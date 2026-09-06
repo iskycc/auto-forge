@@ -530,12 +530,16 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     const direction = input.direction === "desc" ? "DESC" : "ASC";
     const rows = this.handle.client
       .prepare(
-        `${claimSelectSql(
-          `${sortExpression} AS sortValue,${completionExpression} AS completionRank`,
-        )}
-         JOIN run_batches batch ON batch.id=claim.batch_id
-         WHERE ${where.join(" AND ")}
-         ORDER BY ${completionExpression} ASC,${sortExpression} ${direction},claim.id ${direction} LIMIT ?`,
+        `WITH claim_page AS MATERIALIZED (
+           SELECT claim.id,${sortExpression} AS sort_value,${completionExpression} AS completion_rank
+           FROM failure_analysis_claims claim
+           JOIN run_batches batch ON batch.id=claim.batch_id
+           WHERE ${where.join(" AND ")}
+           ORDER BY ${completionExpression} ASC,${sortExpression} ${direction},claim.id ${direction} LIMIT ?
+         )
+         ${claimSelectSql("claim_page.sort_value AS sortValue,claim_page.completion_rank AS completionRank")}
+         JOIN claim_page ON claim_page.id=claim.id
+         ORDER BY claim_page.completion_rank ASC,claim_page.sort_value ${direction},claim.id ${direction}`,
       )
       .all(...parameters) as FailureAnalysisRow[];
     const hasMore = rows.length > input.limit;

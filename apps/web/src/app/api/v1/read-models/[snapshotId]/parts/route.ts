@@ -5,6 +5,7 @@ import {
   batchComparisonPartSchema,
   caseDirectoryPartSchema,
   suiteDirectoryPartSchema,
+  caseDirectorySelectionPartSchema,
 } from "@autoforge/contracts";
 import { authenticateRequest } from "@/lib/auth";
 import { apiErrorResponse } from "@/lib/api-response";
@@ -20,7 +21,11 @@ export async function GET(
       .regex(/^[a-f0-9]{64}$/)
       .parse(snapshotId);
     const input = z
-      .object({ generation: z.string().uuid(), ordinal: z.coerce.number().int().min(0) })
+      .object({
+        generation: z.string().uuid(),
+        ordinal: z.coerce.number().int().min(0),
+        selection: z.enum(["1"]).optional(),
+      })
       .parse(Object.fromEntries(new URL(request.url).searchParams));
     const identity = await authenticateRequest(request);
     const services = await getPlatformServices();
@@ -42,6 +47,9 @@ export async function GET(
     if (snapshot.query.kind === "batch_comparison" && snapshot.query.rightProjectId) {
       services.identityAccess.authorize(identity, "run.read", snapshot.query.rightProjectId);
     }
+    if (snapshot.query.kind === "case_directory" && snapshot.query.filter?.missingSuiteId) {
+      services.identityAccess.authorize(identity, "case_suite.read", snapshot.query.projectId);
+    }
     const part = await services.readModels.part(snapshotId, input.generation, input.ordinal);
     if (part === null)
       throw new DomainError("READ_MODEL_GENERATION_CONFLICT", "数据已更新，请重新读取。");
@@ -49,7 +57,9 @@ export async function GET(
       (snapshot.query.kind === "suite_directory"
         ? suiteDirectoryPartSchema
         : snapshot.query.kind === "case_directory"
-          ? caseDirectoryPartSchema
+          ? input.selection
+            ? caseDirectorySelectionPartSchema
+            : caseDirectoryPartSchema
           : batchComparisonPartSchema
       ).parse(part),
       { headers: { "Cache-Control": "private, no-store" } },

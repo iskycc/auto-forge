@@ -1,19 +1,18 @@
 "use client";
 
-import { LazyCaseSource } from "./lazy-case-source";
-
-import { formatPlatformDateTime } from "@/lib/platform-date-time";
-
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
+import { useDirectoryBranch } from "./use-directory-tree";
+import type { DirectorySource } from "@/lib/directory-tree";
+import type { DirectoryNode as DirectoryDescriptor, DirectoryEntry } from "@autoforge/contracts";
 import { LoadingState } from "@/components/loading-state";
-import { formatMethodSignature } from "@/lib/jvm-signature";
 
 import {
   apiErrorSchema,
   CASE_SUITE_ITEM_MUTATION_LIMIT,
-  type FailureAnalysisHistoryPageView,
+  type CaseDirectoryFilter,
+  type CaseDirectorySelection,
 } from "@autoforge/contracts";
-import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autoforge/domain";
+import type { CaseDefinitionWithMethods, CaseSuite } from "@autoforge/domain";
 import {
   AlertCircle,
   Check,
@@ -27,14 +26,13 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, type SetStateAction } from "react";
+import type { DirectorySelection } from "@/lib/collect-directory-selection";
 
-import { CaseDefinitionEditor } from "./case-definition-editor";
-import { CaseFailureAnalysisHistory } from "./case-failure-analysis-history";
+import { CaseDetailContent } from "./case-detail-content";
+import type { CaseDetailView } from "@/lib/case-detail-view";
 import { CaseImportDialog } from "./case-import-dialog";
-import { CaseVersionHistory } from "./case-version-history";
 import { OpenRunDialogButton } from "./global-run-dialog";
-import { StatusBadge } from "./status-badge";
 import { useConfirm, useToast } from "./ui-feedback";
 import {
   computeSelectionStats,
@@ -43,54 +41,12 @@ import {
   type CaseLatestRun,
   type CaseOutcomeFilter,
 } from "@/lib/case-selection-stats";
-import { classifyAttemptResult } from "@autoforge/domain";
+import { classifyAttemptResult, matchesCaseDirectorySearch } from "@autoforge/domain";
 import {
   collectSelectableDirectoryCaseIds,
   selectionState,
   toggledSelection,
 } from "@/lib/case-directory-selection";
-
-type CaseActivity = {
-  executions: Array<{
-    runId: string;
-    batchId: string;
-    status: string;
-    runnerId?: string;
-    resultCode?: string;
-    createdAt: string;
-    finishedAt?: string;
-  }>;
-  analyses: Array<{
-    attemptId: string;
-    outcome: string;
-    resultCode?: string;
-    failureSignature?: string;
-    passed: number;
-    failed: number;
-    skipped: number;
-    completedAt: string;
-  }>;
-};
-
-type CaseWorkspaceDetail = {
-  definition: CaseDefinitionWithMethods;
-  versions: CaseVersion[];
-  activity: CaseActivity;
-  failureAnalysisHistory: FailureAnalysisHistoryPageView;
-  projectVersionName: string;
-  testStageName: string;
-  executable: boolean;
-  canManage: boolean;
-  canRun: boolean;
-  canReadSource: boolean;
-  canReadAnalysisEvidence: boolean;
-  timeZone: string;
-  sourceView: null | {
-    reference: { entryPath: string };
-    content: string;
-  };
-  sourceViewError?: string;
-};
 
 const TREE_RENDER_PAGE_SIZE = 250;
 const CASE_DELETE_PROGRESS_BATCH_SIZE = 5_000;
@@ -102,6 +58,7 @@ export function CaseSelectionTable({
   suiteManagementProjectIds,
   initialSearch = "",
   latestOutcomes = new Map(),
+  directoryTree,
 }: {
   cases: CaseDefinitionWithMethods[];
   suites: CaseSuite[];
@@ -109,21 +66,85 @@ export function CaseSelectionTable({
   suiteManagementProjectIds: string[] | undefined;
   initialSearch?: string;
   latestOutcomes?: ReadonlyMap<string, CaseLatestRun>;
+  directoryTree?: {
+    filter: CaseDirectoryFilter;
+    loading: boolean;
+    ready: boolean;
+    onFilter(filter: CaseDirectoryFilter): void;
+    refresh(): void;
+    source?: DirectorySource | undefined;
+    projectId: string;
+    caseCount: number;
+    totalCount: number;
+    collect(
+      paths?: string[],
+      signal?: AbortSignal,
+      directoryPath?: string,
+    ): Promise<DirectorySelection>;
+  };
 }) {
+  const [expansion, setExpansion] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const confirmAction = useConfirm();
   const toast = useToast();
-  const [checkedCaseIds, setCheckedCaseIds] = useState(() => new Set<string>());
+  const [selection, setSelection] = useState(
+    () =>
+      new Map<
+        string,
+        { definition: CaseDirectorySelection; outcome?: CaseLatestRun; scope?: string }
+      >(),
+  );
+  const checkedCaseIds = useMemo(() => new Set(selection.keys()), [selection]);
+  const [collecting, setCollecting] = useState(false);
+  const [selectingAll, setSelectingAll] = useState<boolean>();
+  const [importedOutcomes, setImportedOutcomes] = useState<ReadonlyMap<string, CaseLatestRun>>(
+    new Map(),
+  );
+  function setCheckedCaseIds(
+    update: SetStateAction<Set<string>>,
+    candidates: CaseDirectorySelection[] = cases,
+    outcomes = latestOutcomes,
+    selectionScope: "current-filter" | "imported-paths" = "current-filter",
+  ) {
+    setSelection((current) => {
+      const nextIds = typeof update === "function" ? update(new Set(current.keys())) : update;
+      const byId = new Map(candidates.map((item) => [item.id, item]));
+      const next = new Map<
+        string,
+        { definition: CaseDirectorySelection; outcome?: CaseLatestRun; scope?: string }
+      >();
+      for (const id of nextIds) {
+        const previous = current.get(id);
+        const definition = byId.get(id) ?? previous?.definition;
+        const outcome = outcomes.get(id) ?? previous?.outcome;
+        if (definition)
+          next.set(id, {
+            definition,
+            ...(outcome ? { outcome } : {}),
+            ...(selectionScope === "current-filter" && byId.has(id) && directoryTree
+              ? { scope: JSON.stringify(directoryTree.filter) }
+              : previous?.scope
+                ? { scope: previous.scope }
+                : {}),
+          });
+      }
+      return next;
+    });
+  }
   const [activeCaseId, setActiveCaseId] = useState<string>();
-  const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
-  const [missingOnly, setMissingOnly] = useState(false);
+  const [suiteId, setSuiteId] = useState(
+    directoryTree?.filter.missingSuiteId ?? suites[0]?.id ?? "",
+  );
+  const [missingOnly, setMissingOnly] = useState(Boolean(directoryTree?.filter.missingSuiteId));
   const [missingCaseIds, setMissingCaseIds] = useState<Set<string> | null>(null);
   const [membershipPending, setMembershipPending] = useState(false);
   const [search, setSearch] = useState(initialSearch);
-  const [outcomeFilter, setOutcomeFilter] = useState<CaseOutcomeFilter>("all");
+  const [outcomeFilter, setOutcomeFilter] = useState<CaseOutcomeFilter>(
+    directoryTree?.filter.outcome ?? "all",
+  );
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [detailReload, setDetailReload] = useState(0);
-  const [detail, setDetail] = useState<CaseWorkspaceDetail | null>(null);
+  const [detail, setDetail] = useState<CaseDetailView | null>(null);
   const [detailError, setDetailError] = useState<{ caseId: string; message: string } | null>(null);
   const [deletedCaseIds, setDeletedCaseIds] = useState(() => new Set<string>());
   const [deletionProgress, setDeletionProgress] = useState<{
@@ -133,7 +154,16 @@ export function CaseSelectionTable({
 
   const deferredSearch = useDeferredValue(search);
   const deferredOutcomeFilter = useDeferredValue(outcomeFilter);
-  const filtering = deferredSearch !== search || deferredOutcomeFilter !== outcomeFilter;
+  const filtering =
+    deferredSearch !== search ||
+    deferredOutcomeFilter !== outcomeFilter ||
+    Boolean(directoryTree?.loading) ||
+    Boolean(
+      directoryTree &&
+      (directoryTree.filter.query !== search ||
+        directoryTree.filter.outcome !== outcomeFilter ||
+        Boolean(directoryTree.filter.missingSuiteId) !== missingOnly),
+    );
   const normalizedSearch = deferredSearch.trim().toLocaleLowerCase();
   const availableCases = useMemo(
     () => cases.filter((item) => !deletedCaseIds.has(item.id)),
@@ -147,7 +177,7 @@ export function CaseSelectionTable({
     canManageCases(projectId) || canManageSuites(projectId);
   const manageableSuites = suites.filter((suite) => canManageSuites(suite.projectId));
   const selectedProjects = new Set(
-    availableCases.filter((item) => checkedCaseIds.has(item.id)).map((item) => item.projectId),
+    [...selection.values()].map((item) => item.definition.projectId),
   );
   const crossProjectSelection = selectedProjects.size > 1;
   const selectedProjectId = selectedProjects.size === 1 ? [...selectedProjects][0] : undefined;
@@ -161,28 +191,66 @@ export function CaseSelectionTable({
     () =>
       availableCases.filter(
         (item) =>
-          matchesSearch(item, normalizedSearch) &&
-          matchesOutcomeFilter(latestOutcomes.get(item.id), deferredOutcomeFilter),
+          (directoryTree || matchesCaseDirectorySearch(item, normalizedSearch)) &&
+          (directoryTree ||
+            matchesOutcomeFilter(latestOutcomes.get(item.id), deferredOutcomeFilter)),
       ),
-    [availableCases, normalizedSearch, deferredOutcomeFilter, latestOutcomes],
+    [availableCases, normalizedSearch, deferredOutcomeFilter, latestOutcomes, directoryTree],
   );
   const visibleCases = useMemo(
     () =>
-      missingOnly && missingCaseIds
+      !directoryTree && missingOnly && missingCaseIds
         ? searchedCases.filter((item) => missingCaseIds.has(item.id))
         : searchedCases,
-    [missingCaseIds, missingOnly, searchedCases],
+    [missingCaseIds, missingOnly, searchedCases, directoryTree],
   );
-  const directoryTree = useMemo(() => buildDirectoryTree(visibleCases), [visibleCases]);
+  const localTree = useMemo(() => buildDirectoryTree(visibleCases), [visibleCases]);
+  const selectedDirectoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const { definition } of selection.values()) {
+      const segments = definition.directoryPath.split("/").filter(Boolean);
+      for (let i = 1; i <= segments.length; i++) {
+        const path = segments.slice(0, i).join("/");
+        counts.set(path, (counts.get(path) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [selection]);
+  const [completeSelection, setCompleteSelection] = useState<{ filter: string; ids: string[] }>();
   const selectionStats = useMemo(
-    () => computeSelectionStats(checkedCaseIds, latestOutcomes),
-    [checkedCaseIds, latestOutcomes],
+    () =>
+      computeSelectionStats(
+        checkedCaseIds,
+        new Map(
+          [...selection].flatMap(([id, item]) =>
+            item.outcome ? [[id, item.outcome] as const] : [],
+          ),
+        ),
+      ),
+    [checkedCaseIds, selection],
   );
   const selectableCases = visibleCases.filter((item) => canSelectCase(item.projectId));
-  const canSelectAnyCase = selectableCases.length > 0;
-  const allSelected =
-    selectableCases.length > 0 && selectableCases.every((item) => checkedCaseIds.has(item.id));
-  const selectedCases = availableCases.filter((item) => checkedCaseIds.has(item.id));
+  const canSelectAnyCase = directoryTree
+    ? directoryTree.caseCount > 0 && canSelectCase(directoryTree.projectId)
+    : selectableCases.length > 0;
+  const currentScope = directoryTree ? JSON.stringify(directoryTree.filter) : "";
+  const selectedMatchingCount = directoryTree
+    ? [...selection.values()].filter(
+        (item) =>
+          item.scope === currentScope ||
+          (!directoryTree.filter.query &&
+            directoryTree.filter.outcome === "all" &&
+            !directoryTree.filter.missingSuiteId),
+      ).length
+    : 0;
+  const allSelected = directoryTree
+    ? directoryTree.caseCount > 0 &&
+      (selectedMatchingCount === directoryTree.caseCount ||
+        (completeSelection?.filter === currentScope &&
+          completeSelection.ids.length > 0 &&
+          completeSelection.ids.every((id) => checkedCaseIds.has(id))))
+    : selectableCases.length > 0 && selectableCases.every((item) => checkedCaseIds.has(item.id));
+  const selectedCases = [...selection.values()].map((item) => item.definition);
   const selectedCasesCanJoinSuite =
     selectedCases.length > 0 && selectedCases.every((item) => canManageSuites(item.projectId));
   const selectedCasesCanDelete =
@@ -190,6 +258,21 @@ export function CaseSelectionTable({
   const activeDetail = detail?.definition.id === activeCaseId ? detail : null;
   const activeDetailError =
     detailError && detailError.caseId === activeCaseId ? detailError.message : "";
+
+  const externalQuery = directoryTree?.filter.query;
+  const externalOutcome = directoryTree?.filter.outcome;
+  const externalMissing = directoryTree?.filter.missingSuiteId;
+  const externalFilterKey = JSON.stringify([externalQuery, externalOutcome, externalMissing]);
+  const [previousExternalFilterKey, setPreviousExternalFilterKey] = useState(externalFilterKey);
+  if (previousExternalFilterKey !== externalFilterKey) {
+    setPreviousExternalFilterKey(externalFilterKey);
+    if (externalQuery !== undefined && externalOutcome !== undefined) {
+      setSearch(externalQuery);
+      setOutcomeFilter(externalOutcome);
+      setMissingOnly(Boolean(externalMissing));
+      if (externalMissing) setSuiteId(externalMissing);
+    }
+  }
 
   useEffect(() => {
     if (!activeCaseId) return;
@@ -208,7 +291,7 @@ export function CaseSelectionTable({
               : `详情加载失败（HTTP ${response.status}）。`,
           );
         }
-        return (await response.json()) as CaseWorkspaceDetail;
+        return (await response.json()) as CaseDetailView;
       })
       .then((nextDetail) => {
         setDetail(nextDetail);
@@ -225,7 +308,7 @@ export function CaseSelectionTable({
   }, [activeCaseId, detailReload]);
 
   useEffect(() => {
-    if (!missingOnly || !effectiveSuiteId) return;
+    if (directoryTree || !missingOnly || !effectiveSuiteId) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       if (availableCases.length === 0) {
@@ -260,17 +343,22 @@ export function CaseSelectionTable({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [availableCases, effectiveSuiteId, missingOnly]);
+  }, [availableCases, effectiveSuiteId, missingOnly, directoryTree]);
 
-  function importFromTable(matched: CaseDefinitionWithMethods[], unmatchedCount: number): void {
-    setCheckedCaseIds((current) => {
-      const next = new Set(current);
-      for (const item of matched) {
-        // 无管理权限的用例没有勾选框，不能通过导入间接选中。
-        if (canSelectCase(item.projectId)) next.add(item.id);
-      }
-      return next;
-    });
+  function importFromTable(matched: CaseDirectorySelection[], unmatchedCount: number): void {
+    setCheckedCaseIds(
+      (current) => {
+        const next = new Set(current);
+        for (const item of matched) {
+          // 无管理权限的用例没有勾选框，不能通过导入间接选中。
+          if (canSelectCase(item.projectId)) next.add(item.id);
+        }
+        return next;
+      },
+      matched,
+      new Map([...latestOutcomes, ...importedOutcomes]),
+      "imported-paths",
+    );
     setMessage(
       unmatchedCount > 0
         ? `已从表格勾选 ${matched.length} 个用例，${unmatchedCount} 个路径未匹配`
@@ -278,14 +366,40 @@ export function CaseSelectionTable({
     );
   }
 
-  function toggle(id: string): void {
-    setCheckedCaseIds((current) => toggledSelection(current, [id]));
+  function toggle(item: DirectoryEntry, outcome?: CaseLatestRun): void {
+    setCheckedCaseIds(
+      (current) => toggledSelection(current, [item.id]),
+      [item],
+      outcome ? new Map([[item.id, outcome]]) : latestOutcomes,
+    );
     setMessage(null);
   }
 
   function toggleDirectory(ids: readonly string[]): void {
     setCheckedCaseIds((current) => toggledSelection(current, ids));
     setMessage(null);
+  }
+
+  async function selectDirectory(path?: string): Promise<void> {
+    if (!directoryTree) return;
+    if (path === undefined) setSelectingAll(!allSelected);
+    setCollecting(true);
+    try {
+      const result = await directoryTree.collect(undefined, undefined, path);
+      const items = result.items.filter(
+        (item) => canSelectCase(item.projectId) && !deletedCaseIds.has(item.id),
+      );
+      const ids = items.map((item) => item.id);
+      setCheckedCaseIds((current) => toggledSelection(current, ids), items, result.outcomes);
+      if (path === undefined)
+        setCompleteSelection({ filter: JSON.stringify(directoryTree.filter), ids });
+      setMessage(null);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "读取目录用例失败。");
+    } finally {
+      setCollecting(false);
+      setSelectingAll(undefined);
+    }
   }
 
   async function addToSuite(): Promise<void> {
@@ -323,6 +437,7 @@ export function CaseSelectionTable({
         addedCount += caseDefinitionIds.length;
       }
       toast.success(`已将 ${selectedCaseIds.length} 个用例加入任务。`);
+      directoryTree?.refresh();
       setMissingCaseIds((current) => {
         if (!current) return current;
         const next = new Set(current);
@@ -392,6 +507,7 @@ export function CaseSelectionTable({
         setDetailError(null);
       }
       toast.success(`已删除 ${deletedCount} 个用例。`);
+      directoryTree?.refresh();
     } catch (caught) {
       toast.error(caught instanceof Error ? caught.message : "删除用例失败。");
     } finally {
@@ -407,19 +523,39 @@ export function CaseSelectionTable({
           <Search size={17} aria-hidden="true" />
           <Input
             aria-label="页内搜索用例"
-            onChange={(event) => setSearch(event.currentTarget.value)}
+            onChange={(event) => {
+              setSearch(event.currentTarget.value);
+              if (directoryTree)
+                directoryTree.onFilter({
+                  ...directoryTree.filter,
+                  query: event.currentTarget.value,
+                });
+            }}
             placeholder="搜索目录、类名、方法、标签"
             type="search"
+            maxLength={240}
             value={search}
           />
           {search ? (
-            <Button onClick={() => setSearch("")} size="compact" type="button" variant="ghost">
+            <Button
+              onClick={() => {
+                setSearch("");
+                if (directoryTree) directoryTree.onFilter({ ...directoryTree.filter, query: "" });
+              }}
+              size="compact"
+              type="button"
+              variant="ghost"
+            >
               清除
             </Button>
           ) : null}
           <Select
             aria-label="按最近执行结果筛选"
-            onChange={(event) => setOutcomeFilter(parseOutcomeFilter(event.currentTarget.value))}
+            onChange={(event) => {
+              const outcome = parseOutcomeFilter(event.currentTarget.value);
+              setOutcomeFilter(outcome);
+              if (directoryTree) directoryTree.onFilter({ ...directoryTree.filter, outcome });
+            }}
             value={outcomeFilter}
           >
             <option value="all">全部结果</option>
@@ -430,38 +566,57 @@ export function CaseSelectionTable({
           </Select>
         </div>
         <div className="case-browser-summary">
-          <span>全部 {availableCases.length} 个用例</span>
+          <span>
+            {directoryTree && !directoryTree.ready
+              ? "目录尚未就绪"
+              : `全部 ${directoryTree?.totalCount ?? availableCases.length} 个用例`}
+          </span>
           {filtering || membershipPending ? (
             <span className="list-filter-progress" role="status">
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
               {membershipPending ? "正在读取任务成员" : "正在筛选"}
             </span>
           ) : normalizedSearch || deferredOutcomeFilter !== "all" || missingOnly ? (
-            <strong>匹配 {visibleCases.length} 个</strong>
+            <strong>匹配 {directoryTree?.caseCount ?? visibleCases.length} 个</strong>
           ) : null}
         </div>
 
-        {canSelectAnyCase ? (
+        {canSelectAnyCase || checkedCaseIds.size > 0 || missingOnly ? (
           <div className="selection-toolbar case-selection-toolbar">
             <label className="selection-actions">
               <Input
                 type="checkbox"
                 aria-label="选择当前搜索结果中的全部用例"
-                checked={allSelected}
+                disabled={collecting || filtering || directoryTree?.loading}
+                checked={selectingAll ?? allSelected}
                 onChange={() =>
-                  setCheckedCaseIds((current) => {
-                    const next = new Set(current);
-                    for (const item of selectableCases) {
-                      if (allSelected) next.delete(item.id);
-                      else next.add(item.id);
-                    }
-                    return next;
-                  })
+                  directoryTree
+                    ? void selectDirectory()
+                    : setCheckedCaseIds((current) => {
+                        const next = new Set(current);
+                        for (const item of selectableCases) {
+                          if (allSelected) next.delete(item.id);
+                          else next.add(item.id);
+                        }
+                        return next;
+                      })
                 }
               />
               全选当前结果
             </label>
-            <CaseImportDialog cases={availableCases} onImport={importFromTable} />
+            <CaseImportDialog
+              cases={availableCases}
+              onImport={importFromTable}
+              {...(directoryTree
+                ? {
+                    resolvePaths: async (paths: string[], signal: AbortSignal) => {
+                      const result = await directoryTree.collect(paths, signal);
+                      setImportedOutcomes(result.outcomes);
+                      return result.items;
+                    },
+                  }
+                : {})}
+            />
             <span>
               {checkedCaseIds.size > 0
                 ? `已选 ${checkedCaseIds.size}`
@@ -493,6 +648,11 @@ export function CaseSelectionTable({
                     setMissingOnly(false);
                     setMissingCaseIds(null);
                     setMembershipPending(false);
+                    if (directoryTree)
+                      directoryTree.onFilter({
+                        query: directoryTree.filter.query,
+                        outcome: directoryTree.filter.outcome,
+                      });
                   }}
                   aria-label="目标用例任务"
                 >
@@ -510,7 +670,13 @@ export function CaseSelectionTable({
                     const next = !missingOnly;
                     setMissingOnly(next);
                     setMissingCaseIds(null);
-                    setMembershipPending(next);
+                    setMembershipPending(directoryTree ? false : next);
+                    if (directoryTree)
+                      directoryTree.onFilter({
+                        query: directoryTree.filter.query,
+                        outcome: directoryTree.filter.outcome,
+                        ...(next ? { missingSuiteId: effectiveSuiteId } : {}),
+                      });
                   }}
                   type="button"
                   variant={missingOnly ? "primary" : "secondary"}
@@ -585,8 +751,12 @@ export function CaseSelectionTable({
         ) : null}
 
         <div aria-busy={filtering} className="case-directory-scroll">
-          {visibleCases.length === 0 ? (
-            <div className="inline-empty">没有匹配的用例，尝试缩短搜索关键词。</div>
+          {(directoryTree ? directoryTree.caseCount === 0 : visibleCases.length === 0) ? (
+            <div className="inline-empty">
+              {directoryTree && !directoryTree.ready
+                ? "目录尚未就绪，完成准备后自动显示。"
+                : "没有匹配的用例，尝试缩短搜索关键词。"}
+            </div>
           ) : (
             <div className="case-directory-tree" role="tree" aria-label="完整用例目录">
               <DirectoryNode
@@ -594,7 +764,21 @@ export function CaseSelectionTable({
                 canManageProject={canSelectCase}
                 forceOpen={Boolean(normalizedSearch)}
                 latestOutcomes={latestOutcomes}
-                node={directoryTree}
+                key={directoryTree?.source?.projection.status.generation ?? "local"}
+                expansion={expansion}
+                onExpansion={(key, open) =>
+                  setExpansion((current) =>
+                    current.get(key) === open ? current : new Map(current).set(key, open),
+                  )
+                }
+                node={localTree}
+                source={directoryTree?.source}
+                remoteOrdinal={directoryTree?.source?.projection.manifest?.rootOrdinal}
+                selectedDirectoryCounts={selectedDirectoryCounts}
+                onSelectDirectory={selectDirectory}
+                collecting={collecting || filtering}
+                canSelectDirectory={!directoryTree || canSelectCase(directoryTree.projectId)}
+                deletedCaseIds={deletedCaseIds}
                 onActivate={setActiveCaseId}
                 onToggle={toggle}
                 onToggleDirectory={toggleDirectory}
@@ -621,10 +805,14 @@ export function CaseSelectionTable({
           </div>
         ) : activeDetail ? (
           <CaseInspector
+            key={activeDetail.definition.id}
             detail={activeDetail}
-            onDefinitionUpdated={(definition) =>
-              setDetail((current) => (current ? { ...current, definition } : current))
-            }
+            onDefinitionUpdated={(definition) => {
+              setDetail((current) =>
+                current?.definition.id === definition.id ? { ...current, definition } : current,
+              );
+              setDetailReload((value) => value + 1);
+            }}
             onReload={() => setDetailReload((value) => value + 1)}
             onDelete={() => deleteCases([activeDetail.definition.id])}
             pending={pending}
@@ -647,13 +835,13 @@ function CaseInspector({
   onDelete,
   pending,
 }: {
-  detail: CaseWorkspaceDetail;
+  detail: CaseDetailView;
   onDefinitionUpdated(definition: CaseDefinitionWithMethods): void;
   onReload(): void;
   onDelete(): void;
   pending: boolean;
 }) {
-  const { definition, activity } = detail;
+  const { definition } = detail;
   return (
     <div className="case-inspector-content">
       <header className="case-inspector-header">
@@ -664,6 +852,12 @@ function CaseInspector({
         </div>
         <div className="case-inspector-header-actions">
           <span className="storage-pill">v{definition.currentVersion}</span>
+          {detail.canRun && definition.enabled && !definition.archived && detail.executable ? (
+            <OpenRunDialogButton
+              caseDefinitionId={definition.id}
+              className="button button-primary compact-button"
+            />
+          ) : null}
           <Link
             className="button button-secondary compact-button"
             href={`/cases/${encodeURIComponent(definition.id)}`}
@@ -673,181 +867,12 @@ function CaseInspector({
         </div>
       </header>
 
-      <div className="case-inspector-meta">
-        <div>
-          <span>状态</span>
-          <strong>
-            <StatusBadge enabled={definition.enabled} />
-            {definition.archived ? <span className="tag">已归档</span> : null}
-          </strong>
-        </div>
-        <div>
-          <span>版本 / 阶段</span>
-          <strong>
-            {detail.projectVersionName} / {detail.testStageName}
-          </strong>
-        </div>
-        <div>
-          <span>测试方法</span>
-          <strong>{definition.methods.length}</strong>
-        </div>
-        <div>
-          <span>最近更新</span>
-          <strong>{formatDate(definition.updatedAt)}</strong>
-        </div>
-        <div className="case-inspector-meta-wide">
-          <span>分组 / 标签</span>
-          <strong>{[...definition.groups, ...definition.tags].join("、") || "—"}</strong>
-        </div>
-      </div>
-
-      {detail.canRun && definition.enabled && !definition.archived && detail.executable ? (
-        <details className="case-inspector-section">
-          <summary>立即执行</summary>
-          <div className="case-inspector-run-action">
-            <p>通过顶栏执行入口选择执行机或执行机组，并设置重跑策略与 Adapter 地址。</p>
-            <OpenRunDialogButton
-              caseDefinitionId={definition.id}
-              className="button button-primary"
-            />
-          </div>
-        </details>
-      ) : null}
-
-      {!detail.executable ? (
-        <div className="implementation-notice" role="status">
-          <AlertCircle size={17} aria-hidden="true" />
-          该用例来自 sources JAR，只能查看与管理，不能直接执行。
-        </div>
-      ) : null}
-
-      <details className="case-inspector-section" open>
-        <summary>测试方法（{definition.methods.length}）</summary>
-        <div className="table-scroll">
-          <table className="data-table case-inspector-table">
-            <thead>
-              <tr>
-                <th>方法</th>
-                <th>分组</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {definition.methods.map((method) => (
-                <tr key={method.id}>
-                  <td>
-                    <strong>{method.methodName}</strong>
-                    <span className="method-signature">
-                      {formatMethodSignature(method.descriptor)}
-                    </span>
-                  </td>
-                  <td>{method.groups.join("、") || "—"}</td>
-                  <td>
-                    <StatusBadge enabled={method.enabled} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
-
-      <details className="case-inspector-section" open>
-        <summary>执行历史（{activity.executions.length}）</summary>
-        <div className="table-scroll">
-          <table className="data-table case-inspector-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>状态 / 结果</th>
-                <th>Runner</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activity.executions.length === 0 ? (
-                <tr>
-                  <td colSpan={3}>当前用例尚无执行记录。</td>
-                </tr>
-              ) : null}
-              {activity.executions.map((execution) => (
-                <tr key={execution.runId}>
-                  <td>
-                    <Link href={`/run-batches/${encodeURIComponent(execution.batchId)}`}>
-                      {formatDate(execution.finishedAt ?? execution.createdAt)}
-                    </Link>
-                  </td>
-                  <td>
-                    {execution.status} / {execution.resultCode ?? "—"}
-                  </td>
-                  <td>{execution.runnerId ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
-
-      <details className="case-inspector-section" open>
-        <summary>
-          失败分析结论（
-          {detail.failureAnalysisHistory.nextCursor
-            ? `最近 ${detail.failureAnalysisHistory.items.length}`
-            : detail.failureAnalysisHistory.items.length}
-          ）
-        </summary>
-        <CaseFailureAnalysisHistory
-          canReadEvidence={detail.canReadAnalysisEvidence}
-          caseDefinitionId={definition.id}
-          compact
-          initialPage={detail.failureAnalysisHistory}
-          projectId={definition.projectId}
-          timeZone={detail.timeZone}
-        />
-      </details>
-
-      <details className="case-inspector-section">
-        <summary>执行结果统计历史（{activity.analyses.length}）</summary>
-        <div className="table-scroll">
-          <table className="data-table case-inspector-table">
-            <thead>
-              <tr>
-                <th>完成时间</th>
-                <th>结果</th>
-                <th>通过 / 失败 / 跳过</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activity.analyses.length === 0 ? (
-                <tr>
-                  <td colSpan={3}>当前用例尚无执行结果统计。</td>
-                </tr>
-              ) : null}
-              {activity.analyses.map((analysis) => (
-                <tr key={analysis.attemptId}>
-                  <td>{formatDate(analysis.completedAt)}</td>
-                  <td>{analysis.resultCode ?? analysis.outcome}</td>
-                  <td>
-                    {analysis.passed} / {analysis.failed} / {analysis.skipped}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
-
-      {detail.canReadSource ? (
-        <LazyCaseSource
-          key={definition.id}
-          caseDefinitionId={definition.id}
-          revision={definition.revision}
-        />
-      ) : null}
-
-      {detail.canManage ? (
-        <details className="case-inspector-section">
-          <summary>管理用例</summary>
-          <CaseDefinitionEditor definition={definition} onUpdated={onDefinitionUpdated} />
+      <CaseDetailContent
+        detail={detail}
+        presentation="inspector"
+        onDefinitionUpdated={onDefinitionUpdated}
+        onVersionsChanged={onReload}
+        managementActions={
           <div className="case-inspector-delete-action">
             <div>
               <strong>删除用例</strong>
@@ -858,20 +883,8 @@ function CaseInspector({
               删除用例
             </Button>
           </div>
-        </details>
-      ) : null}
-
-      <details className="case-inspector-section">
-        <summary>版本历史（{detail.versions.length}）</summary>
-        <CaseVersionHistory
-          canManage={detail.canManage}
-          canReadSource={detail.canReadSource}
-          caseDefinitionId={definition.id}
-          currentVersion={definition.currentVersion}
-          onChanged={onReload}
-          versions={detail.versions}
-        />
-      </details>
+        }
+      />
     </div>
   );
 }
@@ -880,8 +893,9 @@ type DirectoryTreeNode = {
   name: string;
   path: string;
   directories: DirectoryTreeNode[];
-  cases: CaseDefinitionWithMethods[];
+  cases: DirectoryEntry[];
   defaultOpen?: boolean;
+  descriptor?: DirectoryDescriptor;
 };
 
 function buildDirectoryTree(cases: CaseDefinitionWithMethods[]): DirectoryTreeNode {
@@ -901,7 +915,7 @@ function buildDirectoryTree(cases: CaseDefinitionWithMethods[]): DirectoryTreeNo
       }
       current = child;
     }
-    current.cases.push(item);
+    current.cases.push({ ...item, methodCount: item.methods.length });
   }
   sortDirectory(root);
   computeDefaultExpansion(root);
@@ -942,6 +956,15 @@ function DirectoryNode({
   onToggleDirectory,
   onActivate,
   latestOutcomes,
+  source,
+  expansion,
+  onExpansion,
+  remoteOrdinal,
+  selectedDirectoryCounts,
+  onSelectDirectory,
+  collecting,
+  canSelectDirectory,
+  deletedCaseIds,
   root = false,
 }: {
   node: DirectoryTreeNode;
@@ -949,23 +972,79 @@ function DirectoryNode({
   activeCaseId: string | undefined;
   forceOpen: boolean;
   canManageProject(projectId: string): boolean;
-  onToggle(id: string): void;
+  onToggle(item: DirectoryEntry, outcome?: CaseLatestRun): void;
   onToggleDirectory(ids: readonly string[]): void;
   onActivate(id: string): void;
   latestOutcomes: ReadonlyMap<string, CaseLatestRun>;
+  source?: DirectorySource | undefined;
+  expansion: ReadonlyMap<string, boolean>;
+  onExpansion(key: string, open: boolean): void;
+  remoteOrdinal?: number | undefined;
+  selectedDirectoryCounts: ReadonlyMap<string, number>;
+  onSelectDirectory(path: string): Promise<void>;
+  collecting: boolean;
+  canSelectDirectory: boolean;
+  deletedCaseIds: ReadonlySet<string>;
   root?: boolean;
 }) {
-  const [open, setOpen] = useState(root || forceOpen || Boolean(node.defaultOpen));
+  const expansionKey = `${source?.projection.status.id ?? "local"}:${node.path}`;
+  const [open, setOpen] = useState(
+    expansion.get(expansionKey) ?? (root || (!source && forceOpen) || Boolean(node.defaultOpen)),
+  );
+  const [selecting, setSelecting] = useState<boolean>();
   const [visibleDirectoryCount, setVisibleDirectoryCount] = useState(TREE_RENDER_PAGE_SIZE);
   const [visibleCaseCount, setVisibleCaseCount] = useState(TREE_RENDER_PAGE_SIZE);
 
-  const visibleDirectories = node.directories.slice(0, visibleDirectoryCount);
-  const visibleNodeCases = node.cases.slice(0, visibleCaseCount);
-  const renderedOpen = root || forceOpen || open;
+  const renderedOpen = root || open;
+  const loaded = useDirectoryBranch(source, remoteOrdinal, renderedOpen);
+  const directories = source
+    ? loaded.branches
+        .flatMap((branch) => branch.directories)
+        .map(
+          (descriptor) =>
+            ({
+              name: descriptor.name,
+              path: descriptor.path,
+              directories: [],
+              cases: [],
+              descriptor,
+              defaultOpen:
+                ((root && (source?.projection.manifest?.caseCount ?? 0) <= TREE_RENDER_PAGE_SIZE) ||
+                  (Boolean(node.defaultOpen) &&
+                    loaded.branches[0]?.directories.length === 1 &&
+                    !loaded.branches[0]?.items.length)) &&
+                descriptor.caseCount <= TREE_RENDER_PAGE_SIZE,
+            }) satisfies DirectoryTreeNode,
+        )
+    : node.directories;
+  const branchCases = source ? loaded.branches.flatMap((branch) => branch.items) : node.cases;
+  const visibleDirectories = directories.slice(0, visibleDirectoryCount);
+  const visibleNodeCases = branchCases
+    .filter((item) => !deletedCaseIds.has(item.id))
+    .slice(0, visibleCaseCount);
+  const branchOutcomes = source
+    ? new Map(
+        loaded.branches
+          .flatMap((branch) => branch.outcomes)
+          .map((item) => [
+            item.caseDefinitionId,
+            { outcome: item.outcome, ...(item.resultCode ? { resultCode: item.resultCode } : {}) },
+          ]),
+      )
+    : latestOutcomes;
   const content = (
     <div className="case-tree-children">
       {visibleDirectories.map((directory) => (
         <DirectoryNode
+          source={source}
+          expansion={expansion}
+          onExpansion={onExpansion}
+          remoteOrdinal={directory.descriptor?.ordinal}
+          selectedDirectoryCounts={selectedDirectoryCounts}
+          onSelectDirectory={onSelectDirectory}
+          collecting={collecting}
+          canSelectDirectory={canSelectDirectory}
+          deletedCaseIds={deletedCaseIds}
           activeCaseId={activeCaseId}
           canManageProject={canManageProject}
           forceOpen={forceOpen}
@@ -978,17 +1057,17 @@ function DirectoryNode({
           selected={selected}
         />
       ))}
-      {node.directories.length > visibleDirectoryCount ? (
+      {directories.length > visibleDirectoryCount ? (
         <Button
           onClick={() => setVisibleDirectoryCount((count) => count + TREE_RENDER_PAGE_SIZE)}
           type="button"
           variant="ghost"
         >
-          加载更多目录（剩余 {node.directories.length - visibleDirectoryCount}）
+          加载更多目录（剩余 {directories.length - visibleDirectoryCount}）
         </Button>
       ) : null}
       {visibleNodeCases.map((item) => {
-        const latestRun = latestOutcomes.get(item.id);
+        const latestRun = branchOutcomes.get(item.id);
         const outcomeLabel = latestRunBadge(latestRun);
         return (
           <div
@@ -1002,7 +1081,7 @@ function DirectoryNode({
                 type="checkbox"
                 aria-label={`选择 ${item.displayName}`}
                 checked={selected.has(item.id)}
-                onChange={() => onToggle(item.id)}
+                onChange={() => onToggle(item, latestRun)}
               />
             ) : null}
             <Link
@@ -1015,7 +1094,7 @@ function DirectoryNode({
                 <strong>{item.displayName}</strong>
                 <code>{item.className}</code>
               </span>
-              <small>{item.methods.length} 个方法</small>
+              <small>{item.methodCount} 个方法</small>
               {outcomeLabel ? (
                 <span className={`batch-status ${outcomeBadgeClass(latestRun)}`}>
                   {outcomeLabel}
@@ -1036,34 +1115,73 @@ function DirectoryNode({
           </div>
         );
       })}
-      {node.cases.length > visibleCaseCount ? (
+      {branchCases.length > visibleCaseCount ? (
         <Button
           onClick={() => setVisibleCaseCount((count) => count + TREE_RENDER_PAGE_SIZE)}
           type="button"
           variant="ghost"
         >
-          加载更多用例（剩余 {node.cases.length - visibleCaseCount}）
+          加载更多用例（剩余 {branchCases.length - visibleCaseCount}）
+        </Button>
+      ) : null}
+      {loaded.loading && source ? <p role="status">正在加载目录…</p> : null}
+      {loaded.error && source ? (
+        <div role="alert">
+          {loaded.error}
+          <Button onClick={loaded.retry}>重试</Button>
+        </div>
+      ) : null}
+      {loaded.more && source ? (
+        <Button
+          variant="ghost"
+          disabled={loaded.loading}
+          onClick={() => {
+            setVisibleDirectoryCount((count) => count + TREE_RENDER_PAGE_SIZE);
+            setVisibleCaseCount((count) => count + TREE_RENDER_PAGE_SIZE);
+            loaded.loadMore();
+          }}
+        >
+          加载更多
         </Button>
       ) : null}
     </div>
   );
   if (root) return content;
   const selectableIds = collectSelectableDirectoryCaseIds(node, canManageProject);
-  const directorySelection = selectionState(selected, selectableIds);
+  const count = node.descriptor?.caseCount ?? countCases(node);
+  const selectedCount = selectedDirectoryCounts.get(node.path) ?? 0;
+  const directorySelection = source
+    ? selectedCount >= count
+      ? "checked"
+      : selectedCount
+        ? "mixed"
+        : "unchecked"
+    : selectionState(selected, selectableIds);
   return (
     <details
       aria-selected={false}
       className="case-tree-directory"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        onExpansion(expansionKey, event.currentTarget.open);
+        setOpen(event.currentTarget.open);
+      }}
       open={renderedOpen}
       role="treeitem"
     >
       <summary>
         <Input
-          aria-label={`选择文件夹 ${node.path}（${selectableIds.length} 个用例）`}
-          checked={directorySelection === "checked"}
-          disabled={selectableIds.length === 0}
-          onChange={() => onToggleDirectory(selectableIds)}
+          aria-label={`选择文件夹 ${node.path}（${source ? count : selectableIds.length} 个用例）`}
+          checked={selecting ?? directorySelection === "checked"}
+          disabled={collecting || !canSelectDirectory || (!source && selectableIds.length === 0)}
+          onChange={async () => {
+            if (!source) return onToggleDirectory(selectableIds);
+            setSelecting(directorySelection !== "checked");
+            try {
+              await onSelectDirectory(node.path);
+            } finally {
+              setSelecting(undefined);
+            }
+          }}
           onClick={(event) => event.stopPropagation()}
           ref={(input) => {
             if (input) input.indeterminate = directorySelection === "mixed";
@@ -1072,7 +1190,7 @@ function DirectoryNode({
         />
         <Folder size={17} aria-hidden="true" />
         <strong>{node.name}</strong>
-        <span>{countCases(node)} 个用例</span>
+        <span>{count} 个用例</span>
       </summary>
       {renderedOpen ? content : null}
     </details>
@@ -1119,33 +1237,10 @@ function parseOutcomeFilter(value: string): CaseOutcomeFilter {
     : "all";
 }
 
-function matchesSearch(item: CaseDefinitionWithMethods, normalizedSearch: string): boolean {
-  if (!normalizedSearch) return true;
-  return [
-    item.directoryPath,
-    item.displayName,
-    item.className,
-    item.packageName,
-    ...item.groups,
-    ...item.tags,
-    ...item.methods.flatMap((method) => [method.methodName, ...method.groups]),
-  ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
-}
-
 async function responseErrorMessage(response: Response): Promise<string> {
   const payload: unknown = await response.json().catch(() => null);
   const parsed = apiErrorSchema.safeParse(payload);
   return parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`;
-}
-
-function formatDate(value: string): string {
-  return formatPlatformDateTime(value, undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function batchesOf<T>(items: readonly T[], size: number): T[][] {

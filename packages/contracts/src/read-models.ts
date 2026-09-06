@@ -11,6 +11,14 @@ const page = analysisScope.extend({
 });
 const batch = analysisScope.extend({ batchId: identifier });
 
+export const DIRECTORY_CHUNK_SIZE = 100;
+export const caseDirectoryFilterSchema = z.object({
+  query: z.string().trim().max(240).default(""),
+  outcome: z.enum(["all", "succeeded", "failed", "blocked", "never"]).default("all"),
+  missingSuiteId: identifier.optional(),
+});
+export type CaseDirectoryFilter = z.infer<typeof caseDirectoryFilterSchema>;
+
 /** Only explicitly registered, read-only projections may be executed by the background worker. */
 export const executionCasePageFilterSchema = z.object({
   scope: z.union([z.literal("all"), z.literal("summary"), z.number().int().positive()]),
@@ -45,6 +53,7 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
       .max(200),
   }),
   z.object({ kind: z.literal("source_preview"), projectId: identifier, sourceId: identifier }),
+  z.object({ kind: z.literal("source_directory"), projectId: identifier, sourceId: identifier }),
   z.object({
     kind: z.literal("public_statistics"),
     projectId: identifier,
@@ -56,7 +65,13 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
     projectIds: z.array(identifier).optional(),
     filter: analyticsFilterSchema,
   }),
-  analysisScope.extend({ kind: z.literal("suite_directory"), suiteId: identifier }),
+  analysisScope.extend({
+    kind: z.literal("suite_directory"),
+    suiteId: identifier,
+    chunkSize: z.literal(DIRECTORY_CHUNK_SIZE).optional(),
+    tree: z.literal(true).optional(),
+    search: z.string().trim().max(240).optional(),
+  }),
   analysisScope.extend({
     kind: z.literal("execution_overview"),
     batchId: identifier,
@@ -71,7 +86,13 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
     rightBatchId: identifier,
   }),
   scope.extend({ kind: z.literal("suite_activity"), suiteIds: z.array(identifier).max(200) }),
-  scope.extend({ kind: z.literal("case_directory"), testStageId: identifier }),
+  scope.extend({
+    kind: z.literal("case_directory"),
+    testStageId: identifier,
+    chunkSize: z.literal(DIRECTORY_CHUNK_SIZE).optional(),
+    tree: z.literal(true).optional(),
+    filter: caseDirectoryFilterSchema.optional(),
+  }),
   scope.extend({ kind: z.literal("ddt_dashboard"), testStageId: identifier }),
   page.extend({
     kind: z.literal("analysis_batches"),
@@ -97,6 +118,7 @@ export type ReadModelStatus = z.infer<typeof readModelStatusSchema>;
 export const caseDirectoryManifestSchema = z.object({
   caseCount: z.number().int().nonnegative(),
   partCount: z.number().int().nonnegative(),
+  rootOrdinal: z.number().int().nonnegative().optional(),
 });
 export type CaseDirectoryManifest = z.infer<typeof caseDirectoryManifestSchema>;
 
@@ -153,6 +175,19 @@ export const caseDirectoryPartSchema = z.object({
     .max(250),
 });
 export type CaseDirectoryPart = z.infer<typeof caseDirectoryPartSchema>;
+
+export const caseDirectorySelectionSchema = directoryCaseSchema.pick({
+  id: true,
+  projectId: true,
+  directoryPath: true,
+  displayName: true,
+  className: true,
+});
+export type CaseDirectorySelection = z.infer<typeof caseDirectorySelectionSchema>;
+export const caseDirectorySelectionPartSchema = z.object({
+  items: z.array(caseDirectorySelectionSchema).max(250),
+  outcomes: caseDirectoryPartSchema.shape.outcomes,
+});
 
 export const ddtDashboardSnapshotSchema = z.object({
   caseCount: z.number().int().nonnegative(),
@@ -215,6 +250,8 @@ export const suiteDirectoryPartSchema = z.object({
 });
 export type SuiteDirectoryPart = z.infer<typeof suiteDirectoryPartSchema>;
 export const suiteDirectoryManifestSchema = caseDirectoryManifestSchema.extend({
+  ordinaryCount: z.number().int().nonnegative().optional(),
+  ddtCount: z.number().int().nonnegative().optional(),
   revision: z.number().int(),
 });
 export type SuiteDirectoryManifest = z.infer<typeof suiteDirectoryManifestSchema>;
@@ -222,3 +259,41 @@ export type SuiteDirectoryManifest = z.infer<typeof suiteDirectoryManifestSchema
 export const sourcePreviewSchema = jarInspectionSchema.extend({
   classes: jarInspectionSchema.shape.classes.max(100),
 });
+export const sourceDirectoryPartSchema =
+  jarInspectionSchema.shape.classes.max(DIRECTORY_CHUNK_SIZE);
+
+// Branch parts contain immediate children and references into immutable data chunks only.
+export const directoryNodeSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  kind: z.enum(["case", "ddt"]),
+  caseCount: z.number().int().nonnegative(),
+  ordinal: z.number().int().nonnegative(),
+});
+export type DirectoryNode = z.infer<typeof directoryNodeSchema>;
+export const directoryBranchIndexSchema = z.object({
+  directories: z.array(directoryNodeSchema).max(100),
+  entries: z
+    .array(
+      z.object({
+        ordinal: z.number().int().nonnegative(),
+        index: z.number().int().nonnegative().max(249),
+        kind: z.enum(["case", "ddt"]),
+      }),
+    )
+    .max(100),
+  nextOrdinal: z.number().int().nonnegative().nullable(),
+});
+export type DirectoryBranchIndex = z.infer<typeof directoryBranchIndexSchema>;
+export const directoryEntrySchema = caseDirectorySelectionSchema.extend({
+  methodCount: z.number().int().nonnegative(),
+});
+export type DirectoryEntry = z.infer<typeof directoryEntrySchema>;
+export const directoryBranchSchema = z.object({
+  directories: directoryBranchIndexSchema.shape.directories,
+  items: z.array(directoryEntrySchema).max(100),
+  outcomes: caseDirectoryPartSchema.shape.outcomes,
+  members: suiteDirectoryPartSchema,
+  nextOrdinal: directoryBranchIndexSchema.shape.nextOrdinal,
+});
+export type DirectoryBranch = z.infer<typeof directoryBranchSchema>;

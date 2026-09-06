@@ -1,7 +1,7 @@
 import { DatabaseZap } from "lucide-react";
 
 import { CachedCaseDirectory } from "@/components/cached-case-directory";
-import { caseDirectoryManifestSchema } from "@autoforge/contracts";
+import { caseDirectoryManifestSchema, DIRECTORY_CHUNK_SIZE } from "@autoforge/contracts";
 import { CaseManagementTabs } from "@/components/case-management-tabs";
 import { DdtManagementWorkspace } from "@/components/ddt-management-workspace";
 import { getPlatformServices } from "@/lib/services";
@@ -29,7 +29,6 @@ function single(value: string | string[] | undefined): string | undefined {
 export default async function CasesPage({ searchParams }: CasesPageProps) {
   const { identity } = await requirePageProjectScope("case.read");
   const parameters = await searchParams;
-  const query = single(parameters.query)?.trim();
   const activeTab = single(parameters.tab) === "ddt" ? "ddt" : "testng";
   const services = await getPlatformServices();
   const projects = await services.identities
@@ -58,6 +57,9 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           projectId,
           projectVersionId: projectVersion.id,
           testStageId: testStage.id,
+          chunkSize: DIRECTORY_CHUNK_SIZE,
+          tree: true,
+          filter: { query: "", outcome: "all" },
         })
       : Promise.resolve(null),
     projectVersion
@@ -108,7 +110,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <section className="card case-scope-toolbar" aria-label="用例范围">
             <div className="case-scope-heading">
               <strong>浏览范围</strong>
-              <span>由顶栏项目层级统一控制；目录和用例在下方工作台中完整加载。</span>
+              <span>由顶栏项目层级统一控制；展开目录时按需加载，搜索覆盖当前范围的所有用例。</span>
             </div>
             <div className="case-scope-current" aria-label="当前用例层级">
               <span>
@@ -125,15 +127,14 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         testngContent={
           directoryProjection ? (
             <CachedCaseDirectory
+              projectId={projectId!}
               key={directoryProjection.id}
               snapshot={directoryProjection.status}
               manifest={directoryManifest}
-              userId={identity.user.id}
               canImport={canImport}
               suites={suites}
               caseManagementProjectIds={caseManagementProjectIds}
               suiteManagementProjectIds={suiteManagementProjectIds}
-              initialSearch={query ?? ""}
             />
           ) : (
             <section className="card case-library-empty-card">

@@ -5295,7 +5295,6 @@ button.icon-button:disabled {
   padding: 14px 18px;
   border-top: 1px solid var(--color-border);
 }
-
 .fatal-state {
   display: flex;
   min-height: calc(100vh - 150px);
@@ -9723,6 +9722,14 @@ button.icon-button:disabled {
   padding: 16px;
 }
 
+.case-inspector-content > * {
+  min-width: 0;
+}
+
+.case-inspector-content .case-execution-history .data-table {
+  min-width: 760px;
+}
+
 .case-inspector-header {
   display: flex;
   min-width: 0;
@@ -9795,11 +9802,7 @@ button.icon-button:disabled {
 }
 
 .case-analysis-history.compact {
-  padding: 10px 0 0;
-}
-
-.case-analysis-history.compact > .card-heading {
-  display: none;
+  padding: var(--space-4);
 }
 
 .case-analysis-history.compact .case-analysis-history-item > summary {
@@ -10358,7 +10361,7 @@ button.icon-button:disabled {
 }
 
 .case-detail-page .source-meta-wide {
-  grid-column: span 2;
+  grid-column: 1 / -1;
 }
 
 .case-run-card {

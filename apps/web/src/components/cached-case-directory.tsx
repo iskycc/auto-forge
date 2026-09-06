@@ -1,134 +1,100 @@
 "use client";
 
 import {
-  caseDirectoryPartSchema,
+  caseDirectoryFilterSchema,
+  type CaseDirectoryFilter,
   type CaseDirectoryManifest,
   type ReadModelStatus,
 } from "@autoforge/contracts";
-import type { CaseDefinitionWithMethods, CaseSuite } from "@autoforge/domain";
+import type { CaseSuite } from "@autoforge/domain";
 import { FileArchive } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { CaseSelectionTable } from "./case-selection-table";
 import { ReadModelStatusBar } from "./read-model-status";
 import { Button } from "./ui";
-import {
-  browserCacheEpoch,
-  readBrowserSnapshot,
-  writeBrowserSnapshot,
-} from "@/lib/browser-read-cache";
-import type { CaseLatestRun } from "@/lib/case-selection-stats";
-
-type Directory = { cases: CaseDefinitionWithMethods[]; outcomes: Map<string, CaseLatestRun> };
+import { useDirectoryTree } from "./use-directory-tree";
+import { updateDirectoryLocation } from "@/lib/directory-location";
+import { collectDirectorySelection } from "@/lib/collect-directory-selection";
 
 export function CachedCaseDirectory({
   snapshot,
+  projectId,
   manifest,
-  userId,
   suites,
   caseManagementProjectIds,
   suiteManagementProjectIds,
-  initialSearch,
   canImport,
 }: {
   snapshot: ReadModelStatus;
+  projectId: string;
   manifest: CaseDirectoryManifest | null;
-  userId: string;
   suites: CaseSuite[];
   caseManagementProjectIds: string[] | undefined;
   suiteManagementProjectIds: string[] | undefined;
-  initialSearch: string;
   canImport: boolean;
 }) {
-  const router = useRouter();
-  const [directory, setDirectory] = useState<Directory>({ cases: [], outcomes: new Map() });
-  const [loaded, setLoaded] = useState(0);
-  const [error, setError] = useState("");
-  const [retry, setRetry] = useState(0);
-  const partCount = manifest?.partCount ?? 0;
-  useEffect(() => {
-    if (!snapshot.generation) return;
-    const controller = new AbortController();
-    const epoch = browserCacheEpoch();
-    async function load() {
-      const cases: CaseDefinitionWithMethods[] = [];
-      const outcomes = new Map<string, CaseLatestRun>();
-      setError("");
-      setLoaded(0);
-      try {
-        // Bounded parallel downloads; the page never embeds a complete 100k-case directory in HTML.
-        for (let ordinal = 0; ordinal < partCount; ordinal += 4) {
-          const parts = await Promise.all(
-            Array.from({ length: Math.min(4, partCount - ordinal) }, async (_, offset) => {
-              const index = ordinal + offset;
-              const key = `${userId}:${snapshot.id}:${snapshot.generation}:${index}`;
-              const cached = readBrowserSnapshot(key);
-              if (cached !== undefined) return caseDirectoryPartSchema.parse(cached);
-              const response = await fetch(
-                `/api/v1/read-models/${snapshot.id}/parts?generation=${snapshot.generation}&ordinal=${index}`,
-                { cache: "no-store", signal: controller.signal },
-              );
-              if (response.status === 409) {
-                router.refresh();
-                throw new Error("目录正在更新，请稍后重试。");
-              }
-              if (!response.ok) throw new Error("读取用例目录失败，请重试。");
-              const part = caseDirectoryPartSchema.parse(await response.json());
-              writeBrowserSnapshot(key, part, epoch);
-              return part;
-            }),
-          );
-          if (controller.signal.aborted) return;
-          for (const part of parts) {
-            cases.push(...(part.items as CaseDefinitionWithMethods[]));
-            for (const outcome of part.outcomes)
-              outcomes.set(outcome.caseDefinitionId, {
-                outcome: outcome.outcome,
-                ...(outcome.resultCode ? { resultCode: outcome.resultCode } : {}),
-              });
-          }
-          setLoaded(cases.length);
-          if (ordinal === 0)
-            setDirectory((current) =>
-              current.cases.length ? current : { cases: [...cases], outcomes: new Map(outcomes) },
-            );
-        }
-        if (!controller.signal.aborted) setDirectory({ cases, outcomes });
-      } catch (cause) {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "读取用例目录失败。");
-      }
-    }
-    void load();
-    return () => controller.abort();
-  }, [snapshot.id, snapshot.generation, userId, partCount, retry, router]);
-
+  const parameters = useSearchParams();
+  const filter = caseDirectoryFilterSchema.parse({
+    query: parameters.get("query") ?? "",
+    outcome: parameters.get("outcome") ?? "all",
+    ...(parameters.get("missingSuiteId")
+      ? { missingSuiteId: parameters.get("missingSuiteId") }
+      : {}),
+  });
+  const filters = new URLSearchParams({
+    query: filter.query,
+    outcome: filter.outcome,
+    ...(filter.missingSuiteId ? { missingSuiteId: filter.missingSuiteId } : {}),
+  }).toString();
+  const result = useDirectoryTree(snapshot, filters);
+  const source = useMemo(
+    () =>
+      result.projection ? { projection: result.projection, refresh: result.refresh } : undefined,
+    [result.projection, result.refresh],
+  );
+  const [progress, setProgress] = useState<string>();
+  const selectionController = useRef<AbortController | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(
+    () => () => {
+      selectionController.current?.abort();
+      selectionController.current = null;
+      clearTimeout(searchTimer.current);
+    },
+    [],
+  );
+  function changeFilter(next: CaseDirectoryFilter) {
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(
+      () =>
+        updateDirectoryLocation({
+          query: next.query,
+          outcome: next.outcome === "all" ? undefined : next.outcome,
+          missingSuiteId: next.missingSuiteId,
+        }),
+      next.query !== filter.query ? 300 : 0,
+    );
+  }
+  const currentManifest = result.projection?.manifest ?? manifest;
   return (
     <>
-      <ReadModelStatusBar snapshots={[snapshot]} />
-      {error ? (
+      <ReadModelStatusBar snapshots={[result.projection?.status ?? snapshot]} />
+      {result.error ? (
         <div className="inline-feedback error" role="alert">
-          {error}
-          <Button onClick={() => setRetry((value) => value + 1)}>重试</Button>
+          {result.error}
+          <Button onClick={result.refresh}>重试</Button>
         </div>
       ) : null}
-      {manifest && loaded < manifest.caseCount ? (
-        <p aria-live="polite">
-          正在载入用例目录 {loaded.toLocaleString()} / {manifest.caseCount.toLocaleString()}
-          ，已载入部分可先查看。
-        </p>
+      {result.loading && !result.projection ? (
+        <p role="status">正在后台准备当前范围，完成后自动显示。</p>
       ) : null}
-      {directory.cases.length ? (
-        <CaseSelectionTable
-          cases={directory.cases}
-          suites={suites}
-          latestOutcomes={directory.outcomes}
-          caseManagementProjectIds={caseManagementProjectIds}
-          suiteManagementProjectIds={suiteManagementProjectIds}
-          initialSearch={initialSearch}
-        />
-      ) : manifest?.caseCount === 0 ? (
+      {progress ? <p role="status">{progress}</p> : null}
+      {currentManifest?.caseCount === 0 &&
+      !filter.query &&
+      filter.outcome === "all" &&
+      !filter.missingSuiteId ? (
         <section className="card case-library-empty-card">
           <div className="empty-state case-library-empty">
             <span className="empty-icon">
@@ -143,7 +109,52 @@ export function CachedCaseDirectory({
             ) : null}
           </div>
         </section>
-      ) : null}
+      ) : (
+        <CaseSelectionTable
+          cases={[]}
+          suites={suites}
+          caseManagementProjectIds={caseManagementProjectIds}
+          suiteManagementProjectIds={suiteManagementProjectIds}
+          initialSearch={filter.query}
+          directoryTree={{
+            filter,
+            loading: result.loading,
+            ready: Boolean(result.projection),
+            source,
+            projectId,
+            caseCount: currentManifest?.caseCount ?? 0,
+            totalCount:
+              filter.query || filter.outcome !== "all" || filter.missingSuiteId
+                ? (manifest?.caseCount ?? 0)
+                : (currentManifest?.caseCount ?? 0),
+            onFilter: changeFilter,
+            refresh: result.refresh,
+            collect: async (paths, signal, directoryPath) => {
+              selectionController.current?.abort();
+              const controller = new AbortController();
+              selectionController.current = controller;
+              const cancel = () => controller.abort();
+              if (signal?.aborted) cancel();
+              signal?.addEventListener("abort", cancel, { once: true });
+              setProgress("正在准备批量选择…");
+              try {
+                return await collectDirectorySelection({
+                  baseId: snapshot.id,
+                  filters: paths ? "query=&outcome=all" : filters,
+                  signal: controller.signal,
+                  ...(paths ? { paths } : {}),
+                  ...(directoryPath !== undefined ? { directoryPath } : {}),
+                  onProgress: (completed, total) =>
+                    setProgress(`正在读取匹配标识 ${completed} / ${total}`),
+                });
+              } finally {
+                signal?.removeEventListener("abort", cancel);
+                if (selectionController.current === controller) setProgress(undefined);
+              }
+            },
+          }}
+        />
+      )}
     </>
   );
 }

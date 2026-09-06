@@ -6,6 +6,9 @@ import {
 } from "@autoforge/contracts";
 import type { Clock, IdGenerator } from "./ports";
 
+const CLEANUP_SNAPSHOT_BATCH_SIZE = 25;
+export const READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT = 20;
+
 export type ReadModelSnapshot = {
   id: string;
   query: ReadModelQuery;
@@ -95,6 +98,7 @@ export class ReadModelSnapshotWorker {
       this.ids.next(),
     );
     if (!lease) return false;
+    let writtenParts = 0;
     // Long directory projections renew between bounded chunks. Expired owners cannot publish.
     const writePart = async (ordinal: number, payload: unknown) => {
       if (
@@ -106,11 +110,12 @@ export class ReadModelSnapshotWorker {
       )
         throw new ReadModelRefreshSuperseded("Read model refresh lease was superseded.");
       await this.repository.putPart(lease, ordinal, payload);
+      writtenParts += 1;
     };
     try {
       const payload = await this.build(lease.query, writePart);
       const finishedAt = this.clock.now();
-      await this.repository.complete(
+      const published = await this.repository.complete(
         lease,
         payload,
         finishedAt.toISOString(),
@@ -129,6 +134,14 @@ export class ReadModelSnapshotWorker {
                 : 60_000,
         ),
       );
+      // Periodic cleanup alone can fall behind a 1,000-part directory refreshed every minute.
+      // Match cleanup throughput to published parts while keeping each transaction bounded.
+      if (published) {
+        const batchSize = CLEANUP_SNAPSHOT_BATCH_SIZE * READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT;
+        for (let remaining = writtenParts; remaining > 0; remaining -= batchSize) {
+          await this.cleanup();
+        }
+      }
     } catch (error) {
       if (!(error instanceof ReadModelRefreshSuperseded)) this.reportError(error, lease.query);
       await this.repository.fail(lease, after(this.clock.now(), 30_000));
@@ -137,7 +150,10 @@ export class ReadModelSnapshotWorker {
   }
 
   cleanup(): Promise<void> {
-    return this.repository.cleanup(after(this.clock.now(), -86_400_000), 25);
+    return this.repository.cleanup(
+      after(this.clock.now(), -86_400_000),
+      CLEANUP_SNAPSHOT_BATCH_SIZE,
+    );
   }
 }
 

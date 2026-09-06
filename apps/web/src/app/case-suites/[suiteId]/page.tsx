@@ -2,7 +2,7 @@ import { ArrowLeft, BookOpenText } from "lucide-react";
 import Link from "next/link";
 
 import { CachedSuiteDirectory } from "@/components/cached-suite-directory";
-import { suiteDirectoryManifestSchema } from "@autoforge/contracts";
+import { suiteDirectoryManifestSchema, DIRECTORY_CHUNK_SIZE } from "@autoforge/contracts";
 import { CaseSuiteEditor } from "@/components/case-suite-editor";
 import { CaseSuiteRevisionProvider } from "@/components/case-suite-revision";
 import { CaseSuiteWebhookBindings } from "@/components/case-suite-webhook-bindings";
@@ -24,6 +24,9 @@ export default async function CaseSuitePage({ params }: Props) {
     kind: "suite_directory",
     projectId: suite.projectId,
     suiteId,
+    chunkSize: DIRECTORY_CHUNK_SIZE,
+    tree: true,
+    search: "",
   });
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
   const [runners, runnerGroups, projectStructure, webhookConfigurations, webhookIds, schedule] =

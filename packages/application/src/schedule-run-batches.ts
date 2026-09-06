@@ -895,7 +895,7 @@ export class RunBatchSchedulingService {
       limit: number;
     },
   ) {
-    await this.get(batchId);
+    await this.getMetadata(batchId);
     return this.batches.listSchedulingEvents({ batchId, ...input });
   }
 

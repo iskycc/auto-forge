@@ -21,13 +21,13 @@ final class AutoForgeRunLog {
         this.startedNanos = nanoTime.getAsLong();
     }
 
-    void started(String suiteId, String batchId, String progressUrl, int pollSeconds, long timeoutSeconds) {
+    void started(String suiteId, String batchId, AutoForgeResultLink resultLink, int pollSeconds, long timeoutSeconds) {
         console.section("开始执行");
         console.field("任务编号", suiteId);
         console.field("执行批次", batchId);
         console.field("等待设置", "每 " + AutoForgeConsoleLog.duration(pollSeconds) + "检查进度，最多等待 "
             + AutoForgeConsoleLog.duration(timeoutSeconds));
-        console.link("查看进度", progressUrl, "实时进度", "7 天内有效，在新标签页打开");
+        console.link("查看进度", resultLink.url(), "执行详情", resultLink.validityHint());
     }
 
     void progress(JSONObject progress) {
@@ -50,7 +50,7 @@ final class AutoForgeRunLog {
         lastProgressNanos = now;
     }
 
-    void completed(JSONObject progress, String resultUrl, boolean permanent) {
+    void completed(JSONObject progress, AutoForgeResultLink resultLink) {
         int totalCases = progress.getInt("totalCases");
         int passed = progress.getInt("totalPassed");
         int failed = progress.getInt("finalFailed");
@@ -60,23 +60,22 @@ final class AutoForgeRunLog {
         console.field("用例汇总", "总计 " + totalCases + " | 通过 " + passed + " | 最终失败 " + failed
             + " | 通过率 " + passRate);
         console.field("等待耗时", elapsed());
-        console.link("查看结果", resultUrl, permanent ? "完整结果" : "执行结果",
-            permanent ? "永久有效，在新标签页打开" : "7 天内有效，在新标签页打开");
+        console.link("查看结果", resultLink.url(), resultLink.resultLabel(), resultLink.validityHint());
         if ("succeeded".equals(status) && failed > 0) {
             console.field("结果说明", "执行流程已完成，仍有 " + failed + " 项用例失败，请查看结果定位原因。");
         }
     }
 
-    void timedOut(long timeoutSeconds, String progressUrl) {
+    void timedOut(long timeoutSeconds, AutoForgeResultLink resultLink) {
         console.section("等待超时");
         console.field("等待上限", AutoForgeConsoleLog.duration(timeoutSeconds));
-        console.field("后续处理", "Jenkins 已停止等待，AutoForge 中的批次未取消，可继续查看实时进度。");
-        console.link("查看进度", progressUrl, "实时进度", "7 天内有效，在新标签页打开");
+        console.field("后续处理", "Jenkins 已停止等待，AutoForge 中的批次未取消，可继续查看执行详情。");
+        console.link("查看进度", resultLink.url(), "执行详情", resultLink.validityHint());
     }
 
     void interrupted() {
         console.section("等待中断");
-        console.field("后续处理", "Jenkins 等待已中断，AutoForge 中的批次未取消，可通过上方实时进度继续查看。");
+        console.field("后续处理", "Jenkins 等待已中断，AutoForge 中的批次未取消，可通过上方执行详情继续查看。");
     }
 
     static String statusLabel(String status) {

@@ -407,7 +407,7 @@ public class MixedVisibleTest {
   await expect(
     page.locator(".case-inspector-header").getByRole("heading", { name: "CheckoutTest" }),
   ).toBeVisible();
-  await expect(page.locator(".case-inspector-meta > div")).toHaveCount(5);
+  await expect(page.locator(".case-inspector-meta > div")).toHaveCount(9);
   await expect(page.locator(".case-inspector-meta-wide")).toHaveCount(1);
   await expect(page.locator(".case-inspector-pane .method-signature")).toHaveText(
     "入参：空，返回值：空",
@@ -472,7 +472,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toBeVisible();
   expect(sourceReads).toBe(1);
   await expect(
-    page.locator(".case-inspector-section summary").getByText("立即执行", { exact: true }),
+    page.locator(".case-inspector-header").getByRole("button", { name: "执行此用例", exact: true }),
   ).toBeVisible();
 
   const secondaryHierarchy = await createAdditionalProjectHierarchy(page);
@@ -977,6 +977,10 @@ public class MixedVisibleTest {
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
   await expect(page.getByText("已显示该用例的全部执行历史。")).toBeVisible();
+  const detailExecutionHistory = await page
+    .locator(".case-execution-history tbody td")
+    .allTextContents();
+  const detailSummary = await page.locator(".case-definition-summary strong").allTextContents();
   await page.setViewportSize({ width: 1024, height: 768 });
   const fullAnalysisHistory = page.locator(".case-analysis-history").first();
   await fullAnalysisHistory.scrollIntoViewIfNeeded();
@@ -994,11 +998,17 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: `快速预览 ${taskCase.displayName}` }).click();
   await analysisWorkspaceResponse;
   const caseInspector = page.locator(".case-inspector-pane");
-  await expect(
-    caseInspector.locator(".case-inspector-section > summary", {
-      hasText: "失败分析结论（1）",
-    }),
-  ).toBeVisible();
+  await expect(caseInspector.locator(".case-definition-summary strong")).toHaveText(detailSummary);
+  await expect(caseInspector.locator(".case-execution-history tbody td")).toHaveText(
+    detailExecutionHistory,
+  );
+  await expect(caseInspector.locator(".case-execution-history")).not.toContainText(
+    /TESTNG_|succeeded|failed/,
+  );
+  await caseInspector.getByRole("button", { name: "查看第 2 轮总结日志" }).click();
+  await expect(page.locator(".execution-log")).toContainText("retry passed");
+  await page.keyboard.press("Escape");
+  await expect(caseInspector.getByRole("heading", { name: "失败分析结论（1）" })).toBeVisible();
   await expect(caseInspector.getByText("BUG-E2E-4096")).toBeHidden();
   await caseInspector.locator(".case-analysis-history-item > summary").click();
   await expect(caseInspector.getByText("结算状态字段与接口契约不一致")).toBeVisible();
@@ -1285,8 +1295,9 @@ public class MixedVisibleTest {
   await page.goto(
     `/insights?outcome=succeeded&leftBatchId=${encodeURIComponent(batch.id)}&rightBatchId=${encodeURIComponent(cancellationBatch.id)}`,
   );
-  await expect(page.getByLabel("结果")).toHaveValue("succeeded");
-  await expect(page.getByRole("img", { name: /共同用例 1/ })).toBeVisible();
+  // A new filter has its own background snapshot; assert the result after the first publication.
+  await expect(page.getByLabel("结果")).toHaveValue("succeeded", { timeout: 30_000 });
+  await expect(page.getByRole("img", { name: /共同用例 1/ })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".insight-change-columns")).toBeVisible();
   await page.locator(".insight-comparison-card").getByRole("button", { name: "查看明细" }).click();
   const comparisonDialog = page.getByRole("dialog", { name: "批次对比明细" });
@@ -1526,7 +1537,9 @@ public class MixedVisibleTest {
     "AUTOFORGE_SOURCE_VIEW_E2E",
   );
   await expect(page.getByText(/不能直接执行/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "立即执行" })).toHaveCount(0);
+  await expect(
+    page.locator(".case-inspector-header").getByRole("button", { name: "执行此用例", exact: true }),
+  ).toHaveCount(0);
 
   const deletionImport = await importJarWithIdempotencyKey(page, {
     jar: deletionJar,
@@ -1563,7 +1576,26 @@ public class MixedVisibleTest {
 
   await page.getByLabel("页内搜索用例").fill("SingleDeleteFixture");
   await page.getByRole("button", { name: "快速预览 SingleDeleteFixture" }).click();
-  await page.locator(".case-inspector-section").getByText("管理用例", { exact: true }).click();
+  await page.locator(".case-inspector-section").getByText("用例元数据", { exact: true }).click();
+  const previewEditor = page.locator(".case-inspector-pane .settings-grid-form");
+  await previewEditor.getByLabel("描述", { exact: true }).fill("预览保存后应同步修订与版本历史。");
+  const updatedWorkspace = page.waitForResponse(
+    (response) => response.url().endsWith("/workspace") && response.status() === 200,
+  );
+  await previewEditor.getByRole("button", { name: "保存修改" }).click();
+  const savedPreview = (await (await updatedWorkspace).json()) as {
+    definition: { revision: number; currentVersion: number };
+    versions: unknown[];
+  };
+  await expect(page.locator(".case-inspector-meta")).toContainText(
+    `r${savedPreview.definition.revision}`,
+  );
+  await expect(page.locator(".case-inspector-header .storage-pill")).toHaveText(
+    `v${savedPreview.definition.currentVersion}`,
+  );
+  await expect(
+    page.locator(".case-inspector-section > summary").filter({ hasText: "版本历史" }),
+  ).toHaveText(`版本历史（${savedPreview.versions.length}）`);
   const singleDeleteButton = page.getByRole("button", { name: "删除用例", exact: true });
   await singleDeleteButton.scrollIntoViewIfNeeded();
   await captureUi(page, "case-library-single-delete");

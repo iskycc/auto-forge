@@ -532,13 +532,19 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     }
     parameters.push(input.limit + 1);
     const direction = input.direction === "desc" ? "DESC" : "ASC";
+    // Sort compact keys first; evidence fields are fetched only for the selected page.
     const result = await this.handle.pool.query<FailureAnalysisRow>(
-      `${claimSelectSql(
-        `${sortExpression} AS "sortValue",${completionExpression} AS "completionRank"`,
-      )} JOIN run_batches batch ON batch.id=claim.batch_id
-       WHERE ${where.join(" AND ")}
-       ORDER BY ${completionExpression} ASC,${sortExpression} ${direction},claim.id ${direction}
-       LIMIT $${parameters.length}`,
+      `WITH claim_page AS MATERIALIZED (
+         SELECT claim.id,${sortExpression} AS sort_value,${completionExpression} AS completion_rank
+         FROM failure_analysis_claims claim
+         JOIN run_batches batch ON batch.id=claim.batch_id
+         WHERE ${where.join(" AND ")}
+         ORDER BY ${completionExpression} ASC,${sortExpression} ${direction},claim.id ${direction}
+         LIMIT $${parameters.length}
+       )
+       ${claimSelectSql('claim_page.sort_value AS "sortValue",claim_page.completion_rank AS "completionRank"')}
+       JOIN claim_page ON claim_page.id=claim.id
+       ORDER BY claim_page.completion_rank ASC,claim_page.sort_value ${direction},claim.id ${direction}`,
       parameters,
     );
     const hasMore = result.rows.length > input.limit;

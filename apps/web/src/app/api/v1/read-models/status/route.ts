@@ -30,6 +30,9 @@ async function authorizedSnapshots(request: Request, ids: string[]) {
           ? "audit.read"
           : readModelPermission(snapshot.query);
     services.identityAccess.authorize(identity, permission, snapshot.query.projectId);
+    if (snapshot.query.kind === "case_directory" && snapshot.query.filter?.missingSuiteId) {
+      services.identityAccess.authorize(identity, "case_suite.read", snapshot.query.projectId);
+    }
     if (snapshot.query.kind === "batch_comparison" && snapshot.query.rightProjectId) {
       services.identityAccess.authorize(identity, "run.read", snapshot.query.rightProjectId);
     }
@@ -85,7 +88,8 @@ function readModelPermission(query: ReadModelQuery) {
     query.kind === "dashboard"
   )
     return "case.read";
-  if (query.kind === "source_preview") return "case_source.read";
+  if (query.kind === "source_preview" || query.kind === "source_directory")
+    return "case_source.read";
   if (query.kind === "suite_directory") return "case_suite.read";
   if (query.kind === "analysis_statistics") return "audit.read";
   return "run.read";

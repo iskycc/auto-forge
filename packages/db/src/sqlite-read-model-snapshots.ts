@@ -1,4 +1,5 @@
 import type { ReadModelLease, ReadModelSnapshotRepository } from "@autoforge/application";
+import { READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT } from "@autoforge/application";
 import type { ReadModelQuery } from "@autoforge/contracts";
 import { retrySqliteLockContention, type SqliteDatabaseHandle } from "./database";
 import { readModelSnapshotFromRow, type ReadModelSnapshotRow } from "./read-model-snapshot-row";
@@ -171,7 +172,7 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
       (SELECT part.rowid FROM read_model_snapshot_parts part JOIN read_model_snapshots snapshot ON snapshot.id=part.snapshot_id
        WHERE part.generation<>COALESCE(snapshot.generation,'') AND part.generation<>COALESCE(snapshot.lease_token,'') LIMIT ?)`,
         )
-        .run(limit * 20),
+        .run(limit * READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT),
     );
   }
 }

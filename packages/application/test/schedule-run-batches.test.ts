@@ -1216,6 +1216,9 @@ describe("scheduling event log", () => {
         appended.push(events);
       }),
       listSchedulingEvents: vi.fn().mockResolvedValue({ items: [], nextAfterId: "cursor-1" }),
+      getMetadata: vi.fn(async (batchId: string) =>
+        batchId === "batch-1" ? { id: "batch-1", totalRuns: 100_000 } : null,
+      ),
       getSummary: vi.fn(async (batchId: string) =>
         batchId === "batch-1" ? { id: "batch-1", assignedRuns: 2 } : null,
       ),
@@ -1316,19 +1319,36 @@ describe("scheduling event log", () => {
     expect(metricsCounts).toEqual([1, 1]);
   });
 
-  it("lists scheduling events only after confirming the batch exists", async () => {
+  it("reads scheduling logs without materializing runs and rejects missing batches before querying logs", async () => {
     const { batches } = schedulingBatchesFake();
     const service = schedulingService(batches, Date.parse(timestamp));
 
     const page = await service.listSchedulingEvents("batch-1", { limit: 10 });
 
-    expect(batches.get).toHaveBeenCalledWith("batch-1", undefined);
+    expect(batches.getMetadata).toHaveBeenCalledWith("batch-1", undefined);
+    expect(batches.get).not.toHaveBeenCalled();
+    expect(batches.getSummary).not.toHaveBeenCalled();
     expect(page.nextAfterId).toBe("cursor-1");
     await expect(
       service.listSchedulingEvents("missing-batch", { limit: 10 }),
     ).rejects.toMatchObject({
       code: "RUN_BATCH_NOT_FOUND",
     });
+    expect(batches.listSchedulingEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose scheduling logs for hidden diagnostic batches", async () => {
+    const { batches } = schedulingBatchesFake();
+    vi.mocked(batches.getMetadata).mockResolvedValue({
+      id: "hidden-batch",
+      kind: "case_log_rerun",
+    } as NonNullable<Awaited<ReturnType<RunBatchRepository["getMetadata"]>>>);
+    await expect(
+      schedulingService(batches, Date.parse(timestamp)).listSchedulingEvents("hidden-batch", {
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({ code: "RUN_BATCH_NOT_FOUND" });
+    expect(batches.listSchedulingEvents).not.toHaveBeenCalled();
   });
 });
 

@@ -3,16 +3,24 @@ import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { boundedDetailResponse, detailViewSchema } from "@/lib/bounded-detail-response";
 
 type Context = { params: Promise<{ suiteId: string }> };
 
-export async function GET(request: Request, context: Context): Promise<NextResponse> {
+export async function GET(request: Request, context: Context): Promise<Response> {
   try {
     const identity = await authenticateRequest(request);
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.read");
     const { suiteId } = await context.params;
-    return NextResponse.json(await services.caseSuites.get(suiteId, projectIds));
+    const summary = await services.caseSuites.getSummary(suiteId, projectIds);
+    return await boundedDetailResponse({
+      summary,
+      memberCount: summary.caseCount,
+      view: detailViewSchema.parse(new URL(request.url).searchParams.get("view") ?? undefined),
+      pageUrl: `/api/v1/case-suites/${encodeURIComponent(suiteId)}/members`,
+      load: () => services.caseSuites.get(suiteId, projectIds),
+    });
   } catch (error) {
     return apiErrorResponse(error);
   }

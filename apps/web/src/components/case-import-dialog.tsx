@@ -1,6 +1,6 @@
 "use client";
 
-import type { CaseDefinitionWithMethods } from "@autoforge/domain";
+import type { CaseDirectorySelection } from "@autoforge/contracts";
 import { Table2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -16,11 +16,12 @@ import {
 const MAX_UNMATCHED_PREVIEW = 10;
 
 type CaseImportDialogProps = {
-  cases: CaseDefinitionWithMethods[];
-  onImport(matched: CaseDefinitionWithMethods[], unmatchedCount: number): void;
+  cases: CaseDirectorySelection[];
+  resolvePaths?(paths: string[], signal: AbortSignal): Promise<CaseDirectorySelection[]>;
+  onImport(matched: CaseDirectorySelection[], unmatchedCount: number): void;
 };
 
-export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
+export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDialogProps) {
   const [open, setOpen] = useState(false);
   const [filePaths, setFilePaths] = useState<string[] | null>(null);
   const [fileName, setFileName] = useState("");
@@ -31,8 +32,10 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
     percent: number;
   }>();
   const [pastedText, setPastedText] = useState("");
-  const [result, setResult] = useState<CasePathMatchResult | null>(null);
+  const [result, setResult] = useState<CasePathMatchResult<CaseDirectorySelection> | null>(null);
   const fileReadGeneration = useRef(0);
+  const pathMatchController = useRef<AbortController | null>(null);
+  useEffect(() => () => pathMatchController.current?.abort(), []);
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +47,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
   }, [open]);
 
   function closeDialog() {
+    pathMatchController.current?.abort();
     fileReadGeneration.current += 1;
     setOpen(false);
     setFilePaths(null);
@@ -95,10 +99,24 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
     }
   }
 
-  function parseAndPreview(): void {
+  async function parseAndPreview(): Promise<void> {
     // 两种输入都存在时以文件为准，避免过期粘贴内容覆盖用户刚选的文件。
     const paths = filePaths?.length ? filePaths : parseCasePathColumn(pastedText);
-    setResult(matchCasePaths(cases, paths));
+    const generation = fileReadGeneration.current;
+    pathMatchController.current?.abort();
+    const controller = new AbortController();
+    pathMatchController.current = controller;
+    setReadingFile(true);
+    setFileError("");
+    try {
+      const candidates = resolvePaths ? await resolvePaths(paths, controller.signal) : cases;
+      if (generation === fileReadGeneration.current) setResult(matchCasePaths(candidates, paths));
+    } catch (error) {
+      if (generation === fileReadGeneration.current)
+        setFileError(error instanceof Error ? error.message : "匹配用例失败。");
+    } finally {
+      if (generation === fileReadGeneration.current) setReadingFile(false);
+    }
   }
 
   function applySelection(): void {
@@ -200,7 +218,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                 <Button
                   className="button-primary"
                   disabled={!canParse}
-                  onClick={parseAndPreview}
+                  onClick={() => void parseAndPreview()}
                   type="button"
                 >
                   解析并预览

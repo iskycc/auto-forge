@@ -1,3 +1,5 @@
+import { readDirectoryBranch } from "../../packages/application/src/read-directory-branch";
+import { caseDirectoryManifestSchema } from "@autoforge/contracts";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +15,12 @@ import {
   readExecutionOverview,
   readBatchPage,
 } from "../../packages/application/src/index";
-import { executionCaseKeysSchema, type ReadModelQuery } from "@autoforge/contracts";
+import {
+  executionCaseKeysSchema,
+  caseDirectoryPartSchema,
+  suiteDirectoryPartSchema,
+  type ReadModelQuery,
+} from "@autoforge/contracts";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import * as sqlite from "@autoforge/db/sqlite";
 import * as postgres from "@autoforge/db/postgres";
@@ -36,8 +43,8 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           INSERT INTO case_sources (id,project_id,project_version_id,test_stage_id,display_name,original_file_name,object_key,sha256,size_bytes,class_count,method_count,status,warnings_json,inspection_json,created_at,updated_at)
             VALUES ('snapshot-source','${DEFAULT_PROJECT_ID}','snapshot-version','snapshot-stage','Source','source.jar','objects/source','digest',1,100000,0,'ready','[]','{}','${timestamp}','${timestamp}');
           ${dialect === "sqlite" ? "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<100000)" : "WITH numbers(n) AS (SELECT generate_series(1,100000))"}
-          INSERT INTO case_definitions (id,source_id,project_id,project_version_id,test_stage_id,class_name,package_name,display_name,enabled,groups_json,current_version,created_at,updated_at)
-            SELECT 'case-'||n,'snapshot-source','${DEFAULT_PROJECT_ID}','snapshot-version','snapshot-stage','load.Test'||n,'load','Case '||n,${dialect === "sqlite" ? "1" : "TRUE"},'[]',1,'${timestamp}','${timestamp}' FROM numbers;
+          INSERT INTO case_definitions (id,source_id,project_id,project_version_id,test_stage_id,class_name,package_name,display_name,enabled,groups_json,current_version,created_at,updated_at,directory_path)
+            SELECT 'case-'||n,'snapshot-source','${DEFAULT_PROJECT_ID}','snapshot-version','snapshot-stage','load.Test'||n,'load','Case '||n,${dialect === "sqlite" ? "1" : "TRUE"},'[]',1,'${timestamp}','${timestamp}','load/root' FROM numbers;
         `);
           const suite = await harness.suites.create({
             id: "snapshot-suite",
@@ -226,6 +233,78 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           await expect(
             readExecutionOverview(harness.batches, service, "snapshot-batch", ["forbidden"]),
           ).rejects.toMatchObject({ code: "RUN_BATCH_NOT_FOUND" });
+          const treeQuery: ReadModelQuery = {
+            ...query,
+            chunkSize: 100,
+            tree: true,
+            filter: { query: "", outcome: "all" },
+          };
+          await service.read(treeQuery);
+          await worker.refreshOne();
+          const directoryWindow = await service.read(treeQuery);
+          expect(directoryWindow.payload).toMatchObject({ caseCount: 100_000, partCount: 1_000 });
+          const middleWindow = caseDirectoryPartSchema.parse(
+            await service.part(directoryWindow.id, directoryWindow.generation!, 500),
+          );
+          expect(middleWindow.items).toHaveLength(100);
+          expect(Buffer.byteLength(JSON.stringify(middleWindow))).toBeLessThan(2 * 1024 * 1024);
+          const root = await readDirectoryBranch({
+            kind: "case_directory",
+            ordinal: caseDirectoryManifestSchema.parse(directoryWindow.payload).rootOrdinal!,
+            readPart: (ordinal) =>
+              service.part(directoryWindow.id, directoryWindow.generation!, ordinal),
+          });
+          expect(root.items).toHaveLength(0);
+          expect(root.directories).toHaveLength(1);
+          expect(root.directories[0]?.caseCount).toBe(100_000);
+          expect(Buffer.byteLength(JSON.stringify(root))).toBeLessThan(1024);
+          const searchedWindow: ReadModelQuery = {
+            ...query,
+            chunkSize: 100,
+            tree: true,
+            filter: { query: "load.Test100000", outcome: "all" },
+          };
+          await service.read(searchedWindow);
+          await worker.refreshOne();
+          const searched = await service.read(searchedWindow);
+          expect(searched.payload).toMatchObject({ caseCount: 1, partCount: 1 });
+          expect(
+            caseDirectoryPartSchema.parse(await service.part(searched.id, searched.generation!, 0))
+              .items[0]?.className,
+          ).toBe("load.Test100000");
+          const suiteWindowQuery: ReadModelQuery = {
+            ...suiteQuery,
+            chunkSize: 100,
+            tree: true,
+            search: "",
+          };
+          await service.read(suiteWindowQuery);
+          await worker.refreshOne();
+          const suiteWindow = await service.read(suiteWindowQuery);
+          expect(suiteWindow.payload).toMatchObject({ caseCount: 100_000, partCount: 1_000 });
+          expect(
+            suiteDirectoryPartSchema.parse(
+              await service.part(suiteWindow.id, suiteWindow.generation!, 999),
+            ).items,
+          ).toHaveLength(100);
+          const taskRoot = await readDirectoryBranch({
+            kind: "suite_directory",
+            ordinal: caseDirectoryManifestSchema.parse(suiteWindow.payload).rootOrdinal!,
+            readPart: (ordinal) => service.part(suiteWindow.id, suiteWindow.generation!, ordinal),
+          });
+          expect(taskRoot.members.items).toHaveLength(0);
+          expect(taskRoot.directories[0]?.caseCount).toBe(100_000);
+          const expandedPackage = await readDirectoryBranch({
+            kind: "suite_directory",
+            ordinal: taskRoot.directories[0]!.ordinal,
+            readPart: (ordinal) => service.part(suiteWindow.id, suiteWindow.generation!, ordinal),
+          });
+          expect(expandedPackage.members.items).toHaveLength(100);
+          expect(errors).toEqual([]);
+          expect(builds).toBe(8);
+          process.stdout.write(
+            `${JSON.stringify({ dialect, initialCaseBodies: 0, initialTaskMemberBodies: 0, expandedBranchItems: 100, searchMatches: 1 })}\n`,
+          );
           await harness.execute(
             "UPDATE execution_runs SET status='failed',terminal_outcome='failed' WHERE id='case-1'; UPDATE run_batches SET version=2 WHERE id='snapshot-batch'",
           );

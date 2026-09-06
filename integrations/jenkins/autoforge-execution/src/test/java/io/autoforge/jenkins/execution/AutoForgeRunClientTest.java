@@ -80,8 +80,11 @@ class AutoForgeRunClientTest {
         assertEquals("succeeded", result.get("status"));
         assertEquals(1, result.get("finalFailed"));
         assertEquals(baseUrl + "share/run/permanent-result", result.get("resultUrl"));
+        assertEquals(result.get("resultUrl"), result.get("progressUrl"));
         String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
         assertTrue(log.contains("开始执行"));
+        assertTrue(log.contains("执行详情（永久有效"));
+        assertFalse(log.contains("7 天内有效"));
         assertTrue(log.contains("第 2/2 轮"));
         assertTrue(log.contains("累计通过 9/10"));
         assertTrue(log.contains("最终失败 1"));
@@ -182,7 +185,9 @@ class AutoForgeRunClientTest {
             .runToCompletion("suite-1");
 
         assertEquals(baseUrl + "progress/batch-1?access_token=read-only", result.get("resultUrl"));
+        assertEquals(result.get("resultUrl"), result.get("progressUrl"));
         String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("执行详情（7 天内有效"));
         assertTrue(log.contains("执行结果（7 天内有效"));
         assertFalse(log.contains("永久有效"));
         assertFalse(log.contains("http://"));

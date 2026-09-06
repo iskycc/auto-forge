@@ -1,10 +1,12 @@
 package io.autoforge.jenkins.execution;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import hudson.model.Result;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.net.InetSocketAddress;
@@ -62,11 +64,13 @@ class AutoForgeRunPipelineE2ETest {
         StringWriter console = new StringWriter();
         run.getLogText().writeHtmlTo(0, console);
         String html = console.toString();
-        assertTrue(html.contains("href='" + baseUrl + "share/run/permanent-pipeline-e2e'"));
+        String detailLink = "href='" + baseUrl + "share/run/permanent-pipeline-e2e'";
+        assertEquals(2, html.split(java.util.regex.Pattern.quote(detailLink), -1).length - 1);
+        assertFalse(html.contains("href='" + baseUrl + "progress/"));
         assertTrue(html.contains("target=\"_blank\""));
         assertTrue(html.contains("rel=\"noopener noreferrer\""));
         assertTrue(html.contains(">完整结果</a>"));
-        assertTrue(html.contains(">实时进度</a>"));
+        assertTrue(html.contains(">执行详情</a>"));
         assertFalse(html.contains("af_api_pipeline-e2e"));
     }
 
@@ -76,5 +80,41 @@ class AutoForgeRunPipelineE2ETest {
         exchange.sendResponseHeaders(status, content.length);
         exchange.getResponseBody().write(content);
         exchange.close();
+    }
+
+    @Test
+    @WithJenkins
+    void keepsTheSameDetailLinkWhenJenkinsStopsWaiting(JenkinsRule jenkins) throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+        server.createContext("/api/v1/jenkins/runs", exchange -> respond(exchange, 201, """
+            {"batchId":"batch-timeout","progressUrl":"%sprogress/batch-timeout?access_token=read-only",
+             "resultUrl":"%sshare/run/permanent-timeout",
+             "progressApiUrl":"%sapi/v1/run-batches/batch-timeout/progress",
+             "pollIntervalSeconds":30,"completionTimeoutSeconds":604800}
+            """.formatted(baseUrl, baseUrl, baseUrl)));
+        server.createContext("/api/v1/run-batches/batch-timeout/progress", exchange -> respond(exchange, 200, """
+            {"batchId":"batch-timeout","status":"running","statusLabel":"执行中",
+             "active":true,"currentRound":1,"maximumRounds":1,"totalCases":3,
+             "currentRoundTotal":3,"currentRoundCompleted":0,"currentRoundPassed":0,
+             "currentRoundFailed":0,"totalPassed":0,"finalFailed":0}
+            """));
+        server.start();
+        WorkflowJob job = jenkins.createProject(WorkflowJob.class, "autoforge-run-timeout");
+        job.setDefinition(new CpsFlowDefinition("""
+            autoforgeRun baseUrl: '%s', apiKey: 'af_api_pipeline-timeout',
+              suiteId: 'suite-e2e', timeoutSeconds: 1
+            """.formatted(baseUrl), true));
+
+        WorkflowRun run = jenkins.assertBuildStatus(Result.FAILURE, job.scheduleBuild2(0));
+        jenkins.assertLogContains("等待超时", run);
+        jenkins.assertLogContains("批次未取消", run);
+        StringWriter console = new StringWriter();
+        run.getLogText().writeHtmlTo(0, console);
+        String html = console.toString();
+        String detailLink = "href='" + baseUrl + "share/run/permanent-timeout'";
+        assertEquals(2, html.split(java.util.regex.Pattern.quote(detailLink), -1).length - 1);
+        assertFalse(html.contains("href='" + baseUrl + "progress/"));
+        assertFalse(html.contains("7 天内有效"));
     }
 }

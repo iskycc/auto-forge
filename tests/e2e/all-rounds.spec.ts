@@ -1024,7 +1024,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(sharedStrings).toContain("轮次");
 
   // Jenkins 的两个 Pipeline 步骤使用同一种 API Key：依赖按项目版本替换，执行接口
-  // 返回免登录进展链接；终态结果链接复用完整执行详情（只移除外壳与鉴权操作）。
+  // 开始时与终态返回同一个免登录完整执行详情链接，机器轮询仍使用独立进度 API。
   const jenkinsToken = await issueJenkinsApiToken(page);
   const dependencyPublication = await page.request.post("/api/v1/jenkins/dependencies", {
     headers: { authorization: `Bearer ${jenkinsToken}` },
@@ -1062,16 +1062,19 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   };
   expect(jenkinsRun.pollIntervalSeconds).toBe(30);
   expect(jenkinsRun.completionTimeoutSeconds).toBe(7 * 24 * 60 * 60);
-  expect(jenkinsRun.progressUrl).toContain(`/progress/${jenkinsRun.batchId}`);
+  expect(jenkinsRun.progressUrl).toBe(jenkinsRun.resultUrl);
   expect(jenkinsRun.resultUrl).toContain("/share/run/");
   const anonymousContext = await browser.newContext();
   const anonymousProgressPage = await anonymousContext.newPage();
   const progressPageResponse = await anonymousProgressPage.goto(jenkinsRun.progressUrl);
   expect(progressPageResponse?.status()).toBe(200);
   expect(new URL(anonymousProgressPage.url()).pathname).not.toBe("/login");
-  await expect(
-    anonymousProgressPage.getByText("只读执行进展 · 每 30 秒自动刷新", { exact: true }),
-  ).toBeVisible();
+  await expect(anonymousProgressPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(anonymousProgressPage.getByRole("region", { name: "批次概览" })).toBeVisible();
+  await expect(anonymousProgressPage.locator(".execution-round-table")).toBeVisible();
+  await expect(anonymousProgressPage.locator(".execution-case-table tbody tr")).toHaveCount(2);
+  await expect(anonymousProgressPage.locator(".public-progress-card")).toHaveCount(0);
+  await captureUi(anonymousProgressPage, "jenkins-active-execution-details");
   await expect(anonymousProgressPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
 
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);

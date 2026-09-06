@@ -148,9 +148,9 @@ claim 都排除该批次。持有有效 lease 的 attempt 不设置取消指令�
 
 ## Jenkins 与只读进展
 
-Jenkins Pipeline 使用服务账号签发的最小权限 `af_api_` API Key。`POST /api/v1/jenkins/runs` 需要项目级 `run.create`，只接受 `suiteId`，返回批次 ID、30 秒建议轮询周期、鉴权 API 地址、带批次绑定 HMAC 的七天只读进展地址，以及不带过期时间的永久只读结果地址。Jenkins 步骤必须轮询到批次终态才结束，并打印当前轮次、本轮完成/通过/失败、累计通过、最终失败和进展链接；到达终态后再打印永久结果链接并通过 `resultUrl` 返回。正常用例失败不使 Jenkins 步骤失败，执行异常或中断才失败。
+Jenkins Pipeline 使用服务账号签发的最小权限 `af_api_` API Key。`POST /api/v1/jenkins/runs` 需要项目级 `run.create`，只接受 `suiteId`，返回批次 ID、30 秒建议轮询周期、带批次绑定 HMAC 的七天只读进度轮询 API 地址，以及不带过期时间的永久只读详情地址（`progressUrl` 与 `resultUrl` 相同）。Jenkins 步骤必须轮询到批次终态才结束，并打印当前轮次、本轮完成/通过/失败、累计通过、最终失败和详情链接；启动、超时及终态均链接到同一详情页，返回值 `progressUrl` 与 `resultUrl` 也保持一致。正常用例失败不使 Jenkins 步骤失败，执行异常或中断才失败。
 
-`GET /api/v1/run-batches/{batchId}/progress` 可使用 `run.read` API Key，或使用只绑定该批次的临时/永久签名参数。`/progress/{batchId}` 使用七天临时令牌并只渲染进度卡片；`/share/run/{token}` 使用永久令牌，复用执行历史详情的批次概览、轮次汇总、结果图表和用例表格。执行记录对排队、运行、完成、异常和取消批次统一提供生成按钮。公开页不渲染应用顶栏、侧栏、执行控制或需要额外鉴权的日志、产物、导出与调度事件入口。签名参数不能访问其他批次或普通鉴权 API。永久链接依赖部署主密钥保持稳定，删除对应批次后失效。
+`GET /api/v1/run-batches/{batchId}/progress` 可使用 `run.read` API Key，或使用只绑定该批次的临时/永久签名参数。旧版 `/progress/{batchId}` 继续支持七天临时令牌并只渲染进度卡片；`/share/run/{token}` 使用永久令牌，复用执行历史详情的批次概览、轮次汇总、结果图表和用例表格。执行记录对排队、运行、完成、异常和取消批次统一提供生成按钮。公开页不渲染应用顶栏、侧栏、执行控制或需要额外鉴权的日志、产物、导出与调度事件入口。签名参数不能访问其他批次或普通鉴权 API。永久链接依赖部署主密钥保持稳定，删除对应批次后失效。
 
 ## 调度事件完整性
 

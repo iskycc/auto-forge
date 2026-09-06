@@ -67,7 +67,7 @@ export function CaseFailureAnalysisHistory({
 
   return (
     <>
-      <section className={compact ? "case-analysis-history compact" : "card case-analysis-history"}>
+      <section className={`card case-analysis-history${compact ? " compact" : ""}`}>
         <div className="card-heading">
           <div>
             <span className="eyebrow">Failure analysis history</span>
@@ -95,7 +95,7 @@ export function CaseFailureAnalysisHistory({
         )}
 
         {error ? <p className="form-error">{error}</p> : null}
-        {!compact && nextCursor ? (
+        {nextCursor ? (
           <div className="case-analysis-history-more">
             <Button
               disabled={loading}

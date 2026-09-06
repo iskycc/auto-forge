@@ -2,13 +2,18 @@ import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 
 export const CASE_PATH_HEADER = "用例路径";
 
-export type CasePathMatchResult = {
-  matched: CaseDefinitionWithMethods[];
+export type CasePathFields = Pick<
+  CaseDefinitionWithMethods,
+  "directoryPath" | "displayName" | "className"
+>;
+
+export type CasePathMatchResult<T extends CasePathFields = CaseDefinitionWithMethods> = {
+  matched: T[];
   unmatched: string[];
 };
 
 // 用例路径是用户从包名/目录结构可推导出的稳定标识，用于表格导入时与用例对应。
-export function casePathOf(item: CaseDefinitionWithMethods): string {
+export function casePathOf(item: CasePathFields): string {
   return item.directoryPath ? `${item.directoryPath}/${item.displayName}` : item.displayName;
 }
 
@@ -47,18 +52,18 @@ export function parseCasePathCells(cells: Iterable<string>): string[] {
 // 匹配按规范化后的路径精确比较；同一路径对应多个用例时取第一个，避免重复勾选。
 // 每个用例同时按斜杠路径（com/example/CheckoutTest）和点分类名（com.example.CheckoutTest）
 // 两种写法索引，用户从包结构或类名复制都能匹配。
-export function matchCasePaths(
-  cases: CaseDefinitionWithMethods[],
+export function matchCasePaths<T extends CasePathFields>(
+  cases: T[],
   paths: string[],
-): CasePathMatchResult {
-  const byPath = new Map<string, CaseDefinitionWithMethods>();
+): CasePathMatchResult<T> {
+  const byPath = new Map<string, T>();
   for (const item of cases) {
     const slashPath = normalizeCasePath(casePathOf(item));
     if (!byPath.has(slashPath)) byPath.set(slashPath, item);
     const dottedClassName = normalizeCasePath(item.className);
     if (dottedClassName && !byPath.has(dottedClassName)) byPath.set(dottedClassName, item);
   }
-  const matched: CaseDefinitionWithMethods[] = [];
+  const matched: T[] = [];
   const unmatched: string[] = [];
   for (const path of paths) {
     const item = byPath.get(normalizeCasePath(path));

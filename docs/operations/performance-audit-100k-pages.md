@@ -1,5 +1,8 @@
 # AutoForge 10 万级数据全页面性能验收报告
 
+> 后续修复采用按展开层级懒加载目录索引，保留原页面树形操作，不引入目录页面分页；实现说明见 [后台读模型与浏览器缓存](../architecture/read-model-snapshots.md)。本文以下数据保留为原审计版本的历史基线。
+
+
 - 日期：2026-09-06（Asia/Shanghai）
 - 代码：`origin/main` @ `0d62110`（fix: preserve refreshed dialogs and stabilize release acceptance），部署前已 `git pull` 至最新
 - 模式：Lite（SQLite + 本地对象存储），独立实例端口 **3400**，数据目录 `/opt/auto-forge/.perf-data`（验收后已清理）

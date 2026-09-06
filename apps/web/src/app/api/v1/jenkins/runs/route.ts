@@ -27,8 +27,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     const resultToken = issuePermanentShareToken(services.config.masterKey, "run_batch", batch.id);
     const baseUrl = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
-    const progressUrl = new URL(`/progress/${encodeURIComponent(batch.id)}`, baseUrl);
-    progressUrl.searchParams.set("access_token", progressToken);
+    const resultUrl = new URL(`/share/run/${encodeURIComponent(resultToken)}`, baseUrl).toString();
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "jenkins.run_batch.create",
       resourceType: "run_batch",
@@ -41,8 +40,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         batchId: batch.id,
         status: batch.status,
-        progressUrl: progressUrl.toString(),
-        resultUrl: new URL(`/share/run/${encodeURIComponent(resultToken)}`, baseUrl).toString(),
+        progressUrl: resultUrl,
+        resultUrl,
         progressApiUrl: new URL(
           `/api/v1/run-batches/${encodeURIComponent(batch.id)}/progress?access_token=${encodeURIComponent(progressToken)}`,
           baseUrl,

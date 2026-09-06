@@ -135,7 +135,7 @@ export function CaseExecutionHistory({
                     <td>{caseExecutionStatusLabel(item.status)}</td>
                     <td>
                       <strong>第 {attempt.executionRound} 轮总结</strong>
-                      <span className="case-history-attempt-result" title={attempt.resultCode}>
+                      <span className="case-history-attempt-result">
                         {attempt.executionRound === attempt.attemptNumber
                           ? ""
                           : `第 ${attempt.attemptNumber} 次尝试 · `}

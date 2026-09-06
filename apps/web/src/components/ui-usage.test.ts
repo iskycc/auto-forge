@@ -155,7 +155,13 @@ describe("shared UI controls", () => {
     expect(runDialog).not.toContain("parseParameterRecord");
     expect(runDialog).toContain("useState(true)");
     expect(caseSelection).not.toContain("环境、参数和 Adapter 地址");
-    expect(caseSelection).toContain("重跑策略与 Adapter 地址");
+    expect(caseSelection).toContain("<CaseDetailContent");
+    const caseDetail = readFileSync(
+      join(SOURCE_ROOT, "components", "case-detail-content.tsx"),
+      "utf8",
+    );
+    expect(caseDetail).toContain("参数（只读）");
+    expect(caseDetail).not.toContain('name="parameters"');
   });
 
   it("redirects the retired plan overview to individual task management", () => {

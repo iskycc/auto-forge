@@ -85,7 +85,9 @@ final class AutoForgeRunClient {
         String progressApiUrl = requiredString(started, "progressApiUrl");
         String progressUrl = requiredString(started, "progressUrl");
         String resultUrl = optionalString(started, "resultUrl", progressUrl);
-        boolean permanentResultAvailable = !started.optString("resultUrl", "").isBlank();
+        AutoForgeResultLink resultLink = new AutoForgeResultLink(resultUrl,
+            started.optString("resultUrl", "").isBlank()
+                ? AutoForgeResultLink.Lifetime.TEMPORARY : AutoForgeResultLink.Lifetime.PERMANENT);
         int pollIntervalSeconds = positiveInt(
             started, "pollIntervalSeconds", DEFAULT_POLL_INTERVAL_SECONDS);
         long serverTimeoutSeconds = positiveLong(
@@ -95,7 +97,7 @@ final class AutoForgeRunClient {
             MAXIMUM_COMPLETION_TIMEOUT_SECONDS);
         long effectiveTimeoutSeconds = timeoutSeconds == 0 ? serverTimeoutSeconds : timeoutSeconds;
         long deadlineNanos = deadlineAfter(effectiveTimeoutSeconds);
-        executionLog.started(suiteId, requiredString(started, "batchId"), progressUrl,
+        executionLog.started(suiteId, requiredString(started, "batchId"), resultLink,
             pollIntervalSeconds, effectiveTimeoutSeconds);
 
         while (true) {
@@ -104,19 +106,19 @@ final class AutoForgeRunClient {
             if (!progress.getBoolean("active")) {
                 String status = requiredString(progress, "status");
                 int finalFailed = nonNegativeInt(progress, "finalFailed");
-                executionLog.completed(progress, resultUrl, permanentResultAvailable);
+                executionLog.completed(progress, resultLink);
                 if (!"succeeded".equals(status)) {
                     throw new AbortException(
                         "AutoForge " + AutoForgeRunLog.statusLabel(status) + "，最终失败 " + finalFailed
-                            + " 项；请点击上方“" + (permanentResultAvailable ? "完整结果" : "执行结果") + "”查看详情。");
+                            + " 项；请点击上方“" + resultLink.resultLabel() + "”查看详情。");
                 }
-                return result(progress, progressUrl, resultUrl);
+                return result(progress, resultUrl);
             }
-            sleepBeforeNextPoll(deadlineNanos, effectiveTimeoutSeconds, pollIntervalSeconds, progressUrl, executionLog);
+            sleepBeforeNextPoll(deadlineNanos, effectiveTimeoutSeconds, pollIntervalSeconds, resultLink, executionLog);
         }
     }
 
-    private Map<String, Object> result(JSONObject progress, String progressUrl, String resultUrl) {
+    private Map<String, Object> result(JSONObject progress, String resultUrl) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("batchId", requiredString(progress, "batchId"));
         result.put("status", requiredString(progress, "status"));
@@ -124,7 +126,7 @@ final class AutoForgeRunClient {
         result.put("totalCases", progress.getInt("totalCases"));
         result.put("totalPassed", progress.getInt("totalPassed"));
         result.put("finalFailed", progress.getInt("finalFailed"));
-        result.put("progressUrl", progressUrl);
+        result.put("progressUrl", resultUrl);
         result.put("resultUrl", resultUrl);
         return result;
     }
@@ -212,23 +214,23 @@ final class AutoForgeRunClient {
             long deadlineNanos,
             long effectiveTimeoutSeconds,
             int pollIntervalSeconds,
-            String progressUrl,
+            AutoForgeResultLink resultLink,
             AutoForgeRunLog executionLog) throws InterruptedException, AbortException {
         long remainingNanos = deadlineNanos - nanoTime.getAsLong();
-        if (remainingNanos <= 0) throw timeout(effectiveTimeoutSeconds, progressUrl, executionLog);
+        if (remainingNanos <= 0) throw timeout(effectiveTimeoutSeconds, resultLink, executionLog);
         long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
         long pollMillis = TimeUnit.SECONDS.toMillis(pollIntervalSeconds);
         sleeper.sleep(Math.min(pollMillis, remainingMillis));
         if (nanoTime.getAsLong() >= deadlineNanos) {
-            throw timeout(effectiveTimeoutSeconds, progressUrl, executionLog);
+            throw timeout(effectiveTimeoutSeconds, resultLink, executionLog);
         }
     }
 
-    private static AbortException timeout(long timeoutSeconds, String progressUrl, AutoForgeRunLog executionLog) {
-        executionLog.timedOut(timeoutSeconds, progressUrl);
+    private static AbortException timeout(long timeoutSeconds, AutoForgeResultLink resultLink, AutoForgeRunLog executionLog) {
+        executionLog.timedOut(timeoutSeconds, resultLink);
         return new AbortException(
             "AutoForge 等待超时（" + AutoForgeConsoleLog.duration(timeoutSeconds)
-                + "）；平台中的批次未取消，请点击上方“实时进度”继续查看。");
+                + "）；平台中的批次未取消，请点击上方“执行详情”继续查看。");
     }
 
     private String safeMessage(String body) {

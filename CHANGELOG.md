@@ -4,6 +4,35 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.12.0 - 2026-09-07
+
+### Changed
+
+- 用例管理和任务详情保留树形浏览，改为展开目录时读取直接子目录与文件；未展开目录不读取后代文件，重复展开复用浏览器缓存，后台快照负责统计与目录索引。
+- 搜索、全选、文件夹整选和表格导入仍覆盖完整范围，保留展开及勾选状态；筛选尚未就绪时禁用批量选择，避免快速清空搜索后沿用旧筛选。
+- 用例管理的预览与用例详情共用展示和取数逻辑，统一版本、方法、执行与分析信息，移除不一致的描述。
+- Jenkins 执行插件在任务启动时展示与最终结果相同的执行详情链接，可持续查看完整执行记录。
+
+### Fixed
+
+- 调度日志只读取批次元数据，避免为记录日志加载全部执行与尝试；分析认领在双数据库中先选取有界记录键，再读取正文。
+- 快照旧代次清理按发布分片数量推进，避免大型目录的生成速度持续超过清理速度；目录切换、折叠和快照更新不再混用请求结果。
+- 任务目录成员变更保留最新修订号，删除用例后仍可继续保存任务配置。
+
+### Database, compatibility and offline assets
+
+- 无新增数据库迁移、生产依赖、持久配置字段或 Runner Protocol 变更；Lite 继续独立运行，Full 使用共享 PostgreSQL 快照。
+- 新增目录分支及有界任务成员、来源用例查询接口。三个旧全量详情 GET（执行批次、任务、来源）超过 500 个成员或 2 MiB 时返回 `413 DETAIL_RESPONSE_TOO_LARGE`；大集合调用方需使用 `view=summary` 及对应成员接口。这是响应限制，不是任务容量限制，也不改变页面的树形操作。
+- Full 的所有 Web 节点和独立 worker 必须一起升级；回滚旧版本前停止 worker 并按[快照文档](./docs/architecture/read-model-snapshots.md)清理可重建快照，避免旧代码读取新目录协议。
+- 继续发布原生 amd64 / arm64 离线镜像、内置双架构静态 Runner、两个 Jenkins 插件、五主机 Compose 部署包、SBOM、清单与签名。
+
+### Validation and known limitations
+
+- 本地格式、lint、类型检查、生产构建及 779 项 Vitest 测试通过，Go 测试与 28 项 Node 脚本测试通过；SQLite / PostgreSQL 快照契约 18 项、十万用例与十万任务成员测试 2 项通过。
+- Jenkins 插件构建、客户端与真实 Pipeline 测试、HPI 校验通过；发布脚本测试及 E2E 覆盖矩阵检查通过。
+- Playwright 首轮 39 个场景中 37 项通过；修复并定向复测剩余场景通过，人工检查 1024px / 1536px 用例管理与任务详情截图。目录缓存验收验证逐层读取、完整范围选择、导入、权限及刷新。
+- 首次快照仍需后台生成；本次未重新执行原性能报告的全部 46 路由十万数据浏览器审计，不能据此宣称历史浏览器崩溃已全部根除。完整 Full 中间件、断网和发布资产验收由发布流水线继续验证。
+
 ## 1.11.2 - 2026-09-06
 
 ### Fixed

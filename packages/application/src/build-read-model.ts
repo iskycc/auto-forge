@@ -1,11 +1,15 @@
+import {
+  buildCaseDirectorySnapshot,
+  buildSuiteDirectorySnapshot,
+} from "./build-directory-snapshots";
 import { PublicPlatformStatisticsService } from "./read-public-statistics";
 import { buildBatchComparisonSnapshot } from "./build-batch-comparison-snapshot";
 import {
-  caseDirectoryPartSchema,
   batchCountersSnapshotSchema,
   executionCaseKeysSchema,
-  suiteDirectoryPartSchema,
   sourcePreviewSchema,
+  sourceDirectoryPartSchema,
+  DIRECTORY_CHUNK_SIZE,
   executionOverviewSnapshotSchema,
   ddtDashboardSnapshotSchema,
   analyticsSummarySchema,
@@ -81,6 +85,24 @@ export function createReadModelBuilder(dependencies: {
           classes: source.inspection.classes.length <= 100 ? source.inspection.classes : [],
         });
       }
+      case "source_directory": {
+        const source = await dependencies.catalog.getSource(query.sourceId, [query.projectId]);
+        if (!source) return null;
+        let partCount = 0;
+        for (
+          let offset = 0;
+          offset < source.inspection.classes.length;
+          offset += DIRECTORY_CHUNK_SIZE
+        ) {
+          await writePart(
+            partCount++,
+            sourceDirectoryPartSchema.parse(
+              source.inspection.classes.slice(offset, offset + DIRECTORY_CHUNK_SIZE),
+            ),
+          );
+        }
+        return { caseCount: source.inspection.classes.length, partCount };
+      }
       case "public_statistics":
         return new PublicPlatformStatisticsService(
           dependencies.statistics,
@@ -96,42 +118,8 @@ export function createReadModelBuilder(dependencies: {
             generatedAt: dependencies.clock.now().toISOString(),
           }),
         );
-      case "suite_directory": {
-        const suite = await dependencies.suites.getSummary(query.suiteId, [query.projectId]);
-        if (!suite) return null;
-        let afterCaseMemberId: string | undefined;
-        let afterDdtMemberId: string | undefined;
-        let partCount = 0;
-        let caseCount = 0;
-        for (;;) {
-          const page = await dependencies.suites.listMemberPage({
-            suiteId: query.suiteId,
-            projectIds: [query.projectId],
-            limit: 250,
-            ...(afterCaseMemberId ? { afterCaseMemberId } : {}),
-            ...(afterDdtMemberId ? { afterDdtMemberId } : {}),
-          });
-          if (!page || (!page.items.length && !page.ddtItems.length)) break;
-          // Member trees need names and method counts; DDT cells and TestNG metadata stay in their detail endpoints.
-          await writePart(
-            partCount++,
-            suiteDirectoryPartSchema.parse({
-              items: page.items.map((item) => ({
-                ...item,
-                caseDefinition: {
-                  ...item.caseDefinition,
-                  methodCount: item.caseDefinition.methods.length,
-                },
-              })),
-              ddtItems: page.ddtItems,
-            }),
-          );
-          caseCount += page.items.length + page.ddtItems.length;
-          afterCaseMemberId = page.items.at(-1)?.id ?? afterCaseMemberId;
-          afterDdtMemberId = page.ddtItems.at(-1)?.id ?? afterDdtMemberId;
-        }
-        return { partCount, caseCount, revision: suite.revision };
-      }
+      case "suite_directory":
+        return buildSuiteDirectorySnapshot(dependencies.suites, query, writePart);
       case "execution_overview": {
         const overview = await dependencies.batches.getDetailOverview(query.batchId, [
           query.projectId,
@@ -209,36 +197,13 @@ export function createReadModelBuilder(dependencies: {
         );
       case "ddt_dashboard":
         return ddtDashboardSnapshotSchema.parse(await dependencies.ddt.dashboard(query));
-      case "case_directory": {
-        let cursor: string | undefined;
-        let partCount = 0;
-        let caseCount = 0;
-        const visitedCursors = new Set<string>();
-        do {
-          const page = await dependencies.catalog.listCases({
-            projectIds: [query.projectId],
-            projectVersionId: query.projectVersionId,
-            testStageId: query.testStageId,
-            scopedOnly: true,
-            limit: 250,
-            ...(cursor ? { cursor } : {}),
-          });
-          const outcomes = await dependencies.catalog.listLatestRunOutcomes(
-            page.items.map((item) => item.id),
-          );
-          await writePart(
-            partCount,
-            caseDirectoryPartSchema.parse({ items: page.items, outcomes }),
-          );
-          partCount += 1;
-          caseCount += page.items.length;
-          if (page.nextCursor && visitedCursors.has(page.nextCursor))
-            throw new Error("Case snapshot pagination repeated a cursor.");
-          cursor = page.nextCursor;
-          if (cursor) visitedCursors.add(cursor);
-        } while (cursor);
-        return { caseCount, partCount };
-      }
+      case "case_directory":
+        return buildCaseDirectorySnapshot(
+          dependencies.catalog,
+          dependencies.suites,
+          query,
+          writePart,
+        );
     }
   };
 }
