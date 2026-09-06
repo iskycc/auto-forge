@@ -5,23 +5,29 @@ import type { DirectoryBranch, ReadModelStatus } from "@autoforge/contracts";
 import { readDirectoryProjection, type DirectoryProjection } from "@/lib/directory-projection";
 import { readLazyDirectoryBranch, type DirectorySource } from "@/lib/directory-tree";
 
+const DIRECTORY_SEARCH_DELAY_MS = 300;
+
 export function useDirectoryTree(
   snapshot: ReadModelStatus,
   filters: string,
   minimumRevision?: number,
 ) {
   const [projection, setProjection] = useState<DirectoryProjection>();
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [responseState, setResponseState] = useState<{ requestKey: string; error: string }>();
   const [attempt, setAttempt] = useState(0);
   const refresh = useCallback(() => setAttempt((value) => value + 1), []);
+  const requestKey = JSON.stringify([
+    snapshot.id,
+    snapshot.generation,
+    filters,
+    minimumRevision,
+    attempt,
+  ]);
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let polls = 0;
     async function read() {
-      setLoading(true);
-      setError("");
       try {
         const next = await readDirectoryProjection(snapshot.id, filters, controller.signal);
         const revision = (next.manifest as { revision?: number } | null)?.revision;
@@ -38,20 +44,28 @@ export function useDirectoryTree(
           return;
         }
         setProjection(next);
-        setLoading(false);
+        setResponseState({ requestKey, error: "" });
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setError(cause instanceof Error ? cause.message : "目录加载失败。");
-        setLoading(false);
+        setResponseState({
+          requestKey,
+          error: cause instanceof Error ? cause.message : "目录加载失败。",
+        });
       }
     }
-    void read();
+    // Debounce I/O only: a delayed history write can cancel an in-flight Next link navigation.
+    if (new URLSearchParams(filters).get("query")) {
+      timer = setTimeout(() => void read(), DIRECTORY_SEARCH_DELAY_MS);
+    } else {
+      void read();
+    }
     return () => {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [snapshot.id, snapshot.generation, filters, minimumRevision, attempt]);
-  return { projection, error, loading, refresh };
+  }, [snapshot.id, snapshot.generation, filters, minimumRevision, attempt, requestKey]);
+  const loading = responseState?.requestKey !== requestKey;
+  return { projection, error: loading ? "" : responseState.error, loading, refresh };
 }
 
 export function useDirectoryBranch(

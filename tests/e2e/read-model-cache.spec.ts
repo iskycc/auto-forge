@@ -402,6 +402,22 @@ test("large pages reuse browser and database snapshots and refresh after imports
   await expectUiIntegrity(page);
   await page.screenshot({ path: testInfo.outputPath("suite-1024.png"), fullPage: true });
   expect(hydrationErrors).toEqual([]);
+
+  await page.goto("/cases?query=Snapshot0000Test");
+  const detailLink = page.getByRole("link", { name: "查看 Snapshot0000Test 详情", exact: true });
+  await expect(detailLink).toBeVisible({ timeout: 30_000 });
+  const detailPath = await detailLink.getAttribute("href");
+  expect(detailPath).toBeTruthy();
+  const clockStart = new Date();
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(new Date(clockStart.getTime() + 1000));
+  await page.getByLabel("页内搜索用例", { exact: true }).fill("Snapshot");
+  // URL updates must finish in the input event, before a subsequent link can start navigation.
+  expect(new URL(page.url()).searchParams.get("query")).toBe("Snapshot");
+  await page.clock.resume();
+  await detailLink.click();
+  await expect(page).toHaveURL(detailPath!);
+  await expect(page.getByRole("heading", { name: "全部执行历史", exact: true })).toBeVisible();
 });
 
 async function importCases(

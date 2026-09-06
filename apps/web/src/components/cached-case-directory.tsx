@@ -56,26 +56,19 @@ export function CachedCaseDirectory({
   );
   const [progress, setProgress] = useState<string>();
   const selectionController = useRef<AbortController | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(
     () => () => {
       selectionController.current?.abort();
       selectionController.current = null;
-      clearTimeout(searchTimer.current);
     },
     [],
   );
   function changeFilter(next: CaseDirectoryFilter) {
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(
-      () =>
-        updateDirectoryLocation({
-          query: next.query,
-          outcome: next.outcome === "all" ? undefined : next.outcome,
-          missingSuiteId: next.missingSuiteId,
-        }),
-      next.query !== filter.query ? 300 : 0,
-    );
+    updateDirectoryLocation({
+      query: next.query,
+      outcome: next.outcome === "all" ? undefined : next.outcome,
+      missingSuiteId: next.missingSuiteId,
+    });
   }
   const currentManifest = result.projection?.manifest ?? manifest;
   return (

@@ -36,8 +36,6 @@ export function CachedSuiteDirectory({
       result.projection ? { projection: result.projection, refresh: result.refresh } : undefined,
     [result.projection, result.refresh],
   );
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
   const manifest = result.projection?.manifest
     ? suiteDirectoryManifestSchema.parse(result.projection.manifest)
     : null;
@@ -57,10 +55,7 @@ export function CachedSuiteDirectory({
         canManage={canManage}
         membersRevision={manifest?.revision ?? suite.revision}
         loading={result.loading}
-        onQuery={(query) => {
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => updateDirectoryLocation({ memberQuery: query }), 300);
-        }}
+        onQuery={(query) => updateDirectoryLocation({ memberQuery: query })}
       />
     </>
   );

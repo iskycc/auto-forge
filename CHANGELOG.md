@@ -4,6 +4,19 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.12.1 - 2026-09-07
+
+### Fixed
+
+- 修复输入目录搜索后立即点击详情时，延迟写入搜索 URL 可能打断页面跳转的问题；用例和任务目录在输入时立即更新 URL，只对后台搜索请求做防抖。
+- 搜索、刷新及修订号变更从触发时即进入对应的加载状态，等待期间保留已有目录显示，并继续禁止使用旧结果执行批量选择。
+
+### Compatibility and validation
+
+- 包含 1.12.0 的全部功能与兼容性说明，无额外数据库迁移、配置、依赖或 Runner Protocol 变更，离线资产矩阵不变。
+- 增加暂停浏览器时钟的 Playwright 回归，复现延迟 URL 写入并验证搜索后进入详情；保留目录缓存、完整范围选择和导入验收。
+- 本地格式、lint、类型检查、Web 生产构建及 22 项相关测试通过；目录缓存与导航、JAR 导入 Playwright 场景分别复测通过。
+
 ## 1.12.0 - 2026-09-07
 
 ### Changed
