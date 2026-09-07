@@ -254,8 +254,9 @@ export function CaseSuiteDetailsView({
           {error}
         </div>
       ) : null}
-      {(!directoryTree ||
-        (!directoryTree.loading && !directoryTree.query && suite.caseCount === 0)) &&
+      {/* Mutation responses already contain the authoritative count; an empty task must not wait
+          for its background directory snapshot to catch up before showing the result. */}
+      {(!directoryTree || (!directoryTree.query && suite.caseCount === 0)) &&
       suite.items.length === 0 &&
       suite.ddtItems.length === 0 ? (
         <div className="empty-state table-empty">

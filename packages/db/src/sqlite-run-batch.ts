@@ -44,6 +44,7 @@ import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "dr
 
 import {
   retrySqliteLockContention,
+  retrySqliteWriteTransaction,
   runSqliteWriteTransaction,
   type SqliteDatabaseHandle,
 } from "./database";
@@ -1054,7 +1055,7 @@ export class SqliteRunBatchRepository
   async activateRetryConcurrency(
     input: Parameters<RunBatchRepository["activateRetryConcurrency"]>[0],
   ): Promise<RetryConcurrencyState | null> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const batch = this.handle.db
         .select({ currentRound: runBatches.currentRound, policyJson: runBatches.policyJson })
         .from(runBatches)
@@ -1090,7 +1091,7 @@ export class SqliteRunBatchRepository
   async recordRoundConcurrency(
     input: Parameters<RunBatchRepository["recordRoundConcurrency"]>[0],
   ): Promise<"created" | "existing"> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const existing = this.handle.db
         .select({
           batchId: runBatchRoundConcurrencies.batchId,
@@ -1187,7 +1188,7 @@ export class SqliteRunBatchRepository
   async reserveAssignments(
     input: ReserveSchedulingAssignmentsInput,
   ): Promise<ReserveAssignmentsOutcome> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const batchScope = this.handle.db
         .select({
           projectId: runBatches.projectId,
@@ -1438,7 +1439,7 @@ export class SqliteRunBatchRepository
   ): Promise<void> {
     if (events.length === 0) return;
     // 批量插入放入同一事务，保证一轮调度产生的事件要么整体可见，要么整体回滚。
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       for (const event of events) {
         this.handle.client
           .prepare(

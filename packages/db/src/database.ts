@@ -71,6 +71,14 @@ export function runSqliteWriteTransaction<Result>(
   return handle.client.transaction(operation).immediate();
 }
 
+/** Retry whole rolled-back transactions without extending the connection's blocking lock wait. */
+export function retrySqliteWriteTransaction<Result>(
+  handle: SqliteDatabaseHandle,
+  operation: () => Result,
+): Promise<Result> {
+  return retrySqliteLockContention(() => runSqliteWriteTransaction(handle, operation));
+}
+
 /**
  * busy_timeout cannot recover a WAL transaction that loses a read-to-write upgrade race, and a
  * writer may also legitimately hold the database beyond that timeout. Retry the whole idempotent

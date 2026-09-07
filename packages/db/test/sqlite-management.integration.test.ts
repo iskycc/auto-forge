@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 
 import { createSqliteDatabase } from "../src/database";
 import { createAttemptLogStore } from "../src/attempt-log-store";
@@ -1056,7 +1057,7 @@ describe("SQLite management repositories", () => {
     }
   });
 
-  it("claims, renews, completes and deduplicates an assignment atomically", async () => {
+  it("claims, renews, uploads and completes atomically after transient writer contention", async () => {
     const { handle, runners, batches, executions } = await fixture();
     try {
       await runners.register({
@@ -1111,26 +1112,28 @@ describe("SQLite management repositories", () => {
         ],
         createdAt: "2026-08-09T00:01:00.000Z",
       });
-      await batches.reserveAssignments({
-        batchId: "00000000-0000-4000-8000-0000000c0001",
-        decisions: [
-          {
-            executionRunId: "run-control",
-            runnerId: "runner-control",
-            score: 1,
-            attemptId: "attempt-control",
-            assignmentId: "assignment-control",
+      await withCompetingWriter(handle, () =>
+        batches.reserveAssignments({
+          batchId: "00000000-0000-4000-8000-0000000c0001",
+          decisions: [
+            {
+              executionRunId: "run-control",
+              runnerId: "runner-control",
+              score: 1,
+              attemptId: "attempt-control",
+              assignmentId: "assignment-control",
+            },
+          ],
+          thresholds: {
+            maximumCpuUtilizationPercent: 80,
+            maximumMemoryUtilizationPercent: 85,
+            maximumLoadPerCpu: 1,
           },
-        ],
-        thresholds: {
-          maximumCpuUtilizationPercent: 80,
-          maximumMemoryUtilizationPercent: 85,
-          maximumLoadPerCpu: 1,
-        },
-        offlineBefore: "2026-08-09T00:00:30.000Z",
-        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
-        scheduledAt: "2026-08-09T00:01:01.000Z",
-      });
+          offlineBefore: "2026-08-09T00:00:30.000Z",
+          metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+          scheduledAt: "2026-08-09T00:01:01.000Z",
+        }),
+      );
       handle.client
         .prepare(
           `INSERT INTO case_sources (
@@ -1202,8 +1205,30 @@ describe("SQLite management repositories", () => {
         now: "2026-08-09T00:01:02.000Z",
         leaseExpiresAt: "2026-08-09T00:01:47.000Z",
       };
-      const claimed = await executions.claim(claimInput);
+      const claimed = await withCompetingWriter(handle, () => executions.claim(claimInput));
       expect(claimed).toHaveLength(1);
+      await withCompetingWriter(handle, () =>
+        batches.appendSchedulingEvents([
+          {
+            id: "scheduling-claim-control",
+            batchId: "00000000-0000-4000-8000-0000000c0001",
+            runnerId: "runner-control",
+            executionRunId: "run-control",
+            attemptId: "attempt-control",
+            eventType: "attempt_claimed",
+            message: "Runner claimed assignment",
+            recordedAt: claimInput.now,
+          },
+        ]),
+      );
+      const schedulingEvents = await batches.listSchedulingEvents({
+        batchId: "00000000-0000-4000-8000-0000000c0001",
+        limit: 50,
+      });
+      expect(
+        schedulingEvents.items.filter((event) => event.id === "scheduling-claim-control"),
+      ).toHaveLength(1);
+
       expect(claimed[0]?.assignment.executionSpec).toMatchObject({
         environment: [],
         secretReferences: [],
@@ -1296,20 +1321,22 @@ describe("SQLite management repositories", () => {
       ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_FORBIDDEN" });
       await expect(executions.claim(claimInput)).resolves.toEqual(claimed);
 
-      const gap = await executions.appendLogChunks({
-        runnerId: "runner-control",
-        attemptId: "attempt-control",
-        leaseTokenHash: "lease-token-hash",
-        chunks: [
-          {
-            stream: "stdout",
-            sequence: 1,
-            content: "second",
-            recordedAt: "2026-08-09T00:01:03.000Z",
-          },
-        ],
-        receivedAt: "2026-08-09T00:01:03.100Z",
-      });
+      const gap = await withCompetingWriter(handle, () =>
+        executions.appendLogChunks({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 1,
+              content: "second",
+              recordedAt: "2026-08-09T00:01:03.000Z",
+            },
+          ],
+          receivedAt: "2026-08-09T00:01:03.100Z",
+        }),
+      );
       expect(gap.acknowledgedSequence.stdout).toBe(-1);
 
       const contiguous = await executions.appendLogChunks({
@@ -1372,13 +1399,15 @@ describe("SQLite management repositories", () => {
         required: true,
       };
       await expect(
-        executions.declareArtifacts({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          leaseTokenHash: "lease-token-hash",
-          artifacts: [artifact],
-          declaredAt: "2026-08-09T00:01:03.400Z",
-        }),
+        withCompetingWriter(handle, () =>
+          executions.declareArtifacts({
+            runnerId: "runner-control",
+            attemptId: "attempt-control",
+            leaseTokenHash: "lease-token-hash",
+            artifacts: [artifact],
+            declaredAt: "2026-08-09T00:01:03.400Z",
+          }),
+        ),
       ).resolves.toEqual([{ ...artifact, status: "declared" }]);
       await expect(
         executions.declareArtifacts({
@@ -1407,12 +1436,14 @@ describe("SQLite management repositories", () => {
           now: "2026-08-09T00:01:03.500Z",
         }),
       ).resolves.toMatchObject(artifact);
-      await executions.markArtifactUploaded({
-        attemptId: "attempt-control",
-        artifactId: artifact.artifactId,
-        objectKey: `artifacts/attempt-control/artifact-control/${artifact.sha256}`,
-        uploadedAt: "2026-08-09T00:01:03.600Z",
-      });
+      await withCompetingWriter(handle, () =>
+        executions.markArtifactUploaded({
+          attemptId: "attempt-control",
+          artifactId: artifact.artifactId,
+          objectKey: `artifacts/attempt-control/artifact-control/${artifact.sha256}`,
+          uploadedAt: "2026-08-09T00:01:03.600Z",
+        }),
+      );
       await expect(executions.listArtifacts("attempt-control")).resolves.toMatchObject([
         { ...artifact, status: "uploaded" },
       ]);
@@ -1428,33 +1459,37 @@ describe("SQLite management repositories", () => {
         }),
       ).resolves.toMatchObject({ decisions: [{ action: "continue" }] });
 
-      const renewed = await executions.renewLease({
-        runnerId: "runner-control",
-        leaseId: "lease-control",
-        tokenHash: "lease-token-hash",
-        expectedVersion: 1,
-        now: "2026-08-09T00:01:10.000Z",
-        expiresAt: "2026-08-09T00:01:55.000Z",
-      });
+      const renewed = await withCompetingWriter(handle, () =>
+        executions.renewLease({
+          runnerId: "runner-control",
+          leaseId: "lease-control",
+          tokenHash: "lease-token-hash",
+          expectedVersion: 1,
+          now: "2026-08-09T00:01:10.000Z",
+          expiresAt: "2026-08-09T00:01:55.000Z",
+        }),
+      );
       expect(renewed).toMatchObject({ leaseVersion: 2, instruction: "continue" });
 
-      const completion = await executions.completeAttempt({
-        runnerId: "runner-control",
-        attemptId: "attempt-control",
-        completionId: "completion-control",
-        leaseTokenHash: "lease-token-hash",
-        resultDigest: "result-digest",
-        result: {
-          status: "failed",
-          resultCode: "TEST_ASSERTION_FAILED",
-          summary: "assertion failed",
-          durationMs: 1_000,
-          testNg: structuredTestNgResult("failed"),
-          artifacts: [],
-        },
-        eventId: "event-complete-control",
-        acceptedAt: "2026-08-09T00:01:20.000Z",
-      });
+      const completion = await withCompetingWriter(handle, () =>
+        executions.completeAttempt({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          completionId: "completion-control",
+          leaseTokenHash: "lease-token-hash",
+          resultDigest: "result-digest",
+          result: {
+            status: "failed",
+            resultCode: "TEST_ASSERTION_FAILED",
+            summary: "assertion failed",
+            durationMs: 1_000,
+            testNg: structuredTestNgResult("failed"),
+            artifacts: [],
+          },
+          eventId: "event-complete-control",
+          acceptedAt: "2026-08-09T00:01:20.000Z",
+        }),
+      );
       expect(completion).toMatchObject({ disposition: "accepted", retryScheduled: true });
       expect(
         handle.client
@@ -2907,6 +2942,25 @@ async function executionsProjectId(
     handle,
     createAttemptLogStore(directory),
   ).resolveAttemptProjectId(attemptId);
+}
+
+async function withCompetingWriter<Result>(
+  handle: ReturnType<typeof createSqliteDatabase>,
+  operation: () => Promise<Result>,
+): Promise<Result> {
+  const previousTimeout = handle.client.pragma("busy_timeout", { simple: true }) as number;
+  handle.client.pragma("busy_timeout = 1");
+  const writer = new Database(handle.client.name);
+  writer.exec("BEGIN IMMEDIATE");
+  const release = setTimeout(() => writer.exec("COMMIT"), 40);
+  try {
+    return await operation();
+  } finally {
+    clearTimeout(release);
+    if (writer.inTransaction) writer.exec("ROLLBACK");
+    writer.close();
+    handle.client.pragma(`busy_timeout = ${previousTimeout}`);
+  }
 }
 
 const timestamp = "2026-08-09T00:00:00.000Z";

@@ -4,6 +4,20 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.13.1 - 2026-09-07
+
+### Fixed
+
+- 修复 Lite 多个 Runner 同时领取时，执行线程使用短 SQLite 锁等待却没有重试完整控制事务，导致部分请求立即返回 `503 PLATFORM_BUSY` 的问题。调度分配及事件、轮次并发、领取、续租、完成、产物状态、恢复和取消增加有界异步重试；日志正文追加后的主库路径登记也单独重试，保留幂等水位、回执和真实业务冲突。
+- 修复删除任务全部用例后仍展示旧目录并等待后台快照的问题；空状态直接采用删除成功后的权威用例数，并继续支持立即修改、保存任务配置。Playwright 主动阻塞目录刷新验证该行为。
+- Full 契约验收在干净检出后先构建日志线程入口，避免没有执行 Web 构建的专项测试报 `attempt-log-thread.js` 缺失。
+
+### Compatibility and validation
+
+- 包含 1.13.0 的全部功能与升级要求；无额外数据库迁移、配置、依赖或协议变更，正式标签保持不可变。1.13.0 已完成发布，但其后续 CI 暴露上述 Lite 并发问题，本补丁予以修复。
+- 回归先通过真实 SQLite 写锁复现领取失败，再验证领取、日志、产物、续租和完成可在锁释放后成功，原有去重及冲突断言继续生效。
+- 本地格式、lint、Web / DB 与测试类型检查、Web 生产构建通过；102 项真实 SQLite / PostgreSQL 调度与恢复集成测试、26 项相关单元测试通过。平台及浏览器限制在 2 CPU 后，500 槽执行、任务生命周期和目录缓存的 5 项 Playwright 回归通过，无跳过或重试。
+
 ## 1.13.0 - 2026-09-07
 
 ### Added and changed

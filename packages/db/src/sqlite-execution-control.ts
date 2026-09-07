@@ -36,7 +36,11 @@ import {
 import { createHash } from "node:crypto";
 
 import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import {
+  retrySqliteLockContention,
+  retrySqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
@@ -129,7 +133,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async claim(
     input: Parameters<ExecutionControlRepository["claim"]>[0],
   ): Promise<ClaimedAssignmentRecord[]> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const replay = this.claimReplay(input.runnerId, input.requestId);
       if (replay) return replay;
       if (input.availableSlots === 0) return [];
@@ -245,7 +249,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async renewLease(
     input: Parameters<ExecutionControlRepository["renewLease"]>[0],
   ): ReturnType<ExecutionControlRepository["renewLease"]> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const lease = this.requiredLease(input.leaseId);
       if (lease.runner_id !== input.runnerId || lease.token_hash !== input.tokenHash) {
         throw new DomainError("LEASE_AUTH_REJECTED", "租约凭据无效。");
@@ -287,7 +291,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
     completionEvents?: Parameters<ExecutionControlRepository["completeAttempt"]>[1],
   ): Promise<CompleteAttemptResponse> {
-    const result = runSqliteWriteTransaction(
+    const result = await retrySqliteWriteTransaction(
       this.handle,
       (): { response: CompleteAttemptResponse } | { conflict: true } => {
         const opening = this.completionOpening(input.attemptId);
@@ -571,7 +575,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       receivedAt: input.receivedAt,
       chunks: input.chunks,
     });
-    this.recordAttemptLogsPath(batchId);
+    await retrySqliteLockContention(() => this.recordAttemptLogsPath(batchId));
     return {
       schemaVersion: 1 as const,
       acknowledgedSequence,
@@ -753,7 +757,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async declareArtifacts(
     input: Parameters<ExecutionControlRepository["declareArtifacts"]>[0],
   ): ReturnType<ExecutionControlRepository["declareArtifacts"]> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       this.authorizedTransferContext({ ...input, now: input.declaredAt });
       this.handle.client
         .prepare(
@@ -809,13 +813,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async markArtifactUploaded(
     input: Parameters<ExecutionControlRepository["markArtifactUploaded"]>[0],
   ): Promise<void> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE attempt_artifacts SET object_key = ?, status = 'uploaded', updated_at = ?
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const result = this.handle.client
+        .prepare(
+          `UPDATE attempt_artifacts SET object_key = ?, status = 'uploaded', updated_at = ?
          WHERE id = ? AND attempt_id = ? AND status IN ('declared', 'uploaded')`,
-      )
-      .run(input.objectKey, input.uploadedAt, input.artifactId, input.attemptId);
-    if (result.changes !== 1) throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
+        )
+        .run(input.objectKey, input.uploadedAt, input.artifactId, input.attemptId);
+      if (result.changes !== 1)
+        throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
+    });
   }
 
   async listArtifacts(attemptId: string): ReturnType<ExecutionControlRepository["listArtifacts"]> {
@@ -832,7 +839,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async recoverExpired(
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
   ): Promise<RecoveredAttemptExpiration[]> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const queued = this.handle.client
         .prepare(
           `SELECT r.id, r.batch_id FROM execution_runs r
@@ -960,7 +967,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async terminateBatch(
     input: Parameters<ExecutionControlRepository["terminateBatch"]>[0],
   ): Promise<number> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return retrySqliteWriteTransaction(this.handle, () => {
       const batch = this.handle.client
         .prepare("SELECT status, version, cancel_requested_at FROM run_batches WHERE id = ?")
         .get(input.batchId) as
@@ -997,7 +1004,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   }
 
   async cancelRun(input: Parameters<ExecutionControlRepository["cancelRun"]>[0]): Promise<boolean> {
-    return runSqliteWriteTransaction(this.handle, () => this.cancelRunWithinTransaction(input));
+    return retrySqliteWriteTransaction(this.handle, () => this.cancelRunWithinTransaction(input));
   }
 
   private persistCompletion(

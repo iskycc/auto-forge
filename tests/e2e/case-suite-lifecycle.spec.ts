@@ -640,9 +640,25 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await caseTree.scrollIntoViewIfNeeded();
   await captureUi(page, "case-suite-folder-selected-1024");
   await page.setViewportSize({ width: 1536, height: 1024 });
-  await page.getByRole("button", { name: "批量移除（2）" }).click();
-  await acceptSystemDialog(page, "移除任务用例", "确认移除");
-  await expect(page.getByText("任务中还没有用例")).toBeVisible();
+  // Keep the directory snapshot stale while the authoritative DELETE response advances the
+  // task revision. Empty state feedback must not wait for background statistics to catch up.
+  const directoryRequests = "**/api/v1/read-models/*/directory?*";
+  let releaseDirectory: () => void = () => {};
+  const directoryGate = new Promise<void>((resolve) => {
+    releaseDirectory = resolve;
+  });
+  await page.route(directoryRequests, async (route) => {
+    await directoryGate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole("button", { name: "批量移除（2）" }).click();
+    await acceptSystemDialog(page, "移除任务用例", "确认移除");
+    await expect(page.getByText("任务中还没有用例")).toBeVisible();
+  } finally {
+    releaseDirectory();
+    await page.unrouteAll({ behavior: "wait" });
+  }
 
   // Removing members must advance the editor revision without a page reload.
   await page.getByLabel("任务说明").fill("saved after removing members");
