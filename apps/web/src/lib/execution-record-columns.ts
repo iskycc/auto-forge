@@ -138,7 +138,9 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     key: "duration",
     label: "耗时",
     defaultWidth: 100,
-    minWidth: 70,
+    // 单元格允许换行后，仍要保证 “1h 24m 47s” 这类最长耗时单行放下，
+    // 70px 会把单位挤到第二行形成 “1h 24m / 47s” 的误读排布。
+    minWidth: 100,
     maxWidth: 130,
     text: (row) => formatBatchDuration(executionRecordDurationMs(row)),
   },

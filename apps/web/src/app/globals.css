@@ -390,10 +390,12 @@
   cursor: pointer;
 }
 
+/* 弹层选项改为换行完整显示：触发器宽度不该决定选项可读性，列表自身带滚动。
+   line-break:anywhere 放宽 CJK 禁则，避免行尾全角括号顶着 5px 溢出。 */
 .ui-select-option-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-break: anywhere;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .ui-select-option-active {
@@ -3849,12 +3851,12 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+/* 对象键与 SHA-256 必须可完整核对，允许在任意字符处换行。 */
 .source-meta-grid code,
 .source-meta-grid strong {
-  overflow: hidden;
   font-size: var(--font-size-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .text-success {
@@ -4829,11 +4831,11 @@ button.icon-button:disabled {
   gap: 2px;
 }
 
+/* 执行机名称/副标题换行完整显示，不再用省略号隐藏主机名。 */
 .runner-list-identity strong,
 .runner-list-identity small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .runner-list-identity small,
@@ -5278,13 +5280,12 @@ button.icon-button:disabled {
 .class-cell strong {
   font-size: 13px;
 }
+/* 对象键/类全名是排障关键信息，换行完整显示而不是 440px 截断。 */
 .class-cell code {
-  max-width: 440px;
-  overflow: hidden;
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .method-summary {
   min-width: 120px;
@@ -9061,12 +9062,12 @@ button.icon-button:disabled {
   flex: 1;
 }
 
+/* 通知与搜索结果副标题换行完整显示，面板宽度固定时不再藏信息。 */
 .search-results small,
 .notification-item small {
-  overflow: hidden;
   color: var(--color-text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .popover-empty {
@@ -9763,11 +9764,11 @@ button.icon-button:disabled {
   gap: 2px;
 }
 
+/* 用例名与包名在窄面板里换行完整显示，树本身可纵向滚动。 */
 .case-tree-activate strong,
 .case-tree-activate code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .case-tree-activate code,
@@ -11178,14 +11179,11 @@ button.icon-button:disabled {
   border-radius: 3px;
 }
 
+/* 失败原因多为堆栈摘要，两行 clamp 会藏掉关键后缀；改为完整换行。 */
 .insight-pie-legend b {
-  display: -webkit-box;
-  overflow: hidden;
   font-weight: 600;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .insight-pie-legend em {
@@ -11713,15 +11711,12 @@ button.icon-button:disabled {
 
 /* 六等分指标带在 1280–1760 桌面下每列只有 125–170px，“当前轮次”等长值折到两行
    完整展示，比被省略号吃掉关键信息更可取；两行仍放不下时才出现省略号。 */
+/* 指标值完整换行显示：轮次与重跑上限等信息不能被省略号吞掉。 */
 .batch-metric > strong {
-  display: -webkit-box;
-  overflow: hidden;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .batch-metric > small {
@@ -12084,10 +12079,10 @@ button.icon-button:disabled {
   min-width: 0;
 }
 
+/* 轮次表执行机名换行完整显示，主机名往往不可断行。 */
 .round-runner-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* 全部轮次视图的轮次列：短文本不允许换行挤压状态列。 */
@@ -12932,10 +12927,10 @@ button.icon-button:disabled {
   gap: 6px;
 }
 
+/* 可调整列表宽的表格仍允许单元格换行：列宽是用户偏好，不该成为截断理由。 */
 .resizable-table td {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .resizable-th-content {
@@ -14142,14 +14137,11 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+/* 首页最近批次摘要完整换行显示。 */
 .latest-batch-summary strong {
-  display: -webkit-box;
-  overflow: hidden;
   font-size: var(--font-size-caption);
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .latest-batch-summary b {
@@ -14420,15 +14412,12 @@ button.icon-button:disabled {
   justify-content: flex-start;
 }
 
+/* 首页执行机组卡片名称完整换行显示， Bento 卡片高度随内容自适应。 */
 .dashboard-runner-group-grid strong {
-  display: -webkit-box;
-  overflow: hidden;
   color: var(--color-text);
   font-size: 12px;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .dashboard-runner-group-grid > a > span:first-child i {
@@ -14763,14 +14752,11 @@ button.icon-button:disabled {
 
 /* 最近动态列在 1536 桌面只有约 200px 文本宽，标题与批次摘要折到两行，
    避免任务名与通过/失败计数被整段省略。 */
+/* 首页最近动态的标题与副标题完整换行显示。 */
 .design-activity-list strong,
 .design-activity-list small {
-  display: -webkit-box;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .design-activity-list strong {
@@ -15130,11 +15116,11 @@ button.icon-button:disabled {
   gap: 2px;
 }
 
+/* 任务详情里的执行机芯片换行完整显示。 */
 .global-run-runner strong,
 .global-run-runner small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .global-run-runner strong {
@@ -15315,11 +15301,11 @@ button.icon-button:disabled {
   gap: 2px;
 }
 
+/* 执行机组卡片标题/摘要换行完整显示，卡片高度随内容自适应。 */
 .runner-group-card > header strong,
 .runner-group-card > header small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .runner-group-card > header strong {
@@ -16824,11 +16810,11 @@ button.icon-button:disabled {
   gap: 7px;
 }
 
+/* 轮次内用例标题换行完整显示，长类名是失败定位的唯一线索。 */
 .execution-case-heading > strong {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .execution-case-type {
@@ -17117,8 +17103,10 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+/* 操作按钮在窄列里换行排布，而不是溢出或裁切。 */
 .execution-record-row-actions {
-  white-space: nowrap;
+  flex-wrap: wrap;
+  white-space: normal;
 }
 
 .execution-record-table-stack {
@@ -17339,12 +17327,12 @@ button.icon-button:disabled {
   gap: 2px;
 }
 
+/* 存储树里的 UUID 文件名必须完整可见，允许在任意字符处换行。 */
 .storage-tree-name strong,
 .storage-tree-name code,
 .storage-tree-file-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .storage-tree-file-identity {
