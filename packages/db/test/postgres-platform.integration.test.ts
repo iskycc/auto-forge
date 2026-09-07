@@ -433,6 +433,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
   it("applies migrations and persists suites and runner heartbeats", async () => {
     const handle = createPostgresDatabase({
       connectionString: isolatedConnectionString,
+      lockTimeoutMs: 2_000,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const suites = new PostgresCaseSuiteRepository(handle);
@@ -768,18 +769,31 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         thresholds,
         metricsFreshAfter: "2026-08-09T00:00:30.000Z",
       });
-      await batches.reserveAssignments({
-        batchId: `batch-${runnerId}`,
-        decisions: plan.decisions.map((decision) => ({
-          ...decision,
-          attemptId: `attempt-${runnerId}`,
-          assignmentId: `assignment-${runnerId}`,
-        })),
-        thresholds,
-        offlineBefore: "2026-08-09T00:00:30.000Z",
-        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
-        scheduledAt: "2026-08-09T00:01:01.000Z",
-      });
+      // Inserting an assignment lease holds a KEY SHARE lock on its Runner. Scheduling must
+      // retain its capacity guard without waiting on that unrelated foreign-key reference.
+      const claimingClient = await handle.pool.connect();
+      try {
+        await claimingClient.query("BEGIN");
+        await claimingClient.query("SELECT id FROM runners WHERE id = $1 FOR KEY SHARE", [
+          runnerId,
+        ]);
+        await batches.reserveAssignments({
+          batchId: `batch-${runnerId}`,
+          decisions: plan.decisions.map((decision) => ({
+            ...decision,
+            attemptId: `attempt-${runnerId}`,
+            assignmentId: `assignment-${runnerId}`,
+          })),
+          thresholds,
+          offlineBefore: "2026-08-09T00:00:30.000Z",
+          metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+          scheduledAt: "2026-08-09T00:01:01.000Z",
+        });
+      } finally {
+        await claimingClient.query("ROLLBACK");
+        claimingClient.release();
+      }
+
       expect(await batches.get(`batch-${runnerId}`)).toMatchObject({
         status: "scheduled",
         assignedRuns: 1,

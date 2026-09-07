@@ -1323,7 +1323,9 @@ export class PostgresRunBatchRepository
               .from(pgRunners)
               .where(inArray(pgRunners.id, decisionRunnerIds))
               .orderBy(pgRunners.id)
-              .for("update");
+              // Serialize capacity reservations while allowing claim/lease foreign-key checks.
+              // FOR UPDATE conflicts with their KEY SHARE lock and reverses the batch lock order.
+              .for("no key update");
       const runnerById = new Map(lockedRunners.map((runner) => [runner.id, runner]));
       const reservations =
         decisionRunnerIds.length === 0

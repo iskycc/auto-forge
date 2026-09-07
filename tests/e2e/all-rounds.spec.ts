@@ -763,7 +763,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const cappedRetryBatch = await startTaskFromTopbar(page, suiteId);
   const cappedRetryDetailsResponse = await page.request.get(
     `/api/v1/run-batches/${encodeURIComponent(cappedRetryBatch.id)}`,
-    { headers: userHeaders },
+    // The protocol client has been idle during the UI/log checks. Its pooled connection can race
+    // the server's keep-alive close; retry this idempotent read once on ECONNRESET, never on HTTP errors.
+    { headers: userHeaders, maxRetries: 1 },
   );
   expect(cappedRetryDetailsResponse.status()).toBe(200);
   const cappedRunNames = new Map(
