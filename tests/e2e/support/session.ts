@@ -39,7 +39,16 @@ export async function ensureAdministrator(page: Page): Promise<void> {
     await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
     await page.getByLabel("显示名称").fill("E2E Administrator");
     await page.getByLabel("管理员密码").fill(E2E_ADMIN_PASSWORD);
+    const bootstrapResponse = page.waitForResponse(
+      (candidate) =>
+        new URL(candidate.url()).pathname === "/api/v1/auth/bootstrap" &&
+        candidate.request().method() === "POST",
+    );
     await page.getByRole("button", { name: "创建系统管理员" }).click();
+    // Another node can observe the committed administrator before this browser
+    // receives Set-Cookie. Wait for our response before checking the session or
+    // navigating to login, which would race the successful bootstrap redirect.
+    expect([201, 403]).toContain((await bootstrapResponse).status());
     // Several spec files share one deployment and can all observe
     // setupRequired=true before the first bootstrap transaction commits. The
     // winner receives a session and navigates home; losers receive the

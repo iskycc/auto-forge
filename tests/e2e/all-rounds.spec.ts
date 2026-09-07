@@ -1252,8 +1252,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const overflow = await suiteCell.evaluate((cell) => ({
     clientWidth: cell.clientWidth,
     scrollWidth: cell.scrollWidth,
+    clientHeight: cell.clientHeight,
+    scrollHeight: cell.scrollHeight,
   }));
-  expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+  expect(overflow.scrollHeight).toBeLessThanOrEqual(overflow.clientHeight + 1);
+  await expect(suiteCell.locator("strong")).not.toHaveCSS("text-overflow", "ellipsis");
 
   // 终态失败批次提供两条互不污染统计的重跑路径：单用例日志里的诊断重跑隐藏于
   // 常规执行记录，末轮失败集重跑则创建可追踪的新批次，并允许关闭动态并发和环境恢复。

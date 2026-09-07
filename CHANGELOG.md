@@ -1,14 +1,41 @@
 # Changelog
 
-## 未发布
-
-- 安全审计收紧到重要数据变更与身份访问安全事件，排除执行重试等运行事件，同时保留执行历史。
-- 审计事件新增中文描述；列表、详情和 CSV 统一使用中文，增加中文搜索与分类筛选，优化桌面表格、分页和详情展开布局。
-- 补齐项目版本、测试阶段及项目运行资源创建审计，并记录 API 权限拒绝事件。
-
 All user-visible changes are recorded here. AutoForge follows semantic versioning; release notes must
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
+
+## 1.13.0 - 2026-09-07
+
+### Added and changed
+
+- 根据宿主机及容器的 CPU、内存和 cgroup 配额计算线程预算；Web 响应优先，执行控制与日志上传其次，快照、导入导出和维护在资源紧张时退让，相关异常通过平台通知反馈。
+- Lite / Full 分离执行与后台队列，Full 独立 Worker 并行处理不同维护任务；JAR / DDT 预览、日志编解码及快照构建使用隔离线程，避免同步解析占用 Web 事件循环。
+- 用例分析支持查看同用例前五次执行结果和日志对比，保留单个及批量分析草稿，支持差异导航、同步滚动及读取失败重试。
+- 安全审计收紧到重要数据变更与身份访问安全事件，排除执行重试等运行事件，同时保留执行历史。审计列表、详情和 CSV 统一中文描述，支持中文搜索与分类筛选；补齐项目版本、测试阶段、运行资源创建和 API 权限拒绝审计。
+- 调整桌面表格和长文本换行，修复中文裁切与列宽挤压，保持任务、执行记录和分析页面的原有操作。
+
+### Fixed
+
+- 大型日志 SQLite 文件通过只读线程有界读取，不在访问公开日志时同步迁移、扫描正文或执行截断检查点；读取与写入分别设置队列和期限，过载返回可重试反馈，未确认日志仍由 Runner spool 重传。
+- SQLite 写锁竞争使用短等待和有界异步退避，鉴权查询不再为每个请求写会话；快照暂时冲突延后构建，避免导入期间页面请求长期占用主线程。
+- PostgreSQL 校时使用专属连接，避免业务池占满后停止采样；连接预热部分失败时归还已借出连接，线程异常退出时拒绝待处理请求并允许后续重建。
+- 自动快照刷新只更新目录内容，避免反复整页重载打断搜索、展开状态及 TestNG / DDT 切换；手动刷新仍更新任务元数据。
+- 浏览器验收等待管理员初始化响应后再检查会话，避免数据库提交早于 Cookie 返回时误跳登录；执行记录长名称验收改为检查完整换行和列宽稳定。
+
+### Database, deployment and compatibility
+
+- SQLite 新增 `0067_queue_work_class_indexes.sql`，只建立队列领取部分索引，不转换业务记录或日志正文；覆盖全新建库、上一迁移升级、失败回滚及修复后重跑。PostgreSQL 无新增迁移。
+- Full 为后台任务增加独立 JetStream subject 和 durable consumer，确认新消息发布后再确认旧消息。升级前排空并停止旧 Web / Worker，统一升级所有节点；回滚前必须排空或迁移新后台 subject 的待处理消息，不能直接启动只消费旧 subject 的版本。
+- Compose 默认允许使用宿主机可用 CPU / 内存，Web / Worker 的 CPU 相对权重分别为 2048 / 1024；可用 `AUTOFORGE_WEB_CPUS`、`AUTOFORGE_WEB_MEMORY_LIMIT`、`AUTOFORGE_WORKER_CPUS`、`AUTOFORGE_WORKER_MEMORY_LIMIT` 设置容器上限，默认 `0` 表示不额外限制。
+- 无新增持久配置字段、外部服务或 Runner Protocol 变更。独立 Worker 显式复用仓库已有精确版本的 `better-sqlite3`；发布镜像包含新增工作线程、共享模块和原生驱动。
+- 继续发布 amd64 / arm64 离线镜像、内置双架构静态 Runner、两个 Jenkins 插件、五主机 Compose 部署包、SBOM、清单与签名；部署包补齐资源优先级和快照升级运维说明。
+
+### Validation and known limitations
+
+- 合并后的本地格式、lint、类型检查、Web / Worker 生产构建通过；841 项 TypeScript 单元测试、Go 测试、28 项 Node 脚本测试以及真实 SQLite / PostgreSQL / JetStream / Redis / MinIO 的 300 项集成测试通过。分析、审计、缓存和桌面布局的 21 项 Playwright 回归通过，无跳过或重试，并人工检查截图。
+- 发布前复测执行轮次与身份权限的 6 项 Lite 浏览器场景、22 项发布脚本测试通过；日志对比场景纳入常规 CI 和断网分析验收。
+- 资源优化此前通过 Lite Docker 与 Full 双 Web / 双 Worker 混合负载验收，各 10 项浏览器场景覆盖导入、导出、快照和 500 槽协议执行；独立日志基准中 4 CPU 相对 1 CPU 的吞吐约为 2.07 倍。混合导入时 Full 的 500 用例批次创建仍约需 24 秒，其他执行记录读取保持响应。
+- SQLite 单文件写事务、共享 PostgreSQL 锁和存储吞吐仍有串行边界；500 槽验收使用协议客户端，不等于 500 个真实 JVM。未完成生产硬件长时间满载、全部硬件故障和导入 / 导出进程被强杀后逐类自动续跑验收，不能声明任意故障或无限请求下始终可用。
 
 ## 1.12.1 - 2026-09-07
 

@@ -16,6 +16,8 @@ readonly -a deployment_documentation=(
   "docs/adr/0012-full-distributed-node-local-logs.md"
   "docs/adr/0013-platform-time-authority.md"
   "docs/architecture/ddt-management.md"
+  "docs/architecture/read-model-snapshots.md"
+  "docs/architecture/runtime-resource-priority.md"
   "docs/legal/runner-toolchain-notices.md"
   "docs/manuals/administrator.md"
   "docs/manuals/api-runner-protocol.md"

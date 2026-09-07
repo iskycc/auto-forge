@@ -123,7 +123,7 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: analysis
-            specs: tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts
+            specs: tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-log-comparison.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: ddt
