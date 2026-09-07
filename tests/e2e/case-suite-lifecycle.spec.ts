@@ -630,6 +630,17 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(0);
   await caseTree.locator("summary").first().click();
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(2);
+  // A new snapshot remounts directory groups. Their native disclosure state must match the
+  // remembered expansion so the next click closes the group and releases its rendered rows.
+  const expandedPackage = await caseTree.locator("details").first().elementHandle();
+  expect(expandedPackage).not.toBeNull();
+  await page.getByRole("button", { name: "刷新数据", exact: true }).click();
+  await expect
+    .poll(() => expandedPackage!.evaluate((element) => element.isConnected), { timeout: 30_000 })
+    .toBe(false);
+  await expect(caseTree.locator("details").first()).toHaveJSProperty("open", true);
+  await expect(caseTree.locator(".suite-tree-case")).toHaveCount(2);
+  await expandedPackage!.dispose();
   await caseTree.locator("summary").first().click();
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(0);
   await caseTree.getByLabel(/^选择包 /u).check();

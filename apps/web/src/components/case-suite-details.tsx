@@ -518,6 +518,7 @@ function SuitePackageGroup({
         directory?.setExpanded(expansionKey, event.currentTarget.open);
         setOpen(event.currentTarget.open);
       }}
+      open={open}
       role="treeitem"
     >
       <summary>
@@ -660,6 +661,7 @@ function SuiteDdtGroup({
         directory?.setExpanded(expansionKey, event.currentTarget.open);
         setOpen(event.currentTarget.open);
       }}
+      open={open}
       role="treeitem"
     >
       <summary>
