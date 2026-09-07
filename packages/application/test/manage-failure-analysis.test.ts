@@ -6,6 +6,32 @@ import type { FailureAnalysisRepository, JarObjectStorePort } from "../src/ports
 const NOW = new Date("2026-09-01T02:00:00.000Z");
 
 describe("FailureAnalysisService", () => {
+  it("anchors previous executions to the claim in the authorized project", async () => {
+    const getClaim = vi.fn(async () => failureAnalysisClaim());
+    const listPreviousExecutions = vi.fn(async () => []);
+    const service = createService({ getClaim, listPreviousExecutions });
+
+    await expect(
+      service.listPreviousExecutions({ projectId: "project-a", analysisId: "analysis-a" }),
+    ).resolves.toEqual({ items: [] });
+    expect(getClaim).toHaveBeenCalledWith("analysis-a", "project-a");
+    expect(listPreviousExecutions).toHaveBeenCalledWith({
+      projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-a",
+      limit: 5,
+    });
+  });
+
+  it("rejects missing or cross-project analysis anchors before reading execution history", async () => {
+    const listPreviousExecutions = vi.fn(async () => []);
+    const service = createService({ getClaim: vi.fn(async () => null), listPreviousExecutions });
+    await expect(
+      service.listPreviousExecutions({ projectId: "project-b", analysisId: "analysis-a" }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_NOT_FOUND" });
+    expect(listPreviousExecutions).not.toHaveBeenCalled();
+  });
+
   it("normalizes and bounds candidate and personal analysis search queries", async () => {
     const listCandidates = vi.fn(async () => ({ items: [] }));
     const listClaims = vi.fn(async () => ({ items: [] }));

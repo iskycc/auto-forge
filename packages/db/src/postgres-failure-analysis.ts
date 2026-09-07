@@ -22,6 +22,11 @@ import {
   type FailureAnalysisStatisticsCountRow,
 } from "./failure-analysis-shared";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
+import {
+  previousExecutionsSql,
+  toFailureAnalysisExecution,
+  type FailureAnalysisExecutionRow,
+} from "./failure-analysis-executions";
 
 type BatchRow = {
   id: string;
@@ -41,6 +46,17 @@ type FailureAnalysisHistoryRow = FailureAnalysisRow & {
 
 export class PostgresFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
+
+  async listPreviousExecutions(
+    input: Parameters<FailureAnalysisRepository["listPreviousExecutions"]>[0],
+  ) {
+    await this.handle.ready;
+    const result = await this.handle.pool.query<FailureAnalysisExecutionRow>(
+      previousExecutionsSql(["$1", "$2", "$3", "$4"]),
+      [input.projectId, input.batchId, input.caseDefinitionId, input.limit],
+    );
+    return result.rows.map(toFailureAnalysisExecution);
+  }
 
   async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {
     const batch = await this.readBatch(input, "eligible");

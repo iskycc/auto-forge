@@ -267,6 +267,20 @@ export class FailureAnalysisService {
     });
   }
 
+  async listPreviousExecutions(input: { projectId: string; analysisId: string }) {
+    const claim = await this.repository.getClaim(input.analysisId, input.projectId);
+    if (!claim) {
+      throw new DomainError("FAILURE_ANALYSIS_NOT_FOUND", "未找到该项目中的用例分析记录。");
+    }
+    const items = await this.repository.listPreviousExecutions({
+      projectId: input.projectId,
+      batchId: claim.batchId,
+      caseDefinitionId: claim.caseDefinitionId,
+      limit: 5,
+    });
+    return { items };
+  }
+
   listRecentCaseHistories(input: {
     projectId: string;
     caseDefinitionIds: readonly string[];

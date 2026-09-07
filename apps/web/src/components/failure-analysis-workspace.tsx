@@ -42,6 +42,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 
 import { FailureAnalysisAssignmentDialog } from "@/components/failure-analysis-assignment-dialog";
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
+import { AttemptLogComparison } from "@/components/attempt-log-comparison";
+import {
+  FailureAnalysisExecutionHistory,
+  type AnalysisLogComparison,
+} from "@/components/failure-analysis-execution-history";
 import { FailureAnalysisConclusionPicker } from "@/components/failure-analysis-conclusion-picker";
 import { LoadingState } from "@/components/loading-state";
 import { Button, Input, Select, Textarea } from "@/components/ui";
@@ -1347,6 +1352,8 @@ function CompleteAnalysisDialog({
   const [remark, setRemark] = useState(initial?.remark ?? "");
   const [uploadedClaims, setUploadedClaims] = useState(claims);
   const [logClaim, setLogClaim] = useState<FailureAnalysisClaimView>();
+  const [logComparison, setLogComparison] = useState<AnalysisLogComparison>();
+  const closeLogComparison = useCallback(() => setLogComparison(undefined), []);
   const [previewClaim, setPreviewClaim] = useState<FailureAnalysisClaimView>();
   const [imageZoomPercent, setImageZoomPercent] = useState(100);
   const [submitting, setSubmitting] = useState(false);
@@ -1495,6 +1502,7 @@ function CompleteAnalysisDialog({
       category !== "rerun_passed" ||
       readOnly ||
       logClaim ||
+      logComparison ||
       previewClaim ||
       showCaseConfirmation ||
       showConclusionPicker ||
@@ -1524,6 +1532,7 @@ function CompleteAnalysisDialog({
     category,
     inheritanceCandidate,
     logClaim,
+    logComparison,
     previewClaim,
     readOnly,
     savePastedScreenshot,
@@ -1673,6 +1682,7 @@ function CompleteAnalysisDialog({
           aria-modal="true"
           aria-hidden={
             logClaim ||
+            logComparison ||
             previewClaim ||
             showCaseConfirmation ||
             showConclusionPicker ||
@@ -1756,6 +1766,12 @@ function CompleteAnalysisDialog({
                 ))}
               </div>
             </section>
+
+            <FailureAnalysisExecutionHistory
+              claims={claims}
+              projectId={projectId}
+              onCompare={setLogComparison}
+            />
 
             <AnalysisHistoryPanel
               historyError={historyError}
@@ -2028,6 +2044,9 @@ function CompleteAnalysisDialog({
           canReadLogs
           onClose={() => setLogClaim(undefined)}
         />
+      ) : null}
+      {logComparison ? (
+        <AttemptLogComparison comparison={logComparison} onClose={closeLogComparison} />
       ) : null}
       {previewClaim?.screenshot ? (
         <div

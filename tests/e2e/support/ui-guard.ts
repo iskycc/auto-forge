@@ -50,7 +50,9 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
       Array.from(element.childNodes).some(
         (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
       );
-    const modalRoot = Array.from(document.body.querySelectorAll<HTMLElement>('[aria-modal="true"]'))
+    const modalRoot = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[aria-modal="true"], dialog:modal'),
+    )
       .filter(isVisible)
       .at(-1);
     // A modal intentionally overlays the page beneath it. Only its own active interaction

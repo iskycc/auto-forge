@@ -171,6 +171,26 @@ export const failureAnalysisHistoryPageSchema = z.object({
   nextCursor: z.string().optional(),
 });
 
+export const failureAnalysisExecutionSchema = z.object({
+  executionRunId: z.string().min(1),
+  batchId: z.string().min(1),
+  batchSequenceNumber: z.number().int().positive(),
+  caseVersion: z.number().int().positive(),
+  outcome: z.enum(["succeeded", "failed", "timed_out", "cancelled"]),
+  createdAt: z.string().datetime(),
+  finishedAt: z.string().datetime().optional(),
+  attemptId: z.string().min(1).optional(),
+  attemptNumber: z.number().int().positive().optional(),
+  resultSummary: z.string(),
+});
+
+export const failureAnalysisExecutionHistorySchema = z.object({
+  items: z.array(failureAnalysisExecutionSchema).max(5),
+});
+
+export type FailureAnalysisExecution = z.infer<typeof failureAnalysisExecutionSchema>;
+export type FailureAnalysisExecutionHistory = z.infer<typeof failureAnalysisExecutionHistorySchema>;
+
 export const claimFailureAnalysisInputSchema = z.object({
   projectId: z.string().min(1),
   projectVersionId: z.string().min(1),

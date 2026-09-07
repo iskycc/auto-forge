@@ -21,6 +21,11 @@ import {
   type FailureAnalysisStatisticsCountRow,
 } from "./failure-analysis-shared";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
+import {
+  previousExecutionsSql,
+  toFailureAnalysisExecution,
+  type FailureAnalysisExecutionRow,
+} from "./failure-analysis-executions";
 
 type BatchRow = {
   id: string;
@@ -40,6 +45,20 @@ type FailureAnalysisHistoryRow = FailureAnalysisRow & {
 
 export class SqliteFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async listPreviousExecutions(
+    input: Parameters<FailureAnalysisRepository["listPreviousExecutions"]>[0],
+  ) {
+    const rows = this.handle.client
+      .prepare(previousExecutionsSql(["?", "?", "?", "?"]))
+      .all(
+        input.projectId,
+        input.batchId,
+        input.caseDefinitionId,
+        input.limit,
+      ) as FailureAnalysisExecutionRow[];
+    return rows.map(toFailureAnalysisExecution);
+  }
 
   async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {
     const batch = await this.readBatch(input, "eligible");
