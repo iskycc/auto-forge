@@ -1091,8 +1091,8 @@ function DirectoryNode({
             >
               <FileCode2 size={16} aria-hidden="true" />
               <span>
-                <strong>{item.displayName}</strong>
-                <code>{item.className}</code>
+                <strong title={item.displayName}>{item.displayName}</strong>
+                <code title={item.className}>{item.className}</code>
               </span>
               <small>{item.methodCount} 个方法</small>
               {outcomeLabel ? (

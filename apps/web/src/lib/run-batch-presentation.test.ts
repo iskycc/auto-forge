@@ -130,9 +130,9 @@ describe("run batch presentation", () => {
   });
 
   it("formats attempt durations, artifact sizes and local datetimes", () => {
-    expect(formatAttemptDuration(420)).toBe("420 ms");
-    expect(formatAttemptDuration(2_500)).toBe("2.50 s");
-    expect(formatAttemptDuration(61_000)).toBe("1 min 1 s");
+    expect(formatAttemptDuration(420)).toBe("420\u00A0ms");
+    expect(formatAttemptDuration(2_500)).toBe("2.50\u00A0s");
+    expect(formatAttemptDuration(61_000)).toBe("1\u00A0min\u00A01\u00A0s");
     expect(formatArtifactBytes(512)).toBe("512 B");
     expect(formatArtifactBytes(2_048)).toBe("2.0 KiB");
     expect(formatArtifactBytes(3 * 1_048_576)).toBe("3.0 MiB");

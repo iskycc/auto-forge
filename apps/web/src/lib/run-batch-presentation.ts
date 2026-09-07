@@ -110,10 +110,14 @@ export function formatLocalDateTime(value: string, timeZone?: string): string {
   return formatPlatformDateTime(value, timeZone);
 }
 
+// 耗时字符串使用不换行空格连接数字与单位：自动表格布局会把整串当作最小内容宽度，
+// 避免 “1 min 29 s” 在窄列里被拆成 “1 min 29 / s” 这类跨行断字。
+const UNIT_SPACE = "\u00A0";
+
 export function formatAttemptDuration(durationMs: number): string {
-  if (durationMs < 1_000) return `${durationMs} ms`;
-  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(2)} s`;
-  return `${Math.floor(durationMs / 60_000)} min ${Math.round((durationMs % 60_000) / 1_000)} s`;
+  if (durationMs < 1_000) return `${durationMs}${UNIT_SPACE}ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(2)}${UNIT_SPACE}s`;
+  return `${Math.floor(durationMs / 60_000)}${UNIT_SPACE}min${UNIT_SPACE}${Math.round((durationMs % 60_000) / 1_000)}${UNIT_SPACE}s`;
 }
 
 export function formatArtifactBytes(sizeBytes: number): string {

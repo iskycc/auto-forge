@@ -720,7 +720,7 @@
   box-shadow: var(--shadow-control);
   font-size: var(--font-size-control);
   font-weight: 640;
-  line-height: 1;
+  line-height: 1.4;
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -1865,6 +1865,12 @@
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
+}
+
+/* 分配用户角色弹窗里两栏并排会把每个字段压到 132px，用户名被截断；
+   子表单改为上下堆叠，字段仍保持两列。 */
+.role-assignment-dialog .settings-paired-forms {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .project-structure-manager {
@@ -3466,6 +3472,7 @@ button.icon-button:disabled {
 }
 
 .class-preview {
+  flex-shrink: 0;
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 13px;
@@ -3822,6 +3829,19 @@ button.icon-button:disabled {
   gap: 7px;
   padding: 13px;
   background: var(--color-surface-muted);
+}
+
+/* 字段数不是列数整数倍时，让最后一格补齐本行剩余列，避免网格尾部露出边框底色的空格子。 */
+.source-meta-grid > div:last-child:nth-child(4n + 1) {
+  grid-column: 1 / -1;
+}
+
+.source-meta-grid > div:last-child:nth-child(4n + 2) {
+  grid-column: span 3;
+}
+
+.source-meta-grid > div:last-child:nth-child(4n + 3) {
+  grid-column: span 2;
 }
 
 .source-meta-grid span {
@@ -4731,10 +4751,12 @@ button.icon-button:disabled {
 
 .runner-state {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   font-weight: 620;
+  white-space: nowrap;
 }
 
 .runner-state i {
@@ -5845,6 +5867,12 @@ button.icon-button:disabled {
   .source-meta-grid {
     grid-template-columns: 1fr 1fr;
   }
+  .source-meta-grid > div:last-child {
+    grid-column: auto;
+  }
+  .source-meta-grid > div:last-child:nth-child(2n + 1) {
+    grid-column: span 2;
+  }
   .suite-layout {
     grid-template-columns: 1fr;
   }
@@ -6009,6 +6037,10 @@ button.icon-button:disabled {
   .source-meta-grid,
   .runner-metrics {
     grid-template-columns: 1fr;
+  }
+  .source-meta-grid > div:last-child,
+  .source-meta-grid > div:last-child:nth-child(2n + 1) {
+    grid-column: auto;
   }
   .suite-card-link {
     grid-template-columns: 42px minmax(0, 1fr) 18px;
@@ -6331,7 +6363,6 @@ button.icon-button:disabled {
   flex-wrap: wrap;
   align-items: center;
   gap: 7px;
-  padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
@@ -6354,6 +6385,52 @@ button.icon-button:disabled {
   gap: 5px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
+}
+
+/* 1024 桌面下自动表格布局会把状态列压到 56px、角色列压到 88px，
+   “启用”“2 个绑定”因此逐字竖排；最小宽度按单元格自然宽度（60/100）留 4px 余量。 */
+.access-users-table th:nth-child(3),
+.access-users-table td:nth-child(3) {
+  min-width: 64px;
+}
+
+.access-users-table th:nth-child(5),
+.access-users-table td:nth-child(5) {
+  min-width: 104px;
+}
+
+.log-time-filter > span {
+  flex: 0 0 auto;
+}
+
+.log-search {
+  row-gap: 6px;
+  padding: 7px 10px;
+}
+
+.log-search > button[type="submit"] {
+  margin-left: auto;
+}
+
+/* 搜索组是可换行 flex 容器，时间筛选标签会被压缩；而 .ui-datetime 的 width:100%
+   以压缩后的标签宽度解析，控件反而画出标签与搜索组右边界。改为按内容定宽，
+   空间不足时由显示按钮内部省略号收缩，保证控件始终留在组内。 */
+.log-search .log-time-filter {
+  min-width: 0;
+}
+
+.log-search .ui-datetime {
+  width: auto;
+  min-width: 0;
+}
+
+.log-search .ui-datetime-display {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.log-search .ui-datetime-display > span {
+  min-width: 0;
 }
 
 .execution-log {
@@ -9546,9 +9623,20 @@ button.icon-button:disabled {
   padding: 9px 12px;
 }
 
+/* 用例树面板在 1024 桌面只有约 300px，150px 基准会让目标任务名被截掉大半；
+   260px 基准让选择器在换行布局中独占一行，任何桌面宽度都能完整显示任务名。 */
 .case-selection-toolbar .ui-select {
   min-width: 0;
   flex: 1 1 150px;
+}
+
+/* 矮视口（<900px 高）下独占一行会挤占用例目录的可用高度（e2e 不变量要求目录
+   勾选后仍 ≥160px），因此只在纵向空间足够时升级为独占一行；矮视口回退共享行，
+   被截断的任务名由触发器 title 提示补全。 */
+@media (min-height: 900px) {
+  .case-selection-toolbar .ui-select {
+    flex: 1 1 260px;
+  }
 }
 
 .case-selection-toolbar > span {
@@ -9686,6 +9774,31 @@ button.icon-button:disabled {
 .case-tree-activate small {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
+}
+
+/* 用例树面板在窄桌面只有约 300–440px：1599px 以下方法数先让位给用例名，
+   1439px 以下结果徽章也让位、目录缩进同步收紧，否则 auto 轨道会把用例名（主标签）
+   挤到 0 宽而完全不可读。这些信息在右侧快速预览与用例详情中仍然完整可见。 */
+@media (max-width: 1599px) {
+  .case-tree-activate small {
+    display: none;
+  }
+}
+
+@media (max-width: 1439px) {
+  .case-tree-activate {
+    grid-template-columns: auto minmax(96px, 1fr);
+    gap: 6px;
+  }
+
+  .case-tree-activate .batch-status {
+    display: none;
+  }
+
+  .case-tree-directory {
+    margin-left: 3px;
+    padding-left: 6px;
+  }
 }
 
 .case-tree-activate small {
@@ -10337,6 +10450,7 @@ button.icon-button:disabled {
   max-width: 100%;
   overflow: hidden;
   overflow-wrap: anywhere;
+  line-height: 1.3;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -10993,11 +11107,12 @@ button.icon-button:disabled {
   justify-content: center;
 }
 
+/* 环图自身封顶 168px，多余的列宽留给失败原因图例，减少图例被省略号截断的概率。 */
 .insight-failure-pie-chart {
   display: grid;
   min-height: 0;
   flex: 1 1 auto;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(180px, 1.2fr);
+  grid-template-columns: minmax(120px, 168px) minmax(0, 1fr);
   align-items: center;
   gap: 22px;
   padding-top: 12px;
@@ -11064,10 +11179,13 @@ button.icon-button:disabled {
 }
 
 .insight-pie-legend b {
+  display: -webkit-box;
   overflow: hidden;
   font-weight: 600;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .insight-pie-legend em {
@@ -11593,12 +11711,17 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+/* 六等分指标带在 1280–1760 桌面下每列只有 125–170px，“当前轮次”等长值折到两行
+   完整展示，比被省略号吃掉关键信息更可取；两行仍放不下时才出现省略号。 */
 .batch-metric > strong {
+  display: -webkit-box;
   overflow: hidden;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .batch-metric > small {
@@ -12981,7 +13104,7 @@ button.icon-button:disabled {
 .dashboard-welcome h1 {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 0;
   margin: 0;
   font-size: 27px;
   font-weight: 400;
@@ -14020,10 +14143,13 @@ button.icon-button:disabled {
 }
 
 .latest-batch-summary strong {
+  display: -webkit-box;
   overflow: hidden;
   font-size: var(--font-size-caption);
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .latest-batch-summary b {
@@ -14295,11 +14421,14 @@ button.icon-button:disabled {
 }
 
 .dashboard-runner-group-grid strong {
+  display: -webkit-box;
   overflow: hidden;
   color: var(--color-text);
   font-size: 12px;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .dashboard-runner-group-grid > a > span:first-child i {
@@ -14632,11 +14761,16 @@ button.icon-button:disabled {
   color: var(--color-warning);
 }
 
+/* 最近动态列在 1536 桌面只有约 200px 文本宽，标题与批次摘要折到两行，
+   避免任务名与通过/失败计数被整段省略。 */
 .design-activity-list strong,
 .design-activity-list small {
+  display: -webkit-box;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .design-activity-list strong {
@@ -15904,7 +16038,7 @@ button.icon-button:disabled {
   gap: 2px;
 }
 
-.global-context-field > span {
+.global-context-field > span:not(.ui-select) {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
   font-weight: 650;
@@ -15984,6 +16118,11 @@ button.icon-button:disabled {
 
 .rerun-failures-dialog {
   width: min(560px, calc(100dvw - 40px));
+}
+
+/* 堆叠后的子表单字段约 316px，仍比“显示名 · 用户名”短 1px 以上，弹窗略加宽留余量。 */
+.role-assignment-dialog {
+  width: min(700px, calc(100dvw - 40px));
 }
 
 .rerun-failures-form {
@@ -16360,12 +16499,11 @@ button.icon-button:disabled {
   color: var(--color-text-tertiary);
 }
 
+/* 变量芯片是模板编辑的入口，全部平铺展示；折叠盒曾把 {{summary.*}} 五个变量藏起来。 */
 .webhook-variable-list {
   display: flex;
-  max-height: 76px;
   flex-wrap: wrap;
   gap: 6px;
-  overflow-y: auto;
 }
 
 .webhook-variable-list .webhook-variable-token {

@@ -289,7 +289,11 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
               onKeyDown={handleTriggerKeyDown}
               type="button"
             >
-              <span className={classes(!hasOptions && "ui-select-placeholder")}>
+              {/* 窄面板里触发器标签可能被省略号截断，悬浮仍可读取完整选中值。 */}
+              <span
+                className={classes(!hasOptions && "ui-select-placeholder")}
+                title={selectedLabel}
+              >
                 {selectedLabel}
               </span>
               <ChevronDown

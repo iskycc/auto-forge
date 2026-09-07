@@ -337,7 +337,7 @@ export function AccessSettings({
             </Button>
           </form>
           <div className="table-scroll">
-            <table className="data-table">
+            <table className="data-table access-users-table">
               <thead>
                 <tr>
                   <th>用户</th>
@@ -481,6 +481,7 @@ export function AccessSettings({
             )}
           </div>
           <ActionDialog
+            className="role-assignment-dialog"
             description="系统角色对全局生效，项目角色仅对选定项目生效。"
             onClose={() => !pending && setCreateDialog(null)}
             open={createDialog === "assignment"}
