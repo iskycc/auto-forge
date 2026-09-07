@@ -671,6 +671,9 @@ verify_dependency_recovery() {
 }
 
 cd "${repository_root}"
+# Contract-only phases instantiate the same log threads as the production server.
+# Build their entrypoints before tests even when no Web bundle is requested.
+pnpm --filter @autoforge/web build:work-thread
 download_dependencies
 start_dependencies
 
