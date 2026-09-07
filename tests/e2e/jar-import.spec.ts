@@ -1050,6 +1050,7 @@ public class MixedVisibleTest {
   await expect(failureReasonDialog.getByRole("columnheader", { name: "异常错误码" })).toBeVisible();
   await expect(failureReasonDialog).not.toContainText("TEST_ASSERTION_FAILED");
   await failureReasonDialog.getByRole("button", { name: "关闭失败原因明细" }).click();
+  await expect(failureReasonDialog).toBeHidden();
   await captureUi(page, "quality-insights-charts-1536");
   await page.setViewportSize({ width: 1024, height: 768 });
   await expect(failureReasonCard.locator(".insight-pie > span")).toBeVisible();
@@ -1058,7 +1059,9 @@ public class MixedVisibleTest {
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
     ),
   ).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(2_200);
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollHeight))
+    .toBeLessThan(2_200);
   await captureUi(page, "quality-insights-charts-1024");
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.locator(".insight-trend-card").getByRole("button", { name: "查看明细" }).click();
