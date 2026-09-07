@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { Pool } from "pg";
 import {
   builtInRoleDefinitions,
   DEFAULT_PROJECT_ID,
@@ -31,6 +32,7 @@ import { PostgresProjectStructureRepository } from "../src/postgres-project-stru
 import { createAttemptLogStore, type AttemptLogStore } from "../src/attempt-log-store";
 
 const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
+let isolatedConnectionString: string;
 
 // PG 日志同样外置到每批次独立 SQLite 文件；测试用临时目录承载批次日志。
 function createTestAttemptLogs(): { store: AttemptLogStore; directory: string } {
@@ -44,9 +46,29 @@ function cleanupTestAttemptLogs(logs: { store: AttemptLogStore; directory: strin
 }
 
 describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
+  const schema = `platform_test_${randomUUID().replaceAll("-", "")}`;
+  let administration: Pool | undefined;
+
+  beforeAll(async () => {
+    // Retention intentionally deletes across projects; keep other concurrent fixtures outside it.
+    administration = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 5_000 });
+    await administration.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(connectionString!);
+    url.searchParams.set("options", `-c search_path=${schema}`);
+    isolatedConnectionString = url.toString();
+  });
+
+  afterAll(async () => {
+    try {
+      await administration?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    } finally {
+      await administration?.end();
+    }
+  });
+
   it("repairs a historical LDAP subject link by preferring the submitted username", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const repository = new PostgresIdentityAccessRepository(handle);
@@ -99,7 +121,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("rolls back the complete first LDAP login and assigns the default role only once", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const repository = new PostgresIdentityAccessRepository(handle);
@@ -173,7 +195,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("overwrites matching classes per hierarchy and allows one JAR object in two versions", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     await handle.ready;
@@ -337,7 +359,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("treats a retry already queued by another caller as idempotent", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const catalog = new PostgresCaseCatalogRepository(handle);
@@ -410,7 +432,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("applies migrations and persists suites and runner heartbeats", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const suites = new PostgresCaseSuiteRepository(handle);
@@ -1095,7 +1117,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("persists role deactivation, project ownership and administrator views", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const identity = new PostgresIdentityAccessRepository(handle);
@@ -1201,6 +1223,16 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         message: "批次已完成。",
         createdAt: now,
       });
+      await operations.createNotification({
+        id: `notification-${projectId}`,
+        userId,
+        projectId,
+        kind: "batch.completed",
+        severity: "info",
+        title: "批次完成",
+        message: "批次已完成。",
+        createdAt: now,
+      });
       await expect(
         operations.countUnreadNotifications({ userId, projectIds: [projectId] }),
       ).resolves.toBe(1);
@@ -1237,7 +1269,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("recovers an existing Runner identity without changing its logical id", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const runners = new PostgresRunnerRepository(handle);
@@ -1294,7 +1326,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("rotates, revokes and deregisters runner credentials", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const runners = new PostgresRunnerRepository(handle);
@@ -1528,7 +1560,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
   });
   it("purges a deregistered runner and hides it from listings", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const runners = new PostgresRunnerRepository(handle);
@@ -1614,7 +1646,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
   });
   it("edits case metadata and restores version history", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const catalog = new PostgresCaseCatalogRepository(handle);
@@ -1720,7 +1752,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("tracks suite lifecycle snapshots and freezes batch policy", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const suites = new PostgresCaseSuiteRepository(handle);
@@ -1897,7 +1929,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("holds failed runs until the whole round completes in round retry mode", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const catalog = new PostgresCaseCatalogRepository(handle);
@@ -2170,7 +2202,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("compares, syncs and deletes case sources with cleanup jobs", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const catalog = new PostgresCaseCatalogRepository(handle);
@@ -2306,7 +2338,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
   });
   it("atomically persists an analytics export and transactional outbox event", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const repository = new PostgresPlatformOperationsRepository(handle);
@@ -2362,7 +2394,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("deletes scheduling events explicitly when execution retention removes batches", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const repository = new PostgresPlatformOperationsRepository(handle);
@@ -2421,7 +2453,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
 
   it("lists the latest terminal run outcome per case definition", async () => {
     const handle = createPostgresDatabase({
-      connectionString: connectionString!,
+      connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const catalog = new PostgresCaseCatalogRepository(handle);

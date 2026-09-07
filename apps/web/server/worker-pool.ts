@@ -1,11 +1,14 @@
-import { availableParallelism } from "node:os";
+import { runtimePriority } from "../src/lib/runtime-priority.ts";
+import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { Worker } from "node:worker_threads";
 
 import type { WorkDispatcher } from "../src/lib/work-runtime.ts";
+import { logPayloadBytes, MAX_QUEUED_LOG_BYTES } from "../src/lib/log-io-runtime.ts";
 import {
-  fullWorkerLaneCount,
   fullWorkerPoolMaxPerLane,
-  workerLaneCount,
+  webResourcePlan,
+  stableLaneIndex,
+  type WebResourcePlan,
 } from "../src/lib/worker-sizing.ts";
 import type {
   WorkRequest,
@@ -15,51 +18,168 @@ import type {
 } from "./work-protocol.ts";
 
 type PendingRequest = {
+  bytes: number;
+  finishForeground(): void;
+  detachAbort(): void;
   resolve(value: unknown): void;
   reject(error: unknown): void;
 };
 
+/** Shared by the embedded Lite worker and the standalone Full worker. */
+export class BackgroundWorkerPool {
+  private readonly lanes: WorkerLane[];
+
+  constructor(
+    configuration: WorkThreadConfiguration,
+    options: { lanes: number; heapMb: number; shutdownGraceMs: number },
+  ) {
+    this.lanes = Array.from(
+      { length: options.lanes },
+      (_, index) =>
+        new WorkerLane(
+          {
+            ...configurationForLane(configuration, options.lanes, index),
+            prioritySignal: runtimePriority().signal,
+            ...(configuration.full ? { full: { ...configuration.full, databasePoolMax: 1 } } : {}),
+          },
+          options.shutdownGraceMs,
+          options.heapMb,
+        ),
+    );
+  }
+
+  executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<unknown> {
+    return this.nextLane().dispatch({ kind: "background-job", job }, signal);
+  }
+
+  runPlatformMaintenance(
+    operation: "notifications" | "retention" | "orphan-logs",
+  ): Promise<unknown> {
+    return this.nextLane().dispatch({ kind: "platform-maintenance", operation });
+  }
+
+  async close(): Promise<void> {
+    await Promise.all(this.lanes.map((lane) => lane.close()));
+  }
+
+  private nextLane(): WorkerLane {
+    return this.lanes.reduce((least, lane) =>
+      lane.pendingCount < least.pendingCount ? lane : least,
+    );
+  }
+}
+
 export class WorkerPool implements WorkDispatcher {
   private readonly schedulingLanes: WorkerLane[];
+  private readonly controlLanes: WorkerLane[];
+  private readonly maintenanceLanes: WorkerLane[];
   private readonly logLanes: WorkerLane[];
   private schedulingCursor = 0;
+
+  get backgroundConcurrency(): number {
+    return this.maintenanceLanes.length;
+  }
 
   constructor(
     configuration: WorkThreadConfiguration,
     backgroundConcurrency: number,
     shutdownGraceMs: number,
+    readonly resourcePlan: WebResourcePlan = webResourcePlan(
+      detectRuntimeResources(),
+      configuration.mode,
+      configuration.full?.databasePoolMax,
+    ),
   ) {
-    // Full 模式每条车道内并发执行数据库事务，并行度来自车道内并发而非车道数；
-    // 少量车道即可吃满 PostgreSQL 并行，避免线程过多在有限核数上互相抢占。
-    const laneCount =
-      configuration.mode === "full"
-        ? fullWorkerLaneCount(
-            availableParallelism(),
-            backgroundConcurrency,
-            configuration.full?.databasePoolMax ?? 1,
-          )
-        : workerLaneCount(availableParallelism(), backgroundConcurrency);
+    const laneCount = resourcePlan.schedulingLanes;
     const laneConfiguration = configurationForLane(configuration, laneCount);
     this.schedulingLanes = Array.from(
       { length: laneCount },
-      () => new WorkerLane(laneConfiguration, shutdownGraceMs),
+      (_, index) =>
+        new WorkerLane(
+          configurationForLane(configuration, laneCount, index),
+          shutdownGraceMs,
+          resourcePlan.workerHeapMb,
+        ),
     );
+    this.maintenanceLanes = Array.from(
+      { length: Math.min(backgroundConcurrency, resourcePlan.maintenanceLanes) },
+      () =>
+        new WorkerLane(
+          {
+            ...laneConfiguration,
+            prioritySignal: runtimePriority().signal,
+            ...(configuration.full ? { full: { ...configuration.full, databasePoolMax: 1 } } : {}),
+          },
+          shutdownGraceMs,
+          resourcePlan.workerHeapMb,
+        ),
+    );
+    this.controlLanes =
+      configuration.mode === "full"
+        ? this.schedulingLanes
+        : Array.from(
+            { length: resourcePlan.controlLanes },
+            () => new WorkerLane(laneConfiguration, shutdownGraceMs, resourcePlan.workerHeapMb),
+          );
     // Full 的执行仓储保持在 Web 主线程，只有补位调度进入工作线程，不创建永远
     // 不会使用的独立日志车道和连接池。Lite 仍将同步日志 SQLite I/O 隔离开。
     this.logLanes =
       configuration.mode === "full"
         ? this.schedulingLanes
         : Array.from(
-            { length: laneCount },
-            () => new WorkerLane(laneConfiguration, shutdownGraceMs),
+            { length: resourcePlan.uploadLanes },
+            () => new WorkerLane(laneConfiguration, shutdownGraceMs, resourcePlan.workerHeapMb),
           );
   }
 
+  async runPlatformMaintenance(operation: "notifications" | "retention"): Promise<boolean> {
+    const lane = this.maintenanceLanes.reduce((least, candidate) =>
+      candidate.pendingCount < least.pendingCount ? candidate : least,
+    );
+    return (await lane.dispatch({
+      kind: "platform-maintenance",
+      operation,
+    })) as boolean;
+  }
+
+  async executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<void> {
+    const lane = this.maintenanceLanes.reduce((least, candidate) =>
+      candidate.pendingCount < least.pendingCount ? candidate : least,
+    );
+    await lane.dispatch({ kind: "background-job", job }, signal);
+  }
+
+  parseFile(
+    operation: "inspect-jar" | "read-jar-source" | "parse-ddt",
+    input: unknown,
+  ): Promise<unknown> {
+    const lane = this.maintenanceLanes.reduce((least, candidate) =>
+      candidate.pendingCount < least.pendingCount ? candidate : least,
+    );
+    // Parsing a user upload has no persistent side effects. Bound admission before copying bytes.
+    if (lane.pendingCount >= 2)
+      return Promise.reject(
+        Object.assign(new Error("文件解析繁忙，请稍后重试。"), {
+          name: "DomainError",
+          code: "PLATFORM_BUSY",
+        }),
+      );
+    return lane.dispatch({ kind: "parse-file", operation, input });
+  }
+
   async scheduleBatch(batchId: string): Promise<unknown> {
-    return this.keyedControlLane(`batch:${batchId}`).dispatch({
+    return this.keyedSchedulingLane(`batch:${batchId}`).dispatch({
       kind: "schedule-batch",
       batchId,
     });
+  }
+
+  async triggerDueSchedules(): Promise<number> {
+    return (await this.nextSchedulingLane().dispatch({ kind: "trigger-schedules" })) as number;
+  }
+
+  createBatch(input: unknown): Promise<unknown> {
+    return this.nextSchedulingLane().dispatch({ kind: "create-batch", input });
   }
 
   async scheduleForRunner(
@@ -67,7 +187,7 @@ export class WorkerPool implements WorkDispatcher {
     batchLimit: number,
     liveAvailableSlots?: number,
   ): Promise<number> {
-    return (await this.keyedControlLane(`runner:${runnerId}`).dispatch({
+    return (await this.keyedSchedulingLane(`runner:${runnerId}`).dispatch({
       kind: "schedule-runner",
       runnerId,
       batchLimit,
@@ -86,6 +206,13 @@ export class WorkerPool implements WorkDispatcher {
     return this.keyedControlLane(`runner:${runnerId}`).dispatch({
       kind: "claim-assignments",
       runnerId,
+      input,
+    });
+  }
+
+  reconcileAttempts(input: unknown): Promise<unknown> {
+    return this.keyedControlLane(`runner:${stringProperty(input, "runnerId")}`).dispatch({
+      kind: "reconcile-attempts",
       input,
     });
   }
@@ -152,7 +279,14 @@ export class WorkerPool implements WorkDispatcher {
   }
 
   private uniqueLanes(): WorkerLane[] {
-    return [...new Set([...this.schedulingLanes, ...this.logLanes])];
+    return [
+      ...new Set([
+        ...this.schedulingLanes,
+        ...this.logLanes,
+        ...this.controlLanes,
+        ...this.maintenanceLanes,
+      ]),
+    ];
   }
 
   private nextSchedulingLane(): WorkerLane {
@@ -162,6 +296,10 @@ export class WorkerPool implements WorkDispatcher {
   }
 
   private keyedControlLane(key: string): WorkerLane {
+    return this.controlLanes[stableLaneIndex(key, this.controlLanes.length)]!;
+  }
+
+  private keyedSchedulingLane(key: string): WorkerLane {
     return this.schedulingLanes[stableLaneIndex(key, this.schedulingLanes.length)]!;
   }
 }
@@ -169,13 +307,18 @@ export class WorkerPool implements WorkDispatcher {
 function configurationForLane(
   configuration: WorkThreadConfiguration,
   laneCount: number,
+  laneIndex = 0,
 ): WorkThreadConfiguration {
   if (configuration.mode !== "full" || !configuration.full) return configuration;
   return {
     ...configuration,
     full: {
       ...configuration.full,
-      databasePoolMax: fullWorkerPoolMaxPerLane(configuration.full.databasePoolMax, laneCount),
+      databasePoolMax: fullWorkerPoolMaxPerLane(
+        configuration.full.databasePoolMax,
+        laneCount,
+        laneIndex,
+      ),
     },
   };
 }
@@ -186,44 +329,99 @@ class WorkerLane {
   private readonly pending = new Map<number, PendingRequest>();
   private readonly drainWaiters = new Set<() => void>();
   private closing = false;
+  private workerFailed = false;
+  private pendingBytes = 0;
 
   constructor(
     private readonly configuration: WorkThreadConfiguration,
     private readonly shutdownGraceMs: number,
+    private readonly heapMb: number,
   ) {}
 
-  dispatch(task: WorkTask): Promise<unknown> {
+  get pendingCount(): number {
+    return this.pending.size;
+  }
+
+  dispatch(task: WorkTask, signal?: AbortSignal): Promise<unknown> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (this.closing) return Promise.reject(new Error("Work thread pool is closing."));
+    if (this.workerFailed)
+      return Promise.reject(new Error("Work thread is recovering; retry after it exits."));
+    const bytes = task.kind === "append-attempt-log-chunks" ? logPayloadBytes(task.input) : 0;
+    if (
+      this.pending.size >= (task.kind === "append-attempt-log-chunks" ? 64 : 256) ||
+      this.pendingBytes + bytes > MAX_QUEUED_LOG_BYTES
+    ) {
+      runtimePriority().report(
+        task.kind === "append-attempt-log-chunks" ? "log_io" : "execution_control",
+      );
+      return Promise.reject(
+        Object.assign(new Error("执行控制队列繁忙，请稍后重试。"), {
+          name: "DomainError",
+          code: "PLATFORM_BUSY",
+        }),
+      );
+    }
     const worker = this.ensureWorker();
     const id = this.nextRequestId;
     this.nextRequestId += 1;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      worker.postMessage({ id, task } satisfies WorkRequest);
+      const abort = () => worker.postMessage({ id, cancel: true });
+      signal?.addEventListener("abort", abort, { once: true });
+      this.pending.set(id, {
+        bytes,
+        resolve,
+        reject,
+        finishForeground:
+          task.kind === "platform-maintenance" ||
+          task.kind === "background-job" ||
+          task.kind === "parse-file"
+            ? () => undefined
+            : runtimePriority().beginForeground(),
+        detachAbort: () => signal?.removeEventListener("abort", abort),
+      });
+      this.pendingBytes += bytes;
+      try {
+        worker.postMessage({ id, task } satisfies WorkRequest);
+      } catch (error) {
+        this.fail(error);
+      }
     });
   }
 
   async close(): Promise<void> {
     this.closing = true;
-    if (!this.worker) return;
+    const worker = this.worker;
+    if (!worker) return;
     await this.waitForDrain();
     if (this.pending.size > 0) {
       this.fail(new Error("Work thread did not drain before the shutdown deadline."));
     }
-    await this.worker.terminate();
-    this.worker = undefined;
+    await worker.terminate();
+    if (this.worker === worker) this.worker = undefined;
   }
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
-    const worker = new Worker(workerModuleUrl(), { workerData: this.configuration });
-    worker.on("message", (response: WorkResponse) => this.receive(response));
-    worker.on("error", (error) => this.fail(error));
+    const worker = new Worker(workerModuleUrl(), {
+      workerData: this.configuration,
+      resourceLimits: { maxOldGenerationSizeMb: this.heapMb },
+    });
+    worker.on("message", (response: WorkResponse) => {
+      if (this.worker === worker && !this.workerFailed) this.receive(response);
+    });
+    worker.on("error", (error) => {
+      if (this.worker !== worker) return;
+      this.workerFailed = true;
+      this.fail(error);
+    });
     worker.on("exit", (code) => {
-      if (code !== 0 && !this.closing) {
+      if (this.worker !== worker) return;
+      this.worker = undefined;
+      this.workerFailed = false;
+      if (!this.closing && (code !== 0 || this.pending.size > 0)) {
         this.fail(new Error(`Work thread stopped unexpectedly with exit code ${code}.`));
       }
-      if (this.worker === worker) this.worker = undefined;
     });
     this.worker = worker;
     return worker;
@@ -233,14 +431,26 @@ class WorkerLane {
     const request = this.pending.get(response.id);
     if (!request) return;
     this.pending.delete(response.id);
+    this.pendingBytes -= request.bytes;
+    request.finishForeground();
+    request.detachAbort();
     if (response.ok) request.resolve(response.value);
     else request.reject(workerError(response.error));
     this.notifyDrained();
   }
 
   private fail(error: unknown): void {
-    for (const request of this.pending.values()) request.reject(error);
+    if (!this.closing)
+      runtimePriority().report(
+        this.configuration.prioritySignal ? "background_refresh" : "execution_control",
+      );
+    for (const request of this.pending.values()) {
+      request.finishForeground();
+      request.detachAbort();
+      request.reject(error);
+    }
     this.pending.clear();
+    this.pendingBytes = 0;
     this.notifyDrained();
   }
 
@@ -273,15 +483,6 @@ function workerModuleUrl(): URL {
   );
 }
 
-function stableLaneIndex(value: string, laneCount: number): number {
-  let hash = 2_166_136_261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return (hash >>> 0) % laneCount;
-}
-
 function stringProperty(input: unknown, key: string): string {
   if (!input || typeof input !== "object") return "unknown";
   const value = Reflect.get(input, key);
@@ -298,6 +499,16 @@ function workerError(input: {
   const error = new Error(input.message);
   error.name = input.name;
   if (input.code) Object.assign(error, { code: input.code, details: input.details });
+  if (
+    input.code === "DDT_DUPLICATE_COLUMNS" &&
+    input.details &&
+    typeof input.details === "object"
+  ) {
+    Object.assign(error, {
+      fileName: Reflect.get(input.details, "fileName"),
+      conflicts: Reflect.get(input.details, "conflicts"),
+    });
+  }
   if (input.stack) error.stack = input.stack;
   return error;
 }

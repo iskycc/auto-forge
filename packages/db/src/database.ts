@@ -4,6 +4,9 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 
+import { isSqliteLockContentionError } from "./lock-contention";
+export { isSqliteLockContentionError } from "./lock-contention";
+
 import { runSqliteMigrations } from "./migrations";
 import { schema } from "./schema";
 
@@ -18,6 +21,8 @@ export type SqliteDatabaseHandle = {
 export type CreateSqliteDatabaseOptions = {
   databasePath: string;
   migrationsFolder: string;
+  /** Applied after migrations; Web/background connections must not sleep for seconds on a writer. */
+  busyTimeoutMs?: number;
 };
 
 export type SqliteLockRetryOptions = {
@@ -40,6 +45,13 @@ export function createSqliteDatabase(options: CreateSqliteDatabaseOptions): Sqli
   client.pragma("journal_mode = WAL");
   client.pragma("synchronous = NORMAL");
   runSqliteMigrations(client, options.migrationsFolder);
+  if (options.busyTimeoutMs !== undefined) {
+    if (!Number.isInteger(options.busyTimeoutMs) || options.busyTimeoutMs < 0) {
+      client.close();
+      throw new Error("SQLite busy timeout must be a nonnegative integer.");
+    }
+    client.pragma(`busy_timeout = ${options.busyTimeoutMs}`);
+  }
 
   return {
     client,
@@ -82,23 +94,6 @@ export async function retrySqliteLockContention<Result>(
       await delay(retryDelayMs);
     }
   }
-}
-
-export function isSqliteLockContentionError(error: unknown): boolean {
-  const pending: unknown[] = [error];
-  const visited = new Set<object>();
-  while (pending.length > 0 && visited.size < 16) {
-    const candidate = pending.shift();
-    if (!candidate || typeof candidate !== "object" || visited.has(candidate)) continue;
-    visited.add(candidate);
-    const code = "code" in candidate ? candidate.code : undefined;
-    if (typeof code === "string" && /^(?:SQLITE_BUSY|SQLITE_LOCKED)(?:_|$)/u.test(code)) {
-      return true;
-    }
-    if ("cause" in candidate) pending.push(candidate.cause);
-    if (candidate instanceof AggregateError) pending.push(...candidate.errors);
-  }
-  return false;
 }
 
 function validateSqliteLockRetryOptions(

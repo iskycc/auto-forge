@@ -23,6 +23,8 @@ export class JobWorker {
       leaseDurationMs: number;
       minimumPollMs: number;
       maximumPollMs: number;
+      workClass?: "execution" | "background";
+      canClaim?: () => boolean;
     },
     private readonly logger: WorkerLogger,
   ) {
@@ -36,6 +38,10 @@ export class JobWorker {
     let pollDelay = this.options.minimumPollMs;
     while (!signal.aborted) {
       this.throwInFlightFailure();
+      if (this.options.canClaim && !this.options.canClaim()) {
+        await delay(this.options.maximumPollMs, signal);
+        continue;
+      }
       const available = this.options.concurrency - this.inFlight.size;
       if (available <= 0) {
         await Promise.race(this.inFlight);
@@ -48,6 +54,7 @@ export class JobWorker {
         now: now.toISOString(),
         leaseExpiresAt: new Date(now.getTime() + this.options.leaseDurationMs).toISOString(),
         limit: available,
+        ...(this.options.workClass ? { workClass: this.options.workClass } : {}),
       });
       if (claimed.length === 0) {
         // 阻塞式队列（JetStream fetch）的 claim 已在服务端等待过一个等待窗口，

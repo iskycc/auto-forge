@@ -4,6 +4,9 @@ services:
   autoforge:
     image: ${AUTOFORGE_BACKEND_IMAGE:?set AUTOFORGE_BACKEND_IMAGE to a loaded AutoForge image}
     pull_policy: never
+    cpus: ${AUTOFORGE_WEB_CPUS:-0}
+    mem_limit: ${AUTOFORGE_WEB_MEMORY_LIMIT:-0}
+    cpu_shares: 2048
     init: true
     restart: unless-stopped
     ports:

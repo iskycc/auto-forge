@@ -17,6 +17,7 @@
     "@autoforge/platform-config": "workspace:*",
     "@autoforge/queue": "workspace:*",
     "@autoforge/testng-discovery": "workspace:*",
+    "better-sqlite3": "13.0.3",
     "nats": "2.29.3",
     "zod": "4.4.3"
   },

@@ -15,15 +15,22 @@ const configuration = z
       mode: z.literal("lite"),
       databasePath: z.string().min(1),
       migrationsFolder: z.string().min(1),
+      refreshFacts: z.boolean().default(true),
+      buildInitial: z.boolean().default(false),
     }),
     z.object({
       mode: z.literal("full"),
       databaseUrl: z.string().min(1),
       migrationsFolder: z.string().min(1),
+      refreshFacts: z.boolean().default(true),
+      buildInitial: z.boolean().default(false),
+      poolMax: z.number().int().positive().default(2),
     }),
   ])
   .parse(workerData);
 
+const priority = new Int32Array(z.instanceof(SharedArrayBuffer).parse(workerData.prioritySignal));
+const canRefresh = () => Atomics.load(priority, 0) === 0 && !shutdown.signal.aborted;
 const shutdown = new AbortController();
 parentPort?.on("message", () => shutdown.abort());
 const resources = await initialize();
@@ -55,23 +62,31 @@ const worker = new ReadModelSnapshotWorker(
   resources.clock,
   { next: randomUUID },
   reportError,
+  canRefresh,
+  () => configuration.buildInitial && Atomics.load(priority, 1) === 0 && !shutdown.signal.aborted,
+  resources.isResourceContention,
 );
 let completedCycles = 0;
+let nextFactsRefreshAt = 0;
 try {
   while (!shutdown.signal.aborted) {
     let refreshed = false;
     try {
+      if (configuration.refreshFacts && canRefresh() && Date.now() >= nextFactsRefreshAt) {
+        await resources.operations.rebuildAnalyticsFacts(100);
+        nextFactsRefreshAt = Date.now() + 1_000;
+      }
       refreshed = await worker.refreshOne();
       completedCycles += 1;
       if (completedCycles % 60 === 0) await worker.cleanup();
     } catch (error) {
       reportError(error);
     }
-    await delay(refreshed ? 50 : 1_000, undefined, { signal: shutdown.signal }).catch(
-      (error: unknown) => {
-        if (!shutdown.signal.aborted) throw error;
-      },
-    );
+    await delay(refreshed ? 50 : configuration.buildInitial ? 250 : 1_000, undefined, {
+      signal: shutdown.signal,
+    }).catch((error: unknown) => {
+      if (!shutdown.signal.aborted) throw error;
+    });
   }
 } finally {
   await resources.clock.close();
@@ -85,10 +100,12 @@ async function initialize() {
     const database = adapters.createSqliteDatabase({
       databasePath: configuration.databasePath,
       migrationsFolder: configuration.migrationsFolder,
+      busyTimeoutMs: 25,
     });
     return {
       statistics: new adapters.SqlitePlatformStatisticsRepository(database),
       snapshots: new adapters.SqliteReadModelSnapshotRepository(database),
+      isResourceContention: adapters.isDatabaseLockContentionError,
       ddt: new adapters.SqliteDdtRepository(database),
       catalog: new adapters.SqliteCaseCatalogRepository(database),
       operations: new adapters.SqlitePlatformOperationsRepository(database),
@@ -105,13 +122,16 @@ async function initialize() {
   const database = adapters.createPostgresDatabase({
     connectionString: configuration.databaseUrl,
     migrationsFolder: configuration.migrationsFolder,
-    poolMax: 2,
+    poolMax: configuration.poolMax,
+    statementTimeoutMs: 2_000,
+    lockTimeoutMs: 50,
   });
   try {
     await database.ready;
     return {
       statistics: new adapters.PostgresPlatformStatisticsRepository(database),
       snapshots: new adapters.PostgresReadModelSnapshotRepository(database),
+      isResourceContention: adapters.isDatabaseLockContentionError,
       ddt: new adapters.PostgresDdtRepository(database),
       catalog: new adapters.PostgresCaseCatalogRepository(database),
       operations: new adapters.PostgresPlatformOperationsRepository(database),
@@ -130,6 +150,7 @@ async function initialize() {
 }
 
 function reportError(error: unknown, query?: { kind: string; projectId: string }) {
+  parentPort?.postMessage({ kind: "background_refresh" });
   process.stderr.write(
     `${JSON.stringify({ timestamp: new Date().toISOString(), level: "error", message: "Background read model refresh failed", requestId: "read-model-worker", kind: query?.kind, projectId: query?.projectId, error: (error instanceof Error ? error.message : String(error)).replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1***@") })}\n`,
   );

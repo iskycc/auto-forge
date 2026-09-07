@@ -22,3 +22,5 @@ export * from "./sqlite-webhook";
 export { createLocalClock } from "./local-clock";
 
 export * from "./sqlite-read-model-snapshots";
+
+export { isDatabaseLockContentionError } from "./lock-contention";

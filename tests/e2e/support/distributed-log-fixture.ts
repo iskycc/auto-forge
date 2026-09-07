@@ -107,7 +107,7 @@ export async function distributedLogFixture(nodeIds: [string, string]) {
     },
     async dispose() {
       await logStore.removeBatchStore(batchId);
-      logStore.close();
+      await logStore.close();
       await handle.pool.query("DELETE FROM run_batches WHERE id=$1", [batchId]);
       await handle.pool.query("DELETE FROM run_batch_log_locations WHERE batch_id=$1", [batchId]);
       await handle.pool.query("DELETE FROM runners WHERE id=$1", [runnerId]);

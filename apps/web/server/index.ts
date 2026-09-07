@@ -1,3 +1,10 @@
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
+import { webResourcePlan } from "../src/lib/worker-sizing.ts";
+import { runtimePriority } from "../src/lib/runtime-priority.ts";
+import { LogReadAdmission } from "./log-read-admission.ts";
+import { LogIoPool } from "./log-io-pool.ts";
+import { registerLogIo, unregisterLogIo } from "../src/lib/log-io-runtime.ts";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -23,6 +30,14 @@ import {
 
 const development = process.env.NODE_ENV !== "production";
 const platformConfiguration = loadAppConfig();
+const resources = detectRuntimeResources();
+const resourcePlan = webResourcePlan(
+  resources,
+  platformConfiguration.mode,
+  platformConfiguration.mode === "full" ? platformConfiguration.databasePoolMax : undefined,
+);
+runtimePriority().configure(resourcePlan.foregroundCapacity);
+log("info", "Runtime resource plan", { ...resourcePlan });
 const hostname = platformConfiguration.web.hostname;
 const port = platformConfiguration.web.port;
 const webDirectory = findWebDirectory(process.cwd());
@@ -31,6 +46,10 @@ const webDirectory = findWebDirectory(process.cwd());
 const workPool = new WorkerPool(
   {
     mode: platformConfiguration.mode,
+    imports: {
+      maxJarBytes: platformConfiguration.maxJarBytes,
+      targetJavaVersion: platformConfiguration.testNgTargetJavaVersion,
+    },
     migrationsFolder: platformConfiguration.migrationsFolder,
     attemptLogsDirectory: join(platformConfiguration.dataDirectory, "attempt-logs"),
     dataDirectory: platformConfiguration.dataDirectory,
@@ -57,21 +76,70 @@ const workPool = new WorkerPool(
   },
   platformConfiguration.worker.concurrency,
   platformConfiguration.worker.shutdownGraceMs,
+  resourcePlan,
 );
 registerWorkDispatcher(workPool);
-const readModelWorker = new ReadModelWorkerHost(
-  platformConfiguration.mode === "lite"
-    ? {
-        mode: "lite",
-        databasePath: platformConfiguration.databasePath,
-        migrationsFolder: platformConfiguration.migrationsFolder,
-      }
-    : {
-        mode: "full",
-        databaseUrl: platformConfiguration.databaseUrl,
-        migrationsFolder: platformConfiguration.migrationsFolder,
+const logIo = new LogIoPool(
+  join(platformConfiguration.dataDirectory, "attempt-logs"),
+  (error) => {
+    runtimePriority().report("log_io");
+    log("error", "Log I/O unavailable", { error: error.message });
+  },
+  undefined,
+  {
+    readLanes: resourcePlan.logReadLanes,
+    writeLanes: resourcePlan.logWriteLanes,
+    heapMb: resourcePlan.workerHeapMb,
+  },
+);
+registerLogIo(logIo);
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelay.enable();
+let previousCpu = process.cpuUsage();
+let previousSampleAt = performance.now();
+const priorityMonitor = setInterval(() => {
+  const now = performance.now();
+  const cpu = process.cpuUsage();
+  const cpuUtilization =
+    (cpu.user - previousCpu.user + cpu.system - previousCpu.system) /
+    ((now - previousSampleAt) * 1000 * resources.cpuCapacity);
+  runtimePriority().observeResources(
+    cpuUtilization,
+    process.availableMemory() / resources.memoryCapacityBytes,
+  );
+  previousCpu = cpu;
+  previousSampleAt = now;
+  runtimePriority().observeEventLoopDelay(eventLoopDelay.max / 1_000_000);
+  eventLoopDelay.reset();
+}, 250);
+priorityMonitor.unref();
+const readModelWorkers = Array.from(
+  { length: resourcePlan.snapshotLanes },
+  (_, index) =>
+    new ReadModelWorkerHost(
+      platformConfiguration.mode === "lite"
+        ? {
+            mode: "lite",
+            databasePath: platformConfiguration.databasePath,
+            migrationsFolder: platformConfiguration.migrationsFolder,
+            heapMb: resourcePlan.workerHeapMb,
+            refreshFacts: index === 0,
+            buildInitial: index === 0,
+          }
+        : {
+            mode: "full",
+            databaseUrl: platformConfiguration.databaseUrl,
+            migrationsFolder: platformConfiguration.migrationsFolder,
+            heapMb: resourcePlan.workerHeapMb,
+            refreshFacts: index === 0,
+            buildInitial: index === 0,
+            poolMax: 1,
+          },
+      (error) => {
+        runtimePriority().report("background_refresh");
+        log("error", "Read model worker unavailable", { error: errorMessage(error) });
       },
-  (error) => log("error", "Read model worker unavailable", { error: errorMessage(error) }),
+    ),
 );
 // 后台预热工作线程（建池、迁移校验、连接预热），不阻塞端口监听；预热失败时
 // 首个真实任务退回冷启动，行为与未预热一致。
@@ -112,11 +180,36 @@ const runtime = globalThis as typeof globalThis & {
 };
 runtime.__autoforgePublishAttemptLogs = (attemptId, chunks) =>
   logStreamRelay.publish(attemptId, chunks);
+const logReadAdmission = new LogReadAdmission(resourcePlan.logReadLanes * 8);
 const server = createServer((request, response) => {
-  const startedAt = performance.now();
   const currentRequestId = requestId(request.headers["x-request-id"]);
   request.headers["x-request-id"] = currentRequestId;
   response.setHeader("X-Request-Id", currentRequestId);
+  const admission = logReadAdmission.acquire(request.method, request.url);
+  if (!admission.admitted) {
+    runtimePriority().report("log_io");
+    const apiRequest = request.url?.startsWith("/api/");
+    response.writeHead(503, {
+      "Content-Type": apiRequest ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
+      "Retry-After": "2",
+      "Cache-Control": "no-store",
+    });
+    response.end(
+      apiRequest
+        ? JSON.stringify({
+            error: {
+              code: "PLATFORM_LOG_BUSY",
+              message: "日志服务繁忙，请稍后重试。",
+              requestId: currentRequestId,
+            },
+          })
+        : "日志服务繁忙，请稍后重试。",
+    );
+    return;
+  }
+  response.once("finish", admission.release);
+  response.once("close", admission.release);
+  const startedAt = performance.now();
   if (platformConfiguration.mode === "full" && platformConfiguration.nodeId) {
     response.setHeader("X-Autoforge-Node", platformConfiguration.nodeId);
   }
@@ -208,6 +301,8 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   await logStreamGateway.close();
   delete runtime.__autoforgePublishAttemptLogs;
   unregisterWorkDispatcher(workPool);
+  clearInterval(priorityMonitor);
+  eventLoopDelay.disable();
   server.closeIdleConnections();
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
@@ -226,9 +321,11 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   const results = await Promise.allSettled([
     app.close(),
     workPool.close(),
-    readModelWorker.close(),
+    ...readModelWorkers.map((worker) => worker.close()),
+    logIo.close(),
     serviceRuntime.__autoforgeClosePlatformServices?.() ?? Promise.resolve(),
   ]);
+  unregisterLogIo(logIo);
   const failures = results.filter((result) => result.status === "rejected");
   for (const failure of failures) {
     log("error", "AutoForge shutdown step failed", {

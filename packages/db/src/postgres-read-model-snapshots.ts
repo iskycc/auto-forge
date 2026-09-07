@@ -36,14 +36,21 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
     return result.rows[0] ? readModelSnapshotFromRow(result.rows[0]) : null;
   }
 
-  async claim(now: string, expiresAt: string, token: string) {
+  async claim(now: string, expiresAt: string, token: string, options?: { onlyUnpublished: true }) {
     await this.handle.ready;
     const result = await this.handle.pool.query<ReadModelSnapshotRow>(
       `UPDATE read_model_snapshots SET lease_token=$1,lease_expires_at=$2
       WHERE id=(SELECT id FROM read_model_snapshots WHERE refresh_after<=$3 AND (lease_expires_at IS NULL OR lease_expires_at<=$3)
-      AND failed<5 AND accessed_at>=$4 ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1 FOR UPDATE SKIP LOCKED)
+      AND failed<5 AND accessed_at>=$4 AND ($5::boolean=FALSE OR generated_at IS NULL)
+      ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1 FOR UPDATE SKIP LOCKED)
       RETURNING *`,
-      [token, expiresAt, now, new Date(Date.parse(now) - 300_000).toISOString()],
+      [
+        token,
+        expiresAt,
+        now,
+        new Date(Date.parse(now) - 300_000).toISOString(),
+        options?.onlyUnpublished ?? false,
+      ],
     );
     return result.rows[0] ? { ...readModelSnapshotFromRow(result.rows[0]), token } : null;
   }
@@ -83,11 +90,11 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
     return (result.rowCount ?? 0) > 0;
   }
 
-  async fail(lease: ReadModelLease, retryAt: string) {
+  async fail(lease: ReadModelLease, retryAt: string, options?: { deferred: true }) {
     await this.handle.pool.query(
-      `UPDATE read_model_snapshots SET failed=CASE WHEN requested_revision=$1 THEN failed+1 ELSE 0 END,refresh_after=CASE WHEN requested_revision=$1 THEN $2 ELSE refresh_after END,
+      `UPDATE read_model_snapshots SET failed=CASE WHEN requested_revision=$1 THEN failed+$5 ELSE 0 END,refresh_after=CASE WHEN requested_revision=$1 THEN $2 ELSE refresh_after END,
       lease_token=NULL,lease_expires_at=NULL WHERE id=$3 AND lease_token=$4`,
-      [lease.requestedRevision, retryAt, lease.id, lease.token],
+      [lease.requestedRevision, retryAt, lease.id, lease.token, options?.deferred ? 0 : 1],
     );
   }
 

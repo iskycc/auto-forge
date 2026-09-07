@@ -4,7 +4,10 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
-  "exports": "./src/platform-configuration.ts",
+  "exports": {
+    ".": "./src/platform-configuration.ts",
+    "./runtime-resources": "./src/runtime-resources.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

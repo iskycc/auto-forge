@@ -38,7 +38,12 @@ export function requirePlaywrightSuccess(report) {
 
 async function verify(phase) {
   assert.ok(
-    ["distributed-contracts", "browser-distributed", "distributed-agent"].includes(phase),
+    [
+      "distributed-contracts",
+      "browser-distributed",
+      "browser-background",
+      "distributed-agent",
+    ].includes(phase),
     "Unknown distributed phase",
   );
   const directory = resolve("test-results/distributed", phase);
@@ -51,6 +56,17 @@ async function verify(phase) {
   if (phase === "distributed-contracts") requireVitestSuccess(await readReport("contracts.json"));
   else {
     requirePlaywrightSuccess(await readReport("browser.json"));
+    if (phase === "browser-background") {
+      const protocol = await readReport("protocol.json");
+      assert.equal(
+        protocol.caseCount,
+        500,
+        "Background acceptance must exercise 500 execution slots",
+      );
+      assert.ok(protocol.readProbeCount > 0, "No foreground reads were measured");
+      assert.ok(protocol.p95ReadLatencyMs < 1_500, "Foreground P95 exceeded the response budget");
+      assert.ok(protocol.maximumReadLatencyMs < 5_000, "A foreground read stalled");
+    }
     if (phase === "distributed-agent") requirePlaywrightSuccess(await readReport("agent.json"));
   }
   process.stdout.write(`Verified non-skipped distributed evidence: ${phase}.\n`);

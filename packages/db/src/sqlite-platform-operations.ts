@@ -20,8 +20,8 @@ import {
   type Permission,
 } from "@autoforge/domain";
 
-import type { AttemptLogStore } from "./attempt-log-store";
-import type { SqliteDatabaseHandle } from "./database";
+import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
+import { retrySqliteLockContention, type SqliteDatabaseHandle } from "./database";
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
   analyticsDateBucket,
@@ -48,7 +48,7 @@ type CountRow = { count: number; bytes?: number | null };
 export class SqlitePlatformOperationsRepository implements PlatformOperationsRepository {
   constructor(
     private readonly handle: SqliteDatabaseHandle,
-    private readonly attemptLogs?: AttemptLogStore,
+    private readonly attemptLogs?: AttemptLogStore | AsyncAttemptLogStore,
   ) {
     this.handle.client.function(
       "autoforge_analytics_day",
@@ -79,7 +79,10 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       deadLetterCleanupJobs: number;
     };
     // 用例日志保存在每批次独立 SQLite 文件中，磁盘占用按目录统计。
-    return { ...row, storedLogBytes: this.attemptLogs ? this.attemptLogs.directoryBytes() : 0 };
+    return {
+      ...row,
+      storedLogBytes: this.attemptLogs ? await this.attemptLogs.directoryBytes() : 0,
+    };
   }
 
   async listServiceAccounts(): Promise<ServiceAccount[]> {
@@ -91,26 +94,28 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
 
   async createServiceAccount(record: ServiceAccount): Promise<ServiceAccount> {
     try {
-      this.handle.client
-        .prepare(
-          `INSERT INTO service_accounts
+      await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(
+            `INSERT INTO service_accounts
            (id, name, normalized_name, description, status, system_permissions_json,
             project_permissions_json, created_by, created_at, updated_at, revision)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          record.id,
-          record.name,
-          normalizeName(record.name),
-          record.description,
-          record.status,
-          JSON.stringify(record.systemPermissions),
-          JSON.stringify(record.projectPermissions),
-          record.createdBy,
-          record.createdAt,
-          record.updatedAt,
-          record.revision,
-        );
+          )
+          .run(
+            record.id,
+            record.name,
+            normalizeName(record.name),
+            record.description,
+            record.status,
+            JSON.stringify(record.systemPermissions),
+            JSON.stringify(record.projectPermissions),
+            record.createdBy,
+            record.createdAt,
+            record.updatedAt,
+            record.revision,
+          ),
+      );
     } catch (error) {
       throw databaseConflict(error, "SERVICE_ACCOUNT_NAME_CONFLICT", "服务账号名称已存在。");
     }
@@ -136,25 +141,27 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
           : JSON.stringify(input.projectPermissions),
     };
     try {
-      const result = this.handle.client
-        .prepare(
-          `UPDATE service_accounts
+      const result = await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(
+            `UPDATE service_accounts
            SET name = ?, normalized_name = ?, description = ?, status = ?,
                system_permissions_json = ?, project_permissions_json = ?, updated_at = ?,
                revision = revision + 1
            WHERE id = ? AND revision = ?`,
-        )
-        .run(
-          next.name,
-          normalizeName(next.name),
-          next.description,
-          next.status,
-          next.systemPermissionsJson,
-          next.projectPermissionsJson,
-          input.updatedAt,
-          input.accountId,
-          input.expectedRevision,
-        );
+          )
+          .run(
+            next.name,
+            normalizeName(next.name),
+            next.description,
+            next.status,
+            next.systemPermissionsJson,
+            next.projectPermissionsJson,
+            input.updatedAt,
+            input.accountId,
+            input.expectedRevision,
+          ),
+      );
       if (result.changes !== 1) versionConflict();
     } catch (error) {
       if (error instanceof DomainError) throw error;
@@ -438,7 +445,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       .prepare(
         `INSERT INTO notifications
          (id, user_id, project_id, kind, severity, title, message, resource_type, resource_id,
-          read_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          read_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
       )
       .run(
         record.id,
@@ -594,7 +601,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async previewRetention(category: RetentionCategory, cutoffAt: string): Promise<RetentionPreview> {
-    const row = this.retentionCount(category, cutoffAt);
+    const row = await this.retentionCount(category, cutoffAt);
     return {
       category,
       cutoffAt,
@@ -609,7 +616,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       .immediate();
     // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
     for (const batchId of result.removedBatchStoreIds) {
-      this.attemptLogs?.removeBatchStore(batchId);
+      await this.attemptLogs?.removeBatchStore(batchId);
     }
     return { deletedRecords: result.deletedRecords, objectKeys: result.objectKeys };
   }
@@ -967,50 +974,52 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async createAnalyticsExportJob(
     record: Parameters<PlatformOperationsRepository["createAnalyticsExportJob"]>[0],
   ) {
-    this.handle.client
-      .transaction(() => {
-        const inserted = this.handle.client
-          .prepare(
-            `INSERT OR IGNORE INTO analytics_export_jobs
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .transaction(() => {
+          const inserted = this.handle.client
+            .prepare(
+              `INSERT OR IGNORE INTO analytics_export_jobs
            (id,requested_by,project_ids_json,filter_json,format,idempotency_key,status,
             progress_percent,created_at,updated_at)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          )
-          .run(
-            record.job.id,
-            record.job.requestedBy,
-            record.projectIds === undefined ? null : JSON.stringify(record.projectIds),
-            JSON.stringify(record.job.filter),
-            record.job.format,
-            record.idempotencyKey,
-            record.job.status,
-            record.job.progressPercent,
-            record.job.createdAt,
-            record.job.updatedAt,
-          );
-        if (inserted.changes === 0) return;
-        this.handle.client
-          .prepare(
-            `INSERT INTO queue_jobs
+            )
+            .run(
+              record.job.id,
+              record.job.requestedBy,
+              record.projectIds === undefined ? null : JSON.stringify(record.projectIds),
+              JSON.stringify(record.job.filter),
+              record.job.format,
+              record.idempotencyKey,
+              record.job.status,
+              record.job.progressPercent,
+              record.job.createdAt,
+              record.job.updatedAt,
+            );
+          if (inserted.changes === 0) return;
+          this.handle.client
+            .prepare(
+              `INSERT INTO queue_jobs
            (message_id,run_id,attempt,schema_version,kind,payload_json,priority,deduplication_key,
             status,available_at,created_at,updated_at)
            VALUES (?,?,?,?,?,?,?,?,'available',?,?,?)`,
-          )
-          .run(
-            record.dispatchJob.messageId,
-            record.dispatchJob.runId,
-            record.dispatchJob.attempt,
-            record.dispatchJob.schemaVersion,
-            record.dispatchJob.kind,
-            JSON.stringify(record.dispatchJob.payload),
-            record.dispatchJob.priority,
-            record.dispatchJob.deduplicationKey,
-            record.dispatchJob.createdAt,
-            record.dispatchJob.createdAt,
-            record.dispatchJob.createdAt,
-          );
-      })
-      .immediate();
+            )
+            .run(
+              record.dispatchJob.messageId,
+              record.dispatchJob.runId,
+              record.dispatchJob.attempt,
+              record.dispatchJob.schemaVersion,
+              record.dispatchJob.kind,
+              JSON.stringify(record.dispatchJob.payload),
+              record.dispatchJob.priority,
+              record.dispatchJob.deduplicationKey,
+              record.dispatchJob.createdAt,
+              record.dispatchJob.createdAt,
+              record.dispatchJob.createdAt,
+            );
+        })
+        .immediate(),
+    );
     const row = this.handle.client
       .prepare("SELECT * FROM analytics_export_jobs WHERE requested_by=? AND idempotency_key=?")
       .get(record.job.requestedBy, record.idempotencyKey) as AnalyticsExportJobRow | undefined;
@@ -1028,13 +1037,16 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async claimAnalyticsExportJob(
     input: Parameters<PlatformOperationsRepository["claimAnalyticsExportJob"]>[0],
   ): ReturnType<PlatformOperationsRepository["claimAnalyticsExportJob"]> {
-    const row = this.handle.client
-      .prepare(
-        `UPDATE analytics_export_jobs
+    const row = await retrySqliteLockContention(
+      () =>
+        this.handle.client
+          .prepare(
+            `UPDATE analytics_export_jobs
          SET status='running',progress_percent=10,started_at=COALESCE(started_at,?),updated_at=?
          WHERE id=? AND status IN ('queued','failed') RETURNING *`,
-      )
-      .get(input.startedAt, input.startedAt, input.jobId) as AnalyticsExportJobRow | undefined;
+          )
+          .get(input.startedAt, input.startedAt, input.jobId) as AnalyticsExportJobRow | undefined,
+    );
     if (!row) return Promise.resolve(null);
     const projectIds = analyticsExportProjectIds(row);
     return Promise.resolve({
@@ -1046,27 +1058,30 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async updateAnalyticsExportJob(
     input: Parameters<PlatformOperationsRepository["updateAnalyticsExportJob"]>[0],
   ) {
-    const row = this.handle.client
-      .prepare(
-        `UPDATE analytics_export_jobs SET
+    const row = await retrySqliteLockContention(
+      () =>
+        this.handle.client
+          .prepare(
+            `UPDATE analytics_export_jobs SET
            status=?, progress_percent=?, row_count=?, size_bytes=?, sha256=?, object_key=?,
            file_name=?, error_code=?, error_summary=?, updated_at=?, finished_at=?
          WHERE id=? RETURNING *`,
-      )
-      .get(
-        input.status,
-        input.progressPercent,
-        input.rowCount ?? null,
-        input.sizeBytes ?? null,
-        input.sha256 ?? null,
-        input.objectKey ?? null,
-        input.fileName ?? null,
-        input.errorCode ?? null,
-        input.errorSummary ?? null,
-        input.updatedAt,
-        input.finishedAt ?? null,
-        input.jobId,
-      ) as AnalyticsExportJobRow | undefined;
+          )
+          .get(
+            input.status,
+            input.progressPercent,
+            input.rowCount ?? null,
+            input.sizeBytes ?? null,
+            input.sha256 ?? null,
+            input.objectKey ?? null,
+            input.fileName ?? null,
+            input.errorCode ?? null,
+            input.errorSummary ?? null,
+            input.updatedAt,
+            input.finishedAt ?? null,
+            input.jobId,
+          ) as AnalyticsExportJobRow | undefined,
+    );
     if (!row) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
     return mapAnalyticsExportJob(row);
   }
@@ -1074,16 +1089,18 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async requestAnalyticsExportCancellation(
     input: Parameters<PlatformOperationsRepository["requestAnalyticsExportCancellation"]>[0],
   ) {
-    this.handle.client
-      .prepare(
-        `UPDATE analytics_export_jobs SET
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE analytics_export_jobs SET
            status=CASE status WHEN 'queued' THEN 'cancelled' WHEN 'running' THEN 'cancel_requested' ELSE status END,
            progress_percent=CASE status WHEN 'queued' THEN 100 ELSE progress_percent END,
            finished_at=CASE status WHEN 'queued' THEN ? ELSE finished_at END,
            updated_at=?
          WHERE id=? AND requested_by=? AND status IN ('queued','running')`,
-      )
-      .run(input.updatedAt, input.updatedAt, input.jobId, input.requestedBy);
+        )
+        .run(input.updatedAt, input.updatedAt, input.jobId, input.requestedBy),
+    );
     const job = await this.getAnalyticsExportJob(input.jobId, input.requestedBy);
     if (!job) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
     return job;
@@ -1193,12 +1210,12 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     return row;
   }
 
-  private retentionCount(category: RetentionCategory, cutoffAt: string): CountRow {
+  private async retentionCount(category: RetentionCategory, cutoffAt: string): Promise<CountRow> {
     if (category === "log") {
       // 日志已迁移到每批次独立 SQLite 文件：按终态批次汇总文件大小。
       const batchIds = this.terminalBatchIdsBefore(cutoffAt);
       const stats = this.attemptLogs
-        ? this.attemptLogs.batchStoreStats(batchIds)
+        ? await this.attemptLogs.batchStoreStats(batchIds)
         : new Map<string, number>();
       let bytes = 0;
       for (const value of stats.values()) bytes += value;

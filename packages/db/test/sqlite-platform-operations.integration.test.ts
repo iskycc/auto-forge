@@ -220,6 +220,16 @@ describe("SQLite platform operations", () => {
         message: "批次已完成。",
         createdAt: "2026-08-12T01:00:00.000Z",
       });
+      await repository.createNotification({
+        id: "notice-1",
+        userId: "user-1",
+        projectId: "project-1",
+        kind: "batch.completed",
+        severity: "info",
+        title: "批次完成",
+        message: "批次已完成。",
+        createdAt: "2026-08-12T01:00:00.000Z",
+      });
       expect(
         await repository.listNotifications({
           userId: "user-1",

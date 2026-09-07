@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { constants as zlibConstants, gunzip, gzip } from "node:zlib";
+import { constants as zlibConstants, gunzip, gzip, gunzipSync, gzipSync } from "node:zlib";
 
 import Database from "better-sqlite3";
 import { DomainError } from "@autoforge/domain";
@@ -16,6 +16,8 @@ const MAX_STAT_ENTRIES = 10_000;
 const MINIMUM_COMPRESSION_BYTES = 1_024;
 const MINIMUM_COMPRESSION_SAVING_BYTES = 64;
 const LOG_READ_BATCH_ROWS = 32;
+const LOG_READ_PAGE_BYTES = 1024 * 1024;
+const LOG_SEARCH_MAXIMUM_ROWS = 4096;
 // zlib 异步 API 与文件、DNS、部分加密操作共享进程级 libuv 工作队列。批跑上传一次
 // 最多包含 256 块；若直接 Promise.all，多个请求会把数千个 gzip 排在公开日志的
 // gunzip 前面，使整个控制面看起来卡死。每个运行上下文只提交少量在途任务，并让
@@ -74,7 +76,29 @@ export type AttemptLogStore = {
   close(): void;
 };
 
-export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogStore {
+/** Disk operations may be isolated from the HTTP event loop without changing repository rules. */
+export type AsyncAttemptLogStore = {
+  [Method in Exclude<keyof AttemptLogStore, "relativeStorePath">]: (
+    ...args: Parameters<AttemptLogStore[Method]>
+  ) => Promise<Awaited<ReturnType<AttemptLogStore[Method]>>>;
+} & Pick<AttemptLogStore, "relativeStorePath">;
+
+export type LogCompression = {
+  compress(content: Buffer): Promise<Buffer>;
+  decompress(content: Buffer, maximumBytes: number): Promise<Buffer>;
+};
+
+/** Only for isolated workers: synchronous codecs avoid competing with Web's libuv FS/DNS pool. */
+export const isolatedThreadLogCompression: LogCompression = {
+  compress: async (content) => gzipSync(content),
+  decompress: async (content, maximumBytes) =>
+    gunzipSync(content, { maxOutputLength: maximumBytes }),
+};
+
+export function createAttemptLogStore(
+  attemptLogsDirectory: string,
+  compression: LogCompression = asynchronousLogCompression,
+): AttemptLogStore {
   mkdirSync(attemptLogsDirectory, { recursive: true });
   const openStores = new Map<string, BatchStoreHandle>();
 
@@ -86,27 +110,55 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
     return statement;
   }
 
-  function openBatch(batchId: string): BatchStoreHandle {
-    const cached = openStores.get(batchId);
-    if (cached) {
+  function openBatch(batchId: string): BatchStoreHandle;
+  function openBatch(batchId: string, access: "read"): BatchStoreHandle | undefined;
+  function openBatch(
+    batchId: string,
+    access: "read" | "write" = "write",
+  ): BatchStoreHandle | undefined {
+    const path = storePath(attemptLogsDirectory, batchId);
+    let cached = openStores.get(batchId);
+    if (cached && !existsSync(path)) {
+      // Retention can remove the file from another I/O lane. An open SQLite
+      // connection otherwise keeps serving the unlinked inode indefinitely.
+      closeStore(batchId);
+      cached = undefined;
+    }
+    if (cached && (access === "read" || !cached.client.readonly)) {
+      // Another writer may have upgraded a legacy file since this reader opened it.
+      if (!cached.compressedSchema)
+        cached.compressedSchema = hasColumn(cached.client, "content_encoding");
+      if (!cached.hasWatermarks)
+        cached.hasWatermarks = !!cached.client
+          .prepare(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='attempt_log_watermarks'",
+          )
+          .get();
       // LRU：命中后移到队尾，驱逐时总是关闭最久未用的句柄。
       openStores.delete(batchId);
       openStores.set(batchId, cached);
       return cached;
     }
+    if (cached) closeStore(batchId);
     if (openStores.size >= MAX_OPEN_STORES) {
       const oldest = openStores.keys().next().value as string | undefined;
       if (oldest) closeStore(oldest);
     }
-    const client = new Database(storePath(attemptLogsDirectory, batchId));
-    client.pragma("journal_mode = WAL");
-    // 与主库一致的 WAL 持久化折衷：NORMAL 在操作系统崩溃时最多丢失最后一段
-    // 已提交日志，不会损坏库文件。日志写入位于 Web 事件循环上的同步调用，
-    // FULL 模式的每次提交 fsync 会阻塞全部请求处理，高并发基准中代价显著。
-    client.pragma("synchronous = NORMAL");
-    client.pragma("foreign_keys = OFF");
-    client.pragma("busy_timeout = 5000");
-    client.exec(`
+    if (access === "read" && !existsSync(path)) return undefined;
+    const client = new Database(path, {
+      readonly: access === "read",
+      fileMustExist: access === "read",
+    });
+    try {
+      client.pragma("busy_timeout = 100");
+      if (access === "write") {
+        client.pragma("journal_mode = WAL");
+        // 与主库一致的 WAL 持久化折衷：NORMAL 在操作系统崩溃时最多丢失最后一段
+        // 已提交日志，不会损坏库文件。磁盘与压缩另由线程隔离，这里保留原有
+        // 持久化语义，不让一次读取改变日志文件的同步策略。
+        client.pragma("synchronous = NORMAL");
+        client.pragma("foreign_keys = OFF");
+        client.exec(`
       CREATE TABLE IF NOT EXISTS attempt_log_chunks (
         attempt_id TEXT NOT NULL,
         stream TEXT NOT NULL CHECK (stream IN ('stdout', 'stderr', 'agent')),
@@ -121,8 +173,6 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         received_at TEXT NOT NULL,
         PRIMARY KEY (attempt_id, stream, sequence)
       );
-      CREATE INDEX IF NOT EXISTS attempt_log_chunks_read_idx
-        ON attempt_log_chunks (attempt_id, stream, sequence);
       CREATE TABLE IF NOT EXISTS attempt_log_watermarks (
         attempt_id TEXT NOT NULL,
         stream TEXT NOT NULL CHECK (stream IN ('stdout', 'stderr', 'agent')),
@@ -131,17 +181,32 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         PRIMARY KEY (attempt_id, stream)
       );
     `);
-    ensureCompressionColumns(client);
-    const handle: BatchStoreHandle = { client, statements: new Map() };
-    openStores.set(batchId, handle);
-    return handle;
+        ensureCompressionColumns(client);
+      }
+      const handle: BatchStoreHandle = {
+        client,
+        statements: new Map(),
+        compressedSchema: hasColumn(client, "content_encoding"),
+        hasWatermarks: !!client
+          .prepare(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='attempt_log_watermarks'",
+          )
+          .get(),
+      };
+      openStores.set(batchId, handle);
+      return handle;
+    } catch (error) {
+      client.close();
+      throw error;
+    }
   }
 
   function closeStore(batchId: string): void {
     const handle = openStores.get(batchId);
     if (!handle) return;
     openStores.delete(batchId);
-    handle.client.pragma("wal_checkpoint(TRUNCATE)");
+    // Eviction is not a maintenance window. TRUNCATE waits for readers and can stall
+    // every subsequent request; SQLite manages checkpoints on the writer connection.
     handle.client.close();
   }
 
@@ -161,7 +226,7 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
       handle,
       `SELECT sequence FROM attempt_log_chunks
        WHERE attempt_id = ? AND stream = ? AND sequence > ? ORDER BY sequence`,
-    ).all(attemptId, stream, acknowledged) as Array<{ sequence: number }>;
+    ).iterate(attemptId, stream, acknowledged) as IterableIterator<{ sequence: number }>;
     for (const row of sequences) {
       if (row.sequence !== acknowledged + 1) break;
       acknowledged = row.sequence;
@@ -202,7 +267,7 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
     const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
     return prepared(
       handle,
-      `SELECT stream, sequence, content, content_encoding, size_bytes, recorded_at
+      `SELECT stream, sequence, content, ${handle.compressedSchema ? "content_encoding" : "'identity' AS content_encoding"}, size_bytes, recorded_at
        FROM attempt_log_chunks
        WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
        ORDER BY sequence ASC LIMIT ?`,
@@ -212,7 +277,9 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
   return {
     async appendChunks(input) {
       assertBatchId(input.batchId);
-      const encodedChunks = await mapLogCodecTasks(input.chunks, encodeLogChunk);
+      const encodedChunks = await mapLogCodecTasks(input.chunks, (chunk) =>
+        encodeLogChunk(chunk, compression),
+      );
       // 压缩在取得 SQLite 句柄前完成；异步 zlib 运行期间 LRU 可能驱逐旧句柄，
       // 因此不能跨 await 持有可能已被关闭的数据库连接。
       const handle = openBatch(input.batchId);
@@ -276,27 +343,50 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
       const items: AttemptLogItem[] = [];
       let afterSequence = input.afterSequence;
       let exhausted = false;
+      let returnedBytes = 0;
+      let scannedRows = 0;
       while (items.length <= input.limit && !exhausted) {
         // 不跨异步解压持有句柄。其他批次的并发访问可能在 await 期间触发 LRU
         // 驱逐；每次同步查询重新命中/打开句柄即可避免继续使用已关闭连接。
-        const handle = openBatch(input.batchId);
+        const handle = openBatch(input.batchId, "read");
+        if (!handle) break;
         const rows = readStoredRows(
           handle,
           {
             ...input,
             afterSequence,
           },
-          input.query ? LOG_READ_BATCH_ROWS : input.limit + 1,
+          Math.min(
+            LOG_READ_BATCH_ROWS,
+            input.query ? LOG_READ_BATCH_ROWS : input.limit + 1 - items.length,
+          ),
         );
-        exhausted = rows.length < (input.query ? LOG_READ_BATCH_ROWS : input.limit + 1);
+        exhausted =
+          rows.length <
+          Math.min(
+            LOG_READ_BATCH_ROWS,
+            input.query ? LOG_READ_BATCH_ROWS : input.limit + 1 - items.length,
+          );
         if (rows.length === 0) break;
         afterSequence = rows.at(-1)?.sequence ?? afterSequence;
-        const decoded = await decodeStoredRows(rows);
+        const decoded = await decodeStoredRows(rows, compression);
+        scannedRows += rows.length;
         for (const item of decoded) {
-          if (!input.query || item.content.includes(input.query)) items.push(item);
-          if (items.length > input.limit) break;
+          if (input.query && !item.content.includes(input.query)) continue;
+          const sizeBytes = Buffer.byteLength(item.content, "utf8");
+          if (
+            items.length === input.limit ||
+            (items.length > 0 && returnedBytes + sizeBytes > LOG_READ_PAGE_BYTES)
+          )
+            return { items, hasMore: true };
+          items.push(item);
+          returnedBytes += sizeBytes;
         }
-        if (!input.query) break;
+        if (input.query && !exhausted && scannedRows >= LOG_SEARCH_MAXIMUM_ROWS)
+          throw new DomainError(
+            "PLATFORM_LOG_QUERY_TOO_BROAD",
+            "日志搜索范围过大，请缩小时间范围后重试。",
+          );
       }
       return {
         items: items.slice(0, input.limit),
@@ -306,7 +396,8 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
 
     acknowledgedSequence(batchId, attemptId, stream) {
       assertBatchId(batchId);
-      const handle = openBatch(batchId);
+      const handle = openBatch(batchId, "read");
+      if (!handle?.hasWatermarks) return -1;
       const row = prepared(
         handle,
         "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
@@ -378,14 +469,18 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
     },
 
     relativeStorePath(batchId) {
-      assertBatchId(batchId);
-      return `${basename(attemptLogsDirectory)}/${basename(storePath(attemptLogsDirectory, batchId))}`;
+      return relativeAttemptLogStorePath(attemptLogsDirectory, batchId);
     },
 
     close() {
       for (const batchId of [...openStores.keys()]) closeStore(batchId);
     },
   };
+}
+
+export function relativeAttemptLogStorePath(directory: string, batchId: string): string {
+  assertBatchId(batchId);
+  return `${basename(directory)}/${batchId}.sqlite`;
 }
 
 function assertBatchId(batchId: string): void {
@@ -401,6 +496,8 @@ function storePath(directory: string, batchId: string): string {
 
 type BatchStoreHandle = {
   client: Database.Database;
+  compressedSchema: boolean;
+  hasWatermarks: boolean;
   /** 预编译语句缓存：better-sqlite3 的 prepare 每次解析 SQL，日志热路径按语句文本复用。 */
   statements: Map<string, Database.Statement>;
 };
@@ -432,7 +529,7 @@ function ensureCompressionColumns(client: Database.Database): void {
     client,
     "content_encoding",
     `ALTER TABLE attempt_log_chunks ADD COLUMN content_encoding TEXT NOT NULL
-     DEFAULT 'identity' CHECK (content_encoding IN ('identity', 'gzip'))`,
+     DEFAULT 'identity'`,
   );
   ensureColumn(
     client,
@@ -464,17 +561,16 @@ function hasColumn(client: Database.Database, column: string): boolean {
   );
 }
 
-async function encodeLogChunk(chunk: AttemptLogChunkInput): Promise<EncodedLogChunk> {
+async function encodeLogChunk(
+  chunk: AttemptLogChunkInput,
+  compression: LogCompression,
+): Promise<EncodedLogChunk> {
   const plainContent = Buffer.from(chunk.content, "utf8");
   const contentSha256 = createHash("sha256").update(plainContent).digest("hex");
   if (plainContent.byteLength < MINIMUM_COMPRESSION_BYTES) {
     return encodedIdentityChunk(chunk, plainContent, contentSha256);
   }
-  const compressed = await logCodecScheduler.scheduleWrite(() =>
-    gzipAsync(plainContent, {
-      level: zlibConstants.Z_DEFAULT_COMPRESSION,
-    }),
-  );
+  const compressed = await compression.compress(plainContent);
   if (compressed.byteLength > plainContent.byteLength - MINIMUM_COMPRESSION_SAVING_BYTES) {
     return encodedIdentityChunk(chunk, plainContent, contentSha256);
   }
@@ -513,18 +609,24 @@ function legacyContentEquals(stored: string | Buffer, expected: string): boolean
   return (typeof stored === "string" ? stored : stored.toString("utf8")) === expected;
 }
 
-async function decodeStoredRows(rows: StoredLogRow[]): Promise<AttemptLogItem[]> {
-  return mapLogCodecTasks(rows, decodeStoredRow);
+async function decodeStoredRows(
+  rows: StoredLogRow[],
+  compression: LogCompression,
+): Promise<AttemptLogItem[]> {
+  return mapLogCodecTasks(rows, (row) => decodeStoredRow(row, compression));
 }
 
-async function decodeStoredRow(row: StoredLogRow): Promise<AttemptLogItem> {
+async function decodeStoredRow(
+  row: StoredLogRow,
+  compression: LogCompression,
+): Promise<AttemptLogItem> {
   const storedContent =
     typeof row.content === "string" ? Buffer.from(row.content, "utf8") : row.content;
   let plainContent: Buffer;
   try {
     plainContent =
       row.content_encoding === "gzip"
-        ? await logCodecScheduler.scheduleRead(() => gunzipAsync(storedContent))
+        ? await compression.decompress(storedContent, Math.max(1, row.size_bytes))
         : storedContent;
   } catch (error) {
     throw new Error(`无法解压 ${row.stream} 日志块 ${row.sequence}，批次日志文件可能已经损坏。`, {
@@ -635,3 +737,12 @@ const logCodecScheduler = new LogCodecScheduler(
   LOG_CODEC_CONCURRENCY,
   MAXIMUM_CONSECUTIVE_LOG_READS,
 );
+
+const asynchronousLogCompression: LogCompression = {
+  compress: (content) =>
+    logCodecScheduler.scheduleWrite(() =>
+      gzipAsync(content, { level: zlibConstants.Z_DEFAULT_COMPRESSION }),
+    ),
+  decompress: (content, maximumBytes) =>
+    logCodecScheduler.scheduleRead(() => gunzipAsync(content, { maxOutputLength: maximumBytes })),
+};

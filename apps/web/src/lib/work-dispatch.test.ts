@@ -1,8 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ExecutionControlRepository, RunBatchSchedulingPort } from "@autoforge/application";
+import type {
+  ExecutionControlRepository,
+  RunBatchSchedulingPort,
+  RunBatchSchedulingService,
+} from "@autoforge/application";
 
-import { CoalescingSchedulingPort, workerBackedExecutionControlRepository } from "./work-dispatch";
+import {
+  CoalescingSchedulingPort,
+  workerBackedExecutionControlRepository,
+  prioritizedExecutionControlRepository,
+  workerBackedBatchCreation,
+} from "./work-dispatch";
 import type { WorkDispatcher } from "./work-runtime";
 
 describe("scheduling coalescing", () => {
@@ -33,6 +42,51 @@ describe("scheduling coalescing", () => {
 });
 
 describe("execution control work dispatch", () => {
+  it("creates a Lite batch in the worker while keeping reads bound to their repository", async () => {
+    const local = {
+      id: "local-summary",
+      create: vi.fn(),
+      getSummary() {
+        return Promise.resolve(this.id);
+      },
+    };
+    const createBatch = vi.fn().mockResolvedValue({ id: "worker-batch" });
+    const dispatcher = { createBatch } as unknown as WorkDispatcher;
+    const service = local as unknown as RunBatchSchedulingService;
+    const isolated = workerBackedBatchCreation(service, dispatcher);
+    await expect(isolated.create({ suiteId: "suite" })).resolves.toEqual({ id: "worker-batch" });
+    expect(createBatch).toHaveBeenCalledWith({ suiteId: "suite" });
+    expect(local.create).not.toHaveBeenCalled();
+    await expect(isolated.getSummary("batch")).resolves.toBe("local-summary");
+    expect(workerBackedBatchCreation(service, undefined)).toBe(service);
+  });
+  it("tracks actual Full control work while allowing dependent snapshot reads to progress", async () => {
+    const finish = vi.fn();
+    const begin = vi.fn(() => finish);
+    const local = {
+      listLogChunks: vi.fn(async () => ({ items: [] })),
+      reconcile: vi.fn(async () => {
+        throw new Error("database unavailable");
+      }),
+    } as unknown as ExecutionControlRepository;
+    const repository = prioritizedExecutionControlRepository(local, begin);
+    await repository.listLogChunks({
+      attemptId: "one",
+      stream: "stdout",
+      afterSequence: -1,
+      limit: 1,
+    });
+    expect(begin).not.toHaveBeenCalled();
+    await expect(
+      repository.reconcile({
+        runnerId: "runner",
+        now: "2026-09-07T00:00:00.000Z",
+        request: { schemaVersion: 1, requestId: "reconcile", attempts: [] },
+      }),
+    ).rejects.toThrow("database unavailable");
+    expect(begin).toHaveBeenCalledTimes(1);
+    expect(finish).toHaveBeenCalledTimes(1);
+  });
   it("moves whole-batch termination away from the Web event loop", async () => {
     const input = {
       batchId: "batch-1",

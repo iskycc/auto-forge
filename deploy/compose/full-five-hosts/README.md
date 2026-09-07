@@ -87,8 +87,15 @@ docker compose ps
 不要对包含 `minio-init` 的整套服务执行 `up --wait`：Compose 会把这个一次性任务的正常退出
 视为等待失败。上面的初始化命令可重复执行，已有 bucket 会保留。
 默认 PostgreSQL `max_connections=200`，对应 `.env` 的 `AUTOFORGE_POSTGRES_MAX_CONNECTIONS`。
-平台 `databasePoolMax=10` 时，三个 Web 主池、三个 Web 调度线程总池和三个 worker 池的预算
-合计最多约 `90` 条连接；提高平台连接池或增加节点时需要同时重算数据库容量。
+平台 `databasePoolMax=10` 时，三个 Web 主池、三个 Web 调度线程总池和三个 worker 主池
+合计最多 `90` 条连接；另计每个 Web 的执行控制池
+`min(databasePoolMax, max(4, ceil(CPU容量 / 2)))`，再计入 Web 和 worker 的每条快照线程、
+每条维护线程各 `1` 条业务连接；每个使用平台时钟的数据库句柄另外预留 `1` 条校时连接。线程数量随 CPU/内存变化，按各节点启动日志中的资源计划重算总连接数，
+并为运维、时钟同步和故障恢复留余量。页面与执行控制分池，避免日志磁盘等待占满页面连接。
+
+各平台默认允许使用主机全部 CPU/内存，Web/worker 使用不同 CPU 相对权重；如需硬限制，设置
+节点 `.env` 的 `AUTOFORGE_WEB_CPUS`、`AUTOFORGE_WEB_MEMORY_LIMIT` 和对应 `WORKER` 字段。
+两容器共享主机时应按负载划分内存，配置示例与压测入口见[资源优先级说明](../../../docs/architecture/runtime-resource-priority.md)。
 
 ## 3. 准备唯一的 Full 源配置
 

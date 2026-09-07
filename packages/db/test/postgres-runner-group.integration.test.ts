@@ -43,7 +43,9 @@ async function createHarness(): Promise<RunnerGroupHarness> {
       ]);
     },
     async dispose() {
-      await handle.pool.query("DELETE FROM runner_groups WHERE id IN ('group-1', 'group-2')");
+      await handle.pool.query(
+        "DELETE FROM runner_groups WHERE id IN ('group-1', 'group-2', 'group-a', 'group-b')",
+      );
       await handle.pool.query("DELETE FROM runners WHERE id = ANY($1::text[])", [runnerIds]);
       await handle.close();
     },

@@ -23,3 +23,5 @@ export * from "./postgres-webhook";
 export { createPostgresClock } from "./postgres-clock";
 
 export * from "./postgres-read-model-snapshots";
+
+export { isDatabaseLockContentionError } from "./lock-contention";

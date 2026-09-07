@@ -62,3 +62,9 @@ Full/Lite 对照。修复前 Full 暴露了两个正确性问题：并发最后�
 单机上 PostgreSQL、NATS、MinIO、Redis、Web、worker 与压测客户端共享 CPU，Full 不保证全面快于
 Lite；它的主要收益仍是多 Web/worker 副本、基础设施故障隔离和横向扩展。选择模式时应同时考虑
 运维成本与目标拓扑，而不能只比较单机阶段耗时。
+
+## 容器多核回归
+
+`pnpm test:runtime-resources` 在容器 CPU/内存限制下验证日志池的实际 CPU 时间与吞吐扩展，并在完整生产镜像中重跑 500 槽位 Runner 协议。运行条件、验收阈值、报告位置和测试边界见[资源优先级说明](../architecture/runtime-resource-priority.md)。测试不使用忙循环人为抬高 CPU，也不将声明线程数量当作多核利用证据。
+
+`pnpm test:background-resources` 在上述 Docker 验收后运行 Full 双 Web/双 Worker 混合业务验收，检查 JAR/DDT 导入、分析导出、统计缓存与 500 槽位执行并行时的正确性和页面响应。每种模式运行 10 项浏览器场景；后台任务完成状态和导出内容也必须通过断言，不能只测健康接口。队列隔离、十万条后台积压、锁竞争退避和双数据库维护行为另由单元/集成测试覆盖。

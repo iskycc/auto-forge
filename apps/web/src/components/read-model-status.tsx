@@ -10,8 +10,10 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export function ReadModelStatusBar({
   snapshots: initialSnapshots,
+  onRefresh,
 }: {
   snapshots: ReadModelStatus[];
+  onRefresh?: () => void;
 }) {
   const [snapshots, setSnapshots] = useState(initialSnapshots);
   const [previousSnapshots, setPreviousSnapshots] = useState(initialSnapshots);
@@ -20,6 +22,7 @@ export function ReadModelStatusBar({
     setSnapshots(initialSnapshots);
   }
   const container = useRef<HTMLDivElement>(null);
+  const notifiedSignature = useRef<string | undefined>(undefined);
   const router = useRouter();
   const toast = useToast();
   const [refreshing, setRefreshing] = useState(false);
@@ -71,9 +74,13 @@ export function ReadModelStatusBar({
           .join(",");
         if (
           nextSignature !== signature &&
+          nextSignature !== notifiedSignature.current &&
           !document.querySelector('[role="dialog"][aria-modal="true"]')
-        )
-          router.refresh();
+        ) {
+          notifiedSignature.current = nextSignature;
+          if (onRefresh) onRefresh();
+          else router.refresh();
+        }
       } catch {
         if (!controller.signal.aborted) setOffline(true);
       } finally {
@@ -92,7 +99,7 @@ export function ReadModelStatusBar({
       clearTimeout(initial);
       document.removeEventListener("visibilitychange", inspect);
     };
-  }, [ids, unsettled, failed, offline, router, signature]);
+  }, [ids, unsettled, failed, offline, router, signature, onRefresh]);
 
   async function refresh() {
     setRefreshing(true);
@@ -104,6 +111,8 @@ export function ReadModelStatusBar({
       });
       if (!response.ok) throw new Error("请求更新失败，请稍后重试。");
       toast.info("已请求后台更新，当前内容仍可继续查看。");
+      if (onRefresh) onRefresh();
+      // Explicit refresh also reloads task metadata outside the directory projection.
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "请求更新失败。");

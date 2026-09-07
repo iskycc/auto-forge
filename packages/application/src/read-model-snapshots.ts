@@ -26,7 +26,12 @@ export type ReadModelLease = ReadModelSnapshot & { token: string };
 export interface ReadModelSnapshotRepository {
   request(id: string, query: ReadModelQuery, now: string): Promise<ReadModelSnapshot>;
   get(id: string): Promise<ReadModelSnapshot | null>;
-  claim(now: string, expiresAt: string, token: string): Promise<ReadModelLease | null>;
+  claim(
+    now: string,
+    expiresAt: string,
+    token: string,
+    options?: { onlyUnpublished: true },
+  ): Promise<ReadModelLease | null>;
   renew(lease: ReadModelLease, now: string, expiresAt: string): Promise<boolean>;
   complete(
     lease: ReadModelLease,
@@ -34,7 +39,7 @@ export interface ReadModelSnapshotRepository {
     generatedAt: string,
     refreshAfter: string,
   ): Promise<boolean>;
-  fail(lease: ReadModelLease, retryAt: string): Promise<void>;
+  fail(lease: ReadModelLease, retryAt: string, options?: { deferred: true }): Promise<void>;
   invalidate(projectId: string, now: string): Promise<void>;
   putPart(lease: ReadModelLease, ordinal: number, payload: unknown): Promise<void>;
   getPart(id: string, generation: string, ordinal: number): Promise<unknown | null>;
@@ -88,19 +93,30 @@ export class ReadModelSnapshotWorker {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly reportError: (error: unknown, query: ReadModelQuery) => void,
+    private readonly canRefresh: () => boolean = () => true,
+    private readonly canBuildInitial: () => boolean = canRefresh,
+    private readonly isResourceContention: (error: unknown) => boolean = () => false,
   ) {}
 
   async refreshOne(): Promise<boolean> {
+    const regularBudget = this.canRefresh();
+    if (!regularBudget && !this.canBuildInitial()) return false;
     const now = this.clock.now();
     const lease = await this.repository.claim(
       now.toISOString(),
       after(now, 120_000),
       this.ids.next(),
+      regularBudget ? undefined : { onlyUnpublished: true },
     );
     if (!lease) return false;
+    const assertBudget = () => {
+      if (!this.canRefresh() && !(lease.generatedAt === null && this.canBuildInitial()))
+        throw new ReadModelRefreshDeferred();
+    };
     let writtenParts = 0;
     // Long directory projections renew between bounded chunks. Expired owners cannot publish.
     const writePart = async (ordinal: number, payload: unknown) => {
+      assertBudget();
       if (
         !(await this.repository.renew(
           lease,
@@ -113,7 +129,9 @@ export class ReadModelSnapshotWorker {
       writtenParts += 1;
     };
     try {
+      assertBudget();
       const payload = await this.build(lease.query, writePart);
+      assertBudget();
       const finishedAt = this.clock.now();
       const published = await this.repository.complete(
         lease,
@@ -139,17 +157,29 @@ export class ReadModelSnapshotWorker {
       if (published) {
         const batchSize = CLEANUP_SNAPSHOT_BATCH_SIZE * READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT;
         for (let remaining = writtenParts; remaining > 0; remaining -= batchSize) {
+          if (!this.canRefresh()) break;
           await this.cleanup();
         }
       }
     } catch (error) {
-      if (!(error instanceof ReadModelRefreshSuperseded)) this.reportError(error, lease.query);
-      await this.repository.fail(lease, after(this.clock.now(), 30_000));
+      const deferred =
+        error instanceof ReadModelRefreshDeferred || this.isResourceContention(error);
+      if (
+        !(error instanceof ReadModelRefreshDeferred) &&
+        !(error instanceof ReadModelRefreshSuperseded)
+      )
+        this.reportError(error, lease.query);
+      await this.repository.fail(
+        lease,
+        after(this.clock.now(), deferred ? 1_000 : 30_000),
+        deferred ? { deferred: true } : undefined,
+      );
     }
     return true;
   }
 
   cleanup(): Promise<void> {
+    if (!this.canRefresh()) return Promise.resolve();
     return this.repository.cleanup(
       after(this.clock.now(), -86_400_000),
       CLEANUP_SNAPSHOT_BATCH_SIZE,
@@ -197,3 +227,4 @@ function after(now: Date, durationMs: number): string {
 
 /** An invalidation during a build is expected competition, not a refresh failure. */
 class ReadModelRefreshSuperseded extends Error {}
+class ReadModelRefreshDeferred extends Error {}

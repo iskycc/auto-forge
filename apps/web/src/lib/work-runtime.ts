@@ -3,6 +3,15 @@
  * 使 NodeNext 编译的 server 入口不会直接执行尚未打包的 TypeScript workspace 源码。
  */
 export interface WorkDispatcher {
+  readonly backgroundConcurrency?: number;
+  createBatch?(input: unknown): Promise<unknown>;
+  triggerDueSchedules?(): Promise<number>;
+  parseFile?(
+    operation: "inspect-jar" | "read-jar-source" | "parse-ddt",
+    input: unknown,
+  ): Promise<unknown>;
+  executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<void>;
+  runPlatformMaintenance(operation: "notifications" | "retention"): Promise<boolean>;
   scheduleBatch(batchId: string): Promise<unknown>;
   scheduleForRunner(
     runnerId: string,
@@ -11,6 +20,7 @@ export interface WorkDispatcher {
   ): Promise<number>;
   appendAttemptLogChunks(input: unknown): Promise<unknown>;
   claimAssignments(input: unknown): Promise<unknown>;
+  reconcileAttempts(input: unknown): Promise<unknown>;
   renewLease(input: unknown): Promise<unknown>;
   completeAttempt(input: unknown): Promise<unknown>;
   declareArtifacts(input: unknown): Promise<unknown>;

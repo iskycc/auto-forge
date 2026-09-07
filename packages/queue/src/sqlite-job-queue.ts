@@ -68,15 +68,30 @@ export class SqliteJobQueue implements JobQueuePort {
     now: string;
     leaseExpiresAt: string;
     limit: number;
+    workClass?: "execution" | "background";
   }): Promise<ClaimedJob[]> {
     validateClaim(input);
+    const classPredicate =
+      input.workClass === "execution"
+        ? " AND kind = 'dispatch-run'"
+        : input.workClass === "background"
+          ? " AND kind <> 'dispatch-run'"
+          : "";
+    // SQLite otherwise prefers the mixed availability index and sorts the entire backlog.
+    // Names are internal constants, never derived from caller-provided SQL.
+    const classIndex =
+      input.workClass === "execution"
+        ? " INDEXED BY queue_jobs_execution_claim_idx"
+        : input.workClass === "background"
+          ? " INDEXED BY queue_jobs_background_claim_idx"
+          : "";
     const hasClaimableWork = await retrySqliteLockContention(() =>
       Boolean(
         this.handle.client
           .prepare(
-            `SELECT 1 FROM queue_jobs
-             WHERE (status = 'available' AND available_at <= ?)
-                OR (status = 'leased' AND lease_expires_at <= ?)
+            `SELECT 1 FROM queue_jobs${classIndex}
+             WHERE ((status = 'available' AND available_at <= ?)
+                OR (status = 'leased' AND lease_expires_at <= ?))${classPredicate}
              LIMIT 1`,
           )
           .get(input.now, input.now),
@@ -88,7 +103,7 @@ export class SqliteJobQueue implements JobQueuePort {
         this.recoverExpiredWithinTransaction(input.now, 1_000);
         const rows = this.handle.client
           .prepare(
-            `SELECT * FROM queue_jobs WHERE status = 'available' AND available_at <= ?
+            `SELECT * FROM queue_jobs${classIndex} WHERE status = 'available' AND available_at <= ?${classPredicate}
              ORDER BY priority DESC, created_at, message_id LIMIT ?`,
           )
           .all(input.now, input.limit) as QueueJobRow[];

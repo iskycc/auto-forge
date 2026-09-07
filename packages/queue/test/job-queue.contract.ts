@@ -12,6 +12,52 @@ type HarnessFactory = (testId: string) => Promise<JobQueueHarness>;
 
 export function jobQueueContract(adapterName: string, createHarness: HarnessFactory): void {
   describe(`${adapterName} contract`, () => {
+    it("reserves dispatch consumption while background deliveries remain leased", async () => {
+      await withHarness(createHarness, "classes", async ({ queue }) => {
+        const background = { ...createJob("import"), kind: "jar-import" as const, priority: 100 };
+        await queue.publish(background);
+        await queue.publish(createJob("dispatch"));
+        const request = {
+          workerId: "background",
+          now: timestamp(),
+          leaseExpiresAt: timestamp(30_000),
+          limit: 1,
+          workClass: "background" as const,
+        };
+        const [firstDispatch] = await queue.claim({
+          ...request,
+          workerId: "execution",
+          workClass: "execution",
+        });
+        expect(firstDispatch?.job.kind).toBe("dispatch-run");
+        await queue.acknowledge({
+          workerId: "execution",
+          deliveryId: firstDispatch!.deliveryId,
+          acknowledgedAt: timestamp(),
+        });
+        const [held] = await queue.claim(request);
+        expect(held?.job.kind).toBe("jar-import");
+        await queue.publish(createJob("dispatch-after-import"));
+        const [dispatch] = await queue.claim({
+          ...request,
+          now: timestamp(),
+          workerId: "execution",
+          workClass: "execution",
+        });
+        expect(dispatch?.job.kind).toBe("dispatch-run");
+        await queue.acknowledge({
+          workerId: "execution",
+          deliveryId: dispatch!.deliveryId,
+          acknowledgedAt: timestamp(),
+        });
+        expect(await queue.depth()).toEqual({ available: 0, leased: 1, deadLetter: 0 });
+        await queue.acknowledge({
+          workerId: "background",
+          deliveryId: held!.deliveryId,
+          acknowledgedAt: timestamp(),
+        });
+      });
+    });
     it("deduplicates messages and does not deliver them before their availability time", async () => {
       await withHarness(createHarness, "delay", async ({ queue }) => {
         const job = createJob("delay");

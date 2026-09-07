@@ -1,3 +1,16 @@
+import { createHash, randomBytes } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  CaseSourceService,
+  PlatformOperationsService,
+  DdtImportService,
+  ImportTestNgJarService,
+  ReadModelSnapshotService,
+} from "@autoforge/application";
+import { jobEnvelopeSchema, createRunBatchInputSchema } from "@autoforge/contracts";
+import { z } from "zod";
+import { PlatformConfigurationStore } from "@autoforge/platform-config";
+import { javaSourceReferenceSchema, ddtImportColumnResolutionSchema } from "@autoforge/contracts";
 import { parentPort, workerData } from "node:worker_threads";
 
 import type {
@@ -14,7 +27,11 @@ import type {
 import { buildAttemptCompletionEvents, RunBatchSchedulingService } from "@autoforge/application";
 import {
   createLocalClock,
+  SqliteDdtRepository,
+  SqliteReadModelSnapshotRepository,
+  SqlitePlatformOperationsRepository,
   createAttemptLogStore,
+  isolatedThreadLogCompression,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
@@ -28,6 +45,9 @@ import {
 } from "@autoforge/db/sqlite";
 import {
   createPostgresDatabase,
+  PostgresDdtRepository,
+  PostgresReadModelSnapshotRepository,
+  PostgresPlatformOperationsRepository,
   createPostgresClock,
   NodeAttemptLogStore,
   createNodeLogTransport,
@@ -50,6 +70,7 @@ import type {
   WorkResponse,
   WorkTask,
   WorkThreadConfiguration,
+  CancelWorkRequest,
 } from "./work-protocol.ts";
 
 const port = parentPort;
@@ -68,11 +89,17 @@ let executionControl:
 let work = Promise.resolve();
 let clock: ManagedPlatformClock;
 let clockInitialization: Promise<void> | undefined;
+const cancellations = new Map<number, AbortController>();
 
-port.on("message", (request: WorkRequest) => {
+port.on("message", (request: WorkRequest | CancelWorkRequest) => {
+  if ("cancel" in request) {
+    cancellations.get(request.id)?.abort(new Error("Background work was cancelled."));
+    return;
+  }
+  cancellations.set(request.id, new AbortController());
   // Full 模式的数据库客户端支持并发事务，线程内并行处理以保留 PostgreSQL
   // 的服务端并行度；Lite 的同步 SQLite 写入保持串行队列语义。
-  if (configuration.mode === "full") {
+  if (configuration.mode === "full" && !configuration.prioritySignal) {
     void processRequest(request);
     return;
   }
@@ -81,7 +108,7 @@ port.on("message", (request: WorkRequest) => {
 
 async function processRequest(request: WorkRequest): Promise<void> {
   try {
-    const value = await execute(request.task);
+    const value = await execute(request.task, cancellations.get(request.id)!.signal);
     port!.postMessage({ id: request.id, ok: true, value } satisfies WorkResponse);
   } catch (error) {
     port!.postMessage({
@@ -89,10 +116,14 @@ async function processRequest(request: WorkRequest): Promise<void> {
       ok: false,
       error: serializedError(error),
     } satisfies WorkResponse);
+  } finally {
+    cancellations.delete(request.id);
   }
 }
 
-async function execute(task: WorkTask): Promise<unknown> {
+async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
+  signal.throwIfAborted();
+  if (task.kind === "parse-file") return parseFile(task);
   clockInitialization ??= initializeClock().catch((error: unknown) => {
     clockInitialization = undefined;
     throw error;
@@ -100,6 +131,17 @@ async function execute(task: WorkTask): Promise<unknown> {
   await clockInitialization;
   clock.now();
   switch (task.kind) {
+    case "create-batch":
+      return schedulingService().create(createRunBatchInputSchema.parse(task.input));
+    case "trigger-schedules":
+      return platformOperations().triggerDueSchedules(
+        async (schedule) => (await schedulingService().create({ suiteId: schedule.suiteId })).id,
+      );
+    case "background-job": {
+      while (!backgroundAllowed()) await delay(100, undefined, { signal });
+      signal.throwIfAborted();
+      return executeBackgroundJob(task.job, signal);
+    }
     case "warmup": {
       // 启动预热：提前完成数据库句柄构建、迁移校验、连接池预热与调度协作者
       // 装配，避免首个真实任务（通常是 Runner 心跳触发的补位调度）承担冷启动。
@@ -120,6 +162,22 @@ async function execute(task: WorkTask): Promise<unknown> {
     case "claim-assignments":
       return executionRepository().claim(
         task.input as Parameters<ExecutionControlRepository["claim"]>[0],
+      );
+    case "platform-maintenance": {
+      if (!backgroundAllowed()) return false;
+      if (task.operation === "orphan-logs") {
+        const logs = configuration.mode === "full" ? fullLogStore() : logStore();
+        if (logs instanceof NodeAttemptLogStore) await logs.cleanupOrphans();
+        return true;
+      }
+      const operations = platformOperations();
+      if (task.operation === "notifications") await operations.generateNotifications(100);
+      else await operations.runRetentionCycle(100);
+      return true;
+    }
+    case "reconcile-attempts":
+      return executionRepository().reconcile(
+        task.input as Parameters<ExecutionControlRepository["reconcile"]>[0],
       );
     case "renew-lease":
       return executionRepository().renewLease(
@@ -162,6 +220,116 @@ async function execute(task: WorkTask): Promise<unknown> {
   }
 }
 
+async function parseFile(task: Extract<WorkTask, { kind: "parse-file" }>): Promise<unknown> {
+  if (task.operation === "parse-ddt") {
+    const { parseDdtUpload } = await import("@autoforge/ddt-import");
+    const input = z
+      .object({
+        fileName: z.string(),
+        mediaType: z.string(),
+        content: z.instanceof(Uint8Array),
+        columnResolutions: ddtImportColumnResolutionSchema
+          .omit({ uploadIndex: true })
+          .array()
+          .optional(),
+      })
+      .parse(task.input);
+    return parseDdtUpload({
+      fileName: input.fileName,
+      mediaType: input.mediaType,
+      content: input.content,
+      ...(input.columnResolutions ? { columnResolutions: input.columnResolutions } : {}),
+    });
+  }
+  const { TestNgJarDiscovery } = await import("@autoforge/testng-discovery");
+  const discovery = new TestNgJarDiscovery(configuration.imports);
+  const input = z
+    .object({
+      fileName: z.string().optional(),
+      content: z.instanceof(Uint8Array),
+      reference: javaSourceReferenceSchema.optional(),
+    })
+    .parse(task.input);
+  return task.operation === "inspect-jar"
+    ? discovery.inspect(input.fileName ?? "upload.jar", input.content)
+    : discovery.readSource(input.content, input.reference);
+}
+
+function backgroundAllowed(): boolean {
+  return (
+    !configuration.prioritySignal ||
+    Atomics.load(new Int32Array(configuration.prioritySignal), 0) === 0
+  );
+}
+
+function platformOperations(): PlatformOperationsService {
+  const repository =
+    configuration.mode === "lite"
+      ? new SqlitePlatformOperationsRepository(sqliteHandle(), logStore())
+      : new PostgresPlatformOperationsRepository(postgresHandle(), fullLogStore());
+  return new PlatformOperationsService(
+    repository,
+    clock,
+    { next: () => uuidV7() },
+    {
+      issue: () => randomBytes(32).toString("base64url"),
+      hash: (value) => createHash("sha256").update(value).digest("hex"),
+    },
+    schedulingCollaborators().objectStore,
+  );
+}
+
+async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promise<void> {
+  const job = jobEnvelopeSchema.parse(input);
+  const { catalog, objectStore } = schedulingCollaborators();
+  const ids = { next: () => uuidV7() };
+  const snapshots = new ReadModelSnapshotService(
+    configuration.mode === "lite"
+      ? new SqliteReadModelSnapshotRepository(sqliteHandle())
+      : new PostgresReadModelSnapshotRepository(postgresHandle()),
+    clock,
+  );
+  switch (job.kind) {
+    case "object-cleanup":
+      return new CaseSourceService(catalog, objectStore, clock, ids).objectCleanupHandler()(
+        job,
+        signal,
+      );
+    case "analytics-export":
+      return platformOperations().analyticsExportJobHandler()(job, signal);
+    case "jar-import": {
+      const { TestNgJarDiscovery } = await import("@autoforge/testng-discovery");
+      if (!configuration.imports)
+        throw new Error("Background JAR import configuration is missing.");
+      return new ImportTestNgJarService({
+        catalog,
+        objectStore,
+        clock,
+        ids,
+        readModelInvalidation: snapshots,
+        discovery: new TestNgJarDiscovery(configuration.imports),
+      }).jobHandler()(job, signal);
+    }
+    case "ddt-import": {
+      const { parseDdtUpload } = await import("@autoforge/ddt-import");
+      const repository =
+        configuration.mode === "lite"
+          ? new SqliteDdtRepository(sqliteHandle())
+          : new PostgresDdtRepository(postgresHandle());
+      return new DdtImportService(
+        repository,
+        objectStore,
+        { parseUpload: parseDdtUpload },
+        clock,
+        ids,
+        snapshots,
+      ).jobHandler()(job, signal);
+    }
+    default:
+      throw new Error(`Job ${job.kind} is not a background maintenance operation.`);
+  }
+}
+
 type SchedulingCollaborators = {
   catalog: CaseCatalogRepository;
   suites: CaseSuiteRepository;
@@ -193,7 +361,9 @@ function schedulingService(): RunBatchSchedulingService {
       collaborators.projectStructures,
       collaborators.runnerGroups,
       configuration.caseExecutionTimeoutSeconds * 1_000,
-      () => configuration.artifactCollectionEnabled,
+      () =>
+        new PlatformConfigurationStore(configuration.dataDirectory).read().limits
+          .artifactCollectionEnabled,
     );
   }
   return scheduler;
@@ -241,6 +411,7 @@ function sqliteHandle(): SqliteDatabaseHandle {
   liteDatabase ??= createSqliteDatabase({
     databasePath: sqlite.databasePath,
     migrationsFolder: configuration.migrationsFolder,
+    ...(configuration.prioritySignal ? { busyTimeoutMs: 25 } : {}),
   });
   return liteDatabase;
 }
@@ -275,7 +446,10 @@ function fullLogStore(): AttemptLogStore | NodeAttemptLogStore {
 }
 
 function logStore(): AttemptLogStore {
-  attemptLogs ??= createAttemptLogStore(configuration.attemptLogsDirectory);
+  attemptLogs ??= createAttemptLogStore(
+    configuration.attemptLogsDirectory,
+    isolatedThreadLogCompression,
+  );
   return attemptLogs;
 }
 
@@ -293,6 +467,13 @@ function serializedError(error: unknown): Extract<WorkResponse, { ok: false }>["
     return {
       name: error.name,
       message: error.message,
+      ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+      ...("code" in error &&
+      error.code === "DDT_DUPLICATE_COLUMNS" &&
+      "fileName" in error &&
+      "conflicts" in error
+        ? { details: { fileName: error.fileName, conflicts: error.conflicts } }
+        : {}),
       ...(error.stack ? { stack: error.stack } : {}),
     };
   }

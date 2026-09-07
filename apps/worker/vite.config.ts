@@ -4,11 +4,17 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    ssr: "src/index.ts",
+    ssr: true,
     target: "node24",
-    rollupOptions: {
+    rolldownOptions: {
+      input: {
+        worker: "src/index.ts",
+        "work-thread": "../web/server/work-thread.ts",
+        "read-model-thread": "../web/server/read-model-thread.ts",
+      },
+      external: ["better-sqlite3"],
       output: {
-        entryFileNames: "worker.mjs",
+        entryFileNames: (entry) => (entry.name === "worker" ? "worker.mjs" : "[name].js"),
       },
     },
   },

@@ -37,6 +37,7 @@ const requiredDirectories = [
 
 const explicitlyExternalModules = [
   "apps/web/node_modules/better-sqlite3",
+  "apps/worker/node_modules/better-sqlite3",
   "apps/web/node_modules/next",
 ];
 
@@ -188,7 +189,10 @@ async function assertBuildOutputsExist() {
     "apps/web/dist-server/server/migrate.js",
     "apps/web/dist-server/server/work-thread.js",
     "apps/web/dist-server/server/read-model-thread.js",
+    "apps/web/dist-server/server/attempt-log-thread.js",
     "apps/worker/dist/worker.mjs",
+    "apps/worker/dist/work-thread.js",
+    "apps/worker/dist/read-model-thread.js",
     "resources/agents/manifest.json",
   ]) {
     const source = resolveRepositoryPath(path);
@@ -210,7 +214,10 @@ async function assertPackagedRuntime(destination, sqlitePrebuild) {
     "apps/web/dist-server/server/migrate.js",
     "apps/web/dist-server/server/work-thread.js",
     "apps/web/dist-server/server/read-model-thread.js",
+    "apps/web/dist-server/server/attempt-log-thread.js",
     "apps/worker/dist/worker.mjs",
+    "apps/worker/dist/work-thread.js",
+    "apps/worker/dist/read-model-thread.js",
     "apps/web/node_modules/nats",
     sqlitePrebuildPath,
     "resources/agents/manifest.json",

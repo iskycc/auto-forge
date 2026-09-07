@@ -483,11 +483,8 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         parsePermissions(row.permissionsJson),
       );
     }
-    this.handle.db
-      .update(userSessions)
-      .set({ lastSeenAt: now })
-      .where(eq(userSessions.id, session.id))
-      .run();
+    // Authentication must stay read-only during bulk writes. The explicit session
+    // refresh heartbeat persists activity and expiry without locking every page GET.
     return {
       user: mapUser(user),
       sessionId: session.id,
@@ -1077,7 +1074,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async appendAudit(event: AuditEvent): Promise<void> {
-    this.insertAudit(event);
+    await retrySqliteLockContention(() => this.insertAudit(event));
   }
 
   private insertAudit(event: AuditEvent): void {

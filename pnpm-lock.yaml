@@ -206,6 +206,9 @@ importers:
       "@autoforge/testng-discovery":
         specifier: workspace:*
         version: link:../../packages/testng-discovery
+      better-sqlite3:
+        specifier: 13.0.3
+        version: 13.0.3
       nats:
         specifier: 2.29.3
         version: 2.29.3

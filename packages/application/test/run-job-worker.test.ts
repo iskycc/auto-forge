@@ -4,6 +4,42 @@ import type { ClaimedJob, JobQueuePort } from "../src/ports";
 import { JobWorker, type JobHandler } from "../src/run-job-worker";
 
 describe("JobWorker", () => {
+  it("leaves paused background jobs durable and unclaimed until resources recover", async () => {
+    vi.useFakeTimers();
+    try {
+      const queue = new FakeQueue([dispatchDelivery()]);
+      const abort = new AbortController();
+      let allowed = false;
+      const worker = new JobWorker(
+        queue,
+        {
+          "dispatch-run": async () => {
+            abort.abort();
+          },
+        },
+        { now: () => new Date("2026-08-10T00:00:00.000Z") },
+        {
+          workerId: "background",
+          concurrency: 1,
+          leaseDurationMs: 30_000,
+          minimumPollMs: 10,
+          maximumPollMs: 100,
+          canClaim: () => allowed,
+          workClass: "background",
+        },
+        { info: vi.fn(), error: vi.fn() },
+      );
+      const running = worker.run(abort.signal);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(queue.claimCount).toBe(0);
+      allowed = true;
+      await vi.advanceTimersByTimeAsync(100);
+      await running;
+      expect(queue.acknowledged).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("acknowledges a completed job and drains after shutdown", async () => {
     const delivery = dispatchDelivery();
     const queue = new FakeQueue([delivery]);

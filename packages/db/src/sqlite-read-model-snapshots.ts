@@ -13,15 +13,19 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
       .prepare("SELECT * FROM read_model_snapshots WHERE id=? AND accessed_at>=?")
       .get(id, activeSince) as ReadModelSnapshotRow | undefined;
     if (recent) return readModelSnapshotFromRow(recent);
-    await retrySqliteLockContention(() =>
-      this.handle.client
-        .prepare(
-          `INSERT INTO read_model_snapshots
+    // A cold page must register its background projection even when atomic imports hold
+    // the writer longer than a normal mutation retry. Waiting stays asynchronous and bounded.
+    await retrySqliteLockContention(
+      () =>
+        this.handle.client
+          .prepare(
+            `INSERT INTO read_model_snapshots
       (id,project_id,query_json,accessed_at,refresh_after) VALUES (?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET accessed_at=excluded.accessed_at
       WHERE read_model_snapshots.accessed_at<?`,
-        )
-        .run(id, query.projectId, JSON.stringify(query), now, now, activeSince),
+          )
+          .run(id, query.projectId, JSON.stringify(query), now, now, activeSince),
+      { maximumAttempts: 9 },
     );
     const snapshot = await this.get(id);
     if (!snapshot) throw new Error(`Read model ${id} disappeared after registration.`);
@@ -35,7 +39,7 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
     return row ? readModelSnapshotFromRow(row) : null;
   }
 
-  async claim(now: string, expiresAt: string, token: string) {
+  async claim(now: string, expiresAt: string, token: string, options?: { onlyUnpublished: true }) {
     const row = await retrySqliteLockContention(
       () =>
         this.handle.client
@@ -43,11 +47,18 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
             `UPDATE read_model_snapshots
       SET lease_token=?,lease_expires_at=? WHERE id=(SELECT id FROM read_model_snapshots
       WHERE refresh_after<=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)
-      AND failed<5 AND accessed_at>=? ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1)
+      AND failed<5 AND accessed_at>=? AND (?=0 OR generated_at IS NULL)
+      ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1)
       RETURNING *`,
           )
-          .get(token, expiresAt, now, now, new Date(Date.parse(now) - 300_000).toISOString()) as
-          ReadModelSnapshotRow | undefined,
+          .get(
+            token,
+            expiresAt,
+            now,
+            now,
+            new Date(Date.parse(now) - 300_000).toISOString(),
+            Number(options?.onlyUnpublished ?? false),
+          ) as ReadModelSnapshotRow | undefined,
     );
     return row ? { ...readModelSnapshotFromRow(row), token } : null;
   }
@@ -104,15 +115,22 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
     );
   }
 
-  async fail(lease: ReadModelLease, retryAt: string) {
+  async fail(lease: ReadModelLease, retryAt: string, options?: { deferred: true }) {
     await retrySqliteLockContention(() =>
       this.handle.client
         .prepare(
           `UPDATE read_model_snapshots
-      SET failed=CASE WHEN requested_revision=? THEN failed+1 ELSE 0 END,refresh_after=CASE WHEN requested_revision=? THEN ? ELSE refresh_after END,lease_token=NULL,lease_expires_at=NULL
+      SET failed=CASE WHEN requested_revision=? THEN failed+? ELSE 0 END,refresh_after=CASE WHEN requested_revision=? THEN ? ELSE refresh_after END,lease_token=NULL,lease_expires_at=NULL
       WHERE id=? AND lease_token=?`,
         )
-        .run(lease.requestedRevision, lease.requestedRevision, retryAt, lease.id, lease.token),
+        .run(
+          lease.requestedRevision,
+          options?.deferred ? 0 : 1,
+          lease.requestedRevision,
+          retryAt,
+          lease.id,
+          lease.token,
+        ),
     );
   }
 

@@ -22,7 +22,7 @@ import {
 } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
-import type { AttemptLogStore } from "./attempt-log-store";
+import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
@@ -50,7 +50,7 @@ type CountRow = { count: string | number; bytes: string | number | null };
 export class PostgresPlatformOperationsRepository implements PlatformOperationsRepository {
   constructor(
     private readonly handle: PostgresDatabaseHandle,
-    private readonly attemptLogs?: AttemptLogStore | NodeAttemptLogStore,
+    private readonly attemptLogs?: AttemptLogStore | AsyncAttemptLogStore | NodeAttemptLogStore,
   ) {}
 
   async readOperationalMetrics() {
@@ -433,7 +433,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     await this.handle.pool.query(
       `INSERT INTO notifications
        (id,user_id,project_id,kind,severity,title,message,resource_type,resource_id,read_at,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO NOTHING`,
       [
         record.id,
         record.userId,

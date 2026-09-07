@@ -41,7 +41,10 @@ export function CachedSuiteDirectory({
     : null;
   return (
     <>
-      <ReadModelStatusBar snapshots={[result.projection?.status ?? snapshot]} />
+      <ReadModelStatusBar
+        snapshots={[result.projection?.status ?? snapshot]}
+        onRefresh={result.refresh}
+      />
       {result.error ? (
         <div role="alert" className="inline-feedback error">
           {result.error}

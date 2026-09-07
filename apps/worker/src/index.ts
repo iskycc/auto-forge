@@ -1,18 +1,16 @@
-import { PostgresPlatformStatisticsRepository } from "@autoforge/db/postgres";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
+import { BackgroundWorkerPool } from "../../web/server/worker-pool";
+import { ReadModelWorkerHost } from "../../web/server/read-model-worker-host";
+import { backgroundResourcePlan } from "../../web/src/lib/worker-sizing";
+import { runtimePriority } from "../../web/src/lib/runtime-priority";
 import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 import {
-  CaseSourceService,
-  DdtImportService,
-  DashboardSnapshotService,
-  CaseSuiteActivityService,
-  ReadModelSnapshotWorker,
-  ReadModelSnapshotService,
-  createReadModelBuilder,
-  ImportTestNgJarService,
   JobWorker,
   PlatformOperationsService,
+  RuntimeNotificationService,
   RunBatchSchedulingService,
   WebhookNotificationService,
   type WorkerLogger,
@@ -23,25 +21,18 @@ import {
   createPostgresClock,
   NodeAttemptLogStore,
   createNodeLogTransport,
-  PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
-  PostgresDdtRepository,
-  PostgresDashboardSnapshotRepository,
-  PostgresReadModelSnapshotRepository,
-  PostgresCaseSuiteActivityRepository,
-  PostgresFailureAnalysisRepository,
   PostgresRunBatchRepository,
   PostgresRunnerRepository,
   PostgresPlatformOperationsRepository,
   PostgresWebhookRepository,
+  PostgresIdentityAccessRepository,
 } from "@autoforge/db/postgres";
-import { parseDdtUpload } from "@autoforge/ddt-import";
 import { uuidV7 } from "@autoforge/ids";
 import { MinioObjectStore } from "@autoforge/object-store/minio";
 import { JetStreamJobQueue } from "@autoforge/queue/jetstream";
 import { PostgresOutboxRelay } from "@autoforge/queue/outbox";
 import { connect } from "nats";
-import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
 
 import { loadWorkerConfig } from "./config";
 import { closeServer, startHealthServer } from "./health-server";
@@ -49,6 +40,9 @@ import { logger } from "./logger";
 import { runWithTransientRecovery } from "./transient-recovery";
 
 const config = loadWorkerConfig();
+const resources = detectRuntimeResources();
+const resourcePlan = backgroundResourcePlan(resources, config.concurrency, config.databasePoolMax);
+runtimePriority().configure(Math.max(1, Math.floor(resources.cpuCapacity) - 1));
 const shutdown = new AbortController();
 let fatalError: unknown;
 
@@ -67,6 +61,27 @@ database.pool.on("error", (error) => {
   logger.error("PostgreSQL idle connection lost", { error: error.message });
 });
 await database.ready;
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelay.enable();
+let cpuSample = process.cpuUsage();
+let sampledAt = performance.now();
+const pressureMonitor = setInterval(() => {
+  const now = performance.now();
+  const cpu = process.cpuUsage(cpuSample);
+  runtimePriority().observeEventLoopDelay(eventLoopDelay.max / 1_000_000);
+  runtimePriority().observeResources(
+    (cpu.user + cpu.system) / ((now - sampledAt) * 1_000 * resources.cpuCapacity),
+    process.availableMemory() / resources.memoryCapacityBytes,
+  );
+  cpuSample = process.cpuUsage();
+  sampledAt = now;
+  eventLoopDelay.reset();
+}, 250);
+pressureMonitor.unref();
+const canRefresh = () =>
+  !shutdown.signal.aborted &&
+  database.pool.waitingCount === 0 &&
+  runtimePriority().backgroundAllowed();
 const nats = await connect({
   servers: config.natsServers,
   ...(config.natsToken ? { token: config.natsToken } : {}),
@@ -152,85 +167,103 @@ const webhooks = new WebhookNotificationService(
   clock,
   ids,
 );
-const catalog = new PostgresCaseCatalogRepository(database);
-const dashboardSnapshots = new DashboardSnapshotService(
-  new PostgresDashboardSnapshotRepository(database),
-  catalog,
-  platformOperationsRepository,
-  clock,
+const backgroundPool = new BackgroundWorkerPool(
+  {
+    mode: "full",
+    imports: { maxJarBytes: config.maxJarBytes, targetJavaVersion: config.testNgTargetJavaVersion },
+    migrationsFolder: config.migrationsFolder,
+    attemptLogsDirectory: join(config.dataDirectory, "attempt-logs"),
+    dataDirectory: config.dataDirectory,
+    caseExecutionTimeoutSeconds: config.caseExecutionTimeoutSeconds,
+    artifactCollectionEnabled: config.artifactCollectionEnabled(),
+    scheduler: config.scheduling,
+    full: {
+      ...(config.distributed && config.nodeId
+        ? { nodeId: config.nodeId, masterKey: config.masterKey }
+        : {}),
+      databaseUrl: config.databaseUrl,
+      databasePoolMax: config.databasePoolMax,
+      minio: config.minio,
+    },
+  },
+  {
+    lanes: resourcePlan.maintenanceLanes,
+    heapMb: resourcePlan.workerHeapMb,
+    shutdownGraceMs: config.shutdownGraceMs,
+  },
 );
-const readModels = new ReadModelSnapshotService(
-  new PostgresReadModelSnapshotRepository(database),
-  clock,
-);
-const readModelWorker = new ReadModelSnapshotWorker(
-  new PostgresReadModelSnapshotRepository(database),
-  createReadModelBuilder({
-    statistics: new PostgresPlatformStatisticsRepository(database),
-    suites: new PostgresCaseSuiteRepository(database),
-    batches: new PostgresRunBatchRepository(database),
-    catalog,
-    ddt: new PostgresDdtRepository(database),
-    operations: platformOperationsRepository,
-    dashboard: dashboardSnapshots,
-    suiteActivity: new CaseSuiteActivityService(
-      new PostgresCaseSuiteActivityRepository(database),
-      new PostgresCaseSuiteRepository(database),
-      new PostgresRunBatchRepository(database),
-      clock,
+const readModelWorkers = Array.from(
+  { length: resourcePlan.snapshotLanes },
+  (_, index) =>
+    new ReadModelWorkerHost(
+      {
+        mode: "full",
+        databaseUrl: config.databaseUrl,
+        migrationsFolder: config.migrationsFolder,
+        poolMax: 1,
+        heapMb: resourcePlan.workerHeapMb,
+        refreshFacts: index === 0,
+      },
+      (error) => {
+        runtimePriority().report("background_refresh");
+        logger.error("Background snapshot thread failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
     ),
-    analysis: new PostgresFailureAnalysisRepository(database),
-    clock,
-  }),
-  clock,
-  ids,
-  (error, query) =>
-    logger.error("Read model refresh failed", {
-      kind: query.kind,
-      projectId: query.projectId,
-      error: error instanceof Error ? error.message : String(error),
-    }),
 );
-const caseSources = new CaseSourceService(catalog, objectStore, clock, ids);
-const jarImports = new ImportTestNgJarService({
-  readModelInvalidation: readModels,
-  catalog,
-  objectStore,
+const runtimeNotifications = new RuntimeNotificationService(
+  new PostgresIdentityAccessRepository(database),
+  platformOperationsRepository,
+  runtimePriority(),
   clock,
-  ids,
-  discovery: new TestNgJarDiscovery({
-    maxJarBytes: config.maxJarBytes,
-    targetJavaVersion: config.testNgTargetJavaVersion,
-  }),
-});
-const ddtImports = new DdtImportService(
-  new PostgresDdtRepository(database),
-  objectStore,
-  { parseUpload: parseDdtUpload },
-  clock,
-  ids,
-  readModels,
+  config.workerId,
 );
-const jobWorker = new JobWorker(
+const workerOptions = {
+  concurrency: config.concurrency,
+  leaseDurationMs: 30_000,
+  minimumPollMs: 100,
+  maximumPollMs: 2_000,
+};
+const dispatchWorker = new JobWorker(
   queue,
   {
     "dispatch-run": async (job) => {
       const batchId = job.payload.batchId;
       if (typeof batchId !== "string") throw new Error("Dispatch job batchId is invalid.");
-      await batches.schedule(batchId);
+      const finish = runtimePriority().beginForeground();
+      try {
+        await batches.schedule(batchId);
+      } finally {
+        finish();
+      }
     },
-    "object-cleanup": caseSources.objectCleanupHandler(),
-    "jar-import": jarImports.jobHandler(),
-    "ddt-import": ddtImports.jobHandler(),
-    "analytics-export": platformOperations.analyticsExportJobHandler(),
+  },
+  clock,
+  { ...workerOptions, workerId: config.workerId, workClass: "execution" },
+  logger satisfies WorkerLogger,
+);
+const handleBackgroundJob = async (
+  job: Parameters<BackgroundWorkerPool["executeBackgroundJob"]>[0],
+  signal: AbortSignal,
+) => {
+  await backgroundPool.executeBackgroundJob(job, signal);
+};
+const backgroundWorker = new JobWorker(
+  queue,
+  {
+    "object-cleanup": handleBackgroundJob,
+    "jar-import": handleBackgroundJob,
+    "ddt-import": handleBackgroundJob,
+    "analytics-export": handleBackgroundJob,
   },
   clock,
   {
-    workerId: config.workerId,
-    concurrency: config.concurrency,
-    leaseDurationMs: 30_000,
-    minimumPollMs: 100,
-    maximumPollMs: 2_000,
+    ...workerOptions,
+    concurrency: resourcePlan.maintenanceLanes,
+    workerId: `${config.workerId}-background`,
+    workClass: "background",
+    canClaim: canRefresh,
   },
   logger satisfies WorkerLogger,
 );
@@ -269,11 +302,17 @@ const health = {
 const healthServer = await startHealthServer(config.healthPort, health);
 const loops = Promise.all([
   nodeLogs
-    ? runPeriodic(shutdown.signal, 60_000, () => nodeLogs.cleanupOrphans())
+    ? runPeriodic(shutdown.signal, 60_000, async () => {
+        if (canRefresh()) await backgroundPool.runPlatformMaintenance("orphan-logs");
+      })
     : Promise.resolve(),
-  runWithTransientRecovery(shutdown.signal, () => jobWorker.run(shutdown.signal), logger, {
-    operationName: "job consumer",
+  runWithTransientRecovery(shutdown.signal, () => dispatchWorker.run(shutdown.signal), logger, {
+    operationName: "dispatch consumer",
   }),
+  runWithTransientRecovery(shutdown.signal, () => backgroundWorker.run(shutdown.signal), logger, {
+    operationName: "background consumer",
+  }),
+  runPeriodic(shutdown.signal, 5_000, () => runtimeNotifications.deliverNextPage()),
   runWithTransientRecovery(shutdown.signal, () => outboxRelay.run(shutdown.signal), logger, {
     operationName: "outbox relay",
   }),
@@ -284,18 +323,12 @@ const loops = Promise.all([
       });
       return batch.id;
     });
-    await platformOperations.generateNotifications();
+    if (!canRefresh()) return;
+    await backgroundPool.runPlatformMaintenance("notifications");
     await webhooks.dispatchDue(`${config.workerId}-webhooks`);
-    await platformOperationsRepository.rebuildAnalyticsFacts(1_000);
-  }),
-  runPeriodic(shutdown.signal, 1_000, async () => {
-    await readModelWorker.refreshOne();
-  }),
-  runPeriodic(shutdown.signal, 60_000, async () => {
-    await readModelWorker.cleanup();
   }),
   runPeriodic(shutdown.signal, 3_600_000, async () => {
-    await platformOperations.runRetentionCycle();
+    if (canRefresh()) await backgroundPool.runPlatformMaintenance("retention");
   }),
 ]).catch((error: unknown) => {
   fatalError = error;
@@ -303,6 +336,8 @@ const loops = Promise.all([
 });
 health.ready = true;
 logger.info("AutoForge worker ready", {
+  ...resources,
+  ...resourcePlan,
   workerId: config.workerId,
   concurrency: config.concurrency,
   healthPort: config.healthPort,
@@ -313,9 +348,17 @@ await waitForAbort(shutdown.signal);
 health.ready = false;
 await closeServer(healthServer);
 await withGracePeriod(loops, config.shutdownGraceMs, logger);
+clearInterval(pressureMonitor);
+eventLoopDelay.disable();
 await clock.close();
-await Promise.allSettled([queue.close(), nats.drain(), database.close()]);
-attemptLogs.close();
+await Promise.allSettled([
+  queue.close(),
+  nats.drain(),
+  database.close(),
+  backgroundPool.close(),
+  ...readModelWorkers.map((worker) => worker.close()),
+]);
+await attemptLogs.close();
 if (fatalError) throw fatalError;
 logger.info("AutoForge worker stopped", { workerId: config.workerId });
 
@@ -335,6 +378,7 @@ async function runPeriodic(
     try {
       await operation();
     } catch (error) {
+      runtimePriority().report("background_refresh");
       logger.error("periodic platform operation failed", {
         error: error instanceof Error ? error.message : "unknown error",
       });
@@ -346,15 +390,13 @@ async function runPeriodic(
 function abortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, delayMs);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
+    const finish = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timeout = setTimeout(finish, delayMs);
+    signal.addEventListener("abort", finish, { once: true });
   });
 }
 

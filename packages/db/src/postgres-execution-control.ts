@@ -37,7 +37,7 @@ import {
 import { createHash } from "node:crypto";
 import type { PoolClient, QueryResult } from "pg";
 
-import type { AttemptLogStore } from "./attempt-log-store";
+import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
 import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import type { SchedulingEventDraft } from "@autoforge/application";
 import type { PostgresDatabaseHandle } from "./postgres-database";
@@ -122,7 +122,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 
   constructor(
     private readonly handle: PostgresDatabaseHandle,
-    private readonly attemptLogs: AttemptLogStore | NodeAttemptLogStore,
+    private readonly attemptLogs: AttemptLogStore | AsyncAttemptLogStore | NodeAttemptLogStore,
   ) {}
 
   async claim(
@@ -663,9 +663,9 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       };
     }
     return {
-      stdout: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout"),
-      stderr: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr"),
-      agent: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "agent"),
+      stdout: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout"),
+      stderr: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr"),
+      agent: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "agent"),
     };
   }
 
@@ -1382,7 +1382,7 @@ function completionOpeningFromRow(
 
 async function persistCompletionWrites(
   client: PoolClient,
-  attemptLogs: AttemptLogStore | NodeAttemptLogStore,
+  attemptLogs: AttemptLogStore | AsyncAttemptLogStore | NodeAttemptLogStore,
   control: AttemptControlRow,
   assignment: AssignmentRow,
   lease: LeaseRow,
@@ -1640,7 +1640,7 @@ async function executeSimpleStatementBundle(
 
 async function persistCompletionMetadata(
   client: PoolClient,
-  attemptLogs: AttemptLogStore | NodeAttemptLogStore,
+  attemptLogs: AttemptLogStore | AsyncAttemptLogStore | NodeAttemptLogStore,
   batchId: string,
   attemptId: string,
   result: CompletionResult,
@@ -1672,7 +1672,7 @@ async function persistCompletionMetadata(
       // during log transfer, before its acknowledgement and outside control transactions.
       await attemptLogs.recordWatermarks(watermarks, client);
     } else {
-      attemptLogs.recordWatermarks(watermarks);
+      await attemptLogs.recordWatermarks(watermarks);
     }
   }
 }

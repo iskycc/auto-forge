@@ -20,7 +20,11 @@ import type {
 } from "@autoforge/application";
 
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import {
+  retrySqliteLockContention,
+  runSqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 
 type SqlValue = string | number | null;
 
@@ -655,169 +659,177 @@ export class SqliteDdtRepository implements DdtRepository {
   }
 
   async createImportPreview(input: Parameters<DdtRepository["createImportPreview"]>[0]) {
-    runSqliteWriteTransaction(this.handle, () => {
-      const job = input.job;
-      this.handle.client
-        .prepare(
-          `INSERT INTO ddt_import_jobs
+    await retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        const job = input.job;
+        this.handle.client
+          .prepare(
+            `INSERT INTO ddt_import_jobs
            (id, project_id, project_version_id, test_stage_id, status, uploads_json,
             progress_percent, total_files, valid_files, total_rows, inserted_count,
             updated_count, unchanged_count, skipped_count, failed_files, requested_by,
             created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          job.id,
-          ...scopeParameters(job),
-          job.status,
-          JSON.stringify(job.uploads),
-          job.progressPercent,
-          job.totalFiles,
-          job.validFiles,
-          job.totalRows,
-          job.insertedCount,
-          job.updatedCount,
-          job.unchangedCount,
-          job.skippedCount,
-          job.failedFiles,
-          job.requestedBy ?? null,
-          job.createdAt,
-          job.updatedAt,
-        );
-      const insertFile = this.handle.client.prepare(
-        `INSERT INTO ddt_import_files
+          )
+          .run(
+            job.id,
+            ...scopeParameters(job),
+            job.status,
+            JSON.stringify(job.uploads),
+            job.progressPercent,
+            job.totalFiles,
+            job.validFiles,
+            job.totalRows,
+            job.insertedCount,
+            job.updatedCount,
+            job.unchangedCount,
+            job.skippedCount,
+            job.failedFiles,
+            job.requestedBy ?? null,
+            job.createdAt,
+            job.updatedAt,
+          );
+        const insertFile = this.handle.client.prepare(
+          `INSERT INTO ddt_import_files
          (id, job_id, upload_id, file_name, archive_entry_name, status, row_count,
           inserted_count, updated_count, unchanged_count, skipped_count, error_summary,
           created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-      );
-      for (const file of input.files) {
-        insertFile.run(
-          file.id,
-          job.id,
-          file.uploadId,
-          file.fileName,
-          file.archiveEntryName ?? null,
-          file.errorSummary ? "excluded" : "valid",
-          file.rowCount,
-          file.insertedCount,
-          file.updatedCount,
-          file.unchangedCount,
-          file.errorSummary ?? null,
-          job.createdAt,
-          job.updatedAt,
         );
-      }
-    });
+        for (const file of input.files) {
+          insertFile.run(
+            file.id,
+            job.id,
+            file.uploadId,
+            file.fileName,
+            file.archiveEntryName ?? null,
+            file.errorSummary ? "excluded" : "valid",
+            file.rowCount,
+            file.insertedCount,
+            file.updatedCount,
+            file.unchangedCount,
+            file.errorSummary ?? null,
+            job.createdAt,
+            job.updatedAt,
+          );
+        }
+      }),
+    );
     const job = await this.getImportJob(input.job.id);
     if (!job) throw new Error("DDT import preview was not persisted.");
     return job;
   }
 
   async replaceImportPreview(input: Parameters<DdtRepository["replaceImportPreview"]>[0]) {
-    runSqliteWriteTransaction(this.handle, () => {
-      if (input.projectIds?.length === 0) {
-        throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
-      }
-      const scope = input.projectIds
-        ? `AND project_id IN (${input.projectIds.map(() => "?").join(",")})`
-        : "";
-      const updated = this.handle.client
-        .prepare(
-          `UPDATE ddt_import_jobs
+    await retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        if (input.projectIds?.length === 0) {
+          throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
+        }
+        const scope = input.projectIds
+          ? `AND project_id IN (${input.projectIds.map(() => "?").join(",")})`
+          : "";
+        const updated = this.handle.client
+          .prepare(
+            `UPDATE ddt_import_jobs
            SET uploads_json = ?, progress_percent = 0, total_files = ?, valid_files = ?,
                total_rows = ?, inserted_count = 0, updated_count = 0, unchanged_count = 0,
                skipped_count = 0, failed_files = ?, error_code = NULL, error_summary = NULL,
                updated_at = ?
            WHERE id = ? AND status = 'previewed' ${scope}`,
-        )
-        .run(
-          JSON.stringify(input.uploads),
-          input.totalFiles,
-          input.validFiles,
-          input.totalRows,
-          input.failedFiles,
-          input.updatedAt,
-          input.jobId,
-          ...(input.projectIds ?? []),
-        );
-      if (updated.changes !== 1) {
-        throw new DomainError(
-          "DDT_IMPORT_STATE_CONFLICT",
-          "导入预检不存在或已启动，无法更新列名处理结果。",
-        );
-      }
-      this.handle.client.prepare("DELETE FROM ddt_import_files WHERE job_id = ?").run(input.jobId);
-      const insertFile = this.handle.client.prepare(
-        `INSERT INTO ddt_import_files
+          )
+          .run(
+            JSON.stringify(input.uploads),
+            input.totalFiles,
+            input.validFiles,
+            input.totalRows,
+            input.failedFiles,
+            input.updatedAt,
+            input.jobId,
+            ...(input.projectIds ?? []),
+          );
+        if (updated.changes !== 1) {
+          throw new DomainError(
+            "DDT_IMPORT_STATE_CONFLICT",
+            "导入预检不存在或已启动，无法更新列名处理结果。",
+          );
+        }
+        this.handle.client
+          .prepare("DELETE FROM ddt_import_files WHERE job_id = ?")
+          .run(input.jobId);
+        const insertFile = this.handle.client.prepare(
+          `INSERT INTO ddt_import_files
          (id, job_id, upload_id, file_name, archive_entry_name, status, row_count,
           inserted_count, updated_count, unchanged_count, skipped_count, error_summary,
           created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-      );
-      for (const file of input.files) {
-        insertFile.run(
-          file.id,
-          input.jobId,
-          file.uploadId,
-          file.fileName,
-          file.archiveEntryName ?? null,
-          file.errorSummary ? "excluded" : "valid",
-          file.rowCount,
-          file.insertedCount,
-          file.updatedCount,
-          file.unchangedCount,
-          file.errorSummary ?? null,
-          input.updatedAt,
-          input.updatedAt,
         );
-      }
-    });
+        for (const file of input.files) {
+          insertFile.run(
+            file.id,
+            input.jobId,
+            file.uploadId,
+            file.fileName,
+            file.archiveEntryName ?? null,
+            file.errorSummary ? "excluded" : "valid",
+            file.rowCount,
+            file.insertedCount,
+            file.updatedCount,
+            file.unchangedCount,
+            file.errorSummary ?? null,
+            input.updatedAt,
+            input.updatedAt,
+          );
+        }
+      }),
+    );
     const job = await this.getImportJob(input.jobId, input.projectIds);
     if (!job) throw new Error("DDT import preview replacement was not persisted.");
     return job;
   }
 
   async confirmImport(input: Parameters<DdtRepository["confirmImport"]>[0]) {
-    runSqliteWriteTransaction(this.handle, () => {
-      const scope = input.projectIds
-        ? `AND project_id IN (${input.projectIds.map(() => "?").join(",")})`
-        : "";
-      if (input.projectIds?.length === 0)
-        throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
-      const result = this.handle.client
-        .prepare(
-          `UPDATE ddt_import_jobs SET status = 'queued', conflict_strategy = ?, updated_at = ?
+    await retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        const scope = input.projectIds
+          ? `AND project_id IN (${input.projectIds.map(() => "?").join(",")})`
+          : "";
+        if (input.projectIds?.length === 0)
+          throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
+        const result = this.handle.client
+          .prepare(
+            `UPDATE ddt_import_jobs SET status = 'queued', conflict_strategy = ?, updated_at = ?
            WHERE id = ? AND status = 'previewed' AND valid_files > 0 ${scope}`,
-        )
-        .run(input.conflictStrategy, input.updatedAt, input.jobId, ...(input.projectIds ?? []));
-      if (result.changes !== 1) {
-        throw new DomainError(
-          "DDT_IMPORT_STATE_CONFLICT",
-          "导入预检不存在、没有有效表格或已启动。",
-        );
-      }
-      this.handle.client
-        .prepare(
-          `INSERT INTO queue_jobs
+          )
+          .run(input.conflictStrategy, input.updatedAt, input.jobId, ...(input.projectIds ?? []));
+        if (result.changes !== 1) {
+          throw new DomainError(
+            "DDT_IMPORT_STATE_CONFLICT",
+            "导入预检不存在、没有有效表格或已启动。",
+          );
+        }
+        this.handle.client
+          .prepare(
+            `INSERT INTO queue_jobs
            (message_id, run_id, attempt, schema_version, kind, payload_json, priority,
             deduplication_key, status, available_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
-        )
-        .run(
-          input.dispatchJob.messageId,
-          input.dispatchJob.runId,
-          input.dispatchJob.attempt,
-          input.dispatchJob.schemaVersion,
-          input.dispatchJob.kind,
-          JSON.stringify(input.dispatchJob.payload),
-          input.dispatchJob.priority,
-          input.dispatchJob.deduplicationKey,
-          input.dispatchJob.createdAt,
-          input.dispatchJob.createdAt,
-          input.dispatchJob.createdAt,
-        );
-    });
+          )
+          .run(
+            input.dispatchJob.messageId,
+            input.dispatchJob.runId,
+            input.dispatchJob.attempt,
+            input.dispatchJob.schemaVersion,
+            input.dispatchJob.kind,
+            JSON.stringify(input.dispatchJob.payload),
+            input.dispatchJob.priority,
+            input.dispatchJob.deduplicationKey,
+            input.dispatchJob.createdAt,
+            input.dispatchJob.createdAt,
+            input.dispatchJob.createdAt,
+          );
+      }),
+    );
     const job = await this.getImportJob(input.jobId, input.projectIds);
     if (!job) throw new Error("Confirmed DDT import job was not found.");
     return job;
@@ -853,13 +865,15 @@ export class SqliteDdtRepository implements DdtRepository {
   }
 
   async claimImportJob(jobId: string, startedAt: string) {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE ddt_import_jobs
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE ddt_import_jobs
          SET status = 'running', progress_percent = 1, started_at = COALESCE(started_at, ?), updated_at = ?
          WHERE id = ? AND status IN ('queued', 'running')`,
-      )
-      .run(startedAt, startedAt, jobId);
+        )
+        .run(startedAt, startedAt, jobId),
+    );
     return result.changes === 1 ? this.getImportJob(jobId) : null;
   }
 
@@ -870,17 +884,19 @@ export class SqliteDdtRepository implements DdtRepository {
   ) {
     if (projectIds?.length === 0) throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
     const scope = projectIds ? `AND project_id IN (${projectIds.map(() => "?").join(",")})` : "";
-    const result = this.handle.client
-      .prepare(
-        `UPDATE ddt_import_jobs
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE ddt_import_jobs
          SET status = CASE WHEN status IN ('previewed', 'queued') THEN 'cancelled'
                            ELSE 'cancel_requested' END,
              progress_percent = CASE WHEN status IN ('previewed', 'queued') THEN 100 ELSE progress_percent END,
              finished_at = CASE WHEN status IN ('previewed', 'queued') THEN ? ELSE finished_at END,
              updated_at = ?
          WHERE id = ? AND status IN ('previewed', 'queued', 'running') ${scope}`,
-      )
-      .run(updatedAt, updatedAt, jobId, ...(projectIds ?? []));
+        )
+        .run(updatedAt, updatedAt, jobId, ...(projectIds ?? [])),
+    );
     if (result.changes !== 1)
       throw new DomainError("DDT_IMPORT_STATE_CONFLICT", "导入任务无法取消。");
     const job = await this.getImportJob(jobId, projectIds);
@@ -891,124 +907,96 @@ export class SqliteDdtRepository implements DdtRepository {
   async updateImportJob(input: Parameters<DdtRepository["updateImportJob"]>[0]) {
     const current = await this.getImportJob(input.jobId);
     if (!current) throw new Error(`DDT import job ${input.jobId} does not exist.`);
-    this.handle.client
-      .prepare(
-        `UPDATE ddt_import_jobs
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE ddt_import_jobs
          SET status = ?, progress_percent = ?, inserted_count = ?, updated_count = ?,
              unchanged_count = ?, skipped_count = ?, failed_files = ?, error_code = ?,
              error_summary = ?, updated_at = ?, finished_at = ? WHERE id = ?`,
-      )
-      .run(
-        input.status,
-        input.progressPercent,
-        input.insertedCount ?? current.insertedCount,
-        input.updatedCount ?? current.updatedCount,
-        input.unchangedCount ?? current.unchangedCount,
-        input.skippedCount ?? current.skippedCount,
-        input.failedFiles ?? current.failedFiles,
-        input.errorCode ?? current.errorCode ?? null,
-        input.errorSummary ?? current.errorSummary ?? null,
-        input.updatedAt,
-        input.finishedAt ?? current.finishedAt ?? null,
-        input.jobId,
-      );
+        )
+        .run(
+          input.status,
+          input.progressPercent,
+          input.insertedCount ?? current.insertedCount,
+          input.updatedCount ?? current.updatedCount,
+          input.unchangedCount ?? current.unchangedCount,
+          input.skippedCount ?? current.skippedCount,
+          input.failedFiles ?? current.failedFiles,
+          input.errorCode ?? current.errorCode ?? null,
+          input.errorSummary ?? current.errorSummary ?? null,
+          input.updatedAt,
+          input.finishedAt ?? current.finishedAt ?? null,
+          input.jobId,
+        ),
+    );
     const job = await this.getImportJob(input.jobId);
     if (!job) throw new Error("Updated DDT import job was not found.");
     return job;
   }
 
   async updateImportFile(input: Parameters<DdtRepository["updateImportFile"]>[0]) {
-    this.handle.client
-      .prepare(
-        `UPDATE ddt_import_files
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE ddt_import_files
          SET status = ?, inserted_count = COALESCE(?, inserted_count),
              updated_count = COALESCE(?, updated_count),
              unchanged_count = COALESCE(?, unchanged_count),
              skipped_count = COALESCE(?, skipped_count), error_summary = ?, updated_at = ?
          WHERE id = ?`,
-      )
-      .run(
-        input.status,
-        input.result?.insertedCount ?? null,
-        input.result?.updatedCount ?? null,
-        input.result?.unchangedCount ?? null,
-        input.result?.skippedCount ?? null,
-        input.errorSummary ?? null,
-        input.updatedAt,
-        input.fileId,
-      );
+        )
+        .run(
+          input.status,
+          input.result?.insertedCount ?? null,
+          input.result?.updatedCount ?? null,
+          input.result?.unchangedCount ?? null,
+          input.result?.skippedCount ?? null,
+          input.errorSummary ?? null,
+          input.updatedAt,
+          input.fileId,
+        ),
+    );
   }
 
   async importFile(input: Parameters<DdtRepository["importFile"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
-      const result = {
-        insertedCount: 0,
-        updatedCount: 0,
-        unchangedCount: 0,
-        skippedCount: 0,
-        caseIds: [] as Array<{
-          caseId: string;
-          outcome: "inserted" | "updated" | "unchanged" | "skipped";
-        }>,
-      };
-      for (const [index, row] of input.rows.entries()) {
-        const normalizedCaseId = normalize(row.caseId);
-        const existing = this.handle.client
-          .prepare(
-            `SELECT id, data_json AS dataJson FROM ddt_cases
+    return await retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        const result = {
+          insertedCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          skippedCount: 0,
+          caseIds: [] as Array<{
+            caseId: string;
+            outcome: "inserted" | "updated" | "unchanged" | "skipped";
+          }>,
+        };
+        for (const [index, row] of input.rows.entries()) {
+          const normalizedCaseId = normalize(row.caseId);
+          const existing = this.handle.client
+            .prepare(
+              `SELECT id, data_json AS dataJson FROM ddt_cases
              WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
                AND case_id_normalized = ? LIMIT 1`,
-          )
-          .get(...scopeParameters(input.scope), normalizedCaseId) as
-          { id: string; dataJson: string } | undefined;
-        let outcome: "inserted" | "updated" | "unchanged" | "skipped";
-        if (!existing) {
-          this.handle.client
-            .prepare(
-              `INSERT INTO ddt_cases
+            )
+            .get(...scopeParameters(input.scope), normalizedCaseId) as
+            { id: string; dataJson: string } | undefined;
+          let outcome: "inserted" | "updated" | "unchanged" | "skipped";
+          if (!existing) {
+            this.handle.client
+              .prepare(
+                `INSERT INTO ddt_cases
                (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
                 sr_num, sr_num_normalized, case_kind, data_json, source_file_id, source_name,
                 revision, created_by, updated_by, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-            )
-            .run(
-              row.id,
-              ...scopeParameters(input.scope),
-              row.caseId,
-              normalizedCaseId,
-              row.srNum,
-              normalize(row.srNum),
-              isDdtJourney(row.data) ? "journey" : "standard",
-              JSON.stringify(row.data),
-              input.fileId,
-              input.sourceName,
-              input.actorId ?? null,
-              input.actorId ?? null,
-              input.importedAt,
-              input.importedAt,
-            );
-          result.insertedCount += 1;
-          outcome = "inserted";
-        } else {
-          const before = parseCaseData(existing.dataJson);
-          if (JSON.stringify(before) === JSON.stringify(row.data)) {
-            result.unchangedCount += 1;
-            outcome = "unchanged";
-          } else if (input.conflictStrategy === "skip") {
-            result.skippedCount += 1;
-            outcome = "skipped";
-          } else if (input.conflictStrategy === "error") {
-            throw new DomainError("DDT_IMPORT_CONFLICT", `CaseID“${row.caseId}”已存在。`);
-          } else {
-            this.handle.client
-              .prepare(
-                `UPDATE ddt_cases
-                 SET case_id = ?, sr_num = ?, sr_num_normalized = ?, case_kind = ?, data_json = ?,
-                     source_file_id = ?, source_name = ?, revision = revision + 1,
-                     updated_by = ?, updated_at = ? WHERE id = ?`,
               )
               .run(
+                row.id,
+                ...scopeParameters(input.scope),
                 row.caseId,
+                normalizedCaseId,
                 row.srNum,
                 normalize(row.srNum),
                 isDdtJourney(row.data) ? "journey" : "standard",
@@ -1016,59 +1004,93 @@ export class SqliteDdtRepository implements DdtRepository {
                 input.fileId,
                 input.sourceName,
                 input.actorId ?? null,
+                input.actorId ?? null,
                 input.importedAt,
-                existing.id,
+                input.importedAt,
               );
-            this.handle.client
-              .prepare(
-                `INSERT INTO ddt_case_history
+            result.insertedCount += 1;
+            outcome = "inserted";
+          } else {
+            const before = parseCaseData(existing.dataJson);
+            if (JSON.stringify(before) === JSON.stringify(row.data)) {
+              result.unchangedCount += 1;
+              outcome = "unchanged";
+            } else if (input.conflictStrategy === "skip") {
+              result.skippedCount += 1;
+              outcome = "skipped";
+            } else if (input.conflictStrategy === "error") {
+              throw new DomainError("DDT_IMPORT_CONFLICT", `CaseID“${row.caseId}”已存在。`);
+            } else {
+              this.handle.client
+                .prepare(
+                  `UPDATE ddt_cases
+                 SET case_id = ?, sr_num = ?, sr_num_normalized = ?, case_kind = ?, data_json = ?,
+                     source_file_id = ?, source_name = ?, revision = revision + 1,
+                     updated_by = ?, updated_at = ? WHERE id = ?`,
+                )
+                .run(
+                  row.caseId,
+                  row.srNum,
+                  normalize(row.srNum),
+                  isDdtJourney(row.data) ? "journey" : "standard",
+                  JSON.stringify(row.data),
+                  input.fileId,
+                  input.sourceName,
+                  input.actorId ?? null,
+                  input.importedAt,
+                  existing.id,
+                );
+              this.handle.client
+                .prepare(
+                  `INSERT INTO ddt_case_history
                  (id, ddt_case_id, case_id, change_type, actor_id, source_name,
                   before_json, after_json, changes_json, created_at)
                  VALUES (?, ?, ?, 'import_overwrite', ?, ?, ?, ?, ?, ?)`,
-              )
-              .run(
-                input.historyIds[index],
-                existing.id,
-                row.caseId,
-                input.actorId ?? null,
-                input.sourceName,
-                JSON.stringify(before),
-                JSON.stringify(row.data),
-                JSON.stringify(diffDdtCaseData(before, row.data)),
-                input.importedAt,
-              );
-            result.updatedCount += 1;
-            outcome = "updated";
+                )
+                .run(
+                  input.historyIds[index],
+                  existing.id,
+                  row.caseId,
+                  input.actorId ?? null,
+                  input.sourceName,
+                  JSON.stringify(before),
+                  JSON.stringify(row.data),
+                  JSON.stringify(diffDdtCaseData(before, row.data)),
+                  input.importedAt,
+                );
+              result.updatedCount += 1;
+              outcome = "updated";
+            }
           }
-        }
-        result.caseIds.push({ caseId: row.caseId, outcome });
-        this.handle.client
-          .prepare(
-            `INSERT INTO ddt_import_case_ids(job_id, case_id, case_id_normalized, outcome, created_at)
+          result.caseIds.push({ caseId: row.caseId, outcome });
+          this.handle.client
+            .prepare(
+              `INSERT INTO ddt_import_case_ids(job_id, case_id, case_id_normalized, outcome, created_at)
              VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(job_id, case_id_normalized) DO UPDATE SET
                case_id = excluded.case_id, outcome = excluded.outcome`,
-          )
-          .run(input.jobId, row.caseId, normalizedCaseId, outcome, input.importedAt);
-      }
-      this.handle.client
-        .prepare(
-          `UPDATE ddt_import_files
+            )
+            .run(input.jobId, row.caseId, normalizedCaseId, outcome, input.importedAt);
+        }
+        this.handle.client
+          .prepare(
+            `UPDATE ddt_import_files
            SET status = 'succeeded', inserted_count = ?, updated_count = ?,
                unchanged_count = ?, skipped_count = ?, error_summary = NULL, updated_at = ?
            WHERE id = ? AND job_id = ?`,
-        )
-        .run(
-          result.insertedCount,
-          result.updatedCount,
-          result.unchangedCount,
-          result.skippedCount,
-          input.importedAt,
-          input.fileId,
-          input.jobId,
-        );
-      return result;
-    });
+          )
+          .run(
+            result.insertedCount,
+            result.updatedCount,
+            result.unchangedCount,
+            result.skippedCount,
+            input.importedAt,
+            input.fileId,
+            input.jobId,
+          );
+        return result;
+      }),
+    );
   }
 
   async listImportCaseIds(jobId: string, projectIds?: readonly string[]) {

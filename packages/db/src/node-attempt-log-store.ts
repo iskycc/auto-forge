@@ -1,5 +1,4 @@
-import { opendir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { opendir, access } from "node:fs/promises";
 import { join } from "node:path";
 import type { Clock } from "@autoforge/application";
 import type { PoolClient } from "pg";
@@ -9,7 +8,7 @@ import {
   type NodeLogRequest,
   type NodeLogResponse,
 } from "@autoforge/contracts";
-import type { AttemptLogStore, AttemptLogStream } from "./attempt-log-store";
+import type { AsyncAttemptLogStore, AttemptLogStore, AttemptLogStream } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { PostgresPlatformNodeRepository } from "./postgres-platform-nodes";
 import type { NodeLogTransport } from "./platform-node-transport";
@@ -22,7 +21,7 @@ export class NodeAttemptLogStore {
   constructor(
     private readonly database: PostgresDatabaseHandle,
     readonly nodeId: string,
-    private readonly local: AttemptLogStore,
+    private readonly local: AttemptLogStore | AsyncAttemptLogStore,
     private readonly transport: NodeLogTransport,
     private readonly directory: string,
     private readonly clock: Clock,
@@ -59,9 +58,9 @@ export class NodeAttemptLogStore {
             attemptId: id,
             recordedAt: this.clock.now().toISOString(),
             watermarks: {
-              stdout: this.local.acknowledgedSequence(batchId, id, "stdout"),
-              stderr: this.local.acknowledgedSequence(batchId, id, "stderr"),
-              agent: this.local.acknowledgedSequence(batchId, id, "agent"),
+              stdout: await this.local.acknowledgedSequence(batchId, id, "stdout"),
+              stderr: await this.local.acknowledgedSequence(batchId, id, "stderr"),
+              agent: await this.local.acknowledgedSequence(batchId, id, "agent"),
             },
           });
         }
@@ -156,8 +155,8 @@ export class NodeAttemptLogStore {
   relativeStorePath(batchId: string): string {
     return this.local.relativeStorePath(batchId);
   }
-  close(): void {
-    this.local.close();
+  async close(): Promise<void> {
+    await this.local.close();
   }
 
   async cleanupOrphans(): Promise<void> {
@@ -183,7 +182,7 @@ export class NodeAttemptLogStore {
     if (
       request.operation !== "remove" &&
       (stats.get(request.batchId) ?? 0) > 0 &&
-      (!this.directory || !existsSync(join(this.directory, `${request.batchId}.sqlite`)))
+      (!this.directory || !(await logFileExists(join(this.directory, `${request.batchId}.sqlite`))))
     ) {
       throw new DomainError(
         "PLATFORM_LOG_NODE_UNAVAILABLE",
@@ -215,7 +214,7 @@ export class NodeAttemptLogStore {
         ...(request.recordedBefore !== undefined ? { recordedBefore: request.recordedBefore } : {}),
       });
     } else {
-      this.local.removeBatchStore(request.batchId);
+      await this.local.removeBatchStore(request.batchId);
       await this.updateStoredBytes(request.batchId);
     }
     return response;
@@ -274,7 +273,17 @@ export class NodeAttemptLogStore {
   private async updateStoredBytes(batchId: string): Promise<void> {
     await this.database.pool.query(
       "UPDATE run_batch_log_locations SET stored_bytes=$2 WHERE batch_id=$1 AND node_id=$3",
-      [batchId, this.local.batchStoreStats([batchId]).get(batchId) ?? 0, this.nodeId],
+      [batchId, (await this.local.batchStoreStats([batchId])).get(batchId) ?? 0, this.nodeId],
     );
+  }
+}
+
+async function logFileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }

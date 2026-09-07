@@ -318,6 +318,7 @@ export interface IdentityAccessRepository {
     recordedAt: string,
   ): Promise<void>;
   createSessionAfterLogin(input: CreateSessionRecord): Promise<User>;
+  /** Read-only authentication; activity timestamps are persisted by session refresh. */
   resolveSession(tokenHash: string, now: string): Promise<AuthenticatedIdentity | null>;
   renewSession(input: {
     sessionId: string;
@@ -1469,6 +1470,8 @@ export interface JobQueuePort {
     now: string;
     leaseExpiresAt: string;
     limit: number;
+    /** Execution deliveries have independent capacity from ordinary background work. */
+    workClass?: "execution" | "background";
   }): Promise<ClaimedJob[]>;
   renew(input: {
     workerId: string;

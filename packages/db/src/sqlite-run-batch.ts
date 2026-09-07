@@ -42,7 +42,11 @@ import {
 } from "@autoforge/domain";
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import {
+  retrySqliteLockContention,
+  runSqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 import {
   batchesOf,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
@@ -173,151 +177,153 @@ export class SqliteRunBatchRepository
           record.runs,
           record.policy?.projectVersionId,
         );
-    runSqliteWriteTransaction(this.handle, () => {
-      // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
-      const nextSequence = (
-        this.handle.client
-          .prepare("SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next FROM run_batches")
-          .get() as { next: number }
-      ).next;
-      this.handle.db
-        .insert(runBatches)
-        .values({
-          id: record.id,
-          sequenceNumber: nextSequence,
-          projectId: record.projectId,
-          environmentId: record.environmentId,
-          environmentVersionId: record.environmentVersionId,
-          suiteId: record.suiteId,
-          suiteName: record.suiteName,
-          suiteVersion: record.suiteVersion,
-          batchKind: record.kind ?? "standard",
-          parentBatchId: record.parentBatchId,
-          sourceExecutionRunId: record.sourceExecutionRunId,
-          requestedByUsername: record.requestedBy?.username,
-          requestedBySource: record.requestedBy?.source,
-          status: "queued",
-          retryLimit: record.retryLimit,
-          retryMode: record.retryMode ?? "immediate",
-          priority: record.priority ?? 0,
-          queueTimeoutMs,
-          claimTimeoutMs,
-          executionTimeoutMs,
-          uploadTimeoutMs,
-          environmentJson: JSON.stringify(record.environmentVariables),
-          secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
-          policyJson: record.policy ? JSON.stringify(record.policy) : null,
-          adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
-          totalRuns: record.runs.length,
-          scheduledFor,
-          createdAt: record.createdAt,
-          updatedAt: record.createdAt,
-        })
-        .run();
-      this.handle.db
-        .insert(runBatchRoundConcurrencies)
-        .values({
-          batchId: record.id,
-          executionRound: 1,
-          concurrency: record.policy?.concurrency ?? 4,
-          source: "base",
-          recordedAt: record.createdAt,
-        })
-        .run();
-      this.handle.db
-        .insert(runBatchStatusEvents)
-        .values({
-          id: record.eventId ?? record.id,
-          batchId: record.id,
-          fromStatus: null,
-          toStatus: "queued",
-          batchVersion: 1,
-          reason: "batch.created",
-          recordedAt: record.createdAt,
-        })
-        .run();
-      if (record.runnerIds.length > 0) {
+    await retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
+        const nextSequence = (
+          this.handle.client
+            .prepare("SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next FROM run_batches")
+            .get() as { next: number }
+        ).next;
         this.handle.db
-          .insert(runBatchRunners)
-          .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })))
+          .insert(runBatches)
+          .values({
+            id: record.id,
+            sequenceNumber: nextSequence,
+            projectId: record.projectId,
+            environmentId: record.environmentId,
+            environmentVersionId: record.environmentVersionId,
+            suiteId: record.suiteId,
+            suiteName: record.suiteName,
+            suiteVersion: record.suiteVersion,
+            batchKind: record.kind ?? "standard",
+            parentBatchId: record.parentBatchId,
+            sourceExecutionRunId: record.sourceExecutionRunId,
+            requestedByUsername: record.requestedBy?.username,
+            requestedBySource: record.requestedBy?.source,
+            status: "queued",
+            retryLimit: record.retryLimit,
+            retryMode: record.retryMode ?? "immediate",
+            priority: record.priority ?? 0,
+            queueTimeoutMs,
+            claimTimeoutMs,
+            executionTimeoutMs,
+            uploadTimeoutMs,
+            environmentJson: JSON.stringify(record.environmentVariables),
+            secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
+            policyJson: record.policy ? JSON.stringify(record.policy) : null,
+            adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
+            totalRuns: record.runs.length,
+            scheduledFor,
+            createdAt: record.createdAt,
+            updatedAt: record.createdAt,
+          })
           .run();
-      }
-      for (const recovery of record.roundRecoveries ?? []) {
-        this.handle.client
-          .prepare(
-            `INSERT INTO run_batch_round_recoveries
+        this.handle.db
+          .insert(runBatchRoundConcurrencies)
+          .values({
+            batchId: record.id,
+            executionRound: 1,
+            concurrency: record.policy?.concurrency ?? 4,
+            source: "base",
+            recordedAt: record.createdAt,
+          })
+          .run();
+        this.handle.db
+          .insert(runBatchStatusEvents)
+          .values({
+            id: record.eventId ?? record.id,
+            batchId: record.id,
+            fromStatus: null,
+            toStatus: "queued",
+            batchVersion: 1,
+            reason: "batch.created",
+            recordedAt: record.createdAt,
+          })
+          .run();
+        if (record.runnerIds.length > 0) {
+          this.handle.db
+            .insert(runBatchRunners)
+            .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })))
+            .run();
+        }
+        for (const recovery of record.roundRecoveries ?? []) {
+          this.handle.client
+            .prepare(
+              `INSERT INTO run_batch_round_recoveries
              (batch_id, rule_id, after_round, next_round, jenkins_job_url,
               api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)`,
-          )
-          .run(
-            record.id,
-            recovery.ruleId,
-            recovery.afterRound,
-            recovery.afterRound + 1,
-            recovery.jenkinsJobUrl,
-            recovery.apiKeyCiphertext,
-            recovery.waitMinutes,
-            record.createdAt,
-            record.createdAt,
-            record.createdAt,
-          );
-      }
-      for (const runs of batchesOf(record.runs, RELATIONAL_WRITE_BATCH_SIZE)) {
-        this.handle.db
-          .insert(executionRuns)
-          .values(
-            runs.map((run) => ({
-              id: run.id,
-              caseDefinitionId: run.caseDefinitionId,
-              executionCaseDefinitionId: run.executionCaseDefinitionId ?? run.caseDefinitionId,
-              caseVersion: run.caseVersion,
-              displayName: run.displayName,
-              className: run.className,
-              caseType: run.caseType ?? "testng",
-              classDataJson: run.classData?.json ?? null,
-              classDataSizeBytes: run.classData?.sizeBytes ?? null,
-              classDataSha256: run.classData?.sha256 ?? null,
-              ddtSrNum: run.ddtSrNum ?? null,
-              parametersJson: JSON.stringify(run.parameters ?? {}),
-              batchId: record.id,
-              status: "queued" as const,
-              assignedRunnerId: null,
-              attemptCount: 0,
-              schedulingScore: null,
-              queueDeadlineAt: addMilliseconds(scheduledFor, queueTimeoutMs),
-              executionTimeoutMs,
-              uploadTimeoutMs,
-              createdAt: record.createdAt,
-              assignedAt: null,
-              updatedAt: record.createdAt,
-            })),
-          )
-          .run();
-      }
-      if (record.dispatchJob) {
-        this.handle.client
-          .prepare(
-            `INSERT INTO queue_jobs
+            )
+            .run(
+              record.id,
+              recovery.ruleId,
+              recovery.afterRound,
+              recovery.afterRound + 1,
+              recovery.jenkinsJobUrl,
+              recovery.apiKeyCiphertext,
+              recovery.waitMinutes,
+              record.createdAt,
+              record.createdAt,
+              record.createdAt,
+            );
+        }
+        for (const runs of batchesOf(record.runs, RELATIONAL_WRITE_BATCH_SIZE)) {
+          this.handle.db
+            .insert(executionRuns)
+            .values(
+              runs.map((run) => ({
+                id: run.id,
+                caseDefinitionId: run.caseDefinitionId,
+                executionCaseDefinitionId: run.executionCaseDefinitionId ?? run.caseDefinitionId,
+                caseVersion: run.caseVersion,
+                displayName: run.displayName,
+                className: run.className,
+                caseType: run.caseType ?? "testng",
+                classDataJson: run.classData?.json ?? null,
+                classDataSizeBytes: run.classData?.sizeBytes ?? null,
+                classDataSha256: run.classData?.sha256 ?? null,
+                ddtSrNum: run.ddtSrNum ?? null,
+                parametersJson: JSON.stringify(run.parameters ?? {}),
+                batchId: record.id,
+                status: "queued" as const,
+                assignedRunnerId: null,
+                attemptCount: 0,
+                schedulingScore: null,
+                queueDeadlineAt: addMilliseconds(scheduledFor, queueTimeoutMs),
+                executionTimeoutMs,
+                uploadTimeoutMs,
+                createdAt: record.createdAt,
+                assignedAt: null,
+                updatedAt: record.createdAt,
+              })),
+            )
+            .run();
+        }
+        if (record.dispatchJob) {
+          this.handle.client
+            .prepare(
+              `INSERT INTO queue_jobs
              (message_id, run_id, attempt, schema_version, kind, payload_json, priority,
               deduplication_key, status, available_at, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
-          )
-          .run(
-            record.dispatchJob.messageId,
-            record.dispatchJob.runId,
-            record.dispatchJob.attempt,
-            record.dispatchJob.schemaVersion,
-            record.dispatchJob.kind,
-            JSON.stringify(record.dispatchJob.payload),
-            record.dispatchJob.priority,
-            record.dispatchJob.deduplicationKey,
-            scheduledFor,
-            record.dispatchJob.createdAt,
-            record.dispatchJob.createdAt,
-          );
-      }
-    });
+            )
+            .run(
+              record.dispatchJob.messageId,
+              record.dispatchJob.runId,
+              record.dispatchJob.attempt,
+              record.dispatchJob.schemaVersion,
+              record.dispatchJob.kind,
+              JSON.stringify(record.dispatchJob.payload),
+              record.dispatchJob.priority,
+              record.dispatchJob.deduplicationKey,
+              scheduledFor,
+              record.dispatchJob.createdAt,
+              record.dispatchJob.createdAt,
+            );
+        }
+      }),
+    );
     return this.requiredBatchSummary(record.id);
   }
 

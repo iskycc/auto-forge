@@ -51,6 +51,7 @@ export class JetStreamJobQueue implements JobQueuePort {
     private readonly jetStream: JetStreamClient,
     private readonly manager: JetStreamManager,
     private readonly consumer: Consumer,
+    private readonly backgroundConsumer: Consumer,
     private readonly settings: JetStreamQueueSettings,
   ) {}
 
@@ -62,8 +63,14 @@ export class JetStreamJobQueue implements JobQueuePort {
     const settings = createSettings(options);
     await ensureStream(manager, settings);
     await ensureConsumer(manager, settings);
+    const background = backgroundSettings(settings);
+    await ensureConsumer(manager, background);
     const consumer = await jetStream.consumers.get(settings.streamName, settings.durableName);
-    return new JetStreamJobQueue(jetStream, manager, consumer, settings);
+    const backgroundConsumer = await jetStream.consumers.get(
+      settings.streamName,
+      background.durableName,
+    );
+    return new JetStreamJobQueue(jetStream, manager, consumer, backgroundConsumer, settings);
   }
 
   async publish(jobInput: JobEnvelope, availableAt: string = jobInput.createdAt) {
@@ -71,7 +78,7 @@ export class JetStreamJobQueue implements JobQueuePort {
     const messageHeaders = headers();
     messageHeaders.set("AutoForge-Available-At", availableAt);
     const acknowledgement = await this.jetStream.publish(
-      this.settings.readySubject,
+      subjectForJob(this.settings, job),
       codec.encode(JSON.stringify(job)),
       { msgID: job.deduplicationKey, headers: messageHeaders },
     );
@@ -83,20 +90,54 @@ export class JetStreamJobQueue implements JobQueuePort {
     now: string;
     leaseExpiresAt: string;
     limit: number;
+    workClass?: "execution" | "background";
   }): Promise<ClaimedJob[]> {
     if (!input.workerId || input.limit < 1 || input.limit > 256) {
       throw new Error("JetStream claim request is invalid.");
     }
+    if (input.workClass)
+      return this.claimFrom(
+        input,
+        input.workClass === "execution" ? this.consumer : this.backgroundConsumer,
+      );
+    // Legacy callers still consume both classes, without an empty fetch delaying ready work.
+    const [execution, background] = await Promise.all([
+      this.consumer.info(),
+      this.backgroundConsumer.info(),
+    ]);
+    const useBackground =
+      execution.num_pending === 0 && (background.num_pending > 0 || background.num_ack_pending > 0);
+    return this.claimFrom(
+      { ...input, workClass: useBackground ? "background" : "execution" },
+      useBackground ? this.backgroundConsumer : this.consumer,
+    );
+  }
+
+  private async claimFrom(
+    input: Parameters<JobQueuePort["claim"]>[0],
+    consumer: Consumer,
+  ): Promise<ClaimedJob[]> {
     const claimed: ClaimedJob[] = [];
-    const consumerInfo = await this.consumer.info();
+    const consumerInfo = await consumer.info();
     const maximumMessages = Math.min(input.limit, Math.max(1, consumerInfo.num_pending));
-    const messages = await this.consumer.fetch({ max_messages: maximumMessages, expires: 1_000 });
+    const messages = await consumer.fetch({ max_messages: maximumMessages, expires: 1_000 });
     for await (const message of messages) {
       let job: JobEnvelope;
       try {
         job = jobEnvelopeSchema.parse(JSON.parse(codec.decode(message.data)));
       } catch {
         message.term("invalid AutoForge job envelope");
+        continue;
+      }
+      if (input.workClass === "execution" && job.kind !== "dispatch-run") {
+        // Upgrade old mixed-queue entries without executing them in reserved dispatch slots.
+        // Publish first, then confirm the original; stable IDs tolerate a crash between the two.
+        await this.jetStream.publish(subjectForJob(this.settings, job), message.data, {
+          msgID: `autoforge-classify:${message.info.streamSequence}`,
+          ...(message.headers ? { headers: message.headers } : {}),
+        });
+        if (!(await message.ackAck({ timeout: 5_000 })))
+          throw new Error("JetStream did not confirm background job routing.");
         continue;
       }
       const availableAt = message.headers?.get("AutoForge-Available-At");
@@ -228,7 +269,7 @@ export class JetStreamJobQueue implements JobQueuePort {
       const readyHeaders = headers();
       readyHeaders.set("AutoForge-Available-At", input.redrivenAt);
       await this.jetStream.publish(
-        this.settings.readySubject,
+        subjectForJob(this.settings, parsed.job),
         codec.encode(JSON.stringify(parsed.job)),
         {
           msgID: `autoforge-redrive:${parsed.job.messageId}:${message.sequence}`,
@@ -249,15 +290,19 @@ export class JetStreamJobQueue implements JobQueuePort {
   }
 
   async depth(): Promise<{ available: number; leased: number; deadLetter: number }> {
-    const [consumer, stream] = await Promise.all([
+    const [consumer, background, stream] = await Promise.all([
       this.manager.consumers.info(this.settings.streamName, this.settings.durableName),
+      this.manager.consumers.info(
+        this.settings.streamName,
+        backgroundSettings(this.settings).durableName,
+      ),
       this.manager.streams.info(this.settings.streamName, {
         subjects_filter: this.settings.deadLetterSubject,
       }),
     ]);
     return {
-      available: consumer.num_pending,
-      leased: consumer.num_ack_pending,
+      available: consumer.num_pending + background.num_pending,
+      leased: consumer.num_ack_pending + background.num_ack_pending,
       deadLetter: stream.state.subjects?.[this.settings.deadLetterSubject] ?? 0,
     };
   }
@@ -266,6 +311,10 @@ export class JetStreamJobQueue implements JobQueuePort {
     await Promise.all([
       this.manager.streams.info(this.settings.streamName),
       this.manager.consumers.info(this.settings.streamName, this.settings.durableName),
+      this.manager.consumers.info(
+        this.settings.streamName,
+        backgroundSettings(this.settings).durableName,
+      ),
     ]);
   }
 
@@ -276,7 +325,7 @@ export class JetStreamJobQueue implements JobQueuePort {
   private async promoteDeferredMessage(message: JsMsg, job: JobEnvelope): Promise<void> {
     const readyHeaders = headers();
     readyHeaders.set("AutoForge-Available-At", job.createdAt);
-    await this.jetStream.publish(this.settings.readySubject, message.data, {
+    await this.jetStream.publish(subjectForJob(this.settings, job), message.data, {
       msgID: `autoforge-deferred:${message.info.streamSequence}`,
       headers: readyHeaders,
     });
@@ -360,7 +409,11 @@ async function ensureStream(
     }
     await manager.streams.update(settings.streamName, {
       ...existing.config,
-      subjects: [settings.readySubject, settings.deadLetterSubject],
+      subjects: [
+        settings.readySubject,
+        backgroundSettings(settings).readySubject,
+        settings.deadLetterSubject,
+      ],
       max_age: nanos(30 * 24 * 60 * 60 * 1_000),
       max_msgs: 1_000_000,
       duplicate_window: nanos(24 * 60 * 60 * 1_000),
@@ -370,7 +423,11 @@ async function ensureStream(
     if (!isMissingJetStreamResource(error)) throw error;
     await manager.streams.add({
       name: settings.streamName,
-      subjects: [settings.readySubject, settings.deadLetterSubject],
+      subjects: [
+        settings.readySubject,
+        backgroundSettings(settings).readySubject,
+        settings.deadLetterSubject,
+      ],
       retention: RetentionPolicy.Limits,
       storage: StorageType.File,
       discard: DiscardPolicy.Old,
@@ -454,4 +511,18 @@ function isMissingJetStreamResource(error: unknown): boolean {
   }
   const apiCode = "code" in error.api_error ? Number(error.api_error.code) : 0;
   return apiCode === 404;
+}
+
+function backgroundSettings(settings: JetStreamQueueSettings): JetStreamQueueSettings {
+  return {
+    ...settings,
+    readySubject: `${settings.readySubject}.background`,
+    durableName: `${settings.durableName}-background`,
+  };
+}
+
+function subjectForJob(settings: JetStreamQueueSettings, job: JobEnvelope): string {
+  return job.kind === "dispatch-run"
+    ? settings.readySubject
+    : backgroundSettings(settings).readySubject;
 }

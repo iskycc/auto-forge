@@ -7,9 +7,14 @@ export async function createPostgresClock(
 ): Promise<ManagedPlatformClock> {
   await database.ready;
   const clock = new PlatformClock("postgres", () => performance.now());
+  const reportFailure = (error: unknown) => {
+    clock.recordFailure(error);
+    onError(error);
+  };
+  database.clockPool.on("error", reportFailure);
   const synchronize = async () => {
     const requestedAtMs = performance.now();
-    const client = await database.pool.connect();
+    const client = await database.clockPool.connect();
     let released = false;
     const timeout = setTimeout(() => {
       released = true;
@@ -26,15 +31,17 @@ export async function createPostgresClock(
     }
   };
   // No local-time fallback at startup: every Full process must join the same time basis.
-  await synchronize();
+  try {
+    await synchronize();
+  } catch (error) {
+    database.clockPool.removeListener("error", reportFailure);
+    throw error;
+  }
   let pending: Promise<void> | undefined;
   const timer = setInterval(() => {
     if (pending) return;
     pending = synchronize()
-      .catch((error: unknown) => {
-        clock.recordFailure(error);
-        onError(error);
-      })
+      .catch(reportFailure)
       .finally(() => {
         pending = undefined;
       });
@@ -44,6 +51,7 @@ export async function createPostgresClock(
     close: async () => {
       clearInterval(timer);
       await pending;
+      database.clockPool.removeListener("error", reportFailure);
     },
   });
 }

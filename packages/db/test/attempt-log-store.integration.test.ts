@@ -20,6 +20,26 @@ afterEach(() => {
 });
 
 describe("AttemptLogStore", () => {
+  it("does not create a database when reading logs that have not arrived", async () => {
+    const directory = temporaryDirectory();
+    const store = createAttemptLogStore(directory);
+    try {
+      expect(
+        await store.listChunks({
+          batchId,
+          attemptId: "missing",
+          stream: "stdout",
+          afterSequence: -1,
+          limit: 10,
+        }),
+      ).toEqual({ items: [], hasMore: false });
+      expect(store.acknowledgedSequence(batchId, "missing", "stdout")).toBe(-1);
+      expect(existsSync(join(directory, `${batchId}.sqlite`))).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
   it("appends, lists and acknowledges chunks with gap, conflict and idempotent semantics", async () => {
     const store = createAttemptLogStore(temporaryDirectory());
     try {
@@ -345,7 +365,7 @@ describe("AttemptLogStore", () => {
     }
   });
 
-  it("upgrades and reads legacy uncompressed batch stores without rewriting their rows", async () => {
+  it("reads legacy stores without schema writes and upgrades only when appending", async () => {
     const directory = temporaryDirectory();
     const path = join(directory, `${batchId}.sqlite`);
     const legacy = new Database(path);
@@ -390,6 +410,23 @@ describe("AttemptLogStore", () => {
         }),
       ).resolves.toMatchObject({
         items: [{ sequence: 0, content: "legacy plaintext" }],
+      });
+      const untouched = new Database(path, { readonly: true });
+      try {
+        expect(
+          (untouched.pragma("table_info(attempt_log_chunks)") as Array<{ name: string }>).map(
+            (column) => column.name,
+          ),
+        ).not.toContain("content_encoding");
+        expect(store.acknowledgedSequence(batchId, "attempt-legacy", "stdout")).toBe(-1);
+      } finally {
+        untouched.close();
+      }
+      await store.appendChunks({
+        batchId,
+        attemptId: "attempt-new",
+        receivedAt: "2026-08-12T00:00:02.000Z",
+        chunks: [],
       });
     } finally {
       store.close();

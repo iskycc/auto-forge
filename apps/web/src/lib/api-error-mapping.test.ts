@@ -4,6 +4,26 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it.each([
+    "PLATFORM_LOG_BUSY",
+    "PLATFORM_LOG_TIMEOUT",
+    "PLATFORM_LOG_UNAVAILABLE",
+    "PLATFORM_BUSY",
+  ])("makes %s retryable", (code) => {
+    expect(mapApiError(new DomainError(code, "请稍后重试。"), "overload")).toMatchObject({
+      status: 503,
+      body: { error: { code } },
+    });
+  });
+  it.each(["SQLITE_BUSY", "SQLITE_BUSY_SNAPSHOT", "SQLITE_LOCKED", "55P03", "57014"])(
+    "maps wrapped database contention %s without exposing diagnostics",
+    (code) => {
+      const cause = Object.assign(new Error("private SQL and credentials"), { code });
+      const result = mapApiError(new Error("wrapped query", { cause }), "contention");
+      expect(result).toMatchObject({ status: 503, body: { error: { code: "PLATFORM_BUSY" } } });
+      expect(JSON.stringify(result)).not.toContain("private SQL");
+    },
+  );
   it.each(["READ_MODEL_PENDING", "READ_MODEL_NODE_UNAVAILABLE"])(
     "keeps %s retryable without presenting it as an invalid request",
     (code) => {

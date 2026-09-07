@@ -48,6 +48,8 @@ jobs:
             phase: distributed-contracts
           - name: two-node browser and fault recovery
             phase: browser-distributed
+          - name: background jobs with 500 execution slots
+            phase: browser-background
           - name: real Go Agent through Nginx
             phase: distributed-agent
     steps:

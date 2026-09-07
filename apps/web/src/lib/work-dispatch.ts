@@ -3,11 +3,62 @@ import {
   CoalescedOperation,
   type ExecutionControlRepository,
   type RunBatchSchedulingPort,
+  type RunBatchSchedulingService,
 } from "@autoforge/application";
 
 import type { WorkDispatcher } from "./work-runtime";
 
 export { workDispatcher } from "./work-runtime";
+
+/** Keep Lite snapshot construction and SQLite lock waits off the Web event loop. */
+export function workerBackedBatchCreation(
+  local: RunBatchSchedulingService,
+  dispatcher: WorkDispatcher | undefined,
+): RunBatchSchedulingService {
+  if (!dispatcher?.createBatch) return local;
+  const create = dispatcher.createBatch.bind(dispatcher);
+  return new Proxy(local, {
+    get(target, property) {
+      if (property === "create")
+        return (input: Parameters<RunBatchSchedulingService["create"]>[0]) =>
+          create(input) as ReturnType<RunBatchSchedulingService["create"]>;
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/** Count actual control operations, not long-lived HTTP requests waiting for a snapshot. */
+export function prioritizedExecutionControlRepository(
+  repository: ExecutionControlRepository,
+  beginExecution: () => () => void,
+): ExecutionControlRepository {
+  const critical = new Set<PropertyKey>([
+    "claim",
+    "renewLease",
+    "reconcile",
+    "completeAttempt",
+    "appendLogChunks",
+    "declareArtifacts",
+    "recoverExpired",
+    "terminateBatch",
+  ]);
+  return new Proxy(repository, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (typeof value !== "function") return value;
+      if (!critical.has(property)) return value.bind(target);
+      return async (...args: unknown[]) => {
+        const finish = beginExecution();
+        try {
+          return await value.apply(target, args);
+        } finally {
+          finish();
+        }
+      };
+    },
+  });
+}
 
 /**
  * 高频 Runner 控制事务转交工作线程执行：Lite 模式避免同步 SQLite 阻塞 Web
@@ -24,6 +75,11 @@ export function workerBackedExecutionControlRepository(
   return new Proxy(local, {
     get(target, property) {
       switch (property) {
+        case "reconcile":
+          return (input: Parameters<ExecutionControlRepository["reconcile"]>[0]) =>
+            dispatcher.reconcileAttempts(input) as ReturnType<
+              ExecutionControlRepository["reconcile"]
+            >;
         case "claim":
           return (input: Parameters<ExecutionControlRepository["claim"]>[0]) =>
             dispatcher.claimAssignments(input) as ReturnType<ExecutionControlRepository["claim"]>;

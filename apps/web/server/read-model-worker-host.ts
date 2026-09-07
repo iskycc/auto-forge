@@ -1,8 +1,13 @@
+import { runtimePriority } from "../src/lib/runtime-priority.ts";
 import { Worker } from "node:worker_threads";
 
-type Configuration = { migrationsFolder: string } & (
-  { mode: "lite"; databasePath: string } | { mode: "full"; databaseUrl: string }
-);
+type Configuration = {
+  migrationsFolder: string;
+  heapMb?: number;
+  poolMax?: number;
+  refreshFacts?: boolean;
+  buildInitial?: boolean;
+} & ({ mode: "lite"; databasePath: string } | { mode: "full"; databaseUrl: string });
 
 /** A separate thread prevents SQLite aggregation from blocking HTTP or Runner control work. */
 export class ReadModelWorkerHost {
@@ -27,10 +32,14 @@ export class ReadModelWorkerHost {
           : "./read-model-thread.js",
         import.meta.url,
       ),
-      { workerData: this.configuration },
+      {
+        workerData: { ...this.configuration, prioritySignal: runtimePriority().signal },
+        resourceLimits: { maxOldGenerationSizeMb: this.configuration.heapMb ?? 256 },
+      },
     );
     this.worker = worker;
     worker.on("error", this.reportError);
+    worker.on("message", () => runtimePriority().report("background_refresh"));
     worker.on("exit", (code) => {
       if (this.stopped) return;
       this.reportError(new Error(`Read model worker exited with code ${code}.`));

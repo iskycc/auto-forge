@@ -6,6 +6,9 @@ import { PlatformConfigurationStore } from "@autoforge/platform-config";
 
 const e2eDataDirectory =
   process.env.AUTOFORGE_E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "autoforge-e2e-"));
+const externalServer = process.env.AUTOFORGE_E2E_EXTERNAL_SERVER === "1";
+if (externalServer && !process.env.AUTOFORGE_E2E_DATA_DIR)
+  throw new Error("External E2E server requires its existing AUTOFORGE_E2E_DATA_DIR.");
 process.env.AUTOFORGE_E2E_DATA_DIR = e2eDataDirectory;
 const e2eConfigurationStore = new PlatformConfigurationStore(e2eDataDirectory);
 const initialConfiguration = e2eConfigurationStore.initialize();
@@ -34,10 +37,12 @@ const requestedConfiguration = {
   },
 };
 const e2eConfiguration =
-  initialConfiguration.web.port === requestedConfiguration.web.port &&
-  initialConfiguration.scheduler.projectMaximumConcurrency === requestedProjectMaximumConcurrency &&
-  initialConfiguration.limits.authLoginAttemptsPerWindow ===
-    requestedConfiguration.limits.authLoginAttemptsPerWindow
+  externalServer ||
+  (initialConfiguration.web.port === requestedConfiguration.web.port &&
+    initialConfiguration.scheduler.projectMaximumConcurrency ===
+      requestedProjectMaximumConcurrency &&
+    initialConfiguration.limits.authLoginAttemptsPerWindow ===
+      requestedConfiguration.limits.authLoginAttemptsPerWindow)
     ? initialConfiguration
     : e2eConfigurationStore.replace(requestedConfiguration, initialConfiguration.revision);
 process.env.E2E_ADMIN_BOOTSTRAP_TOKEN ??= e2eConfiguration.secrets.adminBootstrapToken;
@@ -67,14 +72,18 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: `pnpm --filter @autoforge/web build && NODE_ENV=production pnpm --filter @autoforge/web start -- --data-dir=${e2eDataDirectory}`,
-    url: "http://127.0.0.1:3100",
-    reuseExistingServer: true,
-    timeout: 120_000,
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-    },
-  },
+  ...(externalServer
+    ? {}
+    : {
+        webServer: {
+          command: `pnpm --filter @autoforge/web build && NODE_ENV=production pnpm --filter @autoforge/web start -- --data-dir=${e2eDataDirectory}`,
+          url: "http://127.0.0.1:3100",
+          reuseExistingServer: true,
+          timeout: 120_000,
+          env: {
+            ...process.env,
+            NODE_ENV: "production",
+          },
+        },
+      }),
 });

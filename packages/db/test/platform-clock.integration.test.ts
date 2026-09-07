@@ -23,6 +23,33 @@ describe("Lite platform time", () => {
 });
 
 describe.skipIf(!process.env.AUTOFORGE_TEST_POSTGRES_URL)("Full PostgreSQL time authority", () => {
+  it("samples time while a background transaction occupies every business connection", async () => {
+    const database = createPostgresDatabase({
+      connectionString: process.env.AUTOFORGE_TEST_POSTGRES_URL!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+      poolMax: 1,
+    });
+    let clock: Awaited<ReturnType<typeof createPostgresClock>> | undefined;
+    try {
+      await database.ready;
+      const transaction = await database.pool.connect();
+      try {
+        await transaction.query("BEGIN");
+        clock = await createPostgresClock(database, (error) => {
+          throw error;
+        });
+        expect(clock.status().state).toBe("synchronized");
+        expect(database.pool.idleCount).toBe(0);
+        await transaction.query("ROLLBACK");
+      } finally {
+        transaction.release();
+      }
+    } finally {
+      await clock?.close();
+      await database.close();
+    }
+  }, 15_000);
+
   it("aligns three skewed nodes and authenticates their requests using database time", async () => {
     const database = createPostgresDatabase({
       connectionString: process.env.AUTOFORGE_TEST_POSTGRES_URL!,

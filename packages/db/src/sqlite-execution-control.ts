@@ -35,7 +35,7 @@ import {
 } from "@autoforge/domain";
 import { createHash } from "node:crypto";
 
-import type { AttemptLogStore } from "./attempt-log-store";
+import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
@@ -120,6 +120,10 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly attemptLogs: AttemptLogStore,
+    private readonly logReader: Pick<
+      AsyncAttemptLogStore | AttemptLogStore,
+      "listChunks" | "acknowledgedSequence"
+    > = attemptLogs,
   ) {}
 
   async claim(
@@ -582,7 +586,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .get(input.attemptId) as { result_code: string | null } | undefined;
     if (!attempt) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
     const batchId = this.requiredBatchIdForAttempt(input.attemptId);
-    const page = await this.attemptLogs.listChunks({
+    const page = await this.logReader.listChunks({
       batchId,
       attemptId: input.attemptId,
       stream: input.stream,
@@ -594,7 +598,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     });
     return {
       items: page.items,
-      acknowledgedSequence: this.attemptLogs.acknowledgedSequence(
+      acknowledgedSequence: await this.logReader.acknowledgedSequence(
         batchId,
         input.attemptId,
         input.stream,

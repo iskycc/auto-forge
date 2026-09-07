@@ -22,6 +22,43 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} background read model snapshots`,
     () => {
+      it("retains the last published snapshot through repeated resource deferrals and still retries", async () => {
+        const harness = await database(dialect);
+        const query: ReadModelQuery = {
+          kind: "dashboard",
+          projectId,
+          projectVersionId: randomUUID(),
+          timeZone: "UTC",
+        };
+        const id = readModelKey(query);
+        try {
+          await harness.repository.request(id, query, now);
+          const initial = (await harness.repository.claim(now, later, "initial"))!;
+          expect(await harness.repository.complete(initial, { value: "usable" }, now, now)).toBe(
+            true,
+          );
+          expect(
+            await harness.repository.claim(now, later, "initial-only", {
+              onlyUnpublished: true,
+            }),
+          ).toBeNull();
+          for (let retry = 0; retry < 8; retry++) {
+            const lease = await harness.repository.claim(now, later, `retry-${retry}`);
+            expect(lease).not.toBeNull();
+            await harness.repository.fail(lease!, now, { deferred: true });
+          }
+          expect(await harness.repository.get(id)).toMatchObject({
+            failed: false,
+            payload: { value: "usable" },
+          });
+          const recovered = (await harness.repository.claim(now, later, "recovered"))!;
+          expect(await harness.repository.complete(recovered, { value: "fresh" }, now, later)).toBe(
+            true,
+          );
+        } finally {
+          await harness.close();
+        }
+      });
       it("reads recently accessed snapshots without acquiring write access and renews idle interest", async () => {
         const harness = await database(dialect);
         const query: ReadModelQuery = {

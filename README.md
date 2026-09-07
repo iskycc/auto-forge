@@ -1,5 +1,7 @@
 # AutoForge
 
+日志大库访问与后台工作采用[运行资源优先级](./docs/architecture/runtime-resource-priority.md)：按宿主机或容器的实际 CPU/内存扩展工作线程，Web 响应优先，执行控制与日志上传其次，统计和维护任务在资源紧张时退让；相关异常进入平台通知。容器多核与完整协议验收使用 `pnpm test:runtime-resources`；包含导入、导出、快照与执行混合负载的 Lite Docker / Full 双节点验收使用 `pnpm test:background-resources`。
+
 AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管理用例任务、执行单个或批量用例、管理执行机，并对执行结果进行检索、聚合和分析。主平台内置双架构 Runner Agent；管理员点击执行机页面的自动安装入口，在系统弹窗中配置 SSH 连接并确认主机指纹后即可安装，由 Agent 领取任务、以受控子进程执行命令、采集日志和产物，再将结果上报控制面。
 
 项目同时面向两类部署环境：
@@ -88,7 +90,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `DELETE`         | `/api/v1/case-definitions/{caseDefinitionId}`                  | 删除单个有管理权限的用例                                 |
 | `POST`           | `/api/v1/case-definitions/{caseDefinitionId}/share`            | 生成永久匿名用例详情只读链接                             |
 | `GET`            | `/api/v1/case-sources`                                         | 查询 JAR 来源及权威全量来源状态                          |
-| `GET`            | `/api/v1/case-sources/{sourceId}`                              | 读取有界扫描详情，`view=summary` 仅读摘要                 |
+| `GET`            | `/api/v1/case-sources/{sourceId}`                              | 读取有界扫描详情，`view=summary` 仅读摘要                |
 | `GET`            | `/api/v1/case-sources/{sourceId}/classes`                      | 后台快照游标分页读取扫描类，每页最多 100 个              |
 | `PUT`            | `/api/v1/case-sources/{sourceId}/authoritative`                | 将一个 JAR 设为唯一权威全量来源                          |
 | `GET`            | `/api/v1/objects`                                              | 浏览本地对象目录或 MinIO bucket 中的受管对象             |
@@ -109,7 +111,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`            | `/api/v1/failure-analysis/claims/{analysisId}/evidence`        | 读取有权限查看的分析证明截图                             |
 | `GET`            | `/api/v1/case-definitions/{caseDefinitionId}/failure-analyses` | 分页读取一个用例的全部人工分析结论                       |
 | `POST`           | `/api/v1/case-suites`                                          | 创建用例任务                                             |
-| `GET`            | `/api/v1/case-suites/{suiteId}`                                | 查询有界任务详情，`view=summary` 仅读摘要                 |
+| `GET`            | `/api/v1/case-suites/{suiteId}`                                | 查询有界任务详情，`view=summary` 仅读摘要                |
 | `GET`            | `/api/v1/case-suites/{suiteId}/members`                        | 后台快照游标分页读取任务成员，每页合计最多 100 个        |
 | `GET/PUT/DELETE` | `/api/v1/case-suites/{suiteId}/schedule`                       | 查询、保存或删除当前任务的执行计划                       |
 | `GET`            | `/api/v1/case-suites/{suiteId}/executions`                     | 按项目/版本查询任务执行历史，每页最多 10 条，支持 cursor |
@@ -135,12 +137,12 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`            | `/api/v1/run-batches`                                          | 查询批跑调度记录                                         |
 | `POST`           | `/api/v1/run-batches`                                          | 创建批次并尝试资源感知分配                               |
 | `POST`           | `/api/v1/run-batches/preflight`                                | 返回创建前逐项配置阻塞原因                               |
-| `GET`            | `/api/v1/run-batches/{batchId}`                                | 查询有界批次详情，`view=summary` 仅读元数据               |
+| `GET`            | `/api/v1/run-batches/{batchId}`                                | 查询有界批次详情，`view=summary` 仅读元数据              |
 | `GET`            | `/api/v1/run-batches/{batchId}/progress`                       | API Key 或批次签名参数读取 Jenkins 进展摘要              |
 | `POST`           | `/api/v1/run-batches/{batchId}/share`                          | 为任意状态批次生成永久匿名只读链接                       |
 | `POST`           | `/api/v1/run-batches/{batchId}/terminate`                      | 终止批次调度，在途用例自然完成后关闭任务                 |
 | `POST`           | `/api/v1/run-batches/{batchId}/cancel`                         | 兼容旧客户端的批次终止别名                               |
-| `POST`           | `/api/v1/jenkins/runs`                                         | API Key 启动批次并返回统一详情链接与进度轮询地址             |
+| `POST`           | `/api/v1/jenkins/runs`                                         | API Key 启动批次并返回统一详情链接与进度轮询地址         |
 | `POST`           | `/api/v1/jenkins/dependencies`                                 | API Key 按项目版本替换依赖压缩包链接                     |
 | `POST`           | `/api/v1/runner-agents/{runnerId}/claims`                      | 认证长轮询并原子领取 assignment                          |
 | `POST`           | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew`      | 续租并获取取消/排空指令                                  |
@@ -169,7 +171,7 @@ assignment，未领取用例直接关闭；持有有效 lease 的在途用例继
 且不再产生重跑。所有在途用例结束或被超时恢复后，批次终态为 `cancelled`，界面显示“已终止”。
 
 Lite 自托管服务把补调度、assignment 领取/续租/完成、恢复扫描和日志文件写入分派到有界
-worker-thread lane；相同 Runner、attempt 或日志批次稳定落到同一 lane，高频补调度请求会合并。
+worker-thread lane；批次调度、Runner 领取和每个 attempt 的日志分别稳定分配到对应通道，高频补调度请求会合并。
 SQLite WAL 和短事务仍是权威并发边界，Web 主线程主要负责鉴权、页面查询与响应映射。16U 基线
 使用 25 台、每台 20 槽的合成 Runner，在一次有界窗口内完成 500 个 assignment 的原子预留。
 

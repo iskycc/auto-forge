@@ -3,6 +3,9 @@ services:
   web:
     image: ${AUTOFORGE_BACKEND_IMAGE:?set a verified loaded release image}
     pull_policy: never
+    cpus: ${AUTOFORGE_WEB_CPUS:-0}
+    mem_limit: ${AUTOFORGE_WEB_MEMORY_LIMIT:-0}
+    cpu_shares: 2048
     init: true
     restart: unless-stopped
     ports:
@@ -23,6 +26,9 @@ services:
   worker:
     image: ${AUTOFORGE_BACKEND_IMAGE:?set a verified loaded release image}
     pull_policy: never
+    cpus: ${AUTOFORGE_WORKER_CPUS:-0}
+    mem_limit: ${AUTOFORGE_WORKER_MEMORY_LIMIT:-0}
+    cpu_shares: 1024
     command: ["node", "apps/worker/dist/worker.mjs", "--data-dir=/var/lib/autoforge"]
     init: true
     restart: unless-stopped

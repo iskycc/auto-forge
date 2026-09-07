@@ -1,3 +1,4 @@
+import { runtimePriority } from "./runtime-priority";
 import { DomainError, isDomainError } from "@autoforge/domain";
 import { isJarInspectionError } from "@autoforge/testng-discovery";
 import { ZodError } from "zod";
@@ -22,6 +23,16 @@ export interface MappedApiError {
  * 两者必须产出完全一致的状态码与错误结构。
  */
 export function mapApiError(error: unknown, requestId: string): MappedApiError {
+  if (isDatabaseContention(error)) {
+    runtimePriority().report("database_busy");
+    return {
+      status: 503,
+      body: {
+        error: { code: "PLATFORM_BUSY", message: "平台数据库繁忙，请稍后重试。", requestId },
+      },
+    };
+  }
+
   if (isDomainError(error) || isJarInspectionError(error)) {
     return {
       status: domainErrorStatus(error.code),
@@ -87,6 +98,15 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (
+    [
+      "PLATFORM_LOG_BUSY",
+      "PLATFORM_LOG_TIMEOUT",
+      "PLATFORM_LOG_UNAVAILABLE",
+      "PLATFORM_BUSY",
+    ].includes(code)
+  )
+    return 503;
   if (code === "READ_MODEL_PENDING" || code === "READ_MODEL_NODE_UNAVAILABLE") return 503;
   if (code === "READ_MODEL_REQUEST_CANCELLED") return 499;
   if (code === "PLATFORM_LOG_NODE_UNAVAILABLE" || code === "PLATFORM_CLOCK_UNAVAILABLE") return 503;
@@ -144,4 +164,26 @@ function domainErrorStatus(code: string): number {
 
 export function rejectRateLimited(allowed: boolean): void {
   if (!allowed) throw new DomainError("RATE_LIMITED", "请求过于频繁，请稍后重试。");
+}
+
+function isDatabaseContention(error: unknown): boolean {
+  let candidate = error;
+  const visited = new Set<object>();
+  while (
+    candidate &&
+    typeof candidate === "object" &&
+    !visited.has(candidate) &&
+    visited.size < 16
+  ) {
+    visited.add(candidate);
+    if (
+      "code" in candidate &&
+      typeof candidate.code === "string" &&
+      (/^SQLITE_(BUSY|LOCKED)(_|$)/.test(candidate.code) ||
+        ["55P03", "57014"].includes(candidate.code))
+    )
+      return true;
+    candidate = "cause" in candidate ? candidate.cause : undefined;
+  }
+  return false;
 }

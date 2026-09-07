@@ -18,7 +18,7 @@
     "lint": "eslint . --max-warnings=0 && go -C apps/runner-agent vet ./...",
     "typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run --exclude \"**/*.integration.test.ts\" && go -C apps/runner-agent test ./... && node --test scripts/release/*.test.mjs scripts/operations/*.test.mjs scripts/quality/*.test.mjs",
-    "test:integration": "vitest run integration.test",
+    "test:integration": "pnpm --filter @autoforge/web build:work-thread && vitest run integration.test",
     "test:full": "bash scripts/quality/test-full.sh",
     "test:full-business-recovery": "bash scripts/quality/test-full-business-recovery.sh",
     "test:distributed": "bash scripts/quality/test-full.sh browser-distributed",
@@ -36,6 +36,8 @@
     "test:offline": "bash scripts/quality/test-offline.sh",
     "test:performance": "vitest run --config vitest.performance.config.ts",
     "test:lite-concurrency": "E2E_PROJECT_MAXIMUM_CONCURRENCY=${E2E_PROJECT_MAXIMUM_CONCURRENCY:-500} playwright test tests/e2e/lite-high-concurrency.spec.ts",
+    "test:runtime-resources": "bash scripts/quality/test-runtime-resources.sh",
+    "test:background-resources": "bash scripts/quality/test-runtime-resources.sh background && bash scripts/quality/test-full.sh browser-background",
     "release:backend": "bash scripts/release/build-backend-image.sh",
     "release:deploy": "bash scripts/release/build-deployment-bundle.sh"
   },

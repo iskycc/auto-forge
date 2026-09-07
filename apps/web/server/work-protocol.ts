@@ -6,6 +6,8 @@
  */
 export type WorkThreadConfiguration = {
   mode: "lite" | "full";
+  prioritySignal?: SharedArrayBuffer;
+  imports?: { maxJarBytes: number; targetJavaVersion: number };
   migrationsFolder: string;
   attemptLogsDirectory: string;
   dataDirectory: string;
@@ -40,6 +42,16 @@ export type WorkThreadConfiguration = {
 
 export type WorkTask =
   | { kind: "warmup" }
+  | { kind: "trigger-schedules" }
+  | { kind: "create-batch"; input: unknown }
+  | {
+      kind: "parse-file";
+      operation: "inspect-jar" | "read-jar-source" | "parse-ddt";
+      input: unknown;
+    }
+  | { kind: "background-job"; job: unknown }
+  | { kind: "platform-maintenance"; operation: "notifications" | "retention" | "orphan-logs" }
+  | { kind: "reconcile-attempts"; input: unknown }
   | { kind: "schedule-batch"; batchId: string }
   | {
       kind: "schedule-runner";
@@ -57,6 +69,7 @@ export type WorkTask =
   | { kind: "append-attempt-log-chunks"; attemptId: string; input: unknown };
 
 export type WorkRequest = { id: number; task: WorkTask };
+export type CancelWorkRequest = { id: number; cancel: true };
 
 export type WorkResponse =
   | { id: number; ok: true; value: unknown }

@@ -1,3 +1,5 @@
+import { LogIoPool } from "../../../apps/web/server/log-io-pool";
+import { isolatedAttemptLogs } from "../../../apps/web/src/lib/isolated-attempt-logs";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -253,12 +255,20 @@ async function createFixture() {
     if (!destination) throw new Error("missing peer");
     return destination.handlePeer(request);
   };
+  const logPools = directories.map(
+    (directory) =>
+      new LogIoPool(directory, () => undefined, undefined, {
+        readLanes: 2,
+        writeLanes: 2,
+        heapMb: 128,
+      }),
+  );
   for (const [index, id] of nodeIds.entries()) {
     const directory = directories[index]!;
     const node = new NodeAttemptLogStore(
       handle,
       id,
-      createAttemptLogStore(directory),
+      isolatedAttemptLogs(directory, logPools[index]),
       transport,
       directory,
       { now: () => new Date(now) },
@@ -284,7 +294,8 @@ async function createFixture() {
       connected = true;
     },
     async dispose() {
-      for (const node of nodes) node.close();
+      for (const node of nodes) await node.close();
+      await Promise.all(logPools.map((pool) => pool.close()));
       await handle.pool.query("DELETE FROM run_batches WHERE id=$1", [batchId]);
       await handle.pool.query("DELETE FROM run_batch_log_locations WHERE batch_id=$1", [batchId]);
       await handle.pool.query("DELETE FROM platform_nodes WHERE id=ANY($1::text[])", [nodeIds]);

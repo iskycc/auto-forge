@@ -9,6 +9,7 @@ import { postgresSchema } from "./postgres-schema";
 
 export type PostgresDatabaseHandle = {
   pool: Pool;
+  clockPool: Pool;
   db: NodePgDatabase<typeof postgresSchema>;
   ready: Promise<void>;
   close(): Promise<void>;
@@ -18,6 +19,8 @@ export function createPostgresDatabase(options: {
   connectionString: string;
   migrationsFolder: string;
   poolMax?: number;
+  statementTimeoutMs?: number;
+  lockTimeoutMs?: number;
 }): PostgresDatabaseHandle {
   const poolMax = options.poolMax ?? 10;
   const pool = new Pool({
@@ -29,14 +32,31 @@ export function createPostgresDatabase(options: {
     // 预热连接在突发到来前保持可用：空闲 2 分钟内不回收，覆盖执行批次
     // “导入-创建-领取-完成”各阶段之间的短暂间歇。
     idleTimeoutMillis: 120_000,
+    ...(options.statementTimeoutMs !== undefined
+      ? { statement_timeout: options.statementTimeoutMs }
+      : {}),
+    ...(options.lockTimeoutMs !== undefined ? { lock_timeout: options.lockTimeoutMs } : {}),
+  });
+  // Time samples must not wait behind business transactions, even with poolMax=1.
+  // This pool connects lazily and is used only by the platform clock adapter.
+  const clockPool = new Pool({
+    connectionString: options.connectionString,
+    max: 1,
+    connectionTimeoutMillis: 2_000,
+    idleTimeoutMillis: 120_000,
+    statement_timeout: 2_000,
+    application_name: "autoforge-clock",
   });
   return {
     pool,
+    clockPool,
     db: drizzle(pool, { schema: postgresSchema }),
     ready: runPostgresMigrations(pool, options.migrationsFolder).then(() =>
       warmPoolConnections(pool, poolMax),
     ),
-    close: () => pool.end(),
+    close: async () => {
+      await Promise.all([pool.end(), clockPool.end()]);
+    },
   };
 }
 
@@ -46,14 +66,25 @@ export function createPostgresDatabase(options: {
  * 会一并被拖慢。预先建立“池上限与 40 中较小者”数量的空闲连接，突发到达时
  * 直接复用；预热失败不阻断启动，退回按需建连。
  */
-async function warmPoolConnections(pool: Pool, poolMax: number): Promise<void> {
+export async function warmPoolConnections(pool: Pool, poolMax: number): Promise<void> {
   const warmTarget = Math.min(poolMax, 40);
-  try {
-    const clients = await Promise.all(Array.from({ length: warmTarget }, () => pool.connect()));
-    for (const client of clients) client.release();
-  } catch (error) {
+  const allocations = await Promise.allSettled(
+    Array.from({ length: warmTarget }, () => pool.connect()),
+  );
+  for (const allocation of allocations) {
+    if (allocation.status === "fulfilled") allocation.value.release();
+  }
+  const failure = allocations.find((allocation) => allocation.status === "rejected");
+  if (failure) {
     console.warn(
-      `[postgres] connection pool warm-up failed (${(error as Error).message}); falling back to on-demand connections`,
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "warn",
+        requestId: "postgres-pool-warmup",
+        message: "PostgreSQL pool warm-up incomplete; using on-demand connections",
+        error:
+          failure.reason instanceof Error ? failure.reason.message : "Connection warm-up failed",
+      }),
     );
   }
 }

@@ -1,3 +1,7 @@
+import { prioritizedExecutionControlRepository } from "./work-dispatch";
+import { runtimePriority } from "./runtime-priority";
+import { mkdir } from "node:fs/promises";
+import { isolatedAttemptLogs } from "./isolated-attempt-logs";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { publicPlatformStatisticsSchema } from "@autoforge/contracts";
 import { readBatchPage, readExecutionOverview } from "@autoforge/application";
@@ -8,6 +12,7 @@ import { join } from "node:path";
 
 import {
   AttemptLogShareService,
+  RuntimeNotificationService,
   CaseDefinitionService,
   CaseSourceService,
   CaseSuiteService,
@@ -82,6 +87,7 @@ import {
   SqliteWebhookRepository,
 } from "@autoforge/db/sqlite";
 import { parseDdtUpload } from "@autoforge/ddt-import";
+import { isolatedJarDiscovery, isolatedDdtSpreadsheets } from "./isolated-file-parsing";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
@@ -89,6 +95,8 @@ import { RunnerProtocolController } from "@autoforge/runner-sdk";
 import { uuidV7 } from "@autoforge/ids";
 
 import { registerPlatformClock } from "./platform-clock-runtime";
+import { logServerError } from "./api-error-mapping";
+import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { appConfigurationStore, loadAppConfig } from "./config";
 import { LdapDirectory } from "./ldap-directory";
 import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
@@ -108,6 +116,7 @@ import {
 import { AesGcmSecretCipher } from "./secret-cipher";
 import {
   CoalescingSchedulingPort,
+  workerBackedBatchCreation,
   workDispatcher,
   workerBackedExecutionControlRepository,
 } from "./work-dispatch";
@@ -154,6 +163,7 @@ async function createPlatformServices() {
     const database = createSqliteDatabase({
       databasePath: config.databasePath,
       migrationsFolder: config.migrationsFolder,
+      busyTimeoutMs: 25,
     });
     const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
     catalog = new SqliteCaseCatalogRepository(database);
@@ -166,7 +176,11 @@ async function createPlatformServices() {
     runnerInstallationProfileRepository = new SqliteRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
-    const localExecutions = new SqliteExecutionControlRepository(database, attemptLogs);
+    const localExecutions = new SqliteExecutionControlRepository(
+      database,
+      attemptLogs,
+      isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
+    );
     executions = workerBackedExecutionControlRepository(localExecutions, dispatcher);
     failureAnalysisRepository = new SqliteFailureAnalysisRepository(database);
     batches = new SqliteRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
@@ -175,7 +189,10 @@ async function createPlatformServices() {
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
-    operationsRepository = new SqlitePlatformOperationsRepository(database, attemptLogs);
+    operationsRepository = new SqlitePlatformOperationsRepository(
+      database,
+      isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
+    );
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
     webhookRepository = new SqliteWebhookRepository(database);
     closeDatabase = async () => {
@@ -222,9 +239,10 @@ async function createPlatformServices() {
       import("nats"),
       import("redis"),
     ]);
+    await mkdir(join(config.dataDirectory, "attempt-logs"), { recursive: true });
     let attemptLogs:
-      | import("@autoforge/db/sqlite").AttemptLogStore
-      | import("@autoforge/db/postgres").NodeAttemptLogStore = createAttemptLogStore(
+      | import("@autoforge/db/sqlite").AsyncAttemptLogStore
+      | import("@autoforge/db/postgres").NodeAttemptLogStore = isolatedAttemptLogs(
       join(config.dataDirectory, "attempt-logs"),
     );
     const database = createPostgresDatabase({
@@ -232,8 +250,28 @@ async function createPlatformServices() {
       migrationsFolder: config.migrationsFolder,
       poolMax: config.databasePoolMax,
     });
+    // A completion may wait for log disk I/O. Reserve the Web pool for pages,
+    // authentication and metadata instead of allowing those transactions to occupy it.
+    const executionDatabase = createPostgresDatabase({
+      connectionString: config.databaseUrl,
+      migrationsFolder: config.migrationsFolder,
+      poolMax: Math.min(
+        config.databasePoolMax,
+        Math.max(4, Math.ceil(detectRuntimeResources().cpuCapacity / 2)),
+      ),
+    });
+    for (const handle of [database, executionDatabase]) {
+      handle.pool.on("error", (error) => {
+        runtimePriority().report("database_busy");
+        logServerError(
+          error,
+          "postgres-idle-connection",
+          "PostgreSQL idle connection lost; the pool will reconnect",
+        );
+      });
+    }
     try {
-      await database.ready;
+      await Promise.all([database.ready, executionDatabase.ready]);
       clock = await createPostgresClock(database, (error) => {
         workerLogger.error("Platform clock synchronization failed", {
           error: error instanceof Error ? error.message : "Unknown clock error",
@@ -280,9 +318,9 @@ async function createPlatformServices() {
         throw error;
       });
       cache = new RedisCache(redis);
-      closeDatabase = () => {
-        attemptLogs.close();
-        return database.close();
+      closeDatabase = async () => {
+        await attemptLogs.close();
+        await Promise.all([database.close(), executionDatabase.close()]);
       };
       runnerRequestLimiter = new RedisRequestLimiter((script, options) =>
         redis.eval(script, options),
@@ -303,7 +341,7 @@ async function createPlatformServices() {
       };
     } catch (error) {
       await clock.close();
-      await database.close();
+      await Promise.allSettled([database.close(), executionDatabase.close()]);
       throw new Error("无法初始化 Full 模式基础设施。", { cause: error });
     }
     catalog = new PostgresCaseCatalogRepository(database);
@@ -320,7 +358,10 @@ async function createPlatformServices() {
     // 完成请求服务端 p50 从 42ms 降到 28ms，但执行阶段墙钟由客户端驱动未改善，
     // 领取/批次创建反而因车道连接池争用回退；仅补位调度经 runScheduling 交给
     // 工作线程。
-    executions = new PostgresExecutionControlRepository(database, attemptLogs);
+    executions = prioritizedExecutionControlRepository(
+      new PostgresExecutionControlRepository(executionDatabase, attemptLogs),
+      () => runtimePriority().beginForeground(),
+    );
     failureAnalysisRepository = new PostgresFailureAnalysisRepository(database);
     batches = new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
@@ -330,10 +371,13 @@ async function createPlatformServices() {
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
     webhookRepository = new PostgresWebhookRepository(database);
   }
-  const discovery = new TestNgJarDiscovery({
-    maxJarBytes: config.maxJarBytes,
-    targetJavaVersion: config.testNgTargetJavaVersion,
-  });
+  const discovery = isolatedJarDiscovery(
+    new TestNgJarDiscovery({
+      maxJarBytes: config.maxJarBytes,
+      targetJavaVersion: config.testNgTargetJavaVersion,
+    }),
+    dispatcher,
+  );
 
   const caseSuiteActivity = new CaseSuiteActivityService(
     suiteActivityRepository,
@@ -392,7 +436,7 @@ async function createPlatformServices() {
   const ddtImports = new DdtImportService(
     ddtRepository,
     objectStore,
-    { parseUpload: parseDdtUpload },
+    isolatedDdtSpreadsheets({ parseUpload: parseDdtUpload }, dispatcher),
     clock,
     ids,
     readModels,
@@ -425,25 +469,28 @@ async function createPlatformServices() {
       replacementRunnerIdFromBootstrapToken(value, config.masterKey, clock.now()),
   };
   const runnerGroups = new RunnerGroupService(runnerGroupsRepository, runners, clock, ids);
-  const runBatches = new RunBatchSchedulingService(
-    batches,
-    suites,
-    runners,
-    clock,
-    ids,
-    {
-      maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
-      maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
-      maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
-    },
-    config.scheduler.metricsMaximumAgeSeconds,
-    { catalog, objectStore },
-    config.scheduler.projectMaximumConcurrency,
-    config.scheduler.priorityAgingIntervalMinutes,
-    projectStructuresRepository,
-    runnerGroupsRepository,
-    config.caseExecutionTimeoutSeconds * 1_000,
-    () => configurationStore.read().limits.artifactCollectionEnabled,
+  const runBatches = workerBackedBatchCreation(
+    new RunBatchSchedulingService(
+      batches,
+      suites,
+      runners,
+      clock,
+      ids,
+      {
+        maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
+        maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
+        maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
+      },
+      config.scheduler.metricsMaximumAgeSeconds,
+      { catalog, objectStore },
+      config.scheduler.projectMaximumConcurrency,
+      config.scheduler.priorityAgingIntervalMinutes,
+      projectStructuresRepository,
+      runnerGroupsRepository,
+      config.caseExecutionTimeoutSeconds * 1_000,
+      () => configurationStore.read().limits.artifactCollectionEnabled,
+    ),
+    config.mode === "lite" ? dispatcher : undefined,
   );
   const runScheduling = new CoalescingSchedulingPort(runBatches, dispatcher);
   // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
@@ -505,37 +552,59 @@ async function createPlatformServices() {
   if (config.mode === "lite") {
     const workerAbort = new AbortController();
     let workerFailure: unknown;
-    const worker = new JobWorker(
-      jobQueue,
-      {
-        "dispatch-run": async (job) => {
-          const batchId = job.payload.batchId;
-          if (typeof batchId !== "string") throw new Error("Dispatch job batchId is invalid.");
-          await runScheduling.schedule(batchId);
-        },
-        "object-cleanup": caseSources.objectCleanupHandler(),
-        "jar-import": importTestNgJar.jobHandler(),
-        "ddt-import": ddtImports.jobHandler(),
-        "analytics-export": platformOperations.analyticsExportJobHandler(),
-      },
-      clock,
-      {
-        workerId: `lite-web-${process.pid}`,
-        concurrency: config.worker.concurrency,
-        leaseDurationMs: 30_000,
-        minimumPollMs: 100,
-        maximumPollMs: 2_000,
-      },
-      workerLogger,
+    const workers = (["execution", "background"] as const).map(
+      (workClass) =>
+        new JobWorker(
+          jobQueue,
+          {
+            "dispatch-run": async (job) => {
+              const batchId = job.payload.batchId;
+              if (typeof batchId !== "string") throw new Error("Dispatch job batchId is invalid.");
+              await runScheduling.schedule(batchId);
+            },
+            "object-cleanup": dispatcher
+              ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
+              : caseSources.objectCleanupHandler(),
+            "jar-import": dispatcher
+              ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
+              : importTestNgJar.jobHandler(),
+            "ddt-import": dispatcher
+              ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
+              : ddtImports.jobHandler(),
+            "analytics-export": dispatcher
+              ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
+              : platformOperations.analyticsExportJobHandler(),
+          },
+          clock,
+          {
+            workerId: `lite-web-${process.pid}-${workClass}`,
+            workClass,
+            ...(workClass === "background"
+              ? { canClaim: () => runtimePriority().backgroundAllowed() }
+              : {}),
+            concurrency:
+              workClass === "background"
+                ? (dispatcher?.backgroundConcurrency ?? 1)
+                : config.worker.concurrency,
+            leaseDurationMs: 30_000,
+            minimumPollMs: 100,
+            maximumPollMs: 2_000,
+          },
+          workerLogger,
+        ),
     );
-    const workerRun = runWithTransientRecovery(
-      workerAbort.signal,
-      () => worker.run(workerAbort.signal),
-      workerLogger,
-      {
-        operationName: "Lite embedded job worker",
-        shouldKeepRecovering: isSqliteLockContentionError,
-      },
+    const workerRun = Promise.all(
+      workers.map((worker) =>
+        runWithTransientRecovery(
+          workerAbort.signal,
+          () => worker.run(workerAbort.signal),
+          workerLogger,
+          {
+            operationName: "Lite embedded job worker",
+            shouldKeepRecovering: isSqliteLockContentionError,
+          },
+        ),
+      ),
     ).catch((error: unknown) => {
       workerFailure = error;
       workerLogger.error("embedded worker stopped unexpectedly", {
@@ -624,30 +693,47 @@ async function createPlatformServices() {
     },
   };
   const scheduleAbort = new AbortController();
+  const runtimeNotifications = new RuntimeNotificationService(
+    identities,
+    operationsRepository,
+    runtimePriority(),
+    clock,
+    config.mode === "full" ? (config.nodeId ?? "local") : "local",
+  );
+  const runtimeNoticeLoop = runPeriodic(scheduleAbort.signal, 5_000, () =>
+    runtimeNotifications.deliverNextPage(),
+  );
   const roundRecoveryLoop = runPeriodic(scheduleAbort.signal, 5_000, async () => {
     await roundRecovery.dispatchDue(`web-${process.pid}-round-recovery`);
   });
   const scheduleLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 30_000, async () => {
-          await platformOperations.triggerDueSchedules(async (schedule) => {
-            const batch = await runBatches.create({
-              suiteId: schedule.suiteId,
+          if (dispatcher?.triggerDueSchedules) await dispatcher.triggerDueSchedules();
+          else
+            await platformOperations.triggerDueSchedules(async (schedule) => {
+              const batch = await runBatches.create({
+                suiteId: schedule.suiteId,
+              });
+              return batch.id;
             });
-            return batch.id;
-          });
-          await platformOperations.generateNotifications();
+          if (!runtimePriority().backgroundAllowed()) return;
+          if (dispatcher) await dispatcher.runPlatformMaintenance("notifications");
+          else await platformOperations.generateNotifications(100);
           await webhooks.dispatchDue(`lite-web-${process.pid}-webhooks`);
-          await operationsRepository.rebuildAnalyticsFacts(1_000);
         })
       : Promise.resolve();
   const nodeCleanupLoop = nodeLogs
-    ? runPeriodic(scheduleAbort.signal, 60_000, () => nodeLogs!.cleanupOrphans())
+    ? runPeriodic(scheduleAbort.signal, 60_000, async () => {
+        if (runtimePriority().backgroundAllowed()) await nodeLogs!.cleanupOrphans();
+      })
     : Promise.resolve();
   const retentionLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 3_600_000, async () => {
-          await platformOperations.runRetentionCycle();
+          if (!runtimePriority().backgroundAllowed()) return;
+          if (dispatcher) await dispatcher.runPlatformMaintenance("retention");
+          else await platformOperations.runRetentionCycle(100);
         })
       : Promise.resolve();
   const runtimeInfrastructure = infrastructure;
@@ -658,7 +744,13 @@ async function createPlatformServices() {
     },
     close: async () => {
       scheduleAbort.abort();
-      await Promise.all([scheduleLoop, retentionLoop, roundRecoveryLoop, nodeCleanupLoop]);
+      await Promise.all([
+        scheduleLoop,
+        retentionLoop,
+        roundRecoveryLoop,
+        nodeCleanupLoop,
+        runtimeNoticeLoop,
+      ]);
       await storageInventory.close();
       await clock.close();
       await runtimeInfrastructure.close();
@@ -773,6 +865,7 @@ async function runPeriodic(
     try {
       await operation();
     } catch (error) {
+      runtimePriority().report("background_refresh");
       workerLogger.error("periodic platform operation failed", {
         error: error instanceof Error ? error.message : "unknown error",
       });
@@ -784,15 +877,16 @@ async function runPeriodic(
 function abortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, delayMs);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
+    const finish = () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const timeout = setTimeout(finish, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      finish();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

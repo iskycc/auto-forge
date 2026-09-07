@@ -8,6 +8,7 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator } from "./support/session";
+import { startBackgroundLoad } from "./support/background-load";
 
 const CASE_COUNT = 500;
 const RUNNER_COUNT = 8;
@@ -24,7 +25,7 @@ type ClaimedAssignment = {
   lease: { token: string };
 };
 
-test("Lite control plane completes 500 concurrent protocol slots without blocking reads", async ({
+test("control plane completes 500 concurrent protocol slots without blocking reads", async ({
   page,
 }) => {
   test.setTimeout(300_000);
@@ -50,8 +51,9 @@ test("Lite control plane completes 500 concurrent protocol slots without blockin
     method: "POST",
     body: {
       projectId: DEFAULT_PROJECT_ID,
-      name: `Lite 500 并发协议验收 ${randomUUID()}`,
-      description: "GitHub Actions 托管机上的 500 槽位控制面回归",
+      projectVersionId: hierarchy.versionId,
+      name: `500 并发协议验收 ${randomUUID()}`,
+      description: "500 槽位 HTTP 控制面回归",
     },
   });
   expect(suite.status).toBe(201);
@@ -81,53 +83,55 @@ test("Lite control plane completes 500 concurrent protocol slots without blockin
   });
   expect(configured.status).toBe(200);
 
-  const batchStartedAt = performance.now();
-  const created = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
-    method: "POST",
-    body: { suiteId: suite.body.id },
-  });
-  expect(created.status).toBe(201);
-  const batchCreationDurationMs = performance.now() - batchStartedAt;
+  const { durations, readLatenciesMs } = await observeExecutionRecordReads(page, async () => {
+    const finishBackground =
+      process.env.E2E_BACKGROUND_LOAD === "1"
+        ? await startBackgroundLoad(page, hierarchy)
+        : undefined;
 
-  const claimStartedAt = performance.now();
-  const claimed = (
-    await Promise.all(identities.map((identity) => claimAssignments(page, identity)))
-  ).flat();
-  const claimDurationMs = performance.now() - claimStartedAt;
-  expect(claimed).toHaveLength(CASE_COUNT);
+    const batchStartedAt = performance.now();
+    const created = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
+      method: "POST",
+      body: { suiteId: suite.body.id },
+    });
+    expect(created.status).toBe(201);
+    const batchCreationDurationMs = performance.now() - batchStartedAt;
 
-  const readLatenciesMs: number[] = [];
-  let keepProbing = true;
-  const probe = probeExecutionRecords(page, readLatenciesMs, () => keepProbing);
-  const executionStartedAt = performance.now();
-  try {
+    const claimStartedAt = performance.now();
+    const claimed = (
+      await Promise.all(identities.map((identity) => claimAssignments(page, identity)))
+    ).flat();
+    const claimDurationMs = performance.now() - claimStartedAt;
+    expect(claimed).toHaveLength(CASE_COUNT);
+
+    const executionStartedAt = performance.now();
     await mapWithConcurrency(claimed, CLIENT_REQUEST_CONCURRENCY, async (claim, index) => {
       await uploadLog(page, claim, index);
       await completeAttempt(page, claim, index);
     });
-  } finally {
-    keepProbing = false;
-    await probe;
-  }
-  const executionDurationMs = performance.now() - executionStartedAt;
+    const executionDurationMs = performance.now() - executionStartedAt;
 
-  const completed = await browserJson<{
-    status: string;
-    succeededRuns: number;
-    failedRuns: number;
-  }>(page, `/api/v1/run-batches/${created.body.id}`);
-  expect(completed.status).toBe(200);
-  expect(completed.body).toMatchObject({
-    status: "succeeded",
-    succeededRuns: CASE_COUNT,
-    failedRuns: 0,
+    const completed = await browserJson<{
+      status: string;
+      succeededRuns: number;
+      failedRuns: number;
+    }>(page, `/api/v1/run-batches/${created.body.id}`);
+    expect(completed.status).toBe(200);
+    expect(completed.body).toMatchObject({
+      status: "succeeded",
+      succeededRuns: CASE_COUNT,
+      failedRuns: 0,
+    });
+    expect(executionDurationMs).toBeLessThan(90_000);
+    await finishBackground?.();
+    return { batchCreationDurationMs, claimDurationMs, executionDurationMs };
   });
+
   expect(readLatenciesMs.length).toBeGreaterThan(0);
   const p95ReadLatencyMs = percentile(readLatenciesMs, 0.95);
   const maximumReadLatencyMs = Math.max(...readLatenciesMs);
   expect(p95ReadLatencyMs).toBeLessThan(1_500);
   expect(maximumReadLatencyMs).toBeLessThan(5_000);
-  expect(executionDurationMs).toBeLessThan(90_000);
 
   await writePerformanceReport({
     schemaVersion: 1,
@@ -136,9 +140,9 @@ test("Lite control plane completes 500 concurrent protocol slots without blockin
     runnerCapacity: RUNNER_CAPACITY,
     clientRequestConcurrency: CLIENT_REQUEST_CONCURRENCY,
     importDurationMs: rounded(importDurationMs),
-    batchCreationDurationMs: rounded(batchCreationDurationMs),
-    claimDurationMs: rounded(claimDurationMs),
-    executionDurationMs: rounded(executionDurationMs),
+    batchCreationDurationMs: rounded(durations.batchCreationDurationMs),
+    claimDurationMs: rounded(durations.claimDurationMs),
+    executionDurationMs: rounded(durations.executionDurationMs),
     readProbeCount: readLatenciesMs.length,
     p95ReadLatencyMs: rounded(p95ReadLatencyMs),
     maximumReadLatencyMs: rounded(maximumReadLatencyMs),
@@ -355,6 +359,27 @@ async function completeAttempt(page: Page, claim: ClaimedAssignment, index: numb
     },
   );
   expect(response.status()).toBe(200);
+}
+
+async function observeExecutionRecordReads<Durations>(
+  page: Page,
+  operation: () => Promise<Durations>,
+): Promise<{ durations: Durations; readLatenciesMs: number[] }> {
+  const readLatenciesMs: number[] = [];
+  let keepProbing = true;
+  let probeFailure: unknown;
+  const probe = probeExecutionRecords(page, readLatenciesMs, () => keepProbing).catch((error) => {
+    probeFailure = error;
+  });
+  let durations: Durations;
+  try {
+    durations = await operation();
+  } finally {
+    keepProbing = false;
+    await probe;
+  }
+  if (probeFailure) throw probeFailure;
+  return { durations, readLatenciesMs };
 }
 
 async function probeExecutionRecords(

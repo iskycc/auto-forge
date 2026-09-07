@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-if [[ "${GITHUB_ACTIONS:-}" != "true" && "${1:-all}" != "browser-distributed" ]]; then
+if [[ "${GITHUB_ACTIONS:-}" != "true" && "${1:-all}" != "browser-distributed" && "${1:-all}" != "browser-background" ]]; then
   echo "Full acceptance is restricted to GitHub Actions because it builds production bundles and runs privileged infrastructure fault injection." >&2
   exit 1
 fi
@@ -163,7 +163,7 @@ start_minio() {
     --address 127.0.0.1:59011 \
     --console-address 127.0.0.1:59010 >>"${temporary_directory}/minio.log" 2>&1 &
   minio_pid="$!"
-  wait_until MinIO curl --fail --silent http://127.0.0.1:59011/minio/health/live
+  wait_until MinIO curl --fail --silent --max-time 5 http://127.0.0.1:59011/minio/health/live
 }
 
 stop_minio() {
@@ -177,7 +177,7 @@ start_minio_proxy() {
     "${fault_control_directory}" 59009 59011 \
     >>"${temporary_directory}/minio-proxy.log" 2>&1 &
   minio_proxy_pid="$!"
-  wait_until "MinIO fault proxy" curl --fail --silent http://127.0.0.1:59009/minio/health/live
+  wait_until "MinIO fault proxy" curl --fail --silent --max-time 5 http://127.0.0.1:59009/minio/health/live
 }
 
 download_dependencies() {
@@ -204,7 +204,7 @@ start_dependencies() {
     --env POSTGRES_DB=autoforge \
     --env POSTGRES_USER=autoforge \
     --env POSTGRES_PASSWORD=autoforge \
-    "${postgres_image}" >/dev/null
+    "${postgres_image}" postgres -c max_connections=200 >/dev/null
   docker run --detach \
     --name "${redis_container}" \
     --tmpfs /data:rw,noexec,nosuid,size=64m \
@@ -344,7 +344,7 @@ initialize_platform_configuration() {
   node --input-type=module -e '
     import { writeFileSync } from "node:fs";
     import { MAXIMUM_JAR_UPLOAD_BYTES } from "./packages/platform-config/src/platform-configuration.ts";
-    const [path] = process.argv.slice(1);
+    const [path, phase] = process.argv.slice(1);
     writeFileSync(path, `${JSON.stringify({
       revision: 1,
       mode: "full",
@@ -366,7 +366,7 @@ initialize_platform_configuration() {
         maximumMemoryUtilizationPercent: 85,
         maximumLoadPerCpu: 1,
         metricsMaximumAgeSeconds: 45,
-        projectMaximumConcurrency: 1,
+        projectMaximumConcurrency: phase === "browser-background" ? 500 : 1,
         priorityAgingIntervalMinutes: 5,
       },
       worker: {
@@ -388,7 +388,7 @@ initialize_platform_configuration() {
         },
       },
     }, null, 2)}\n`, { mode: 0o600 });
-  ' "${platform_configuration_input}"
+  ' "${platform_configuration_input}" "${acceptance_phase}"
   node --input-type=module -e '
     import { readFileSync } from "node:fs";
     import { PlatformConfigurationStore } from "./packages/platform-config/src/platform-configuration.ts";
@@ -444,7 +444,7 @@ start_full_nginx() {
   docker run --detach --name "${nginx_container}" --network host \
     --mount "type=bind,source=${temporary_directory}/nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
     nginx:1.28.2-alpine@sha256:5b4900b042ccfa8b0a73df622c3a60f2322faeb2be800cbee5aa7b44d241649e >/dev/null
-  wait_until "Nginx distributed platform" curl --fail --silent http://127.0.0.1:3197/api/v1/health/ready
+  wait_until "Nginx distributed platform" curl --fail --silent --max-time 5 http://127.0.0.1:3197/api/v1/health/ready
 }
 
 run_full_distributed_flow() {
@@ -482,7 +482,7 @@ start_platform_node() {
     --data-dir="${directory}" >>"${temporary_directory}/${role}.log" 2>&1 &
   started_web_pid="$!"
   printf '%s\n' "${started_web_pid}" >"${temporary_directory}/${role}.pid"
-  wait_until "Full platform ${role}" curl --fail --silent "http://127.0.0.1:${port}/api/v1/health/ready"
+  wait_until "Full platform ${role}" curl --fail --silent --max-time 5 "http://127.0.0.1:${port}/api/v1/health/ready"
 }
 
 start_full_platform() {
@@ -500,19 +500,24 @@ start_full_worker() {
     apps/worker/dist/worker.mjs --data-dir="${platform_data_directory}" \
     >"${temporary_directory}/worker.log" 2>&1 &
   worker_pid="$!"
-  wait_until "Full worker" curl --fail --silent http://127.0.0.1:3201/health/ready
+  wait_until "Full worker" curl --fail --silent --max-time 5 http://127.0.0.1:3201/health/ready
   AUTOFORGE_TEST_WALL_CLOCK_OFFSET_MS=-600000 setsid node \
     --import "${repository_root}/scripts/quality/clock-skew-fixture.mjs" \
     apps/worker/dist/worker.mjs --data-dir="${replica_platform_data_directory}" \
     >"${temporary_directory}/worker-replica.log" 2>&1 &
   worker_replica_pid="$!"
-  wait_until "Full worker replica" curl --fail --silent http://127.0.0.1:3202/health/ready
+  wait_until "Full worker replica" curl --fail --silent --max-time 5 http://127.0.0.1:3202/health/ready
 }
 
 run_full_browser_flow() {
   local browser_phase="${1:?Full browser phase is required}"
   local browser_specs=()
+  local reporter_options=()
   case "${browser_phase}" in
+    background)
+      browser_specs=(tests/e2e/lite-high-concurrency.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/ddt-management.spec.ts tests/e2e/read-model-cache.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/management-operations.spec.ts)
+      reporter_options=(--reporter=list,json)
+      ;;
     assets)
       browser_specs=(
         tests/e2e/case-suite-lifecycle.spec.ts
@@ -561,6 +566,9 @@ run_full_browser_flow() {
     "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.masterKey" \
     "${platform_data_directory}/config/platform.json")"
   E2E_BASE_URL=http://127.0.0.1:3199 \
+  E2E_BACKGROUND_LOAD="$([[ "${browser_phase}" == "background" ]] && echo 1 || echo 0)" \
+  AUTOFORGE_CONCURRENCY_REPORT="${evidence_directory}/protocol.json" \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="${evidence_directory}/browser.json" \
   E2E_SECONDARY_BASE_URL=http://127.0.0.1:3198 \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_bootstrap_token}" \
@@ -568,7 +576,7 @@ run_full_browser_flow() {
   AUTOFORGE_E2E_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
     pnpm exec playwright test \
       --config playwright.full.config.ts \
-      "${browser_specs[@]}"
+      "${browser_specs[@]}" "${reporter_options[@]}" --output "${evidence_directory}/browser"
 }
 
 run_full_real_agent_recovery() {
@@ -618,9 +626,9 @@ verify_dependency_recovery() {
     http://127.0.0.1:3198/api/v1/health/ready
   docker start "${redis_container}" >/dev/null
   wait_until Redis docker exec "${redis_container}" redis-cli ping
-  wait_until "primary Web after Redis recovery" curl --fail --silent \
+  wait_until "primary Web after Redis recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3199/api/v1/health/ready
-  wait_until "replica Web after Redis recovery" curl --fail --silent \
+  wait_until "replica Web after Redis recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3198/api/v1/health/ready
 
   printf 'Verifying MinIO interruption and recovery...\n'
@@ -630,9 +638,9 @@ verify_dependency_recovery() {
   wait_until_unready "primary worker after MinIO interruption" \
     http://127.0.0.1:3201/health/ready
   start_minio
-  wait_until "primary Web after MinIO recovery" curl --fail --silent \
+  wait_until "primary Web after MinIO recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3199/api/v1/health/ready
-  wait_until "primary worker after MinIO recovery" curl --fail --silent \
+  wait_until "primary worker after MinIO recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3201/health/ready
 
   printf 'Verifying NATS interruption and recovery...\n'
@@ -642,9 +650,9 @@ verify_dependency_recovery() {
   wait_until_unready "primary worker after NATS interruption" \
     http://127.0.0.1:3201/health/ready
   start_nats
-  wait_until "primary Web after NATS recovery" curl --fail --silent \
+  wait_until "primary Web after NATS recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3199/api/v1/health/ready
-  wait_until "primary worker after NATS recovery" curl --fail --silent \
+  wait_until "primary worker after NATS recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3201/health/ready
 
   printf 'Verifying PostgreSQL interruption and recovery...\n'
@@ -656,9 +664,9 @@ verify_dependency_recovery() {
     http://127.0.0.1:3201/health/ready
   docker unpause "${postgres_container}" >/dev/null
   wait_until PostgreSQL docker exec "${postgres_container}" pg_isready -U autoforge -d autoforge
-  wait_until "primary Web after PostgreSQL recovery" curl --fail --silent \
+  wait_until "primary Web after PostgreSQL recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3199/api/v1/health/ready
-  wait_until "primary worker after PostgreSQL recovery" curl --fail --silent \
+  wait_until "primary worker after PostgreSQL recovery" curl --fail --silent --max-time 5 \
     http://127.0.0.1:3201/health/ready
 }
 
@@ -674,7 +682,7 @@ case "${acceptance_phase}" in
     run_capacity_tests
     run_adapter_tests
     ;;
-  distributed-agent | browser-distributed | browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-agent | runtime-recovery | runtime-health | all)
+  distributed-agent | browser-distributed | browser-background | browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-agent | runtime-recovery | runtime-health | all)
     case "${acceptance_phase}" in
       runtime-health | all)
         run_capacity_tests
@@ -687,6 +695,9 @@ case "${acceptance_phase}" in
     start_full_worker
     start_full_platform
     case "${acceptance_phase}" in
+      browser-background)
+        run_full_browser_flow background
+        ;;
       distributed-agent)
         run_full_distributed_flow
         rm -- "${fault_control_directory}/stop"

@@ -73,7 +73,10 @@ export function CachedCaseDirectory({
   const currentManifest = result.projection?.manifest ?? manifest;
   return (
     <>
-      <ReadModelStatusBar snapshots={[result.projection?.status ?? snapshot]} />
+      <ReadModelStatusBar
+        snapshots={[result.projection?.status ?? snapshot]}
+        onRefresh={result.refresh}
+      />
       {result.error ? (
         <div className="inline-feedback error" role="alert">
           {result.error}
