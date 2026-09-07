@@ -4,7 +4,7 @@ import { directoryResponseError, type DirectoryProjection } from "./directory-pr
 
 export type DirectorySource = { projection: DirectoryProjection; refresh(): void };
 export async function readLazyDirectoryBranch(input: {
-  projection: DirectoryProjection;
+  projection: { status: Pick<DirectoryProjection["status"], "id" | "generation"> };
   ordinal: number;
   signal: AbortSignal;
   fetcher?: typeof fetch;

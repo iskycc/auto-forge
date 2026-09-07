@@ -80,7 +80,9 @@ export function useDirectoryBranch(
   const [attempt, setAttempt] = useState(0);
   const projection = source?.projection;
   const refresh = source?.refresh;
-  const scope = `${projection?.status.id}:${projection?.status.generation}:${ordinal}`;
+  const snapshotId = projection?.status.id;
+  const generation = projection?.status.generation;
+  const scope = `${snapshotId}:${generation}:${ordinal}`;
   const [previousScope, setPreviousScope] = useState(scope);
   if (previousScope !== scope) {
     setPreviousScope(scope);
@@ -90,14 +92,14 @@ export function useDirectoryBranch(
   }
   const branches = chunks.map((chunk) => chunk.branch);
   useEffect(() => {
-    if (!active || !projection || requestedOrdinal === undefined) return;
+    if (!active || !snapshotId || !generation || requestedOrdinal === undefined) return;
     const controller = new AbortController();
     async function read() {
       setLoading(true);
       setError("");
       try {
         const branch = await readLazyDirectoryBranch({
-          projection: projection!,
+          projection: { status: { id: snapshotId!, generation: generation! } },
           ordinal: requestedOrdinal!,
           signal: controller.signal,
         });
@@ -118,7 +120,9 @@ export function useDirectoryBranch(
     }
     void read();
     return () => controller.abort();
-  }, [active, projection, ordinal, requestedOrdinal, refresh, attempt]);
+    // Status polling may return a new object for the same immutable generation. It must not abort
+    // an in-flight branch read and start it again before its browser cache can be populated.
+  }, [active, snapshotId, generation, ordinal, requestedOrdinal, refresh, attempt]);
   const nextOrdinal = branches.at(-1)?.nextOrdinal;
   return {
     branches,
