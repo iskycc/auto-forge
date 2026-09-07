@@ -16,6 +16,7 @@ import {
   type RetentionCategory,
 } from "@autoforge/contracts";
 import {
+  AuthorizationDeniedError,
   DomainError,
   hasPermission,
   isPermission,
@@ -818,14 +819,14 @@ function requirePermission(
   projectId?: string,
 ): void {
   if (!hasPermission(actor, permission, projectId)) {
-    throw new DomainError("AUTH_FORBIDDEN", "当前身份没有执行此操作的权限。");
+    throw new AuthorizationDeniedError(actor, permission, projectId);
   }
 }
 
 function requirePermissionInAnyScope(actor: AuthenticatedIdentity, permission: Permission): void {
   const projectIds = projectIdsForPermission(actor, permission);
   if (projectIds?.length === 0) {
-    throw new DomainError("AUTH_FORBIDDEN", "当前身份没有执行此操作的权限。");
+    throw new AuthorizationDeniedError(actor, permission);
   }
 }
 

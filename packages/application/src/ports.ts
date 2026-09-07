@@ -415,6 +415,9 @@ export interface IdentityAccessRepository {
   ): Promise<StoredLdapConfiguration>;
   appendAudit(event: AuditEvent): Promise<void>;
   listAudit(input: {
+    actions?: readonly string[];
+    query?: string;
+    queryActions?: readonly string[];
     projectIds?: readonly string[];
     includeUnscoped?: boolean;
     actorId?: string;
@@ -482,7 +485,6 @@ export interface ExecutionControlRepository {
       resultDigest: string;
       result: CompletionResult;
       eventId: string;
-      auditEventId?: string;
       acceptedAt: string;
     },
     completionEvents?: CompletionSchedulingEventFactory,

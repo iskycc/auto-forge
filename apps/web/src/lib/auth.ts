@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
 import {
+  AuthorizationDeniedError,
   DEFAULT_PROJECT_ID,
   DomainError,
   isPermission,
@@ -161,10 +162,10 @@ export function authorizedProjectScope(
 ): string[] | undefined {
   const projectIds = projectIdsForPermission(identity, permission);
   if (projectIds?.length === 0) {
-    throw new DomainError("AUTH_FORBIDDEN", "当前账号没有执行此操作的权限。");
+    throw new AuthorizationDeniedError(identity, permission, requestedProjectId);
   }
   if (requestedProjectId && projectIds && !projectIds.includes(requestedProjectId)) {
-    throw new DomainError("AUTH_FORBIDDEN", "当前账号不能访问指定项目。");
+    throw new AuthorizationDeniedError(identity, permission, requestedProjectId);
   }
   return requestedProjectId ? [requestedProjectId] : projectIds;
 }

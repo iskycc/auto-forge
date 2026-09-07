@@ -9,10 +9,19 @@ import type {
   UpdateRoleInput,
 } from "@autoforge/contracts";
 import {
+  securityAuditAction,
+  securityAuditActionCodes,
+  securityAuditActions,
+  type SecurityAuditCategory,
+} from "@autoforge/contracts";
+import { describeSecurityAuditEvent, securityAuditDetails } from "./security-audit";
+import {
   builtInRoleDefinitions,
   countSystemAdministrators,
   DEFAULT_PROJECT_ID,
   DomainError,
+  AuthorizationDeniedError,
+  type AuthorizationDenial,
   hasPermission,
   projectIdsForPermission,
   isPermission,
@@ -55,6 +64,7 @@ export type SessionResult = {
 
 type AuditInput = {
   actorId?: string | undefined;
+  actorName?: string | undefined;
   action: string;
   resourceType: string;
   resourceId?: string | undefined;
@@ -209,7 +219,7 @@ export class IdentityAccessService {
 
   authorize(identity: AuthenticatedIdentity, permission: Permission, projectId?: string): void {
     if (!hasPermission(identity, permission, projectId)) {
-      throw new DomainError("AUTH_FORBIDDEN", "当前账号没有执行此操作的权限。");
+      throw new AuthorizationDeniedError(identity, permission, projectId);
     }
   }
 
@@ -217,7 +227,7 @@ export class IdentityAccessService {
     const projectIds = projectIdsForPermission(identity, permission);
     if (!projectIds) return undefined;
     if (projectIds.length === 0) {
-      throw new DomainError("AUTH_FORBIDDEN", "当前账号没有执行此操作的权限。");
+      throw new AuthorizationDeniedError(identity, permission);
     }
     return projectIds;
   }
@@ -739,7 +749,7 @@ export class IdentityAccessService {
   async listProjects(actor: AuthenticatedIdentity) {
     const projectIds = projectIdsForPermission(actor, "project.read");
     if (projectIds?.length === 0) {
-      throw new DomainError("AUTH_FORBIDDEN", "当前账号没有读取项目的权限。");
+      throw new AuthorizationDeniedError(actor, "project.read");
     }
     return this.repository.listProjects(projectIds);
   }
@@ -937,6 +947,8 @@ export class IdentityAccessService {
       projectId?: string;
       actorId?: string;
       action?: string;
+      category?: SecurityAuditCategory;
+      query?: string;
       resourceType?: string;
       result?: AuditEvent["result"];
       recordedAfter?: string;
@@ -946,7 +958,9 @@ export class IdentityAccessService {
     },
   ) {
     const projectIds = this.auditProjectScope(actor, "audit.read", input.projectId);
-    return this.repository.listAudit({
+    const page = await this.repository.listAudit({
+      actions: securityAuditActionCodes(input.category),
+      ...auditSearch(input.query),
       ...(input.actorId ? { actorId: input.actorId } : {}),
       ...(input.action ? { action: input.action } : {}),
       ...(input.resourceType ? { resourceType: input.resourceType } : {}),
@@ -960,6 +974,7 @@ export class IdentityAccessService {
         ? { includeUnscoped: true }
         : {}),
     });
+    return { ...page, items: page.items.map(describeSecurityAuditEvent) };
   }
 
   async recordTerminalSession(
@@ -1000,13 +1015,13 @@ export class IdentityAccessService {
       resourceType: "runner",
       resourceId: input.runnerId,
       result: "succeeded",
-      details: {
+      details: securityAuditDetails(input.action, {
         sessionId: input.sessionId,
         ...(input.reason ? { reason: input.reason } : {}),
         ...(input.inputMessages === undefined ? {} : { inputMessages: input.inputMessages }),
         ...(input.inputBytes === undefined ? {} : { inputBytes: input.inputBytes }),
         ...(input.outputBytes === undefined ? {} : { outputBytes: input.outputBytes }),
-      },
+      }),
       recordedAt: this.now(),
     });
   }
@@ -1025,6 +1040,7 @@ export class IdentityAccessService {
     if (input.projectId) await this.readModelInvalidation?.invalidate(input.projectId);
     await this.audit({
       actorId: actor.user.id,
+      actorName: `${actor.user.displayName} · ${actor.user.username}`,
       action: input.action,
       resourceType: input.resourceType,
       ...(input.resourceId ? { resourceId: input.resourceId } : {}),
@@ -1035,12 +1051,33 @@ export class IdentityAccessService {
     });
   }
 
+  async recordAccessDenial(denial: AuthorizationDenial, requestId: string): Promise<void> {
+    // Guessed project IDs may not exist; retain the requested ID without violating the audit foreign key.
+    const project = denial.projectId
+      ? (await this.repository.listProjects([denial.projectId]))[0]
+      : undefined;
+    await this.audit({
+      actorId: denial.actorId,
+      actorName: denial.actorName,
+      action: "auth.access_denied",
+      resourceType: "access_control",
+      ...(project ? { projectId: project.id } : {}),
+      result: "rejected",
+      requestId,
+      details: {
+        permission: denial.permission,
+        ...(denial.projectId ? { targetProjectId: denial.projectId } : {}),
+      },
+    });
+  }
+
   async recordRunnerOperation(input: {
     runnerId: string;
     action: string;
     requestId?: string;
     details?: AuditEvent["details"];
   }): Promise<void> {
+    if (!securityAuditAction(input.action)) return;
     await this.repository.appendAudit({
       id: this.ids.next(),
       actorType: "runner",
@@ -1050,7 +1087,7 @@ export class IdentityAccessService {
       resourceId: input.runnerId,
       result: "succeeded",
       ...(input.requestId ? { requestId: input.requestId } : {}),
-      details: input.details ?? {},
+      details: securityAuditDetails(input.action, input.details ?? {}),
       recordedAt: this.now(),
     });
   }
@@ -1061,6 +1098,8 @@ export class IdentityAccessService {
       projectId?: string;
       actorId?: string;
       action?: string;
+      category?: SecurityAuditCategory;
+      query?: string;
       resourceType?: string;
       result?: AuditEvent["result"];
       recordedAfter?: string;
@@ -1073,7 +1112,12 @@ export class IdentityAccessService {
     let cursor: string | undefined;
     while (events.length < input.maximumEvents) {
       const page = await this.repository.listAudit({
+        actions: securityAuditActionCodes(input.category),
+        ...auditSearch(input.query),
         ...(projectIds ? { projectIds } : {}),
+        ...(input.projectId && actor.systemPermissions.includes("audit.export")
+          ? { includeUnscoped: true }
+          : {}),
         ...(input.actorId ? { actorId: input.actorId } : {}),
         ...(input.action ? { action: input.action } : {}),
         ...(input.resourceType ? { resourceType: input.resourceType } : {}),
@@ -1083,7 +1127,7 @@ export class IdentityAccessService {
         ...(cursor ? { cursor } : {}),
         limit: Math.min(200, input.maximumEvents - events.length),
       });
-      events.push(...page.items);
+      events.push(...page.items.map(describeSecurityAuditEvent));
       if (!page.nextCursor) break;
       cursor = page.nextCursor;
     }
@@ -1098,7 +1142,7 @@ export class IdentityAccessService {
     const authorizedProjectIds = this.projectScope(actor, permission);
     if (!requestedProjectId) return authorizedProjectIds;
     if (authorizedProjectIds && !authorizedProjectIds.includes(requestedProjectId)) {
-      throw new DomainError("AUTH_FORBIDDEN", "当前账号不能访问指定项目的审计记录。");
+      throw new AuthorizationDeniedError(actor, permission, requestedProjectId);
     }
     return [requestedProjectId];
   }
@@ -1196,7 +1240,11 @@ export class IdentityAccessService {
           resourceType: "session",
           result: "succeeded",
           ...(requestId ? { requestId } : {}),
-          details: { provider: "ldap" },
+          details: securityAuditDetails(
+            "auth.login",
+            { provider: "ldap" },
+            `${directoryIdentity.displayName} · ${directoryIdentity.username}`,
+          ),
           recordedAt: synchronizedAt,
         },
       });
@@ -1375,6 +1423,11 @@ export class IdentityAccessService {
   }
 
   private async audit(input: AuditInput): Promise<void> {
+    if (!securityAuditAction(input.action)) return;
+    const actor =
+      input.actorId && !input.actorName ? await this.repository.findUser(input.actorId) : undefined;
+    const actorName =
+      input.actorName ?? (actor ? `${actor.displayName} · ${actor.username}` : undefined);
     await this.repository.appendAudit({
       id: this.ids.next(),
       actorType: input.actorId ? "user" : "system",
@@ -1385,7 +1438,7 @@ export class IdentityAccessService {
       ...(input.projectId ? { projectId: input.projectId } : {}),
       result: input.result,
       ...(input.requestId ? { requestId: input.requestId } : {}),
-      details: input.details,
+      details: securityAuditDetails(input.action, input.details, actorName),
       recordedAt: this.now(),
     });
   }
@@ -1397,6 +1450,18 @@ export class IdentityAccessService {
 
 function normalizeUsername(username: string): string {
   return username.trim().normalize("NFKC").toLocaleLowerCase("en-US");
+}
+
+function auditSearch(query?: string): { query?: string; queryActions?: string[] } {
+  const normalized = query?.trim().slice(0, 128);
+  return normalized
+    ? {
+        query: normalized,
+        queryActions: securityAuditActions
+          .filter((entry) => entry.label.includes(normalized))
+          .map((entry) => entry.action),
+      }
+    : {};
 }
 
 function isLocked(lockedUntil: string | undefined, now: Date): boolean {

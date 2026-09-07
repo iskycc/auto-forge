@@ -524,6 +524,7 @@ run_full_browser_flow() {
       browser_specs=(
         tests/e2e/identity-rbac.spec.ts
         tests/e2e/management-operations.spec.ts
+        tests/e2e/security-audit.spec.ts
         tests/e2e/platform-operations.spec.ts
       )
       ;;
@@ -537,6 +538,7 @@ run_full_browser_flow() {
         tests/e2e/identity-rbac.spec.ts
         tests/e2e/jar-import.spec.ts
         tests/e2e/management-operations.spec.ts
+        tests/e2e/security-audit.spec.ts
         tests/e2e/platform-operations.spec.ts
         tests/e2e/project-isolation.spec.ts
       )

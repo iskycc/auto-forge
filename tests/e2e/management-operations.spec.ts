@@ -126,13 +126,13 @@ test("service account lifecycle immediately narrows token access and produces ex
 
   await page.goto("/audit?action=service_account.update");
   await expect(page.getByRole("heading", { name: "安全审计" })).toBeVisible();
-  await expect(page.getByText("service_account.update", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("cell", { name: "修改服务账号 用户与授权" }).first()).toBeVisible();
   const csv = await page.request.get(
     "/api/v1/audit-events/export?action=service_account.update&maximumEvents=100",
   );
   expect(csv.status()).toBe(200);
   expect(csv.headers()["content-type"]).toContain("text/csv");
-  expect(await csv.text()).toContain("service_account.update");
+  expect(await csv.text()).toContain("修改服务账号");
   expect(account.id).toBeTruthy();
 });
 

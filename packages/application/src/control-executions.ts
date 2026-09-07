@@ -211,7 +211,6 @@ export class ExecutionControlService {
         resultDigest: this.credentials.hash(JSON.stringify(result)),
         result,
         eventId: this.ids.next(),
-        auditEventId: this.ids.next(),
         acceptedAt: this.clock.now().toISOString(),
       },
       (context, retryScheduled) =>

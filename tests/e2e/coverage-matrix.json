@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-01",
+  "updatedAt": "2026-09-07",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -100,7 +100,11 @@
       "id": "AF-E2E-006",
       "status": "partial",
       "owner": "identity-operations",
-      "evidence": ["tests/e2e/identity-rbac.spec.ts", "tests/e2e/management-operations.spec.ts"],
+      "evidence": [
+        "tests/e2e/identity-rbac.spec.ts",
+        "tests/e2e/management-operations.spec.ts",
+        "tests/e2e/security-audit.spec.ts"
+      ],
       "coverage": {
         "lite": "partial",
         "full": "partial",

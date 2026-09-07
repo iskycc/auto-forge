@@ -17,6 +17,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         ...(input.projectId ? { projectId: input.projectId } : {}),
         ...(input.actorId ? { actorId: input.actorId } : {}),
         ...(input.action ? { action: input.action } : {}),
+        ...(input.category ? { category: input.category } : {}),
+        ...(input.query ? { query: input.query } : {}),
         ...(input.resourceType ? { resourceType: input.resourceType } : {}),
         ...(input.result ? { result: input.result } : {}),
         ...(input.recordedAfter ? { recordedAfter: input.recordedAfter } : {}),

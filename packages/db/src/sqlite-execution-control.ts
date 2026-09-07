@@ -1072,16 +1072,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       details: { resultCode: result.resultCode, retryScheduled: runStatus === "queued" },
       recordedAt: input.acceptedAt,
     });
-    if (runStatus === "queued") {
-      this.appendRetryAudit({
-        id: input.auditEventId ?? input.eventId,
-        runId: control.execution_run_id,
-        projectId: control.project_id,
-        attemptNumber: control.attempt_number,
-        resultCode: result.resultCode,
-        recordedAt: input.acceptedAt,
-      });
-    }
     return this.updateBatchStatus(
       control.batch_id,
       input.acceptedAt,
@@ -1270,16 +1260,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       details: { retryScheduled: decision.retryScheduled },
       recordedAt,
     });
-    if (decision.retryScheduled) {
-      this.appendRetryAudit({
-        id: eventId,
-        runId: control.execution_run_id,
-        projectId: control.project_id,
-        attemptNumber: control.attempt_number,
-        resultCode: expiration.resultCode,
-        recordedAt,
-      });
-    }
     this.updateBatchStatus(control.batch_id, recordedAt, eventId, expiration.eventType);
     return {
       attemptId,
@@ -1705,29 +1685,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
          JOIN run_batches b ON b.id = r.batch_id WHERE a.id = ?`,
       )
       .get(attemptId) as AttemptControlRow | undefined;
-  }
-
-  private appendRetryAudit(input: {
-    id: string;
-    runId: string;
-    projectId: string;
-    attemptNumber: number;
-    resultCode: string;
-    recordedAt: string;
-  }): void {
-    this.handle.client
-      .prepare(
-        `INSERT INTO audit_events
-         (id, actor_type, action, resource_type, resource_id, project_id, result, details_json, recorded_at)
-         VALUES (?, 'system', 'execution_run.retry_scheduled', 'execution_run', ?, ?, 'succeeded', ?, ?)`,
-      )
-      .run(
-        input.id,
-        input.runId,
-        input.projectId,
-        JSON.stringify({ attemptNumber: input.attemptNumber, resultCode: input.resultCode }),
-        input.recordedAt,
-      );
   }
 
   private appendAttemptEvent(input: {

@@ -17,3 +17,4 @@ export * from "./scheduler";
 export * from "./scheduling-events";
 export * from "./webhook";
 export * from "./case-directory-filter";
+export * from "./authorization-denied";

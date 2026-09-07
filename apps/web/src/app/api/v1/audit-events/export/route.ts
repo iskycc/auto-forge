@@ -1,5 +1,5 @@
 import { auditListQuerySchema } from "@autoforge/contracts";
-import type { AuditEvent } from "@autoforge/domain";
+import { auditCsv } from "@/lib/audit-presentation";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -22,13 +22,15 @@ export async function GET(request: Request): Promise<NextResponse> {
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.actorId ? { actorId: input.actorId } : {}),
       ...(input.action ? { action: input.action } : {}),
+      ...(input.category ? { category: input.category } : {}),
+      ...(input.query ? { query: input.query } : {}),
       ...(input.resourceType ? { resourceType: input.resourceType } : {}),
       ...(input.result ? { result: input.result } : {}),
       ...(input.recordedAfter ? { recordedAfter: input.recordedAfter } : {}),
       ...(input.recordedBefore ? { recordedBefore: input.recordedBefore } : {}),
       maximumEvents: input.maximumEvents,
     });
-    return new NextResponse(toCsv(events), {
+    return new NextResponse(auditCsv(events), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": 'attachment; filename="autoforge-audit.csv"',
@@ -38,31 +40,4 @@ export async function GET(request: Request): Promise<NextResponse> {
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }
-}
-
-function toCsv(events: AuditEvent[]): string {
-  const rows = events.map((event) =>
-    [
-      event.recordedAt,
-      event.actorType,
-      event.actorId ?? "",
-      event.action,
-      event.resourceType,
-      event.resourceId ?? "",
-      event.projectId ?? "",
-      event.result,
-      event.requestId ?? "",
-      JSON.stringify(event.details),
-    ]
-      .map(csvCell)
-      .join(","),
-  );
-  return [
-    "recordedAt,actorType,actorId,action,resourceType,resourceId,projectId,result,requestId,details",
-    ...rows,
-  ].join("\n");
-}
-
-function csvCell(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`;
 }

@@ -117,7 +117,9 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
 
   await page.goto("/audit");
   await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
-  await expect(page.getByLabel("操作者")).toHaveAttribute("list", "audit-actor-options");
+  await page.getByText("人员与时间筛选", { exact: true }).click();
+  await expect(page.locator('select[name="actorId"]')).toBeAttached();
+  await expect(page.getByLabel("搜索审计记录")).toBeVisible();
 
   await page.goto("/runners");
   await expect(page.getByRole("navigation", { name: "执行资源视图" })).toHaveCount(0);

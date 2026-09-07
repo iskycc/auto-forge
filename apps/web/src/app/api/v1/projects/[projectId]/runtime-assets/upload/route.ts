@@ -35,19 +35,30 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       join(services.config.dataDirectory, "upload-staging"),
     );
     try {
-      return NextResponse.json(
-        await services.projectStructures.createUploadedAsset({
-          projectId,
-          kind: metadata.kind,
-          archiveFormat: metadata.archiveFormat,
-          fileName: upload.fileName,
-          content: upload.content,
+      const asset = await services.projectStructures.createUploadedAsset({
+        projectId,
+        kind: metadata.kind,
+        archiveFormat: metadata.archiveFormat,
+        fileName: upload.fileName,
+        content: upload.content,
+        sizeBytes: upload.sizeBytes,
+        sha256: upload.sha256,
+        actorId: identity.user.id,
+      });
+      await services.identityAccess.recordAuthorizedOperation(identity, {
+        action: "project_runtime_asset.upload",
+        resourceType: "project_runtime_asset",
+        resourceId: asset.id,
+        projectId,
+        requestId: currentRequestId,
+        details: {
+          fileName: asset.fileName,
+          kind: asset.kind,
           sizeBytes: upload.sizeBytes,
           sha256: upload.sha256,
-          actorId: identity.user.id,
-        }),
-        { status: 201 },
-      );
+        },
+      });
+      return NextResponse.json(asset, { status: 201 });
     } finally {
       await upload.dispose();
     }

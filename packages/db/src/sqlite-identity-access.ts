@@ -1100,6 +1100,9 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async listAudit(input: {
+    actions?: readonly string[];
+    query?: string;
+    queryActions?: readonly string[];
     projectIds?: readonly string[];
     includeUnscoped?: boolean;
     actorId?: string;
@@ -1111,8 +1114,22 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     cursor?: string;
     limit: number;
   }): Promise<AuditListPage> {
-    if (input.projectIds?.length === 0) return { items: [] };
+    if (input.projectIds?.length === 0 || input.actions?.length === 0) return { items: [] };
     const conditions: SQL[] = [];
+    if (input.actions) conditions.push(inArray(auditEvents.action, [...input.actions]));
+    if (input.query) {
+      const pattern = auditSearchPattern(input.query);
+      conditions.push(
+        or(
+          sql`${auditEvents.detailsJson} LIKE ${pattern} ESCAPE '\\'`,
+          sql`${auditEvents.resourceId} LIKE ${pattern} ESCAPE '\\'`,
+          sql`${auditEvents.actorId} IN (SELECT id FROM users WHERE display_name LIKE ${pattern} ESCAPE '\\' OR username LIKE ${pattern} ESCAPE '\\')`,
+          input.queryActions?.length
+            ? inArray(auditEvents.action, [...input.queryActions])
+            : sql`0 = 1`,
+        )!,
+      );
+    }
     if (input.projectIds) {
       const scoped = inArray(auditEvents.projectId, [...input.projectIds]);
       conditions.push(input.includeUnscoped ? or(scoped, isNull(auditEvents.projectId))! : scoped);
@@ -1295,3 +1312,4 @@ function stringRecord(json: string): Record<string, string> {
 function normalizeUsername(username: string): string {
   return username.trim().normalize("NFKC").toLocaleLowerCase("en-US");
 }
+import { auditSearchPattern } from "./audit-search";

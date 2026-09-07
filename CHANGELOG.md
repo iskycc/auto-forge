@@ -1,5 +1,11 @@
 # Changelog
 
+## 未发布
+
+- 安全审计收紧到重要数据变更与身份访问安全事件，排除执行重试等运行事件，同时保留执行历史。
+- 审计事件新增中文描述；列表、详情和 CSV 统一使用中文，增加中文搜索与分类筛选，优化桌面表格、分页和详情展开布局。
+- 补齐项目版本、测试阶段及项目运行资源创建审计，并记录 API 权限拒绝事件。
+
 All user-visible changes are recorded here. AutoForge follows semantic versioning; release notes must
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.

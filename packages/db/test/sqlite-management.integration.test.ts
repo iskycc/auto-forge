@@ -1463,20 +1463,7 @@ describe("SQLite management repositories", () => {
              FROM audit_events WHERE action = 'execution_run.retry_scheduled' AND resource_id = ?`,
           )
           .all("run-control"),
-      ).toEqual([
-        {
-          actor_type: "system",
-          action: "execution_run.retry_scheduled",
-          resource_type: "execution_run",
-          resource_id: "run-control",
-          project_id: "00000000-0000-7000-8000-000000000001",
-          result: "succeeded",
-          details_json: JSON.stringify({
-            attemptNumber: 1,
-            resultCode: "TEST_ASSERTION_FAILED",
-          }),
-        },
-      ]);
+      ).toEqual([]);
       expect(await batches.get("00000000-0000-4000-8000-0000000c0001")).toMatchObject({
         status: "queued",
         version: 4,
@@ -1521,7 +1508,7 @@ describe("SQLite management repositories", () => {
             "SELECT COUNT(*) AS count FROM audit_events WHERE action = 'execution_run.retry_scheduled' AND resource_id = ?",
           )
           .get("run-control"),
-      ).toEqual({ count: 1 });
+      ).toEqual({ count: 0 });
       await expect(
         executions.completeAttempt({
           runnerId: "runner-control",

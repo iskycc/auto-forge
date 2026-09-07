@@ -1509,16 +1509,6 @@ async function persistCompletionWrites(
     result,
     input.acceptedAt,
   );
-  if (runStatus === "queued") {
-    await appendRetryAudit(client, {
-      id: input.auditEventId ?? input.eventId,
-      runId: control.execution_run_id,
-      projectId: control.project_id,
-      attemptNumber: control.attempt_number,
-      resultCode: result.resultCode,
-      recordedAt: input.acceptedAt,
-    });
-  }
 }
 
 /**
@@ -1758,16 +1748,6 @@ async function expireAttempt(
     details: { retryScheduled: decision.retryScheduled },
     recordedAt,
   });
-  if (decision.retryScheduled) {
-    await appendRetryAudit(client, {
-      id: eventId,
-      runId: control.execution_run_id,
-      projectId: control.project_id,
-      attemptNumber: control.attempt_number,
-      resultCode: expiration.resultCode,
-      recordedAt,
-    });
-  }
   await updateBatchStatus(client, control.batch_id, recordedAt, eventId, expiration.eventType);
   return {
     attemptId,
@@ -1991,31 +1971,6 @@ async function findAttemptControl(
     [attemptId],
   );
   return result.rows[0];
-}
-
-async function appendRetryAudit(
-  client: PoolClient,
-  input: {
-    id: string;
-    runId: string;
-    projectId: string;
-    attemptNumber: number;
-    resultCode: string;
-    recordedAt: string;
-  },
-): Promise<void> {
-  await client.query(
-    `INSERT INTO audit_events
-     (id, actor_type, action, resource_type, resource_id, project_id, result, details_json, recorded_at)
-     VALUES ($1, 'system', 'execution_run.retry_scheduled', 'execution_run', $2, $3, 'succeeded', $4, $5)`,
-    [
-      input.id,
-      input.runId,
-      input.projectId,
-      JSON.stringify({ attemptNumber: input.attemptNumber, resultCode: input.resultCode }),
-      input.recordedAt,
-    ],
-  );
 }
 
 type ClaimLeaseSeed = { id: string; eventId: string; tokenHash: string; tokenEncrypted: string };

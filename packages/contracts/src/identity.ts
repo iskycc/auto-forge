@@ -218,9 +218,11 @@ function normalizeLdapUrl(value: string): string {
 }
 
 export const auditListQuerySchema = z.object({
+  query: z.string().trim().max(128).optional(),
   projectId: z.string().min(1).max(128).optional(),
   actorId: z.string().optional(),
   action: z.string().optional(),
+  category: z.enum(["access", "user", "project", "case", "suite", "platform", "runner"]).optional(),
   resourceType: z.string().optional(),
   result: z.enum(["succeeded", "rejected", "failed"]).optional(),
   recordedAfter: z.iso.datetime({ offset: true }).optional(),

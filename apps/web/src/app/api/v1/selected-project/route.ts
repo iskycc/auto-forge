@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { NextResponse } from "next/server";
-import { DomainError } from "@autoforge/domain";
+import { AuthorizationDeniedError, DomainError } from "@autoforge/domain";
 
 import { authenticateRequest, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
@@ -28,7 +28,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
     const services = await getPlatformServices();
     const projects = await services.identities.listProjects(selectableProjectIds(identity));
     if (!projects.some((project) => project.id === input.projectId)) {
-      throw new DomainError("AUTH_FORBIDDEN", "当前账号不能访问指定项目。");
+      throw new AuthorizationDeniedError(identity, "project.read", input.projectId);
     }
     const structure = await services.projectStructures.list(input.projectId);
     const activeVersions = structure.versions.filter((version) => version.status === "active");

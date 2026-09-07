@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
 
 vi.mock("server-only", () => ({}));
-const { authenticateRequest, readRecentExecutions } = vi.hoisted(() => ({
+const { authenticateRequest, readRecentExecutions, recordAccessDenial } = vi.hoisted(() => ({
   authenticateRequest: vi.fn<() => Promise<AuthenticatedIdentity>>(),
+  recordAccessDenial: vi.fn().mockResolvedValue(undefined),
   readRecentExecutions: vi.fn().mockResolvedValue({ items: [] }),
 }));
-vi.mock("./services", () => ({ getPlatformServices: vi.fn() }));
+vi.mock("./services", () => ({
+  getPlatformServices: async () => ({ identityAccess: { recordAccessDenial } }),
+}));
 vi.mock("@/lib/services", () => ({
   getPlatformServices: async () => ({ caseSuiteActivity: { readRecentExecutions } }),
 }));
@@ -55,6 +58,7 @@ describe("case suite recent executions API", () => {
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: { code: "AUTH_FORBIDDEN" } });
       expect(readRecentExecutions).not.toHaveBeenCalled();
+      expect(recordAccessDenial).toHaveBeenCalledTimes(1);
     },
   );
 

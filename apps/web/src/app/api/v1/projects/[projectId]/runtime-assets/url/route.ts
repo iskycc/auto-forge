@@ -20,12 +20,21 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const { projectId } = await context.params;
     authorizedProjectScope(identity, "project.manage", projectId);
     const input = runtimeAssetUrlInputSchema.parse(await readJsonBody(request, 16 * 1_024));
-    return NextResponse.json(
-      await (
-        await getPlatformServices()
-      ).projectStructures.createUrlAsset(projectId, input, identity.user.id),
-      { status: 201 },
+    const services = await getPlatformServices();
+    const asset = await services.projectStructures.createUrlAsset(
+      projectId,
+      input,
+      identity.user.id,
     );
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "project_runtime_asset.register",
+      resourceType: "project_runtime_asset",
+      resourceId: asset.id,
+      projectId,
+      requestId: currentRequestId,
+      details: { fileName: asset.fileName, kind: asset.kind },
+    });
+    return NextResponse.json(asset, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }

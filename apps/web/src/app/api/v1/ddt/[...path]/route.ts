@@ -481,7 +481,11 @@ async function audit(
 ): Promise<void> {
   await services.identityAccess.recordAuthorizedOperation(identity, {
     action,
-    resourceType: "ddt_case",
+    resourceType: action.startsWith("ddt_template.")
+      ? "ddt_template"
+      : action.startsWith("ddt_import.")
+        ? "ddt_import"
+        : "ddt_case",
     projectId: scope.projectId,
     requestId: currentRequestId,
     details: {

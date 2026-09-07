@@ -1,15 +1,20 @@
-import { Button, DatetimeInput, Input, Select } from "@/components/ui";
-
-import { Download, Search, ShieldCheck } from "lucide-react";
+import {
+  securityAuditActions,
+  securityAuditCategories,
+  type SecurityAuditCategory,
+} from "@autoforge/contracts";
+import { Download, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
-
+import { Button, DatetimeInput, Input, Select } from "@/components/ui";
+import { SecurityAuditTable } from "@/components/security-audit-table";
+import { RefreshAuditButton } from "@/components/refresh-audit-button";
+import { presentAuditEvent } from "@/lib/audit-presentation";
 import {
   hasPermissionInAnyScope,
   requireAuthorizedPageProjectScope,
   requirePageProjectScope,
 } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 import {
   platformDateTimeInputValue,
@@ -17,23 +22,25 @@ import {
 } from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
-
-type AuditPageProps = {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-};
+type AuditPageProps = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 
 export default async function AuditPage({ searchParams }: AuditPageProps) {
   const { identity } = await requirePageProjectScope("audit.read");
   const services = await getPlatformServices();
   const timeZone = services.configurationStore.read().web.timeZone;
   const values = await searchParams;
-  const projects = await services.identities
-    .listProjects(selectableProjectIds(identity))
-    .catch(() => []);
+  const projects = await services.identities.listProjects(selectableProjectIds(identity));
   const projectId = await selectedProjectId(identity, projects, "audit.read");
   if (projectId) requireAuthorizedPageProjectScope(identity, "audit.read", projectId);
+  const categoryValue = single(values.category);
+  const category =
+    categoryValue && Object.hasOwn(securityAuditCategories, categoryValue)
+      ? (categoryValue as SecurityAuditCategory)
+      : undefined;
   const filter = {
     ...(projectId ? { projectId } : {}),
+    ...(category ? { category } : {}),
+    ...optionalFilter("query", values.query),
     ...optionalFilter("actorId", values.actorId),
     ...optionalFilter("action", values.action),
     ...optionalFilter("resourceType", values.resourceType),
@@ -47,170 +54,165 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
     services.identityAccess.listAudit(identity, filter),
     hasPermissionInAnyScope(identity, "user.read")
       ? services.identityAccess.listUsers(identity, { limit: 100 })
-      : Promise.resolve({ items: [], nextCursor: undefined }),
+      : Promise.resolve({ items: [] }),
     hasPermissionInAnyScope(identity, "runner.read")
       ? services.runnerControl.list(500)
       : Promise.resolve([]),
   ]);
-  const userNames = new Map([
+  const userNames = new Map<string, string>([
     [identity.user.id, `${identity.user.displayName} · ${identity.user.username}`],
     ...userPage.items.map((user) => [user.id, `${user.displayName} · ${user.username}`] as const),
   ]);
   const runnerNames = new Map(runners.map((runner) => [runner.id, runner.name] as const));
+  const actorNames = new Map([...userNames, ...runnerNames]);
+  for (const event of events.items) {
+    if (event.actorId && typeof event.details.actorName === "string")
+      actorNames.set(event.actorId, event.details.actorName);
+  }
+  if (filter.actorId && !actorNames.has(filter.actorId))
+    actorNames.set(filter.actorId, `指定人员 · ${filter.actorId.slice(0, 8)}`);
   const projectNames = new Map(projects.map((project) => [project.id, project.name] as const));
   const cursorTrail = auditCursorTrail(values.trail);
   const exportParameters = auditParameters(values, projectId, timeZone);
   exportParameters.set("maximumEvents", "5000");
+  const advancedFilters = Boolean(filter.actorId || filter.recordedAfter || filter.recordedBefore);
 
   return (
-    <section className="page-stack">
+    <section className="page-stack audit-page">
       <header className="page-header operations-page-header">
         <div>
-          <p className="eyebrow">Audit</p>
+          <p className="eyebrow">访问与变更追踪</p>
           <h1>安全审计</h1>
-          <p>按操作者、动作、资源、项目、结果和时间查询持久审计证据；原始 UTC 值可悬停查看。</p>
+          <p>追踪重要数据变更、账号登录和访问安全事件。</p>
         </div>
-        {hasPermissionInAnyScope(identity, "audit.export") ? (
-          <a
-            className="button button-secondary"
-            href={`/api/v1/audit-events/export?${exportParameters}`}
-          >
-            <Download size={16} /> 导出 CSV
-          </a>
-        ) : null}
+        <div className="button-row">
+          <RefreshAuditButton />
+          {hasPermissionInAnyScope(identity, "audit.export") ? (
+            <a
+              className="button button-secondary"
+              href={`/api/v1/audit-events/export?${exportParameters}`}
+            >
+              <Download size={16} />
+              导出记录
+            </a>
+          ) : null}
+        </div>
       </header>
-
-      <form action="/audit" className="content-card audit-filter-panel" method="get">
-        <label>
-          操作者
-          <Input
-            defaultValue={single(values.actorId)}
-            list="audit-actor-options"
-            name="actorId"
-            placeholder="选择名称或粘贴 ID"
-          />
-          <datalist id="audit-actor-options">
-            {[...userNames].map(([id, name]) => (
-              <option key={`user:${id}`} label={name} value={id} />
-            ))}
-            {[...runnerNames].map(([id, name]) => (
-              <option key={`runner:${id}`} label={`${name} · Runner`} value={id} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          动作
-          <Input
-            defaultValue={single(values.action)}
-            list="audit-action-options"
-            name="action"
-            placeholder="选择常用动作或输入动作码"
-          />
-          <datalist id="audit-action-options">
-            {auditActionOptions(events.items.map((event) => event.action)).map((action) => (
-              <option key={action} value={action} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          资源类型
-          <Input defaultValue={single(values.resourceType)} name="resourceType" />
-        </label>
-        <label>
-          结果
-          <Select defaultValue={single(values.result) ?? ""} name="result">
-            <option value="">全部</option>
-            <option value="succeeded">成功</option>
-            <option value="rejected">拒绝</option>
-            <option value="failed">失败</option>
-          </Select>
-        </label>
-        <label>
-          开始时间
-          <DatetimeInput
-            defaultValue={dateInputValue(values.recordedAfter, timeZone)}
-            name="recordedAfter"
-          />
-        </label>
-        <label>
-          结束时间
-          <DatetimeInput
-            defaultValue={dateInputValue(values.recordedBefore, timeZone)}
-            name="recordedBefore"
-          />
-        </label>
-        <Button className="button button-primary" type="submit">
-          <Search size={16} /> 查询
-        </Button>
-      </form>
-
-      <section className="card table-card audit-table-card">
-        <div className="card-heading">
-          <div>
-            <span className="eyebrow">Evidence</span>
-            <h2>审计事件</h2>
-          </div>
-          <ShieldCheck size={21} aria-hidden="true" />
-          <span className="table-count">本页 {events.items.length} 条</span>
-        </div>
-        {events.items.length === 0 ? (
-          <div className="inline-empty">当前筛选条件下没有审计事件。</div>
-        ) : (
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>动作</th>
-                  <th>结果</th>
-                  <th>操作者</th>
-                  <th>资源</th>
-                  <th>项目</th>
-                  <th>详情</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.items.map((event) => (
-                  <tr key={event.id}>
-                    <td>
-                      <time dateTime={event.recordedAt} title={`UTC：${event.recordedAt}`}>
-                        {formatLocalDateTime(event.recordedAt, timeZone)}
-                      </time>
-                    </td>
-                    <td>
-                      <code>{event.action}</code>
-                    </td>
-                    <td>
-                      <span className={`audit-result audit-result-${event.result}`}>
-                        {auditResultLabel(event.result)}
-                      </span>
-                    </td>
-                    <td title={event.actorId}>
-                      {actorLabel(event.actorType, event.actorId, userNames, runnerNames)}
-                    </td>
-                    <td title={event.resourceId}>
-                      {resourceLabel(event.resourceType, event.resourceId)}
-                    </td>
-                    <td title={event.projectId}>
-                      {event.projectId
-                        ? (projectNames.get(event.projectId) ?? shortId(event.projectId))
-                        : "系统"}
-                    </td>
-                    <td>
-                      <details>
-                        <summary>查看</summary>
-                        <pre>{JSON.stringify(event.details, null, 2)}</pre>
-                      </details>
-                    </td>
-                  </tr>
+      <section className="content-card audit-card" aria-label="安全审计记录">
+        <form action="/audit" className="audit-filter-panel" method="get">
+          <div className="audit-filter-grid">
+            <label>
+              搜索记录
+              <div className="audit-search-field">
+                <Search size={16} aria-hidden="true" />
+                <Input
+                  aria-label="搜索审计记录"
+                  defaultValue={single(values.query)}
+                  maxLength={128}
+                  name="query"
+                  placeholder="搜索操作、人员或对象编号"
+                />
+              </div>
+            </label>
+            <label>
+              审计分类
+              <Select name="category" defaultValue={category ?? ""}>
+                <option value="">全部分类</option>
+                {Object.entries(securityAuditCategories).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
                 ))}
-              </tbody>
-            </table>
+              </Select>
+            </label>
+            <label>
+              操作类型
+              <Select name="action" defaultValue={single(values.action) ?? ""}>
+                <option value="">全部操作</option>
+                {securityAuditActions.map((entry) => (
+                  <option key={entry.action} value={entry.action}>
+                    {entry.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label>
+              操作结果
+              <Select name="result" defaultValue={single(values.result) ?? ""}>
+                <option value="">全部结果</option>
+                <option value="succeeded">成功</option>
+                <option value="rejected">已拒绝</option>
+                <option value="failed">失败</option>
+              </Select>
+            </label>
           </div>
-        )}
-        {cursorTrail.length > 0 || events.nextCursor ? (
-          <nav aria-label="审计事件分页" className="pagination">
-            {cursorTrail.length > 0 ? (
+          <details className="audit-advanced-filters" open={advancedFilters}>
+            <summary>
+              <SlidersHorizontal size={15} />
+              人员与时间筛选
+            </summary>
+            <div className="audit-advanced-grid">
+              <label>
+                操作者
+                <Select name="actorId" defaultValue={single(values.actorId) ?? ""}>
+                  <option value="">全部操作者</option>
+                  {[...actorNames].map(([id, name]) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label>
+                开始时间
+                <DatetimeInput
+                  defaultValue={dateInputValue(values.recordedAfter, timeZone)}
+                  name="recordedAfter"
+                />
+              </label>
+              <label>
+                结束时间
+                <DatetimeInput
+                  defaultValue={dateInputValue(values.recordedBefore, timeZone)}
+                  name="recordedBefore"
+                />
+              </label>
+            </div>
+          </details>
+          <div className="audit-filter-actions">
+            <p>仅记录重要数据变更与访问安全事件</p>
+            <div>
+              <Link className="button button-secondary" href="/audit">
+                清空筛选
+              </Link>
+              <Button type="submit" variant="primary">
+                <Search size={16} />
+                查询
+              </Button>
+            </div>
+          </div>
+        </form>
+        <div className="audit-list-heading">
+          <h2>
+            <ShieldCheck size={18} />
+            安全事件
+          </h2>
+          <span>本页 {events.items.length} 条</span>
+        </div>
+        <SecurityAuditTable
+          events={events.items.map((event) =>
+            presentAuditEvent(event, {
+              users: userNames,
+              runners: runnerNames,
+              projects: projectNames,
+            }),
+          )}
+          timeZone={timeZone}
+        />
+        <nav aria-label="审计事件分页" className="audit-pagination">
+          <span>第 {cursorTrail.length + 1} 页 · 每页最多 30 条</span>
+          <div>
+            {cursorTrail.length ? (
               <Link
                 className="button button-secondary"
                 href={`/audit?${previousPageParameters(values, projectId, cursorTrail, timeZone)}`}
@@ -218,7 +220,9 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                 上一页
               </Link>
             ) : (
-              <span />
+              <Button type="button" disabled>
+                上一页
+              </Button>
             )}
             {events.nextCursor ? (
               <Link
@@ -227,9 +231,13 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
               >
                 下一页
               </Link>
-            ) : null}
-          </nav>
-        ) : null}
+            ) : (
+              <Button type="button" disabled>
+                下一页
+              </Button>
+            )}
+          </div>
+        </nav>
       </section>
     </section>
   );
@@ -237,10 +245,6 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
 
 function single(value: string | string[] | undefined): string | undefined {
   return (Array.isArray(value) ? value[0] : value)?.trim() || undefined;
-}
-
-function auditResultLabel(result: "succeeded" | "rejected" | "failed"): string {
-  return result === "succeeded" ? "成功" : result === "rejected" ? "拒绝" : "失败";
 }
 
 function optionalFilter<Key extends string>(
@@ -283,7 +287,7 @@ function auditParameters(
   timeZone: string,
 ): URLSearchParams {
   const parameters = new URLSearchParams();
-  for (const key of ["actorId", "action", "resourceType", "result"] as const) {
+  for (const key of ["query", "category", "actorId", "action", "resourceType", "result"] as const) {
     const value = single(values[key]);
     if (value) parameters.set(key, value);
   }
@@ -335,47 +339,4 @@ function auditCursorTrail(value: string | string[] | undefined): string[] {
   } catch {
     return [];
   }
-}
-
-function actorLabel(
-  actorType: "user" | "runner" | "system",
-  actorId: string | undefined,
-  userNames: ReadonlyMap<string, string>,
-  runnerNames: ReadonlyMap<string, string>,
-): string {
-  if (!actorId) return actorType === "system" ? "系统" : actorType === "runner" ? "Runner" : "用户";
-  if (actorType === "user") return userNames.get(actorId) ?? `用户 · ${shortId(actorId)}`;
-  if (actorType === "runner") return runnerNames.get(actorId) ?? `Runner · ${shortId(actorId)}`;
-  return `系统 · ${shortId(actorId)}`;
-}
-
-function resourceLabel(resourceType: string, resourceId: string | undefined): string {
-  const typeLabel: Record<string, string> = {
-    user: "用户",
-    runner: "执行机",
-    project: "项目",
-    case_suite: "用例任务",
-    run_batch: "执行批次",
-    session: "会话",
-  };
-  const label = typeLabel[resourceType] ?? resourceType;
-  return resourceId ? `${label} · ${shortId(resourceId)}` : label;
-}
-
-function shortId(value: string): string {
-  return value.slice(0, 8);
-}
-
-function auditActionOptions(currentActions: readonly string[]): string[] {
-  return [
-    ...new Set([
-      ...currentActions,
-      "auth.login",
-      "auth.logout",
-      "runner.register",
-      "runner.update",
-      "run_batch.create",
-      "run_batch.cancel",
-    ]),
-  ].sort();
 }

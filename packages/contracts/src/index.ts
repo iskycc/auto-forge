@@ -17,3 +17,4 @@ export * from "./case-suite-activity";
 export * from "./read-models";
 
 export * from "./execution-overview";
+export * from "./security-audit";

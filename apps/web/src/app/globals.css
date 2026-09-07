@@ -10388,55 +10388,170 @@ button.icon-button:disabled {
   align-items: center;
 }
 
+.audit-card {
+  --audit-time-width: 16%;
+  --audit-actor-width: 18%;
+  --audit-action-width: 21%;
+  --audit-result-width: 10%;
+  --audit-detail-width: 90px;
+  overflow: hidden;
+}
+
 .audit-filter-panel {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.audit-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
   align-items: end;
-  gap: 14px;
 }
 
 .audit-filter-panel label {
   display: grid;
   min-width: 0;
-  gap: 6px;
+  gap: var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
   font-weight: 650;
 }
 
-.audit-filter-panel > .ui-button {
-  width: fit-content;
-  min-width: 104px;
+.audit-search-field {
+  position: relative;
+  display: block;
 }
 
-.audit-table-card .data-table {
-  min-width: 1040px;
+.audit-search-field > svg {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.audit-filter-panel .audit-search-field > input.ui-input[aria-label] {
+  padding-left: calc(var(--space-3) * 3);
+}
+
+.audit-advanced-filters > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.audit-advanced-filters > summary svg {
+  vertical-align: middle;
+  margin-right: var(--space-2);
+}
+
+.audit-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+}
+
+.audit-filter-actions,
+.audit-list-heading,
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.audit-filter-actions > p,
+.audit-list-heading > span,
+.audit-pagination > span {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.audit-filter-actions > div,
+.audit-pagination > div,
+.audit-list-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.audit-list-heading,
+.audit-pagination {
+  padding: var(--space-4) var(--space-5);
+}
+
+.audit-list-heading h2 {
+  margin: 0;
+  font-size: var(--font-size-body);
+}
+
+.audit-pagination {
+  border-top: 1px solid var(--color-border);
+}
+
+.security-audit-table {
+  width: 100%;
+  min-width: 0;
   table-layout: fixed;
 }
 
-.audit-table-card .data-table th:nth-child(1) {
-  width: 190px;
+.security-audit-table .audit-time-column {
+  width: var(--audit-time-width);
+}
+.security-audit-table .audit-actor-column {
+  width: var(--audit-actor-width);
+}
+.security-audit-table .audit-action-column {
+  width: var(--audit-action-width);
+}
+.security-audit-table .audit-result-column {
+  width: var(--audit-result-width);
+}
+.security-audit-table .audit-detail-column {
+  width: var(--audit-detail-width);
 }
 
-.audit-table-card .data-table th:nth-child(2) {
-  width: 190px;
-}
-
-.audit-table-card .data-table th:nth-child(3),
-.audit-table-card .data-table th:nth-child(7) {
-  width: 90px;
-}
-
-.audit-table-card .data-table td {
+.security-audit-table th,
+.security-audit-table td {
+  padding: var(--space-3);
+  vertical-align: top;
+  white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.security-audit-table td strong {
+  display: block;
+  font-size: var(--font-size-control);
+  font-weight: 600;
+}
+
+.security-audit-table td small,
+.security-audit-table time {
+  display: block;
+  margin-top: calc(var(--space-2) / 2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.security-audit-table .audit-detail-toggle {
+  min-height: calc(var(--space-2) * 4);
+  padding: calc(var(--space-2) / 2) var(--space-2);
+  gap: calc(var(--space-2) / 2);
+  font-size: var(--font-size-caption);
 }
 
 .audit-result {
   display: inline-flex;
-  min-height: 24px;
   align-items: center;
-  border-radius: 999px;
-  padding: 0 8px;
+  min-height: calc(var(--space-2) * 3);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
   font-size: var(--font-size-caption);
   font-weight: 680;
   white-space: nowrap;
@@ -10446,22 +10561,65 @@ button.icon-button:disabled {
   background: var(--color-success-soft);
   color: var(--color-success);
 }
-
 .audit-result-rejected {
   background: var(--color-warning-soft);
   color: var(--color-warning);
 }
-
 .audit-result-failed {
   background: var(--color-danger-soft);
   color: var(--color-danger);
 }
 
-.audit-table-card details pre {
-  width: min(440px, 70vw);
-  max-height: 260px;
-  overflow: auto;
+.audit-detail-row > td {
+  background: var(--color-surface-muted);
+}
+
+.audit-event-details {
+  padding: var(--space-2);
+}
+
+.audit-event-details h3 {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-body);
+}
+
+.audit-event-details dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+}
+
+.audit-event-details dl > div {
+  min-width: 0;
+}
+
+.audit-event-details dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.audit-event-details dd {
+  margin: calc(var(--space-2) / 2) 0 0;
+  font-size: var(--font-size-control);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.audit-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: calc(var(--space-5) * 3) var(--space-5);
+  color: var(--color-text-secondary);
+}
+
+.audit-empty strong {
+  color: var(--color-text);
+}
+.audit-empty p {
+  margin: 0;
+  font-size: var(--font-size-control);
 }
 
 /* Insights use a stable primary row and keep specialist filters out of the visual flow. */
@@ -11221,7 +11379,7 @@ button.icon-button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .audit-filter-panel,
+  .audit-filter-grid,
   .insight-primary-filters,
   .insight-advanced-filters > div {
     grid-template-columns: repeat(2, minmax(0, 1fr));

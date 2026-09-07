@@ -20,9 +20,16 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const { projectId, versionId } = await context.params;
     authorizedProjectScope(identity, "project.manage", projectId);
     const input = createTestStageInputSchema.parse(await readJsonBody(request, 16 * 1_024));
-    const stage = await (
-      await getPlatformServices()
-    ).projectStructures.createStage(projectId, versionId, input);
+    const services = await getPlatformServices();
+    const stage = await services.projectStructures.createStage(projectId, versionId, input);
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "test_stage.create",
+      resourceType: "test_stage",
+      resourceId: stage.id,
+      projectId,
+      requestId: currentRequestId,
+      details: { name: stage.name, projectVersionId: versionId },
+    });
     return NextResponse.json(stage, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);

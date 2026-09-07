@@ -37,7 +37,14 @@ describe("per-suite schedule access", () => {
     const { service, reader, findScheduleBySuite } = fixture();
     await expect(
       service.readSuiteSchedule(reader, { id: "suite-2", projectId: "project-2" }),
-    ).rejects.toMatchObject({ code: "AUTH_FORBIDDEN" });
+    ).rejects.toMatchObject({
+      code: "AUTH_FORBIDDEN",
+      authorization: {
+        actorId: reader.user.id,
+        permission: "case_suite.read",
+        projectId: "project-2",
+      },
+    });
     expect(findScheduleBySuite).not.toHaveBeenCalled();
   });
 

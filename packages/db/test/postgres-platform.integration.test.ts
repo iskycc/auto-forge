@@ -1499,6 +1499,18 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         [`run-${runnerId}`],
       );
       expect(run.rows[0]?.status).toBe("queued");
+      const retryAudit = await handle.pool.query(
+        "SELECT id FROM audit_events WHERE action = 'execution_run.retry_scheduled' AND resource_id = $1",
+        [`run-${runnerId}`],
+      );
+      expect(retryAudit.rows).toEqual([]);
+      const history = await handle.pool.query(
+        "SELECT details_json FROM attempt_state_events WHERE attempt_id = $1 AND event_type = 'lease.expired'",
+        [`attempt-${runnerId}`],
+      );
+      expect(history.rows.map((entry) => JSON.parse(entry.details_json))).toContainEqual({
+        retryScheduled: true,
+      });
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
       await handle.pool.query("DELETE FROM case_versions WHERE source_id = $1", [

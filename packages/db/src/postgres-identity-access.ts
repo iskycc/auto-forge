@@ -1104,6 +1104,9 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   }
 
   async listAudit(input: {
+    actions?: readonly string[];
+    query?: string;
+    queryActions?: readonly string[];
     projectIds?: readonly string[];
     includeUnscoped?: boolean;
     actorId?: string;
@@ -1116,9 +1119,21 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     limit: number;
   }): Promise<AuditListPage> {
     await this.ready();
-    if (input.projectIds?.length === 0) return { items: [] };
+    if (input.projectIds?.length === 0 || input.actions?.length === 0) return { items: [] };
     const parameters: unknown[] = [];
     const conditions: string[] = [];
+    if (input.actions) {
+      parameters.push([...input.actions]);
+      conditions.push(`action = ANY($${parameters.length}::text[])`);
+    }
+    if (input.query) {
+      parameters.push(auditSearchPattern(input.query));
+      const pattern = `$${parameters.length}`;
+      parameters.push([...(input.queryActions ?? [])]);
+      conditions.push(`(details_json ILIKE ${pattern} ESCAPE '\\' OR resource_id ILIKE ${pattern} ESCAPE '\\'
+        OR actor_id IN (SELECT id FROM users WHERE display_name ILIKE ${pattern} ESCAPE '\\' OR username ILIKE ${pattern} ESCAPE '\\')
+        OR action = ANY($${parameters.length}::text[]))`);
+    }
     if (input.projectIds) {
       parameters.push([...input.projectIds]);
       const scopedCondition = `project_id = ANY($${parameters.length}::text[])`;
@@ -1434,3 +1449,4 @@ function requiredRow<T>(row: T | undefined, message: string): T {
   if (!row) throw new Error(message);
   return row;
 }
+import { auditSearchPattern } from "./audit-search";

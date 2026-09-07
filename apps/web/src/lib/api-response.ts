@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isAuthorizationDeniedError } from "@autoforge/domain";
 import {
   DDT_IMPORT_FILE_BYTES,
   DDT_IMPORT_FILE_LIMIT,
@@ -168,7 +168,21 @@ function jarTooLargeError(maxJarBytes: number): DomainError {
   );
 }
 
-export function apiErrorResponse(error: unknown, requestId: string = randomUUID()): NextResponse {
+export async function apiErrorResponse(
+  error: unknown,
+  requestId: string = randomUUID(),
+): Promise<NextResponse> {
+  if (isAuthorizationDeniedError(error)) {
+    try {
+      const { getPlatformServices } = await import("./services");
+      await (
+        await getPlatformServices()
+      ).identityAccess.recordAccessDenial(error.authorization, requestId);
+    } catch (cause) {
+      const mapped = mapApiError(new Error("无法保存访问拒绝审计记录。", { cause }), requestId);
+      return NextResponse.json(mapped.body, { status: mapped.status });
+    }
+  }
   const mapped = mapApiError(error, requestId);
   return NextResponse.json(mapped.body, { status: mapped.status });
 }

@@ -42,7 +42,7 @@ describe("JAR upload request boundaries", () => {
       failure = error;
     }
 
-    const response = apiErrorResponse(failure, "request-id");
+    const response = await apiErrorResponse(failure, "request-id");
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "INVALID_MULTIPART", requestId: "request-id" },
@@ -66,19 +66,23 @@ describe("JAR upload request boundaries", () => {
       failure = error;
     }
 
-    expect(apiErrorResponse(failure).status).toBe(413);
+    expect((await apiErrorResponse(failure)).status).toBe(413);
   });
 
-  it("maps an SSH host-key change to a conflict that requires a fresh probe", () => {
+  it("maps an SSH host-key change to a conflict that requires a fresh probe", async () => {
     expect(
-      apiErrorResponse(
-        new DomainError("RUNNER_HOST_KEY_MISMATCH", "The observed host key changed."),
+      (
+        await apiErrorResponse(
+          new DomainError("RUNNER_HOST_KEY_MISMATCH", "The observed host key changed."),
+        )
       ).status,
     ).toBe(409);
   });
 
-  it("maps application authorization failures to HTTP 403", () => {
-    expect(apiErrorResponse(new DomainError("AUTH_FORBIDDEN", "Access denied.")).status).toBe(403);
+  it("maps application authorization failures to HTTP 403", async () => {
+    expect(
+      (await apiErrorResponse(new DomainError("AUTH_FORBIDDEN", "Access denied."))).status,
+    ).toBe(403);
   });
 
   it("bounds chunked multipart bodies without trusting Content-Length", async () => {
