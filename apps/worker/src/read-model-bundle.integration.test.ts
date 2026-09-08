@@ -96,12 +96,15 @@ async function createHarness(mode: "lite" | "full") {
   const migrationsFolder = join(repositoryRoot, "packages/db/drizzle/postgresql");
   const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL!;
   const admin = createPostgresDatabase({ connectionString, migrationsFolder, poolMax: 1 });
-  const schema = `snapshot_bundle_${randomUUID().replaceAll("-", "")}`;
+  // The migration advisory lock spans schemas. Keep this startup test in its own
+  // database so parallel migration fixtures cannot consume its 50 ms lock budget.
+  const databaseName = `snapshot_bundle_${randomUUID().replaceAll("-", "")}`;
   try {
     await admin.ready;
-    await admin.pool.query(`CREATE SCHEMA ${schema}`);
+    await admin.pool.query(`CREATE DATABASE ${databaseName}`);
     const url = new URL(connectionString);
-    url.searchParams.set("options", `-c search_path=${schema}`);
+    url.pathname = `/${databaseName}`;
+    url.searchParams.delete("options");
     const configuration = { mode, databaseUrl: url.toString(), migrationsFolder, poolMax: 1 };
     const handle = createPostgresDatabase({ ...configuration, connectionString: url.toString() });
     try {
@@ -116,7 +119,7 @@ async function createHarness(mode: "lite" | "full") {
       close: async () => {
         try {
           await handle.close();
-          await admin.pool.query(`DROP SCHEMA ${schema} CASCADE`);
+          await admin.pool.query(`DROP DATABASE ${databaseName} WITH (FORCE)`);
         } finally {
           await admin.close();
         }
@@ -124,7 +127,7 @@ async function createHarness(mode: "lite" | "full") {
     };
   } catch (error) {
     try {
-      await admin.pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await admin.pool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
     } finally {
       await admin.close();
     }
