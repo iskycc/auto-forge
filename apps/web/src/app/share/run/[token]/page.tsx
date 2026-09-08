@@ -1,9 +1,13 @@
+import { hasPermission } from "@autoforge/domain";
 import { Link2Off } from "lucide-react";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
+import { AuthenticatedRunRedirect } from "@/components/authenticated-run-redirect";
 import { ExecutionBatchDetails } from "@/components/execution-batch-details";
 import { RunBatchDetailHero } from "@/components/run-batch-detail-hero";
 import type { RunnerDirectoryEntry } from "@/components/run-batch-rounds";
+import { currentIdentity } from "@/lib/auth";
 import { toExecutionBatchView } from "@/lib/execution-batch-view";
 import { readPermanentShareToken } from "@/lib/permanent-share-token";
 import { getPlatformServices } from "@/lib/services";
@@ -22,6 +26,10 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
   const overview = await services.executionOverview(batchId).catch(() => null);
   if (!overview) return <InvalidRunShare />;
   const batch = overview.batch;
+  const identity = await currentIdentity();
+  if (identity && hasPermission(identity, "run.read", batch.projectId)) {
+    redirect(`/run-batches/${encodeURIComponent(batchId)}`);
+  }
   const projectVersion = batch.policy?.projectVersionId
     ? (await services.projectStructures.list(batch.projectId)).versions.find(
         (version) => version.id === batch.policy?.projectVersionId,
@@ -38,6 +46,7 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
 
   return (
     <main className="shared-run-detail-page">
+      {!identity && <AuthenticatedRunRedirect batchId={batchId} />}
       <div className="page-stack shared-run-detail-shell">
         <RunBatchDetailHero
           batchId={batch.id}

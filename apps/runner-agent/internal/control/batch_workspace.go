@@ -19,6 +19,8 @@ const batchesDirectoryName = "batches"
 
 const maximumCachedBatchIDs = 1_024
 
+const cotestRuntimeLayoutVersion = "complete-bundle-v1\n"
+
 // batchRegistry 跟踪本机正在执行的批次共享目录：同一批次（batchId）的
 // test-jar / dependency-jar / jar-bundle / jdk-archive 输入只下载解压一次，
 // 同批次并发 attempt 通过硬链接或受控目录链接共享；批次进入终态且本机没有在途
@@ -287,6 +289,9 @@ func ensureBatchCotestRuntime(batchDir string, inputs []ExecutionInput, limits R
 	if err := materializeCotestJDK(batchDir, filepath.Join(staging, "jdk"), inputs, budget); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(staging, ".layout-version"), []byte(cotestRuntimeLayoutVersion), 0o600); err != nil {
+		return fmt.Errorf("record shared CoTest runtime layout: %w", err)
+	}
 	if err := os.RemoveAll(target); err != nil {
 		return fmt.Errorf("reset shared CoTest runtime: %w", err)
 	}
@@ -297,6 +302,12 @@ func ensureBatchCotestRuntime(batchDir string, inputs []ExecutionInput, limits R
 }
 
 func cotestRuntimeReady(target string, inputs []ExecutionInput) bool {
+	// Pre-upgrade caches mixed the imported JAR with the dependency bundle. Rebuild
+	// them once so a restarted Agent cannot reintroduce removed classes.
+	layout, err := os.ReadFile(filepath.Join(target, ".layout-version"))
+	if err != nil || string(layout) != cotestRuntimeLayoutVersion {
+		return false
+	}
 	if info, err := os.Stat(filepath.Join(target, "test-jars")); err != nil || !info.IsDir() {
 		return false
 	}

@@ -159,12 +159,88 @@ func TestPrepareCotestWorkspaceExtractsJDKAndJars(t *testing.T) {
 	for _, expected := range []string{
 		"runtime/jdk/bin/java",
 		"runtime/jdk/jre/bin/java",
-		"test-jars/autoforge-case.jar",
 		"test-jars/lib/testng.jar",
 		"test-jars/lib/project.jar",
 	} {
 		if _, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(expected))); err != nil {
 			t.Fatalf("expected %s: %v", expected, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "test-jars", "autoforge-case.jar")); !os.IsNotExist(err) {
+		t.Fatalf("historical imported JAR must not enter the bundle classpath: %v", err)
+	}
+}
+
+func TestPrepareCotestWorkspaceUsesOnlyTheCompleteBundle(t *testing.T) {
+	for _, bundleFirst := range []bool{true, false} {
+		name := "bundle_last"
+		if bundleFirst {
+			name = "bundle_first"
+		}
+		t.Run(name, func(t *testing.T) {
+			workspace := t.TempDir()
+			writeFixture(t, filepath.Join(workspace, "inputs", "tests.jar"), []byte("historical-case"))
+			writeFixture(t, filepath.Join(workspace, "inputs", "removed.jar"), []byte("historical-dependency"))
+			archive := filepath.Join(workspace, "runtime-inputs", "bundle.zip")
+			writeZipFixture(t, archive, map[string]string{"lib/current.jar": "current"})
+			inputs := []ExecutionInput{
+				{Kind: "test-jar", TargetPath: "inputs/tests.jar", SizeBytes: 15},
+				{Kind: "dependency-jar", TargetPath: "inputs/removed.jar", SizeBytes: 21},
+			}
+			bundle := ExecutionInput{Kind: "jar-bundle", TargetPath: "runtime-inputs/bundle.zip", SizeBytes: fileSize(t, archive)}
+			if bundleFirst {
+				inputs = append([]ExecutionInput{bundle}, inputs...)
+			} else {
+				inputs = append(inputs, bundle)
+			}
+			if err := prepareCotestWorkspace(workspace, inputs, 1<<20, 100); err != nil {
+				t.Fatal(err)
+			}
+			entries, err := os.ReadDir(filepath.Join(workspace, "test-jars"))
+			if err != nil || len(entries) != 1 || entries[0].Name() != "lib" {
+				t.Fatalf("classpath contains files outside the complete bundle: %v, %v", entries, err)
+			}
+			content, err := os.ReadFile(filepath.Join(workspace, "test-jars", "lib", "current.jar"))
+			if err != nil || string(content) != "current" {
+				t.Fatalf("bundle content = %q, %v", content, err)
+			}
+		})
+	}
+}
+
+func TestPrepareCotestWorkspaceAcceptsBundleJarNamedAutoforgeCase(t *testing.T) {
+	workspace := t.TempDir()
+	writeFixture(t, filepath.Join(workspace, "inputs", "tests.jar"), []byte("old"))
+	archive := filepath.Join(workspace, "runtime-inputs", "bundle.zip")
+	writeZipFixture(t, archive, map[string]string{"autoforge-case.jar": "current"})
+	inputs := []ExecutionInput{
+		{Kind: "test-jar", TargetPath: "inputs/tests.jar", SizeBytes: 3},
+		{Kind: "jar-bundle", TargetPath: "runtime-inputs/bundle.zip", SizeBytes: fileSize(t, archive)},
+	}
+	if err := prepareCotestWorkspace(workspace, inputs, 1<<20, 100); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(workspace, "test-jars", "autoforge-case.jar"))
+	if err != nil || string(content) != "current" {
+		t.Fatalf("bundle's own JAR must be preserved: %q, %v", content, err)
+	}
+}
+
+func TestPrepareCotestWorkspaceWithoutBundleUsesDeclaredJars(t *testing.T) {
+	workspace := t.TempDir()
+	writeFixture(t, filepath.Join(workspace, "inputs", "tests.jar"), []byte("case"))
+	writeFixture(t, filepath.Join(workspace, "inputs", "dependency.jar"), []byte("dependency"))
+	inputs := []ExecutionInput{
+		{Kind: "test-jar", TargetPath: "inputs/tests.jar", SizeBytes: 4},
+		{Kind: "dependency-jar", TargetPath: "inputs/dependency.jar", SizeBytes: 10},
+	}
+	if err := prepareCotestWorkspace(workspace, inputs, 1<<20, 100); err != nil {
+		t.Fatal(err)
+	}
+	for name, expected := range map[string]string{"autoforge-case.jar": "case", "dependency.jar": "dependency"} {
+		content, err := os.ReadFile(filepath.Join(workspace, "test-jars", name))
+		if err != nil || string(content) != expected {
+			t.Fatalf("declared input %s = %q, %v", name, content, err)
 		}
 	}
 }

@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Locale;
 
 final class JarDirectoryScanner {
-  private static final String PRIMARY_CASE_JAR = "autoforge-case.jar";
   private static final int MAX_DIRECTORY_DEPTH = 3;
   private static final int MAX_WALK_DEPTH = MAX_DIRECTORY_DEPTH + 1;
   private static final int MAX_VISITED_ENTRIES = 100_000;
@@ -53,9 +52,7 @@ final class JarDirectoryScanner {
     if (jarFiles.isEmpty()) {
       throw new IllegalArgumentException("JAR directory does not contain any .jar files: " + root);
     }
-    jarFiles.sort(
-        Comparator.comparingInt(JarDirectoryScanner::classpathPriority)
-            .thenComparing(Path::toString));
+    jarFiles.sort(Comparator.comparing(Path::toString));
     List<URL> urls = new ArrayList<>(jarFiles.size());
     for (Path jarFile : jarFiles) {
       try {
@@ -65,10 +62,6 @@ final class JarDirectoryScanner {
       }
     }
     return Collections.unmodifiableList(urls);
-  }
-
-  private static int classpathPriority(Path path) {
-    return path.getFileName().toString().equals(PRIMARY_CASE_JAR) ? 0 : 1;
   }
 
   private static Path requireDirectory(Path directory) {

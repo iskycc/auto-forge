@@ -10,6 +10,33 @@ import {
 } from "../src/project-adapter-runtime";
 
 describe("Adapter execution resource limits", () => {
+  it("retains the dependency publication time and reads legacy snapshots without inventing a timestamp", () => {
+    const snapshot = {
+      suiteName: "suite",
+      testName: "test",
+      jarBundle: {
+        id: "bundle",
+        sourceType: "upload",
+        sha256: "a".repeat(64),
+        sizeBytes: 123,
+        archiveFormat: "zip",
+        createdAt: "2026-09-08T01:00:00.000Z",
+      },
+    };
+    expect(parseProjectAdapterRuntime(JSON.stringify(snapshot))?.jarBundle).toMatchObject({
+      createdAt: snapshot.jarBundle.createdAt,
+    });
+    expect(
+      parseProjectAdapterRuntime(
+        JSON.stringify({ ...snapshot, jarBundle: { ...snapshot.jarBundle, createdAt: undefined } }),
+      )?.jarBundle,
+    ).not.toHaveProperty("createdAt");
+    expect(() =>
+      parseProjectAdapterRuntime(
+        JSON.stringify({ ...snapshot, jarBundle: { ...snapshot.jarBundle, createdAt: "invalid" } }),
+      ),
+    ).toThrow();
+  });
   it("grows the workspace budget beyond the legacy 10 GiB default for large archives", () => {
     const twentyGiB = 20 * 1_024 * 1_024 * 1_024;
 

@@ -114,6 +114,7 @@ function makeService(
   state: FakeState,
   batch: RunBatchDetails = makeBatchDetails("failed"),
   diagnosticBatches: RunBatchDetails[] = [],
+  dependencyPublishedAt: Record<string, string> = {},
 ) {
   const shares: AttemptLogShareRepository = {
     create: async (record) => {
@@ -147,10 +148,27 @@ function makeService(
   const batches = {
     get: async () => batch,
     getSummary: async () => batch,
-    getRerunSnapshot: async () => ({
-      batch,
+    getRerunSnapshot: async (batchId: string) => ({
+      batch: [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId),
       roundRecoveries: [],
       runs: batch.runs,
+      ...(dependencyPublishedAt[batchId]
+        ? {
+            adapterRuntime: {
+              suiteName: "suite",
+              testName: "test",
+              environmentAddresses: [],
+              jarBundle: {
+                id: `bundle-${batchId}`,
+                sourceType: "upload",
+                sha256: "a".repeat(64),
+                sizeBytes: 1,
+                archiveFormat: "zip",
+                createdAt: dependencyPublishedAt[batchId],
+              },
+            },
+          }
+        : {}),
     }),
     listAttemptsForExecutionRun: async (executionRunId: string) =>
       batch.attempts.filter((attempt) => attempt.executionRunId === executionRunId),
@@ -401,8 +419,20 @@ describe("AttemptLogShareService", () => {
       executionRunId: "manual-run",
       createdAt: "2026-08-17T00:07:30.000Z",
     };
-    const service = makeService(state, source, [diagnostic]);
+    const sourcePublication = "2026-08-16T00:00:00.000Z";
+    const diagnosticPublication = "2026-08-17T00:06:00.000Z";
+    const service = makeService(state, source, [diagnostic], {
+      [source.id]: sourcePublication,
+      [diagnostic.id]: diagnosticPublication,
+    });
     await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    expect((await service.getSharedAttemptLog("token-1"))?.dependencyUpdatedAt).toBe(
+      sourcePublication,
+    );
+    expect(
+      (await service.getSharedAttemptLog("token-1", diagnostic.attempts[0]!.id))
+        ?.dependencyUpdatedAt,
+    ).toBe(diagnosticPublication);
 
     const view = await service.getSharedAttemptLog("token-1", "manual-attempt");
 

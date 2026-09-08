@@ -727,6 +727,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       testng_result_json: string | null;
       finished_at: string;
     }>;
+    if (rows.length === 0) return 0;
     const writeFact = this.handle.client.prepare(
       `INSERT INTO analytics_facts
        (attempt_id, project_id, batch_id, run_id, suite_id, case_definition_id, case_version,

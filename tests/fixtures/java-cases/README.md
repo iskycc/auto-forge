@@ -28,9 +28,9 @@
 2. 先把 `tests/fixtures/real-agent/ProjectFileUtil.java` 与最小
    `MM2DataProvider` 编译为 `project-fixture.jar`，再把 java-cases 用例依赖它编译为
    `java-cases-tests.jar`。
-3. 按 Adapter 读取根目录及最多三层子目录 JAR 的规则，把依赖放进
+3. 按 Adapter 读取根目录及最多三层子目录 JAR 的规则，把 `java-cases-tests.jar` 与全部依赖放进
    `dependency-bundle/level-1/level-2/level-3`，打包为
-   `java-cases-dependencies.zip`。
+   `java-cases-dependencies.zip`。该全量包独立提供执行类路径，不从导入 JAR 补充缺失类。
 4. 用 `javac`+`jar` 构建 `cotest-testng-adapter` 可执行 JAR（等价于
    `mvn package`，生产代码无第三方依赖）。
 

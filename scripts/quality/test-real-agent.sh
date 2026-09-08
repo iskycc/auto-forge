@@ -133,6 +133,7 @@ prepare_toolchain() {
   else
     cp -- "${toolchain_directory}"/*.jar "${dependency_bundle_directory}/"
   fi
+  cp -- "${acceptance_directory}/real-agent-tests.jar" "${dependency_bundle_directory}/"
   jar --create \
     --file "${acceptance_directory}/adapter-dependencies.zip" \
     -C "${acceptance_directory}/dependency-bundle" .

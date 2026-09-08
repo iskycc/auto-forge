@@ -2428,6 +2428,7 @@ async function postgresProjectAdapterRuntime(
           sha256: asset.sha256,
           sizeBytes: asset.sizeBytes,
           archiveFormat: asset.archiveFormat,
+          createdAt: asset.createdAt,
         }
       : undefined;
   };

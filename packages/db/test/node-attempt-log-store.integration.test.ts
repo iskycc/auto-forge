@@ -1,7 +1,7 @@
 import { LogIoPool } from "../../../apps/web/server/log-io-pool";
 import { isolatedAttemptLogs } from "../../../apps/web/src/lib/isolated-attempt-logs";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, rename } from "node:fs/promises";
+import { mkdtemp, rm, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,6 +16,39 @@ const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const now = "2026-09-05T00:00:00.000Z";
 
 describe.skipIf(!connectionString)("node-owned logs across isolated Full nodes", () => {
+  it("reads an initializing owner's log from either node and recovers after the first remote upload", async () => {
+    const fixture = await createFixture();
+    const { nodes, directories, batchId, attemptIds, handle } = fixture;
+    const query = {
+      batchId,
+      attemptId: attemptIds[0],
+      stream: "stdout" as const,
+      afterSequence: -1,
+      limit: 10,
+    };
+    try {
+      await handle.pool.query(
+        "INSERT INTO run_batch_log_locations(batch_id,node_id) VALUES($1,$2)",
+        [batchId, nodes[0].nodeId],
+      );
+      await writeFile(join(directories[0], `${batchId}.sqlite`), "", { flag: "wx" });
+      for (const node of nodes)
+        await expect(node.listChunks(query)).resolves.toEqual({ items: [], hasMore: false });
+      await nodes[1].appendChunks({
+        batchId,
+        attemptId: attemptIds[0],
+        receivedAt: now,
+        chunks: [{ stream: "stdout", sequence: 0, content: "first upload", recordedAt: now }],
+      });
+      for (const node of nodes) {
+        expect((await node.listChunks(query)).items[0]?.content).toBe("first upload");
+        expect(await node.acknowledgedSequence(batchId, attemptIds[0], "stdout")).toBe(0);
+      }
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it("chooses one owner under concurrent writes and shares gaps, duplicates, filters and acknowledgement metadata", async () => {
     const fixture = await createFixture();
     const { nodes, directories, batchId, attemptIds, handle } = fixture;

@@ -291,6 +291,9 @@ func TestBatchRegistryMaterializesAdapterDependenciesOnce(t *testing.T) {
 		if err := linkSharedCotestRuntime(registry.directory("batch-1"), workspace, inputs); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := os.Stat(filepath.Join(workspace, "test-jars", "autoforge-case.jar")); !os.IsNotExist(err) {
+			t.Fatalf("shared runtime leaked the historical imported JAR: %v", err)
+		}
 		jarDirectory, err := os.Lstat(filepath.Join(workspace, "test-jars"))
 		if err != nil || !jarDirectory.IsDir() || jarDirectory.Mode()&os.ModeSymlink != 0 {
 			t.Fatalf("shared test-jars directory = %v, %v", jarDirectory, err)
@@ -302,6 +305,41 @@ func TestBatchRegistryMaterializesAdapterDependenciesOnce(t *testing.T) {
 		if !os.SameFile(sharedStat, dependencyStat) {
 			t.Fatal("attempt did not reuse the batch-level extracted dependency")
 		}
+	}
+}
+
+func TestEnsureBatchCotestRuntimeRebuildsLegacyMixedClasspath(t *testing.T) {
+	batchDir := t.TempDir()
+	archive := filepath.Join(batchDir, "runtime-inputs", "bundle.zip")
+	writeZipFixture(t, archive, map[string]string{"lib/current.jar": "current"})
+	writeFixture(t, filepath.Join(batchDir, "inputs", "tests.jar"), []byte("old"))
+	inputs := []ExecutionInput{
+		{Kind: "test-jar", TargetPath: "inputs/tests.jar", SizeBytes: 3},
+		{Kind: "jar-bundle", TargetPath: "runtime-inputs/bundle.zip", SizeBytes: fileSize(t, archive)},
+	}
+	runtime := filepath.Join(batchDir, "runtime", "cotest")
+	writeFixture(t, filepath.Join(runtime, "test-jars", "autoforge-case.jar"), []byte("old"))
+	writeFixture(t, filepath.Join(runtime, "test-jars", "removed.jar"), []byte("removed"))
+	limits := ResourceLimits{DiskBytes: 1 << 20, FileCount: 100}
+	if err := ensureBatchCotestRuntime(batchDir, inputs, limits); err != nil {
+		t.Fatal(err)
+	}
+	for _, stale := range []string{"autoforge-case.jar", "removed.jar"} {
+		if _, err := os.Stat(filepath.Join(runtime, "test-jars", stale)); !os.IsNotExist(err) {
+			t.Fatalf("old cached %s must not remain after upgrade: %v", stale, err)
+		}
+	}
+	current := filepath.Join(runtime, "test-jars", "lib", "current.jar")
+	first, err := os.Stat(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBatchCotestRuntime(batchDir, inputs, limits); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.Stat(current)
+	if err != nil || !os.SameFile(first, second) {
+		t.Fatalf("rebuilt runtime must be reused without extracting again: %v", err)
 	}
 }
 

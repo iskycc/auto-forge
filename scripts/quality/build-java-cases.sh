@@ -81,6 +81,7 @@ compile_java_cases() {
 
 assemble_dependency_bundle() {
   cp -- "${toolchain_directory}"/*.jar "${bundle_directory}/"
+  cp -- "${output_directory}/java-cases-tests.jar" "${bundle_directory}/"
   jar --create \
     --file "${output_directory}/java-cases-dependencies.zip" \
     -C "${output_directory}/dependency-bundle" .

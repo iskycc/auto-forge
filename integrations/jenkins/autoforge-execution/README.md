@@ -52,8 +52,8 @@ def result = autoforgeRun(
 | `totalCases`  | `int`    | 批次总用例数。                                                      |
 | `totalPassed` | `int`    | 汇总后通过的用例数。                                                |
 | `finalFailed` | `int`    | 最后一轮仍失败的用例数。TestNG 断言失败不会把批次调度状态改成异常。 |
-| `progressUrl` | `String` | 与 `resultUrl` 相同的匿名执行详情链接。                                        |
-| `resultUrl`   | `String` | 永久匿名执行详情链接。                                              |
+| `progressUrl` | `String` | 与 `resultUrl` 相同的执行详情入口。                                        |
+| `resultUrl`   | `String` | 永久执行详情入口；支持匿名查看，已登录且有项目权限时进入控制台。        |
 
 ## 运行行为与网络要求
 
@@ -67,6 +67,12 @@ def result = autoforgeRun(
 - 运行中即可查看概览、轮次、用例及公开日志，详情链接永久有效；机器轮询仍使用独立的
   七天有效进度 API。旧平台未返回 `resultUrl` 时，两处均回退到临时 `progressUrl`，
   并明确显示“7 天内有效”。
+- 在已更新的主平台打开详情链接时，已登录且具有该项目 `run.read` 权限的用户自动进入
+  控制台执行详情页，显示侧边栏、顶栏及其权限允许的操作；匿名、会话失效或无项目读取
+  权限的用户仍查看公开只读页面。有效的旧 `/progress/` 链接也支持该行为。
+  跨站打开 Jenkins 链接时保留 `SameSite=Strict` Cookie，页面通过一次有界的同源权限
+  检查识别已有会话；网络异常时保留公开页，不阻塞查看。平台外部访问地址应与浏览器
+  登录时使用的站点一致，不同域名或 IP 之间不共享登录 Cookie。无需重新安装 Jenkins HPI。
 - 下载的纯文本日志、以及不支持 Jenkins 控制台注解的日志客户端只显示关键词。
   Pipeline 保留 `progressUrl`、`resultUrl` 字段，两者统一返回上述详情地址；新版插件连接
   返回不同链接的旧平台时，也优先使用 `resultUrl`。

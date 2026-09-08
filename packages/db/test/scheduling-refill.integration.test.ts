@@ -187,6 +187,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
             sha256: "b".repeat(64),
             sizeBytes: 2048,
             archiveFormat: "zip",
+            createdAt: "2026-08-09T00:00:00.000Z",
           },
         },
         runs: [sourceRun],
@@ -218,7 +219,9 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       await expect(
         harness.batches.getRerunSnapshot(sourceBatchId, { executionRunId: sourceRunId }),
       ).resolves.toMatchObject({
-        adapterRuntime: { jarBundle: { id: "historical-bundle" } },
+        adapterRuntime: {
+          jarBundle: { id: "historical-bundle", createdAt: "2026-08-09T00:00:00.000Z" },
+        },
       });
       await expect(
         harness.batches.getRerunSnapshot(diagnosticBatchId, {
@@ -227,8 +230,29 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       ).resolves.toMatchObject({
         adapterRuntime: {
           environmentAddresses: ["10.0.0.12"],
-          jarBundle: { id: currentBundleId },
+          jarBundle: { id: currentBundleId, createdAt: recordedAt },
         },
+      });
+      const newBatchId = randomUUID();
+      const newRunId = randomUUID();
+      await harness.batches.create({
+        id: newBatchId,
+        projectId: harness.projectId,
+        suiteId: randomUUID(),
+        suiteName: "New task after dependency publication",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: [],
+        policy,
+        adapter: { enabled: true, suiteName: "suite", testName: "test", environmentAddresses: [] },
+        runs: [{ ...sourceRun, id: newRunId }],
+        createdAt: recordedAt,
+      });
+      await expect(
+        harness.batches.getRerunSnapshot(newBatchId, { executionRunId: newRunId }),
+      ).resolves.toMatchObject({
+        adapterRuntime: { jarBundle: { id: currentBundleId, createdAt: recordedAt } },
       });
     } finally {
       await harness.dispose();

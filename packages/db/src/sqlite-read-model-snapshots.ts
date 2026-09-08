@@ -40,26 +40,27 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
   }
 
   async claim(now: string, expiresAt: string, token: string, options?: { onlyUnpublished: true }) {
-    const row = await retrySqliteLockContention(
-      () =>
-        this.handle.client
-          .prepare(
-            `UPDATE read_model_snapshots
-      SET lease_token=?,lease_expires_at=? WHERE id=(SELECT id FROM read_model_snapshots
+    const candidateSql = `SELECT id FROM read_model_snapshots
       WHERE refresh_after<=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)
       AND failed<5 AND accessed_at>=? AND (?=0 OR generated_at IS NULL)
-      ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1)
-      RETURNING *`,
-          )
-          .get(
-            token,
-            expiresAt,
-            now,
-            now,
-            new Date(Date.parse(now) - 300_000).toISOString(),
-            Number(options?.onlyUnpublished ?? false),
-          ) as ReadModelSnapshotRow | undefined,
-    );
+      ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1`;
+    const parameters = [
+      now,
+      now,
+      new Date(Date.parse(now) - 300_000).toISOString(),
+      Number(options?.onlyUnpublished ?? false),
+    ];
+    const row = await retrySqliteLockContention(() => {
+      // Idle polling must not compete with heartbeats for SQLite's single writer.
+      // The UPDATE repeats the predicate atomically: the probe grants no execution rights.
+      if (!this.handle.client.prepare(candidateSql).get(...parameters)) return undefined;
+      return this.handle.client
+        .prepare(
+          `UPDATE read_model_snapshots
+        SET lease_token=?,lease_expires_at=? WHERE id=(${candidateSql}) RETURNING *`,
+        )
+        .get(token, expiresAt, ...parameters) as ReadModelSnapshotRow | undefined;
+    });
     return row ? { ...readModelSnapshotFromRow(row), token } : null;
   }
 

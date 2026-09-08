@@ -2,6 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { AnalyticsFactRefresh } from "./analytics-fact-refresh.ts";
 import {
   CaseSuiteActivityService,
   DashboardSnapshotService,
@@ -61,26 +62,26 @@ const worker = new ReadModelSnapshotWorker(
   builder,
   resources.clock,
   { next: randomUUID },
-  reportError,
+  reportRefreshError,
   canRefresh,
   () => configuration.buildInitial && Atomics.load(priority, 1) === 0 && !shutdown.signal.aborted,
   resources.isResourceContention,
 );
 let completedCycles = 0;
-let nextFactsRefreshAt = 0;
+const factRefresh = new AnalyticsFactRefresh(
+  () => resources.operations.rebuildAnalyticsFacts(100),
+  reportRefreshError,
+);
 try {
   while (!shutdown.signal.aborted) {
     let refreshed = false;
     try {
-      if (configuration.refreshFacts && canRefresh() && Date.now() >= nextFactsRefreshAt) {
-        await resources.operations.rebuildAnalyticsFacts(100);
-        nextFactsRefreshAt = Date.now() + 1_000;
-      }
+      if (configuration.refreshFacts && canRefresh()) await factRefresh.refreshIfDue();
       refreshed = await worker.refreshOne();
       completedCycles += 1;
       if (completedCycles % 60 === 0) await worker.cleanup();
     } catch (error) {
-      reportError(error);
+      reportRefreshError(error);
     }
     await delay(refreshed ? 50 : configuration.buildInitial ? 250 : 1_000, undefined, {
       signal: shutdown.signal,
@@ -147,6 +148,14 @@ async function initialize() {
     await database.close();
     throw error;
   }
+}
+
+function reportRefreshError(error: unknown, query?: { kind: string; projectId: string }) {
+  if (resources.isResourceContention(error)) {
+    parentPort?.postMessage({ kind: "database_contention" });
+    return;
+  }
+  reportError(error, query);
 }
 
 function reportError(error: unknown, query?: { kind: string; projectId: string }) {

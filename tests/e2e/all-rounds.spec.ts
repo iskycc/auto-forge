@@ -1,13 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, type ProjectStructure } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, startTaskFromTopbar } from "./support/task-execution";
 import {
@@ -32,6 +32,34 @@ async function captureUi(page: Page, name: string): Promise<void> {
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
+}
+
+async function expectConsoleRunDetails(page: Page, batchId: string, suiteName: string) {
+  await expect(page).toHaveURL(new RegExp(`/run-batches/${batchId}$`, "u"));
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: suiteName, exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "批次概览" })).toBeVisible();
+  await expect(page.getByText("永久匿名只读执行详情")).toHaveCount(0);
+}
+
+async function openRunLinkFromJenkins(page: Page, url: string): Promise<void> {
+  // A different site, not just another port: Strict cookies are omitted on the
+  // first navigation, just as when clicking the Jenkins console link.
+  const jenkinsConsoleUrl = "http://jenkins.example.test/console";
+  await page.route(jenkinsConsoleUrl, (route) =>
+    route.fulfill({
+      contentType: "text/html; charset=utf-8",
+      body: `<a href="${url}" target="_self" rel="noreferrer">查看执行详情</a>`,
+    }),
+  );
+  await page.goto(jenkinsConsoleUrl);
+  await expect(page.getByRole("link", { name: "查看执行详情" })).toBeVisible();
+  const navigation = page.waitForRequest(
+    (request) => request.isNavigationRequest() && request.url() === url,
+  );
+  await page.getByRole("link", { name: "查看执行详情" }).click();
+  expect((await (await navigation).allHeaders()).cookie ?? "").not.toContain("autoforge_session=");
 }
 
 async function expectDialogFitsViewport(page: Page, dialog: Locator): Promise<void> {
@@ -267,6 +295,23 @@ async function publishVersionDependency(
 function dependencyInputId(claim: ClaimedAssignment): string | undefined {
   return claim.assignment.executionSpec.inputs.find((input) => input.kind === "jar-bundle")
     ?.inputId;
+}
+
+async function dependencyPublicationTime(
+  page: Page,
+  versionId: string,
+  assetId: string,
+): Promise<string> {
+  const structure = await browserJson<ProjectStructure>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/structure`,
+  );
+  expect(structure.status).toBe(200);
+  const bundle = structure.body.versions.find((version) => version.id === versionId)
+    ?.adapterConfiguration.jarBundleAsset;
+  expect(bundle?.id).toBe(assetId);
+  expect(bundle?.createdAt).toBeTruthy();
+  return bundle!.createdAt;
 }
 
 async function ensureProjectHierarchy(page: Page): Promise<void> {
@@ -1081,6 +1126,84 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await captureUi(anonymousProgressPage, "jenkins-active-execution-details");
   await expect(anonymousProgressPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
 
+  const signedInDetailsPage = await page.context().newPage();
+  await openRunLinkFromJenkins(signedInDetailsPage, jenkinsRun.progressUrl);
+  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await captureUi(signedInDetailsPage, "jenkins-signed-in-active-execution-details");
+  await signedInDetailsPage.goto(jenkinsRun.progressUrl);
+  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+
+  const legacyProgressUrl = new URL(`/progress/${jenkinsRun.batchId}`, jenkinsRun.progressApiUrl);
+  legacyProgressUrl.search = new URL(jenkinsRun.progressApiUrl).search;
+  await signedInDetailsPage.goto(legacyProgressUrl.toString());
+  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await openRunLinkFromJenkins(signedInDetailsPage, legacyProgressUrl.toString());
+  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+
+  const sessionProbeUrl = new URL(
+    `/api/v1/run-batches/${jenkinsRun.batchId}?view=summary`,
+    jenkinsRun.resultUrl,
+  ).toString();
+  await signedInDetailsPage.route(sessionProbeUrl, (route) => route.abort("failed"));
+  const failedProbe = signedInDetailsPage.waitForEvent("requestfailed", {
+    predicate: (request) => request.url() === sessionProbeUrl,
+  });
+  await openRunLinkFromJenkins(signedInDetailsPage, jenkinsRun.progressUrl);
+  await failedProbe;
+  await expect(signedInDetailsPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(signedInDetailsPage).toHaveURL(jenkinsRun.progressUrl);
+  await signedInDetailsPage.unroute(sessionProbeUrl);
+  await signedInDetailsPage.reload();
+  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+
+  const restrictedContext = await browser.newContext();
+  const restrictedPage = await restrictedContext.newPage();
+  const platformOrigin = new URL(jenkinsRun.resultUrl).origin;
+  const username = uniqueName("jenkins-share-reader");
+  const password = "E2e!SharedReadOnly123";
+  const restrictedUser = await browserJson(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName: username, password, forcePasswordChange: false },
+  });
+  expect(restrictedUser.status).toBe(201);
+  const restrictedLogin = await restrictedContext.request.post(
+    `${platformOrigin}/api/v1/auth/login`,
+    {
+      headers: { origin: platformOrigin },
+      data: { username, password },
+    },
+  );
+  expect(restrictedLogin.status()).toBe(200);
+  expect(
+    (await restrictedContext.request.get(`${platformOrigin}/api/v1/auth/session`)).status(),
+  ).toBe(200);
+  expect(
+    (
+      await restrictedContext.request.get(
+        `${platformOrigin}/api/v1/run-batches/${jenkinsRun.batchId}?view=summary`,
+      )
+    ).status(),
+  ).toBe(403);
+  await restrictedPage.goto(jenkinsRun.resultUrl);
+  await expect(restrictedPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(restrictedPage.locator(".app-shell")).toHaveCount(0);
+
+  // A stale cookie must not turn a working public report into a login redirect.
+  await restrictedContext.clearCookies();
+  await restrictedContext.addCookies([
+    {
+      name: "autoforge_session",
+      value: "expired-or-revoked-session",
+      url: platformOrigin,
+      httpOnly: true,
+      sameSite: "Strict",
+    },
+  ]);
+  await restrictedPage.goto(jenkinsRun.resultUrl);
+  await expect(restrictedPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(restrictedPage).toHaveURL(jenkinsRun.resultUrl);
+  await restrictedContext.close();
+
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   for (let claimed = 0; claimed < 2; claimed += 1) {
     const claim = await claimAssignment(page, identity);
@@ -1114,6 +1237,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     .toBe("false:执行完成:2/2");
   await anonymousProgressPage.reload();
   await expect(anonymousProgressPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await signedInDetailsPage.goto(jenkinsRun.resultUrl);
+  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expect(signedInDetailsPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await captureUi(signedInDetailsPage, "jenkins-signed-in-final-execution-details");
+  await signedInDetailsPage.close();
   const anonymousResultPage = await anonymousContext.newPage();
   const resultPageResponse = await anonymousResultPage.goto(jenkinsRun.resultUrl);
   expect(resultPageResponse?.status()).toBe(200);
@@ -1285,6 +1413,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     suiteProjectVersion.name,
     "historical",
   );
+  const historicalDependencyUpdatedAt = await dependencyPublicationTime(
+    page,
+    suiteProjectVersion.id,
+    historicalDependencyId,
+  );
   const derivedFakeJenkins = await startFakeJenkins();
   try {
     await configureTaskExecution(page, suiteId, identity.runnerId, {
@@ -1374,6 +1507,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     "current",
   );
   expect(currentDependencyId).not.toBe(historicalDependencyId);
+  const currentDependencyUpdatedAt = await dependencyPublicationTime(
+    page,
+    suiteProjectVersion.id,
+    currentDependencyId,
+  );
+  expect(currentDependencyUpdatedAt).not.toBe(historicalDependencyUpdatedAt);
 
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
@@ -1477,6 +1616,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const executionHistory = publicLogPage.getByRole("navigation", {
     name: "同一用例的执行历史",
   });
+  const dependencyTime = publicLogPage
+    .locator(".share-log-fact")
+    .filter({ has: publicLogPage.locator("dt", { hasText: "用例更新时间" }) })
+    .locator("time");
+  await expect(dependencyTime).toHaveAttribute("title", `UTC ${historicalDependencyUpdatedAt}`);
   await expect(executionHistory).toBeVisible();
   await expect(
     publicLogPage.getByRole("button", { name: "执行此用例", exact: true }),
@@ -1494,6 +1638,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const manualRerunLink = executionHistory.getByRole("link", { name: /手动重跑.*通过/u });
   await manualRerunLink.click();
   await expect(manualRerunLink).toHaveAttribute("aria-current", "page");
+  await expect(dependencyTime).toHaveAttribute("title", `UTC ${currentDependencyUpdatedAt}`);
   expect(publicLogPage.context().pages()).toHaveLength(openPageCount);
   expect(publicLogPage.url()).toContain(
     `attempt=${encodeURIComponent(diagnosticClaim.assignment.attemptId)}`,
@@ -1508,13 +1653,34 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await publicLogPage.getByRole("button", { name: "执行此用例", exact: true }).click();
   const publicPageRerunResponse = await publicPageRerunResponsePromise;
   expect(publicPageRerunResponse.status()).toBe(201);
+  // Reproduce the first-upload boundary deterministically on the local Lite fixture.
+  // The distributed suite keeps using its real remote log-owner routing.
+  if (process.env.AUTOFORGE_E2E_EXTERNAL_SERVER !== "1") {
+    const batch = (await publicPageRerunResponse.json()) as { batchId: string };
+    const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+    if (!dataDirectory) throw new Error("Missing local E2E data directory");
+    await writeFile(resolve(dataDirectory, "attempt-logs", `${batch.batchId}.sqlite`), "", {
+      flag: "wx",
+    });
+  }
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   const publicPageRerunClaim = await claimAssignment(page, identity);
-  const latestManualRerunLink = executionHistory.getByRole("link", {
-    name: /手动重跑.*等待执行/u,
-  });
+  expect(dependencyInputId(publicPageRerunClaim)).toBe(currentDependencyId);
+  const latestManualRerunLink = executionHistory.locator(
+    `a[href$="?attempt=${encodeURIComponent(publicPageRerunClaim.assignment.attemptId)}"]`,
+  );
   await expect(latestManualRerunLink).toBeVisible({ timeout: 10_000 });
+  await expect(latestManualRerunLink).toContainText("手动重跑");
   await expect(latestManualRerunLink).toContainText(`by ${E2E_ADMIN_USERNAME}（本地）`);
+  await latestManualRerunLink.click();
+  await expect(latestManualRerunLink).toHaveAttribute("aria-current", "page");
+  await expect(dependencyTime).toHaveAttribute("title", `UTC ${currentDependencyUpdatedAt}`);
+  await expect(publicLogPage.locator(".share-log-output")).toContainText("本次尝试暂无日志内容。");
+  await uploadAttemptLog(page, identity, publicPageRerunClaim, "public rerun first upload\n");
+  await publicLogPage.reload();
+  await expect(publicLogPage.locator(".share-log-output")).toContainText(
+    "public rerun first upload",
+  );
   await expectUiIntegrity(publicLogPage);
   await captureUi(publicLogPage, "shared-diagnostic-history-live-update");
   expect(publicLogPage.context().pages()).toHaveLength(openPageCount);

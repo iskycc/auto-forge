@@ -15,7 +15,7 @@ export type RuntimeIncident = {
 
 const descriptions: Record<RuntimeIncident["kind"], string> = {
   resource_pressure:
-    "平台 CPU 使用率较高或可用内存不足，已暂缓后台工作，优先保障页面响应与执行控制。请结合资源监控检查持续负载。",
+    "平台持续出现 CPU 高负载或可用内存不足，已暂缓后台工作，优先保障页面响应与执行控制。请结合资源监控检查持续负载。",
   execution_control:
     "执行控制工作线程异常，领取、续租或上报可能需要重试。请检查节点诊断日志与数据库状态。",
   log_io:
@@ -23,9 +23,9 @@ const descriptions: Record<RuntimeIncident["kind"], string> = {
   background_refresh:
     "后台刷新或维护任务暂时失败，统计页面继续使用上一次成功快照。请检查节点诊断日志、数据库与存储资源状态。",
   web_pressure:
-    "平台检测到 Web 响应延迟，已暂缓后台统计以释放资源。请检查节点 CPU、内存和磁盘负载。",
+    "平台持续检测到事件循环延迟，页面响应可能变慢，已暂缓后台统计以释放资源。请检查节点 CPU、内存和磁盘负载。",
   database_busy:
-    "平台数据库出现锁竞争或连接异常，请稍后重试失败的操作。请检查数据库连接、长事务、磁盘延迟和数据库负载。",
+    "平台数据库操作超过锁等待或查询期限，或后台锁竞争持续发生，已暂缓普通后台工作。请重试失败的操作，并检查长事务、磁盘延迟和数据库负载。",
 };
 
 /** Deliver at most one bounded recipient page per cycle; retries reuse notification IDs. */

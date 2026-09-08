@@ -59,6 +59,15 @@ export function SharedAttemptLogContent({
                   <code>{view.casePath}</code>
                 </ShareFact>
                 <ShareFact label="用例名称">{view.displayName}</ShareFact>
+                <ShareFact label="用例更新时间">
+                  <span title="本次执行使用的依赖 JAR 压缩包上传或登记时间">
+                    {view.dependencyUpdatedAt ? (
+                      <ShareTime timeZone={timeZone} value={view.dependencyUpdatedAt} />
+                    ) : (
+                      "未记录"
+                    )}
+                  </span>
+                </ShareFact>
                 <ShareFact label="执行结果">
                   <span className={`batch-status ${sharedOutcomeClass(view.outcome)}`}>
                     {sharedOutcomeLabel(view.outcome)}

@@ -119,12 +119,14 @@ export class AttemptLogShareService {
     const familyAttempts = [
       ...roundAttempts.map((attempt) => ({
         attempt,
+        batchId: rootBatchId,
         kind: "round" as const,
         requestedBy: null,
       })),
       ...diagnosticBatches.flatMap((diagnosticBatch) =>
         diagnosticBatch.attempts.map((attempt) => ({
           attempt,
+          batchId: diagnosticBatch.id,
           kind: "manual_rerun" as const,
           requestedBy: diagnosticBatch.requestedBy ?? null,
         })),
@@ -132,6 +134,7 @@ export class AttemptLogShareService {
     ];
     const visibleAttempts: Array<{
       attempt: RunAttempt;
+      batchId: string;
       outcome: SharedAttemptLogOutcome;
       kind: "round" | "manual_rerun";
       requestedBy: { username: string; source: "local" | "ldap" } | null;
@@ -151,6 +154,13 @@ export class AttemptLogShareService {
     );
     if (!selected) return null;
     const { attempt, outcome, kind, requestedBy } = selected;
+    const selectedSnapshot =
+      selected.batchId === rootBatchId
+        ? rootSnapshot
+        : await this.batches.getRerunSnapshot(selected.batchId, {
+            executionRunId: attempt.executionRunId,
+          });
+    if (!selectedSnapshot) return null;
     const log = await this.readAttemptLogText(attempt.id);
     return {
       batchId: batch.id,
@@ -160,6 +170,7 @@ export class AttemptLogShareService {
       executionRound: attempt.executionRound ?? attempt.attemptNumber,
       casePath: run.className,
       displayName: run.displayName,
+      dependencyUpdatedAt: selectedSnapshot.adapterRuntime?.jarBundle?.createdAt ?? null,
       outcome,
       resultCode: attempt.resultCode ?? null,
       summary: outcome === "succeeded" ? null : (attempt.resultSummary ?? null),

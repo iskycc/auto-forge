@@ -2,7 +2,11 @@ import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/applicat
 import type { Runner } from "@autoforge/domain";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import {
+  retrySqliteLockContention,
+  runSqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
 import { mapStoredRunner } from "./runner-mapper";
 import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
@@ -115,30 +119,32 @@ export class SqliteRunnerRepository implements RunnerRepository {
     };
     recordedAt: string;
   }): Promise<Runner> {
-    const row = this.handle.db
-      .update(runners)
-      .set({
-        labelsJson: JSON.stringify(input.labels),
-        capabilitiesJson: JSON.stringify(input.capabilities),
-        maxConcurrency: input.maxConcurrency,
-        busySlots: input.busySlots,
-        agentVersion: input.agentVersion,
-        terminalEnabled: input.terminalEnabled,
-        ...(input.resourceSnapshot
-          ? {
-              cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
-              memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
-              loadAverage1m: input.resourceSnapshot.loadAverage1m,
-              logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
-              metricsObservedAt: input.resourceSnapshot.observedAt,
-            }
-          : {}),
-        lastSeenAt: input.recordedAt,
-        updatedAt: input.recordedAt,
-      })
-      .where(eq(runners.id, input.runnerId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(runners)
+        .set({
+          labelsJson: JSON.stringify(input.labels),
+          capabilitiesJson: JSON.stringify(input.capabilities),
+          maxConcurrency: input.maxConcurrency,
+          busySlots: input.busySlots,
+          agentVersion: input.agentVersion,
+          terminalEnabled: input.terminalEnabled,
+          ...(input.resourceSnapshot
+            ? {
+                cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
+                memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
+                loadAverage1m: input.resourceSnapshot.loadAverage1m,
+                logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
+                metricsObservedAt: input.resourceSnapshot.observedAt,
+              }
+            : {}),
+          lastSeenAt: input.recordedAt,
+          updatedAt: input.recordedAt,
+        })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }

@@ -173,6 +173,17 @@ func materializeCotestJars(
 	if err := os.MkdirAll(jarDirectory, 0o700); err != nil {
 		return fmt.Errorf("create adapter JAR directory: %w", err)
 	}
+	// A configured bundle is the complete execution classpath. Imported JARs remain
+	// authoritative discovery inputs, but must not restore classes removed from the bundle.
+	for _, input := range inputs {
+		if input.Kind == "jar-bundle" {
+			source := filepath.Join(inputRoot, filepath.Clean(input.TargetPath))
+			if err := extractArchive(source, jarDirectory, budget); err != nil {
+				return fmt.Errorf("extract dependency JAR bundle: %w", err)
+			}
+			return nil
+		}
+	}
 	for index := range inputs {
 		input := &inputs[index]
 		source := filepath.Join(inputRoot, filepath.Clean(input.TargetPath))
@@ -190,10 +201,6 @@ func materializeCotestJars(
 			}
 			if err := copyRegularFile(source, filepath.Join(jarDirectory, filepath.Base(source))); err != nil {
 				return fmt.Errorf("publish dependency JAR for adapter: %w", err)
-			}
-		case "jar-bundle":
-			if err := extractArchive(source, jarDirectory, budget); err != nil {
-				return fmt.Errorf("extract dependency JAR bundle: %w", err)
 			}
 		}
 	}

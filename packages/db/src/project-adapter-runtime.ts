@@ -4,6 +4,7 @@ import {
   PROJECT_RUNTIME_ASSETS_CAPABILITY,
   REQUIRED_EXECUTION_CAPABILITIES,
 } from "@autoforge/domain";
+import type { RunBatchRuntimeAssetSnapshot } from "@autoforge/application";
 
 const maximumRuntimeAssetBytes = Number.MAX_SAFE_INTEGER;
 const maximumExecutionDiskBytes = 10_995_116_277_760;
@@ -11,14 +12,7 @@ const adapterArchiveExpansionFactor = 8;
 const adapterArchiveFileLimit = 100_000;
 const sha256Pattern = /^[a-f0-9]{64}$/u;
 
-export type RuntimeAssetSnapshot = {
-  id: string;
-  sourceType: "upload" | "url";
-  url?: string;
-  sha256: string;
-  sizeBytes: number;
-  archiveFormat: "zip" | "tar.gz";
-};
+export type RuntimeAssetSnapshot = RunBatchRuntimeAssetSnapshot;
 
 export type ProjectAdapterRuntime = {
   suiteName: string;
@@ -161,6 +155,11 @@ function runtimeAsset(value: unknown): RuntimeAssetSnapshot {
   ) {
     throw new TypeError("Runtime asset size is invalid.");
   }
+  const createdAt =
+    record.createdAt === undefined ? undefined : boundedString(record.createdAt, 32, 20);
+  if (createdAt !== undefined && !Number.isFinite(Date.parse(createdAt))) {
+    throw new TypeError("Runtime asset publication time is invalid.");
+  }
   return {
     id: boundedString(record.id, 128, 1),
     sourceType,
@@ -168,6 +167,7 @@ function runtimeAsset(value: unknown): RuntimeAssetSnapshot {
     sha256,
     sizeBytes,
     archiveFormat: enumValue(record.archiveFormat, ["zip", "tar.gz"] as const),
+    ...(createdAt ? { createdAt } : {}),
   };
 }
 

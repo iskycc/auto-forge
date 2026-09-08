@@ -39,9 +39,19 @@ runtime/jdk/bin/java -jar /opt/autoforge/lib/cotest-testng-adapter.jar \
   --environment-address <round-robin-task-address> --output reports/testng
 ```
 
-未配置的可选参数不会传递。主用例 JAR 在 Adapter classpath 中优先，其余 JAR 确定性排序。每个
+未配置的可选参数不会传递。配置压缩包时，本次执行固化的完整依赖包是 Adapter 唯一的业务
+classpath：包含用例、TestNG、CoTest 扩展及全部业务依赖，历史导入的用例 JAR 和独立旧依赖
+不进入 `test-jars`，缺失类直接报错，不补充或回退。包内 JAR 确定性排序。未配置压缩包时仍使用
+独立测试/依赖 JAR 输入。每个
 attempt 使用独立进程，Adapter 每次创建并关闭一个子优先 ClassLoader；JDK/XML/Adapter 自身类
 父优先，因此既避免跨用例同名类污染，也不允许业务 JAR覆盖 Adapter 实现。
+
+新批次与公开日志单用例诊断重跑固化当前项目版本的依赖包，已有批次及整批最后失败重跑继续使用
+原快照。依赖更新不会改写历史用例元数据、方法选择或正在执行的批次；新增/删除方法仍需重新导入
+用例 JAR 更新发现结果。公开日志的“用例更新时间”显示所选执行实际使用的依赖压缩包上传/登记
+时间，并支持查看 UTC 原值；不会用当前项目配置时间覆盖历史执行。旧快照没有此字段时显示“未记录”。
+时间作为可选字段随 Lite/Full 运行时 JSON 快照保存，无新增数据库迁移。升级主平台后通过平台升级 Runner，流程会自动更新配套 Adapter，无需单独操作。Runner 为批次共享运行时保存布局版本，升级后重建旧版混合类路径缓存，再继续按批次
+共享；只升级主平台无法改变旧 Runner 准备执行目录的行为。相同 Runner 逻辑适用于 Lite 和 Full。
 
 日志由 Agent 先脱敏并写有界 spool，再周期上传。控制面成功持久化后，Lite 直接向当前进程的
 同源 WebSocket 订阅者发布，Full 先通过 NATS Core 在 Web 副本间广播，再向各自订阅者发布；浏览器

@@ -3,6 +3,7 @@ package com.autoforge.adapters.cotest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import fixture.VersionedClass;
@@ -24,7 +25,7 @@ class IsolatedJarClassLoaderTest {
 
   @Test
   void loadsApplicationClassesChildFirstButKeepsJdkClassesParentFirst() throws Exception {
-    Path jar = compileChildVersionJar();
+    Path jar = compileFixtureJar("VersionedClass", "child");
 
     try (IsolatedJarClassLoader loader =
         new IsolatedJarClassLoader(
@@ -38,15 +39,37 @@ class IsolatedJarClassLoaderTest {
     }
   }
 
-  private Path compileChildVersionJar() throws IOException {
-    Path source = temporaryDirectory.resolve("source/fixture/VersionedClass.java");
-    Path classes = temporaryDirectory.resolve("classes");
+  @Test
+  void usesTheCompleteBundleWithoutRestoringRemovedClassesFromImportedJars() throws Exception {
+    Path directory = Files.createDirectories(temporaryDirectory.resolve("test-jars"));
+    Path imported = Files.createDirectories(temporaryDirectory.resolve("inputs"));
+    Files.copy(compileFixtureJar("VersionedClass", "old"), imported.resolve("tests.jar"));
+    Files.copy(compileFixtureJar("RemovedClass", "removed"), imported.resolve("removed.jar"));
+    Path updated = directory.resolve("updated.jar");
+    Files.copy(compileFixtureJar("VersionedClass", "updated"), updated);
+    try (IsolatedJarClassLoader loader =
+        new IsolatedJarClassLoader(
+            new JarDirectoryScanner().scan(directory), getClass().getClassLoader())) {
+      Class<?> loaded = Class.forName("fixture.VersionedClass", true, loader);
+      assertEquals(
+          "updated", loaded.getMethod("value").invoke(loaded.getConstructor().newInstance()));
+      assertEquals(
+          updated.toUri().toURL(), loaded.getProtectionDomain().getCodeSource().getLocation());
+      assertThrows(ClassNotFoundException.class, () -> loader.loadClass("fixture.RemovedClass"));
+    }
+  }
+
+  private Path compileFixtureJar(String className, String value) throws IOException {
+    Path source = temporaryDirectory.resolve(value + "/source/fixture/" + className + ".java");
+    Path classes = temporaryDirectory.resolve(value + "/classes");
     Files.createDirectories(source.getParent());
     Files.createDirectories(classes);
     Utf8TestIO.write(
         source,
-        "package fixture; public final class VersionedClass { "
-            + "public String value() { return \"child\"; } }");
+        "package fixture; public final class " + className + " { "
+            + "public String value() { return \""
+            + value
+            + "\"; } }");
 
     JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
     int result =
@@ -63,11 +86,11 @@ class IsolatedJarClassLoaderTest {
             source.toString());
     assertEquals(0, result);
 
-    Path classFile = classes.resolve("fixture/VersionedClass.class");
-    Path jar = temporaryDirectory.resolve("child.jar");
+    Path classFile = classes.resolve("fixture/" + className + ".class");
+    Path jar = temporaryDirectory.resolve(value + ".jar");
     try (OutputStream file = Files.newOutputStream(jar);
         JarOutputStream archive = new JarOutputStream(file)) {
-      archive.putNextEntry(new JarEntry("fixture/VersionedClass.class"));
+      archive.putNextEntry(new JarEntry("fixture/" + className + ".class"));
       Files.copy(classFile, archive);
       archive.closeEntry();
     }

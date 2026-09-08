@@ -39,7 +39,10 @@ export class ReadModelWorkerHost {
     );
     this.worker = worker;
     worker.on("error", this.reportError);
-    worker.on("message", () => runtimePriority().report("background_refresh"));
+    worker.on("message", (event: { kind: string }) => {
+      if (event.kind === "database_contention") runtimePriority().observeDatabaseContention();
+      else runtimePriority().report("background_refresh");
+    });
     worker.on("exit", (code) => {
       if (this.stopped) return;
       this.reportError(new Error(`Read model worker exited with code ${code}.`));

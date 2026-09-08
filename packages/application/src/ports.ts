@@ -1581,6 +1581,8 @@ export type RunBatchRuntimeAssetSnapshot = {
   sha256: string;
   sizeBytes: number;
   archiveFormat: "zip" | "tar.gz";
+  /** Upload/publication time; absent in batches created before it was snapshotted. */
+  createdAt?: string;
 };
 
 export type RunBatchAdapterRuntimeSnapshot = {

@@ -64,6 +64,8 @@ export interface SharedAttemptLogView {
   casePath: string;
   /** 用例名称（方法级显示名） */
   displayName: string;
+  /** 当前查看的执行实际使用的依赖压缩包上传/登记时间；历史未记录时为 null。 */
+  dependencyUpdatedAt?: string | null;
   outcome: SharedAttemptLogOutcome;
   resultCode: string | null;
   /** 完整失败描述（可包含多行与非 ASCII 文本），仅非成功时有值 */

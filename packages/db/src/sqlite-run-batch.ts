@@ -2210,7 +2210,7 @@ function projectAdapterRuntime(
     if (!id) return undefined;
     const row = handle.client
       .prepare(
-        `SELECT id, source_type, url, sha256, size_bytes, archive_format
+        `SELECT id, source_type, url, sha256, size_bytes, archive_format, created_at
          FROM project_runtime_assets WHERE id = ? AND project_id = ?`,
       )
       .get(id, projectId) as
@@ -2221,6 +2221,7 @@ function projectAdapterRuntime(
           sha256: string;
           size_bytes: number;
           archive_format: "zip" | "tar.gz";
+          created_at: string;
         }
       | undefined;
     return row
@@ -2231,6 +2232,7 @@ function projectAdapterRuntime(
           sha256: row.sha256,
           sizeBytes: row.size_bytes,
           archiveFormat: row.archive_format,
+          createdAt: row.created_at,
         }
       : undefined;
   };

@@ -20,6 +20,71 @@ afterEach(() => {
 });
 
 describe("AttemptLogStore", () => {
+  it("returns empty logs while a new batch file is being initialized, then reads the first upload", async () => {
+    const directory = temporaryDirectory();
+    const path = join(directory, `${batchId}.sqlite`);
+    const initializing = new Database(path);
+    initializing.pragma("journal_mode = WAL");
+    const reader = createAttemptLogStore(directory);
+    const writer = createAttemptLogStore(directory);
+    const query = {
+      batchId,
+      attemptId: "new-attempt",
+      stream: "stdout" as const,
+      afterSequence: -1,
+      limit: 10,
+    };
+    try {
+      await expect(reader.listChunks(query)).resolves.toEqual({ items: [], hasMore: false });
+      expect(reader.acknowledgedSequence(batchId, "new-attempt", "stdout")).toBe(-1);
+      expect(
+        initializing.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all(),
+      ).toEqual([]);
+      await writer.appendChunks({
+        batchId,
+        attemptId: "new-attempt",
+        receivedAt: "2026-09-08T00:00:00.000Z",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "new execution log",
+            recordedAt: "2026-09-08T00:00:00.000Z",
+          },
+        ],
+      });
+      expect((await reader.listChunks(query)).items.map((chunk) => chunk.content)).toEqual([
+        "new execution log",
+      ]);
+      expect(reader.acknowledgedSequence(batchId, "new-attempt", "stdout")).toBe(0);
+    } finally {
+      reader.close();
+      writer.close();
+      initializing.close();
+    }
+  });
+
+  it("does not disguise a corrupt log database as pending logs", async () => {
+    const directory = temporaryDirectory();
+    const corrupt = new Database(join(directory, `${batchId}.sqlite`));
+    corrupt.exec("CREATE TABLE unexpected_table(value TEXT)");
+    corrupt.close();
+    const reader = createAttemptLogStore(directory);
+    try {
+      await expect(
+        reader.listChunks({
+          batchId,
+          attemptId: "attempt",
+          stream: "stdout",
+          afterSequence: -1,
+          limit: 10,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      reader.close();
+    }
+  });
+
   it("does not create a database when reading logs that have not arrived", async () => {
     const directory = temporaryDirectory();
     const store = createAttemptLogStore(directory);

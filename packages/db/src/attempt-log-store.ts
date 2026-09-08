@@ -151,6 +151,15 @@ export function createAttemptLogStore(
     });
     try {
       client.pragma("busy_timeout = 100");
+      if (
+        access === "read" &&
+        !client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' LIMIT 1").get()
+      ) {
+        // The writer creates the file before publishing its schema. Do not cache an
+        // uninitialized reader or turn a not-yet-uploaded log into a database error.
+        client.close();
+        return undefined;
+      }
       if (access === "write") {
         client.pragma("journal_mode = WAL");
         // 与主库一致的 WAL 持久化折衷：NORMAL 在操作系统崩溃时最多丢失最后一段
