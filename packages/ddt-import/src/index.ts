@@ -1,8 +1,8 @@
 import {
   DDT_IMPORT_ARCHIVE_ENTRY_LIMIT,
   DDT_IMPORT_FILE_BYTES,
-  DDT_IMPORT_FILE_LIMIT,
   DDT_IMPORT_TOTAL_BYTES,
+  DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
 } from "@autoforge/contracts";
 import type { DdtColumnResolution, DdtImportColumnConflict } from "@autoforge/contracts";
 
@@ -23,7 +23,18 @@ export type DdtImportUpload = {
   columnResolutions?: DdtColumnResolution[];
 };
 
-export async function parseDdtUpload(upload: DdtImportUpload) {
+export type DdtImportParseLimits = {
+  maximumZipSpreadsheets: number;
+};
+
+const DEFAULT_PARSE_LIMITS: DdtImportParseLimits = {
+  maximumZipSpreadsheets: DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
+};
+
+export async function parseDdtUpload(
+  upload: DdtImportUpload,
+  limits: DdtImportParseLimits = DEFAULT_PARSE_LIMITS,
+) {
   if (!isZipFile(upload.fileName)) {
     const parsed = parseSpreadsheet(
       Buffer.from(upload.content),
@@ -34,7 +45,7 @@ export async function parseDdtUpload(upload: DdtImportUpload) {
   }
   const extracted = await extractSpreadsheetsFromZip(Buffer.from(upload.content), {
     archiveName: upload.fileName,
-    maxFiles: DDT_IMPORT_FILE_LIMIT,
+    maxFiles: limits.maximumZipSpreadsheets,
     maxFileBytes: DDT_IMPORT_FILE_BYTES,
     maxTotalBytes: DDT_IMPORT_TOTAL_BYTES,
     maxEntries: DDT_IMPORT_ARCHIVE_ENTRY_LIMIT,

@@ -24,7 +24,9 @@ export function isolatedDdtSpreadsheets(
 ): DdtSpreadsheetPort {
   if (!dispatcher?.parseFile) return local;
   return {
-    parseUpload: (input) =>
-      dispatcher.parseFile!("parse-ddt", input) as ReturnType<DdtSpreadsheetPort["parseUpload"]>,
+    parseUpload: (input, limits) =>
+      dispatcher.parseFile!("parse-ddt", { ...input, parseLimits: limits }) as ReturnType<
+        DdtSpreadsheetPort["parseUpload"]
+      >,
   };
 }

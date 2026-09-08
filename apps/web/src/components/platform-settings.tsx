@@ -78,6 +78,8 @@ export function PlatformSettings({
             authLoginAttemptsPerWindow: numberValue(form, "authLoginAttemptsPerWindow"),
             caseExecutionTimeoutSeconds: numberValue(form, "caseExecutionTimeoutSeconds"),
             artifactCollectionEnabled: form.get("artifactCollectionEnabled") === "on",
+            ddtImportFileLimit: numberValue(form, "ddtImportFileLimit"),
+            ddtImportZipSpreadsheetLimit: numberValue(form, "ddtImportZipSpreadsheetLimit"),
           },
           scheduler: {
             maximumCpuUtilizationPercent: numberValue(form, "maximumCpuUtilizationPercent"),
@@ -342,6 +344,22 @@ export function PlatformSettings({
               name="caseExecutionTimeoutSeconds"
               value={initial.limits.caseExecutionTimeoutSeconds}
             />
+            <NumberInput
+              description="单次请求可上传的 Excel、CSV、ODS 或 ZIP 文件总数；保存后立即生效。"
+              label="DDT 单次上传文件上限"
+              max={10_000}
+              min={1}
+              name="ddtImportFileLimit"
+              value={initial.limits.ddtImportFileLimit}
+            />
+            <NumberInput
+              description="单个 ZIP 中可解析的表格文件总数；保存后立即生效。"
+              label="DDT 单个 ZIP 表格上限"
+              max={10_000}
+              min={1}
+              name="ddtImportZipSpreadsheetLimit"
+              value={initial.limits.ddtImportZipSpreadsheetLimit}
+            />
             <label className="checkbox-field">
               <Input
                 defaultChecked={initial.limits.artifactCollectionEnabled}
@@ -422,16 +440,23 @@ function NumberInput({
   name,
   value,
   step,
+  min,
+  max,
+  description,
 }: {
   label: string;
   name: string;
   value: number;
   step?: string;
+  min?: number;
+  max?: number;
+  description?: string;
 }) {
   return (
     <label>
       {label}
-      <Input defaultValue={value} name={name} step={step} type="number" />
+      <Input defaultValue={value} max={max} min={min} name={name} step={step} type="number" />
+      {description ? <small>{description}</small> : null}
     </label>
   );
 }

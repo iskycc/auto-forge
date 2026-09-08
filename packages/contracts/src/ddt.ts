@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 export const DDT_IMPORT_FILE_LIMIT = 200;
+export const DDT_IMPORT_ZIP_SPREADSHEET_LIMIT = 200;
+export const DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM = 10_000;
 export const DDT_IMPORT_FILE_BYTES = 128 * 1_024 * 1_024;
 export const DDT_IMPORT_TOTAL_BYTES = 512 * 1_024 * 1_024;
 export const DDT_IMPORT_ARCHIVE_ENTRY_LIMIT = 10_000;
@@ -116,7 +118,7 @@ export const ddtImportColumnResolutionSchema = z.object({
     .number()
     .int()
     .min(0)
-    .max(DDT_IMPORT_FILE_LIMIT - 1),
+    .max(DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM - 1),
   archiveEntryName: z.string().trim().min(1).max(1_024).optional(),
   sheetName: z.string().trim().min(1).max(256),
   columnIndex: z.number().int().min(0).max(16_383),

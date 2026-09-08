@@ -70,6 +70,29 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText(/平台时区已立即生效.*无需重启/)).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-time-zone", originalTimeZone);
 
+  const ddtImportFileLimit = page.getByLabel("DDT 单次上传文件上限");
+  const ddtImportZipSpreadsheetLimit = page.getByLabel("DDT 单个 ZIP 表格上限");
+  const originalDdtImportFileLimit = await ddtImportFileLimit.inputValue();
+  const originalDdtImportZipSpreadsheetLimit = await ddtImportZipSpreadsheetLimit.inputValue();
+  await ddtImportFileLimit.fill(originalDdtImportFileLimit === "321" ? "322" : "321");
+  await ddtImportZipSpreadsheetLimit.fill(
+    originalDdtImportZipSpreadsheetLimit === "654" ? "655" : "654",
+  );
+  await page.getByRole("button", { name: "保存平台配置" }).click();
+  await expect(page.getByText(/DDT 导入数量限制已立即生效.*无需重启/)).toBeVisible();
+  const savedDdtLimits = await page.request.get("/api/v1/settings/platform");
+  expect(savedDdtLimits.status()).toBe(200);
+  expect(await savedDdtLimits.json()).toMatchObject({
+    limits: {
+      ddtImportFileLimit: Number(await ddtImportFileLimit.inputValue()),
+      ddtImportZipSpreadsheetLimit: Number(await ddtImportZipSpreadsheetLimit.inputValue()),
+    },
+  });
+  await ddtImportFileLimit.fill(originalDdtImportFileLimit);
+  await ddtImportZipSpreadsheetLimit.fill(originalDdtImportZipSpreadsheetLimit);
+  await page.getByRole("button", { name: "保存平台配置" }).click();
+  await expect(page.getByText(/DDT 导入数量限制已立即生效.*无需重启/)).toBeVisible();
+
   const publicBaseUrl = page.locator('input[name="publicBaseUrl"]');
   const runnerBaseUrl = page.locator('input[name="runnerBaseUrl"]');
   const originalPublicBaseUrl = await publicBaseUrl.inputValue();

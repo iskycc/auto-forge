@@ -53,6 +53,10 @@ export function platformConfigurationActivation(
     changed(current.limits.artifactCollectionEnabled, saved.limits.artifactCollectionEnabled)
       ? "产物收集"
       : undefined,
+    changed(current.limits.ddtImportFileLimit, saved.limits.ddtImportFileLimit) ||
+    changed(current.limits.ddtImportZipSpreadsheetLimit, saved.limits.ddtImportZipSpreadsheetLimit)
+      ? "DDT 导入数量限制"
+      : undefined,
   ].filter((value): value is string => Boolean(value));
   const restartRequiredFields = [
     changed(current.mode, saved.mode) ? "部署模式" : undefined,
@@ -98,7 +102,13 @@ export function mergePlatformConfiguration(
     ...current,
     mode: input.mode,
     web: mergedWebConfiguration(current.web, input.web),
-    limits: { ...input.limits },
+    limits: {
+      ...current.limits,
+      ...input.limits,
+      ddtImportFileLimit: input.limits.ddtImportFileLimit ?? current.limits.ddtImportFileLimit,
+      ddtImportZipSpreadsheetLimit:
+        input.limits.ddtImportZipSpreadsheetLimit ?? current.limits.ddtImportZipSpreadsheetLimit,
+    },
     scheduler: { ...input.scheduler },
     worker: { ...input.worker },
     ...(input.mode === "full" || input.full

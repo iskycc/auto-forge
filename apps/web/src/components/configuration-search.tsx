@@ -70,6 +70,18 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "artifactCollectionEnabled",
   ),
   platformField(
+    "DDT 单次上传文件上限",
+    "单次导入可上传的 Excel、CSV、ODS 或 ZIP 文件数量",
+    "ddt excel csv upload 表格 文件 数量",
+    "ddtImportFileLimit",
+  ),
+  platformField(
+    "DDT 单个 ZIP 表格上限",
+    "单个压缩包内可导入的表格文件数量",
+    "ddt zip 压缩包 表格 数量",
+    "ddtImportZipSpreadsheetLimit",
+  ),
+  platformField(
     "CPU 调度阈值",
     "Runner CPU 利用率调度保护",
     "scheduler cpu",

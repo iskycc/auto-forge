@@ -67,6 +67,27 @@ describe("isolated upload parsing", () => {
             content: Buffer.from("CaseID,srNum,name\na,S,x\n"),
           }),
         ).resolves.toMatchObject([{ rows: [{ CaseID: "a", srNum: "S", name: "x" }] }]);
+
+        const ddtArchive = zipSync({
+          "a.csv": Buffer.from("CaseID,srNum\na,A\n"),
+          "b.csv": Buffer.from("CaseID,srNum\nb,B\n"),
+        });
+        await expect(
+          pool.parseFile("parse-ddt", {
+            fileName: "cases.zip",
+            mediaType: "application/zip",
+            content: ddtArchive,
+            parseLimits: { maximumZipSpreadsheets: 1 },
+          }),
+        ).rejects.toThrow("ZIP 中可导入的表格超过 1 个的配置上限");
+        await expect(
+          pool.parseFile("parse-ddt", {
+            fileName: "cases.zip",
+            mediaType: "application/zip",
+            content: ddtArchive,
+            parseLimits: { maximumZipSpreadsheets: 2 },
+          }),
+        ).resolves.toHaveLength(2);
       } finally {
         await pool.close();
       }

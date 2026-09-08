@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import {
+  DDT_IMPORT_FILE_LIMIT,
+  DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
   ddtImportColumnConflictSchema,
   type DdtColumnResolution,
   type DdtImportColumnConflict,
@@ -33,9 +35,22 @@ export type ParsedDdtFile = {
   rows: DdtCaseData[];
 };
 
+export type DdtSpreadsheetLimits = {
+  maximumZipSpreadsheets: number;
+};
+
+export type DdtImportLimits = DdtSpreadsheetLimits & {
+  maximumUploadFiles: number;
+};
+
 export interface DdtSpreadsheetPort {
-  parseUpload(upload: DdtUpload): Promise<ParsedDdtFile[]>;
+  parseUpload(upload: DdtUpload, limits: DdtSpreadsheetLimits): Promise<ParsedDdtFile[]>;
 }
+
+const defaultDdtImportLimits = (): DdtImportLimits => ({
+  maximumUploadFiles: DDT_IMPORT_FILE_LIMIT,
+  maximumZipSpreadsheets: DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
+});
 
 export class DdtImportService {
   constructor(
@@ -45,10 +60,19 @@ export class DdtImportService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly readModelInvalidation?: { invalidate(projectId: string): Promise<void> },
+    private readonly importLimits: () => DdtImportLimits = defaultDdtImportLimits,
   ) {}
 
   async preview(scope: DdtScope, uploads: DdtUpload[], actorId?: string): Promise<DdtImportJob> {
     if (uploads.length === 0) throw new DomainError("DDT_FILE_REQUIRED", "请选择 DDT 表格或 ZIP。");
+    const limits = this.importLimits();
+    if (uploads.length > limits.maximumUploadFiles) {
+      throw new DomainError(
+        "DDT_FILE_LIMIT_EXCEEDED",
+        `一次最多上传 ${limits.maximumUploadFiles} 个表格或 ZIP。`,
+      );
+    }
+    const spreadsheetLimits = { maximumZipSpreadsheets: limits.maximumZipSpreadsheets };
     const jobId = this.ids.next();
     const now = this.clock.now().toISOString();
     const storedUploads: DdtUploadReference[] = [];
@@ -66,7 +90,7 @@ export class DdtImportService {
         storedUploads.push(uploadReference);
         let parsedFiles: ParsedDdtFile[];
         try {
-          parsedFiles = await this.spreadsheets.parseUpload(upload);
+          parsedFiles = await this.spreadsheets.parseUpload(upload, spreadsheetLimits);
         } catch (error) {
           const duplicateColumns = duplicateColumnError(error);
           if (duplicateColumns) {
@@ -158,6 +182,9 @@ export class DdtImportService {
       ]),
     );
     const resolutionsByUpload = groupColumnResolutions(resolutions);
+    const spreadsheetLimits = {
+      maximumZipSpreadsheets: this.importLimits().maximumZipSpreadsheets,
+    };
     const uploads: DdtUploadReference[] = [];
     const previewFiles: DdtImportPreviewFile[] = [];
     const seenCaseIds = new Set<string>();
@@ -175,12 +202,15 @@ export class DdtImportService {
         ...(columnResolutions.length ? { columnResolutions } : {}),
       };
       try {
-        const parsedFiles = await this.spreadsheets.parseUpload({
-          fileName: storedUpload.fileName,
-          mediaType: storedUpload.mediaType,
-          content,
-          ...(columnResolutions.length ? { columnResolutions } : {}),
-        });
+        const parsedFiles = await this.spreadsheets.parseUpload(
+          {
+            fileName: storedUpload.fileName,
+            mediaType: storedUpload.mediaType,
+            content,
+            ...(columnResolutions.length ? { columnResolutions } : {}),
+          },
+          spreadsheetLimits,
+        );
         for (const parsed of parsedFiles) {
           previewFiles.push(
             await this.previewParsedFile(current, storedUpload.id, parsed, seenCaseIds, templates),
@@ -494,14 +524,20 @@ export class DdtImportService {
 
   private async parseJobUploads(job: DdtImportJob): Promise<Map<string, ParsedDdtFile>> {
     const parsedByFile = new Map<string, ParsedDdtFile>();
+    const spreadsheetLimits = {
+      maximumZipSpreadsheets: this.importLimits().maximumZipSpreadsheets,
+    };
     for (const upload of job.uploads) {
       const content = await this.objectStore.read(upload.objectKey);
-      const parsed = await this.spreadsheets.parseUpload({
-        fileName: upload.fileName,
-        mediaType: upload.mediaType,
-        content,
-        ...(upload.columnResolutions ? { columnResolutions: upload.columnResolutions } : {}),
-      });
+      const parsed = await this.spreadsheets.parseUpload(
+        {
+          fileName: upload.fileName,
+          mediaType: upload.mediaType,
+          content,
+          ...(upload.columnResolutions ? { columnResolutions: upload.columnResolutions } : {}),
+        },
+        spreadsheetLimits,
+      );
       const expected = job.files.filter((file) => file.uploadId === upload.id);
       for (const file of expected) {
         const match = parsed.find(

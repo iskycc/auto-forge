@@ -440,6 +440,13 @@ async function createPlatformServices() {
     clock,
     ids,
     readModels,
+    () => {
+      const limits = configurationStore.read().limits;
+      return {
+        maximumUploadFiles: limits.ddtImportFileLimit,
+        maximumZipSpreadsheets: limits.ddtImportZipSpreadsheetLimit,
+      };
+    },
   );
   const projectStructures = new ProjectStructureService(
     projectStructuresRepository,

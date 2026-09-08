@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Added and changed
+
+- 平台配置新增“DDT 单次上传文件上限”和“DDT 单个 ZIP 表格上限”，范围均为 1–10,000；新安装及旧配置缺失字段时均沿用历史默认值 200。Web 请求、应用服务、隔离解析线程和 Full 独立 worker 按每次新导入读取当前持久化值，保存后无需重启。
+- DDT ZIP 超限错误改为显示实际配置上限，不再使用含义不清的“剩余额度”。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、外部依赖、离线资产或 Runner Protocol 变更。持久配置 schema 版本保持 v1；旧配置自动补齐两个默认值，旧版 v1 管理客户端省略新字段时保留服务器当前值。
+
+### Validation and known limitations
+
+- 全仓格式、lint、TypeScript 类型检查、Web/Worker 生产构建、845 项 TypeScript 单元测试、Go 测试、28 项发布/运维脚本测试、Lite/Full 隔离解析集成测试及平台配置 Playwright 场景通过。
+- 两个数量配置不会放宽单文件 128 MiB、单请求/ZIP 解压总计 512 MiB、ZIP 10,000 个目录项等独立安全边界。
+
 ## 1.13.2 - 2026-09-08
 
 ### Added

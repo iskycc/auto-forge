@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM } from "./ddt";
+
 export const DEFAULT_PLATFORM_TIME_ZONE = "Asia/Shanghai";
 
 function isSupportedTimeZone(value: string): boolean {
@@ -47,19 +49,31 @@ const platformWebConfigurationInputSchema = z.object({
   publicDashboardRefreshSeconds: z.number().int().min(5).max(300),
 });
 
+const ddtImportQuantityLimitSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM);
+
+const platformLimitsInputSchema = z.object({
+  maxJarBytes: z.number().int().min(1_048_576).max(268_435_456),
+  testNgTargetJavaVersion: z.number().int().min(8).max(100),
+  runnerClaimRateLimitPerMinute: z.number().int().min(1).max(10_000),
+  sessionTtlHours: z.number().int().min(1).max(168),
+  authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
+  caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
+  artifactCollectionEnabled: z.boolean().default(true),
+  // Optional on the v1 write contract so older administration clients do not
+  // overwrite an administrator's persisted DDT limits when saving other fields.
+  ddtImportFileLimit: ddtImportQuantityLimitSchema.optional(),
+  ddtImportZipSpreadsheetLimit: ddtImportQuantityLimitSchema.optional(),
+});
+
 export const updatePlatformConfigurationInputSchema = z.object({
   revision: z.number().int().positive(),
   mode: z.enum(["lite", "full"]),
   web: platformWebConfigurationInputSchema,
-  limits: z.object({
-    maxJarBytes: z.number().int().min(1_048_576).max(268_435_456),
-    testNgTargetJavaVersion: z.number().int().min(8).max(100),
-    runnerClaimRateLimitPerMinute: z.number().int().min(1).max(10_000),
-    sessionTtlHours: z.number().int().min(1).max(168),
-    authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
-    caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
-    artifactCollectionEnabled: z.boolean().default(true),
-  }),
+  limits: platformLimitsInputSchema,
   scheduler: schedulerConfigurationSchema,
   worker: z.object({
     concurrency: z.number().int().min(1).max(256),
@@ -102,6 +116,10 @@ export const platformConfigurationViewSchema = updatePlatformConfigurationInputS
     web: platformWebConfigurationInputSchema.extend({
       timeZone: platformTimeZoneSchema,
       runnerBaseUrl: platformHttpBaseUrlSchema.optional(),
+    }),
+    limits: platformLimitsInputSchema.extend({
+      ddtImportFileLimit: ddtImportQuantityLimitSchema,
+      ddtImportZipSpreadsheetLimit: ddtImportQuantityLimitSchema,
     }),
     configurationFile: z.string().min(1),
     configurationManaged: z.boolean().optional(),

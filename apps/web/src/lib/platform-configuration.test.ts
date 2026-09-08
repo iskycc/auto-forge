@@ -95,11 +95,22 @@ describe("platform configuration mapping", () => {
         port: 3200,
         timeZone: "UTC",
       },
-      limits: { ...current.limits, artifactCollectionEnabled: false, maxJarBytes: 67_108_864 },
+      limits: {
+        ...current.limits,
+        artifactCollectionEnabled: false,
+        maxJarBytes: 67_108_864,
+        ddtImportFileLimit: 350,
+      },
     });
 
     expect(platformConfigurationActivation(current, saved)).toEqual({
-      appliedImmediatelyFields: ["外部访问地址", "内部访问地址", "平台时区", "产物收集"],
+      appliedImmediatelyFields: [
+        "外部访问地址",
+        "内部访问地址",
+        "平台时区",
+        "产物收集",
+        "DDT 导入数量限制",
+      ],
       restartRequiredFields: ["HTTP 端口", "容量与会话限制"],
     });
   });
@@ -149,6 +160,29 @@ describe("platform configuration mapping", () => {
       }).web.runnerBaseUrl,
     ).toBeUndefined();
   });
+
+  it("preserves DDT limits when an older v1 client omits them", () => {
+    const current = configuration({
+      limits: {
+        ...configuration().limits,
+        ddtImportFileLimit: 325,
+        ddtImportZipSpreadsheetLimit: 640,
+      },
+    });
+    const { ddtImportFileLimit, ddtImportZipSpreadsheetLimit, ...legacyLimits } = current.limits;
+
+    const merged = mergePlatformConfiguration(current, {
+      revision: current.revision,
+      mode: current.mode,
+      web: current.web,
+      limits: legacyLimits,
+      scheduler: current.scheduler,
+      worker: current.worker,
+    });
+
+    expect(merged.limits.ddtImportFileLimit).toBe(ddtImportFileLimit);
+    expect(merged.limits.ddtImportZipSpreadsheetLimit).toBe(ddtImportZipSpreadsheetLimit);
+  });
 });
 
 function configuration(
@@ -172,6 +206,8 @@ function configuration(
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
       artifactCollectionEnabled: true,
+      ddtImportFileLimit: 200,
+      ddtImportZipSpreadsheetLimit: 200,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

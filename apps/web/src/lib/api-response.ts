@@ -38,7 +38,10 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
   });
 }
 
-export async function readDdtUploads(request: Request): Promise<DdtUpload[]> {
+export async function readDdtUploads(
+  request: Request,
+  maximumFiles = DDT_IMPORT_FILE_LIMIT,
+): Promise<DdtUpload[]> {
   const tooLarge = () =>
     new DomainError("DDT_UPLOAD_TOO_LARGE", "DDT 上传总大小不能超过 512 MiB。");
   rejectOversizedUpload(request, DDT_IMPORT_TOTAL_BYTES, tooLarge);
@@ -47,11 +50,8 @@ export async function readDdtUploads(request: Request): Promise<DdtUpload[]> {
     (entry): entry is File => entry instanceof File,
   );
   if (files.length === 0) throw new DomainError("DDT_FILE_REQUIRED", "请选择 DDT 表格或 ZIP。");
-  if (files.length > DDT_IMPORT_FILE_LIMIT)
-    throw new DomainError(
-      "DDT_FILE_LIMIT_EXCEEDED",
-      `一次最多上传 ${DDT_IMPORT_FILE_LIMIT} 个文件。`,
-    );
+  if (files.length > maximumFiles)
+    throw new DomainError("DDT_FILE_LIMIT_EXCEEDED", `一次最多上传 ${maximumFiles} 个表格或 ZIP。`);
   let totalBytes = 0;
   const uploads: DdtUpload[] = [];
   for (const file of files) {

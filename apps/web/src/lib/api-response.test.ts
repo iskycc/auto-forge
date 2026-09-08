@@ -3,7 +3,7 @@ import { DomainError } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
 import { config as proxyConfig } from "../proxy";
-import { apiErrorResponse, readJarUpload } from "./api-response";
+import { apiErrorResponse, readDdtUploads, readJarUpload } from "./api-response";
 
 const MEBIBYTE = 1_048_576;
 
@@ -102,6 +102,27 @@ describe("JAR upload request boundaries", () => {
 
     await expect(readJarUpload(request, MEBIBYTE)).rejects.toMatchObject({
       code: "JAR_TOO_LARGE",
+    });
+  });
+});
+
+describe("DDT upload request boundaries", () => {
+  it("uses the current configured file-count limit", async () => {
+    const form = new FormData();
+    form.append("files", new File(["CaseID,srNum\na,A\n"], "a.csv", { type: "text/csv" }));
+    form.append("files", new File(["CaseID,srNum\nb,B\n"], "b.csv", { type: "text/csv" }));
+
+    await expect(
+      readDdtUploads(
+        new Request("http://localhost/api/v1/ddt/imports/preview", {
+          method: "POST",
+          body: form,
+        }),
+        1,
+      ),
+    ).rejects.toMatchObject({
+      code: "DDT_FILE_LIMIT_EXCEEDED",
+      message: "一次最多上传 1 个表格或 ZIP。",
     });
   });
 });

@@ -9,7 +9,10 @@ import {
 } from "@autoforge/application";
 import { jobEnvelopeSchema, createRunBatchInputSchema } from "@autoforge/contracts";
 import { z } from "zod";
-import { PlatformConfigurationStore } from "@autoforge/platform-config";
+import {
+  MAXIMUM_DDT_IMPORT_QUANTITY_LIMIT,
+  PlatformConfigurationStore,
+} from "@autoforge/platform-config";
 import { javaSourceReferenceSchema, ddtImportColumnResolutionSchema } from "@autoforge/contracts";
 import { parentPort, workerData } from "node:worker_threads";
 
@@ -76,6 +79,7 @@ import type {
 const port = parentPort;
 if (!port) throw new Error("Work thread requires a parent port.");
 const configuration = workerData as WorkThreadConfiguration;
+const platformConfigurationStore = new PlatformConfigurationStore(configuration.dataDirectory);
 
 // 两个模式共享线程骨架，基础设施句柄按模式延迟构建：Full 线程不会打开
 // SQLite 主库，Lite 线程不会创建 PostgreSQL 连接池。
@@ -232,14 +236,22 @@ async function parseFile(task: Extract<WorkTask, { kind: "parse-file" }>): Promi
           .omit({ uploadIndex: true })
           .array()
           .optional(),
+        parseLimits: z
+          .object({
+            maximumZipSpreadsheets: z.number().int().min(1).max(MAXIMUM_DDT_IMPORT_QUANTITY_LIMIT),
+          })
+          .optional(),
       })
       .parse(task.input);
-    return parseDdtUpload({
-      fileName: input.fileName,
-      mediaType: input.mediaType,
-      content: input.content,
-      ...(input.columnResolutions ? { columnResolutions: input.columnResolutions } : {}),
-    });
+    return parseDdtUpload(
+      {
+        fileName: input.fileName,
+        mediaType: input.mediaType,
+        content: input.content,
+        ...(input.columnResolutions ? { columnResolutions: input.columnResolutions } : {}),
+      },
+      input.parseLimits,
+    );
   }
   const { TestNgJarDiscovery } = await import("@autoforge/testng-discovery");
   const discovery = new TestNgJarDiscovery(configuration.imports);
@@ -323,6 +335,7 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
         clock,
         ids,
         snapshots,
+        currentDdtImportLimits,
       ).jobHandler()(job, signal);
     }
     default:
@@ -361,12 +374,18 @@ function schedulingService(): RunBatchSchedulingService {
       collaborators.projectStructures,
       collaborators.runnerGroups,
       configuration.caseExecutionTimeoutSeconds * 1_000,
-      () =>
-        new PlatformConfigurationStore(configuration.dataDirectory).read().limits
-          .artifactCollectionEnabled,
+      () => platformConfigurationStore.read().limits.artifactCollectionEnabled,
     );
   }
   return scheduler;
+}
+
+function currentDdtImportLimits() {
+  const limits = platformConfigurationStore.read().limits;
+  return {
+    maximumUploadFiles: limits.ddtImportFileLimit,
+    maximumZipSpreadsheets: limits.ddtImportZipSpreadsheetLimit,
+  };
 }
 
 function schedulingCollaborators(): SchedulingCollaborators {

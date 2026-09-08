@@ -22,6 +22,8 @@ describe("platform configuration store", () => {
     expect(configuration.web.timeZone).toBe("Asia/Shanghai");
     expect(configuration.revision).toBe(1);
     expect(configuration.limits.maxJarBytes).toBe(256 * 1024 * 1024);
+    expect(configuration.limits.ddtImportFileLimit).toBe(200);
+    expect(configuration.limits.ddtImportZipSpreadsheetLimit).toBe(200);
     expect(configuration.secrets.masterKey).toHaveLength(44);
     expect(statSync(store.paths.configurationFile).mode & 0o777).toBe(0o600);
     expect(statSync(store.paths.initialAdminTokenFile).mode & 0o777).toBe(0o600);
@@ -30,17 +32,22 @@ describe("platform configuration store", () => {
     );
   });
 
-  it("keeps old configuration files readable with the UTC+8 default", () => {
+  it("keeps old configuration files readable with platform defaults", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
     const store = new PlatformConfigurationStore(dataDirectory);
     store.initialize(new Date("2026-08-11T00:00:00.000Z"));
     const legacy = JSON.parse(readFileSync(store.paths.configurationFile, "utf8")) as {
       web: { timeZone?: string };
+      limits: { ddtImportFileLimit?: number; ddtImportZipSpreadsheetLimit?: number };
     };
     delete legacy.web.timeZone;
+    delete legacy.limits.ddtImportFileLimit;
+    delete legacy.limits.ddtImportZipSpreadsheetLimit;
     writeFileSync(store.paths.configurationFile, JSON.stringify(legacy), { mode: 0o600 });
 
     expect(store.read().web.timeZone).toBe("Asia/Shanghai");
+    expect(store.read().limits.ddtImportFileLimit).toBe(200);
+    expect(store.read().limits.ddtImportZipSpreadsheetLimit).toBe(200);
   });
 
   it("uses revision conditions and preserves generated secrets", () => {

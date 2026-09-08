@@ -220,9 +220,10 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         return NextResponse.json(template, { status: 201 });
       }
       if (matches(path, "imports", "preview")) {
+        const maximumFiles = services.configurationStore.read().limits.ddtImportFileLimit;
         const job = await services.ddtImports.preview(
           scope,
-          await readDdtUploads(request),
+          await readDdtUploads(request, maximumFiles),
           ddtActorId(identity),
         );
         await audit(identity, services, scope, currentRequestId, "ddt_import.preview", {

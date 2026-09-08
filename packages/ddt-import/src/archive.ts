@@ -553,7 +553,7 @@ export async function extractSpreadsheetsFromZip(archive: Buffer, options: Extra
       throw new ZipImportError(`ZIP 中包含重名表格：${path.normalized}`);
     }
     if (selected.length >= options.maxFiles) {
-      throw new ZipImportError("ZIP 中可导入的表格超过本次剩余额度");
+      throw new ZipImportError(`ZIP 中可导入的表格超过 ${options.maxFiles} 个的配置上限`);
     }
     if (entry.originalSize > options.maxFileBytes) {
       throw new ZipImportError(`ZIP 中的 ${path.normalized} 解压后超过单文件大小上限`);

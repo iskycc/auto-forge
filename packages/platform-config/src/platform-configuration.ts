@@ -21,6 +21,9 @@ export const INITIAL_ADMIN_TOKEN_FILE = "initial-admin-token";
 export const MINIMUM_JAR_UPLOAD_BYTES = 1_048_576;
 export const MAXIMUM_JAR_UPLOAD_BYTES = 268_435_456;
 export const DEFAULT_PLATFORM_TIME_ZONE = "Asia/Shanghai";
+export const DEFAULT_DDT_IMPORT_FILE_LIMIT = 200;
+export const DEFAULT_DDT_IMPORT_ZIP_SPREADSHEET_LIMIT = 200;
+export const MAXIMUM_DDT_IMPORT_QUANTITY_LIMIT = 10_000;
 
 function isSupportedTimeZone(value: string): boolean {
   try {
@@ -103,6 +106,19 @@ export const persistedPlatformConfigurationSchema = z
       caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
       // 产物收集全局开关；关闭后执行规格不下发产物规则，Agent 不扫描不上传产物。
       artifactCollectionEnabled: z.boolean().default(true),
+      // 兼容旧配置文件：两个 DDT 数量限制缺失时保持历史的 200。
+      ddtImportFileLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAXIMUM_DDT_IMPORT_QUANTITY_LIMIT)
+        .default(DEFAULT_DDT_IMPORT_FILE_LIMIT),
+      ddtImportZipSpreadsheetLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAXIMUM_DDT_IMPORT_QUANTITY_LIMIT)
+        .default(DEFAULT_DDT_IMPORT_ZIP_SPREADSHEET_LIMIT),
     }),
     scheduler: schedulerSchema,
     worker: z.object({
@@ -327,6 +343,8 @@ function defaultConfiguration(
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
       artifactCollectionEnabled: true,
+      ddtImportFileLimit: DEFAULT_DDT_IMPORT_FILE_LIMIT,
+      ddtImportZipSpreadsheetLimit: DEFAULT_DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

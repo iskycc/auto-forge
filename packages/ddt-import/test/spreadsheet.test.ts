@@ -57,6 +57,23 @@ describe("DDT spreadsheet compatibility", () => {
     ]);
   });
 
+  it("applies the configured spreadsheet limit to each ZIP archive", async () => {
+    const archive = zipSync({
+      "a.csv": new TextEncoder().encode("CaseID,srNum\na,A\n"),
+      "b.csv": new TextEncoder().encode("CaseID,srNum\nb,B\n"),
+    });
+    const upload = {
+      fileName: "cases.zip",
+      mediaType: "application/zip",
+      content: archive,
+    };
+
+    await expect(parseDdtUpload(upload, { maximumZipSpreadsheets: 1 })).rejects.toThrow(
+      "ZIP 中可导入的表格超过 1 个的配置上限",
+    );
+    await expect(parseDdtUpload(upload, { maximumZipSpreadsheets: 2 })).resolves.toHaveLength(2);
+  });
+
   it("reports duplicate column positions and applies a manual resolution", () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
