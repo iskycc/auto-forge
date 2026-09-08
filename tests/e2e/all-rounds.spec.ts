@@ -520,11 +520,15 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     }),
   });
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles({
+  const jarInput = page.locator('input[type="file"]');
+  // setInputFiles bypasses disabled controls; wait for the hydrated change handler.
+  await expect(jarInput).toBeEnabled();
+  await jarInput.setInputFiles({
     name: "all-rounds-tests.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),
   });
+  await expect(page.locator(".file-summary")).toContainText("all-rounds-tests.jar");
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText("com.example.AllRoundsStableTest")).toBeVisible({
     timeout: 20_000,
