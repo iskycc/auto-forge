@@ -301,6 +301,7 @@ run_adapter_tests() {
       packages/db/test/failure-analysis-migration.integration.test.ts \
       packages/db/test/analysis-assignees.integration.test.ts \
       packages/db/test/read-model-snapshots.integration.test.ts \
+      apps/worker/src/read-model-bundle.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \
       packages/db/test/postgres-round-recovery.integration.test.ts \
       packages/db/test/postgres-webhook.integration.test.ts \

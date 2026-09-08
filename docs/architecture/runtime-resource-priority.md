@@ -96,6 +96,7 @@ Full 升级应先排空并停止旧 Web/Worker，再统一升级所有节点。�
 - `apps/web/server/log-io-pool.integration.test.ts`：约 128 MiB 旧库并发上传，以及持续卡住的读线程、HTTP 响应、队列上限和恢复。
 - `packages/db/test/node-attempt-log-store.integration.test.ts`：真实 PostgreSQL 与独立日志线程验证两节点归属、转发、删除、重试与恢复。
 - `packages/db/test/resource-priority.integration.test.ts` 和 `read-model-snapshots.integration.test.ts`：Lite/Full 锁竞争、查询期限、快照退让和恢复。
+- `apps/worker/src/read-model-bundle.integration.test.ts`：实际构建独立 Worker，验证 Lite/Full 统计线程发布快照并正常关闭。各进程/线程入口独立构建，避免共享数据库适配器被并入其他线程入口后，导入适配器意外启动错误的线程。Full 路径需要 `AUTOFORGE_TEST_POSTGRES_URL`，已纳入 Full 适配器验收。
 - `packages/application/test/runtime-notifications.test.ts`：通知权限、失败重试和稳定去重 ID。
 - `packages/db/test/runner-heartbeat-contention.integration.test.ts`：真实 SQLite 写锁下的 8 Runner 心跳重试、原身份恢复和无工作时不争写锁；`apps/web/src/lib/runtime-priority.test.ts` 使用可控单调时钟模拟一天，验证孤立尖峰不刷通知、持续故障只提示一次、恢复后再次告警。这是确定性回归，不是实际运行 24 小时的 soak 验收。
 - 队列共享契约验证执行/后台隔离、租约、确认、重试和死信；真实 JetStream 额外验证旧 subject 搬运，SQLite 验证十万条后台积压下实际领取 SQL 的索引计划。

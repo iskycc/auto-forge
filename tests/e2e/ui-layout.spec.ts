@@ -225,11 +225,15 @@ test("top-bar project context persists across pages and removes local project sw
   await page.getByRole("option", { name: "灰度验证", exact: true }).click();
   expect((await stageSwitched).status()).toBe(200);
   await expect(switcher).toContainText("灰度验证");
+  await expect(page.getByLabel("当前用例层级")).toContainText("灰度验证");
 
   await expect(page.getByText("当前项目层级还没有用例")).toBeVisible();
   const emptyCard = page.locator(".case-library-empty-card");
   await expect(emptyCard).toBeVisible();
-  expect((await emptyCard.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(320);
+  // Snapshot publication can replace the visible card between visibility and measurement.
+  await expect
+    .poll(() => emptyCard.evaluateAll((cards) => cards[0]?.getBoundingClientRect().height ?? 0))
+    .toBeGreaterThanOrEqual(320);
 
   await page.goto("/settings/projects?section=execution");
   await expect(page.getByRole("tree", { name: "项目版本与测试阶段" })).toBeVisible();

@@ -6,6 +6,17 @@ and known limitations.
 
 ## Unreleased
 
+## 1.13.4 - 2026-09-08
+
+### Fixed
+
+- 修复 Full 独立 Worker 生产构建中统计线程误加载维护线程入口的问题，恢复后台快照更新，避免启动时反复报配置路径异常。各进程/线程入口独立构建，并增加真实生产产物的 Lite/Full 快照发布和关闭回归测试。
+- 修复项目层级切换 UI 验收在后台快照替换卡片期间单次读取布局导致的偶发失败，保留原有可见性和最小高度要求。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、配置、依赖或 Runner Protocol 变更。Full 部署需更新独立 Worker 镜像并重启进程；该补丁无需单独升级 Runner。
+
 ## 1.13.3 - 2026-09-08
 
 ### Added and changed
