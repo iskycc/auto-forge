@@ -106,7 +106,7 @@ class AutoForgeRunClientTest {
              "pollIntervalSeconds":30,"completionTimeoutSeconds":120}
             """.formatted(baseUrl, baseUrl)));
         server.createContext("/api/v1/run-batches/batch-timeout/progress", exchange ->
-            respond(exchange, 200, progress(true, "running", "Running", 0)));
+            respond(exchange, 200, progress(true, "running", "Running", 0).replace("batch-1", "batch-timeout")));
         server.start();
         AtomicLong nowNanos = new AtomicLong();
 
@@ -136,7 +136,7 @@ class AutoForgeRunClientTest {
              "pollIntervalSeconds":30,"completionTimeoutSeconds":120}
             """.formatted(baseUrl, baseUrl, baseUrl)));
         server.createContext("/api/v1/run-batches/batch-failed/progress", exchange ->
-            respond(exchange, 200, progress(false, "failed", "Finished", 0)));
+            respond(exchange, 200, progress(false, "failed", "Finished", 0).replace("batch-1", "batch-failed")));
         server.start();
 
         AbortException failure = assertThrows(
@@ -194,20 +194,162 @@ class AutoForgeRunClientTest {
     }
 
     @Test
-    void explainsInterruptedWaitingWithoutCancellingTheRemoteBatch() throws Exception {
+    void terminatesTheRemoteBatchBeforePropagatingInterruptedWaiting() throws Exception {
         AtomicInteger progressRequests = new AtomicInteger();
+        AtomicInteger terminationRequests = new AtomicInteger();
         String baseUrl = startRunServer(progressRequests, true,
-            poll -> progress(true, "running", "Running", 0));
+            poll -> progress(poll == 0, poll == 0 ? "running" : "cancelled", "Stopped", 0));
+        server.createContext("/api/v1/run-batches/batch-1/terminate", exchange -> {
+            terminationRequests.incrementAndGet();
+            respond(exchange, 200, "{\"batchId\":\"batch-1\",\"terminating\":true}");
+        });
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         assertThrows(InterruptedException.class, () -> client(baseUrl, 0, output, new AtomicLong(), millis -> {
             throw new InterruptedException("Pipeline stopped");
         }).runToCompletion("suite-1"));
 
-        assertEquals(1, progressRequests.get());
+        assertEquals(1, terminationRequests.get());
+        assertEquals(2, progressRequests.get());
         String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
-        assertTrue(log.contains("等待中断"));
-        assertTrue(log.contains("批次未取消"));
+        assertTrue(log.contains("请求终止"));
+        assertTrue(log.contains("完整结果"));
+        assertFalse(log.contains("批次未取消"));
+    }
+
+    @Test
+    void retriesUncertainTerminationAndWaitsForAuthoritativeTerminalProgress() throws Exception {
+        AtomicInteger progressRequests = new AtomicInteger();
+        AtomicInteger terminationRequests = new AtomicInteger();
+        String baseUrl = startRunServer(progressRequests, true, poll ->
+            progress(poll < 2, poll < 2 ? "running" : "cancelled", "Stopped", 0));
+        server.createContext("/api/v1/run-batches/batch-1/terminate", exchange -> {
+            assertEquals("POST", exchange.getRequestMethod());
+            assertEquals("Bearer af_api_unit-test", exchange.getRequestHeaders().getFirst("authorization"));
+            assertTrue(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).contains("Jenkins Pipeline"));
+            if (terminationRequests.incrementAndGet() == 1) {
+                respond(exchange, 503, "{\"error\":{\"message\":\"temporarily unavailable\"}}");
+            } else {
+                // A successful request, even one reporting no pending work, is not terminal progress.
+                respond(exchange, 200, "{\"batchId\":\"batch-1\",\"terminating\":false}");
+            }
+        });
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AtomicLong clock = new AtomicLong();
+        AutoForgeRunCancellation cancellation = new AutoForgeRunCancellation();
+        Map<String, Object> result = stoppingClient(baseUrl, output, clock, cancellation).runToCompletion("suite-1");
+
+        assertEquals(2, terminationRequests.get());
+        assertEquals(3, progressRequests.get());
+        assertEquals("cancelled", result.get("status"));
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("终止重试"));
+        assertTrue(log.contains("完整结果"));
+        assertFalse(log.contains("af_api_unit-test"));
+    }
+
+    @Test
+    void reportsMissingTerminationPermissionWithoutClaimingTheBatchStopped() throws Exception {
+        String baseUrl = startRunServer(new AtomicInteger(), true,
+            poll -> progress(true, "running", "Running", 0));
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/api/v1/run-batches/batch-1/terminate", exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 403, "{\"error\":{\"message\":\"permission denied\"}}");
+        });
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AbortException failure = assertThrows(AbortException.class, () ->
+            stoppingClient(baseUrl, output, new AtomicLong(), new AutoForgeRunCancellation()).runToCompletion("suite-1"));
+        assertTrue(failure.getMessage().contains("403"));
+        assertEquals(1, requests.get());
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("终止未确认"));
+        assertTrue(log.contains("run.cancel、run.read"));
+        assertTrue(log.contains("查看报告"));
+        assertFalse(log.contains("完整结果"));
+    }
+
+    @Test
+    void retriesProgressAfterTerminationWithoutResubmittingAnAcceptedRequest() throws Exception {
+        AtomicInteger progressRequests = new AtomicInteger();
+        AtomicInteger terminationRequests = new AtomicInteger();
+        String baseUrl = startRunServer(new AtomicInteger(), true,
+            poll -> progress(true, "running", "Running", 0));
+        server.removeContext("/api/v1/run-batches/batch-1/progress");
+        server.createContext("/api/v1/run-batches/batch-1/progress", exchange -> {
+            int poll = progressRequests.incrementAndGet();
+            if (poll == 1) {
+                respond(exchange, 200, progress(true, "running", "Running", 0));
+                return;
+            }
+            assertEquals("Bearer af_api_unit-test", exchange.getRequestHeaders().getFirst("authorization"));
+            assertNull(exchange.getRequestURI().getQuery(), "Drain must not depend on an expiring progress token");
+            if (poll == 2) respond(exchange, 502, "{\"error\":{\"message\":\"temporary outage\"}}");
+            else respond(exchange, 200, progress(false, "failed", "Failed", 1));
+        });
+        server.createContext("/api/v1/run-batches/batch-1/terminate", exchange -> {
+            terminationRequests.incrementAndGet();
+            respond(exchange, 200, "{\"batchId\":\"batch-1\",\"terminating\":true}");
+        });
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Map<String, Object> result = stoppingClient(baseUrl, output, new AtomicLong(),
+            new AutoForgeRunCancellation()).runToCompletion("suite-1");
+        assertEquals(1, terminationRequests.get());
+        assertEquals(3, progressRequests.get());
+        assertEquals("failed", result.get("status"));
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("终止重试"));
+        assertTrue(log.contains("完整结果"));
+    }
+
+    @Test
+    void rejectsMismatchedTerminalReports() throws Exception {
+        String baseUrl = startRunServer(new AtomicInteger(), true,
+            poll -> poll == 0 ? progress(true, "running", "Running", 0)
+                : progress(false, "cancelled", "Stopped", 0).replace("batch-1", "another-batch"));
+        server.createContext("/api/v1/run-batches/batch-1/terminate", exchange ->
+            respond(exchange, 200, "{\"batchId\":\"batch-1\",\"terminating\":true}"));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        assertThrows(IllegalArgumentException.class, () -> stoppingClient(baseUrl, output,
+            new AtomicLong(), new AutoForgeRunCancellation()).runToCompletion("suite-1"));
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("终止未确认"));
+        assertFalse(log.contains("完整结果"));
+    }
+
+    @Test
+    void boundsDrainWaitingIndependentlyOfTheNormalExecutionTimeout() throws Exception {
+        String baseUrl = startRunServer(new AtomicInteger(), true,
+            poll -> progress(true, "running", "Running", 0));
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/api/v1/run-batches/batch-1/terminate", exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, "{\"batchId\":\"batch-1\",\"terminating\":true}");
+        });
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AtomicLong clock = new AtomicLong();
+        assertThrows(AbortException.class, () -> stoppingClient(baseUrl, output, clock,
+            new AutoForgeRunCancellation()).runToCompletion("suite-1"));
+        assertEquals(1, requests.get());
+        assertEquals(TimeUnit.SECONDS.toNanos(120), clock.get());
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("终止未确认"));
+    }
+
+    @Test
+    void doesNotCreateABatchWhenStopWasAlreadyRequested() {
+        AutoForgeRunCancellation cancellation = new AutoForgeRunCancellation();
+        cancellation.request();
+        assertThrows(InterruptedException.class, () -> stoppingClient("http://127.0.0.1:1/",
+            new ByteArrayOutputStream(), new AtomicLong(), cancellation).runToCompletion("suite-1"));
+    }
+
+    private static AutoForgeRunClient stoppingClient(String baseUrl, ByteArrayOutputStream output,
+            AtomicLong clock, AutoForgeRunCancellation cancellation) {
+        return new AutoForgeRunClient(baseUrl, "af_api_unit-test", 0,
+            new PrintStream(output, true, StandardCharsets.UTF_8),
+            HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build(), clock::get,
+            millis -> cancellation.request(), millis -> clock.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis)),
+            cancellation);
     }
 
     private String startRunServer(AtomicInteger progressRequests, boolean permanentResult, IntFunction<String> response)

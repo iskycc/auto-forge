@@ -4,6 +4,8 @@
 指定项目版本。它发布的是外部 URL 和完整性元数据，不会把 Jenkins 工作区文件直接上传到
 AutoForge。
 
+最低支持 Jenkins `2.479.3` 和 Pipeline: Step API `700.v6e45cb_a_5a_a_21`，安装与兼容性验证见[插件说明](../README.md)。
+
 ## 最小 Pipeline 示例
 
 ```groovy

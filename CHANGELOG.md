@@ -4,6 +4,25 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.13.2 - 2026-09-08
+
+### Added
+
+- Jenkins `autoforgeRun` 收到普通 Pipeline 停止信号后，请求 AutoForge 平滑终止批次，等待已领取用例完成并上传结果，确认终态后输出最终汇总和原来的执行报告链接，再传播中断。支持重复停止去重、创建请求期间停止及收尾阶段有界网络重试；权限不足或无法确认终态时明确反馈并保留报告入口。
+- 执行插件 API Key 需同时具备项目 `run.create`、`run.cancel`、`run.read` 权限。复用 Lite/Full 已有终止和进度 API，无数据库迁移或 Runner 协议变更；插件自身等待超时语义不变，Jenkins 强制终止、Controller 崩溃和无回执创建仍有明确限制。
+
+### Fixed
+
+- 两个 Jenkins 插件改为以 Pipeline: Step API `700.v6e45cb_a_5a_a_21` 编译并声明最低依赖，修复 `1.13.1` 在已安装 `700` 的 Jenkins 上因要求 `724` 而无法加载的问题。Jenkins Controller 最低版本继续为 `2.479.3`，Lite/Full API 契约保持不变。
+- Pipeline 回归检查 Jenkins 实际加载的 Step API 版本；CI 分别验证 `700` 与 `724`，发布包检查明确约束 HPI 的最低插件依赖，避免测试传递依赖掩盖兼容性回退。
+- Jenkins 本地验收与正式打包使用 `clean verify`，避免切换版本构建时将旧版控制台 JAR 混入 HPI。
+
+### Compatibility and validation
+
+- 无主平台数据库迁移、持久配置或 Runner 协议变更；继续交付双架构离线镜像、五主机部署包、两个 Jenkins HPI、SBOM、清单与签名。已有 API Key 若缺少 `run.cancel` 或 `run.read`，必须补齐服务账号权限及令牌 scopes 才能完成停止收尾。
+- 本地 Step API `700` / `724` 两个基线的 Maven 验证通过；最终 `700` 基线离线干净构建通过，29 项测试通过，2 项无 properties 资源的自动检查跳过。真实 Jenkins 场景覆盖执行成功、等待超时、普通及重复停止、创建期间停止和依赖发布。
+- Lite 的执行轮次、报告与 API Key 终止浏览器闭环通过；真实 SQLite/PostgreSQL 的 29 项集成测试、7 项发布工作流检查，以及相关格式、lint 和测试类型检查通过。强制 kill、Controller 崩溃或创建回执丢失不能保证自动收尾，插件文档列明恢复边界。
+
 ## 1.13.1 - 2026-09-07
 
 ### Fixed

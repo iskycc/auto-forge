@@ -56,6 +56,8 @@ public final class AutoForgeRunStep extends Step {
         private final String suiteId;
         private final Secret apiKey;
         private final long timeoutSeconds;
+        private final AutoForgeRunCancellation cancellation = new AutoForgeRunCancellation();
+        private volatile Throwable cancellationCause;
 
         Execution(AutoForgeRunStep step, StepContext context) {
             super(context);
@@ -69,12 +71,38 @@ public final class AutoForgeRunStep extends Step {
         protected Map<String, Object> run() throws Exception {
             TaskListener listener = getContext().get(TaskListener.class);
             if (listener == null) throw new AbortException("无法获取 Jenkins 构建日志输出通道。");
-            return new AutoForgeRunClient(
+            try {
+                Map<String, Object> result = new AutoForgeRunClient(
                     baseUrl,
                     apiKey.getPlainText(),
                     timeoutSeconds,
-                    listener.getLogger())
-                .runToCompletion(suiteId);
+                    listener.getLogger(),
+                    cancellation).runToCompletion(suiteId);
+                throwIfStopped();
+                return result;
+            } catch (Exception failure) {
+                Throwable stopped = cancellationCause;
+                if (stopped != null && stopped != failure) {
+                    stopped.addSuppressed(failure);
+                    throwIfStopped();
+                }
+                throw failure;
+            }
+        }
+
+        @Override
+        public synchronized void stop(Throwable cause) {
+            if (cancellationCause == null) cancellationCause = cause;
+            // The superclass would fail the Pipeline immediately and interrupt HTTP creation.
+            // Leave its worker alive until the remote terminal report has been printed.
+            cancellation.request();
+        }
+
+        private void throwIfStopped() throws Exception {
+            Throwable cause = cancellationCause;
+            if (cause instanceof Exception failure) throw failure;
+            if (cause instanceof Error failure) throw failure;
+            if (cause != null) throw new Exception("Jenkins Pipeline 已请求停止。", cause);
         }
     }
 

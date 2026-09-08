@@ -20,6 +20,8 @@
     <revision>1.2.0</revision>
     <changelist>-SNAPSHOT</changelist>
     <jenkins.version>2.479.3</jenkins.version>
+    <!-- Compile against the supported minimum; newer Pipeline APIs are tested separately. -->
+    <workflow-step-api.version>700.v6e45cb_a_5a_a_21</workflow-step-api.version>
     <hpi.bundledArtifacts>autoforge-console</hpi.bundledArtifacts>
     <hpi.strictBundledArtifacts>true</hpi.strictBundledArtifacts>
   </properties>
@@ -53,7 +55,7 @@
     <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-step-api</artifactId>
-      <version>724.v538c2362b_dfb_</version>
+      <version>${workflow-step-api.version}</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 expected_plugin_version="${1:-1.2.0-SNAPSHOT}"
+expected_step_api_version="${2:-700.v6e45cb_a_5a_a_21}"
 verification_dir="$(mktemp -d)"
 trap 'rm -rf "${verification_dir}"' EXIT
 
@@ -21,7 +22,12 @@ verify_hpi() {
   [[ "${actual_plugin_version}" == "${expected_plugin_version}" \
     || "${actual_plugin_version}" == "${expected_plugin_version} "* ]]
   grep -Fq "Jenkins-Version: 2.479.3" "${verification_dir}/${short_name}.manifest"
-  grep -Fq "workflow-step-api:724.v538c2362b_dfb_" "${verification_dir}/${short_name}.manifest"
+  if ! grep -Fqx "Plugin-Dependencies: workflow-step-api:${expected_step_api_version}" \
+    "${verification_dir}/${short_name}.manifest"; then
+    printf '%s must require only workflow-step-api:%s\n' \
+      "${short_name}" "${expected_step_api_version}" >&2
+    exit 1
+  fi
   unzip -p "${hpi_path}" "WEB-INF/lib/${short_name}.jar" > "${plugin_jar}"
   jar tf "${plugin_jar}" | grep -Fqx "${step_class}"
   local console_library_path

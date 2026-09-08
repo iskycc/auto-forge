@@ -208,8 +208,10 @@ async function browserSessionHeaders(page: Page): Promise<Record<string, string>
   return { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") };
 }
 
-async function issueJenkinsApiToken(page: Page): Promise<string> {
-  const permissions = ["run.create", "run.read", "project.manage"];
+async function issueJenkinsApiToken(
+  page: Page,
+  permissions = ["run.create", "run.read", "project.manage"],
+): Promise<string> {
   const account = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
     method: "POST",
     body: {
@@ -1584,4 +1586,69 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     resultCode: "TESTNG_SUCCEEDED",
     summary: "final failure rerun passed",
   });
+
+  // Jenkins 使用与插件相同的 API Key 终止接口；接受请求不代表已领取用例完成收尾。
+  const terminationToken = await issueJenkinsApiToken(page, [
+    "run.create",
+    "run.read",
+    "run.cancel",
+  ]);
+  const terminationHeaders = { authorization: `Bearer ${terminationToken}` };
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  const stoppingResponse = await page.request.post("/api/v1/jenkins/runs", {
+    headers: terminationHeaders,
+    data: { suiteId },
+  });
+  expect(stoppingResponse.status()).toBe(201);
+  const stoppingBatch = (await stoppingResponse.json()) as { batchId: string; resultUrl: string };
+  const runningDuringStop = await claimAssignment(page, identity);
+  const terminationPath = `/api/v1/run-batches/${stoppingBatch.batchId}/terminate`;
+  const deniedTermination = await page.request.post(terminationPath, {
+    headers: { authorization: `Bearer ${jenkinsToken}` },
+    data: { reason: "Jenkins stop without cancellation scope" },
+  });
+  expect(deniedTermination.status()).toBe(403);
+  for (let request = 0; request < 2; request += 1) {
+    const termination = await page.request.post(terminationPath, {
+      headers: terminationHeaders,
+      data: { reason: "Jenkins Pipeline stopped; drain current work" },
+    });
+    expect(termination.status()).toBe(200);
+    expect(await termination.json()).toMatchObject({
+      batchId: stoppingBatch.batchId,
+      terminating: true,
+    });
+  }
+  const draining = await page.request.get(`/api/v1/run-batches/${stoppingBatch.batchId}/progress`, {
+    headers: terminationHeaders,
+  });
+  expect(draining.status()).toBe(200);
+  expect(await draining.json()).toMatchObject({ active: true, statusLabel: "终止中" });
+  await completeAttempt(page, identity, runningDuringStop, {
+    completionId: "jenkins-stop-drained",
+    status: "failed",
+    resultCode: "TESTNG_FAILED",
+    summary: "Preserve the running case result after Jenkins requested termination",
+    stdoutWatermark: -1,
+  });
+  await expect
+    .poll(async () => {
+      const progress = await page.request.get(
+        `/api/v1/run-batches/${stoppingBatch.batchId}/progress`,
+        {
+          headers: terminationHeaders,
+        },
+      );
+      expect(progress.status()).toBe(200);
+      return progress.json();
+    })
+    .toMatchObject({
+      active: false,
+      status: "cancelled",
+      totalCases: 2,
+      totalPassed: 0,
+      finalFailed: 1,
+    });
+  const stoppedReport = await page.request.get(stoppingBatch.resultUrl);
+  expect(stoppedReport.status()).toBe(200);
 });

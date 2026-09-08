@@ -109,6 +109,11 @@ jobs:
         run: corepack enable
       - name: Build and verify Jenkins plugins
         run: pnpm test:jenkins-plugins
+      - name: Verify newer Pipeline Step API compatibility
+        run: |
+          mvn --batch-mode --no-transfer-progress --file integrations/jenkins/pom.xml \
+            -Dworkflow-step-api.version=724.v538c2362b_dfb_ clean verify
+          bash scripts/verify-jenkins-hpis.sh 1.2.0-SNAPSHOT 724.v538c2362b_dfb_
 
   lite-browser:
     name: Lite browser · ${{ matrix.scenario }}

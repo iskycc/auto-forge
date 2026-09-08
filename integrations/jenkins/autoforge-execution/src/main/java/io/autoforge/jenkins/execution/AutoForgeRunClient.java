@@ -20,6 +20,7 @@ final class AutoForgeRunClient {
     static final long MAXIMUM_COMPLETION_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
     private static final int DEFAULT_POLL_INTERVAL_SECONDS = 30;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    private static final long TERMINATION_POLL_MILLIS = 5_000;
 
     private final URI baseUri;
     private final String apiKey;
@@ -28,8 +29,15 @@ final class AutoForgeRunClient {
     private final HttpClient httpClient;
     private final LongSupplier nanoTime;
     private final Sleeper sleeper;
+    private final Sleeper terminationSleeper;
+    private final AutoForgeRunCancellation cancellation;
 
     AutoForgeRunClient(String baseUrl, String apiKey, long timeoutSeconds, PrintStream logger) {
+        this(baseUrl, apiKey, timeoutSeconds, logger, new AutoForgeRunCancellation());
+    }
+
+    AutoForgeRunClient(String baseUrl, String apiKey, long timeoutSeconds, PrintStream logger,
+            AutoForgeRunCancellation cancellation) {
         this(
             baseUrl,
             apiKey,
@@ -40,7 +48,9 @@ final class AutoForgeRunClient {
                 .connectTimeout(Duration.ofSeconds(15))
                 .build(),
             System::nanoTime,
-            Thread::sleep);
+            cancellation::awaitNextPoll,
+            Thread::sleep,
+            cancellation);
     }
 
     AutoForgeRunClient(
@@ -51,6 +61,14 @@ final class AutoForgeRunClient {
             HttpClient httpClient,
             LongSupplier nanoTime,
             Sleeper sleeper) {
+        this(baseUrl, apiKey, timeoutSeconds, logger, httpClient, nanoTime, sleeper, sleeper,
+            new AutoForgeRunCancellation());
+    }
+
+    AutoForgeRunClient(
+            String baseUrl, String apiKey, long timeoutSeconds, PrintStream logger,
+            HttpClient httpClient, LongSupplier nanoTime, Sleeper sleeper, Sleeper terminationSleeper,
+            AutoForgeRunCancellation cancellation) {
         this.baseUri = validatedBaseUri(baseUrl);
         if (apiKey == null || !apiKey.startsWith("af_api_")) {
             throw new IllegalArgumentException("apiKey 必须是以 af_api_ 开头的 AutoForge API 密钥。");
@@ -65,19 +83,23 @@ final class AutoForgeRunClient {
         this.httpClient = httpClient;
         this.nanoTime = nanoTime;
         this.sleeper = sleeper;
+        this.terminationSleeper = terminationSleeper;
+        this.cancellation = cancellation;
     }
 
     Map<String, Object> runToCompletion(String suiteId) throws IOException, InterruptedException {
+        if (cancellation.isRequested()) throw new InterruptedException("Pipeline stopped before batch creation");
         AutoForgeRunLog executionLog = new AutoForgeRunLog(console, nanoTime);
         JSONObject request = new JSONObject();
         request.put("suiteId", suiteId);
-        JSONObject started = post("api/v1/jenkins/runs", request);
+        JSONObject started;
         try {
-            return awaitCompletion(started, suiteId, executionLog);
-        } catch (InterruptedException failure) {
-            executionLog.interrupted();
+            started = post("api/v1/jenkins/runs", request);
+        } catch (IOException | InterruptedException failure) {
+            if (cancellation.isRequested()) executionLog.creationUnconfirmed(suiteId);
             throw failure;
         }
+        return awaitCompletion(started, suiteId, executionLog);
     }
 
     private Map<String, Object> awaitCompletion(JSONObject started, String suiteId, AutoForgeRunLog executionLog)
@@ -100,22 +122,101 @@ final class AutoForgeRunClient {
         executionLog.started(suiteId, requiredString(started, "batchId"), resultLink,
             pollIntervalSeconds, effectiveTimeoutSeconds);
 
-        while (true) {
-            JSONObject progress = get(URI.create(progressApiUrl));
-            executionLog.progress(progress);
-            if (!progress.getBoolean("active")) {
-                String status = requiredString(progress, "status");
-                int finalFailed = nonNegativeInt(progress, "finalFailed");
-                executionLog.completed(progress, resultLink);
-                if (!"succeeded".equals(status)) {
-                    throw new AbortException(
-                        "AutoForge " + AutoForgeRunLog.statusLabel(status) + "，最终失败 " + finalFailed
-                            + " 项；请点击上方“" + resultLink.resultLabel() + "”查看详情。");
+        String batchId = requiredString(started, "batchId");
+        InterruptedException interruptedFailure = null;
+        try {
+            while (!cancellation.isRequested()) {
+                JSONObject progress = get(URI.create(progressApiUrl));
+                executionLog.progress(progress);
+                if (isTerminal(progress, batchId)) {
+                    executionLog.completed(progress, resultLink);
+                    if (!"succeeded".equals(progress.getString("status"))) {
+                        throw new AbortException(
+                            "AutoForge " + AutoForgeRunLog.statusLabel(progress.getString("status"))
+                                + "，最终失败 " + nonNegativeInt(progress, "finalFailed")
+                                + " 项；请点击上方“" + resultLink.resultLabel() + "”查看详情。");
+                    }
+                    return result(progress, resultUrl);
                 }
-                return result(progress, resultUrl);
+                if (!cancellation.isRequested()) {
+                    sleepBeforeNextPoll(deadlineNanos, effectiveTimeoutSeconds, pollIntervalSeconds, resultLink, executionLog);
+                }
             }
-            sleepBeforeNextPoll(deadlineNanos, effectiveTimeoutSeconds, pollIntervalSeconds, resultLink, executionLog);
+        } catch (InterruptedException interrupted) {
+            interruptedFailure = interrupted;
+            cancellation.request();
+            // Cleanup uses a fresh, bounded wait and must be able to perform HTTP I/O.
+            Thread.interrupted();
+        } catch (IOException failure) {
+            if (!cancellation.isRequested()) throw failure;
         }
+        Map<String, Object> stoppedResult = terminateAndAwait(batchId, serverTimeoutSeconds, resultLink, executionLog);
+        if (interruptedFailure != null) throw interruptedFailure;
+        return stoppedResult;
+    }
+
+    private Map<String, Object> terminateAndAwait(String batchId, long maximumWaitSeconds,
+            AutoForgeResultLink resultLink, AutoForgeRunLog executionLog) throws IOException, InterruptedException {
+        long deadline = deadlineAfter(maximumWaitSeconds);
+        String batchPath = "api/v1/run-batches/" + encodePathSegment(batchId);
+        JSONObject request = new JSONObject();
+        request.put("reason", "Jenkins Pipeline 已收到停止要求，终止后续执行并等待当前用例收尾。");
+        boolean accepted = false;
+        long retryMillis = TERMINATION_POLL_MILLIS;
+        IOException lastFailure = null;
+        executionLog.terminationRequested(maximumWaitSeconds);
+        try {
+            while (nanoTime.getAsLong() < deadline) {
+                try {
+                    if (!accepted) {
+                        JSONObject response = post(batchPath + "/terminate", request);
+                        if (!batchId.equals(requiredString(response, "batchId"))) {
+                            throw new IllegalArgumentException("终止响应的执行批次与当前 Pipeline 不一致。");
+                        }
+                        accepted = true;
+                        executionLog.terminationAccepted();
+                    }
+                    // Use the configured control plane and API key: the original progress token may expire during drain.
+                    JSONObject progress = send(authenticatedRequest(resolve(batchPath + "/progress")).GET().build());
+                    executionLog.progress(progress);
+                    if (isTerminal(progress, batchId)) {
+                        executionLog.completed(progress, resultLink);
+                        return result(progress, resultLink.url());
+                    }
+                    retryMillis = TERMINATION_POLL_MILLIS;
+                } catch (IOException failure) {
+                    if (failure instanceof RequestFailure response && !response.retryable()) throw failure;
+                    lastFailure = failure;
+                    executionLog.terminationRetry(accepted);
+                    retryMillis = Math.min(30_000, retryMillis * 2);
+                }
+                long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - nanoTime.getAsLong()));
+                terminationSleeper.sleep(Math.min(retryMillis, remainingMillis));
+            }
+            AbortException expired = new AbortException("AutoForge 终止等待已超过期限，尚未确认批次完全结束。");
+            if (lastFailure != null) expired.initCause(lastFailure);
+            throw expired;
+        } catch (IOException | InterruptedException | RuntimeException failure) {
+            executionLog.terminationUnconfirmed(resultLink,
+                failure instanceof RequestFailure response ? response.statusCode : null);
+            throw failure;
+        }
+    }
+
+    private static boolean isTerminal(JSONObject progress, String batchId) {
+        if (!batchId.equals(requiredString(progress, "batchId"))) {
+            throw new IllegalArgumentException("进度响应的执行批次与当前 Pipeline 不一致。");
+        }
+        String status = requiredString(progress, "status");
+        boolean terminal = "succeeded".equals(status) || "failed".equals(status) || "cancelled".equals(status);
+        if (progress.getBoolean("active") == terminal) {
+            throw new IllegalArgumentException("平台返回的执行状态与活跃标记不一致，无法确认终态。");
+        }
+        return terminal;
+    }
+
+    private static String encodePathSegment(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private Map<String, Object> result(JSONObject progress, String resultUrl) {
@@ -158,7 +259,7 @@ final class AutoForgeRunClient {
     private JSONObject send(HttpRequest request) throws IOException, InterruptedException {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new AbortException("AutoForge 请求失败（HTTP " + response.statusCode() + "）：" + safeMessage(response.body()));
+            throw new RequestFailure(response.statusCode(), safeMessage(response.body()));
         }
         return JSONObject.fromObject(response.body());
     }
@@ -221,7 +322,7 @@ final class AutoForgeRunClient {
         long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
         long pollMillis = TimeUnit.SECONDS.toMillis(pollIntervalSeconds);
         sleeper.sleep(Math.min(pollMillis, remainingMillis));
-        if (nanoTime.getAsLong() >= deadlineNanos) {
+        if (!cancellation.isRequested() && nanoTime.getAsLong() >= deadlineNanos) {
             throw timeout(effectiveTimeoutSeconds, resultLink, executionLog);
         }
     }
@@ -247,5 +348,19 @@ final class AutoForgeRunClient {
     @FunctionalInterface
     interface Sleeper {
         void sleep(long millis) throws InterruptedException;
+    }
+
+    private static final class RequestFailure extends AbortException {
+        @java.io.Serial private static final long serialVersionUID = 1L;
+        private final int statusCode;
+
+        RequestFailure(int statusCode, String message) {
+            super("AutoForge 请求失败（HTTP " + statusCode + "）：" + message);
+            this.statusCode = statusCode;
+        }
+
+        boolean retryable() {
+            return statusCode == 408 || statusCode == 409 || statusCode == 429 || statusCode >= 500;
+        }
     }
 }

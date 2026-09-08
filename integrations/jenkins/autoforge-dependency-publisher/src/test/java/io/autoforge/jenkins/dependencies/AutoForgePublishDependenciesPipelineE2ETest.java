@@ -1,5 +1,6 @@
 package io.autoforge.jenkins.dependencies;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -27,6 +28,10 @@ class AutoForgePublishDependenciesPipelineE2ETest {
     @Test
     @WithJenkins
     void runsTheInstalledPipelineDslAgainstTheAutoForgeContract(JenkinsRule jenkins) throws Exception {
+        // Check the loaded version so transitive test dependencies cannot hide a baseline regression.
+        assertEquals(
+            System.getProperty("workflow-step-api.version", "700.v6e45cb_a_5a_a_21"),
+            jenkins.jenkins.getPluginManager().getPlugin("workflow-step-api").getVersion());
         server = HttpServer.create(new InetSocketAddress(0), 0);
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
         server.createContext("/api/v1/jenkins/dependencies", exchange -> respond(exchange, 200, """
