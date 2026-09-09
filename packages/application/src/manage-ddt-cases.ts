@@ -10,13 +10,23 @@ import {
   type DdtScope,
 } from "@autoforge/domain";
 
-import type { Clock, DdtRepository, IdGenerator } from "./ports";
+import type {
+  CaseCatalogRepository,
+  CaseExecutionHistoryQuery,
+  Clock,
+  DdtRepository,
+  IdGenerator,
+} from "./ports";
 
 export class DdtCaseService {
   constructor(
     private readonly repository: DdtRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly executionHistory?: Pick<
+      CaseCatalogRepository,
+      "listCaseActivity" | "listCaseExecutionHistory"
+    >,
   ) {}
 
   list(input: DdtCaseListInput) {
@@ -118,6 +128,31 @@ export class DdtCaseService {
     const item = await this.repository.getCase(scope, caseId.trim());
     if (!item) throw new DomainError("DDT_CASE_NOT_FOUND", "指定的 DDT 用例不存在。");
     return item;
+  }
+
+  async getSummary(scope: DdtScope, caseId: string) {
+    const item = await this.repository.getCaseSummary(scope, caseId.trim());
+    if (!item) throw new DomainError("DDT_CASE_NOT_FOUND", "指定的 DDT 用例不存在。");
+    return item;
+  }
+
+  async listActivity(scope: DdtScope, caseId: string, limit = 50) {
+    const item = await this.getSummary(scope, caseId);
+    if (!this.executionHistory?.listCaseActivity) {
+      throw new DomainError("DDT_HISTORY_UNAVAILABLE", "当前运行时未配置 DDT 执行历史读取。");
+    }
+    return this.executionHistory.listCaseActivity(item.id, Math.max(1, Math.min(limit, 100)));
+  }
+
+  async listExecutionHistory(scope: DdtScope, caseId: string, query: CaseExecutionHistoryQuery) {
+    const item = await this.getSummary(scope, caseId);
+    if (!this.executionHistory) {
+      throw new DomainError("DDT_HISTORY_UNAVAILABLE", "当前运行时未配置 DDT 执行历史读取。");
+    }
+    return this.executionHistory.listCaseExecutionHistory(item.id, {
+      ...query,
+      limit: Math.max(1, Math.min(query.limit, 100)),
+    });
   }
 
   async update(

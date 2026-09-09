@@ -44,6 +44,7 @@ export type WorkTask =
   | { kind: "warmup" }
   | { kind: "trigger-schedules" }
   | { kind: "create-batch"; input: unknown }
+  | { kind: "create-single-ddt-case"; input: unknown }
   | {
       kind: "parse-file";
       operation: "inspect-jar" | "read-jar-source" | "parse-ddt";

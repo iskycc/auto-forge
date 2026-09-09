@@ -7,7 +7,12 @@ import {
   ImportTestNgJarService,
   ReadModelSnapshotService,
 } from "@autoforge/application";
-import { jobEnvelopeSchema, createRunBatchInputSchema } from "@autoforge/contracts";
+import {
+  jobEnvelopeSchema,
+  createRunBatchInputSchema,
+  createSingleCaseRunInputSchema,
+  ddtScopeSchema,
+} from "@autoforge/contracts";
 import { z } from "zod";
 import {
   MAXIMUM_DDT_IMPORT_QUANTITY_LIMIT,
@@ -137,6 +142,16 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
   switch (task.kind) {
     case "create-batch":
       return schedulingService().create(createRunBatchInputSchema.parse(task.input));
+    case "create-single-ddt-case": {
+      const { scope, caseId, input } = z
+        .object({
+          scope: ddtScopeSchema,
+          caseId: z.string().trim().min(1).max(512),
+          input: createSingleCaseRunInputSchema,
+        })
+        .parse(task.input);
+      return schedulingService().createSingleDdtCase(scope, caseId, input);
+    }
     case "trigger-schedules":
       return platformOperations().triggerDueSchedules(
         async (schedule) => (await schedulingService().create({ suiteId: schedule.suiteId })).id,
@@ -368,7 +383,14 @@ function schedulingService(): RunBatchSchedulingService {
         maximumLoadPerCpu: configuration.scheduler.maximumLoadPerCpu,
       },
       configuration.scheduler.metricsMaximumAgeSeconds,
-      { catalog: collaborators.catalog, objectStore: collaborators.objectStore },
+      {
+        catalog: collaborators.catalog,
+        objectStore: collaborators.objectStore,
+        ddt:
+          configuration.mode === "lite"
+            ? new SqliteDdtRepository(sqliteHandle())
+            : new PostgresDdtRepository(postgresHandle()),
+      },
       configuration.scheduler.projectMaximumConcurrency,
       configuration.scheduler.priorityAgingIntervalMinutes,
       collaborators.projectStructures,

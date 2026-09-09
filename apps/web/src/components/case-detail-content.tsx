@@ -40,6 +40,7 @@ export function CaseDetailContent({
 }) {
   const { definition, activity, timeZone } = detail;
   const inspector = presentation === "inspector";
+  const historyCaseId = detail.historyContext?.caseDefinitionId ?? definition.id;
   return (
     <>
       <section className={`case-definition-summary ${inspector ? "" : "card source-summary-card"}`}>
@@ -101,17 +102,21 @@ export function CaseDetailContent({
       ) : null}
 
       <CaseExecutionHistory
-        key={`executions:${definition.id}`}
-        caseDefinitionId={definition.id}
+        key={`executions:${historyCaseId}`}
+        caseDefinitionId={historyCaseId}
+        {...(detail.historyContext
+          ? { historyUrl: detail.historyContext.executionHistoryUrl }
+          : {})}
         initialPage={detail.executionHistory}
         canReadLogs={detail.canReadLogs}
         canCreateRuns={detail.canRun}
         timeZone={timeZone}
       />
       <CaseFailureAnalysisHistory
-        key={`analyses:${definition.id}`}
+        key={`analyses:${historyCaseId}`}
         canReadEvidence={detail.canReadAnalysisEvidence}
-        caseDefinitionId={definition.id}
+        caseDefinitionId={historyCaseId}
+        {...(detail.historyContext ? { historyUrl: detail.historyContext.analysisHistoryUrl } : {})}
         compact={inspector}
         initialPage={detail.failureAnalysisHistory}
         projectId={definition.projectId}

@@ -25,6 +25,7 @@ export function CaseFailureAnalysisHistory({
   canReadEvidence,
   timeZone,
   compact = false,
+  historyUrl,
 }: {
   caseDefinitionId: string;
   projectId: string;
@@ -32,6 +33,7 @@ export function CaseFailureAnalysisHistory({
   canReadEvidence: boolean;
   timeZone: string;
   compact?: boolean;
+  historyUrl?: string;
 }) {
   const [items, setItems] = useState(initialPage.items);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
@@ -44,11 +46,14 @@ export function CaseFailureAnalysisHistory({
     setLoading(true);
     setError("");
     try {
-      const parameters = new URLSearchParams({ cursor: nextCursor, limit: "20" });
-      const response = await fetch(
-        `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionId)}/failure-analyses?${parameters}`,
-        { cache: "no-store" },
+      const url = new URL(
+        historyUrl ??
+          `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionId)}/failure-analyses`,
+        window.location.origin,
       );
+      url.searchParams.set("cursor", nextCursor);
+      url.searchParams.set("limit", "20");
+      const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "读取失败分析历史失败。"))!);
       }

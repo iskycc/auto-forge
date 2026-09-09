@@ -117,6 +117,7 @@ import type {
 } from "./ddt-types";
 import type {
   DdtCase,
+  DdtCaseSummary,
   DdtCaseData,
   DdtExecutionClass,
   DdtCaseHistory,
@@ -1074,6 +1075,7 @@ export type CreateCaseSuiteRecord = {
 
 export interface DdtRepository {
   listCases(query: DdtCaseListQuery): Promise<DdtCaseListPage>;
+  getCaseSummary(scope: DdtScope, caseId: string): Promise<DdtCaseSummary | null>;
   getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null>;
   getCases(scope: DdtScope, caseIds: readonly string[]): Promise<DdtCase[]>;
   findCaseData(scope: DdtScope, caseIds: readonly string[]): Promise<Map<string, DdtCaseData>>;

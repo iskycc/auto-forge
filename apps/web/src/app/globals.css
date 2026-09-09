@@ -8300,24 +8300,21 @@ button.icon-button:disabled {
 .ddt-page-hero .eyebrow {
   display: none;
 }
-.ddt-page-hero h1 {
-  font-size: var(--font-size-ddt-heading);
-}
 .ddt-case-list-item.ui-button {
   box-shadow: none;
 }
 .ddt-case-browser {
-  --ddt-case-list-width: 280px;
+  --ddt-case-list-width: clamp(240px, 26%, 440px);
   --ddt-case-list-collapsed-width: 52px;
   --ddt-case-resizer-width: 6px;
-  --ddt-case-browser-min-height: 480px;
-  --ddt-case-browser-top-space: 232px;
+  --ddt-case-browser-height: 320px;
+  --ddt-case-filter-max-height: none;
   display: grid;
   grid-template-columns: min(var(--ddt-case-list-width), 40%) var(--ddt-case-resizer-width) minmax(
       0,
       1fr
     );
-  height: max(var(--ddt-case-browser-min-height), calc(100dvh - var(--ddt-case-browser-top-space)));
+  height: var(--ddt-case-browser-height);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -8433,6 +8430,8 @@ button.icon-button:disabled {
   left: 0;
   display: grid;
   width: calc(200% + var(--space-2));
+  max-height: var(--ddt-case-filter-max-height);
+  overflow-y: auto;
   gap: var(--space-2);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
@@ -8441,8 +8440,8 @@ button.icon-button:disabled {
   box-shadow: var(--shadow-float);
 }
 .ddt-advanced-filter-fields .ui-select-list {
-  top: auto;
-  bottom: calc(100% + var(--space-1));
+  position: static;
+  margin-top: var(--space-1);
 }
 
 .ddt-loaded-selection {
@@ -8475,6 +8474,26 @@ button.icon-button:disabled {
 }
 .ddt-case-list-row:hover {
   background: var(--color-info-soft);
+}
+.ddt-case-preview {
+  flex: 0 0 auto;
+  margin-right: var(--space-1);
+}
+.ddt-execution-class-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.ddt-execution-inspector .case-inspector-content {
+  padding: 0;
+}
+.ddt-execution-inspector .case-inspector-header {
+  flex-wrap: wrap;
+}
+.ddt-execution-inspector .case-inspector-header-actions {
+  justify-items: start;
 }
 .ddt-case-list-item {
   display: flex;
@@ -15413,6 +15432,14 @@ button.icon-button:disabled {
 }
 
 .global-run-form {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.global-run-form-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -15578,6 +15605,16 @@ button.icon-button:disabled {
   grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
 }
 
+.single-ddt-run-selection {
+  display: grid;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.single-ddt-run-selection p {
+  margin: 0;
+}
+
 .global-run-fields {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -15689,12 +15726,10 @@ button.icon-button:disabled {
 }
 
 .global-run-dialog-actions {
-  position: sticky;
-  bottom: 0;
   display: flex;
+  flex: 0 0 auto;
   justify-content: flex-end;
   gap: 9px;
-  margin: 0 -22px;
   border-top: 1px solid var(--color-border);
   padding: 13px 22px;
   background: rgba(255, 255, 255, 0.96);
@@ -20747,8 +20782,5 @@ button.icon-button:disabled {
   .ddt-workspace:has(.ddt-case-browser) > .ddt-subtabs {
     grid-column: 1;
     grid-row: 2;
-  }
-  .ddt-workspace:has(.ddt-case-browser) .ddt-case-browser {
-    height: calc(100dvh - 272px);
   }
 }

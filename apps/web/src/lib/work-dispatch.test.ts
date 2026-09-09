@@ -42,6 +42,26 @@ describe("scheduling coalescing", () => {
 });
 
 describe("execution control work dispatch", () => {
+  it("offloads DDT snapshot creation in both modes without sending case data through the Web", async () => {
+    const local = {
+      create: vi.fn().mockResolvedValue({ id: "full-batch" }),
+      createSingleDdtCase: vi.fn(),
+    } as unknown as RunBatchSchedulingService;
+    const createSingleDdtCase = vi.fn().mockResolvedValue({ id: "ddt-batch" });
+    const dispatcher = { createSingleDdtCase } as unknown as WorkDispatcher;
+    const scope = { projectId: "project", projectVersionId: "version", testStageId: "stage" };
+    const input = { runnerIds: ["runner"] };
+    for (const batchDispatcher of [dispatcher, undefined]) {
+      const service = workerBackedBatchCreation(local, batchDispatcher, dispatcher);
+      await expect(service.createSingleDdtCase(scope, "DDT-1", input)).resolves.toEqual({
+        id: "ddt-batch",
+      });
+      expect(createSingleDdtCase).toHaveBeenLastCalledWith({ scope, caseId: "DDT-1", input });
+    }
+    expect(local.createSingleDdtCase).not.toHaveBeenCalled();
+    await workerBackedBatchCreation(local, undefined, dispatcher).create({ suiteId: "suite" });
+    expect(local.create).toHaveBeenCalledWith({ suiteId: "suite" });
+  });
   it("creates a Lite batch in the worker while keeping reads bound to their repository", async () => {
     const local = {
       id: "local-summary",

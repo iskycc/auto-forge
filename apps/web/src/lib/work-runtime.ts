@@ -5,6 +5,7 @@
 export interface WorkDispatcher {
   readonly backgroundConcurrency?: number;
   createBatch?(input: unknown): Promise<unknown>;
+  createSingleDdtCase?(input: unknown): Promise<unknown>;
   triggerDueSchedules?(): Promise<number>;
   parseFile?(
     operation: "inspect-jar" | "read-jar-source" | "parse-ddt",

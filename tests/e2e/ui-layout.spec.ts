@@ -429,7 +429,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
     await expect(adapterToggle).toBeChecked();
     await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
     await expect(dialog.locator('[name="parameters"]')).toHaveCount(0);
-    await dialog.locator(".global-run-form").evaluate((form) => {
+    await dialog.locator(".global-run-form-content").evaluate((form) => {
       form.scrollTop = form.scrollHeight;
     });
     await expect(adapterToggle).toBeInViewport();

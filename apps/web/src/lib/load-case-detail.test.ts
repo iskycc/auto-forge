@@ -4,6 +4,32 @@ import { DomainError, type AuthenticatedIdentity, type Permission } from "@autof
 import { loadCaseDetail } from "./load-case-detail";
 
 describe("shared case detail loading", () => {
+  it("uses the DDT identity for histories while keeping class metadata separate", async () => {
+    const services = fixture();
+    const activity = vi.fn().mockResolvedValue({ executions: [], analyses: [] });
+    const executions = vi.fn().mockResolvedValue({ items: [], nextCursor: "ddt-older" });
+    const context = {
+      caseDefinitionId: "ddt-case-a",
+      executionHistoryUrl: "/api/v1/ddt/cases/A/executions?projectId=project-a",
+      analysisHistoryUrl: "/api/v1/ddt/cases/A/failure-analyses?projectId=project-a",
+    };
+    const detail = await loadCaseDetail(services, identityWith([]), "case-a", ["project-a"], {
+      ...context,
+      activity,
+      executions,
+    });
+    expect(services.caseDefinitions.listActivity).not.toHaveBeenCalled();
+    expect(services.caseDefinitions.listExecutionHistory).not.toHaveBeenCalled();
+    expect(services.failureAnalysis.listCaseHistory).toHaveBeenCalledWith({
+      projectId: "project-a",
+      caseDefinitionId: "ddt-case-a",
+      limit: 20,
+    });
+    expect(executions).toHaveBeenCalledWith({ limit: 50, includeRunnerNames: false });
+    expect(detail.definition.id).toBe("case-a");
+    expect(detail.executionHistory.nextCursor).toBe("ddt-older");
+    expect(detail.historyContext).toEqual(context);
+  });
   it("keeps histories bounded and preserves cursors for both entrypoints", async () => {
     const services = fixture();
     const detail = await loadCaseDetail(services, identityWith([]), "case-a", ["project-a"]);

@@ -32,12 +32,14 @@ export function CaseExecutionHistory({
   canReadLogs,
   canCreateRuns,
   timeZone,
+  historyUrl,
 }: {
   caseDefinitionId: string;
   initialPage: CaseExecutionHistoryPage;
   canReadLogs: boolean;
   canCreateRuns: boolean;
   timeZone: string;
+  historyUrl?: string;
 }) {
   const [items, setItems] = useState(initialPage.items);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
@@ -50,11 +52,13 @@ export function CaseExecutionHistory({
     setLoading(true);
     setError("");
     try {
-      const parameters = new URLSearchParams({ cursor: nextCursor, limit: "50" });
-      const response = await fetch(
-        `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionId)}/executions?${parameters}`,
-        { cache: "no-store" },
+      const url = new URL(
+        historyUrl ?? `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionId)}/executions`,
+        window.location.origin,
       );
+      url.searchParams.set("cursor", nextCursor);
+      url.searchParams.set("limit", "50");
+      const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "读取执行历史失败。"))!);
       }

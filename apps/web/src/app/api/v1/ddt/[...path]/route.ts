@@ -1,5 +1,6 @@
 import { readReadyModel } from "@/lib/read-ready-model";
 import {
+  createSingleCaseRunInputSchema,
   bulkDdtCaseIdsInputSchema,
   bulkUpdateDdtCasesInputSchema,
   confirmDdtImportInputSchema,
@@ -8,10 +9,13 @@ import {
   setDdtSrExecutionClassInputSchema,
   changeDdtExecutionClassRangeInputSchema,
   ddtExecutionMappingListInputSchema,
+  failureAnalysisHistoryPageSchema,
   updateDdtCaseInputSchema,
   upsertDdtTemplateInputSchema,
 } from "@autoforge/contracts";
 import type { AuthenticatedIdentity, DdtScope, Permission } from "@autoforge/domain";
+import { hasPermission } from "@autoforge/domain";
+import { loadDdtCaseDetail } from "@/lib/load-ddt-case-detail";
 import { DomainError } from "@autoforge/domain";
 import { buildExportWorkbook } from "@autoforge/ddt-import";
 import { NextResponse } from "next/server";
@@ -102,6 +106,41 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     if (path[0] === "cases" && path[1] && path.length === 2) {
       return NextResponse.json(await services.ddtCases.get(scope, path[1]));
     }
+    if (isCaseAction(path, "workspace")) {
+      return NextResponse.json(await loadDdtCaseDetail(services, identity, scope, path[1]!), {
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+    if (isCaseAction(path, "summary")) {
+      return NextResponse.json(await services.ddtCases.getSummary(scope, path[1]!), {
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+    if (isCaseAction(path, "executions") || isCaseAction(path, "failure-analyses")) {
+      const query = z
+        .object({
+          cursor: z.string().min(1).max(1_024).optional(),
+          limit: z.coerce.number().int().min(1).max(100).default(20),
+        })
+        .parse(Object.fromEntries(url.searchParams));
+      const item = await services.ddtCases.getSummary(scope, path[1]!);
+      const result =
+        path[2] === "executions"
+          ? await services.ddtCases.listExecutionHistory(scope, item.caseId, {
+              limit: query.limit,
+              ...(query.cursor ? { cursor: query.cursor } : {}),
+              includeRunnerNames: hasPermission(identity, "runner.read"),
+            })
+          : failureAnalysisHistoryPageSchema.parse(
+              await services.failureAnalysis.listCaseHistory({
+                projectId: scope.projectId,
+                caseDefinitionId: item.id,
+                limit: query.limit,
+                ...(query.cursor ? { cursor: query.cursor } : {}),
+              }),
+            );
+      return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
+    }
     if (path[0] === "cases" && path[1] && path[2] === "history" && path.length === 3) {
       return NextResponse.json(
         await services.ddtCases.history(
@@ -159,8 +198,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
 
 export async function POST(request: Request, context: Context): Promise<NextResponse> {
   const requestedPath = await pathSegments(context);
-  const permission =
-    matches(requestedPath, "cases", "search") || matches(requestedPath, "export")
+  const permission = isCaseAction(requestedPath, "execute")
+    ? "run.create"
+    : matches(requestedPath, "cases", "search") || matches(requestedPath, "export")
       ? "case.read"
       : "case.manage";
   return mutate(
@@ -168,6 +208,24 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     context,
     permission,
     async ({ identity, scope, services, path, currentRequestId }) => {
+      if (isCaseAction(path, "execute")) {
+        const input = createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1_024));
+        const batch = await services.runBatches.createSingleDdtCase(scope, path[1]!, input);
+        await services.identityAccess.recordAuthorizedOperation(identity, {
+          action: "execution.single_ddt_case_create",
+          resourceType: "run_batch",
+          resourceId: batch.id,
+          projectId: scope.projectId,
+          requestId: currentRequestId,
+          details: {
+            caseId: path[1]!,
+            projectVersionId: scope.projectVersionId,
+            testStageId: scope.testStageId,
+            delaySeconds: input.delaySeconds,
+          },
+        });
+        return NextResponse.json(batch, { status: 201 });
+      }
       if (matches(path, "cases", "search")) {
         const body = z
           .object({
@@ -452,6 +510,10 @@ async function pathSegments(context: Context): Promise<string[]> {
 
 function matches(path: string[], ...expected: string[]): boolean {
   return path.length === expected.length && expected.every((part, index) => path[index] === part);
+}
+
+function isCaseAction(path: string[], action: string): boolean {
+  return path.length === 3 && path[0] === "cases" && Boolean(path[1]) && path[2] === action;
 }
 
 function boundedLimit(url: URL, fallback: number, maximum: number): number {

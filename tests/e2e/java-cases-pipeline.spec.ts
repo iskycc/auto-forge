@@ -1,4 +1,5 @@
 import { associateDdtSr } from "./support/ddt-associations";
+import { expectUiIntegrity } from "./support/ui-guard";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -568,6 +569,7 @@ async function exerciseDdtExecution(
     caseType: "ddt",
     className: "com.autoforge.javacases.JavaCasesDdtFixture",
   });
+  await exerciseDdtQuickExecution(page, agent, hierarchy, caseId, batchId);
   const scopeQuery = new URLSearchParams(hierarchy);
   const unlinked = await browserJson(page, `/api/v1/ddt/sr-mappings?${scopeQuery}`, {
     method: "POST",
@@ -581,6 +583,120 @@ async function exerciseDdtExecution(
   expect(currentCase.body.executionClass).toBeUndefined();
   const after = await browserJson<{ runs: unknown[] }>(page, snapshotUrl);
   expect(after.body.runs).toEqual(before.body.runs);
+}
+
+async function exerciseDdtQuickExecution(
+  page: Page,
+  agent: AgentProcess,
+  hierarchy: ProjectHierarchy,
+  caseId: string,
+  previousBatchId: string,
+): Promise<void> {
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: caseId, exact: true }).click();
+  const fields = page.getByRole("region", { name: "DDT 用例详情" });
+  await expect(fields.getByRole("button", { name: "立即执行", exact: true })).toBeVisible();
+  await captureDdtExecutionViews(page, "ddt-execution-fields");
+  await page.getByRole("button", { name: `快速预览 ${caseId}`, exact: true }).click();
+  const inspector = page.locator(".ddt-execution-inspector");
+  await expect(inspector.getByRole("heading", { name: caseId, exact: true })).toBeVisible();
+  await expect(inspector.locator(".case-execution-history")).toContainText(ddtSuiteName);
+  await expect(
+    inspector.locator(`a[href="/run-batches/${previousBatchId}"]`).first(),
+  ).toBeVisible();
+  await captureDdtExecutionViews(page, "ddt-execution-inspector");
+  await captureDdtExecutionViews(page, "ddt-execution-history", async () => {
+    await inspector.evaluate((panel) => {
+      const history = panel.querySelector(".case-execution-history");
+      if (!history) throw new Error("DDT execution history was not rendered.");
+      panel.scrollTop += history.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    });
+  });
+  await inspector.getByRole("button", { name: "立即执行", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "开始执行", exact: true });
+  await expect(dialog.getByText(caseId, { exact: true })).toBeVisible();
+  await dialog.getByRole("checkbox", { name: new RegExp(runnerName) }).check();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeDisabled();
+  await dialog.getByRole("heading", { name: "选择执行内容", exact: true }).scrollIntoViewIfNeeded();
+  await captureDdtExecutionViews(page, "ddt-execution-selection");
+  await dialog.getByLabel("单用例 Adapter Suite Name").fill("Adapter · DDT quick execution");
+  await dialog.getByLabel("单用例 Adapter Test Name").fill("JavaCasesDdtFixture");
+  await dialog.getByLabel("单用例执行环境 IP 地址").fill(environmentAddress);
+  await captureDdtExecutionViews(page, "ddt-execution-dialog");
+  const submitted = page.waitForResponse(
+    (response) => response.request().method() === "POST" && response.url().includes("/execute?"),
+  );
+  await dialog.getByRole("button", { name: "确认并开始执行", exact: true }).click();
+  const response = await submitted;
+  expect(response.status(), await response.text()).toBe(201);
+  const batch = (await response.json()) as { id: string };
+  await expect(page).toHaveURL(new RegExp(`/run-batches/${batch.id}$`));
+  const terminal = await waitForTerminalBatch(
+    page,
+    batch.id,
+    agent,
+    "succeeded",
+    "TESTNG_SUCCEEDED",
+    1,
+  );
+  expect(await readAttemptLogs(page, terminal.attempts[0]!.id, "stdout")).toContain(
+    "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
+  );
+
+  const endpoint = `/api/v1/ddt/cases/${encodeURIComponent(caseId)}`;
+  const query = new URLSearchParams(hierarchy);
+  const summary = await browserJson<{
+    id: string;
+    data?: unknown;
+    executionClass: { caseDefinitionId: string };
+  }>(page, `${endpoint}/summary?${query}`);
+  expect(summary.status).toBe(200);
+  expect(summary.body.data).toBeUndefined();
+  const executions = await browserJson<{ items: Array<{ batchId: string }>; nextCursor?: string }>(
+    page,
+    `${endpoint}/executions?${query}&limit=1`,
+  );
+  expect(executions.body.items.map((item) => item.batchId)).toEqual([batch.id]);
+  expect(executions.body.nextCursor).toBeTruthy();
+  const nextPage = await browserJson<{ items: Array<{ batchId: string }> }>(
+    page,
+    `${endpoint}/executions?${query}&limit=1&cursor=${encodeURIComponent(executions.body.nextCursor!)}`,
+  );
+  expect(nextPage.body.items.map((item) => item.batchId)).toEqual([previousBatchId]);
+  const classExecutions = await browserJson<{ items: unknown[] }>(
+    page,
+    `/api/v1/case-definitions/${summary.body.executionClass.caseDefinitionId}/executions`,
+  );
+  expect(classExecutions.body.items).toEqual([]);
+  const snapshot = await browserJson<{
+    runs: Array<{ caseDefinitionId: string; caseType: string; className: string }>;
+  }>(page, `/api/v1/run-batches/${batch.id}`);
+  expect(snapshot.body.runs).toHaveLength(1);
+  expect(snapshot.body.runs[0]).toMatchObject({
+    caseDefinitionId: summary.body.id,
+    caseType: "ddt",
+    className: "com.autoforge.javacases.JavaCasesDdtFixture",
+  });
+}
+
+async function captureDdtExecutionViews(
+  page: Page,
+  name: string,
+  beforeCapture?: () => Promise<void>,
+): Promise<void> {
+  const originalViewport = page.viewportSize();
+  const directory = process.env.AUTOFORGE_LOG_SCREENSHOT_DIR;
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await beforeCapture?.();
+    await expectUiIntegrity(page);
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      await page.screenshot({ path: resolve(directory, `${name}-${width}.png`) });
+    }
+  }
+  if (originalViewport) await page.setViewportSize(originalViewport);
 }
 
 async function importDdtCase(

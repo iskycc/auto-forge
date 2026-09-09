@@ -42,6 +42,24 @@ export async function expectDdtSrExecutionContract(
     repository.setSrExecutionClass({ ...assignment, srNum: "order" }),
   ).rejects.toMatchObject({ code: "DDT_EXECUTION_MAPPING_REVISION_CONFLICT" });
   const cases = await repository.getCases(scope, caseIds);
+  for (const item of cases) {
+    const summary = await repository.getCaseSummary(scope, item.caseId);
+    expect(summary).toMatchObject({
+      id: item.id,
+      revision: item.revision,
+      executionClass: { caseDefinitionId: executionCaseDefinitionId },
+    });
+    expect(summary).not.toHaveProperty("data");
+    expect(
+      await repository.getCaseSummary({ ...scope, testStageId: "other-stage" }, item.caseId),
+    ).toBeNull();
+    expect(
+      await repository.getCaseSummary({ ...scope, projectVersionId: "other-version" }, item.caseId),
+    ).toBeNull();
+    expect(
+      await repository.getCaseSummary({ ...scope, projectId: "other-project" }, item.caseId),
+    ).toBeNull();
+  }
   expect(cases.map((item) => item.executionClass?.caseDefinitionId)).toEqual([
     executionCaseDefinitionId,
     executionCaseDefinitionId,

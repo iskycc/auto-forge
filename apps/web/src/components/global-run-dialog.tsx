@@ -6,6 +6,7 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import type {
   CaseDefinitionWithMethods,
+  DdtCaseSummary,
   CaseSuite,
   RunBatch,
   Runner,
@@ -53,20 +54,25 @@ type StartMode = "immediate" | "delayed";
 
 export function OpenRunDialogButton({
   caseDefinitionId,
+  ddtCase,
+  disabled,
   className,
   children = "执行此用例",
 }: {
   caseDefinitionId?: string;
+  ddtCase?: DdtCaseSummary;
+  disabled?: boolean;
   className?: string;
   children?: ReactNode;
 }) {
   return (
     <Button
       className={className}
+      disabled={disabled}
       onClick={() =>
         window.dispatchEvent(
           new CustomEvent(OPEN_RUN_DIALOG_EVENT, {
-            detail: caseDefinitionId ? { caseDefinitionId } : {},
+            detail: ddtCase ? { ddtCase } : caseDefinitionId ? { caseDefinitionId } : {},
           }),
         )
       }
@@ -101,6 +107,8 @@ export function GlobalRunDialog({
   const [runKind, setRunKind] = useState<RunKind>("suite");
   const [suiteId, setSuiteId] = useState("");
   const [caseDefinitionId, setCaseDefinitionId] = useState("");
+  const [ddtCase, setDdtCase] = useState<DdtCaseSummary>();
+  const openRequest = useRef(0);
   const [caseQuery, setCaseQuery] = useState("");
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<RunnerSelectionKind>("runners");
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
@@ -114,6 +122,7 @@ export function GlobalRunDialog({
   const [startMode, setStartMode] = useState<StartMode>("immediate");
   const [delayMinutes, setDelayMinutes] = useState(5);
   const [delaySecondsPart, setDelaySecondsPart] = useState(0);
+  const delayStartPanel = useRef<HTMLDivElement>(null);
   const previewNowMs = usePlatformNow(open && startMode === "delayed");
   const preferenceKey = executionSuitePreferenceKey({
     userId,
@@ -130,7 +139,9 @@ export function GlobalRunDialog({
     ? suiteHasExecutionResource(selectedSuite, options)
     : false;
   const selectedProjectId =
-    runKind === "suite" ? selectedSuite?.projectId : selectedCase?.projectId;
+    runKind === "suite"
+      ? selectedSuite?.projectId
+      : (ddtCase?.projectId ?? selectedCase?.projectId);
   const configuredDelaySeconds = startMode === "delayed" ? delayMinutes * 60 + delaySecondsPart : 0;
   const visibleCases = useMemo(() => {
     const normalizedQuery = caseQuery.trim().toLocaleLowerCase("zh-CN");
@@ -143,17 +154,42 @@ export function GlobalRunDialog({
   }, [caseQuery, options?.cases]);
 
   const openDialog = useCallback(
-    (requestedCaseId?: string) => {
+    (requestedCaseId?: string, requestedDdtCase?: DdtCaseSummary) => {
+      const request = ++openRequest.current;
+      setProjectOptions(undefined);
+      setCaseDefinitionId("");
+      setDdtCase(requestedDdtCase);
+      if (requestedDdtCase) {
+        requestedCaseId = requestedDdtCase.executionClass?.caseDefinitionId;
+        setAdapterEnabled(true);
+      }
       if (requestedCaseId) {
         setRunKind("case");
-        setCaseDefinitionId(requestedCaseId);
       }
       setOpen(true);
-      if (loading) return;
       setLoading(true);
       setError("");
-      void loadRunOptions(requestedCaseId, projectId, projectVersionId, testStageId)
-        .then((loaded) => {
+      const loadOptions = async () => {
+        const currentDdtCase = requestedDdtCase
+          ? await requestJson<DdtCaseSummary>(
+              `/api/v1/ddt/cases/${encodeURIComponent(requestedDdtCase.caseId)}/summary?${new URLSearchParams({ projectId: requestedDdtCase.projectId, projectVersionId: requestedDdtCase.projectVersionId, testStageId: requestedDdtCase.testStageId })}`,
+            )
+          : undefined;
+        if (currentDdtCase && !currentDdtCase.executionClass)
+          throw new Error("当前 DDT 用例尚未关联执行类，请刷新 SR 测试类关联后重试。");
+        requestedCaseId = currentDdtCase?.executionClass?.caseDefinitionId ?? requestedCaseId;
+        const loaded = await loadRunOptions(
+          requestedCaseId,
+          currentDdtCase?.projectId ?? projectId,
+          currentDdtCase?.projectVersionId ?? projectVersionId,
+          currentDdtCase?.testStageId ?? testStageId,
+        );
+        return { loaded, currentDdtCase };
+      };
+      void loadOptions()
+        .then(({ loaded, currentDdtCase }) => {
+          if (request !== openRequest.current) return;
+          setDdtCase(currentDdtCase);
           setProjectOptions({ contextKey, value: loaded });
           const remembered =
             rememberedSuites.current.get(preferenceKey) ??
@@ -171,11 +207,14 @@ export function GlobalRunDialog({
           );
         })
         .catch((problem: unknown) => {
+          if (request !== openRequest.current) return;
           setError(problem instanceof Error ? problem.message : "执行配置加载失败。");
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          if (request === openRequest.current) setLoading(false);
+        });
     },
-    [contextKey, loading, preferenceKey, projectId, projectVersionId, testStageId],
+    [contextKey, preferenceKey, projectId, projectVersionId, testStageId],
   );
 
   useEffect(() => {
@@ -189,7 +228,12 @@ export function GlobalRunDialog({
   useEffect(() => {
     if (!enabled) return;
     const onOpen = (event: Event) => {
-      const detail = (event as CustomEvent<{ caseDefinitionId?: string }>).detail;
+      const detail = (event as CustomEvent<{ caseDefinitionId?: string; ddtCase?: DdtCaseSummary }>)
+        .detail;
+      if (detail?.ddtCase) {
+        openDialog(undefined, detail.ddtCase);
+        return;
+      }
       if (detail?.caseDefinitionId) {
         openDialog(detail.caseDefinitionId);
         return;
@@ -201,6 +245,8 @@ export function GlobalRunDialog({
   }, [enabled, openDialog]);
 
   const closeDialog = useCallback(() => {
+    openRequest.current += 1;
+    setLoading(false);
     setOpen(false);
     setError("");
     if (!searchParams.has("run") && !searchParams.has("runCase")) return;
@@ -209,6 +255,11 @@ export function GlobalRunDialog({
     next.delete("runCase");
     router.replace(next.size > 0 ? `${pathname}?${next}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (open && !loading && startMode === "delayed")
+      delayStartPanel.current?.scrollIntoView({ block: "nearest" });
+  }, [open, loading, startMode]);
 
   useEffect(() => {
     if (!open) return;
@@ -277,27 +328,27 @@ export function GlobalRunDialog({
           body: requestBody,
         });
       } else {
-        batch = await requestJson<RunBatch>(
-          `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionId)}/execute`,
-          {
-            method: "POST",
-            body: {
-              projectId: selectedProjectId,
-              delaySeconds: configuredDelaySeconds,
-              runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
-              ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
-              retryLimit,
-              retryMode,
-              artifactPatterns: ["reports/testng/**"],
-              adapter: {
-                enabled: adapterEnabled,
-                suiteName: adapterSuiteName,
-                testName: adapterTestName,
-                environmentAddresses: parseLines(environmentAddresses),
-              },
+        const endpoint = ddtCase
+          ? `/api/v1/ddt/cases/${encodeURIComponent(ddtCase.caseId)}/execute?${new URLSearchParams({ projectId: ddtCase.projectId, projectVersionId: ddtCase.projectVersionId, testStageId: ddtCase.testStageId })}`
+          : `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionId)}/execute`;
+        batch = await requestJson<RunBatch>(endpoint, {
+          method: "POST",
+          body: {
+            projectId: selectedProjectId,
+            delaySeconds: configuredDelaySeconds,
+            runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
+            ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
+            retryLimit,
+            retryMode,
+            artifactPatterns: ["reports/testng/**"],
+            adapter: {
+              enabled: adapterEnabled,
+              suiteName: adapterSuiteName,
+              testName: adapterTestName,
+              environmentAddresses: parseLines(environmentAddresses),
             },
           },
-        );
+        });
       }
       setOpen(false);
       router.push(`/run-batches/${encodeURIComponent(batch.id)}`);
@@ -349,424 +400,442 @@ export function GlobalRunDialog({
                   <LoadingState compact label="正在读取执行配置" />
                 ) : (
                   <form className="global-run-form" onSubmit={(event) => void submit(event)}>
-                    <section className="global-run-step">
-                      <div className="global-run-step-title">
-                        <span>1</span>
-                        <div>
-                          <h3>选择执行内容</h3>
-                          <p>任务批跑与单用例共用同一套调度状态机。</p>
+                    <div className="global-run-form-content">
+                      <section className="global-run-step">
+                        <div className="global-run-step-title">
+                          <span>1</span>
+                          <div>
+                            <h3>选择执行内容</h3>
+                            <p>任务批跑与单用例共用同一套调度状态机。</p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="segmented-control" aria-label="执行内容类型">
-                        <Button
-                          aria-pressed={runKind === "suite"}
-                          onClick={() => {
-                            setRunKind("suite");
-                          }}
-                          type="button"
-                        >
-                          用例任务
-                        </Button>
-                        <Button
-                          aria-pressed={runKind === "case"}
-                          onClick={() => {
-                            setRunKind("case");
-                          }}
-                          type="button"
-                        >
-                          单个用例
-                        </Button>
-                      </div>
-                      {runKind === "suite" ? (
-                        <label className="field-stack">
-                          <span>用例任务</span>
-                          <Select
-                            aria-label="执行用例任务"
-                            onChange={(event) => {
-                              const selectedId = event.target.value;
-                              setSuiteId(selectedId);
-                              rememberedSuites.current.set(preferenceKey, selectedId);
-                              writeExecutionSuitePreference(
-                                () => window.localStorage,
-                                preferenceKey,
-                                selectedId,
-                              );
+                        <div className="segmented-control" aria-label="执行内容类型">
+                          <Button
+                            aria-pressed={runKind === "suite"}
+                            onClick={() => {
+                              setRunKind("suite");
                             }}
-                            value={suiteId}
+                            type="button"
                           >
-                            <option value="" disabled>
-                              请选择可执行任务
-                            </option>
-                            {(options?.suites ?? []).map((suite) => (
-                              <option key={suite.id} value={suite.id}>
-                                {suite.name} · {suite.caseCount} 个用例 · v{suite.version}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                      ) : (
-                        <div className="single-case-picker">
+                            用例任务
+                          </Button>
+                          <Button
+                            aria-pressed={runKind === "case"}
+                            onClick={() => {
+                              setRunKind("case");
+                            }}
+                            type="button"
+                          >
+                            {ddtCase ? "DDT 用例" : "单个用例"}
+                          </Button>
+                        </div>
+                        {runKind === "suite" ? (
                           <label className="field-stack">
-                            <span>搜索用例</span>
-                            <Input
-                              aria-label="搜索待执行用例"
-                              onChange={(event) => setCaseQuery(event.target.value)}
-                              placeholder="名称或类路径"
-                              value={caseQuery}
-                            />
-                          </label>
-                          <label className="field-stack">
-                            <span>单个用例</span>
+                            <span>用例任务</span>
                             <Select
-                              aria-label="待执行单个用例"
+                              aria-label="执行用例任务"
                               onChange={(event) => {
-                                setCaseDefinitionId(event.target.value);
+                                const selectedId = event.target.value;
+                                setSuiteId(selectedId);
+                                rememberedSuites.current.set(preferenceKey, selectedId);
+                                writeExecutionSuitePreference(
+                                  () => window.localStorage,
+                                  preferenceKey,
+                                  selectedId,
+                                );
                               }}
-                              value={caseDefinitionId}
+                              value={suiteId}
                             >
-                              <option value="">请选择用例</option>
-                              {visibleCases.map((definition) => (
-                                <option key={definition.id} value={definition.id}>
-                                  {definition.displayName} · {definition.className}
+                              <option value="" disabled>
+                                请选择可执行任务
+                              </option>
+                              {(options?.suites ?? []).map((suite) => (
+                                <option key={suite.id} value={suite.id}>
+                                  {suite.name} · {suite.caseCount} 个用例 · v{suite.version}
                                 </option>
                               ))}
                             </Select>
                           </label>
-                        </div>
-                      )}
-                    </section>
-
-                    {runKind === "suite" ? (
-                      <section className="global-run-step suite-run-summary">
-                        <div className="global-run-step-title">
-                          <span>✓</span>
-                          <div>
-                            <h3>使用任务配置直接执行</h3>
-                            <p>执行资源、重试策略和 Adapter 地址均读取任务当前版本。</p>
+                        ) : ddtCase ? (
+                          <div className="inline-notice single-ddt-run-selection" role="status">
+                            <p>
+                              <strong>{ddtCase.caseId}</strong> · SR {ddtCase.srNum}
+                            </p>
+                            <p>
+                              执行类：{selectedCase?.className ?? ddtCase.executionClass?.className}
+                            </p>
+                            <p>执行时使用当前已保存的 DDT 数据及 SR 测试类关联。</p>
                           </div>
-                        </div>
-                        {selectedSuite ? (
-                          <>
-                            {!suiteExecutionResourceConfigured ? (
-                              <p className="inline-notice warning-notice" role="status">
-                                任务尚未配置有效执行资源，请先进入任务详情完成配置。
-                              </p>
-                            ) : null}
-                            <dl className="summary-grid">
-                              <div>
-                                <dt>执行资源</dt>
-                                <dd>{suiteRunnerSummary(selectedSuite, options)}</dd>
-                              </div>
-                              <div>
-                                <dt>失败重跑</dt>
-                                <dd>
-                                  {selectedSuite.policy.retryLimit} 次 ·{" "}
-                                  {selectedSuite.policy.retryMode === "round"
-                                    ? "整轮重跑"
-                                    : "立即重跑"}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>执行器</dt>
-                                <dd>
-                                  {selectedSuite.policy.executor === "testng-container"
-                                    ? "Container"
-                                    : "Process"}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>环境地址</dt>
-                                <dd>
-                                  {selectedSuite.policy.adapter.enabled
-                                    ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
-                                    : "未启用 Adapter"}
-                                </dd>
-                              </div>
-                            </dl>
-                          </>
                         ) : (
-                          <p className="inline-notice warning-notice" role="status">
-                            {options?.suites.length
-                              ? "上次选择的任务当前不可用，请重新选择可执行任务。"
-                              : "当前项目版本暂无可执行任务，请先创建或启用任务。"}
-                          </p>
+                          <div className="single-case-picker">
+                            <label className="field-stack">
+                              <span>搜索用例</span>
+                              <Input
+                                aria-label="搜索待执行用例"
+                                onChange={(event) => setCaseQuery(event.target.value)}
+                                placeholder="名称或类路径"
+                                value={caseQuery}
+                              />
+                            </label>
+                            <label className="field-stack">
+                              <span>单个用例</span>
+                              <Select
+                                aria-label="待执行单个用例"
+                                onChange={(event) => {
+                                  setCaseDefinitionId(event.target.value);
+                                }}
+                                value={caseDefinitionId}
+                              >
+                                <option value="">请选择用例</option>
+                                {visibleCases.map((definition) => (
+                                  <option key={definition.id} value={definition.id}>
+                                    {definition.displayName} · {definition.className}
+                                  </option>
+                                ))}
+                              </Select>
+                            </label>
+                          </div>
                         )}
                       </section>
-                    ) : (
-                      <>
-                        <section className="global-run-step">
+
+                      {runKind === "suite" ? (
+                        <section className="global-run-step suite-run-summary">
                           <div className="global-run-step-title">
-                            <span>2</span>
+                            <span>✓</span>
                             <div>
-                              <h3>选择执行资源</h3>
-                              <p>可以直接指定多台执行机，也可以使用维护好的执行机组。</p>
+                              <h3>使用任务配置直接执行</h3>
+                              <p>执行资源、重试策略和 Adapter 地址均读取任务当前版本。</p>
                             </div>
                           </div>
-                          <div className="resource-mode-grid">
-                            <Button
-                              aria-pressed={runnerSelectionKind === "runners"}
-                              onClick={() => setRunnerSelectionKind("runners")}
-                              type="button"
-                            >
-                              <Server size={17} /> 指定执行机
-                            </Button>
-                            <Button
-                              aria-pressed={runnerSelectionKind === "group"}
-                              onClick={() => setRunnerSelectionKind("group")}
-                              type="button"
-                            >
-                              <UsersRound size={17} /> 使用执行机组
-                            </Button>
-                          </div>
-                          {runnerSelectionKind === "runners" ? (
-                            <div className="global-run-runner-grid">
-                              {(options?.runners ?? []).map((runner) => {
-                                const unavailable =
-                                  runner.state !== "online" || Boolean(runner.purgedAt);
-                                const selected = runnerIds.includes(runner.id);
-                                return (
-                                  <label
-                                    className={`global-run-runner ${selected ? "selected" : ""} ${unavailable ? "disabled" : ""}`}
-                                    key={runner.id}
-                                  >
-                                    <Input
-                                      checked={selected}
-                                      disabled={unavailable}
-                                      onChange={() => toggleRunner(runner.id)}
-                                      type="checkbox"
-                                    />
-                                    <span>
-                                      <strong>{runner.name}</strong>
-                                      <small>
-                                        {runnerStateLabel(runner.state)}
-                                        {runner.state === "online"
-                                          ? ` · 可用槽位 ${Math.max(0, runner.maxConcurrency - runner.busySlots)}`
-                                          : " · 当前不可执行"}
-                                      </small>
-                                    </span>
-                                    {selected ? <Check aria-hidden="true" size={16} /> : null}
-                                  </label>
-                                );
-                              })}
-                            </div>
+                          {selectedSuite ? (
+                            <>
+                              {!suiteExecutionResourceConfigured ? (
+                                <p className="inline-notice warning-notice" role="status">
+                                  任务尚未配置有效执行资源，请先进入任务详情完成配置。
+                                </p>
+                              ) : null}
+                              <dl className="summary-grid">
+                                <div>
+                                  <dt>执行资源</dt>
+                                  <dd>{suiteRunnerSummary(selectedSuite, options)}</dd>
+                                </div>
+                                <div>
+                                  <dt>失败重跑</dt>
+                                  <dd>
+                                    {selectedSuite.policy.retryLimit} 次 ·{" "}
+                                    {selectedSuite.policy.retryMode === "round"
+                                      ? "整轮重跑"
+                                      : "立即重跑"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>执行器</dt>
+                                  <dd>
+                                    {selectedSuite.policy.executor === "testng-container"
+                                      ? "Container"
+                                      : "Process"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>环境地址</dt>
+                                  <dd>
+                                    {selectedSuite.policy.adapter.enabled
+                                      ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
+                                      : "未启用 Adapter"}
+                                  </dd>
+                                </div>
+                              </dl>
+                            </>
                           ) : (
-                            <label className="field-stack">
-                              <span>执行机组</span>
-                              <Select
-                                aria-label="执行机组"
-                                onChange={(event) => setRunnerGroupId(event.target.value)}
-                                value={runnerGroupId}
-                              >
-                                <option value="">请选择执行机组</option>
-                                {(options?.groups ?? []).map((group) => (
-                                  <option
-                                    disabled={group.runnerIds.length === 0}
-                                    key={group.id}
-                                    value={group.id}
-                                  >
-                                    {group.name} · {group.runnerIds.length} 台执行机
-                                  </option>
-                                ))}
-                              </Select>
-                            </label>
+                            <p className="inline-notice warning-notice" role="status">
+                              {options?.suites.length
+                                ? "上次选择的任务当前不可用，请重新选择可执行任务。"
+                                : "当前项目版本暂无可执行任务，请先创建或启用任务。"}
+                            </p>
                           )}
                         </section>
-                        <section className="global-run-step">
-                          <div className="global-run-step-title">
-                            <span>3</span>
-                            <div>
-                              <h3>执行策略</h3>
-                              <p>单用例可临时配置重跑策略与 Adapter 环境 IP。</p>
+                      ) : (
+                        <>
+                          <section className="global-run-step">
+                            <div className="global-run-step-title">
+                              <span>2</span>
+                              <div>
+                                <h3>选择执行资源</h3>
+                                <p>可以直接指定多台执行机，也可以使用维护好的执行机组。</p>
+                              </div>
                             </div>
-                          </div>
-                          <div className="global-run-fields">
-                            <label className="field-stack">
-                              <span>失败重跑</span>
-                              <Select
-                                aria-label="失败重跑次数"
-                                onChange={(event) => setRetryLimit(Number(event.target.value))}
-                                value={String(retryLimit)}
+                            <div className="resource-mode-grid">
+                              <Button
+                                aria-pressed={runnerSelectionKind === "runners"}
+                                onClick={() => setRunnerSelectionKind("runners")}
+                                type="button"
                               >
-                                {Array.from({ length: 11 }, (_, value) => (
-                                  <option key={value} value={value}>
-                                    {value === 0 ? "不重跑" : `${value} 次`}
-                                  </option>
-                                ))}
-                              </Select>
-                            </label>
-                            <label className="field-stack">
-                              <span>重跑方式</span>
-                              <Select
-                                aria-label="失败重跑方式"
-                                onChange={(event) =>
-                                  setRetryMode(event.target.value as typeof retryMode)
-                                }
-                                value={retryMode}
+                                <Server size={17} /> 指定执行机
+                              </Button>
+                              <Button
+                                aria-pressed={runnerSelectionKind === "group"}
+                                onClick={() => setRunnerSelectionKind("group")}
+                                type="button"
                               >
-                                <option value="immediate">失败后立即重跑</option>
-                                <option value="round">本轮结束后统一重跑</option>
-                              </Select>
-                            </label>
+                                <UsersRound size={17} /> 使用执行机组
+                              </Button>
+                            </div>
+                            {runnerSelectionKind === "runners" ? (
+                              <div className="global-run-runner-grid">
+                                {(options?.runners ?? []).map((runner) => {
+                                  const unavailable =
+                                    runner.state !== "online" || Boolean(runner.purgedAt);
+                                  const selected = runnerIds.includes(runner.id);
+                                  return (
+                                    <label
+                                      className={`global-run-runner ${selected ? "selected" : ""} ${unavailable ? "disabled" : ""}`}
+                                      key={runner.id}
+                                    >
+                                      <Input
+                                        checked={selected}
+                                        disabled={unavailable}
+                                        onChange={() => toggleRunner(runner.id)}
+                                        type="checkbox"
+                                      />
+                                      <span>
+                                        <strong>{runner.name}</strong>
+                                        <small>
+                                          {runnerStateLabel(runner.state)}
+                                          {runner.state === "online"
+                                            ? ` · 可用槽位 ${Math.max(0, runner.maxConcurrency - runner.busySlots)}`
+                                            : " · 当前不可执行"}
+                                        </small>
+                                      </span>
+                                      {selected ? <Check aria-hidden="true" size={16} /> : null}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <label className="field-stack">
+                                <span>执行机组</span>
+                                <Select
+                                  aria-label="执行机组"
+                                  onChange={(event) => setRunnerGroupId(event.target.value)}
+                                  value={runnerGroupId}
+                                >
+                                  <option value="">请选择执行机组</option>
+                                  {(options?.groups ?? []).map((group) => (
+                                    <option
+                                      disabled={group.runnerIds.length === 0}
+                                      key={group.id}
+                                      value={group.id}
+                                    >
+                                      {group.name} · {group.runnerIds.length} 台执行机
+                                    </option>
+                                  ))}
+                                </Select>
+                              </label>
+                            )}
+                          </section>
+                          <section className="global-run-step">
+                            <div className="global-run-step-title">
+                              <span>3</span>
+                              <div>
+                                <h3>执行策略</h3>
+                                <p>单用例可临时配置重跑策略与 Adapter 环境 IP。</p>
+                              </div>
+                            </div>
+                            <div className="global-run-fields">
+                              <label className="field-stack">
+                                <span>失败重跑</span>
+                                <Select
+                                  aria-label="失败重跑次数"
+                                  onChange={(event) => setRetryLimit(Number(event.target.value))}
+                                  value={String(retryLimit)}
+                                >
+                                  {Array.from({ length: 11 }, (_, value) => (
+                                    <option key={value} value={value}>
+                                      {value === 0 ? "不重跑" : `${value} 次`}
+                                    </option>
+                                  ))}
+                                </Select>
+                              </label>
+                              <label className="field-stack">
+                                <span>重跑方式</span>
+                                <Select
+                                  aria-label="失败重跑方式"
+                                  onChange={(event) =>
+                                    setRetryMode(event.target.value as typeof retryMode)
+                                  }
+                                  value={retryMode}
+                                >
+                                  <option value="immediate">失败后立即重跑</option>
+                                  <option value="round">本轮结束后统一重跑</option>
+                                </Select>
+                              </label>
+                            </div>
+                            <div className="single-run-advanced">
+                              <label className="adapter-toggle">
+                                <Input
+                                  checked={adapterEnabled}
+                                  disabled={Boolean(ddtCase)}
+                                  onChange={(event) => setAdapterEnabled(event.target.checked)}
+                                  type="checkbox"
+                                />
+                                使用 CoTest TestNG Adapter
+                              </label>
+                              {adapterEnabled ? (
+                                <div className="adapter-run-fields">
+                                  <label className="field-stack">
+                                    <span>Adapter Suite Name</span>
+                                    <Input
+                                      aria-label="单用例 Adapter Suite Name"
+                                      onChange={(event) => setAdapterSuiteName(event.target.value)}
+                                      value={adapterSuiteName}
+                                    />
+                                  </label>
+                                  <label className="field-stack">
+                                    <span>Adapter Test Name</span>
+                                    <Input
+                                      aria-label="单用例 Adapter Test Name"
+                                      onChange={(event) => setAdapterTestName(event.target.value)}
+                                      value={adapterTestName}
+                                    />
+                                  </label>
+                                  <label className="field-stack adapter-address-field">
+                                    <span>执行环境 IP / 地址（每行一个）</span>
+                                    <Textarea
+                                      aria-label="单用例执行环境 IP 地址"
+                                      onChange={(event) =>
+                                        setEnvironmentAddresses(event.target.value)
+                                      }
+                                      placeholder="10.0.0.21"
+                                      rows={2}
+                                      value={environmentAddresses}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                            </div>
+                          </section>
+                        </>
+                      )}
+
+                      <section className="global-run-step global-run-start-step">
+                        <div className="global-run-step-title">
+                          <span>
+                            <Clock3 aria-hidden="true" size={15} />
+                          </span>
+                          <div>
+                            <h3>设置开始时间</h3>
+                            <p>倒计时由服务端持久化，页面关闭或服务重启都不会丢失。</p>
                           </div>
-                          <div className="single-run-advanced">
-                            <label className="adapter-toggle">
-                              <Input
-                                checked={adapterEnabled}
-                                onChange={(event) => setAdapterEnabled(event.target.checked)}
-                                type="checkbox"
-                              />
-                              使用 CoTest TestNG Adapter
-                            </label>
-                            {adapterEnabled ? (
-                              <div className="adapter-run-fields">
+                        </div>
+                        <div className="start-mode-layout">
+                          <div
+                            className="segmented-control start-mode-control"
+                            aria-label="开始方式"
+                          >
+                            <Button
+                              aria-pressed={startMode === "immediate"}
+                              onClick={() => setStartMode("immediate")}
+                              type="button"
+                            >
+                              立即执行
+                            </Button>
+                            <Button
+                              aria-pressed={startMode === "delayed"}
+                              onClick={() => setStartMode("delayed")}
+                              type="button"
+                            >
+                              倒计时执行
+                            </Button>
+                          </div>
+                          {startMode === "delayed" ? (
+                            <div className="delay-start-panel" ref={delayStartPanel}>
+                              <div className="delay-time-fields">
                                 <label className="field-stack">
-                                  <span>Adapter Suite Name</span>
+                                  <span>分钟</span>
                                   <Input
-                                    aria-label="单用例 Adapter Suite Name"
-                                    onChange={(event) => setAdapterSuiteName(event.target.value)}
-                                    value={adapterSuiteName}
+                                    aria-label="倒计时分钟"
+                                    max={10_080}
+                                    min={0}
+                                    onChange={(event) => {
+                                      const minutes = boundedInteger(event.target.value, 0, 10_080);
+                                      setDelayMinutes(minutes);
+                                      if (minutes === 10_080) setDelaySecondsPart(0);
+                                    }}
+                                    type="number"
+                                    value={delayMinutes}
                                   />
                                 </label>
                                 <label className="field-stack">
-                                  <span>Adapter Test Name</span>
+                                  <span>秒</span>
                                   <Input
-                                    aria-label="单用例 Adapter Test Name"
-                                    onChange={(event) => setAdapterTestName(event.target.value)}
-                                    value={adapterTestName}
-                                  />
-                                </label>
-                                <label className="field-stack adapter-address-field">
-                                  <span>执行环境 IP / 地址（每行一个）</span>
-                                  <Textarea
-                                    aria-label="单用例执行环境 IP 地址"
+                                    aria-label="倒计时秒"
+                                    max={delayMinutes === 10_080 ? 0 : 59}
+                                    min={0}
                                     onChange={(event) =>
-                                      setEnvironmentAddresses(event.target.value)
+                                      setDelaySecondsPart(
+                                        boundedInteger(
+                                          event.target.value,
+                                          0,
+                                          delayMinutes === 10_080 ? 0 : 59,
+                                        ),
+                                      )
                                     }
-                                    placeholder="10.0.0.21"
-                                    rows={2}
-                                    value={environmentAddresses}
+                                    type="number"
+                                    value={delaySecondsPart}
                                   />
                                 </label>
                               </div>
-                            ) : null}
-                          </div>
-                        </section>
-                      </>
-                    )}
-
-                    <section className="global-run-step global-run-start-step">
-                      <div className="global-run-step-title">
-                        <span>
-                          <Clock3 aria-hidden="true" size={15} />
-                        </span>
-                        <div>
-                          <h3>设置开始时间</h3>
-                          <p>倒计时由服务端持久化，页面关闭或服务重启都不会丢失。</p>
+                              <div className="delay-presets" aria-label="常用倒计时">
+                                {[1, 5, 10, 30].map((minutes) => (
+                                  <Button
+                                    key={minutes}
+                                    onClick={() => {
+                                      setDelayMinutes(minutes);
+                                      setDelaySecondsPart(0);
+                                    }}
+                                    type="button"
+                                  >
+                                    {minutes} 分钟
+                                  </Button>
+                                ))}
+                              </div>
+                              <div className="delay-start-preview" role="status">
+                                <Clock3 aria-hidden="true" size={18} />
+                                <span>
+                                  <small>计划开始</small>
+                                  <strong>
+                                    {configuredDelaySeconds > 0
+                                      ? formatPlatformDateTime(
+                                          previewNowMs + configuredDelaySeconds * 1_000,
+                                          undefined,
+                                          {
+                                            month: "2-digit",
+                                            day: "2-digit",
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                            second: "2-digit",
+                                          },
+                                        )
+                                      : "请设置有效倒计时"}
+                                  </strong>
+                                </span>
+                                <em>{formatCountdown(configuredDelaySeconds)}</em>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="immediate-start-note">
+                              提交并通过预检后立即进入资源调度。
+                            </p>
+                          )}
                         </div>
-                      </div>
-                      <div className="start-mode-layout">
-                        <div className="segmented-control start-mode-control" aria-label="开始方式">
-                          <Button
-                            aria-pressed={startMode === "immediate"}
-                            onClick={() => setStartMode("immediate")}
-                            type="button"
-                          >
-                            立即执行
-                          </Button>
-                          <Button
-                            aria-pressed={startMode === "delayed"}
-                            onClick={() => setStartMode("delayed")}
-                            type="button"
-                          >
-                            倒计时执行
-                          </Button>
-                        </div>
-                        {startMode === "delayed" ? (
-                          <div className="delay-start-panel">
-                            <div className="delay-time-fields">
-                              <label className="field-stack">
-                                <span>分钟</span>
-                                <Input
-                                  aria-label="倒计时分钟"
-                                  max={10_080}
-                                  min={0}
-                                  onChange={(event) => {
-                                    const minutes = boundedInteger(event.target.value, 0, 10_080);
-                                    setDelayMinutes(minutes);
-                                    if (minutes === 10_080) setDelaySecondsPart(0);
-                                  }}
-                                  type="number"
-                                  value={delayMinutes}
-                                />
-                              </label>
-                              <label className="field-stack">
-                                <span>秒</span>
-                                <Input
-                                  aria-label="倒计时秒"
-                                  max={delayMinutes === 10_080 ? 0 : 59}
-                                  min={0}
-                                  onChange={(event) =>
-                                    setDelaySecondsPart(
-                                      boundedInteger(
-                                        event.target.value,
-                                        0,
-                                        delayMinutes === 10_080 ? 0 : 59,
-                                      ),
-                                    )
-                                  }
-                                  type="number"
-                                  value={delaySecondsPart}
-                                />
-                              </label>
-                            </div>
-                            <div className="delay-presets" aria-label="常用倒计时">
-                              {[1, 5, 10, 30].map((minutes) => (
-                                <Button
-                                  key={minutes}
-                                  onClick={() => {
-                                    setDelayMinutes(minutes);
-                                    setDelaySecondsPart(0);
-                                  }}
-                                  type="button"
-                                >
-                                  {minutes} 分钟
-                                </Button>
-                              ))}
-                            </div>
-                            <div className="delay-start-preview" role="status">
-                              <Clock3 aria-hidden="true" size={18} />
-                              <span>
-                                <small>计划开始</small>
-                                <strong>
-                                  {configuredDelaySeconds > 0
-                                    ? formatPlatformDateTime(
-                                        previewNowMs + configuredDelaySeconds * 1_000,
-                                        undefined,
-                                        {
-                                          month: "2-digit",
-                                          day: "2-digit",
-                                          hour: "2-digit",
-                                          minute: "2-digit",
-                                          second: "2-digit",
-                                        },
-                                      )
-                                    : "请设置有效倒计时"}
-                                </strong>
-                              </span>
-                              <em>{formatCountdown(configuredDelaySeconds)}</em>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className="immediate-start-note">提交并通过预检后立即进入资源调度。</p>
-                        )}
-                      </div>
-                    </section>
+                      </section>
 
-                    {error ? (
-                      <p className="form-error global-run-error" role="alert">
-                        {error}
-                      </p>
-                    ) : null}
+                      {error ? (
+                        <p className="form-error global-run-error" role="alert">
+                          {error}
+                        </p>
+                      ) : null}
+                    </div>
                     <footer className="global-run-dialog-actions">
                       <Button disabled={submitting} onClick={closeDialog} type="button">
                         取消

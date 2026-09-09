@@ -80,21 +80,23 @@ export class SqliteDdtRepository implements DdtRepository {
          LIMIT ?`,
       )
       .all(...parameters, query.limit + 1) as DdtCaseSummaryRow[];
-    const items = rows.slice(0, query.limit).map((row) => ({
-      id: row.id,
-      projectId: row.projectId,
-      projectVersionId: row.projectVersionId,
-      testStageId: row.testStageId,
-      caseId: row.caseId,
-      srNum: row.srNum,
-      kind: row.kind,
-      sourceName: row.sourceName,
-      revision: row.revision,
-      updatedAt: row.updatedAt,
-      ...mapExecutionClass(row),
-    }));
+    const items = rows.slice(0, query.limit).map(mapCaseSummary);
     const next = rows.length > query.limit ? rows[query.limit - 1]?.caseIdNormalized : undefined;
     return { items, ...(next ? { nextCursor: next } : {}) };
+  }
+
+  async getCaseSummary(scope: DdtScope, caseId: string) {
+    const row = this.handle.client
+      .prepare(
+        `SELECT id, project_id AS projectId, project_version_id AS projectVersionId,
+       test_stage_id AS testStageId, case_id AS caseId, case_id_normalized AS caseIdNormalized,
+       sr_num AS srNum, case_kind AS kind, source_name AS sourceName, revision,
+       updated_at AS updatedAt, ${executionClassColumns}
+       FROM ddt_cases WHERE project_id=? AND project_version_id=? AND test_stage_id=?
+       AND case_id_normalized=? LIMIT 1`,
+      )
+      .get(...scopeParameters(scope), normalize(caseId)) as DdtCaseSummaryRow | undefined;
+    return row ? mapCaseSummary(row) : null;
   }
 
   async getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null> {
@@ -1500,6 +1502,22 @@ type DeletedCaseRow = {
   case_created_at: string;
   case_updated_at: string;
 };
+
+function mapCaseSummary(row: DdtCaseSummaryRow) {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    projectVersionId: row.projectVersionId,
+    testStageId: row.testStageId,
+    caseId: row.caseId,
+    srNum: row.srNum,
+    kind: row.kind,
+    sourceName: row.sourceName,
+    revision: row.revision,
+    updatedAt: row.updatedAt,
+    ...mapExecutionClass(row),
+  };
+}
 
 function mapCase(row: DdtCaseRow): DdtCase {
   return {

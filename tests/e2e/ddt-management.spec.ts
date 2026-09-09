@@ -886,6 +886,8 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
   expect(detailRequests).toHaveLength(2);
   expect(detailRequests.every((path) => path.includes("CASE-000"))).toBe(true);
   await expect(workspace.getByRole("table")).toHaveCount(0);
+  await expectResponsiveDdtSidebar(page);
+  expect(detailRequests).toHaveLength(2);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     await workspace.scrollIntoViewIfNeeded();
@@ -895,6 +897,9 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
 
   await details.getByRole("button", { name: "编辑字段 描述", exact: true }).click();
   await details.getByLabel("描述 的值").fill("保存前切换用例仍应保留此草稿");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect(details.getByLabel("描述 的值")).toHaveValue("保存前切换用例仍应保留此草稿");
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await navigation.getByRole("button", { name: "CASE-001", exact: true }).click();
   const discard = page.getByRole("dialog", { name: "放弃未保存的修改" });
   await discard.getByRole("button", { name: "继续编辑" }).click();
@@ -1046,13 +1051,18 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
       workspaceBounds!.y + workspaceBounds!.height,
     );
     await captureDdtUi(page, `ddt-case-workspace-filter-${width}`);
+    await navigation.getByRole("button", { name: "动态字段匹配方式", exact: true }).click();
+    await navigation.getByRole("option", { name: "小于等于", exact: true }).click();
+    await navigation.getByRole("button", { name: "动态字段匹配方式", exact: true }).click();
+    await navigation.getByRole("option", { name: "包含", exact: true }).click();
   }
   await navigation.getByLabel("DDT 动态字段", { exact: true }).fill("");
   await navigation.locator(".ddt-advanced-filters > summary").click();
   const resizer = workspace.getByRole("separator", { name: "调整 CaseID 列表宽度" });
   await resizer.focus();
+  const previousWidth = Number(await resizer.getAttribute("aria-valuenow"));
   await resizer.press("ArrowRight");
-  await expect(resizer).toHaveAttribute("aria-valuenow", "300");
+  await expect(resizer).toHaveAttribute("aria-valuenow", String(previousWidth + 20));
   await navigation.getByRole("button", { name: "收起 CaseID 列表" }).click();
   await expect(navigation.locator(".ddt-case-navigation-content")).toBeHidden();
   await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
@@ -1073,6 +1083,88 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
 async function selectDdtGroup(navigation: Locator, group: string): Promise<void> {
   await navigation.getByRole("button", { name: "DDT 业务分组", exact: true }).click();
   await navigation.getByRole("option", { name: group, exact: true }).click();
+}
+
+async function expectResponsiveDdtSidebar(page: Page): Promise<void> {
+  const workspace = page.locator(".ddt-case-browser");
+  const navigation = page.getByRole("region", { name: "DDT 用例导航" });
+  const sizes: Array<{ width: number; height: number }> = [];
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+    { width: 2560, height: 1440 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-responsive-sidebar-${viewport.width}`);
+    const bounds = await workspace.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(
+      bounds!.y + bounds!.height,
+      "DDT workspace must fit the available viewport height",
+    ).toBeLessThanOrEqual(viewport.height);
+    const sidebar = await navigation.boundingBox();
+    sizes.push({ width: sidebar!.width, height: sidebar!.height });
+  }
+  expect(sizes[1]!.width, "DDT sidebar must grow with its workspace").toBeGreaterThan(
+    sizes[0]!.width + 40,
+  );
+  expect(sizes[2]!.width).toBeGreaterThan(sizes[1]!.width);
+  expect(sizes[1]!.height).toBeGreaterThan(sizes[0]!.height);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const resizer = workspace.getByRole("separator", { name: "调整 CaseID 列表宽度" });
+  await expect(resizer).toHaveAttribute("aria-valuenow", String(Math.round(sizes[1]!.width)));
+  const beforeDrag = Number(await resizer.getAttribute("aria-valuenow"));
+  const handle = await resizer.boundingBox();
+  await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(handle!.x + handle!.width / 2 + 60, handle!.y + 20);
+  await page.mouse.up();
+  await expect
+    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
+    .toBeGreaterThan(beforeDrag + 40);
+  const expandedWidth = Number(await resizer.getAttribute("aria-valuenow"));
+  const expandedWorkspaceWidth = await workspace.evaluate((element) => element.clientWidth);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect
+    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
+    .toBeLessThan(expandedWidth);
+  const reducedWorkspaceWidth = await workspace.evaluate((element) => element.clientWidth);
+  const reducedWidth = Number(await resizer.getAttribute("aria-valuenow"));
+  expect(reducedWidth / reducedWorkspaceWidth).toBeCloseTo(
+    expandedWidth / expandedWorkspaceWidth,
+    2,
+  );
+  expect((await navigation.boundingBox())!.width).toBeCloseTo(reducedWidth, 0);
+  await navigation.getByRole("button", { name: "收起 CaseID 列表" }).click();
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await expect(navigation.locator(".ddt-case-navigation-content")).toBeHidden();
+  await navigation.getByRole("button", { name: "展开 CaseID 列表" }).click();
+  await expect
+    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
+    .toBe(expandedWidth);
+  await resizer.press("Home");
+  await expect
+    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
+    .toBe(beforeDrag);
+  await page
+    .getByRole("navigation", { name: "用例类型" })
+    .getByRole("link", { name: "TestNG 用例" })
+    .click();
+  await expect(workspace).toBeHidden();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page
+    .getByRole("navigation", { name: "用例类型" })
+    .getByRole("link", { name: "DDT 管理" })
+    .click();
+  await expect(workspace).toBeVisible();
+  await expect.poll(async () => (await navigation.boundingBox())!.width).toBe(sizes[0]!.width);
+  await page.setViewportSize({ width: 1536, height: 768 });
+  await expect
+    .poll(async () => (await workspace.boundingBox())!.height)
+    .toBeLessThan(sizes[1]!.height - 200);
+  await page.setViewportSize({ width: 1536, height: 1024 });
 }
 
 async function issueDdtApiToken(
@@ -1146,8 +1238,56 @@ test("SR associations restrict candidates and automatically cover imported and m
   );
   expect(oldEndpoint.body.error.code).toBe("DDT_SR_MAPPING_REQUIRED");
   await associateDdtSr(page, "PAYMENTS", className);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: `快速预览 ${caseIds[0]}`, exact: true }).click();
+  const inspector = page.locator(".ddt-execution-inspector");
+  await expect(inspector.getByRole("heading", { name: caseIds[0]!, exact: true })).toBeVisible();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    const bounds = await inspector.boundingBox();
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+    await captureDdtUi(page, `ddt-responsive-inspector-${viewport.width}`);
+  }
   const readerToken = await issueDdtApiToken(page, hierarchy.projectId, ["case.read"]);
   const readerHeaders = { authorization: `Bearer ${readerToken}` };
+  const firstCasePath = `cases/${encodeURIComponent(caseIds[0]!)}`;
+  const previewResponse = await page.request.get(ddtPath(hierarchy, `${firstCasePath}/workspace`), {
+    headers: readerHeaders,
+  });
+  expect(previewResponse.status()).toBe(200);
+  const preview = await previewResponse.json();
+  expect(preview.item.data).toBeUndefined();
+  expect(preview.executionDetail).toMatchObject({
+    definition: { id: definition.id },
+    canRun: false,
+    canManage: false,
+    canReadLogs: false,
+    canReadSource: false,
+    executionHistory: { items: [] },
+    failureAnalysisHistory: { items: [] },
+  });
+  for (const endpoint of ["summary", "executions", "failure-analyses"]) {
+    expect(
+      (
+        await page.request.get(ddtPath(hierarchy, `${firstCasePath}/${endpoint}`), {
+          headers: readerHeaders,
+        })
+      ).status(),
+    ).toBe(200);
+  }
+  expect(
+    (
+      await page.request.post(ddtPath(hierarchy, `${firstCasePath}/execute`), {
+        headers: readerHeaders,
+        data: {},
+      })
+    ).status(),
+  ).toBe(403);
   expect(
     (
       await page.request.get(ddtPath(hierarchy, "sr-mappings"), { headers: readerHeaders })

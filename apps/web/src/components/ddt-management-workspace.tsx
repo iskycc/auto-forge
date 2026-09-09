@@ -14,6 +14,7 @@ import {
   type DdtHistoryItem,
 } from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { DdtCaseInspector } from "./ddt-case-inspector";
 
 import {
   ArchiveRestore,
@@ -165,11 +166,13 @@ export function DdtManagementWorkspace({
   scope,
   canManage,
   canManageSuites,
+  canRun,
   suites,
 }: {
   scope: Scope;
   canManage: boolean;
   canManageSuites: boolean;
+  canRun: boolean;
   suites: Array<{ id: string; name: string }>;
 }) {
   const confirmAction = useConfirm();
@@ -204,6 +207,7 @@ export function DdtManagementWorkspace({
   const setAdvancedOperator = (value: string) => updateFilterUrl("ddtOperator", value);
   const setAdvancedValue = (value: string) => updateFilterUrl("ddtValue", value);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [executionPreviewCaseId, setExecutionPreviewCaseId] = useState<string>();
   const [detail, setDetail] = useState<DdtCase>();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [activeCaseId, setActiveCaseId] = useState("");
@@ -338,6 +342,7 @@ export function DdtManagementWorkspace({
       setDetail(undefined);
       setDetailLoading(false);
       setActiveCaseId("");
+      setExecutionPreviewCaseId(undefined);
       await load();
     };
     const timer = window.setTimeout(() => void applyFilter(), 0);
@@ -430,11 +435,20 @@ export function DdtManagementWorkspace({
   };
   const navigateCase = async (caseId: string) => {
     if (!(await leaveEditor())) return;
+    setExecutionPreviewCaseId(undefined);
     setSelected(new Set());
     await openCase(caseId);
   };
+  const previewCase = async (caseId: string) => {
+    if (!(await leaveEditor())) return;
+    detailRequest.current?.abort();
+    setSelected(new Set());
+    setActiveCaseId(caseId);
+    setExecutionPreviewCaseId(caseId);
+  };
   const changeFilter = async (change: () => void) => {
     if (!(await leaveEditor())) return;
+    setExecutionPreviewCaseId(undefined);
     detailRequest.current?.abort();
     setDetail(undefined);
     setActiveCaseId("");
@@ -736,6 +750,7 @@ export function DdtManagementWorkspace({
           savingCase={savingCase}
           onLoadMore={() => void loadMore()}
           onOpen={(caseId) => void navigateCase(caseId)}
+          onPreview={(caseId) => void previewCase(caseId)}
           onSelect={async (caseId) => {
             if (await leaveEditor()) setSelected((current) => toggleSet(current, caseId));
           }}
@@ -880,7 +895,14 @@ export function DdtManagementWorkspace({
             </div>
           }
         >
-          {detailLoading ? (
+          {executionPreviewCaseId ? (
+            <DdtCaseInspector
+              key={executionPreviewCaseId}
+              scope={scope}
+              caseId={executionPreviewCaseId}
+              onClose={() => void navigateCase(executionPreviewCaseId)}
+            />
+          ) : detailLoading ? (
             <LoadingState label="正在读取用例" description="正在加载所选用例的字段与修改历史。" />
           ) : detailError ? (
             <div className="ddt-detail-error">
@@ -901,6 +923,8 @@ export function DdtManagementWorkspace({
               item={detail}
               history={history}
               canManage={canManage}
+              canRun={canRun}
+              onPreview={() => void previewCase(detail.caseId)}
               onStatusChange={(status) => {
                 editorStatus.current = status;
                 setSavingCase(status === "saving");

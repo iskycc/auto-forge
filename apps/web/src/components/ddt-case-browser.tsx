@@ -14,18 +14,21 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Eye,
   FileSpreadsheet,
   History,
   PanelLeftClose,
   PanelLeftOpen,
   PencilLine,
 } from "lucide-react";
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { OpenRunDialogButton } from "./global-run-dialog";
+import { useDdtBrowserLayout } from "./use-ddt-browser-layout";
 
 export type DdtHistoryItem = {
   id: string;
@@ -35,10 +38,6 @@ export type DdtHistoryItem = {
   createdAt: string;
 };
 export type DdtEditorStatus = "idle" | "editing" | "saving";
-
-const DEFAULT_LIST_WIDTH = 280;
-const MINIMUM_LIST_WIDTH = 200;
-const MAXIMUM_LIST_WIDTH = 440;
 
 export function DdtCaseBrowser({
   cases,
@@ -53,6 +52,7 @@ export function DdtCaseBrowser({
   savingCase,
   onLoadMore,
   onOpen,
+  onPreview,
   onSelect,
   onSelectAll,
 }: {
@@ -68,18 +68,26 @@ export function DdtCaseBrowser({
   savingCase: boolean;
   onLoadMore(): void;
   onOpen(caseId: string): void;
+  onPreview(caseId: string): void;
   onSelect(caseId: string): void;
   onSelectAll(checked: boolean): void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [listWidth, setListWidth] = useState(DEFAULT_LIST_WIDTH);
+  const {
+    browserRef,
+    listWidth,
+    minimumListWidth,
+    maximumListWidth,
+    style,
+    resizeList,
+    resetListWidth,
+  } = useDdtBrowserLayout();
   const dragStart = useRef<{ x: number; width: number } | null>(null);
-  const changeWidth = (width: number) =>
-    setListWidth(Math.max(MINIMUM_LIST_WIDTH, Math.min(MAXIMUM_LIST_WIDTH, width)));
   return (
     <div
       className={`ddt-case-browser${collapsed ? " is-collapsed" : ""}`}
-      style={{ "--ddt-case-list-width": `${listWidth}px` } as CSSProperties}
+      ref={browserRef}
+      style={style}
     >
       <section className="ddt-case-navigation" aria-label="DDT 用例导航">
         <header>
@@ -170,6 +178,22 @@ export function DdtCaseBrowser({
                   </span>
                   <ChevronRight size={14} />
                 </Button>
+                <Button
+                  type="button"
+                  className="ddt-case-preview"
+                  variant="ghost"
+                  size="compact"
+                  aria-label={`快速预览 ${item.caseId}`}
+                  title={
+                    item.executionClass
+                      ? "在右侧查看执行、分析历史与测试类详情"
+                      : "请先设置 SR 测试类关联"
+                  }
+                  disabled={savingCase || !item.executionClass}
+                  onClick={() => onPreview(item.caseId)}
+                >
+                  <Eye size={15} aria-hidden="true" />
+                </Button>
               </div>
             ))}
             {refreshing && !cases.length ? (
@@ -201,19 +225,16 @@ export function DdtCaseBrowser({
           role="separator"
           aria-label="调整 CaseID 列表宽度"
           aria-orientation="vertical"
-          aria-valuemin={MINIMUM_LIST_WIDTH}
-          aria-valuemax={MAXIMUM_LIST_WIDTH}
+          aria-valuemin={minimumListWidth}
+          aria-valuemax={maximumListWidth}
           aria-valuenow={listWidth}
           tabIndex={0}
-          onDoubleClick={() => setListWidth(DEFAULT_LIST_WIDTH)}
+          onDoubleClick={resetListWidth}
           onKeyDown={(event) => {
             if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
             event.preventDefault();
-            changeWidth(
-              event.key === "Home"
-                ? DEFAULT_LIST_WIDTH
-                : listWidth + (event.key === "ArrowLeft" ? -20 : 20),
-            );
+            if (event.key === "Home") resetListWidth();
+            else resizeList(listWidth + (event.key === "ArrowLeft" ? -20 : 20));
           }}
           onPointerDown={(event) => {
             if (event.button !== 0) return;
@@ -225,7 +246,7 @@ export function DdtCaseBrowser({
           }}
           onPointerMove={(event) => {
             if (dragStart.current)
-              changeWidth(dragStart.current.width + event.clientX - dragStart.current.x);
+              resizeList(dragStart.current.width + event.clientX - dragStart.current.x);
           }}
           onPointerUp={(event) => {
             dragStart.current = null;
@@ -260,6 +281,8 @@ export function DdtCaseDetail({
   item,
   history,
   canManage,
+  canRun,
+  onPreview,
   onSave,
   onRestore,
   onStatusChange,
@@ -269,6 +292,8 @@ export function DdtCaseDetail({
   item: DdtCase;
   history: DdtHistoryItem[];
   canManage: boolean;
+  canRun: boolean;
+  onPreview(): void;
   onSave(data: DdtCaseData): Promise<void>;
   onRestore(historyId: string): Promise<void>;
   onStatusChange(status: DdtEditorStatus): void;
@@ -421,6 +446,27 @@ export function DdtCaseDetail({
             {item.executionClass?.className ??
               "请在“SR 测试类关联”页面配置当前 SR 的测试类；本 SR 下所有用例自动继承。"}
           </small>
+          {item.executionClass ? (
+            <div className="ddt-execution-class-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={Boolean(editor) || saving}
+                onClick={onPreview}
+              >
+                <Eye size={15} /> 查看执行详情
+              </Button>
+              {canRun && item.executionClass.enabled && !item.executionClass.archived ? (
+                <OpenRunDialogButton
+                  ddtCase={item}
+                  disabled={Boolean(editor) || saving}
+                  className="button button-primary compact-button"
+                >
+                  立即执行
+                </OpenRunDialogButton>
+              ) : null}
+            </div>
+          ) : null}
         </section>
         {steps ? (
           <div className="ddt-journey-switcher">

@@ -11,7 +11,7 @@ import {
   selectedProjectHierarchy,
   selectedProjectId,
 } from "@/lib/selected-project";
-import { projectIdsForPermission } from "@autoforge/domain";
+import { hasPermission, projectIdsForPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +77,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         ddtContent={
           projectId && projectVersion && testStage ? (
             <DdtManagementWorkspace
+              canRun={hasPermission(identity, "run.create", projectId)}
               key={`${projectId}:${projectVersion.id}:${testStage.id}`}
               scope={{
                 projectId,

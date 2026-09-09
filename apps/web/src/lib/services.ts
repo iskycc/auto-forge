@@ -432,7 +432,7 @@ async function createPlatformServices() {
     secretCipher,
   );
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
-  const ddtCases = new DdtCaseService(ddtRepository, clock, ids);
+  const ddtCases = new DdtCaseService(ddtRepository, clock, ids, catalog);
   const ddtImports = new DdtImportService(
     ddtRepository,
     objectStore,
@@ -489,7 +489,7 @@ async function createPlatformServices() {
         maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
       },
       config.scheduler.metricsMaximumAgeSeconds,
-      { catalog, objectStore },
+      { catalog, objectStore, ddt: ddtRepository },
       config.scheduler.projectMaximumConcurrency,
       config.scheduler.priorityAgingIntervalMinutes,
       projectStructuresRepository,
@@ -498,6 +498,7 @@ async function createPlatformServices() {
       () => configurationStore.read().limits.artifactCollectionEnabled,
     ),
     config.mode === "lite" ? dispatcher : undefined,
+    dispatcher,
   );
   const runScheduling = new CoalescingSchedulingPort(runBatches, dispatcher);
   // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。

@@ -72,6 +72,19 @@ export class PostgresDdtRepository implements DdtRepository {
     return { items, ...(next ? { nextCursor: next } : {}) };
   }
 
+  async getCaseSummary(scope: DdtScope, caseId: string) {
+    await this.ready();
+    const result = await this.handle.pool.query<DdtCaseSummaryRow>(
+      `SELECT id, project_id, project_version_id, test_stage_id, case_id,
+       case_id_normalized, sr_num, case_kind, source_name, revision, updated_at,
+       ${executionClassColumns} FROM ddt_cases
+       WHERE project_id=$1 AND project_version_id=$2 AND test_stage_id=$3
+       AND case_id_normalized=$4 LIMIT 1`,
+      [...scopeValues(scope), normalize(caseId)],
+    );
+    return result.rows[0] ? mapCaseSummary(result.rows[0]) : null;
+  }
+
   async getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null> {
     await this.ready();
     return getCaseWith(this.handle.pool, scope, caseId);

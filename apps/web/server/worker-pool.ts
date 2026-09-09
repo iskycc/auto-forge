@@ -182,6 +182,10 @@ export class WorkerPool implements WorkDispatcher {
     return this.nextSchedulingLane().dispatch({ kind: "create-batch", input });
   }
 
+  createSingleDdtCase(input: unknown): Promise<unknown> {
+    return this.nextSchedulingLane().dispatch({ kind: "create-single-ddt-case", input });
+  }
+
   async scheduleForRunner(
     runnerId: string,
     batchLimit: number,

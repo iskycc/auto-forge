@@ -3,6 +3,7 @@ import { DomainError, hasPermission, type AuthenticatedIdentity } from "@autofor
 
 import type { CaseDetailView } from "./case-detail-view";
 import type { PlatformServices } from "./services";
+import type { CaseExecutionHistoryQuery } from "@autoforge/application";
 
 type CaseDetailServices = {
   caseDefinitions: Pick<
@@ -22,19 +23,32 @@ export async function loadCaseDetail(
   identity: AuthenticatedIdentity,
   caseDefinitionId: string,
   projectIds: readonly string[] | undefined,
+  historySource?: NonNullable<CaseDetailView["historyContext"]> & {
+    activity(): ReturnType<CaseDetailServices["caseDefinitions"]["listActivity"]>;
+    executions(
+      query: CaseExecutionHistoryQuery,
+    ): ReturnType<CaseDetailServices["caseDefinitions"]["listExecutionHistory"]>;
+  },
 ): Promise<CaseDetailView> {
   const definition = await services.caseDefinitions.get(caseDefinitionId, projectIds);
   const [versions, activity, executionHistory, failureAnalysisHistory, structure, executable] =
     await Promise.all([
       services.caseDefinitions.listVersions(caseDefinitionId, projectIds),
-      services.caseDefinitions.listActivity(caseDefinitionId, projectIds, 50),
-      services.caseDefinitions.listExecutionHistory(caseDefinitionId, projectIds, {
-        limit: 50,
-        includeRunnerNames: hasPermission(identity, "runner.read"),
-      }),
+      historySource
+        ? historySource.activity()
+        : services.caseDefinitions.listActivity(caseDefinitionId, projectIds, 50),
+      historySource
+        ? historySource.executions({
+            limit: 50,
+            includeRunnerNames: hasPermission(identity, "runner.read"),
+          })
+        : services.caseDefinitions.listExecutionHistory(caseDefinitionId, projectIds, {
+            limit: 50,
+            includeRunnerNames: hasPermission(identity, "runner.read"),
+          }),
       services.failureAnalysis.listCaseHistory({
         projectId: definition.projectId,
-        caseDefinitionId,
+        caseDefinitionId: historySource?.caseDefinitionId ?? caseDefinitionId,
         limit: 20,
       }),
       services.projectStructures.list(definition.projectId),
@@ -62,5 +76,14 @@ export async function loadCaseDetail(
     canReadSource: hasPermission(identity, "case_source.read", definition.projectId),
     canReadAnalysisEvidence: hasPermission(identity, "run.read", definition.projectId),
     timeZone: services.configurationStore.read().web.timeZone,
+    ...(historySource
+      ? {
+          historyContext: {
+            caseDefinitionId: historySource.caseDefinitionId,
+            executionHistoryUrl: historySource.executionHistoryUrl,
+            analysisHistoryUrl: historySource.analysisHistoryUrl,
+          },
+        }
+      : {}),
   };
 }

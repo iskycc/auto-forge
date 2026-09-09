@@ -20,6 +20,8 @@ import {
   retryConcurrencyDecisionForRound,
   scheduleExecutionRuns,
   type CaseSuiteDetails,
+  type DdtCase,
+  type DdtScope,
   type RunBatch,
   type RunBatchDetails,
   type RunBatchRoundConcurrencySource,
@@ -36,6 +38,7 @@ import type {
   CaseSuiteRepository,
   CaseCatalogRepository,
   Clock,
+  DdtRepository,
   CreateRunBatchRecord,
   IdGenerator,
   JarObjectStorePort,
@@ -133,6 +136,7 @@ export class RunBatchSchedulingService {
     private readonly executionInputs?: {
       catalog: CaseCatalogRepository;
       objectStore: JarObjectStorePort;
+      ddt?: Pick<DdtRepository, "getCase">;
     },
     private readonly projectMaximumConcurrency = 128,
     private readonly priorityAgingIntervalMinutes = 5,
@@ -268,6 +272,50 @@ export class RunBatchSchedulingService {
     caseDefinitionId: string,
     input: CreateSingleCaseRunInput,
   ): Promise<RunBatch> {
+    return this.createSingleExecution(caseDefinitionId, input);
+  }
+
+  async createSingleDdtCase(
+    scope: DdtScope,
+    caseId: string,
+    input: CreateSingleCaseRunInput,
+  ): Promise<RunBatch> {
+    if (!this.executionInputs?.ddt) {
+      throw new DomainError(
+        "SINGLE_CASE_EXECUTION_UNAVAILABLE",
+        "当前运行时未配置 DDT 用例输入仓储。",
+      );
+    }
+    const validated = createSingleCaseRunInputSchema.parse(input);
+    const item = await this.executionInputs.ddt.getCase(scope, caseId);
+    if (!item) throw new DomainError("DDT_CASE_NOT_FOUND", "指定的 DDT 用例不存在。");
+    if (!item.executionClass) {
+      throw new DomainError(
+        "DDT_EXECUTION_CLASS_REQUIRED",
+        "请先在 SR 测试类关联页面配置当前用例的执行类。",
+      );
+    }
+    if (!validated.adapter.enabled) {
+      throw new DomainError(
+        "DDT_ADAPTER_REQUIRED",
+        "DDT 用例执行必须启用 CoTest Adapter，以传递当前用例数据。",
+      );
+    }
+    return this.createSingleExecution(
+      item.executionClass.caseDefinitionId,
+      {
+        ...validated,
+        projectId: scope.projectId,
+      },
+      item,
+    );
+  }
+
+  private async createSingleExecution(
+    caseDefinitionId: string,
+    input: CreateSingleCaseRunInput,
+    ddtCase?: DdtCase,
+  ): Promise<RunBatch> {
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
     }
@@ -280,6 +328,16 @@ export class RunBatchSchedulingService {
       throw new DomainError(
         "CASE_DEFINITION_NOT_FOUND",
         "指定用例不存在、已归档或不属于当前项目。",
+      );
+    }
+    if (
+      ddtCase &&
+      (definition.projectVersionId !== ddtCase.projectVersionId ||
+        definition.testStageId !== ddtCase.testStageId)
+    ) {
+      throw new DomainError(
+        "DDT_EXECUTION_CLASS_UNAVAILABLE",
+        "执行类不属于当前 DDT 用例的项目版本和测试阶段，请刷新关联后重试。",
       );
     }
     if (!definition.enabled || !definition.methods.some((method) => method.enabled)) {
@@ -349,9 +407,9 @@ export class RunBatchSchedulingService {
       id: batchId,
       projectId,
       eventId: this.ids.next(),
-      suiteId: `single:${definition.id}`,
-      suiteName: `单用例 · ${definition.displayName}`,
-      suiteVersion: definition.currentVersion,
+      suiteId: `single:${ddtCase?.id ?? definition.id}`,
+      suiteName: `单用例 · ${ddtCase?.caseId ?? definition.displayName}`,
+      suiteVersion: ddtCase?.revision ?? definition.currentVersion,
       retryLimit: validated.retryLimit ?? defaultCaseSuiteExecutionPolicy.retryLimit,
       retryMode: validated.retryMode ?? defaultCaseSuiteExecutionPolicy.retryMode,
       priority,
@@ -381,14 +439,27 @@ export class RunBatchSchedulingService {
         environmentAddresses: [...validated.adapter.environmentAddresses],
       },
       runs: [
-        {
-          id: this.ids.next(),
-          caseDefinitionId: definition.id,
-          caseVersion: definition.currentVersion,
-          displayName: definition.displayName,
-          className: definition.className,
-          parameters: { ...definition.parameters },
-        },
+        ddtCase
+          ? ddtExecutionRun(this.ids.next(), {
+              ...ddtCase,
+              executionClass: {
+                caseDefinitionId: definition.id,
+                className: definition.className,
+                displayName: definition.displayName,
+                sourceId: definition.sourceId,
+                currentVersion: definition.currentVersion,
+                enabled: definition.enabled,
+                archived: definition.archived,
+              },
+            })
+          : {
+              id: this.ids.next(),
+              caseDefinitionId: definition.id,
+              caseVersion: definition.currentVersion,
+              displayName: definition.displayName,
+              className: definition.className,
+              parameters: { ...definition.parameters },
+            },
       ],
       dispatchJob,
       scheduledFor,

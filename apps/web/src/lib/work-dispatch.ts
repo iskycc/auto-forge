@@ -10,18 +10,27 @@ import type { WorkDispatcher } from "./work-runtime";
 
 export { workDispatcher } from "./work-runtime";
 
-/** Keep Lite snapshot construction and SQLite lock waits off the Web event loop. */
+/** Keep Lite batch writes and DDT JSON snapshots in both modes off the Web event loop. */
 export function workerBackedBatchCreation(
   local: RunBatchSchedulingService,
   dispatcher: WorkDispatcher | undefined,
+  singleCaseDispatcher: WorkDispatcher | undefined = dispatcher,
 ): RunBatchSchedulingService {
-  if (!dispatcher?.createBatch) return local;
-  const create = dispatcher.createBatch.bind(dispatcher);
+  if (!dispatcher?.createBatch && !singleCaseDispatcher?.createSingleDdtCase) return local;
+  const create = dispatcher?.createBatch?.bind(dispatcher);
+  const createSingleDdtCase = singleCaseDispatcher?.createSingleDdtCase?.bind(singleCaseDispatcher);
   return new Proxy(local, {
     get(target, property) {
-      if (property === "create")
+      if (property === "create" && create)
         return (input: Parameters<RunBatchSchedulingService["create"]>[0]) =>
           create(input) as ReturnType<RunBatchSchedulingService["create"]>;
+      if (property === "createSingleDdtCase" && createSingleDdtCase)
+        return (
+          ...[scope, caseId, input]: Parameters<RunBatchSchedulingService["createSingleDdtCase"]>
+        ) =>
+          createSingleDdtCase({ scope, caseId, input }) as ReturnType<
+            RunBatchSchedulingService["createSingleDdtCase"]
+          >;
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },

@@ -17,4 +17,9 @@ export type CaseDetailView = {
   canReadSource: boolean;
   canReadAnalysisEvidence: boolean;
   timeZone: string;
+  historyContext?: {
+    caseDefinitionId: string;
+    executionHistoryUrl: string;
+    analysisHistoryUrl: string;
+  };
 };
