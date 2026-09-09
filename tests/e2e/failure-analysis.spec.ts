@@ -105,15 +105,21 @@ async function expectLongAnalysisDialog(
   ]) {
     await page.setViewportSize(viewport);
     await expect(dialog).toBeVisible();
+    // Screenshot capture is optional in CI; wait for the entrance animation explicitly.
+    await dialog.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
     await dialog.locator(".runner-update-body").evaluate((element) => element.scrollTo(0, 0));
     await captureUi(page, `analysis-long-name-${state}-${viewport.width}`);
     await expectDialogFitsViewport(page, dialog);
-    const bodyBounds = await dialog.locator(".runner-update-body").boundingBox();
-    const actionsBounds = await dialog.locator(".dialog-actions").boundingBox();
+    const layout = await dialog.evaluate((element) => ({
+      bodyBottom: element.querySelector(".runner-update-body")!.getBoundingClientRect().bottom,
+      actionsTop: element.querySelector(".dialog-actions")!.getBoundingClientRect().top,
+    }));
     expect(
-      bodyBounds!.y + bodyBounds!.height,
+      layout.bodyBottom,
       "scrolling analysis fields must end above the action buttons",
-    ).toBeLessThanOrEqual(actionsBounds!.y + 1);
+    ).toBeLessThanOrEqual(layout.actionsTop + 1);
     const widths = await dialog.evaluate((element) =>
       [
         element,
