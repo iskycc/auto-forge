@@ -10,6 +10,7 @@ import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/
 import { createSqliteDatabase } from "../src/database";
 import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
+import { SqliteDdtRepository } from "../src/sqlite-ddt";
 import { SqliteProjectStructureRepository } from "../src/sqlite-project-structure";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
@@ -70,9 +71,9 @@ describe("SQLite case suite lifecycle", () => {
         .prepare(
           `INSERT INTO ddt_cases
            (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
-            sr_num, sr_num_normalized, case_kind, data_json, execution_case_definition_id,
+            sr_num, sr_num_normalized, case_kind, data_json,
             source_name, revision, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'standard', '{}', ?, ?, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'standard', '{}', ?, 1, ?, ?)`,
         )
         .run(
           "export-ddt-1",
@@ -83,11 +84,11 @@ describe("SQLite case suite lifecycle", () => {
           "order-export-1",
           "SR-EXPORT",
           "sr-export",
-          "case-1",
           "export.xlsx",
           timestamp,
           timestamp,
         );
+      await associateSr(handle, "SR-EXPORT");
       await suites.addDdtCases({
         suiteId: "suite-export",
         items: [{ id: "export-ddt-item-1", ddtCaseId: "export-ddt-1" }],
@@ -398,9 +399,9 @@ describe("SQLite case suite lifecycle", () => {
         .prepare(
           `INSERT INTO ddt_cases
            (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
-            sr_num, sr_num_normalized, case_kind, data_json, execution_case_definition_id,
+            sr_num, sr_num_normalized, case_kind, data_json,
             source_name, revision, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, 1, ?, ?)`,
         )
         .run(
           "ddt-1",
@@ -412,7 +413,6 @@ describe("SQLite case suite lifecycle", () => {
           "SR-ORDER",
           "sr-order",
           JSON.stringify({ CaseID: "ORDER-1", srNum: "SR-ORDER", amount: 100 }),
-          "case-1",
           "orders.xlsx",
           timestamp,
           timestamp,
@@ -511,6 +511,14 @@ describe("SQLite case suite lifecycle", () => {
         new SqliteProjectStructureRepository(handle),
       );
 
+      const unmapped = await scheduler.preflight({ suiteId: "suite-1" });
+      expect(unmapped.blockers).toEqual([
+        expect.objectContaining({
+          caseDefinitionId: "ddt-1",
+          code: "DDT_EXECUTION_CLASS_REQUIRED",
+        }),
+      ]);
+      await associateSr(handle, "SR-ORDER");
       const preflight = await scheduler.preflight({ suiteId: "suite-1" });
       expect(preflight.blockers).toEqual([]);
       const batch = await scheduler.create({ suiteId: "suite-1" });
@@ -653,6 +661,29 @@ function sequenceIds(): { next: () => string } {
   return { next: () => `policy-${++next}` };
 }
 
+async function associateSr(handle: ReturnType<typeof createSqliteDatabase>, srNum: string) {
+  const repository = new SqliteDdtRepository(handle);
+  const scope = {
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: "project-version-1",
+    testStageId: "stage-1",
+  };
+  await repository.changeExecutionClassRange({
+    scope,
+    executionCaseDefinitionId: "case-1",
+    included: true,
+    expectedRevision: 0,
+    updatedAt: timestamp,
+  });
+  await repository.setSrExecutionClass({
+    scope,
+    srNum,
+    executionCaseDefinitionId: "case-1",
+    expectedRevision: 0,
+    updatedAt: timestamp,
+  });
+}
+
 async function fixture() {
   const directory = await mkdtemp(resolve(tmpdir(), "autoforge-case-suites-"));
   temporaryDirectories.push(directory);
@@ -790,6 +821,7 @@ async function fixture() {
       },
     ],
   });
+  await catalog.setAuthoritativeSource("source-1", DEFAULT_PROJECT_ID);
   return {
     handle,
     catalog,
