@@ -19099,11 +19099,13 @@ button.icon-button:disabled {
   width: min(980px, calc(100vw - 56px));
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   max-height: calc(100vh - 48px);
 }
 
 .failure-analysis-completion-dialog .runner-update-body {
   min-width: 0;
+  min-height: 0;
   grid-template-columns: minmax(0, 1fr);
   overflow-y: auto;
 }
@@ -19132,13 +19134,9 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-completion-dialog .dialog-actions {
-  position: sticky;
-  z-index: 2;
-  bottom: -18px;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin: 0 -18px -18px;
   border-top: 1px solid var(--color-border);
   padding: 12px 18px;
   background: color-mix(in srgb, var(--color-surface) 96%, transparent);

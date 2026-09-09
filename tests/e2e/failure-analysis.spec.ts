@@ -108,6 +108,12 @@ async function expectLongAnalysisDialog(
     await dialog.locator(".runner-update-body").evaluate((element) => element.scrollTo(0, 0));
     await captureUi(page, `analysis-long-name-${state}-${viewport.width}`);
     await expectDialogFitsViewport(page, dialog);
+    const bodyBounds = await dialog.locator(".runner-update-body").boundingBox();
+    const actionsBounds = await dialog.locator(".dialog-actions").boundingBox();
+    expect(
+      bodyBounds!.y + bodyBounds!.height,
+      "scrolling analysis fields must end above the action buttons",
+    ).toBeLessThanOrEqual(actionsBounds!.y + 1);
     const widths = await dialog.evaluate((element) =>
       [
         element,
@@ -133,6 +139,11 @@ async function expectLongAnalysisDialog(
       const dialogBounds = await dialog.boundingBox();
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(dialogBounds!.x + dialogBounds!.width);
     }
+    await dialog
+      .locator(".runner-update-body")
+      .evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await expectUiIntegrity(page);
+    await captureUi(page, `analysis-long-name-${state}-bottom-${viewport.width}`);
   }
 }
 

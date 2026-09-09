@@ -2051,32 +2051,32 @@ function CompleteAnalysisDialog({
             ) : null}
 
             {error ? <p className="form-error">{error}</p> : null}
-            <div className="dialog-actions">
-              <Button onClick={onClose} type="button" variant="secondary">
-                {readOnly ? "关闭" : "取消"}
+          </div>
+          <div className="dialog-actions">
+            <Button onClick={onClose} type="button" variant="secondary">
+              {readOnly ? "关闭" : "取消"}
+            </Button>
+            {!readOnly ? (
+              <Button
+                disabled={
+                  !category ||
+                  submitting ||
+                  uploading ||
+                  lookingUpRerunProofs ||
+                  (category === "rerun_passed" && !rerunProofReady)
+                }
+                onClick={requestCompletion}
+                type="button"
+                variant="primary"
+              >
+                {submitting ? (
+                  <LoaderCircle className="spin" size={16} />
+                ) : (
+                  <CheckCircle2 size={16} />
+                )}
+                提交分析
               </Button>
-              {!readOnly ? (
-                <Button
-                  disabled={
-                    !category ||
-                    submitting ||
-                    uploading ||
-                    lookingUpRerunProofs ||
-                    (category === "rerun_passed" && !rerunProofReady)
-                  }
-                  onClick={requestCompletion}
-                  type="button"
-                  variant="primary"
-                >
-                  {submitting ? (
-                    <LoaderCircle className="spin" size={16} />
-                  ) : (
-                    <CheckCircle2 size={16} />
-                  )}
-                  提交分析
-                </Button>
-              ) : null}
-            </div>
+            ) : null}
           </div>
         </section>
       </div>
