@@ -335,6 +335,7 @@ export class FailureAnalysisService {
 
   listRecentCaseHistories(input: {
     projectId: string;
+    batchId: string;
     caseDefinitionIds: readonly string[];
     limitPerCase?: number;
   }) {
@@ -347,6 +348,7 @@ export class FailureAnalysisService {
     }
     return this.repository.listRecentCaseHistories({
       projectId: input.projectId,
+      batchId: input.batchId,
       caseDefinitionIds,
       limitPerCase: Math.min(10, Math.max(1, Math.trunc(input.limitPerCase ?? 5))),
     });
@@ -354,6 +356,8 @@ export class FailureAnalysisService {
 
   listCompletedConclusions(input: {
     projectId: string;
+    batchId: string;
+    caseDefinitionId: string;
     query?: string;
     cursor?: string;
     limit?: number;
@@ -361,6 +365,8 @@ export class FailureAnalysisService {
     const query = optionalTrimmed(input.query);
     return this.repository.listCompletedConclusions({
       projectId: input.projectId,
+      batchId: input.batchId,
+      caseDefinitionId: input.caseDefinitionId,
       ...(query ? { query: query.slice(0, 200) } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),
       limit: boundedPageSize(input.limit),
@@ -473,6 +479,7 @@ export class FailureAnalysisService {
   async complete(input: {
     analysisIds: readonly string[];
     projectId: string;
+    inheritedFromAnalysisId?: string;
     claimant: { id: string; username: string };
     category: FailureAnalysisCategory;
     issueDescription?: string;
@@ -516,6 +523,9 @@ export class FailureAnalysisService {
     }
     return this.repository.complete({
       analysisIds,
+      ...(input.inheritedFromAnalysisId
+        ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+        : {}),
       projectId: input.projectId,
       claimantId: input.claimant.id,
       category: input.category,

@@ -677,6 +677,7 @@ export function failureAnalysisContract(
         ).resolves.toEqual({ items: [] });
         const recentHistories = await repository.listRecentCaseHistories({
           projectId,
+          batchId,
           caseDefinitionIds: completed.map((claim) => claim.caseDefinitionId),
           limitPerCase: 1,
         });
@@ -684,36 +685,32 @@ export function failureAnalysisContract(
         expect(recentHistories.map((item) => item.claim.id).sort()).toEqual(
           completed.map((claim) => claim.id).sort(),
         );
+        const alpha = completed.find((claim) => claim.caseName === "Alpha")!;
         const searchableConclusions = await repository.listCompletedConclusions({
           projectId,
+          batchId,
+          caseDefinitionId: alpha.caseDefinitionId,
           query: "alpha",
           limit: 10,
         });
         expect(searchableConclusions.items).toEqual([
           expect.objectContaining({
-            claim: expect.objectContaining({
-              caseName: "Alpha",
-              status: "completed",
-            }),
+            claim: expect.objectContaining({ caseName: "Alpha", status: "completed" }),
           }),
         ]);
-        const firstConclusionPage = await repository.listCompletedConclusions({
+        const conclusionPage = await repository.listCompletedConclusions({
           projectId,
+          batchId,
+          caseDefinitionId: alpha.caseDefinitionId,
           limit: 1,
         });
-        const secondConclusionPage = await repository.listCompletedConclusions({
-          projectId,
-          cursor: firstConclusionPage.nextCursor!,
-          limit: 1,
-        });
-        expect(firstConclusionPage.nextCursor).toBeTruthy();
-        expect(secondConclusionPage.items).toHaveLength(1);
-        expect(secondConclusionPage.items[0]!.claim.id).not.toBe(
-          firstConclusionPage.items[0]!.claim.id,
-        );
+        expect(conclusionPage.items.map((item) => item.claim.id)).toEqual([alpha.id]);
+        expect(conclusionPage.nextCursor).toBeUndefined();
         await expect(
           repository.listCompletedConclusions({
             projectId: "another-project",
+            batchId,
+            caseDefinitionId: alpha.caseDefinitionId,
             limit: 10,
           }),
         ).resolves.toEqual({ items: [] });

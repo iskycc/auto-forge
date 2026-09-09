@@ -1811,11 +1811,14 @@ export interface FailureAnalysisRepository {
   }): Promise<FailureAnalysisHistoryPage>;
   listRecentCaseHistories(input: {
     projectId: string;
+    batchId: string;
     caseDefinitionIds: readonly string[];
     limitPerCase: number;
   }): Promise<FailureAnalysisHistoryItem[]>;
   listCompletedConclusions(input: {
     projectId: string;
+    batchId: string;
+    caseDefinitionId: string;
     query?: string;
     cursor?: string;
     limit: number;
@@ -1848,6 +1851,7 @@ export interface FailureAnalysisRepository {
   complete(input: {
     analysisIds: readonly string[];
     projectId: string;
+    inheritedFromAnalysisId?: string;
     claimantId: string;
     category: FailureAnalysisCategory;
     issueDescription?: string;

@@ -19,6 +19,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const claims = await services.failureAnalysis.complete({
       projectId: input.projectId,
       analysisIds: input.analysisIds,
+      ...(input.inheritedFromAnalysisId
+        ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+        : {}),
       category: input.category,
       claimant: { id: identity.user.id, username: identity.user.username },
       caseIssueConfirmed: input.caseIssueConfirmed,
@@ -33,7 +36,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       resourceId: claims[0]!.id,
       projectId: input.projectId,
       requestId: currentRequestId,
-      details: { count: claims.length, category: input.category },
+      details: {
+        count: claims.length,
+        category: input.category,
+        ...(input.inheritedFromAnalysisId
+          ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+          : {}),
+      },
     });
     return NextResponse.json({ items: failureAnalysisClaimSchema.array().parse(claims) });
   } catch (error) {

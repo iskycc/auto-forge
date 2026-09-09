@@ -20,6 +20,11 @@ import {
   type FailureAnalysisAnalystRow,
   type FailureAnalysisStatisticsCountRow,
 } from "./failure-analysis-shared";
+import {
+  analysisHistoryTaskScopeSql,
+  analysisInheritanceScopeSql,
+  requireMatchingAnalysisInheritance,
+} from "./failure-analysis-inheritance";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   previousExecutionsSql,
@@ -696,13 +701,14 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
            FROM (${claimSelectSql()}
                  WHERE claim.project_id=? AND claim.status='completed'
                    AND claim.completed_at IS NOT NULL
+                   AND ${analysisHistoryTaskScopeSql("?")}
                    AND claim.case_definition_id IN (${placeholders})) history
          ) ranked
          JOIN run_batches batch ON batch.id=ranked.batchId
          WHERE ranked.historyRank<=?
          ORDER BY ranked.caseDefinitionId,ranked.completedAt DESC,ranked.analysisId DESC`,
       )
-      .all(input.projectId, ...input.caseDefinitionIds, input.limitPerCase) as Array<
+      .all(input.projectId, input.batchId, ...input.caseDefinitionIds, input.limitPerCase) as Array<
       FailureAnalysisHistoryRow & { historyRank: number }
     >;
     return rows.map(toHistoryItem);
@@ -714,10 +720,16 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     const cursor = decodeRunBatchCursor(input.cursor);
     const where = [
       "claim.project_id=?",
+      analysisHistoryTaskScopeSql("?"),
+      "claim.case_definition_id=?",
       "claim.status='completed'",
       "claim.completed_at IS NOT NULL",
     ];
-    const parameters: Array<string | number> = [input.projectId];
+    const parameters: Array<string | number> = [
+      input.projectId,
+      input.batchId,
+      input.caseDefinitionId,
+    ];
     const query = input.query?.trim().slice(0, 200);
     if (query) {
       where.push(`(LOWER(claim.case_name) LIKE ? ESCAPE '\\'
@@ -848,6 +860,23 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
     return runSqliteWriteTransaction(this.handle, () => {
+      if (input.inheritedFromAnalysisId) {
+        const placeholders = input.analysisIds.map(() => "?").join(",");
+        const matches = this.handle.client
+          .prepare(
+            `SELECT target_claim.id
+          ${analysisInheritanceScopeSql}
+          AND source_claim.id=? AND target_claim.project_id=? AND target_claim.claimant_id=?
+          AND target_claim.id IN (${placeholders})`,
+          )
+          .all(
+            input.inheritedFromAnalysisId,
+            input.projectId,
+            input.claimantId,
+            ...input.analysisIds,
+          );
+        requireMatchingAnalysisInheritance(matches.length, input.analysisIds.length);
+      }
       const update = this.handle.client.prepare(
         `UPDATE failure_analysis_claims
          SET status='completed',category=?,issue_description=?,case_fix_evidence=?,

@@ -6,6 +6,31 @@ and known limitations.
 
 ## Unreleased
 
+## 1.14.1 - 2026-09-09
+
+### Fixed
+
+- 用例分析的历史结论与搜索继承范围限定为同一任务 ID、同一用例 ID；跨任务、跨用例或无任务上下文的查询不再返回继承候选。批量分析保留逐用例历史查看，取消跨用例套用结论入口。
+- 继承提交携带来源分析 ID，SQLite/PostgreSQL 在完成事务内校验来源已完成且任务、用例一致；无效来源或混合批量请求整体拒绝。同一任务不同执行批次之间仍可继承同一用例的结论。
+
+### Database, deployment and compatibility
+
+- 相较 v1.14.0 无新增数据库迁移、持久配置、外部服务、离线资产种类或 Runner Protocol 变更，无需因此更新 Runner。
+- 历史继承查询 `GET /api/v1/failure-analysis/history` 必须传入 `batchId`；结论搜索
+  `GET /api/v1/failure-analysis/conclusions` 必须传入 `batchId` 和 `caseDefinitionId`，缺少上下文返回 400。
+  完成接口新增可选 `inheritedFromAnalysisId`，使用继承功能的调用方应传入来源分析 ID。
+
+### Validation and known limitations
+
+- 应用服务、真实 SQLite/PostgreSQL 仓储及历史窗口回归共 31 项不同测试通过，覆盖任务与用例隔离、分页、
+  无任务上下文、未完成或无效来源、批量原子拒绝以及正确继承；Full 流水线已纳入新增回归。
+- 全仓格式、lint、类型检查和 Web 生产构建通过。完整用例分析 Playwright 场景通过，人工检查
+  1024×768 / 1536×960 的历史面板与继承选择器截图，布局、滚动和控件显示正常。
+- 全仓 865 项 TypeScript 单元测试、Go 测试、28 项脚本测试及 E2E 覆盖清单检查通过；本地全仓集成测试
+  186 项通过，130 项依赖未启用的外部服务而跳过，相关 PostgreSQL 专项已另外连接真实数据库验证。
+- 只读用例详情的完整分析履历保持可查看；无任务归属的执行不提供继承候选。此次限制针对平台继承功能，
+  手动填写分析结论仍按原有规则校验。
+
 ## 1.14.0 - 2026-09-09
 
 ### Added and changed

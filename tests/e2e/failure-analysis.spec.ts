@@ -1,3 +1,4 @@
+import { insertAnalysisConclusionScopeFixture } from "./support/analysis-conclusion-scope-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { insertAnalysisExecutionHistory } from "./support/analysis-execution-history-fixture";
 import { expect, test } from "@playwright/test";
@@ -30,6 +31,11 @@ test("terminal task failures support durable single and batch analysis with evid
     requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
     version.body.id,
     suffix,
+  );
+  const conclusionScope = insertAnalysisConclusionScopeFixture(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    suffix,
+    fixture.failedNames[3],
   );
   await insertAnalysisExecutionHistory(
     requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
@@ -365,6 +371,7 @@ test("terminal task failures support durable single and batch analysis with evid
       html: expect.stringContaining("<h2>AutoForge 用例分析（2 个）</h2>"),
       text: expect.stringContaining("分析结论：用例问题已修改"),
     });
+  await expect(batchDialog.getByRole("button", { name: /继承/ })).toHaveCount(0);
   await captureUi(page, "failure-analysis-case-fixed-dialog-1024", false);
   await batchDialog.getByRole("button", { name: "提交分析" }).click();
   const confirmation = page.getByRole("alertdialog", { name: "确认用例问题" });
@@ -436,6 +443,50 @@ test("terminal task failures support durable single and batch analysis with evid
   const codeDialog = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[2]}` });
   await expect(codeDialog.getByText("历史分析结论", { exact: true })).toBeVisible();
   await expect(codeDialog).toContainText("BUG-1023");
+  await expect(codeDialog).not.toContainText("OTHER-TASK-ISSUE");
+  const currentClaims = await browserJson<{
+    items: Array<{ id: string; caseName: string; caseDefinitionId: string }>;
+  }>(
+    page,
+    `/api/v1/failure-analysis/claims?projectId=${DEFAULT_PROJECT_ID}&projectVersionId=${version.body.id}&batchId=${fixture.batchId}`,
+  );
+  expect(currentClaims.status).toBe(200);
+  const codeClaim = currentClaims.body.items.find(
+    (claim) => claim.caseName === fixture.failedNames[2],
+  )!;
+  const rejectedInheritance = await browserJson<{ error: { code: string } }>(
+    page,
+    "/api/v1/failure-analysis/claims/complete",
+    {
+      method: "POST",
+      body: {
+        projectId: DEFAULT_PROJECT_ID,
+        analysisIds: [codeClaim.id],
+        inheritedFromAnalysisId: conclusionScope.otherTaskAnalysisId,
+        category: "code_issue_filed",
+        issueDescription: "Forged source",
+        ticketReference: "OTHER-TASK-ISSUE",
+      },
+    },
+  );
+  expect(rejectedInheritance.status).toBeGreaterThanOrEqual(400);
+  expect(rejectedInheritance.body.error.code).toBe("FAILURE_ANALYSIS_INHERITANCE_SCOPE_INVALID");
+  for (const endpoint of ["history", "conclusions"]) {
+    const unscoped = await browserJson(
+      page,
+      `/api/v1/failure-analysis/${endpoint}?projectId=${DEFAULT_PROJECT_ID}&caseDefinitionId=${codeClaim.caseDefinitionId}`,
+    );
+    expect(unscoped.status).toBe(400);
+  }
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectDialogFitsViewport(page, codeDialog);
+    await captureUi(page, `analysis-history-scope-${viewport.width}`, false);
+  }
+  await page.setViewportSize({ width: 1024, height: 768 });
   await codeDialog.getByRole("button", { name: "继承此代码问题结论" }).click();
   const inheritanceConfirmation = page.getByRole("alertdialog", {
     name: "确认继承未闭环代码问题",
@@ -469,20 +520,44 @@ test("terminal task failures support durable single and batch analysis with evid
   const rerunCard = analysisCard(page, fixture.failedNames[3]);
   await rerunCard.getByRole("button", { name: "开始分析" }).click();
   const rerunDialog = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[3]}` });
-  await rerunDialog.getByRole("button", { name: "从已分析用例继承" }).click();
+  await rerunDialog.getByRole("button", { name: "从该用例历史继承" }).click();
   const conclusionPicker = page.getByRole("dialog", { name: "选择已分析用例结论" });
-  const conclusionSearchResponse = page.waitForResponse((response) => {
+  await expect(conclusionPicker).toContainText("仅搜索同一任务、同一用例");
+  for (const forbiddenQuery of [fixture.failedNames[0], "OTHER-TASK-ISSUE"]) {
+    const response = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === "/api/v1/failure-analysis/conclusions" &&
+        url.searchParams.get("query") === forbiddenQuery
+      );
+    });
+    await conclusionPicker.getByLabel("搜索已分析用例").fill(forbiddenQuery);
+    await conclusionPicker.getByRole("button", { name: "搜索", exact: true }).click();
+    expect((await response).status()).toBe(200);
+    await expect(conclusionPicker).toContainText("没有找到可继承的已完成结论");
+    await expect(conclusionPicker.getByRole("button", { name: /选择并继承/ })).toHaveCount(0);
+  }
+  const allowedResponse = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
       url.pathname === "/api/v1/failure-analysis/conclusions" &&
-      url.searchParams.get("query") === fixture.failedNames[0]
+      url.searchParams.get("query") === fixture.failedNames[3]
     );
   });
-  await conclusionPicker.getByLabel("搜索已分析用例").fill(fixture.failedNames[0]);
+  await conclusionPicker.getByLabel("搜索已分析用例").fill(fixture.failedNames[3]);
   await conclusionPicker.getByRole("button", { name: "搜索", exact: true }).click();
-  expect((await conclusionSearchResponse).status()).toBe(200);
+  expect((await allowedResponse).status()).toBe(200);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectDialogFitsViewport(page, conclusionPicker);
+    await captureUi(page, `analysis-conclusion-picker-${viewport.width}`, false);
+  }
+  await page.setViewportSize({ width: 1024, height: 768 });
   await conclusionPicker
-    .getByRole("button", { name: `选择并继承 ${fixture.failedNames[0]}` })
+    .getByRole("button", { name: `选择并继承 ${fixture.failedNames[3]}` })
     .click();
   const generalInheritanceConfirmation = page.getByRole("alertdialog", {
     name: "确认继承分析结论",

@@ -21,6 +21,11 @@ import {
   type FailureAnalysisAnalystRow,
   type FailureAnalysisStatisticsCountRow,
 } from "./failure-analysis-shared";
+import {
+  analysisHistoryTaskScopeSql,
+  analysisInheritanceScopeSql,
+  requireMatchingAnalysisInheritance,
+} from "./failure-analysis-inheritance";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   previousExecutionsSql,
@@ -690,13 +695,14 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
          FROM (${claimSelectSql()}
                WHERE claim.project_id=$1 AND claim.status='completed'
                  AND claim.completed_at IS NOT NULL
+                 AND ${analysisHistoryTaskScopeSql("$4")}
                  AND claim.case_definition_id=ANY($2::text[])) history
        ) ranked
        JOIN run_batches batch ON batch.id=ranked."batchId"
        WHERE ranked."historyRank"<=$3
        ORDER BY ranked."caseDefinitionId",ranked."completedAt" DESC,
                 ranked."analysisId" DESC`,
-      [input.projectId, [...input.caseDefinitionIds], input.limitPerCase],
+      [input.projectId, [...input.caseDefinitionIds], input.limitPerCase, input.batchId],
     );
     return result.rows.map(toHistoryItem);
   }
@@ -705,9 +711,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     input: Parameters<FailureAnalysisRepository["listCompletedConclusions"]>[0],
   ) {
     await this.handle.ready;
-    const parameters: unknown[] = [input.projectId];
+    const parameters: unknown[] = [input.projectId, input.batchId, input.caseDefinitionId];
     const where = [
       "claim.project_id=$1",
+      analysisHistoryTaskScopeSql("$2"),
+      "claim.case_definition_id=$3",
       "claim.status='completed'",
       "claim.completed_at IS NOT NULL",
     ];
@@ -827,6 +835,21 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     const client = await this.handle.pool.connect();
     try {
       await client.query("BEGIN");
+      if (input.inheritedFromAnalysisId) {
+        const matches = await client.query(
+          `SELECT target_claim.id
+          ${analysisInheritanceScopeSql}
+          AND source_claim.id=$1 AND target_claim.project_id=$2 AND target_claim.claimant_id=$3
+          AND target_claim.id=ANY($4::text[]) FOR SHARE OF source_claim`,
+          [
+            input.inheritedFromAnalysisId,
+            input.projectId,
+            input.claimantId,
+            [...input.analysisIds],
+          ],
+        );
+        requireMatchingAnalysisInheritance(matches.rows.length, input.analysisIds.length);
+      }
       const proofAttemptIds = input.analysisIds.map(
         (analysisId) => input.rerunProofs.get(analysisId)?.attemptId ?? null,
       );

@@ -8,6 +8,7 @@ import { getPlatformServices } from "@/lib/services";
 
 const querySchema = z.object({
   projectId: z.string().min(1),
+  batchId: z.string().min(1),
   caseDefinitionIds: z.array(z.string().min(1)).min(1).max(100),
   limitPerCase: z.coerce.number().int().min(1).max(10).default(5),
 });
@@ -17,6 +18,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const searchParams = new URL(request.url).searchParams;
     const input = querySchema.parse({
       projectId: searchParams.get("projectId"),
+      batchId: searchParams.get("batchId"),
       caseDefinitionIds: searchParams.getAll("caseDefinitionId"),
       limitPerCase: searchParams.get("limitPerCase") ?? undefined,
     });

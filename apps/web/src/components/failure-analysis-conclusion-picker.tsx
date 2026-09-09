@@ -10,11 +10,15 @@ import { Button, Input } from "./ui";
 
 export function FailureAnalysisConclusionPicker({
   projectId,
+  batchId,
+  caseDefinitionId,
   excludedAnalysisIds,
   onClose,
   onSelect,
 }: {
   projectId: string;
+  batchId: string;
+  caseDefinitionId: string;
   excludedAnalysisIds: ReadonlySet<string>;
   onClose: () => void;
   onSelect: (item: FailureAnalysisHistoryItemView) => void;
@@ -31,7 +35,12 @@ export function FailureAnalysisConclusionPicker({
       setLoading(true);
       setError("");
       try {
-        const parameters = new URLSearchParams({ projectId, limit: "20" });
+        const parameters = new URLSearchParams({
+          projectId,
+          batchId,
+          caseDefinitionId,
+          limit: "20",
+        });
         if (query) parameters.set("query", query);
         if (cursor) parameters.set("cursor", cursor);
         const response = await fetch(`/api/v1/failure-analysis/conclusions?${parameters}`, {
@@ -45,6 +54,7 @@ export function FailureAnalysisConclusionPicker({
           items: FailureAnalysisHistoryItemView[];
           nextCursor?: string;
         };
+        if (signal?.aborted) return;
         const availableItems = page.items.filter((item) => !excludedAnalysisIds.has(item.claim.id));
         setItems((current) => (append ? [...current, ...availableItems] : availableItems));
         setNextCursor(page.nextCursor);
@@ -55,7 +65,7 @@ export function FailureAnalysisConclusionPicker({
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [excludedAnalysisIds, projectId, query],
+    [batchId, caseDefinitionId, excludedAnalysisIds, projectId, query],
   );
 
   useEffect(() => {
@@ -91,7 +101,7 @@ export function FailureAnalysisConclusionPicker({
           <span>
             <ClipboardPaste size={17} />
             <strong>选择已分析用例结论</strong>
-            <small>可搜索项目内已完成的分析，证明材料不会被继承</small>
+            <small>仅搜索同一任务、同一用例的已完成分析；不继承证明材料</small>
           </span>
           <Button aria-label="关闭结论选择弹窗" onClick={onClose} type="button">
             <X size={16} />
@@ -106,7 +116,7 @@ export function FailureAnalysisConclusionPicker({
                 autoFocus
                 maxLength={200}
                 onChange={(event) => setQueryInput(event.target.value)}
-                placeholder="用例名称、类路径、失败概要、问题单"
+                placeholder="失败概要、问题说明、问题单"
                 value={queryInput}
               />
             </span>

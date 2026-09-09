@@ -242,6 +242,7 @@ export const startFailureAnalysisInputSchema = z.object({
 });
 
 export const completeFailureAnalysisInputSchema = z.object({
+  inheritedFromAnalysisId: z.string().min(1).max(200).optional(),
   projectId: z.string().min(1),
   analysisIds: z.array(z.string().min(1)).min(1).max(100),
   category: failureAnalysisCategorySchema,

@@ -8,6 +8,8 @@ import { getPlatformServices } from "@/lib/services";
 
 const querySchema = z.object({
   projectId: z.string().min(1),
+  batchId: z.string().min(1),
+  caseDefinitionId: z.string().min(1),
   query: z.string().max(200).optional(),
   cursor: z.string().max(1_024).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -20,6 +22,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     const services = await getPlatformServices();
     const page = await services.failureAnalysis.listCompletedConclusions({
       projectId: input.projectId,
+      batchId: input.batchId,
+      caseDefinitionId: input.caseDefinitionId,
       limit: input.limit,
       ...(input.query ? { query: input.query } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),

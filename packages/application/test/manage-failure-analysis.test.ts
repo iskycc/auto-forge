@@ -179,6 +179,28 @@ describe("FailureAnalysisService", () => {
     expect(requestedExecutionRunIds[0]).toEqual(["run-a", "run-b"]);
   });
 
+  it("carries the selected conclusion source into the transactional completion check", async () => {
+    const claim = failureAnalysisClaim();
+    const complete = vi.fn(async () => [claim]);
+    const service = createService({ findOwnedClaims: vi.fn(async () => [claim]), complete });
+    await service.complete({
+      analysisIds: [claim.id],
+      projectId: claim.projectId,
+      claimant: { id: claim.claimantId, username: claim.claimantUsername },
+      inheritedFromAnalysisId: "same-task-case-history",
+      category: "code_issue_filed",
+      issueDescription: "Same root cause",
+      ticketReference: "BUG-1",
+      caseIssueConfirmed: false,
+    });
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inheritedFromAnalysisId: "same-task-case-history",
+        analysisIds: [claim.id],
+      }),
+    );
+  });
+
   it("bounds and deduplicates historical analysis queries", async () => {
     const listCaseHistory = vi.fn(async () => ({ items: [] }));
     const listRecentCaseHistories = vi.fn(async () => []);
@@ -196,11 +218,14 @@ describe("FailureAnalysisService", () => {
     });
     await service.listRecentCaseHistories({
       projectId: "project-a",
+      batchId: "batch-a",
       caseDefinitionIds: ["case-a", "case-b", "case-a"],
       limitPerCase: 50,
     });
     await service.listCompletedConclusions({
       projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-a",
       query: `  ${"根因".repeat(120)}  `,
       limit: 500,
     });
@@ -210,16 +235,23 @@ describe("FailureAnalysisService", () => {
     );
     expect(listRecentCaseHistories).toHaveBeenCalledWith({
       projectId: "project-a",
+      batchId: "batch-a",
       caseDefinitionIds: ["case-a", "case-b"],
       limitPerCase: 10,
     });
     expect(listCompletedConclusions).toHaveBeenCalledWith({
       projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-a",
       query: "根因".repeat(100),
       limit: 100,
     });
     expect(() =>
-      service.listRecentCaseHistories({ projectId: "project-a", caseDefinitionIds: [] }),
+      service.listRecentCaseHistories({
+        projectId: "project-a",
+        batchId: "batch-a",
+        caseDefinitionIds: [],
+      }),
     ).toThrowError(expect.objectContaining({ code: "FAILURE_ANALYSIS_HISTORY_SELECTION_INVALID" }));
   });
 

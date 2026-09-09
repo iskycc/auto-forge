@@ -298,6 +298,7 @@ run_adapter_tests() {
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
       packages/db/test/postgres-failure-analysis.integration.test.ts \
+      packages/db/test/failure-analysis-history-scope.integration.test.ts \
       packages/db/test/failure-analysis-migration.integration.test.ts \
       packages/db/test/analysis-assignees.integration.test.ts \
       packages/db/test/read-model-snapshots.integration.test.ts \

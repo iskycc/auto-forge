@@ -1419,6 +1419,8 @@ function CompleteAnalysisDialog({
     () => [...new Set(claims.map((claim) => claim.caseDefinitionId))],
     [claims],
   );
+  const historyBatchId = claims[0]!.batchId;
+  const [inheritedFromAnalysisId, setInheritedFromAnalysisId] = useState<string>();
   const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
   const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
   const closeScreenshotPreview = useCallback(() => {
@@ -1430,6 +1432,7 @@ function CompleteAnalysisDialog({
     const controller = new AbortController();
     const parameters = new URLSearchParams({
       projectId,
+      batchId: historyBatchId,
       limitPerCase: String(historyLimitPerCase),
     });
     for (const caseDefinitionId of caseDefinitionIds) {
@@ -1446,6 +1449,7 @@ function CompleteAnalysisDialog({
         return (await response.json()) as { items: FailureAnalysisHistoryItemView[] };
       })
       .then((payload) => {
+        if (controller.signal.aborted) return;
         setHistoryItems(payload.items.filter((item) => !currentAnalysisIds.has(item.claim.id)));
       })
       .catch((loadError: unknown) => {
@@ -1456,7 +1460,7 @@ function CompleteAnalysisDialog({
         if (!controller.signal.aborted) setHistoryLoading(false);
       });
     return () => controller.abort();
-  }, [caseDefinitionIds, currentAnalysisIds, historyLimitPerCase, projectId]);
+  }, [caseDefinitionIds, currentAnalysisIds, historyBatchId, historyLimitPerCase, projectId]);
 
   useEffect(() => {
     if (!previewClaim) return;
@@ -1589,6 +1593,7 @@ function CompleteAnalysisDialog({
           ticketReference,
           remark,
           caseIssueConfirmed,
+          ...(inheritedFromAnalysisId ? { inheritedFromAnalysisId } : {}),
         }),
       });
       if (!response.ok)
@@ -1669,7 +1674,14 @@ function CompleteAnalysisDialog({
   }
 
   function inheritConclusion(): void {
-    if (!inheritanceCandidate) return;
+    if (
+      !inheritanceCandidate ||
+      !initial ||
+      readOnly ||
+      inheritanceCandidate.claim.caseDefinitionId !== initial.caseDefinitionId
+    )
+      return;
+    setInheritedFromAnalysisId(inheritanceCandidate.claim.id);
     setCategory(inheritanceCandidate.claim.category);
     setRerunProofLookup(undefined);
     setIssueDescription(inheritanceCandidate.claim.issueDescription ?? "");
@@ -1810,7 +1822,7 @@ function CompleteAnalysisDialog({
               historyItems={historyItems}
               historyLoading={historyLoading}
               historyLimitPerCase={historyLimitPerCase}
-              canInherit={!readOnly}
+              canInherit={!readOnly && claims.length === 1}
               onBrowse={() => setShowConclusionPicker(true)}
               onInherit={setInheritanceCandidate}
               onPreview={(claim, trigger) => openScreenshotPreview(claim, trigger)}
@@ -2195,8 +2207,10 @@ function CompleteAnalysisDialog({
           </section>
         </div>
       ) : null}
-      {showConclusionPicker ? (
+      {showConclusionPicker && initial ? (
         <FailureAnalysisConclusionPicker
+          batchId={initial.batchId}
+          caseDefinitionId={initial.caseDefinitionId}
           excludedAnalysisIds={currentAnalysisIds}
           onClose={() => setShowConclusionPicker(false)}
           onSelect={(item) => {
@@ -2301,12 +2315,12 @@ function AnalysisHistoryPanel({
         <span className="failure-analysis-history-header-actions">
           <small>
             {selectedCaseCount > 1
-              ? `按用例展示最近 ${historyLimitPerCase} 条`
-              : `最近 ${historyLimitPerCase} 条`}
+              ? `同一任务 · 按用例展示最近 ${historyLimitPerCase} 条`
+              : `同一任务 · 最近 ${historyLimitPerCase} 条`}
           </small>
           {canInherit ? (
             <Button onClick={onBrowse} size="compact" type="button" variant="secondary">
-              <ClipboardPaste size={13} /> 从已分析用例继承
+              <ClipboardPaste size={13} /> 从该用例历史继承
             </Button>
           ) : null}
         </span>
@@ -2320,7 +2334,9 @@ function AnalysisHistoryPanel({
           {historyError}
         </div>
       ) : historyItems.length === 0 ? (
-        <div className="failure-analysis-history-state">该用例暂无已完成的历史分析结论。</div>
+        <div className="failure-analysis-history-state">
+          同一任务下，该用例暂无已完成的历史分析结论。
+        </div>
       ) : (
         <div className="failure-analysis-history-cards">
           {historyItems.map((item) => (
