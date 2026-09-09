@@ -10,10 +10,20 @@ export async function associateDdtSr(page: Page, srNum: string, className: strin
   await range.getByRole("button", { name: `加入 ${className}`, exact: true }).click();
   await expect(range.getByRole("button", { name: `移除 ${className}`, exact: true })).toBeVisible();
   await range.getByRole("button", { name: "完成", exact: true }).click();
-  await page.getByRole("button", { name: `关联 ${srNum} 的测试类`, exact: true }).click();
-  const mapping = page.getByRole("dialog", { name: `关联 SR ${srNum}`, exact: true });
-  await mapping.getByRole("radio", { name: className, exact: true }).check();
-  await mapping.getByRole("button", { name: "保存 SR 关联", exact: true }).click();
+  await page.getByRole("button", { name: "配置需求分类", exact: true }).click();
+  const categories = page.getByRole("dialog", { name: "需求分类", exact: true });
+  await categories.getByRole("button", { name: "新建分类", exact: true }).click();
+  await categories.getByLabel("分类名称", { exact: true }).fill(`${srNum} 分类`);
+  await categories.getByRole("radio", { name: className, exact: true }).check();
+  await categories.getByRole("button", { name: "保存分类", exact: true }).click();
+  await expect(
+    categories.getByRole("button", { name: `编辑分类 ${srNum} 分类`, exact: true }),
+  ).toBeVisible();
+  await categories.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByRole("button", { name: `设置 ${srNum} 的分类`, exact: true }).click();
+  const mapping = page.getByRole("dialog", { name: `设置 SR ${srNum} 的分类`, exact: true });
+  await mapping.getByRole("radio", { name: `${srNum} 分类`, exact: true }).check();
+  await mapping.getByRole("button", { name: "保存 SR 分类", exact: true }).click();
   await expect(mapping).toHaveCount(0);
   await expect(
     page.locator(".ddt-sr-row").filter({ has: page.getByText(srNum, { exact: true }) }),

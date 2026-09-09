@@ -161,6 +161,10 @@ export class AttemptLogShareService {
             executionRunId: attempt.executionRunId,
           });
     if (!selectedSnapshot) return null;
+    const selectedRun = selectedSnapshot.runs.find(
+      (candidate) => candidate.id === attempt.executionRunId,
+    );
+    if (!selectedRun) return null;
     const log = await this.readAttemptLogText(attempt.id);
     return {
       batchId: batch.id,
@@ -168,8 +172,9 @@ export class AttemptLogShareService {
       attemptId: attempt.id,
       attemptNumber: attempt.attemptNumber,
       executionRound: attempt.executionRound ?? attempt.attemptNumber,
-      casePath: run.className,
-      displayName: run.displayName,
+      casePath: selectedRun.className,
+      displayName: selectedRun.displayName,
+      caseType: selectedRun.caseType ?? "testng",
       dependencyUpdatedAt: selectedSnapshot.adapterRuntime?.jarBundle?.createdAt ?? null,
       outcome,
       resultCode: attempt.resultCode ?? null,

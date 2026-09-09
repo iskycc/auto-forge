@@ -140,4 +140,123 @@ export async function expectDdtSrExecutionContract(
   expect(competingWrites.find((result) => result.status === "rejected")).toMatchObject({
     reason: { code: "DDT_EXECUTION_MAPPING_REVISION_CONFLICT" },
   });
+  const category = {
+    scope,
+    id: `category-${executionCaseDefinitionId}`,
+    name: "钱包",
+    executionCaseDefinitionId,
+    expectedRevision: 0,
+    updatedAt,
+  };
+  await repository.saveRequirementCategory(category);
+  await expect(
+    repository.saveRequirementCategory({ ...category, id: `duplicate-${category.id}` }),
+  ).rejects.toMatchObject({ code: "DDT_CATEGORY_NAME_CONFLICT" });
+  await expect(
+    repository.saveRequirementCategory({
+      ...category,
+      executionCaseDefinitionId: "missing",
+      expectedRevision: 1,
+    }),
+  ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_OUT_OF_RANGE" });
+  await repository.setSrExecutionClass({
+    ...assignment,
+    expectedRevision: 4,
+    categoryId: category.id,
+    executionCaseDefinitionId: null,
+  });
+  await expect(
+    repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 10 }),
+  ).resolves.toMatchObject({
+    items: [
+      {
+        category: { id: category.id, name: "钱包" },
+        executionClass: { caseDefinitionId: executionCaseDefinitionId },
+      },
+    ],
+  });
+  await expect(repository.getCase(scope, caseIds[0])).resolves.toMatchObject({
+    executionClass: { caseDefinitionId: executionCaseDefinitionId },
+    revision: 1,
+  });
+  await expect(
+    repository.deleteRequirementCategory({ scope, id: category.id, expectedRevision: 1 }),
+  ).rejects.toMatchObject({ code: "DDT_CATEGORY_IN_USE" });
+  await expect(
+    repository.changeExecutionClassRange({ ...candidate, included: false, expectedRevision: 3 }),
+  ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_IN_USE" });
+  await repository.changeExecutionClassRange({
+    ...candidate,
+    executionCaseDefinitionId: executionCaseDefinitionId + "-replacement",
+    expectedRevision: 3,
+  });
+  const beforeCategoryChange = await repository.getCases(scope, caseIds);
+  await repository.saveRequirementCategory({
+    ...category,
+    name: "支付",
+    executionCaseDefinitionId: executionCaseDefinitionId + "-replacement",
+    expectedRevision: 1,
+  });
+  await expect(
+    repository.saveRequirementCategory({ ...category, expectedRevision: 1 }),
+  ).rejects.toMatchObject({ code: "DDT_EXECUTION_MAPPING_REVISION_CONFLICT" });
+  await expect(
+    repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 10 }),
+  ).resolves.toMatchObject({ items: [{ category: { name: "支付" } }] });
+  expect(
+    (await repository.getCases(scope, caseIds)).map(
+      (item) => item.executionClass?.caseDefinitionId,
+    ),
+  ).toEqual([
+    executionCaseDefinitionId + "-replacement",
+    executionCaseDefinitionId + "-replacement",
+  ]);
+  expect(beforeCategoryChange.map((item) => item.executionClass?.caseDefinitionId)).toEqual([
+    executionCaseDefinitionId,
+    executionCaseDefinitionId,
+  ]);
+  const anotherCategory = { ...category, id: category.id + "-second", name: "其他分类" };
+  await repository.saveRequirementCategory(anotherCategory);
+  const firstCategories = await repository.listRequirementCategories(scope, {
+    query: "",
+    limit: 1,
+  });
+  expect(firstCategories.items).toHaveLength(1);
+  expect(firstCategories.nextCursor).toBeDefined();
+  const nextCategories = await repository.listRequirementCategories(scope, {
+    query: "",
+    limit: 1,
+    cursor: firstCategories.nextCursor!,
+  });
+  expect(nextCategories.items[0]?.id).not.toBe(firstCategories.items[0]?.id);
+  expect(nextCategories.nextCursor).toBeUndefined();
+  await repository.deleteRequirementCategory({
+    scope,
+    id: anotherCategory.id,
+    expectedRevision: 1,
+  });
+  await expect(
+    repository.listRequirementCategories(
+      { ...scope, testStageId: "other-stage" },
+      { query: "", limit: 10 },
+    ),
+  ).resolves.toEqual({ items: [] });
+  await expect(
+    repository.setSrExecutionClass({
+      ...assignment,
+      expectedRevision: 5,
+      categoryId: "missing",
+      executionCaseDefinitionId: null,
+    }),
+  ).rejects.toMatchObject({ code: "DDT_CATEGORY_NOT_FOUND" });
+  await repository.setSrExecutionClass({
+    ...assignment,
+    expectedRevision: 5,
+    categoryId: null,
+    executionCaseDefinitionId: null,
+  });
+  await repository.deleteRequirementCategory({ scope, id: category.id, expectedRevision: 2 });
+  await expect(repository.getCase(scope, caseIds[0])).resolves.not.toHaveProperty("executionClass");
+
+  await repository.setSrExecutionClass({ ...assignment, expectedRevision: 6 });
 }

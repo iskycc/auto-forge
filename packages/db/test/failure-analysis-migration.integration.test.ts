@@ -26,20 +26,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             .sort()) {
             await database.execute(await readFile(resolve(folder, file), "utf8"));
           }
-          const disabled = dialect === "sqlite" ? "0" : "FALSE";
-          await database.execute(`
-          INSERT INTO runners (id,credential_hash,name,disabled,draining,os,architecture,agent_version,protocol_version,labels_json,capabilities_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at)
-          VALUES ('runner','hash','Runner',${disabled},${disabled},'linux','amd64','1.0.0',1,'[]','[]',1,0,'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
-          INSERT INTO run_batches (id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,created_at,updated_at)
-          VALUES ('worked','suite','Worked',1,'succeeded',0,'[]',1,'00000000-0000-7000-8000-000000000001','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z'),
-                 ('untouched','suite','Untouched',1,'succeeded',0,'[]',1,'00000000-0000-7000-8000-000000000001','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
-          INSERT INTO execution_runs (id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,created_at,updated_at)
-          VALUES ('run','worked','case',1,'Case','example.Case','failed',1,'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
-          INSERT INTO run_attempts (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at)
-          VALUES ('attempt','run','runner',1,'failed',1,'2026-09-01T00:00:00.000Z');
-          INSERT INTO failure_analysis_claims (id,project_id,batch_id,execution_run_id,case_definition_id,attempt_id,case_name,class_name,attempt_number,failure_summary,status,claimant_id,claimant_username,claimant_display_name,claimed_at,updated_at)
-          VALUES ('analysis','00000000-0000-7000-8000-000000000001','worked','run','case','attempt','Case','example.Case',1,'Failed','claimed','analyst','analyst','Analyst','2026-09-01T01:00:00.000Z','2026-09-01T01:00:00.000Z');
-        `);
+          await seedAnalysis(database, dialect);
           const migration = await readFile(resolve(folder, migrationName), "utf8");
           await database.execute("BEGIN");
           await database.execute(migration);
@@ -63,6 +50,80 @@ for (const dialect of ["sqlite", "postgres"] as const) {
       });
     },
   );
+}
+
+for (const dialect of ["sqlite", "postgres"] as const) {
+  it.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
+    `${dialect} upgrades remark images without losing historical remarks or proof and supports rollback`,
+    async () => {
+      const database = await legacyDatabase(dialect);
+      const folder = resolve(
+        import.meta.dirname,
+        `../drizzle/${dialect === "sqlite" ? "sqlite" : "postgresql"}`,
+      );
+      const migrationName =
+        dialect === "sqlite"
+          ? "0069_failure_analysis_remark_images.sql"
+          : "0067_failure_analysis_remark_images.sql";
+      try {
+        for (const name of (await readdir(folder))
+          .filter((name) => name.endsWith(".sql") && name < migrationName)
+          .sort()) {
+          await database.execute(await readFile(resolve(folder, name), "utf8"));
+        }
+        await seedAnalysis(database, dialect);
+        await database.execute(
+          "UPDATE failure_analysis_claims SET remark='old remark',screenshot_object_key='old/proof.png'",
+        );
+        const migration = await readFile(resolve(folder, migrationName), "utf8");
+        await database.execute("BEGIN");
+        await database.execute(migration);
+        await expect(
+          database.execute("SELECT * FROM intentionally_missing_upgrade_table"),
+        ).rejects.toThrow();
+        await database.execute("ROLLBACK");
+        await expect(
+          database.query("SELECT remark_images_json FROM failure_analysis_claims"),
+        ).rejects.toThrow();
+        await database.execute("BEGIN");
+        await database.execute(migration);
+        await database.execute("COMMIT");
+        expect(
+          await database.query(
+            "SELECT remark,screenshot_object_key,remark_images_json FROM failure_analysis_claims",
+          ),
+        ).toEqual([
+          {
+            remark: "old remark",
+            screenshot_object_key: "old/proof.png",
+            remark_images_json: '{"schemaVersion":1,"images":[]}',
+          },
+        ]);
+      } finally {
+        await database.dispose();
+      }
+    },
+  );
+}
+
+async function seedAnalysis(
+  database: Awaited<ReturnType<typeof legacyDatabase>>,
+  dialect: "sqlite" | "postgres",
+) {
+  const disabled = dialect === "sqlite" ? "0" : "FALSE";
+  await database.execute(`
+          INSERT INTO runners (id,credential_hash,name,disabled,draining,os,architecture,agent_version,protocol_version,labels_json,capabilities_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at)
+          VALUES ('runner','hash','Runner',${disabled},${disabled},'linux','amd64','1.0.0',1,'[]','[]',1,0,'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+          INSERT INTO run_batches (id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,created_at,updated_at)
+          VALUES ('worked','suite','Worked',1,'succeeded',0,'[]',1,'00000000-0000-7000-8000-000000000001','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z'),
+                 ('untouched','suite','Untouched',1,'succeeded',0,'[]',1,'00000000-0000-7000-8000-000000000001','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+          INSERT INTO execution_runs (id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,created_at,updated_at)
+          VALUES ('run','worked','case',1,'Case','example.Case','failed',1,'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+          INSERT INTO run_attempts (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at)
+          VALUES ('attempt','run','runner',1,'failed',1,'2026-09-01T00:00:00.000Z');
+          INSERT INTO failure_analysis_claims (id,project_id,batch_id,execution_run_id,case_definition_id,attempt_id,case_name,class_name,attempt_number,failure_summary,status,claimant_id,claimant_username,claimant_display_name,claimed_at,updated_at)
+          VALUES ('analysis','00000000-0000-7000-8000-000000000001','worked','run','case','attempt','Case','example.Case',1,'Failed','claimed','analyst','analyst','Analyst','2026-09-01T01:00:00.000Z','2026-09-01T01:00:00.000Z');
+        `);
 }
 
 async function legacyDatabase(dialect: "sqlite" | "postgres") {

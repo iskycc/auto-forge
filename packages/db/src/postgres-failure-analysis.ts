@@ -14,6 +14,8 @@ import {
   encodeFailureAnalysisClaimCursor,
   emptyStatisticsRow,
   statisticsPage,
+  serializeRemarkImages,
+  requireCompletedAnalysisCount,
   FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS,
   toFailureAnalysisCandidate,
   toFailureAnalysisClaim,
@@ -342,7 +344,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               claim.claimed_at AS "claimedAt",claim.analysis_started_at AS "analysisStartedAt",
               claim.completed_at AS "completedAt",claim.issue_description AS "issueDescription",
               claim.case_fix_evidence AS "caseFixEvidence",
-              claim.ticket_reference AS "ticketReference",claim.remark,
+              claim.ticket_reference AS "ticketReference",claim.remark,claim.remark_images_json AS "remarkImagesJson",
               claim.rerun_proof_attempt_id AS "rerunProofAttemptId",
               claim.rerun_proof_url AS "rerunProofUrl",
               claim.screenshot_object_key AS "screenshotObjectKey",
@@ -831,6 +833,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
   }
 
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
+    const remarkImagesJson = serializeRemarkImages(input.remarkImages);
     await this.handle.ready;
     const client = await this.handle.pool.connect();
     try {
@@ -858,19 +861,19 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       );
       // 一次 UNNEST 条件更新替代每个分析任务一次网络往返。一次批量最多 100 项，
       // 数组大小始终有界，同时每项仍可保存不同的重跑 attempt 与永久链接。
-      await client.query(
+      const updated = await client.query(
         `WITH selected(id,proof_attempt_id,proof_url) AS (
            SELECT * FROM UNNEST($9::text[],$10::text[],$11::text[])
          )
          UPDATE failure_analysis_claims claim
          SET status='completed',category=$1,issue_description=$2,case_fix_evidence=$3,
-             ticket_reference=$4,remark=$5,
+             ticket_reference=$4,remark=$5,remark_images_json=$12,
              rerun_proof_attempt_id=selected.proof_attempt_id,
              rerun_proof_url=selected.proof_url,
              analysis_started_at=COALESCE(claim.analysis_started_at,$6),
              completed_at=$6,updated_at=$6
          FROM selected
-         WHERE claim.id=selected.id AND claim.project_id=$7 AND claim.claimant_id=$8`,
+         WHERE claim.id=selected.id AND claim.project_id=$7 AND claim.claimant_id=$8 AND claim.status <> 'completed'`,
         [
           input.category,
           input.issueDescription ?? null,
@@ -883,8 +886,10 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
           [...input.analysisIds],
           proofAttemptIds,
           proofUrls,
+          remarkImagesJson,
         ],
       );
+      requireCompletedAnalysisCount(updated.rowCount ?? 0, input.analysisIds.length);
       const result = await client.query<FailureAnalysisRow>(
         `${claimSelectSql()} WHERE claim.project_id=$1 AND claim.claimant_id=$2
          AND claim.id=ANY($3::text[])`,
@@ -931,7 +936,7 @@ function claimSelectSql(extraSelection?: string): string {
                  claim.completed_at AS "completedAt",
                  claim.issue_description AS "issueDescription",
                  claim.case_fix_evidence AS "caseFixEvidence",
-                 claim.ticket_reference AS "ticketReference",claim.remark,
+                 claim.ticket_reference AS "ticketReference",claim.remark,claim.remark_images_json AS "remarkImagesJson",
                  claim.rerun_proof_attempt_id AS "rerunProofAttemptId",
                  claim.rerun_proof_url AS "rerunProofUrl",
                  claim.screenshot_object_key AS "screenshotObjectKey",

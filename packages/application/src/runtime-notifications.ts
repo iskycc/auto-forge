@@ -1,17 +1,8 @@
+import type { RuntimeIncident } from "@autoforge/contracts/runtime-diagnostics";
 import { createHash } from "node:crypto";
 import type { Clock, IdentityAccessRepository, PlatformOperationsRepository } from "./ports";
 
-export type RuntimeIncident = {
-  id: string;
-  kind:
-    | "log_io"
-    | "background_refresh"
-    | "web_pressure"
-    | "database_busy"
-    | "execution_control"
-    | "resource_pressure";
-  createdAt: string;
-};
+export type { RuntimeIncident } from "@autoforge/contracts/runtime-diagnostics";
 
 const descriptions: Record<RuntimeIncident["kind"], string> = {
   resource_pressure:
@@ -71,7 +62,7 @@ export class RuntimeNotificationService {
         kind: `platform.${incident.kind}`,
         severity: "warning",
         title: "平台运行保护提示",
-        message: `节点 ${this.nodeLabel}：${descriptions[incident.kind]}`,
+        message: `节点 ${this.nodeLabel}：${descriptions[incident.kind]}${incidentDetails(incident)}`,
         createdAt: this.clock.now().toISOString(),
       });
     }
@@ -80,4 +71,19 @@ export class RuntimeNotificationService {
       this.delivery = undefined;
     } else this.delivery.afterUserId = userIds.at(-1)!;
   }
+}
+
+function incidentDetails(incident: RuntimeIncident): string {
+  const context = incident.context;
+  if (!context) return "";
+  const labels = [
+    `操作/任务：${context.operation}`,
+    context.database && `数据库：${context.database}`,
+    context.errorCode && `错误码：${context.errorCode}`,
+    context.requestId && `请求：${context.requestId}`,
+    context.batchId && `执行批次：${context.batchId}`,
+    context.projectId && `项目：${context.projectId}`,
+    `发生时间：${incident.createdAt}`,
+  ].filter(Boolean);
+  return ` ${labels.join("；")}。${incident.kind === "database_busy" ? "此处记录发生等待的操作，持锁方需结合数据库诊断确认。" : ""}`;
 }

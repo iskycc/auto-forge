@@ -60,9 +60,10 @@ export interface SharedAttemptLogView {
   attemptNumber: number;
   /** 用户可见逻辑轮次。 */
   executionRound: number;
-  /** 用例路径，如 com.example.CheckoutTest */
+  /** 本次执行快照的完整类路径，TestNG 与 DDT 共用。 */
   casePath: string;
-  /** 用例名称（方法级显示名） */
+  caseType?: "testng" | "ddt";
+  /** TestNG 展示名；DDT 为本次执行快照的 CaseID。 */
   displayName: string;
   /** 当前查看的执行实际使用的依赖压缩包上传/登记时间；历史未记录时为 null。 */
   dependencyUpdatedAt?: string | null;

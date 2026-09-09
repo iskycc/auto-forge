@@ -496,6 +496,12 @@ test("terminal task failures support durable single and batch analysis with evid
   await batchDialog.getByLabel("问题说明 *").fill("测试数据字段已经失效");
   await batchDialog.getByLabel("用例已修改证明 *").fill("commit abc123，已更新断言数据");
   await batchDialog.getByLabel("备注说明 选填").fill("相同根因批量处理");
+  // HTTP deployments accessed by IP do not provide the secure-context-only randomUUID API.
+  await page.evaluate(() =>
+    Object.defineProperty(window.crypto, "randomUUID", { value: undefined, configurable: true }),
+  );
+  await pastePng(page, "batch-remark.png");
+  await expect(batchDialog.getByAltText("备注图片：batch-remark.png")).toBeVisible();
   await batchDialog.getByRole("button", { name: "复制用例信息" }).click();
   await expect
     .poll(() =>
@@ -519,6 +525,19 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(batchDialog).toBeHidden();
   await expect(firstCard).toContainText("已完成");
   await expect(secondCard).toContainText("用例问题已修改");
+  const batchRemarks = await browserJson<{
+    items: Array<{ caseName: string; remarkImages?: Array<{ id: string }> }>;
+  }>(
+    page,
+    `/api/v1/failure-analysis/claims?projectId=${DEFAULT_PROJECT_ID}&projectVersionId=${version.body.id}&batchId=${fixture.batchId}`,
+  );
+  const completedRemarks = batchRemarks.body.items.filter((claim) =>
+    fixture.failedNames.slice(0, 2).includes(claim.caseName),
+  );
+  expect(completedRemarks).toHaveLength(2);
+  expect(completedRemarks.every((claim) => claim.remarkImages?.length === 1)).toBe(true);
+  expect(completedRemarks[0]!.remarkImages![0]!.id).toBe(completedRemarks[1]!.remarkImages![0]!.id);
+
   await expect(page.locator(".failure-analysis-shell")).not.toHaveAttribute("inert", "");
   await expect(page.locator(".failure-analysis-claim-group > h3").first()).toContainText(
     "未完成分析",
@@ -582,6 +601,21 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(codeDialog.getByText("历史分析结论", { exact: true })).toBeVisible();
   await expect(codeDialog).toContainText("BUG-1023");
   await expect(codeDialog).not.toContainText("OTHER-TASK-ISSUE");
+  await codeDialog.getByRole("button", { name: "从该用例历史继承" }).click();
+  const codeConclusionPicker = page.getByRole("dialog", { name: "选择已分析用例结论" });
+  await expect(codeConclusionPicker.locator(".failure-analysis-conclusion-ticket")).toHaveText(
+    "问题单：BUG-1023",
+  );
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectDialogFitsViewport(page, codeConclusionPicker);
+    await captureUi(page, `analysis-history-ticket-${viewport.width}`, false);
+  }
+  await codeConclusionPicker.getByRole("button", { name: "关闭结论选择弹窗" }).click();
+
   const currentClaims = await browserJson<{
     items: Array<{ id: string; caseName: string; caseDefinitionId: string }>;
   }>(
@@ -637,6 +671,32 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(codeDialog.getByLabel("问题单链接或问题单号 *")).toHaveValue("BUG-1023");
   await codeDialog.getByLabel("问题说明 *").fill("后端返回的状态字段错误");
   await codeDialog.getByLabel("问题单链接或问题单号 *").fill("BUG-2048");
+  const remarkBox = codeDialog.getByLabel("备注说明 选填");
+  await remarkBox.fill("接口返回异常，见备注截图");
+  await pastePng(page, "remark-context.png");
+  await remarkBox.focus();
+  await pastePng(page, "discarded.png");
+  await codeDialog.getByRole("button", { name: "删除备注图片 discarded.png" }).click();
+  await expect(codeDialog.getByAltText("备注图片：discarded.png")).toHaveCount(0);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await codeDialog
+      .getByRole("button", { name: "查看备注图片 remark-context.png" })
+      .scrollIntoViewIfNeeded();
+    await expectDialogFitsViewport(page, codeDialog);
+    await captureUi(page, `analysis-remark-draft-${viewport.width}`, false);
+  }
+  await codeDialog.getByRole("button", { name: "查看备注图片 remark-context.png" }).click();
+  const remarkPreview = page.getByRole("dialog", { name: "图片预览 remark-context.png" });
+  await expect(remarkPreview.getByAltText("备注图片大图：remark-context.png")).toBeVisible();
+  await remarkPreview.getByRole("button", { name: "放大图片" }).click();
+  await expect(remarkPreview.getByLabel("当前图片缩放比例")).toHaveText("125%");
+  await page.keyboard.press("Escape");
+  await expect(remarkPreview).toBeHidden();
+
   await codeDialog.getByRole("button", { name: "复制用例信息" }).click();
   await expect
     .poll(() =>
@@ -654,6 +714,40 @@ test("terminal task failures support durable single and batch analysis with evid
   await codeDialog.getByRole("button", { name: "提交分析" }).click();
   await expect(codeDialog).toBeHidden();
   await expect(codeCard).toContainText("代码问题已提单");
+  await page.reload();
+  await analysisCard(page, fixture.failedNames[2])
+    .getByRole("button", { name: "查看分析详情" })
+    .click();
+  const savedRemark = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[2]}` });
+  await expect(savedRemark.getByLabel("备注说明 选填")).toHaveValue("接口返回异常，见备注截图");
+  const savedImage = savedRemark.getByAltText("备注图片：remark-context.png");
+  await expect
+    .poll(() => savedImage.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(savedRemark.getByRole("button", { name: /删除备注图片/ })).toHaveCount(0);
+  await expect(savedRemark.getByAltText("备注图片：discarded.png")).toHaveCount(0);
+  const imageUrl = (await savedImage.getAttribute("src"))!;
+  const foreignProject = new URL(imageUrl, page.url());
+  foreignProject.searchParams.set("projectId", "another-project");
+  expect((await page.request.get(foreignProject.toString())).ok()).toBe(false);
+  const anonymous = await page.context().browser()!.newContext();
+  try {
+    expect((await anonymous.request.get(new URL(imageUrl, page.url()).toString())).status()).toBe(
+      401,
+    );
+  } finally {
+    await anonymous.close();
+  }
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await savedImage.scrollIntoViewIfNeeded();
+    await expectDialogFitsViewport(page, savedRemark);
+    await captureUi(page, `analysis-remark-saved-${viewport.width}`, false);
+  }
+  await savedRemark.getByRole("button", { name: "关闭", exact: true }).click();
 
   const rerunCard = analysisCard(page, fixture.failedNames[3]);
   await rerunCard.getByRole("button", { name: "开始分析" }).click();
@@ -702,6 +796,7 @@ test("terminal task failures support durable single and batch analysis with evid
   });
   await generalInheritanceConfirmation.getByRole("button", { name: "确认继承结论" }).click();
   await expect(rerunDialog.getByLabel("用例问题已修改", { exact: false })).toBeChecked();
+  await expect(rerunDialog.getByAltText("备注图片：batch-remark.png")).toHaveCount(0);
   await expect(rerunDialog.getByLabel("问题说明 *")).toHaveValue("测试数据字段已经失效");
   await expect(rerunDialog.getByLabel("用例已修改证明 *")).toHaveValue(
     "commit abc123，已更新断言数据",
@@ -720,12 +815,19 @@ test("terminal task failures support durable single and batch analysis with evid
   expect((await missingLookupResponse).status()).toBe(200);
   await expect(rerunDialog).toContainText("1 个用例未找到成功重跑记录，必须提交截图");
   await expect(rerunDialog).toContainText("直接按 Ctrl + V 粘贴执行通过截图");
+  await rerunDialog.getByLabel("备注说明 选填").focus();
+  await pastePng(page, "rerun-remark.png");
+  await expect(rerunDialog.getByAltText("备注图片：rerun-remark.png")).toBeVisible();
+  await expect(rerunDialog.getByRole("button", { name: "提交分析" })).toBeDisabled();
+  await expect(rerunDialog.getByAltText("重跑通过截图：rerun-remark.png")).toHaveCount(0);
+
   await expect(rerunSubmit).toBeDisabled();
   await expect(rerunDialog.locator('input[type="file"]')).toHaveCount(0);
   const pasteZone = rerunDialog.getByRole("group", {
     name: "使用 Ctrl+V 粘贴重跑通过截图",
   });
   await pasteZone.scrollIntoViewIfNeeded();
+  await pasteZone.focus();
   await expect(pasteZone).toBeVisible();
   await captureUi(page, "failure-analysis-rerun-paste-1024", false);
   await pastePng(page);
@@ -907,8 +1009,11 @@ function candidateRow(page: import("@playwright/test").Page, caseName: string) {
   return page.locator(".failure-analysis-table tbody tr").filter({ hasText: caseName });
 }
 
-async function pastePng(page: import("@playwright/test").Page): Promise<void> {
-  await page.evaluate(() => {
+async function pastePng(
+  page: import("@playwright/test").Page,
+  fileName = "rerun-passed.png",
+): Promise<void> {
+  await page.evaluate(async (fileName) => {
     const target = document.activeElement;
     if (!(target instanceof HTMLElement)) throw new Error("active paste target not found");
     const png = Uint8Array.from(
@@ -917,11 +1022,35 @@ async function pastePng(page: import("@playwright/test").Page): Promise<void> {
       ),
       (character) => character.charCodeAt(0),
     );
-    const file = new File([png], "rerun-passed.png", { type: "image/png" });
+    let content: BlobPart = png;
+    if (fileName !== "rerun-passed.png") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 360;
+      const context = canvas.getContext("2d")!;
+      context.fillStyle = "#f1f5f9";
+      context.fillRect(0, 0, 640, 360);
+      context.fillStyle = "#1e293b";
+      context.fillRect(0, 0, 640, 64);
+      context.font = "24px sans-serif";
+      context.fillStyle = "white";
+      context.fillText("API response · Analysis remark", 24, 42);
+      context.fillStyle = "#b91c1c";
+      context.fillText("Assertion failed: expected SUCCESS", 24, 125);
+      context.fillStyle = "#334155";
+      context.font = "20px monospace";
+      context.fillText('{ "status": "ERROR", "code": 502 }', 24, 190);
+      content = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("PNG fixture failed")))),
+      );
+    }
+    const file = new File([content], fileName, { type: "image/png" });
     const transfer = new DataTransfer();
     transfer.items.add(file);
-    target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, clipboardData: transfer }));
-  });
+    target.dispatchEvent(
+      new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer }),
+    );
+  }, fileName);
 }
 
 async function installClipboardCapture(page: import("@playwright/test").Page): Promise<void> {

@@ -514,6 +514,9 @@ export function failureAnalysisContract(
           withScreenshot.every((claim) => claim.screenshot?.objectKey === screenshot.objectKey),
         ).toBe(true);
 
+        const remarkImages = [
+          { ...screenshot, id: "remark-image", objectKey: "objects/remark.png" },
+        ];
         const completed = await repository.complete({
           analysisIds: persisted.items.map((claim) => claim.id),
           projectId,
@@ -522,6 +525,7 @@ export function failureAnalysisContract(
           issueDescription: "测试数据问题",
           caseFixEvidence: "commit abc123",
           remark: "批量完成",
+          remarkImages,
           rerunProofs: new Map(),
           completedAt: "2026-09-01T01:05:00.000Z",
         });
@@ -537,6 +541,11 @@ export function failureAnalysisContract(
           remark: "批量完成",
           completedAt: "2026-09-01T01:05:00.000Z",
         });
+        for (const claim of completed) {
+          expect((await repository.getClaim(claim.id, projectId))?.remarkImages).toEqual(
+            remarkImages,
+          );
+        }
         const pendingClaim = await repository.claim({
           projectId,
           projectVersionId,
@@ -549,6 +558,24 @@ export function failureAnalysisContract(
           claimedAt: "2026-09-01T01:06:00.000Z",
         });
         expect(pendingClaim.claims).toHaveLength(1);
+        await expect(
+          repository.complete({
+            analysisIds: [pendingClaim.claims[0]!.id, completed[0]!.id],
+            projectId,
+            claimantId: "analyst-a",
+            category: "code_issue_filed",
+            ticketReference: "MUST-ROLL-BACK",
+            remarkImages: [],
+            rerunProofs: new Map(),
+            completedAt: "2026-09-01T01:07:00.000Z",
+          }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_COMPLETION_CONFLICT" });
+        expect((await repository.getClaim(pendingClaim.claims[0]!.id, projectId))?.status).toBe(
+          "claimed",
+        );
+        expect((await repository.getClaim(completed[0]!.id, projectId))?.remarkImages).toEqual(
+          remarkImages,
+        );
         const statistics = await repository.readStatistics({
           projectId,
           batchId,

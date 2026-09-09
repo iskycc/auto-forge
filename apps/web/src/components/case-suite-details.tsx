@@ -261,7 +261,10 @@ export function CaseSuiteDetailsView({
       suite.ddtItems.length === 0 ? (
         <div className="empty-state table-empty">
           <strong>任务中还没有用例</strong>
-          <p>前往用例管理勾选测试类并加入当前任务。</p>
+          <p>
+            可添加普通用例、DDT 用例或两者混合。执行前，所有用例都必须有可用的测试类；DDT 请先完成
+            SR 测试类关联。
+          </p>
         </div>
       ) : (
         <>

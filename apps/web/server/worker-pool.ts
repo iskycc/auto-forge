@@ -1,3 +1,7 @@
+import {
+  isRuntimeDatabaseContention,
+  type RuntimeDiagnosticContext,
+} from "@autoforge/contracts/runtime-diagnostics";
 import { runtimePriority } from "../src/lib/runtime-priority.ts";
 import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { Worker } from "node:worker_threads";
@@ -439,7 +443,12 @@ class WorkerLane {
     request.finishForeground();
     request.detachAbort();
     if (response.ok) request.resolve(response.value);
-    else request.reject(workerError(response.error));
+    else {
+      const context = response.error.runtimeContext;
+      if (context && isRuntimeDatabaseContention(context))
+        runtimePriority().report("database_busy", context);
+      request.reject(workerError(response.error));
+    }
     this.notifyDrained();
   }
 
@@ -494,6 +503,7 @@ function stringProperty(input: unknown, key: string): string {
 }
 
 function workerError(input: {
+  runtimeContext?: RuntimeDiagnosticContext;
   name: string;
   message: string;
   code?: string;
@@ -501,6 +511,7 @@ function workerError(input: {
   stack?: string;
 }): Error {
   const error = new Error(input.message);
+  if (input.runtimeContext) Object.assign(error, { runtimeContext: input.runtimeContext });
   error.name = input.name;
   if (input.code) Object.assign(error, { code: input.code, details: input.details });
   if (

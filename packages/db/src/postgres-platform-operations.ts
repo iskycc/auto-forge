@@ -470,6 +470,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
             ) recipients ON recipients.project_id=b.project_id
             WHERE b.status IN ('succeeded','failed','cancelled')
               AND b.batch_kind <> 'case_log_rerun'
+            AND NOT EXISTS (SELECT 1 FROM notifications existing WHERE existing.id = 'notice-batch-' || recipients.user_id || '-' || b.id)
             ORDER BY b.updated_at DESC LIMIT $2
             ON CONFLICT DO NOTHING`,
           values: [input.now, input.limit],
@@ -484,7 +485,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
               AND u.status='active' AND EXISTS (
                 SELECT 1 FROM user_system_roles usr JOIN roles role ON role.id=usr.role_id
                 WHERE usr.user_id=u.id AND position('runner.read' in role.permissions_json)>0
-              ) ORDER BY r.last_seen_at LIMIT $3 ON CONFLICT DO NOTHING`,
+              ) AND NOT EXISTS (SELECT 1 FROM notifications existing WHERE existing.id = 'notice-runner-' || u.id || '-' || r.id)
+            ORDER BY r.last_seen_at LIMIT $3 ON CONFLICT DO NOTHING`,
           values: [input.now, input.runnerOfflineBefore, input.limit],
         },
         {
@@ -496,7 +498,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
             WHERE j.status='dead_letter' AND u.status='active' AND EXISTS (
               SELECT 1 FROM user_system_roles usr JOIN roles role ON role.id=usr.role_id
               WHERE usr.user_id=u.id AND position('settings.manage' in role.permissions_json)>0
-            ) ORDER BY j.updated_at DESC LIMIT $2 ON CONFLICT DO NOTHING`,
+            ) AND NOT EXISTS (SELECT 1 FROM notifications existing WHERE existing.id = 'notice-cleanup-' || u.id || '-' || j.id)
+            ORDER BY j.updated_at DESC LIMIT $2 ON CONFLICT DO NOTHING`,
           values: [input.now, input.limit],
         },
       ];

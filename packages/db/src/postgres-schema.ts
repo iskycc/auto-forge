@@ -1082,6 +1082,9 @@ export const pgFailureAnalysisClaims = pgTable(
     caseFixEvidence: text("case_fix_evidence"),
     ticketReference: text("ticket_reference"),
     remark: text("remark"),
+    remarkImagesJson: text("remark_images_json")
+      .notNull()
+      .default('{"schemaVersion":1,"images":[]}'),
     rerunProofAttemptId: text("rerun_proof_attempt_id").references(() => pgRunAttempts.id, {
       onDelete: "set null",
     }),
@@ -1693,12 +1696,40 @@ export const pgDdtExecutionClassRange = pgTable(
     }),
   ],
 );
+export const pgDdtRequirementCategories = pgTable(
+  "ddt_requirement_categories",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id").references(
+      () => pgCaseDefinitions.id,
+      { onDelete: "set null" },
+    ),
+    revision: integer("revision").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ddt_requirement_categories_scope_name_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.normalizedName,
+    ),
+    index("ddt_category_class_idx").on(table.executionCaseDefinitionId),
+  ],
+);
+
 export const pgDdtSrExecutionMappings = pgTable(
   "ddt_sr_execution_mappings",
   {
     projectId: text("project_id").notNull(),
     projectVersionId: text("project_version_id").notNull(),
     testStageId: text("test_stage_id").notNull(),
+    categoryId: text("category_id").references(() => pgDdtRequirementCategories.id),
     srNumNormalized: text("sr_num_normalized").notNull(),
     srNum: text("sr_num").notNull(),
     executionCaseDefinitionId: text("execution_case_definition_id").references(
@@ -1989,6 +2020,7 @@ export const postgresSchema = {
   ddtCases: pgDdtCases,
   ddtExecutionConfiguration: pgDdtExecutionConfiguration,
   ddtExecutionClassRange: pgDdtExecutionClassRange,
+  ddtRequirementCategories: pgDdtRequirementCategories,
   ddtSrExecutionMappings: pgDdtSrExecutionMappings,
 
   ddtCaseHistory: pgDdtCaseHistory,

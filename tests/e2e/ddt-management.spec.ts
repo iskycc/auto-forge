@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { configureTaskExecution } from "./support/task-execution";
 import { associateDdtSr } from "./support/ddt-associations";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -1255,6 +1258,21 @@ test("SR associations restrict candidates and automatically cover imported and m
   }
   const readerToken = await issueDdtApiToken(page, hierarchy.projectId, ["case.read"]);
   const readerHeaders = { authorization: `Bearer ${readerToken}` };
+  expect(
+    (
+      await page.request.get(ddtPath(hierarchy, "requirement-categories"), {
+        headers: readerHeaders,
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await page.request.post(ddtPath(hierarchy, "requirement-categories"), {
+        headers: readerHeaders,
+        data: { name: "未授权分类", className, expectedRevision: 0 },
+      })
+    ).status(),
+  ).toBe(403);
   const firstCasePath = `cases/${encodeURIComponent(caseIds[0]!)}`;
   const previewResponse = await page.request.get(ddtPath(hierarchy, `${firstCasePath}/workspace`), {
     headers: readerHeaders,
@@ -1343,38 +1361,96 @@ test("SR associations restrict candidates and automatically cover imported and m
   await page.goBack();
   await expect(page.getByLabel("搜索 SR", { exact: true })).toHaveValue("");
   await expect(page.locator('.ddt-sr-row[data-sr="OTHER"]')).toBeVisible();
+  await page.route("**/api/v1/ddt/sr-mappings?**", async (route) => {
+    const response = await route.fetch();
+    const snapshot = (await response.json()) as {
+      items: Array<{ srNum: string; executionClass?: unknown }>;
+    };
+    for (const item of snapshot.items) if (item.srNum === "PAYMENTS") delete item.executionClass;
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(srRow).toContainText("分类执行类已删除");
+  await expect(
+    page.getByRole("button", { name: "解除 PAYMENTS 的关联", exact: true }),
+  ).toBeVisible();
+  await page.unroute("**/api/v1/ddt/sr-mappings?**");
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(srRow).toContainText(className);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 1024 });
     await expectUiIntegrity(page);
     await captureDdtUi(page, `ddt-sr-associations-${width}`);
   }
+  await page.getByRole("button", { name: "配置需求分类", exact: true }).click();
+  const categoryDialog = page.getByRole("dialog", { name: "需求分类", exact: true });
+  await categoryDialog.getByRole("button", { name: "删除分类 PAYMENTS 分类", exact: true }).click();
+  await acceptSystemDialog(page, "删除分类“PAYMENTS 分类”", "删除分类");
+  await expect(categoryDialog.getByRole("alert")).toContainText("仍使用此分类");
+  await categoryDialog.getByRole("button", { name: "编辑分类 PAYMENTS 分类", exact: true }).click();
+  await categoryDialog.getByLabel("分类名称", { exact: true }).fill("钱包与支付");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-category-editor-${width}`);
+  }
+  await categoryDialog.getByRole("button", { name: "保存分类", exact: true }).click();
+  await expect(
+    categoryDialog.getByRole("button", { name: "编辑分类 钱包与支付", exact: true }),
+  ).toBeVisible();
+  await categoryDialog.getByRole("button", { name: "新建分类", exact: true }).click();
+  await categoryDialog.getByLabel("分类名称", { exact: true }).fill("钱包与支付");
+  await categoryDialog.getByRole("radio", { name: className, exact: true }).check();
+  await categoryDialog.getByRole("button", { name: "保存分类", exact: true }).click();
+  await expect(categoryDialog.getByRole("alert")).toContainText("同名需求分类");
+  await categoryDialog.getByRole("button", { name: "返回分类列表", exact: true }).click();
+  await categoryDialog.getByRole("button", { name: "编辑分类 钱包与支付", exact: true }).click();
+  await categoryDialog.getByLabel("分类名称", { exact: true }).fill("PAYMENTS 分类");
+  await categoryDialog.getByRole("button", { name: "保存分类", exact: true }).click();
+  await expect(
+    categoryDialog.getByRole("button", { name: "编辑分类 PAYMENTS 分类", exact: true }),
+  ).toBeVisible();
+  await categoryDialog.getByRole("button", { name: "完成", exact: true }).click();
   await page.getByRole("button", { name: "配置测试类范围" }).click();
   const range = page.getByRole("dialog", { name: "测试类候选范围", exact: true });
   await range.getByRole("button", { name: `移除 ${className}`, exact: true }).click();
-  await expect(range.getByRole("alert")).toContainText("仍关联此测试类");
-  await expect(page.locator(".toast-viewport")).toContainText("仍关联此测试类");
+  await expect(range.getByRole("alert")).toContainText("仍使用此测试类");
+  await expect(page.locator(".toast-viewport")).toContainText("仍使用此测试类");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 1024 });
     await expectUiIntegrity(page);
     await captureDdtUi(page, `ddt-sr-range-${width}`);
   }
   await range.getByRole("button", { name: "完成", exact: true }).click();
-  await page.getByRole("button", { name: "关联 PAYMENTS 的测试类", exact: true }).click();
-  const mapping = page.getByRole("dialog", { name: "关联 SR PAYMENTS", exact: true });
-  await mapping.getByRole("radio", { name: className, exact: true }).check();
+  await page.getByRole("button", { name: "设置 PAYMENTS 的分类", exact: true }).click();
+  const mapping = page.getByRole("dialog", { name: "设置 SR PAYMENTS 的分类", exact: true });
+  await mapping.getByRole("radio", { name: "PAYMENTS 分类", exact: true }).check();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-sr-category-choice-${width}`);
+  }
   const concurrent = await browserJson(page, ddtPath(hierarchy, "sr-mappings"), {
     method: "POST",
     body: { srNum: "PAYMENTS", className, expectedRevision: 1 },
   });
   expect(concurrent.status).toBe(200);
-  await mapping.getByRole("button", { name: "保存 SR 关联" }).click();
+  await mapping.getByRole("button", { name: "保存 SR 分类" }).click();
   await expect(mapping.getByRole("alert")).toContainText("已被修改");
-  await mapping.getByRole("button", { name: "关闭后刷新 SR" }).click();
+  await mapping.getByRole("button", { name: "取消" }).click();
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await page.getByRole("button", { name: "解除 PAYMENTS 的关联", exact: true }).click();
   await acceptSystemDialog(page, "解除 PAYMENTS 的关联", "解除关联");
   await expect(srRow).toContainText("未关联");
   for (const id of caseIds) expect((await getCase(id)).body.executionClass).toBeUndefined();
+  await page.getByRole("button", { name: "配置需求分类", exact: true }).click();
+  const categories = page.getByRole("dialog", { name: "需求分类", exact: true });
+  await categories.getByRole("button", { name: "删除分类 PAYMENTS 分类", exact: true }).click();
+  await acceptSystemDialog(page, "删除分类“PAYMENTS 分类”", "删除分类");
+  await expect(
+    categories.getByRole("button", { name: "删除分类 PAYMENTS 分类", exact: true }),
+  ).toHaveCount(0);
+  await categories.getByRole("button", { name: "完成", exact: true }).click();
   await page.getByRole("button", { name: "配置测试类范围" }).click();
   await range.getByRole("button", { name: `移除 ${className}`, exact: true }).click();
   await expect(range.getByRole("button", { name: `移除 ${className}`, exact: true })).toHaveCount(
@@ -1382,6 +1458,278 @@ test("SR associations restrict candidates and automatically cover imported and m
   );
   await expect(range.getByRole("region", { name: "候选测试类范围" })).toContainText("候选范围为空");
 });
+
+test("mixed and DDT-only tasks share execution and reject unbound members", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const className = `com.example.Mixed${Date.now()}Test`;
+  const definition = await importExecutionClass(page, hierarchy, className);
+  const mixed = await createDdtSuite(page, hierarchy, definition.id);
+  const caseIds = [`DDT-A-${hierarchy.suffix}`, `DDT-B-${hierarchy.suffix}`];
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("button", { name: "导入表格" }).click();
+  const importer = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+  await importer.locator('input[type="file"]').setInputFiles({
+    name: "mixed.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      `CaseID,srNum,value\n${caseIds[0]},MIXED,first\n${caseIds[1]},MIXED,second\n`,
+    ),
+  });
+  await importer.getByRole("button", { name: "开始预检" }).click();
+  await importer.getByRole("button", { name: "确认并后台导入" }).click();
+  await expect(page.locator(".ddt-status.succeeded").first()).toBeVisible({ timeout: 30_000 });
+
+  await page.goto(`/case-suites/${mixed.id}`);
+  await page.getByRole("link", { name: "添加普通用例", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`targetSuiteId=${mixed.id}`));
+  await expect(page.locator('select[aria-label="目标用例任务"]')).toHaveValue(mixed.id);
+  await page.goto(`/case-suites/${mixed.id}`);
+  await page.getByRole("link", { name: "添加 DDT 用例", exact: true }).click();
+  for (const id of caseIds) await page.getByLabel(`选择 ${id}`, { exact: true }).check();
+  await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
+  const addDialog = page.getByRole("dialog", { name: "将 2 条 DDT 用例加入任务", exact: true });
+  await expect(addDialog.locator("select")).toHaveValue(mixed.id);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `mixed-task-add-${width}`);
+  }
+  await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+  await expect(addDialog).toBeHidden();
+  const rejected = await browserJson<{
+    error: { code: string; details: { blockers: Array<{ code: string }> } };
+  }>(page, "/api/v1/run-batches", { method: "POST", body: { suiteId: mixed.id } });
+  expect(rejected.status).toBe(400);
+  expect(rejected.body.error.code).toBe("RUN_BATCH_PREFLIGHT_FAILED");
+  expect(
+    rejected.body.error.details.blockers.filter(
+      (blocker) => blocker.code === "DDT_EXECUTION_CLASS_REQUIRED",
+    ),
+  ).toHaveLength(2);
+
+  for (const id of caseIds) await page.getByLabel(`选择 ${id}`, { exact: true }).check();
+  await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
+  await addDialog.locator("select").selectOption("new");
+  const pureName = `DDT only ${hierarchy.suffix}`;
+  await addDialog.getByLabel("新任务名称").fill(pureName);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-task-create-${width}`);
+  }
+  let failAddition = true;
+  const membershipRoute = "**/api/v1/case-suites/*/ddt-cases";
+  await page.route(membershipRoute, async (route) => {
+    if (failAddition) {
+      failAddition = false;
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "添加用例暂时失败，请重试。",
+            requestId: "ddt-membership-retry",
+          },
+        },
+      });
+    } else await route.continue();
+  });
+  await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+  await expect(addDialog).toContainText("添加用例暂时失败，请重试。");
+  await expect(addDialog).toContainText(`任务“${pureName}”已创建`);
+  await expect(addDialog.getByLabel("新任务名称")).toBeDisabled();
+  await captureDdtUi(page, "ddt-task-membership-retry-1536");
+  await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+  await expect(addDialog).toBeHidden();
+  await expect(page.getByRole("status").filter({ hasText: pureName })).toBeVisible();
+  await page.unroute(membershipRoute);
+  const suites = await browserJson<{ items: Array<{ id: string; name: string }> }>(
+    page,
+    `/api/v1/case-suites?projectId=${hierarchy.projectId}&projectVersionId=${hierarchy.versionId}`,
+  );
+  expect(suites.body.items.filter((suite) => suite.name === pureName)).toHaveLength(1);
+  const pure = suites.body.items.find((suite) => suite.name === pureName)!;
+  expect(pure).toBeTruthy();
+  await associateDdtSr(page, "MIXED", className);
+  await uploadDdtTaskDependencies(page, hierarchy.projectId);
+  const runner = await registerDdtTaskRunner(page);
+  try {
+    for (const suite of [mixed, pure]) {
+      await configureTaskExecution(page, suite.id, runner.runnerId, {
+        concurrency: 4,
+        retryLimit: 0,
+        adapter: {
+          enabled: true,
+          suiteName: "Mixed DDT",
+          testName: "Regression",
+          environmentAddresses: ["127.0.0.1"],
+        },
+      });
+      const created = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
+        method: "POST",
+        body: { suiteId: suite.id },
+      });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      const runCount = suite.id === mixed.id ? 3 : 2;
+      const values: string[] = [];
+      const ddtAttempts: Array<{ attemptId: string; caseId: string }> = [];
+      for (let index = 0; index < runCount; index++) {
+        type Assignment = {
+          assignment: {
+            attemptId: string;
+            batchId: string;
+            executionSpec: {
+              className: string;
+              inputs: Array<{ inputId: string; kind: string }>;
+            };
+          };
+          lease: { token: string };
+        };
+        let claim: Assignment | undefined;
+        await expect
+          .poll(
+            async () => {
+              const response = await page.request.post(
+                `/api/v1/runner-agents/${runner.runnerId}/claims`,
+                {
+                  headers: {
+                    authorization: `Bearer ${runner.credential}`,
+                    "x-autoforge-runner-id": runner.runnerId,
+                  },
+                  data: {
+                    schemaVersion: 1,
+                    requestId: randomUUID(),
+                    availableSlots: 1,
+                    labels: ["linux", "java", "testng"],
+                    capabilities: ddtTaskCapabilities,
+                    waitSeconds: 0,
+                  },
+                },
+              );
+              expect(response.status()).toBe(200);
+              claim = ((await response.json()) as { assignments: Assignment[] }).assignments[0];
+              return Boolean(claim);
+            },
+            { timeout: 20_000 },
+          )
+          .toBe(true);
+        expect(claim!.assignment.executionSpec.className).toBe(className);
+        const classData = claim!.assignment.executionSpec.inputs.find(
+          (input) => input.kind === "class-data",
+        );
+        if (classData) {
+          const response = await page.request.get(
+            `/api/v1/run-attempts/${claim!.assignment.attemptId}/inputs/${classData.inputId}`,
+            {
+              headers: {
+                authorization: `Bearer ${runner.credential}`,
+                "x-autoforge-runner-id": runner.runnerId,
+                "x-autoforge-lease-token": claim!.lease.token,
+              },
+            },
+          );
+          expect(response.status()).toBe(200);
+          const content = (await response.json()) as { CaseID: string; value: string };
+          expect(caseIds).toContain(content.CaseID);
+          values.push(content.value);
+          ddtAttempts.push({ attemptId: claim!.assignment.attemptId, caseId: content.CaseID });
+        }
+        const completed = await page.request.post(
+          `/api/v1/run-attempts/${claim!.assignment.attemptId}/complete`,
+          {
+            headers: {
+              authorization: `Bearer ${runner.credential}`,
+              "x-autoforge-runner-id": runner.runnerId,
+            },
+            data: {
+              schemaVersion: 1,
+              completionId: randomUUID(),
+              leaseToken: claim!.lease.token,
+              result: {
+                status: "succeeded",
+                resultCode: "TESTNG_SUCCEEDED",
+                summary: "Mixed DDT protocol acceptance",
+                durationMs: 10,
+                artifacts: [],
+              },
+            },
+          },
+        );
+        expect(completed.status()).toBe(200);
+      }
+      expect(values.sort()).toEqual(["first", "second"]);
+      await expect
+        .poll(async () => {
+          const batch = await browserJson<{ status: string; totalRuns: number }>(
+            page,
+            `/api/v1/run-batches/${created.body.id}`,
+          );
+          expect(batch.body.totalRuns).toBe(runCount);
+          return batch.body.status;
+        })
+        .toBe("succeeded");
+      const ddtAttempt = ddtAttempts[0]!;
+      const share = await browserJson<{ shareUrl: string }>(
+        page,
+        `/api/v1/run-attempts/${ddtAttempt.attemptId}/log-share`,
+        { method: "POST" },
+      );
+      expect(share.status).toBe(200);
+      const anonymous = await page.context().browser()!.newContext();
+      try {
+        const publicPage = await anonymous.newPage();
+        await publicPage.goto(new URL(share.body.shareUrl, page.url()).toString());
+        await expect(
+          publicPage.getByRole("heading", { name: ddtAttempt.caseId, exact: true }),
+        ).toBeVisible();
+        await expect(
+          publicPage.locator(".share-log-fact").filter({ hasText: "执行类路径" }),
+        ).toContainText(className);
+        await expect(
+          publicPage.locator(".share-log-fact").filter({ hasText: "用例名称（CaseID）" }),
+        ).toContainText(ddtAttempt.caseId);
+        for (const width of [1024, 1536]) {
+          await publicPage.setViewportSize({ width, height: 960 });
+          await expectUiIntegrity(publicPage);
+          await captureDdtUi(
+            publicPage,
+            `ddt-public-log-${suite.id === mixed.id ? "mixed" : "pure"}-${width}`,
+          );
+        }
+      } finally {
+        await anonymous.close();
+      }
+      await page.goto(`/case-suites/${suite.id}`);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: 960 });
+        await expectUiIntegrity(page);
+        await captureDdtUi(
+          page,
+          `${suite.id === mixed.id ? "mixed" : "ddt-only"}-task-details-${width}`,
+        );
+      }
+    }
+  } finally {
+    // Keep this simulated Runner from accepting work after the test.
+    await browserJson(page, `/api/v1/runners/${runner.runnerId}`, {
+      method: "PATCH",
+      body: { state: "disabled" },
+    });
+  }
+});
+
+const ddtTaskCapabilities = [
+  "executor:testng-v1",
+  "adapter:cotest-testng-v1",
+  "runtime:project-assets-v1",
+  "isolation:cgroup-v2",
+  "java:21.0.8",
+  "testng:7.11.0",
+];
 
 async function createHierarchy(page: Page) {
   const suffix = uniqueName("ddt");
@@ -1535,4 +1883,83 @@ async function expectBelow(list: Locator, feedback: Locator): Promise<void> {
       return listBox && feedbackBox ? feedbackBox.y - (listBox.y + listBox.height) : -1;
     })
     .toBeGreaterThanOrEqual(0);
+}
+
+async function registerDdtTaskRunner(
+  page: Page,
+): Promise<{ runnerId: string; credential: string }> {
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name: "E2E DDT Task Runner",
+      labels: ["linux", "java", "testng"],
+      capabilities: ddtTaskCapabilities,
+      maxConcurrency: 4,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "0.7.2",
+      protocolVersion: 1,
+      terminalEnabled: false,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const runner = (await registration.json()) as { runnerId: string; credential: string };
+  const heartbeat = await page.request.post(
+    `/api/v1/runner-agents/${encodeURIComponent(runner.runnerId)}/heartbeat`,
+    {
+      headers: {
+        authorization: `Bearer ${runner.credential}`,
+        "x-autoforge-runner-id": runner.runnerId,
+      },
+      data: {
+        schemaVersion: 1,
+        busySlots: 0,
+        labels: ["linux", "java", "testng"],
+        capabilities: ddtTaskCapabilities,
+        maxConcurrency: 4,
+        agentVersion: "0.7.2",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 4,
+          observedAt: new Date().toISOString(),
+        },
+      },
+    },
+  );
+  expect(heartbeat.status()).toBe(200);
+  return runner;
+}
+
+async function uploadDdtTaskDependencies(page: Page, projectId: string): Promise<void> {
+  const dependencyJar = zipSync({
+    "META-INF/MANIFEST.MF": new TextEncoder().encode("Manifest-Version: 1.0\n"),
+  });
+  const dependencyArchive = zipSync({ "lib/e2e-placeholder.jar": dependencyJar });
+  await page.goto(
+    `/settings/projects?${new URLSearchParams({
+      projectId,
+      section: "execution",
+    }).toString()}`,
+  );
+  const uploadForm = page.locator("form", {
+    has: page.getByRole("button", { name: "上传并启用" }),
+  });
+  await uploadForm.getByLabel("资源类型").selectOption("jar-bundle");
+  await uploadForm.getByLabel("压缩格式").selectOption("zip");
+  await uploadForm.getByLabel("本地文件").setInputFiles({
+    name: "single-case-dependencies.zip",
+    mimeType: "application/zip",
+    buffer: Buffer.from(dependencyArchive),
+  });
+  await uploadForm.getByRole("button", { name: "上传并启用" }).click();
+  await expect(page.getByText("运行时资源已上传并设为当前配置。")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(
+    uploadForm.getByRole("progressbar", { name: "运行时资源上传完成进度" }),
+  ).toHaveAttribute("aria-valuenow", "100");
 }

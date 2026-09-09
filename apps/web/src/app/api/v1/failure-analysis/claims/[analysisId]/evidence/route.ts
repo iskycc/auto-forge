@@ -13,10 +13,16 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const projectId = z.string().min(1).parse(new URL(request.url).searchParams.get("projectId"));
     await authorizeRequest(request, "run.read", projectId);
     const services = await getPlatformServices();
-    const evidence = await services.failureAnalysis.readScreenshot(
-      (await context.params).analysisId,
-      projectId,
-    );
+    const analysisId = (await context.params).analysisId;
+    const imageId = z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .parse(new URL(request.url).searchParams.get("imageId") ?? undefined);
+    const evidence = imageId
+      ? await services.failureAnalysis.readRemarkImage(analysisId, projectId, imageId)
+      : await services.failureAnalysis.readScreenshot(analysisId, projectId);
     if (!evidence) {
       throw new DomainError("FAILURE_ANALYSIS_EVIDENCE_NOT_FOUND", "分析证明截图不存在。");
     }

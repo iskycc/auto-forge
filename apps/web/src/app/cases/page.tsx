@@ -19,6 +19,7 @@ type CasesPageProps = {
   searchParams: Promise<{
     query?: string | string[];
     tab?: string | string[];
+    targetSuiteId?: string | string[];
   }>;
 };
 
@@ -66,6 +67,17 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
       ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id)
       : Promise.resolve([]),
   ]);
+  const targetSuiteId = single(parameters.targetSuiteId);
+  if (targetSuiteId && projectVersion && !suites.some((suite) => suite.id === targetSuiteId)) {
+    // Direct task links must still select their target beyond the first list window.
+    const target = await services.suites.getSummary(targetSuiteId, effectiveProjectIds);
+    if (
+      target &&
+      target.policy.projectVersionId === projectVersion.id &&
+      target.status === "active"
+    )
+      suites.unshift(target);
+  }
   const directoryManifest = directoryProjection?.generation
     ? caseDirectoryManifestSchema.parse(directoryProjection.payload)
     : null;

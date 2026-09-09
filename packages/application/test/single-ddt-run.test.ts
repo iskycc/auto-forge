@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import type { DdtCase } from "@autoforge/domain";
+import type { CaseSuiteDetails, DdtCase } from "@autoforge/domain";
 import type {
   CaseCatalogRepository,
   CaseSuiteRepository,
@@ -87,6 +87,74 @@ describe("single DDT execution", () => {
   });
 });
 
+describe("DDT task execution", () => {
+  it.each(["mixed", "ddt-only"] as const)(
+    "creates one %s batch with independent identities and data for DDT cases sharing a class",
+    async (kind) => {
+      const { service, create, suite, item, getSuite } = fixture();
+      if (kind === "ddt-only") suite.items = [];
+      const second = {
+        ...item,
+        id: "ddt-second",
+        caseId: "DDT-002",
+        data: { ...item.data, CaseID: "DDT-002", value: "second" },
+      };
+      suite.ddtItems.push({
+        id: "member-second",
+        suiteId: suite.id,
+        addedAt: item.createdAt,
+        ddtCase: second,
+      });
+      expect((await service.preflight({ suiteId: suite.id })).blockers).toEqual([]);
+      getSuite.mockClear();
+      await service.create({ suiteId: suite.id });
+      expect(getSuite).toHaveBeenCalledTimes(1);
+      const batch = create.mock.calls[0]![0];
+      expect(batch.runs.map((run: { caseDefinitionId: string }) => run.caseDefinitionId)).toEqual(
+        kind === "mixed" ? ["class", "ddt-case", "ddt-second"] : ["ddt-case", "ddt-second"],
+      );
+      expect(new Set(batch.runs.map((run: { id: string }) => run.id)).size).toBe(batch.runs.length);
+      expect(batch.runs.filter((run: { caseType: string }) => run.caseType === "ddt")).toEqual([
+        expect.objectContaining({
+          executionCaseDefinitionId: "class",
+          className: "example.Test",
+          ddtSrNum: "SR-1",
+          classData: expect.objectContaining({ json: `${JSON.stringify(item.data)}\n` }),
+        }),
+        expect.objectContaining({
+          executionCaseDefinitionId: "class",
+          className: "example.Test",
+          ddtSrNum: "SR-1",
+          classData: expect.objectContaining({ json: `${JSON.stringify(second.data)}\n` }),
+        }),
+      ]);
+    },
+  );
+
+  it.each(["unmapped", "disabled", "archived", "empty-class", "ordinary-empty-class"])(
+    "rejects the entire task for %s without scheduling any members",
+    async (condition) => {
+      const { service, create, suite, item } = fixture();
+      if (condition === "unmapped") delete item.executionClass;
+      if (condition === "disabled") item.executionClass!.enabled = false;
+      if (condition === "archived") item.executionClass!.archived = true;
+      if (condition === "empty-class") item.executionClass!.className = "  ";
+      if (condition === "ordinary-empty-class") suite.items[0]!.caseDefinition.className = "";
+      const result = await service.preflight({ suiteId: suite.id });
+      expect(result.ready).toBe(false);
+      expect(
+        result.blockers.some((blocker) =>
+          /EXECUTION_CLASS_(REQUIRED|UNAVAILABLE)/.test(blocker.code),
+        ),
+      ).toBe(true);
+      await expect(service.create({ suiteId: suite.id })).rejects.toMatchObject({
+        code: "RUN_BATCH_PREFLIGHT_FAILED",
+      });
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
+});
+
 function fixture() {
   const item: DdtCase = {
     ...scope,
@@ -130,9 +198,48 @@ function fixture() {
       status: "ready",
       lifecycleStatus: "active",
       objectKey: "jar",
+      sha256: "a".repeat(64),
+      sizeBytes: 10,
     },
     inspection: { executable: true },
   });
+  const suite = {
+    id: "suite",
+    projectId: scope.projectId,
+    name: "Mixed task",
+    version: 1,
+    revision: 1,
+    status: "active",
+    enabled: true,
+    policy: {
+      executor: "testng",
+      adapter: input.adapter,
+      projectVersionId: scope.projectVersionId,
+      runnerIds: input.runnerIds,
+      runnerLabels: [],
+      concurrency: 4,
+      priority: 0,
+      retryLimit: 0,
+      retryMode: "immediate",
+      retryConcurrencyRules: [],
+      roundRecoveryRules: [],
+      queueTimeoutMs: 86400000,
+      claimTimeoutMs: 300000,
+      uploadTimeoutMs: 600000,
+      artifactPatterns: [],
+    },
+    items: [
+      {
+        id: "ordinary-member",
+        suiteId: "suite",
+        addedAt: item.createdAt,
+        caseDefinition: definition,
+      },
+    ],
+    ddtItems: [{ id: "ddt-member", suiteId: "suite", addedAt: item.createdAt, ddtCase: item }],
+  } as unknown as CaseSuiteDetails;
+  const getSuite = vi.fn().mockResolvedValue(suite);
+  let nextId = 0;
   const create = vi.fn();
   const batches = {
     create,
@@ -171,10 +278,10 @@ function fixture() {
   } as unknown as ProjectStructureRepository;
   const service = new RunBatchSchedulingService(
     batches,
-    {} as CaseSuiteRepository,
+    { get: getSuite } as unknown as CaseSuiteRepository,
     runners,
     { now: () => new Date("2026-09-09T00:00:00Z") },
-    { next: () => "generated" },
+    { next: () => `generated-${++nextId}` },
     { maximumCpuUtilizationPercent: 85, maximumMemoryUtilizationPercent: 85, maximumLoadPerCpu: 1 },
     45,
     {
@@ -186,5 +293,5 @@ function fixture() {
     5,
     structure,
   );
-  return { service, getCase, create, item, definition, getSource };
+  return { service, getCase, create, item, definition, getSource, suite, getSuite };
 }

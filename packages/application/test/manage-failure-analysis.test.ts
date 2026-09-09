@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import type { FailureAnalysisClaim } from "@autoforge/domain";
 import { describe, expect, it, vi } from "vitest";
 
 import { FailureAnalysisService } from "../src/manage-failure-analysis";
@@ -612,7 +614,172 @@ describe("FailureAnalysisService", () => {
     );
     expect(result.every((claim) => claim.screenshot?.mediaType === "image/png")).toBe(true);
   });
+
+  it("saves remark images once for a batch and keeps them separate from rerun proof", async () => {
+    const claim = failureAnalysisClaim();
+    const complete = vi.fn<FailureAnalysisRepository["complete"]>(async () => [claim]);
+    const putObject = vi.fn(async (input: { objectKey: string }) => ({
+      objectKey: input.objectKey,
+      created: true,
+    }));
+    const service = createService(
+      { findOwnedClaims: vi.fn(async () => [claim]), complete },
+      () => "remark-image",
+      { putObject, read: vi.fn(), delete: vi.fn() },
+    );
+    await service.complete(remarkCompletionInput());
+    expect(putObject).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        remark: "排查截图",
+        remarkImages: [expect.objectContaining({ id: "remark-image", fileName: "remark.png" })],
+        rerunProofs: new Map(),
+      }),
+    );
+    expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("screenshot");
+  });
+
+  it("validates every remark image before uploading or completing any claim", async () => {
+    const complete = vi.fn();
+    const putObject = vi.fn();
+    const service = createService(
+      { findOwnedClaims: vi.fn(async () => [failureAnalysisClaim()]), complete },
+      undefined,
+      { putObject, read: vi.fn(), delete: vi.fn() },
+    );
+    const input = remarkCompletionInput();
+    await expect(
+      service.complete({
+        ...input,
+        remarkImages: [
+          ...input.remarkImages,
+          { fileName: "fake.png", mediaType: "image/png", content: new Uint8Array([1, 2, 3]) },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_SCREENSHOT_CONTENT_INVALID" });
+    await expect(
+      service.complete({ ...input, remarkImages: Array(9).fill(input.remarkImages[0]) }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_REMARK_IMAGES_LIMIT" });
+    expect(putObject).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("removes uploaded remark objects when the completion transaction fails", async () => {
+    const persistenceError = new Error("analysis changed while uploading");
+    const remove = vi.fn(async () => undefined);
+    const service = createService(
+      {
+        findOwnedClaims: vi.fn(async () => [failureAnalysisClaim()]),
+        complete: vi.fn(async () => {
+          throw persistenceError;
+        }),
+      },
+      () => "remark-image",
+      {
+        putObject: vi.fn(async (input: { objectKey: string }) => ({
+          objectKey: input.objectKey,
+          created: true,
+        })),
+        read: vi.fn(),
+        delete: remove,
+      },
+    );
+    await expect(service.complete(remarkCompletionInput())).rejects.toBe(persistenceError);
+    expect(remove).toHaveBeenCalledWith(expect.stringContaining("remark-image"));
+  });
+
+  it("does not accept a remark image as proof of a successful rerun", async () => {
+    const putObject = vi.fn();
+    const service = createService(
+      {
+        findOwnedClaims: vi.fn(async () => [failureAnalysisClaim()]),
+        findSuccessfulManualRerunAttempts: vi.fn(async () => new Map()),
+      },
+      undefined,
+      { putObject, read: vi.fn(), delete: vi.fn() },
+    );
+    await expect(
+      service.complete({ ...remarkCompletionInput(), category: "rerun_passed" }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_RERUN_PROOF_REQUIRED" });
+    expect(putObject).not.toHaveBeenCalled();
+  });
+
+  it("preserves remark objects if a failed commit acknowledgement actually saved their references", async () => {
+    let claim: FailureAnalysisClaim = failureAnalysisClaim();
+    const remove = vi.fn();
+    const commitError = new Error("connection lost after commit");
+    const service = createService(
+      {
+        findOwnedClaims: vi.fn(async () => [claim]),
+        complete: vi.fn(async (input) => {
+          claim = { ...claim, status: "completed", remarkImages: input.remarkImages ?? [] };
+          throw commitError;
+        }),
+      },
+      () => "remark-image",
+      {
+        putObject: vi.fn(async (input) => ({ objectKey: input.objectKey, created: true })),
+        read: vi.fn(),
+        delete: remove,
+      },
+    );
+    await expect(service.complete(remarkCompletionInput())).rejects.toBe(commitError);
+    expect(remove).not.toHaveBeenCalled();
+    expect(claim.remarkImages).toHaveLength(1);
+  });
+
+  it("reads remark images only through an authorized claim and verifies stored bytes", async () => {
+    const content = remarkCompletionInput().remarkImages[0]!.content;
+    const image = {
+      id: "remark-image",
+      objectKey: "private/remark.png",
+      fileName: "remark.png",
+      mediaType: "image/png" as const,
+      sizeBytes: content.byteLength,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    };
+    const getClaim = vi.fn(async (_id: string, projectId: string) =>
+      projectId === "project-a" ? { ...failureAnalysisClaim(), remarkImages: [image] } : null,
+    );
+    const read = vi.fn(async () => content);
+    const service = createService({ getClaim }, undefined, {
+      putObject: vi.fn(),
+      read,
+      delete: vi.fn(),
+    });
+    expect(await service.readRemarkImage("analysis-a", "another-project", image.id)).toBeNull();
+    expect(await service.readRemarkImage("analysis-a", "project-a", "missing-image")).toBeNull();
+    expect(read).not.toHaveBeenCalled();
+    expect(await service.readRemarkImage("analysis-a", "project-a", image.id)).toMatchObject({
+      ...image,
+      content,
+    });
+    read.mockResolvedValueOnce(new Uint8Array(content.byteLength));
+    await expect(
+      service.readRemarkImage("analysis-a", "project-a", image.id),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_EVIDENCE_CORRUPT" });
+  });
 });
+
+function remarkCompletionInput() {
+  return {
+    projectId: "project-a",
+    analysisIds: ["analysis-a"],
+    claimant: { id: "analyst", username: "c10001" },
+    category: "code_issue_filed" as const,
+    issueDescription: "代码错误",
+    ticketReference: "BUG-2048",
+    remark: "排查截图",
+    caseIssueConfirmed: false,
+    remarkImages: [
+      {
+        fileName: "remark.png",
+        mediaType: "image/png",
+        content: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]),
+      },
+    ],
+  };
+}
 
 function createService(
   repository: Partial<FailureAnalysisRepository>,

@@ -55,10 +55,12 @@ export function SharedAttemptLogContent({
                 <RoundLogNavigation historyHref={historyHref} timeZone={timeZone} view={view} />
               ) : null}
               <dl className="share-log-facts">
-                <ShareFact label="用例路径">
+                <ShareFact label="执行类路径">
                   <code>{view.casePath}</code>
                 </ShareFact>
-                <ShareFact label="用例名称">{view.displayName}</ShareFact>
+                <ShareFact label={view.caseType === "ddt" ? "用例名称（CaseID）" : "用例名称"}>
+                  {view.displayName}
+                </ShareFact>
                 <ShareFact label="用例更新时间">
                   <span title="本次执行使用的依赖 JAR 压缩包上传或登记时间">
                     {view.dependencyUpdatedAt ? (

@@ -1,4 +1,8 @@
-import { ddtExecutionClassIdSql, freezeDdtSrExecutionClasses } from "./ddt-execution-sql";
+import {
+  ddtRequirementCategoryIdSql,
+  ddtExecutionClassIdSql,
+  freezeDdtSrExecutionClasses,
+} from "./ddt-execution-sql";
 import { getTableColumns } from "drizzle-orm";
 import type {
   CaseSuiteRepository,
@@ -370,6 +374,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         this.handle.db
           .select({
             ...getTableColumns(ddtCases),
+            requirementCategoryId: sql<string | null>`${sql.raw(ddtRequirementCategoryIdSql)}`,
             executionCaseDefinitionId: sql<string | null>`${sql.raw(ddtExecutionClassIdSql)}`,
           })
           .from(ddtCases)

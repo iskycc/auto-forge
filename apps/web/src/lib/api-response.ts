@@ -106,7 +106,7 @@ function rejectOversizedUpload(
   }
 }
 
-async function parseMultipartFormData(
+export async function parseMultipartFormData(
   request: Request,
   maximumBytes: number,
   tooLarge: (maximumBytes: number) => DomainError,

@@ -1,3 +1,7 @@
+import {
+  runtimeDiagnosticContext,
+  isRuntimeDatabaseContention,
+} from "@autoforge/contracts/runtime-diagnostics";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { BackgroundWorkerPool } from "../../web/server/worker-pool";
@@ -205,7 +209,13 @@ const readModelWorkers = Array.from(
         refreshFacts: index === 0,
       },
       (error) => {
-        runtimePriority().report("background_refresh");
+        const context = runtimeDiagnosticContext(error, {
+          operation: "snapshot.worker",
+          database: "postgresql",
+        });
+        if (isRuntimeDatabaseContention(context))
+          runtimePriority().observeDatabaseContention(context);
+        else runtimePriority().report("background_refresh", context);
         logger.error("Background snapshot thread failed", {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -302,7 +312,7 @@ const health = {
 const healthServer = await startHealthServer(config.healthPort, health);
 const loops = Promise.all([
   nodeLogs
-    ? runPeriodic(shutdown.signal, 60_000, async () => {
+    ? runPeriodic(shutdown.signal, 60_000, "logs.cleanupOrphans", async () => {
         if (canRefresh()) await backgroundPool.runPlatformMaintenance("orphan-logs");
       })
     : Promise.resolve(),
@@ -312,22 +322,27 @@ const loops = Promise.all([
   runWithTransientRecovery(shutdown.signal, () => backgroundWorker.run(shutdown.signal), logger, {
     operationName: "background consumer",
   }),
-  runPeriodic(shutdown.signal, 5_000, () => runtimeNotifications.deliverNextPage()),
+  runPeriodic(shutdown.signal, 5_000, "notifications.deliver", () =>
+    runtimeNotifications.deliverNextPage(),
+  ),
   runWithTransientRecovery(shutdown.signal, () => outboxRelay.run(shutdown.signal), logger, {
     operationName: "outbox relay",
   }),
-  runPeriodic(shutdown.signal, 30_000, async () => {
+  runPeriodic(shutdown.signal, 30_000, "schedules.trigger", async () => {
     await platformOperations.triggerDueSchedules(async (schedule) => {
       const batch = await batches.create({
         suiteId: schedule.suiteId,
       });
       return batch.id;
     });
-    if (!canRefresh()) return;
-    await backgroundPool.runPlatformMaintenance("notifications");
-    await webhooks.dispatchDue(`${config.workerId}-webhooks`);
   }),
-  runPeriodic(shutdown.signal, 3_600_000, async () => {
+  runPeriodic(shutdown.signal, 30_000, "notifications.generate", async () => {
+    if (canRefresh()) await backgroundPool.runPlatformMaintenance("notifications");
+  }),
+  runPeriodic(shutdown.signal, 30_000, "webhooks.dispatch", async () => {
+    if (canRefresh()) await webhooks.dispatchDue(`${config.workerId}-webhooks`);
+  }),
+  runPeriodic(shutdown.signal, 3_600_000, "retention.cleanup", async () => {
     if (canRefresh()) await backgroundPool.runPlatformMaintenance("retention");
   }),
 ]).catch((error: unknown) => {
@@ -372,14 +387,20 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
 async function runPeriodic(
   signal: AbortSignal,
   intervalMs: number,
+  operationName: string,
   operation: () => Promise<void>,
 ): Promise<void> {
   while (!signal.aborted) {
     try {
       await operation();
     } catch (error) {
-      runtimePriority().report("background_refresh");
+      const context = runtimeDiagnosticContext(error, { operation: operationName });
+      runtimePriority().report(
+        isRuntimeDatabaseContention(context) ? "database_busy" : "background_refresh",
+        context,
+      );
       logger.error("periodic platform operation failed", {
+        ...context,
         error: error instanceof Error ? error.message : "unknown error",
       });
     }

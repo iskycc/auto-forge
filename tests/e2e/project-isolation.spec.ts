@@ -93,7 +93,7 @@ test("project member cannot observe another project's assets through pages or di
   await expect(page.getByRole("link", { name: suiteB.name })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "创建任务" })).toHaveCount(0);
   await page.getByRole("link", { name: suiteA.name }).click();
-  await expect(page.getByRole("link", { name: "添加用例" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /添加普通用例|添加 DDT 用例/u })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "移除" })).toHaveCount(0);
   await page.goto("/execution-records");
   const suiteOptions = await page.getByLabel("用例任务").last().locator("option").allTextContents();

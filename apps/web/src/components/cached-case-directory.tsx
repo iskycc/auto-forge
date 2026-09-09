@@ -112,6 +112,7 @@ export function CachedCaseDirectory({
           caseManagementProjectIds={caseManagementProjectIds}
           suiteManagementProjectIds={suiteManagementProjectIds}
           initialSearch={filter.query}
+          initialSuiteId={parameters.get("targetSuiteId") ?? undefined}
           directoryTree={{
             filter,
             loading: result.loading,

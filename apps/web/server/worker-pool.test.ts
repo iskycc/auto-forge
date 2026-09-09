@@ -50,6 +50,35 @@ function pool() {
 }
 
 describe("work thread recovery", () => {
+  it("preserves the failing maintenance operation and database code across worker RPC", async () => {
+    const executor = pool();
+    try {
+      const context = {
+        operation: "platform-maintenance.retention",
+        database: "sqlite",
+        errorCode: "SQLITE_BUSY",
+        requestId: "work-9",
+      };
+      const pending = expect(executor.runPlatformMaintenance("retention")).rejects.toMatchObject({
+        code: "SQLITE_BUSY",
+        runtimeContext: context,
+      });
+      const request = workers[0]!.requests[0]!;
+      workers[0]!.emit("message", {
+        id: request.id,
+        ok: false,
+        error: {
+          name: "SqliteError",
+          message: "database locked",
+          code: "SQLITE_BUSY",
+          runtimeContext: context,
+        },
+      });
+      await pending;
+    } finally {
+      await executor.close();
+    }
+  });
   it("rejects unfinished requests even on exit zero, then accepts work in a replacement thread", async () => {
     const executor = pool();
     try {

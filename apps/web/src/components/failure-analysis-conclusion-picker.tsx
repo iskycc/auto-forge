@@ -140,6 +140,23 @@ export function FailureAnalysisConclusionPicker({
                     <small>
                       #{item.batchSequenceNumber} {item.batchName} · {item.claim.failureSummary}
                     </small>
+                    {item.claim.category === "code_issue_filed" ? (
+                      <p className="failure-analysis-conclusion-ticket">
+                        <b>问题单：</b>
+                        {item.claim.ticketReference &&
+                        /^https?:\/\//iu.test(item.claim.ticketReference) ? (
+                          <a
+                            href={item.claim.ticketReference}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {item.claim.ticketReference}
+                          </a>
+                        ) : (
+                          item.claim.ticketReference || "未记录问题单"
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                   <Button
                     aria-label={`选择并继承 ${item.claim.caseName}`}

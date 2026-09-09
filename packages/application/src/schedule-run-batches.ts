@@ -1109,6 +1109,18 @@ export class RunBatchSchedulingService {
         }),
       );
     } else {
+      for (const item of suite.items) {
+        if (!item.caseDefinition.className.trim()) {
+          blockers.push(
+            blocker(
+              "CASE_EXECUTION_CLASS_REQUIRED",
+              "input",
+              `普通用例 ${item.caseDefinition.displayName} 缺少测试类，请重新导入或从任务移除。`,
+              { caseDefinitionId: item.caseDefinition.id },
+            ),
+          );
+        }
+      }
       const enabledCases = suite.items.filter((item) => item.caseDefinition.enabled);
       const ddtCases = suite.ddtItems ?? [];
       const enabledDdtCases = ddtCases.filter(
@@ -1116,7 +1128,7 @@ export class RunBatchSchedulingService {
       );
       await this.inspectSuiteVersion(suite, enabledCases, ddtCases, blockers);
       for (const item of ddtCases) {
-        if (!item.ddtCase.executionClass) {
+        if (!item.ddtCase.executionClass?.className.trim()) {
           blockers.push(
             blocker(
               "DDT_EXECUTION_CLASS_REQUIRED",

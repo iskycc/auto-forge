@@ -4,7 +4,57 @@ import type {
   FailureAnalysisSort,
   FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
-import type { FailureAnalysisClaim } from "@autoforge/domain";
+import {
+  DomainError,
+  type FailureAnalysisClaim,
+  type FailureAnalysisRemarkImage,
+} from "@autoforge/domain";
+import {
+  FAILURE_ANALYSIS_REMARK_IMAGE_LIMIT,
+  failureAnalysisRemarkImageSchema,
+} from "@autoforge/contracts";
+function parseRemarkImages(value: unknown): FailureAnalysisRemarkImage[] {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("schemaVersion" in value) ||
+    value.schemaVersion !== 1 ||
+    !("images" in value) ||
+    !Array.isArray(value.images) ||
+    value.images.length > FAILURE_ANALYSIS_REMARK_IMAGE_LIMIT
+  ) {
+    throw new Error("Invalid failure analysis remark image metadata.");
+  }
+  return value.images.map((image: unknown) => {
+    const metadata = failureAnalysisRemarkImageSchema.parse(image);
+    if (
+      !image ||
+      typeof image !== "object" ||
+      !("objectKey" in image) ||
+      typeof image.objectKey !== "string" ||
+      image.objectKey.length === 0
+    ) {
+      throw new Error("Failure analysis remark image object key is missing.");
+    }
+    return { ...metadata, objectKey: image.objectKey };
+  });
+}
+
+export function serializeRemarkImages(images: FailureAnalysisRemarkImage[] = []): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    images: parseRemarkImages({ schemaVersion: 1, images }),
+  });
+}
+
+export function requireCompletedAnalysisCount(actual: number, expected: number): void {
+  if (actual !== expected) {
+    throw new DomainError(
+      "FAILURE_ANALYSIS_COMPLETION_CONFLICT",
+      "部分分析已完成或认领人已改变，请刷新后重试。",
+    );
+  }
+}
 
 // 分析列表只承载失败概要；完整执行输出从弹窗日志/公开日志按需读取。限制单项概要可避免
 // 极端异常堆栈把 50 行分页响应膨胀到数十 MiB，同时仍保留足够的根因上下文。
@@ -107,6 +157,7 @@ export type FailureAnalysisRow = {
   caseFixEvidence: string | null;
   ticketReference: string | null;
   remark: string | null;
+  remarkImagesJson: string;
   rerunProofAttemptId: string | null;
   rerunProofUrl: string | null;
   screenshotObjectKey: string | null;
@@ -175,6 +226,7 @@ export function toFailureAnalysisClaim(row: FailureAnalysisRow): FailureAnalysis
     ...(row.caseFixEvidence ? { caseFixEvidence: row.caseFixEvidence } : {}),
     ...(row.ticketReference ? { ticketReference: row.ticketReference } : {}),
     ...(row.remark ? { remark: row.remark } : {}),
+    remarkImages: parseRemarkImages(JSON.parse(row.remarkImagesJson)),
     ...(row.rerunProofAttemptId ? { rerunProofAttemptId: row.rerunProofAttemptId } : {}),
     ...(row.rerunProofUrl ? { rerunProofUrl: row.rerunProofUrl } : {}),
     ...(hasCompleteScreenshot(row)

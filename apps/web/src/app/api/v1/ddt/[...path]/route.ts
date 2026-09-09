@@ -7,6 +7,9 @@ import {
   ddtCaseListInputSchema,
   resolveDdtImportColumnsInputSchema,
   setDdtSrExecutionClassInputSchema,
+  setDdtSrCategoryInputSchema,
+  saveDdtRequirementCategoryInputSchema,
+  deleteDdtRequirementCategoryInputSchema,
   changeDdtExecutionClassRangeInputSchema,
   ddtExecutionMappingListInputSchema,
   failureAnalysisHistoryPageSchema,
@@ -80,6 +83,20 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
               limit: query.limit,
               ...(query.cursor ? { cursor: query.cursor } : {}),
             }),
+      );
+    }
+    if (matches(path, "requirement-categories")) {
+      const query = ddtExecutionMappingListInputSchema.parse({
+        query: url.searchParams.get("query") ?? "",
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: boundedLimit(url, 60, 100),
+      });
+      return NextResponse.json(
+        await services.ddtCases.requirementCategories(scope, {
+          query: query.query,
+          limit: query.limit,
+          ...(query.cursor ? { cursor: query.cursor } : {}),
+        }),
       );
     }
     if (matches(path, "execution-classes")) {
@@ -261,6 +278,36 @@ export async function POST(request: Request, context: Context): Promise<NextResp
           "DDT_SR_MAPPING_REQUIRED",
           "逐条用例关联已停用，请在 SR 测试类关联页面按 SR 设置执行类。",
         );
+      }
+      if (matches(path, "requirement-categories")) {
+        const input = saveDdtRequirementCategoryInputSchema.parse(
+          await readJsonBody(request, 8 * 1_024),
+        );
+        const saved = await services.ddtCases.saveRequirementCategory(scope, {
+          name: input.name,
+          className: input.className,
+          expectedRevision: input.expectedRevision,
+          ...(input.id ? { id: input.id } : {}),
+        });
+        await audit(identity, services, scope, currentRequestId, "ddt_category.save", {
+          ...input,
+          ...saved,
+        });
+        return NextResponse.json(saved);
+      }
+      if (matches(path, "requirement-categories", "delete")) {
+        const input = deleteDdtRequirementCategoryInputSchema.parse(
+          await readJsonBody(request, 8 * 1_024),
+        );
+        await services.ddtCases.deleteRequirementCategory(scope, input);
+        await audit(identity, services, scope, currentRequestId, "ddt_category.delete", input);
+        return NextResponse.json({ saved: true });
+      }
+      if (matches(path, "sr-categories")) {
+        const input = setDdtSrCategoryInputSchema.parse(await readJsonBody(request, 8 * 1_024));
+        await services.ddtCases.setSrCategory(scope, input);
+        await audit(identity, services, scope, currentRequestId, "ddt_sr.category", input);
+        return NextResponse.json({ saved: true });
       }
       if (matches(path, "sr-mappings")) {
         const input = setDdtSrExecutionClassInputSchema.parse(

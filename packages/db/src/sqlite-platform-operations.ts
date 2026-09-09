@@ -466,14 +466,12 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async generateNotifications(
     input: Parameters<PlatformOperationsRepository["generateNotifications"]>[0],
   ): Promise<number> {
-    return this.handle.client
-      .transaction(() => {
-        let inserted = 0;
-        inserted += this.handle.client
-          .prepare(
-            `INSERT OR IGNORE INTO notifications
-           (id,user_id,project_id,kind,severity,title,message,resource_type,resource_id,created_at)
-           SELECT 'notice-batch-' || recipients.user_id || '-' || b.id,
+    if (input.limit <= 0) return 0;
+    const candidates = [
+      {
+        columns:
+          "(id,user_id,project_id,kind,severity,title,message,resource_type,resource_id,created_at)",
+        select: `SELECT 'notice-batch-' || recipients.user_id || '-' || b.id,
                   recipients.user_id,b.project_id,'batch.completed',
                   CASE WHEN b.status='succeeded' THEN 'info' ELSE 'warning' END,
                   '执行批次已完成',b.suite_name || '：' || b.status,'run_batch',b.id,?
@@ -484,14 +482,13 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
            ) recipients ON recipients.project_id=b.project_id
            WHERE b.status IN ('succeeded','failed','cancelled')
              AND b.batch_kind <> 'case_log_rerun'
+           AND NOT EXISTS (SELECT 1 FROM notifications existing WHERE existing.id = 'notice-batch-' || recipients.user_id || '-' || b.id)
            ORDER BY b.updated_at DESC LIMIT ?`,
-          )
-          .run(input.now, input.limit).changes;
-        inserted += this.handle.client
-          .prepare(
-            `INSERT OR IGNORE INTO notifications
-           (id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)
-           SELECT 'notice-runner-' || u.id || '-' || r.id,u.id,'runner.offline','critical',
+        parameters: [input.now, input.limit],
+      },
+      {
+        columns: "(id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)",
+        select: `SELECT 'notice-runner-' || u.id || '-' || r.id,u.id,'runner.offline','critical',
                   'Runner 已离线',r.name || ' 最近心跳：' || r.last_seen_at,'runner',r.id,?
            FROM runners r CROSS JOIN users u
            WHERE r.last_seen_at<? AND r.disabled=0 AND r.deregistered_at IS NULL AND u.status='active'
@@ -499,22 +496,39 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
                SELECT 1 FROM user_system_roles usr JOIN roles role ON role.id=usr.role_id
                WHERE usr.user_id=u.id AND instr(role.permissions_json,'runner.read')>0
              )
+           AND NOT EXISTS (SELECT 1 FROM notifications existing WHERE existing.id = 'notice-runner-' || u.id || '-' || r.id)
            ORDER BY r.last_seen_at LIMIT ?`,
-          )
-          .run(input.now, input.runnerOfflineBefore, input.limit).changes;
-        inserted += this.handle.client
-          .prepare(
-            `INSERT OR IGNORE INTO notifications
-           (id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)
-           SELECT 'notice-cleanup-' || u.id || '-' || j.id,u.id,'cleanup.dead_letter','critical',
+        parameters: [input.now, input.runnerOfflineBefore, input.limit],
+      },
+      {
+        columns: "(id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)",
+        select: `SELECT 'notice-cleanup-' || u.id || '-' || j.id,u.id,'cleanup.dead_letter','critical',
                   '清理任务进入死信',j.category || ' / ' || j.resource_type,'cleanup_job',j.id,?
            FROM cleanup_jobs j CROSS JOIN users u
            WHERE j.status='dead_letter' AND u.status='active' AND EXISTS (
              SELECT 1 FROM user_system_roles usr JOIN roles role ON role.id=usr.role_id
              WHERE usr.user_id=u.id AND instr(role.permissions_json,'settings.manage')>0
-           ) ORDER BY j.updated_at DESC LIMIT ?`,
-          )
-          .run(input.now, input.limit).changes;
+           ) AND NOT EXISTS (SELECT 1 FROM notifications existing WHERE existing.id = 'notice-cleanup-' || u.id || '-' || j.id)
+           ORDER BY j.updated_at DESC LIMIT ?`,
+        parameters: [input.now, input.limit],
+      },
+    ];
+    // Probe outside the write transaction. The INSERT repeats eligibility and remains
+    // idempotent if another node produces the same notification between these steps.
+    const pending = candidates.filter((candidate) =>
+      this.handle.client
+        .prepare(`SELECT 1 FROM (${candidate.select}) LIMIT 1`)
+        .get(...candidate.parameters),
+    );
+    if (pending.length === 0) return 0;
+    return this.handle.client
+      .transaction(() => {
+        let inserted = 0;
+        for (const candidate of pending) {
+          inserted += this.handle.client
+            .prepare(`INSERT OR IGNORE INTO notifications ${candidate.columns} ${candidate.select}`)
+            .run(...candidate.parameters).changes;
+        }
         return inserted;
       })
       .immediate();
@@ -611,9 +625,23 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async executeRetention(input: Parameters<PlatformOperationsRepository["executeRetention"]>[0]) {
-    const result = this.handle.client
-      .transaction(() => executeSqliteRetention(this.handle, input))
-      .immediate();
+    if (input.category === "source" || input.limit <= 0)
+      return { deletedRecords: 0, objectKeys: [] };
+    if (
+      input.category !== "log" &&
+      !this.handle.client
+        .prepare(`SELECT 1 FROM (${retentionCandidateSelection(input.category)}) LIMIT 1`)
+        .get(...retentionCandidateParameters(input))
+    )
+      return { deletedRecords: 0, objectKeys: [] };
+    // Log retention only selects batch IDs; file deletion happens below without a main-database writer.
+    // Other categories repeat the same candidate selection inside the short write transaction.
+    const result =
+      input.category === "log"
+        ? executeSqliteRetention(this.handle, input)
+        : this.handle.client
+            .transaction(() => executeSqliteRetention(this.handle, input))
+            .immediate();
     // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
     for (const batchId of result.removedBatchStoreIds) {
       await this.attemptLogs?.removeBatchStore(batchId);
@@ -624,15 +652,16 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async claimRetentionCleanupJobs(
     input: Parameters<PlatformOperationsRepository["claimRetentionCleanupJobs"]>[0],
   ): ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]> {
+    if (input.limit <= 0) return [];
+    const candidateSql = `SELECT id FROM cleanup_jobs
+           WHERE category LIKE 'retention-%' AND object_key IS NOT NULL AND available_at <= ?
+             AND (status IN ('pending','failed') OR (status='leased' AND lease_expires_at <= ?))
+           ORDER BY available_at,id LIMIT ?`;
+    if (!this.handle.client.prepare(candidateSql).get(input.now, input.now, 1)) return [];
     return this.handle.client
       .transaction(() => {
         const rows = this.handle.client
-          .prepare(
-            `SELECT id FROM cleanup_jobs
-           WHERE category LIKE 'retention-%' AND object_key IS NOT NULL AND available_at <= ?
-             AND (status IN ('pending','failed') OR (status='leased' AND lease_expires_at <= ?))
-           ORDER BY available_at,id LIMIT ?`,
-          )
+          .prepare(candidateSql)
           .all(input.now, input.now, input.limit) as Array<{ id: string }>;
         const claimed: Awaited<
           ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]>
@@ -1374,6 +1403,39 @@ type SearchRow = {
   subtitle: string;
 };
 
+function retentionCandidateSelection(category: Exclude<RetentionCategory, "source">): string {
+  const selections = {
+    artifact: `SELECT f.id, f.object_key FROM attempt_artifacts f
+         JOIN run_attempts a ON a.id = f.attempt_id
+         WHERE a.finished_at < ? AND f.status = 'uploaded' ORDER BY a.finished_at LIMIT ?`,
+    log: `SELECT id FROM run_batches
+           WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ?
+           ORDER BY updated_at LIMIT ?`,
+    execution: `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled')
+         AND updated_at < ? AND NOT EXISTS (
+           SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
+           JOIN attempt_artifacts f ON f.attempt_id=a.id
+           WHERE r.batch_id=run_batches.id AND f.status='uploaded'
+         ) ORDER BY updated_at LIMIT ?`,
+    analytics:
+      "SELECT attempt_id FROM analytics_facts WHERE completed_at < ? ORDER BY completed_at LIMIT ?",
+    audit: "SELECT id FROM audit_events WHERE recorded_at < ? ORDER BY recorded_at LIMIT ?",
+    session:
+      "SELECT id FROM user_sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?) ORDER BY created_at LIMIT ?",
+    queue:
+      "SELECT message_id FROM queue_jobs WHERE status IN ('completed','dead_letter') AND updated_at < ? ORDER BY updated_at LIMIT ?",
+  };
+  return selections[category];
+}
+
+function retentionCandidateParameters(
+  input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
+): Array<string | number> {
+  return input.category === "session"
+    ? [input.cutoffAt, input.cutoffAt, input.limit]
+    : [input.cutoffAt, input.limit];
+}
+
 function executeSqliteRetention(
   handle: SqliteDatabaseHandle,
   input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
@@ -1383,11 +1445,7 @@ function executeSqliteRetention(
   let deletedRecords = 0;
   if (input.category === "artifact") {
     const rows = handle.client
-      .prepare(
-        `SELECT f.id, f.object_key FROM attempt_artifacts f
-         JOIN run_attempts a ON a.id = f.attempt_id
-         WHERE a.finished_at < ? AND f.status = 'uploaded' ORDER BY a.finished_at LIMIT ?`,
-      )
+      .prepare(retentionCandidateSelection("artifact"))
       .all(input.cutoffAt, input.limit) as Array<{ id: string; object_key: string | null }>;
     const enqueue = handle.client.prepare(
       `INSERT OR IGNORE INTO cleanup_jobs
@@ -1416,25 +1474,14 @@ function executeSqliteRetention(
     // 日志保存在每批次独立 SQLite 文件中；按批次文件整体回收，主库无日志行可删。
     const batchIds = (
       handle.client
-        .prepare(
-          `SELECT id FROM run_batches
-           WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ?
-           ORDER BY updated_at LIMIT ?`,
-        )
+        .prepare(retentionCandidateSelection("log"))
         .all(input.cutoffAt, input.limit) as Array<{ id: string }>
     ).map((row) => row.id);
     removedBatchStoreIds.push(...batchIds);
     deletedRecords = batchIds.length;
   } else if (input.category === "execution") {
     const rows = handle.client
-      .prepare(
-        `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled')
-         AND updated_at < ? AND NOT EXISTS (
-           SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
-           JOIN attempt_artifacts f ON f.attempt_id=a.id
-           WHERE r.batch_id=run_batches.id AND f.status='uploaded'
-         ) ORDER BY updated_at LIMIT ?`,
-      )
+      .prepare(retentionCandidateSelection("execution"))
       .all(input.cutoffAt, input.limit) as Array<{ id: string }>;
     if (rows.length > 0) {
       const ids = rows.map((row) => row.id);
@@ -1452,27 +1499,18 @@ function executeSqliteRetention(
       removedBatchStoreIds.push(...ids);
     }
   } else {
-    const statements: Partial<
-      Record<Exclude<RetentionCategory, "artifact" | "source" | "log" | "execution">, string>
-    > = {
-      analytics: `DELETE FROM analytics_facts WHERE attempt_id IN (
-        SELECT attempt_id FROM analytics_facts WHERE completed_at < ? ORDER BY completed_at LIMIT ?)`,
-      audit: `DELETE FROM audit_events WHERE id IN (
-        SELECT id FROM audit_events WHERE recorded_at < ? ORDER BY recorded_at LIMIT ?)`,
-      session: `DELETE FROM user_sessions WHERE id IN (
-        SELECT id FROM user_sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)
-        ORDER BY created_at LIMIT ?)`,
-      queue: `DELETE FROM queue_jobs WHERE message_id IN (
-        SELECT message_id FROM queue_jobs WHERE status IN ('completed','dead_letter') AND updated_at < ?
-        ORDER BY updated_at LIMIT ?)`,
+    const targets = {
+      analytics: { table: "analytics_facts", key: "attempt_id" },
+      audit: { table: "audit_events", key: "id" },
+      session: { table: "user_sessions", key: "id" },
+      queue: { table: "queue_jobs", key: "message_id" },
     };
-    const sql = statements[input.category];
-    if (!sql) return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds };
-    const parameters =
-      input.category === "session"
-        ? [input.cutoffAt, input.cutoffAt, input.limit]
-        : [input.cutoffAt, input.limit];
-    deletedRecords = handle.client.prepare(sql).run(...parameters).changes;
+    const target = targets[input.category];
+    deletedRecords = handle.client
+      .prepare(
+        `DELETE FROM ${target.table} WHERE ${target.key} IN (${retentionCandidateSelection(input.category)})`,
+      )
+      .run(...retentionCandidateParameters(input)).changes;
   }
   return { deletedRecords, objectKeys: keys, removedBatchStoreIds };
 }

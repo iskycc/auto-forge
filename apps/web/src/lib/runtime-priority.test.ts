@@ -2,6 +2,46 @@ import { describe, expect, it } from "vitest";
 import { RuntimePriority } from "./runtime-priority";
 
 describe("foreground resource priority", () => {
+  it("reports persistent minute-spaced cleanup contention despite polling jitter", () => {
+    let now = 0;
+    const priority = new RuntimePriority(() => now);
+    const context = {
+      operation: "snapshot.cleanup",
+      database: "sqlite" as const,
+      errorCode: "SQLITE_BUSY",
+    };
+    for (const observedAt of [0, 60_100, 120_200]) {
+      now = observedAt;
+      priority.observeDatabaseContention(context);
+    }
+    expect(priority.pendingIncident()).toMatchObject({ kind: "database_busy", context });
+  });
+  it("identifies distinct failing operations while coalescing retries with different request IDs", () => {
+    let now = 0;
+    const priority = new RuntimePriority(() => now);
+    const context = {
+      operation: "snapshot.cleanup",
+      database: "sqlite" as const,
+      errorCode: "SQLITE_BUSY",
+    };
+    for (let sample = 0; sample < 3; sample++, now += 5_000) {
+      priority.observeDatabaseContention({ ...context, requestId: `work-${sample}` });
+    }
+    const incident = priority.pendingIncident()!;
+    expect(incident.context).toMatchObject(context);
+    priority.acknowledgeIncident(incident.id);
+    for (let sample = 0; sample < 100; sample++, now += 30_000) {
+      priority.observeDatabaseContention({ ...context, requestId: `retry-${sample}` });
+      expect(priority.pendingIncident()).toBeUndefined();
+    }
+    priority.report("database_busy", {
+      ...context,
+      operation: "platform-maintenance.notifications",
+    });
+    expect(priority.pendingIncident()?.context?.operation).toBe(
+      "platform-maintenance.notifications",
+    );
+  });
   it("uses spare capacity while execution is active and yields when its budget is saturated", () => {
     const priority = new RuntimePriority();
     priority.configure(4);

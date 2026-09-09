@@ -1,3 +1,4 @@
+import type { RuntimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 /**
  * Web 进程内执行工作线程的配置与消息协议。Lite 与 Full 共用同一线程池，
  * Lite 把 Runner 控制事务与补位调度从 Web 事件循环卸载到工作线程；Full 仅
@@ -77,5 +78,12 @@ export type WorkResponse =
   | {
       id: number;
       ok: false;
-      error: { name: string; message: string; code?: string; details?: unknown; stack?: string };
+      error: {
+        runtimeContext?: RuntimeDiagnosticContext;
+        name: string;
+        message: string;
+        code?: string;
+        details?: unknown;
+        stack?: string;
+      };
     };

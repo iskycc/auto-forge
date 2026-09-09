@@ -16,6 +16,8 @@ export type FailureAnalysisScreenshot = {
   sha256: string;
 };
 
+export type FailureAnalysisRemarkImage = FailureAnalysisScreenshot & { id: string };
+
 export type FailureAnalysisClaim = {
   id: string;
   projectId: string;
@@ -40,6 +42,7 @@ export type FailureAnalysisClaim = {
   caseFixEvidence?: string;
   ticketReference?: string;
   remark?: string;
+  remarkImages?: FailureAnalysisRemarkImage[];
   rerunProofAttemptId?: string;
   rerunProofUrl?: string;
   screenshot?: FailureAnalysisScreenshot;

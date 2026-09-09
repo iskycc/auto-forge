@@ -25,3 +25,24 @@ it("keeps one SR class within a snapshot when the mapping changes between SQL wi
   ]);
   expect(rows[1]?.executionCaseDefinitionId).toBe("later");
 });
+
+it("uses one category class across different SRs while preserving each SR's first observed mapping", () => {
+  const base = {
+    projectId: "p",
+    projectVersionId: "v",
+    testStageId: "s",
+    srNumNormalized: "first",
+    requirementCategoryId: "wallet",
+    executionCaseDefinitionId: "class-a",
+  };
+  const rows = [
+    base,
+    { ...base, srNumNormalized: "second", executionCaseDefinitionId: "class-b" },
+    { ...base, requirementCategoryId: "payment", executionCaseDefinitionId: "class-c" },
+  ];
+  expect(freezeDdtSrExecutionClasses(rows).map((row) => row.executionCaseDefinitionId)).toEqual([
+    "class-a",
+    "class-a",
+    "class-a",
+  ]);
+});

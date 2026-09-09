@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
 import {
+  FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES,
+  FAILURE_ANALYSIS_REMARK_IMAGE_LIMIT,
+  FAILURE_ANALYSIS_REMARK_IMAGES_MAXIMUM_BYTES,
   failureAnalysisCompletionOrderSchema,
   failureAnalysisSortSchema,
   type FailureAnalysisCompletionOrder,
@@ -12,6 +15,8 @@ import {
   failureAnalysisCategories,
   type FailureAnalysisCategory,
   type FailureAnalysisClaim,
+  type FailureAnalysisRemarkImage,
+  type FailureAnalysisScreenshot,
 } from "@autoforge/domain";
 
 import type { AttemptLogShareService } from "./attempt-log-shares";
@@ -20,7 +25,13 @@ import type { Clock, FailureAnalysisRepository, IdGenerator, JarObjectStorePort 
 const MAXIMUM_PAGE_SIZE = 100;
 const MAXIMUM_CLAIM_SIZE = 100;
 const MAXIMUM_SEARCH_QUERY_LENGTH = 240;
-export const FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES = 10 * 1024 * 1024;
+export const FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES = FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES;
+
+export type FailureAnalysisImageUpload = {
+  fileName: string;
+  mediaType: string;
+  content: Uint8Array;
+};
 const SCREENSHOT_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 type ScreenshotMediaType = (typeof SCREENSHOT_MEDIA_TYPES)[number];
 
@@ -412,21 +423,9 @@ export class FailureAnalysisService {
     }
     const analysisIds = boundedAnalysisIds(input.analysisIds);
     const claims = await this.requireOwnedClaims(analysisIds, input.projectId, input.claimantId);
-    const mediaType = screenshotMediaType(input.mediaType);
-    if (
-      input.content.byteLength === 0 ||
-      input.content.byteLength > FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES
-    ) {
-      throw new DomainError(
-        "FAILURE_ANALYSIS_SCREENSHOT_SIZE_INVALID",
-        `截图大小必须在 1 字节到 ${FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES} 字节之间。`,
-      );
-    }
-    ensureScreenshotSignature(input.content, mediaType);
-    const sha256 = createHash("sha256").update(input.content).digest("hex");
-    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[mediaType];
     const evidenceId = this.ids.next();
-    const objectKey = `projects/${input.projectId}/failure-analysis/${claims[0]!.batchId}/${evidenceId}-${sha256.slice(0, 16)}.${extension}`;
+    const screenshot = prepareAnalysisImage(input, input.projectId, claims[0]!.batchId, evidenceId);
+    const { objectKey, sha256, mediaType } = screenshot;
     await this.objectStore.putObject({
       objectKey,
       sha256,
@@ -439,13 +438,7 @@ export class FailureAnalysisService {
         analysisIds,
         projectId: input.projectId,
         claimantId: input.claimantId,
-        screenshot: {
-          objectKey,
-          fileName: safeScreenshotFileName(input.fileName, extension),
-          mediaType,
-          sizeBytes: input.content.byteLength,
-          sha256,
-        },
+        screenshot,
         updatedAt: this.clock.now().toISOString(),
       });
     } catch (persistenceError) {
@@ -465,15 +458,23 @@ export class FailureAnalysisService {
     if (!this.objectStore) return null;
     const claim = await this.repository.getClaim(analysisId, projectId);
     if (!claim?.screenshot) return null;
-    const content = await this.objectStore.read(claim.screenshot.objectKey);
+    return this.readAnalysisImage(claim.screenshot);
+  }
+
+  async readRemarkImage(analysisId: string, projectId: string, imageId: string) {
+    const claim = await this.repository.getClaim(analysisId, projectId);
+    const image = claim?.remarkImages?.find((candidate) => candidate.id === imageId);
+    return image ? this.readAnalysisImage(image) : null;
+  }
+
+  private async readAnalysisImage(image: FailureAnalysisScreenshot) {
+    if (!this.objectStore) return null;
+    const content = await this.objectStore.read(image.objectKey);
     const digest = createHash("sha256").update(content).digest("hex");
-    if (content.byteLength !== claim.screenshot.sizeBytes || digest !== claim.screenshot.sha256) {
-      throw new DomainError(
-        "FAILURE_ANALYSIS_EVIDENCE_CORRUPT",
-        "分析证明截图大小或摘要校验失败。",
-      );
+    if (content.byteLength !== image.sizeBytes || digest !== image.sha256) {
+      throw new DomainError("FAILURE_ANALYSIS_EVIDENCE_CORRUPT", "分析图片大小或摘要校验失败。");
     }
-    return { ...claim.screenshot, content };
+    return { ...image, content };
   }
 
   async complete(input: {
@@ -486,10 +487,14 @@ export class FailureAnalysisService {
     caseFixEvidence?: string;
     ticketReference?: string;
     remark?: string;
+    remarkImages?: readonly FailureAnalysisImageUpload[];
     caseIssueConfirmed: boolean;
   }): Promise<FailureAnalysisClaim[]> {
     const analysisIds = boundedAnalysisIds(input.analysisIds);
     const claims = await this.requireOwnedClaims(analysisIds, input.projectId, input.claimant.id);
+    if (claims.some((claim) => claim.status === "completed")) {
+      throw new DomainError("FAILURE_ANALYSIS_ALREADY_COMPLETED", "分析已完成，请刷新后查看结论。");
+    }
     const issueDescription = optionalTrimmed(input.issueDescription);
     const caseFixEvidence = optionalTrimmed(input.caseFixEvidence);
     const ticketReference = optionalTrimmed(input.ticketReference);
@@ -521,21 +526,105 @@ export class FailureAnalysisService {
         }
       }
     }
-    return this.repository.complete({
-      analysisIds,
-      ...(input.inheritedFromAnalysisId
-        ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
-        : {}),
-      projectId: input.projectId,
-      claimantId: input.claimant.id,
-      category: input.category,
-      ...(issueDescription ? { issueDescription } : {}),
-      ...(caseFixEvidence ? { caseFixEvidence } : {}),
-      ...(ticketReference ? { ticketReference } : {}),
-      ...(remark ? { remark } : {}),
-      rerunProofs,
-      completedAt: this.clock.now().toISOString(),
+    return this.completeWithRemarkImages(input.remarkImages ?? [], claims, (remarkImages) =>
+      this.repository.complete({
+        analysisIds,
+        ...(input.inheritedFromAnalysisId
+          ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+          : {}),
+        projectId: input.projectId,
+        claimantId: input.claimant.id,
+        category: input.category,
+        ...(issueDescription ? { issueDescription } : {}),
+        ...(caseFixEvidence ? { caseFixEvidence } : {}),
+        ...(ticketReference ? { ticketReference } : {}),
+        ...(remark ? { remark } : {}),
+        ...(remarkImages.length > 0 ? { remarkImages } : {}),
+        rerunProofs,
+        completedAt: this.clock.now().toISOString(),
+      }),
+    );
+  }
+
+  private async completeWithRemarkImages(
+    uploads: readonly FailureAnalysisImageUpload[],
+    claims: FailureAnalysisClaim[],
+    persist: (images: FailureAnalysisRemarkImage[]) => Promise<FailureAnalysisClaim[]>,
+  ): Promise<FailureAnalysisClaim[]> {
+    if (uploads.length === 0) return persist([]);
+    const claim = claims[0]!;
+    if (
+      uploads.length > FAILURE_ANALYSIS_REMARK_IMAGE_LIMIT ||
+      uploads.reduce((total, image) => total + image.content.byteLength, 0) >
+        FAILURE_ANALYSIS_REMARK_IMAGES_MAXIMUM_BYTES
+    ) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_REMARK_IMAGES_LIMIT",
+        "备注最多包含 8 张图片，合计不能超过 20 MiB。",
+      );
+    }
+    if (!this.objectStore) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_EVIDENCE_UNAVAILABLE",
+        "当前运行时无法保存备注图片。",
+      );
+    }
+    // Validate the whole selection before writing. Image bytes stay outside database transactions.
+    const images = uploads.map((upload) => {
+      const id = this.ids.next();
+      return { id, ...prepareAnalysisImage(upload, claim.projectId, claim.batchId, id) };
     });
+    const uploadedKeys: string[] = [];
+    try {
+      for (const [index, image] of images.entries()) {
+        await this.objectStore.putObject({
+          objectKey: image.objectKey,
+          sha256: image.sha256,
+          mediaType: image.mediaType,
+          sizeBytes: image.sizeBytes,
+          content: oneChunk(uploads[index]!.content),
+        });
+        uploadedKeys.push(image.objectKey);
+      }
+      return await persist(images);
+    } catch (persistenceError) {
+      // A failed commit acknowledgement may still mean the transaction committed.
+      // Recheck durable references before compensation; an unavailable database must not cost saved images.
+      let persistedClaims: FailureAnalysisClaim[];
+      try {
+        persistedClaims = await this.repository.findOwnedClaims({
+          analysisIds: claims.map((item) => item.id),
+          projectId: claim.projectId,
+          claimantId: claim.claimantId,
+        });
+      } catch (verificationError) {
+        throw new AggregateError(
+          [persistenceError, verificationError],
+          "无法确认分析提交结果，已保留备注图片以避免删除已保存内容。",
+        );
+      }
+      const referencedKeys = new Set(
+        persistedClaims.flatMap((item) =>
+          (item.remarkImages ?? []).map((image) => image.objectKey),
+        ),
+      );
+      const cleanupErrors: unknown[] = [];
+      for (const objectKey of uploadedKeys) {
+        if (referencedKeys.has(objectKey)) continue;
+        try {
+          await this.objectStore.delete(objectKey);
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(
+          [persistenceError, ...cleanupErrors],
+          "保存备注图片失败，且无法清理部分已上传对象。",
+        );
+      }
+      throw persistenceError;
+    }
   }
 
   async lookupRerunProofs(input: {
@@ -613,6 +702,34 @@ function boundedAnalysisIds(values: readonly string[]): string[] {
     );
   }
   return ids;
+}
+
+function prepareAnalysisImage(
+  upload: FailureAnalysisImageUpload,
+  projectId: string,
+  batchId: string,
+  id: string,
+): FailureAnalysisScreenshot {
+  const mediaType = screenshotMediaType(upload.mediaType);
+  if (
+    upload.content.byteLength === 0 ||
+    upload.content.byteLength > FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES
+  ) {
+    throw new DomainError(
+      "FAILURE_ANALYSIS_SCREENSHOT_SIZE_INVALID",
+      "图片不能为空，且单张不能超过 10 MiB。",
+    );
+  }
+  ensureScreenshotSignature(upload.content, mediaType);
+  const sha256 = createHash("sha256").update(upload.content).digest("hex");
+  const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[mediaType];
+  return {
+    objectKey: `projects/${projectId}/failure-analysis/${batchId}/${id}-${sha256.slice(0, 16)}.${extension}`,
+    fileName: safeScreenshotFileName(upload.fileName, extension),
+    mediaType,
+    sizeBytes: upload.content.byteLength,
+    sha256,
+  };
 }
 
 function screenshotMediaType(value: string): ScreenshotMediaType {

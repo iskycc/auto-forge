@@ -163,6 +163,10 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           displayName: "订单 DDT 执行类",
         }),
       ]);
+      await handle.pool.query(
+        `INSERT INTO case_definitions (id,project_id,project_version_id,test_stage_id,directory_path,source_id,class_name,package_name,display_name,description,tags_json,parameters_json,enabled,archived,revision,groups_json,current_version,created_at,updated_at) SELECT $1,project_id,project_version_id,test_stage_id,directory_path,source_id,'com.example.PaymentDdtTest',package_name,'支付执行类',description,tags_json,parameters_json,enabled,archived,revision,groups_json,current_version,created_at,updated_at FROM case_definitions WHERE id = $2`,
+        [executionDefinitionId + "-replacement", executionDefinitionId],
+      );
       await expectDdtSrExecutionContract(
         repository,
         scope,

@@ -6,7 +6,13 @@ describe("platform protection notifications", () => {
   it("only notifies active system managers, and retries delivery with stable IDs", async () => {
     const incident: RuntimeIncident = {
       id: "incident",
-      kind: "log_io",
+      kind: "database_busy",
+      context: {
+        operation: "snapshot.build.case_directory",
+        database: "sqlite",
+        errorCode: "SQLITE_BUSY",
+        requestId: "work-12",
+      },
       createdAt: "2026-09-07T00:00:00.000Z",
     };
     const source = { pendingIncident: () => incident, acknowledgeIncident: vi.fn() };
@@ -50,6 +56,12 @@ describe("platform protection notifications", () => {
     expect([...delivered.values()].map((notice) => notice.userId)).toEqual(["a", "e"]);
     expect(createNotification.mock.calls[0]?.[0].id).toBe(createNotification.mock.calls[2]?.[0].id);
     expect(source.acknowledgeIncident).toHaveBeenCalledWith("incident");
+    const message = createNotification.mock.calls[0]![0].message;
+    expect(message).toContain("操作/任务：snapshot.build.case_directory");
+    expect(message).toContain("数据库：sqlite");
+    expect(message).toContain("SQLITE_BUSY");
+    expect(message).toContain("work-12");
+    expect(message).toContain("持锁方需结合数据库诊断确认");
     expect(identities.listSystemRoleBindings).toHaveBeenCalledWith(undefined, { limit: 50 });
   });
 });

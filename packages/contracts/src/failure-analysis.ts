@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export const FAILURE_ANALYSIS_REMARK_IMAGE_LIMIT = 8;
+export const FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES = 10 * 1024 * 1024;
+export const FAILURE_ANALYSIS_REMARK_IMAGES_MAXIMUM_BYTES = 20 * 1024 * 1024;
+
 export const failureAnalysisCategorySchema = z.enum([
   "rerun_passed",
   "case_fixed",
@@ -13,6 +17,10 @@ export const failureAnalysisScreenshotSchema = z.object({
   mediaType: z.enum(["image/png", "image/jpeg", "image/webp"]),
   sizeBytes: z.number().int().positive(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
+export const failureAnalysisRemarkImageSchema = failureAnalysisScreenshotSchema.extend({
+  id: z.string().min(1),
 });
 
 export const failureAnalysisSortSchema = z.enum([
@@ -123,6 +131,10 @@ export const failureAnalysisClaimSchema = z.object({
   caseFixEvidence: z.string().optional(),
   ticketReference: z.string().optional(),
   remark: z.string().optional(),
+  remarkImages: z
+    .array(failureAnalysisRemarkImageSchema)
+    .max(FAILURE_ANALYSIS_REMARK_IMAGE_LIMIT)
+    .optional(),
   rerunProofAttemptId: z.string().optional(),
   rerunProofUrl: z.string().optional(),
   screenshot: failureAnalysisScreenshotSchema.optional(),

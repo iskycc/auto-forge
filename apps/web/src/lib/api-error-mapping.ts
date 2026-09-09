@@ -1,3 +1,4 @@
+import { runtimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 import { runtimePriority } from "./runtime-priority";
 import { DomainError, isDomainError } from "@autoforge/domain";
 import { isJarInspectionError } from "@autoforge/testng-discovery";
@@ -24,7 +25,10 @@ export interface MappedApiError {
  */
 export function mapApiError(error: unknown, requestId: string): MappedApiError {
   if (isDatabaseContention(error)) {
-    runtimePriority().report("database_busy");
+    runtimePriority().report(
+      "database_busy",
+      runtimeDiagnosticContext(error, { operation: "http.request", requestId }),
+    );
     return {
       status: 503,
       body: {

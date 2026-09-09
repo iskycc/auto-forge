@@ -13,6 +13,8 @@ import {
   encodeFailureAnalysisCandidateCursor,
   encodeFailureAnalysisClaimCursor,
   statisticsPage,
+  serializeRemarkImages,
+  requireCompletedAnalysisCount,
   FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS,
   toFailureAnalysisCandidate,
   toFailureAnalysisClaim,
@@ -344,7 +346,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
                 claim.claimed_at AS claimedAt,claim.analysis_started_at AS analysisStartedAt,
                 claim.completed_at AS completedAt,claim.issue_description AS issueDescription,
                 claim.case_fix_evidence AS caseFixEvidence,claim.ticket_reference AS ticketReference,
-                claim.remark,claim.rerun_proof_attempt_id AS rerunProofAttemptId,
+                claim.remark,claim.remark_images_json AS "remarkImagesJson",claim.rerun_proof_attempt_id AS rerunProofAttemptId,
                 claim.rerun_proof_url AS rerunProofUrl,
                 claim.screenshot_object_key AS screenshotObjectKey,
                 claim.screenshot_file_name AS screenshotFileName,
@@ -859,6 +861,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
+    const remarkImagesJson = serializeRemarkImages(input.remarkImages);
     return runSqliteWriteTransaction(this.handle, () => {
       if (input.inheritedFromAnalysisId) {
         const placeholders = input.analysisIds.map(() => "?").join(",");
@@ -880,18 +883,19 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       const update = this.handle.client.prepare(
         `UPDATE failure_analysis_claims
          SET status='completed',category=?,issue_description=?,case_fix_evidence=?,
-             ticket_reference=?,remark=?,rerun_proof_attempt_id=?,rerun_proof_url=?,
+             ticket_reference=?,remark=?,remark_images_json=?,rerun_proof_attempt_id=?,rerun_proof_url=?,
              analysis_started_at=COALESCE(analysis_started_at,?),completed_at=?,updated_at=?
-         WHERE id=? AND project_id=? AND claimant_id=?`,
+         WHERE id=? AND project_id=? AND claimant_id=? AND status <> 'completed'`,
       );
       for (const analysisId of input.analysisIds) {
         const proof = input.rerunProofs.get(analysisId);
-        update.run(
+        const result = update.run(
           input.category,
           input.issueDescription ?? null,
           input.caseFixEvidence ?? null,
           input.ticketReference ?? null,
           input.remark ?? null,
+          remarkImagesJson,
           proof?.attemptId ?? null,
           proof?.url ?? null,
           input.completedAt,
@@ -901,6 +905,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
           input.projectId,
           input.claimantId,
         );
+        requireCompletedAnalysisCount(Number(result.changes), 1);
       }
       return this.selectOwnedClaims(input.analysisIds, input.projectId, input.claimantId);
     });
@@ -966,7 +971,7 @@ function claimSelectSql(extraSelection?: string): string {
                  claim.analysis_started_at AS analysisStartedAt,claim.completed_at AS completedAt,
                  claim.issue_description AS issueDescription,
                  claim.case_fix_evidence AS caseFixEvidence,
-                 claim.ticket_reference AS ticketReference,claim.remark,
+                 claim.ticket_reference AS ticketReference,claim.remark,claim.remark_images_json AS "remarkImagesJson",
                  claim.rerun_proof_attempt_id AS rerunProofAttemptId,
                  claim.rerun_proof_url AS rerunProofUrl,
                  claim.screenshot_object_key AS screenshotObjectKey,

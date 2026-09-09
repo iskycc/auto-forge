@@ -55,9 +55,20 @@ export default async function CaseSuitePage({ params }: Props) {
           </p>
         </div>
         {canManage ? (
-          <Link className="button button-primary button-large" href="/cases">
-            <BookOpenText size={17} /> 添加用例
-          </Link>
+          <div className="button-row">
+            <Link
+              className="button button-secondary"
+              href={`/cases?targetSuiteId=${encodeURIComponent(suite.id)}`}
+            >
+              <BookOpenText size={17} /> 添加普通用例
+            </Link>
+            <Link
+              className="button button-primary"
+              href={`/cases?tab=ddt&ddtView=cases&targetSuiteId=${encodeURIComponent(suite.id)}`}
+            >
+              <BookOpenText size={17} /> 添加 DDT 用例
+            </Link>
+          </div>
         ) : null}
       </section>
       <CaseSuiteSchedulePanel

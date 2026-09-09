@@ -1,3 +1,7 @@
+import {
+  runtimeDiagnosticContext,
+  type RuntimeDiagnosticContext,
+} from "@autoforge/contracts/runtime-diagnostics";
 import { runtimePriority } from "../src/lib/runtime-priority.ts";
 import { Worker } from "node:worker_threads";
 
@@ -39,9 +43,17 @@ export class ReadModelWorkerHost {
     );
     this.worker = worker;
     worker.on("error", this.reportError);
-    worker.on("message", (event: { kind: string }) => {
-      if (event.kind === "database_contention") runtimePriority().observeDatabaseContention();
-      else runtimePriority().report("background_refresh");
+    worker.on("message", (event: { kind: string; context?: RuntimeDiagnosticContext }) => {
+      const context = runtimeDiagnosticContext(
+        { runtimeContext: event.context },
+        {
+          operation: "snapshot.worker",
+          database: this.configuration.mode === "lite" ? "sqlite" : "postgresql",
+        },
+      );
+      if (event.kind === "database_contention")
+        runtimePriority().observeDatabaseContention(context);
+      else runtimePriority().report("background_refresh", context);
     });
     worker.on("exit", (code) => {
       if (this.stopped) return;

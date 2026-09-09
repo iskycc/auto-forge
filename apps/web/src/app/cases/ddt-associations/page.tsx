@@ -26,7 +26,7 @@ export default async function DdtAssociationsPage() {
         <div>
           <p className="eyebrow">DDT / SR</p>
           <h1>SR 测试类关联</h1>
-          <p>每个 SR 关联一个测试类，同一 SR 下的现有及后续导入用例自动继承。</p>
+          <p>为 SR 设置需求分类，统一使用分类的执行类；现有及后续导入用例自动继承。</p>
         </div>
         <Link className="button button-secondary" href="/cases?tab=ddt&ddtView=cases">
           返回 DDT 用例

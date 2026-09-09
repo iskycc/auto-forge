@@ -50,10 +50,23 @@ it("defers real snapshot writer contention, recovers publication and still repor
     await request("contended");
     writer.exec("BEGIN IMMEDIATE");
     Atomics.store(paused, 0, 0);
-    await vi.waitFor(() => expect(events).toContainEqual({ kind: "database_contention" }), {
-      timeout: 5_000,
-    });
-    expect(events).not.toContainEqual({ kind: "background_refresh" });
+    await vi.waitFor(
+      () =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            kind: "database_contention",
+            context: expect.objectContaining({
+              database: "sqlite",
+              errorCode: "SQLITE_BUSY",
+              operation: expect.stringMatching(/^snapshot\./),
+            }),
+          }),
+        ),
+      {
+        timeout: 5_000,
+      },
+    );
+    expect(events).not.toContainEqual(expect.objectContaining({ kind: "background_refresh" }));
     writer.exec("COMMIT");
     await vi.waitFor(
       async () =>
@@ -67,9 +80,12 @@ it("defers real snapshot writer contention, recovers publication and still repor
       "CREATE TRIGGER reject_snapshot_claim BEFORE UPDATE OF lease_token ON read_model_snapshots WHEN NEW.id='broken' BEGIN SELECT RAISE(ABORT,'injected non-lock failure'); END",
     );
     Atomics.store(paused, 0, 0);
-    await vi.waitFor(() => expect(events).toContainEqual({ kind: "background_refresh" }), {
-      timeout: 5_000,
-    });
+    await vi.waitFor(
+      () => expect(events).toContainEqual(expect.objectContaining({ kind: "background_refresh" })),
+      {
+        timeout: 5_000,
+      },
+    );
     await vi.waitFor(() => expect(diagnostics.join("")).toContain("injected non-lock failure"));
     expect(errors).toEqual([]);
   } finally {

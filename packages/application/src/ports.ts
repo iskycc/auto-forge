@@ -91,6 +91,7 @@ import type {
   FailureAnalysisClaim,
   FailureAnalysisClaimRelease,
   FailureAnalysisScreenshot,
+  FailureAnalysisRemarkImage,
 } from "@autoforge/domain";
 import type {
   FailureAnalysisBatch,
@@ -125,6 +126,7 @@ import type {
   DdtScope,
   DdtSrExecutionMappingPage,
   DdtExecutionClassRangePage,
+  DdtRequirementCategoryPage,
 } from "@autoforge/domain";
 
 export type CreateProjectVersionRecord = {
@@ -1074,6 +1076,23 @@ export type CreateCaseSuiteRecord = {
 };
 
 export interface DdtRepository {
+  listRequirementCategories(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number },
+  ): Promise<DdtRequirementCategoryPage>;
+  saveRequirementCategory(input: {
+    scope: DdtScope;
+    id: string;
+    name: string;
+    executionCaseDefinitionId: string;
+    expectedRevision: number;
+    updatedAt: string;
+  }): Promise<void>;
+  deleteRequirementCategory(input: {
+    scope: DdtScope;
+    id: string;
+    expectedRevision: number;
+  }): Promise<void>;
   listCases(query: DdtCaseListQuery): Promise<DdtCaseListPage>;
   getCaseSummary(scope: DdtScope, caseId: string): Promise<DdtCaseSummary | null>;
   getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null>;
@@ -1101,6 +1120,7 @@ export interface DdtRepository {
     updatedAt: string;
   }): Promise<void>;
   setSrExecutionClass(input: {
+    categoryId?: string | null;
     scope: DdtScope;
     srNum: string;
     executionCaseDefinitionId: string | null;
@@ -1860,6 +1880,7 @@ export interface FailureAnalysisRepository {
     caseFixEvidence?: string;
     ticketReference?: string;
     remark?: string;
+    remarkImages?: FailureAnalysisRemarkImage[];
     rerunProofs: ReadonlyMap<string, { attemptId: string; url: string }>;
     completedAt: string;
   }): Promise<FailureAnalysisClaim[]>;

@@ -151,7 +151,7 @@ function makeService(
     getRerunSnapshot: async (batchId: string) => ({
       batch: [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId),
       roundRecoveries: [],
-      runs: batch.runs,
+      runs: [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId)?.runs ?? [],
       ...(dependencyPublishedAt[batchId]
         ? {
             adapterRuntime: {
@@ -387,6 +387,44 @@ describe("AttemptLogShareService", () => {
     expect(
       await service.getSharedAttemptLogForBatch("batch-1", "attempt-1", "other-attempt"),
     ).toBeNull();
+  });
+
+  it("keeps DDT CaseID separate from the selected execution class in public logs", async () => {
+    const source = makeBatchDetails("failed");
+    source.runs[0] = {
+      ...source.runs[0]!,
+      caseType: "ddt",
+      displayName: "WALLET-001",
+      className: "example.WalletTest",
+    };
+    const diagnostic = makeBatchDetails("succeeded");
+    diagnostic.id = "ddt-diagnostic";
+    diagnostic.kind = "case_log_rerun";
+    diagnostic.parentBatchId = source.id;
+    diagnostic.sourceExecutionRunId = "run-1";
+    diagnostic.runs[0] = {
+      ...source.runs[0]!,
+      id: "ddt-rerun",
+      batchId: diagnostic.id,
+      className: "example.SelectedExecutionTest",
+    };
+    diagnostic.attempts[0] = {
+      ...diagnostic.attempts[0]!,
+      id: "ddt-attempt",
+      executionRunId: "ddt-rerun",
+    };
+    const service = makeService(makeState(), source, [diagnostic]);
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    expect(await service.getSharedAttemptLog("token-1")).toMatchObject({
+      displayName: "WALLET-001",
+      casePath: "example.WalletTest",
+      caseType: "ddt",
+    });
+    expect(await service.getSharedAttemptLog("token-1", "ddt-attempt")).toMatchObject({
+      displayName: "WALLET-001",
+      casePath: "example.SelectedExecutionTest",
+      caseType: "ddt",
+    });
   });
 
   it("includes diagnostic reruns with the requesting LDAP username in the same log history", async () => {

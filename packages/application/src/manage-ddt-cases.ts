@@ -90,6 +90,43 @@ export class DdtCaseService {
     });
   }
 
+  requirementCategories(scope: DdtScope, query: { query: string; cursor?: string; limit: number }) {
+    return this.repository.listRequirementCategories(scope, query);
+  }
+
+  async saveRequirementCategory(
+    scope: DdtScope,
+    input: { id?: string; name: string; className: string; expectedRevision: number },
+  ) {
+    const executionClass = await this.requireExecutionClass(scope, input.className);
+    const id = input.id ?? this.ids.next();
+    await this.repository.saveRequirementCategory({
+      scope,
+      id,
+      name: input.name.trim(),
+      executionCaseDefinitionId: executionClass.caseDefinitionId,
+      expectedRevision: input.expectedRevision,
+      updatedAt: this.clock.now().toISOString(),
+    });
+    return { id };
+  }
+
+  deleteRequirementCategory(scope: DdtScope, input: { id: string; expectedRevision: number }) {
+    return this.repository.deleteRequirementCategory({ scope, ...input });
+  }
+
+  setSrCategory(
+    scope: DdtScope,
+    input: { srNum: string; categoryId: string | null; expectedRevision: number },
+  ) {
+    return this.repository.setSrExecutionClass({
+      scope,
+      ...input,
+      executionCaseDefinitionId: null,
+      updatedAt: this.clock.now().toISOString(),
+    });
+  }
+
   async setSrExecutionClass(
     scope: DdtScope,
     input: {

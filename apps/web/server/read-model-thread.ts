@@ -1,3 +1,4 @@
+import { runtimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 import { parentPort, workerData } from "node:worker_threads";
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
@@ -67,21 +68,25 @@ const worker = new ReadModelSnapshotWorker(
   () => configuration.buildInitial && Atomics.load(priority, 1) === 0 && !shutdown.signal.aborted,
   resources.isResourceContention,
 );
-let completedCycles = 0;
+let nextCleanupAt = performance.now() + 60_000;
 const factRefresh = new AnalyticsFactRefresh(
   () => resources.operations.rebuildAnalyticsFacts(100),
-  reportRefreshError,
+  (error) => reportRefreshError(error, undefined, "analytics.rebuildFacts"),
 );
 try {
   while (!shutdown.signal.aborted) {
     let refreshed = false;
+    let operation = "snapshot.refresh";
     try {
       if (configuration.refreshFacts && canRefresh()) await factRefresh.refreshIfDue();
       refreshed = await worker.refreshOne();
-      completedCycles += 1;
-      if (completedCycles % 60 === 0) await worker.cleanup();
+      if (configuration.refreshFacts && performance.now() >= nextCleanupAt) {
+        nextCleanupAt = performance.now() + 60_000;
+        operation = "snapshot.cleanup";
+        await worker.cleanup();
+      }
     } catch (error) {
-      reportRefreshError(error);
+      reportRefreshError(error, undefined, operation);
     }
     await delay(refreshed ? 50 : configuration.buildInitial ? 250 : 1_000, undefined, {
       signal: shutdown.signal,
@@ -141,7 +146,9 @@ async function initialize() {
       activity: new adapters.PostgresCaseSuiteActivityRepository(database),
       suites: new adapters.PostgresCaseSuiteRepository(database),
       batches: new adapters.PostgresRunBatchRepository(database),
-      clock: await adapters.createPostgresClock(database, reportError),
+      clock: await adapters.createPostgresClock(database, (error) =>
+        reportRefreshError(error, undefined, "clock.synchronize"),
+      ),
       close: () => database.close(),
     };
   } catch (error) {
@@ -150,17 +157,38 @@ async function initialize() {
   }
 }
 
-function reportRefreshError(error: unknown, query?: { kind: string; projectId: string }) {
-  if (resources.isResourceContention(error)) {
-    parentPort?.postMessage({ kind: "database_contention" });
-    return;
-  }
-  reportError(error, query);
-}
-
-function reportError(error: unknown, query?: { kind: string; projectId: string }) {
-  parentPort?.postMessage({ kind: "background_refresh" });
+function reportRefreshError(
+  error: unknown,
+  query?: { kind: string; projectId: string },
+  operation = "snapshot.refresh",
+) {
+  const context = runtimeDiagnosticContext(error, {
+    operation: query ? `snapshot.build.${query.kind}` : operation,
+    database: configuration.mode === "lite" ? "sqlite" : "postgresql",
+    ...(query ? { projectId: query.projectId } : {}),
+  });
+  const contention = resources.isResourceContention(error);
+  parentPort?.postMessage({
+    kind: contention ? "database_contention" : "background_refresh",
+    context,
+  });
   process.stderr.write(
-    `${JSON.stringify({ timestamp: new Date().toISOString(), level: "error", message: "Background read model refresh failed", requestId: "read-model-worker", kind: query?.kind, projectId: query?.projectId, error: (error instanceof Error ? error.message : String(error)).replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1***@") })}\n`,
+    `${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: contention ? "warn" : "error",
+      message: contention
+        ? "Background database operation deferred"
+        : "Background read model refresh failed",
+      requestId: "read-model-worker",
+      ...context,
+      ...(!contention
+        ? {
+            error: (error instanceof Error ? error.message : String(error)).replace(
+              /([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi,
+              "$1***@",
+            ),
+          }
+        : {}),
+    })}\n`,
   );
 }

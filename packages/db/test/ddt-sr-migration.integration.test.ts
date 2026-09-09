@@ -103,6 +103,50 @@ for (const dialect of ["sqlite", "postgres"] as const) {
               "SELECT id,execution_case_definition_id,revision FROM ddt_cases ORDER BY id",
             ),
           ).toEqual(original);
+
+          const categoryMigration = await readFile(
+            resolve(
+              folder,
+              dialect === "sqlite"
+                ? "0070_ddt_requirement_categories.sql"
+                : "0068_ddt_requirement_categories.sql",
+            ),
+            "utf8",
+          );
+          const previousMappings = await database.query(
+            "SELECT * FROM ddt_sr_execution_mappings ORDER BY sr_num_normalized",
+          );
+          await database.execute("BEGIN");
+          await database.execute(categoryMigration);
+          await expect(
+            database.execute("SELECT * FROM missing_category_fixture"),
+          ).rejects.toThrow();
+          await database.execute("ROLLBACK");
+          expect(
+            await database.query(
+              "SELECT * FROM ddt_sr_execution_mappings ORDER BY sr_num_normalized",
+            ),
+          ).toEqual(previousMappings);
+          await expect(
+            database.query("SELECT * FROM ddt_requirement_categories"),
+          ).rejects.toThrow();
+          await database.execute("BEGIN");
+          await database.execute(categoryMigration);
+          await database.execute("COMMIT");
+          expect(
+            await database.query(
+              "SELECT mapping.sr_num_normalized, category.execution_case_definition_id FROM ddt_sr_execution_mappings mapping LEFT JOIN ddt_requirement_categories category ON category.id = mapping.category_id ORDER BY mapping.sr_num_normalized",
+            ),
+          ).toEqual([
+            { sr_num_normalized: "ambiguous", execution_case_definition_id: null },
+            { sr_num_normalized: "recycled", execution_case_definition_id: "class-b" },
+            { sr_num_normalized: "uniform", execution_case_definition_id: "class-a" },
+          ]);
+          expect(
+            await database.query(
+              "SELECT id,execution_case_definition_id,revision FROM ddt_cases ORDER BY id",
+            ),
+          ).toEqual(original);
         } finally {
           await database.dispose();
         }

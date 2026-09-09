@@ -78,6 +78,26 @@ export const bulkDdtCaseIdsInputSchema = z.object({
   caseIds: z.array(z.string().min(1).max(512)).min(1).max(DDT_BULK_MUTATION_LIMIT),
 });
 
+export const saveDdtRequirementCategoryInputSchema = z
+  .object({
+    id: z.string().min(1).max(128).optional(),
+    name: z.string().trim().min(1).max(160),
+    className: z.string().trim().min(1).max(1_024),
+    expectedRevision: z.number().int().min(0),
+  })
+  .refine((input) => (input.id ? input.expectedRevision > 0 : input.expectedRevision === 0), {
+    message: "新分类修订号必须为 0；编辑分类必须提供已有修订号。",
+  });
+export const deleteDdtRequirementCategoryInputSchema = z.object({
+  id: z.string().min(1).max(128),
+  expectedRevision: z.number().int().min(1),
+});
+export const setDdtSrCategoryInputSchema = z.object({
+  srNum: z.string().trim().min(1).max(512),
+  categoryId: z.string().min(1).max(128).nullable(),
+  expectedRevision: z.number().int().min(0),
+});
+
 export const setDdtSrExecutionClassInputSchema = z.object({
   srNum: z.string().trim().min(1).max(512),
   className: z.string().trim().min(1).max(1_024).nullable(),

@@ -4,7 +4,28 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.16.0 - 2026-09-10
+
+### Added
+
+- DDT 支持按项目版本和测试阶段维护需求分类，使用“SR → 分类 → 执行类”映射；分类弹框支持创建、编辑、搜索和受保护删除，SR 分类自动覆盖现有及后续导入用例。
+
+- 任务详情分别提供普通用例和 DDT 添加入口并携带目标任务；DDT 选中用例后可直接新建任务。普通、混合和纯 DDT 任务共享执行配置与调度，任何成员缺少测试类时禁止整批启动。
+- 数据库锁通知展示发生等待的操作/后台任务、数据库类型、错误码和可用的请求/批次标识，跨线程保留诊断上下文；同一操作的持续故障合并通知。
+- 用例分析备注支持粘贴 PNG/JPEG/WebP 图片、预览和提交前删除；备注图片随结论保存，支持单条和批量分析，刷新后可回看。最多 8 张、单张 10 MiB、合计 20 MiB，独立于重跑通过证明且不从历史结论继承。
+
+### Fixed
+
+- DDT 公开日志与普通用例共用执行类路径字段，用例名称显示 CaseID；切换历史或诊断重跑时读取选中执行的类路径和名称快照。
+
+- Lite 快照清理、通知生成、Webhook 生成/领取和保留期清理及领取在没有工作时只读探测，不再争写锁；来源保留清理和只读选取日志批次不申请主库写锁，定期快照清理由一个工作线程按经过时间触发。业务通知候选排除已通知记录，避免重复写入和后续通知饥饿；定时触发、通知和 Webhook 使用独立维护循环。
+- 历史结论选择弹窗直接展示“代码问题已提单”的问题单号或链接，长内容自动换行。
+
+### Database
+
+- SQLite `0070_ddt_requirement_categories.sql`、PostgreSQL `0068_ddt_requirement_categories.sql` 增加需求分类和 SR 分类引用。已有统一关联自动转为可编辑的历史分类，不改写用例与执行记录；迁移失败可事务回滚后重试，降级必须恢复升级前数据库备份。
+
+- SQLite `0069_failure_analysis_remark_images.sql`、PostgreSQL `0067_failure_analysis_remark_images.sql` 为分析备注增加版本化图片元数据；已有备注和通过证明保持不变。图片仍使用 Lite 本地 / Full MinIO 对象存储，无新增依赖。升级失败可事务回滚后重试；降级前应备份数据库和对象目录，保留新增列以便再次升级读取图片。
 
 ## 1.15.3 - 2026-09-09
 

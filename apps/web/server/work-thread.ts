@@ -1,3 +1,4 @@
+import { runtimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -123,7 +124,20 @@ async function processRequest(request: WorkRequest): Promise<void> {
     port!.postMessage({
       id: request.id,
       ok: false,
-      error: serializedError(error),
+      error: {
+        ...serializedError(error),
+        runtimeContext: runtimeDiagnosticContext(error, {
+          operation:
+            request.task.kind === "background-job"
+              ? `background-job.${jobEnvelopeSchema.safeParse(request.task.job).data?.kind ?? "unknown"}`
+              : "operation" in request.task
+                ? `${request.task.kind}.${request.task.operation}`
+                : request.task.kind,
+          database: configuration.mode === "lite" ? "sqlite" : "postgresql",
+          requestId: `work-${request.id}`,
+          ...("batchId" in request.task ? { batchId: request.task.batchId } : {}),
+        }),
+      },
     } satisfies WorkResponse);
   } finally {
     cancellations.delete(request.id);
@@ -508,7 +522,9 @@ function serializedError(error: unknown): Extract<WorkResponse, { ok: false }>["
     return {
       name: error.name,
       message: error.message,
-      ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+      ...(runtimeDiagnosticContext(error, { operation: "worker" }).errorCode
+        ? { code: runtimeDiagnosticContext(error, { operation: "worker" }).errorCode }
+        : {}),
       ...("code" in error &&
       error.code === "DDT_DUPLICATE_COLUMNS" &&
       "fileName" in error &&

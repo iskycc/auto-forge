@@ -10,6 +10,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Code2, Link2, Search, Settings2, RefreshCw } from "lucide-react";
+import { DdtRequirementCategoriesDialog } from "./ddt-requirement-categories-dialog";
 import { ActionDialog } from "./action-dialog";
 import { Button, Input } from "./ui";
 import { useConfirm, useToast } from "./ui-feedback";
@@ -29,7 +30,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
-  const [dialog, setDialog] = useState<DdtSrExecutionMapping | "range" | null>(null);
+  const [dialog, setDialog] = useState<DdtSrExecutionMapping | "range" | "categories" | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const endpoint: Endpoint = useCallback(
     (path, extra = {}) => `/api/v1/ddt/${path}?${new URLSearchParams({ ...scope, ...extra })}`,
@@ -84,16 +85,16 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
       return;
     setLoading(true);
     try {
-      await requestDdtJson(endpoint("sr-mappings"), {
+      await requestDdtJson(endpoint("sr-categories"), {
         method: "POST",
         headers: jsonHeaders,
         body: JSON.stringify({
           srNum: mapping.srNum,
-          className: null,
+          categoryId: null,
           expectedRevision: mapping.revision,
         }),
       });
-      toast.success(`已解除 SR ${mapping.srNum} 的测试类关联。`);
+      toast.success(`已解除 SR ${mapping.srNum} 的需求分类。`);
       reload();
     } catch (failure) {
       toast.error(errorMessage(failure));
@@ -131,14 +132,18 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
           <RefreshCw size={15} />
           刷新
         </Button>
-        <Button className="button button-primary" onClick={() => setDialog("range")}>
+        <Button className="button button-secondary" onClick={() => setDialog("range")}>
           <Settings2 size={15} />
           {canManage ? "配置测试类范围" : "查看测试类范围"}
         </Button>
+        <Button className="button button-primary" onClick={() => setDialog("categories")}>
+          <Settings2 size={15} />
+          {canManage ? "配置需求分类" : "查看需求分类"}
+        </Button>
       </div>
       <p className="ddt-association-hint">
-        先将需要执行 DDT 的少量测试类加入候选列表，再为 SR 选择测试类。修改 SR
-        时，用例会自动继承目标 SR 的关联。
+        先配置需求分类及其执行类，再为 SR 选择分类。SR 下所有 DDT
+        用例共享分类执行类，后续导入自动继承。
       </p>
       {!canManage ? (
         <p className="inline-notice">当前账号只可查看；配置需要用例管理权限。</p>
@@ -155,7 +160,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
         <div className="ddt-sr-row ddt-sr-table-heading">
           <span>SR / 业务分组</span>
           <span>用例数</span>
-          <span>关联测试类</span>
+          <span>需求分类 / 执行类</span>
           <span>状态</span>
           <span>操作</span>
         </div>
@@ -164,8 +169,15 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
             <strong>{mapping.srNum}</strong>
             <span>{mapping.caseCount.toLocaleString()}</span>
             <div className="ddt-sr-class">
-              <strong>{mapping.executionClass?.displayName ?? "尚未关联"}</strong>
-              <code>{mapping.executionClass?.className ?? "本 SR 下用例共享一个测试类"}</code>
+              <strong>
+                {mapping.category?.name ?? (mapping.executionClass ? "历史直接关联" : "尚未分类")}
+              </strong>
+              <code>
+                {mapping.executionClass?.className ??
+                  (mapping.category
+                    ? "分类执行类已删除，请编辑分类"
+                    : "本 SR 下用例共享一个测试类")}
+              </code>
             </div>
             <span className={mapping.legacyConflict ? "ddt-association-warning" : ""}>
               {mapping.legacyConflict
@@ -174,7 +186,9 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                   ? !mapping.executionClass.enabled || mapping.executionClass.archived
                     ? "测试类不可用"
                     : "已关联"
-                  : "未关联"}
+                  : mapping.category
+                    ? "测试类不可用"
+                    : "未关联"}
             </span>
             <div className="ddt-sr-actions">
               {canManage ? (
@@ -183,12 +197,12 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                     className="button button-secondary"
                     disabled={loading}
                     onClick={() => setDialog(mapping)}
-                    aria-label={`关联 ${mapping.srNum} 的测试类`}
+                    aria-label={`设置 ${mapping.srNum} 的分类`}
                   >
                     <Link2 size={14} />
-                    {mapping.executionClass ? "更换" : "关联测试类"}
+                    {mapping.category ? "更换分类" : "设置分类"}
                   </Button>
-                  {mapping.executionClass ? (
+                  {mapping.category || mapping.executionClass ? (
                     <Button
                       className="button button-ghost"
                       disabled={loading}
@@ -231,12 +245,24 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
           </Button>
         ) : null}
       </footer>
-      {dialog ? (
+      {dialog === "range" ? (
         <DdtExecutionClassesDialog
           endpoint={endpoint}
-          mapping={dialog === "range" ? null : dialog}
           canManage={canManage}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            reload();
+          }}
+        />
+      ) : dialog ? (
+        <DdtRequirementCategoriesDialog
+          endpoint={endpoint}
+          mapping={dialog === "categories" ? null : dialog}
+          canManage={canManage}
+          onClose={() => {
+            setDialog(null);
+            reload();
+          }}
           onSaved={() => {
             setDialog(null);
             reload();
@@ -249,22 +275,17 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
 
 function DdtExecutionClassesDialog({
   endpoint,
-  mapping,
   canManage,
   onClose,
-  onSaved,
 }: {
   endpoint: Endpoint;
-  mapping: DdtSrExecutionMapping | null;
   canManage: boolean;
   onClose(): void;
-  onSaved(): void;
 }) {
   const [range, setRange] = useState<DdtExecutionClassRangePage>({ revision: 0, items: [] });
   const [candidates, setCandidates] = useState<DdtExecutionClass[]>([]);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -282,13 +303,13 @@ function DdtExecutionClassesDialog({
         const [page, found] = await Promise.all([
           requestDdtJson<DdtExecutionClassRangePage>(
             endpoint("execution-range", {
-              query: mapping ? query : "",
+              query: "",
               limit: "60",
               ...(cursor ? { cursor } : {}),
             }),
             { signal: controller.signal, cache: "reload" },
           ),
-          mapping || !canManage
+          !canManage
             ? Promise.resolve({ items: [] as DdtExecutionClass[] })
             : requestDdtJson<{ items: DdtExecutionClass[] }>(
                 endpoint("execution-classes", { query, limit: "50" }),
@@ -306,7 +327,7 @@ function DdtExecutionClassesDialog({
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [endpoint, mapping, query, canManage],
+    [endpoint, query, canManage],
   );
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -338,38 +359,11 @@ function DdtExecutionClassesDialog({
       setSaving(false);
     }
   };
-  const saveMapping = async () => {
-    if (!mapping || !selected) return;
-    setSaving(true);
-    setError("");
-    try {
-      await requestDdtJson(endpoint("sr-mappings"), {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({
-          srNum: mapping.srNum,
-          className: selected,
-          expectedRevision: mapping.revision,
-        }),
-      });
-      toast.success(`已关联 SR ${mapping.srNum}，其下所有 DDT 用例将使用 ${selected}。`);
-      onSaved();
-    } catch (failure) {
-      setError(errorMessage(failure));
-      toast.error(errorMessage(failure));
-    } finally {
-      setSaving(false);
-    }
-  };
   return (
     <ActionDialog
       open
-      title={mapping ? `关联 SR ${mapping.srNum}` : "测试类候选范围"}
-      description={
-        mapping
-          ? `本 SR 当前有 ${mapping.caseCount} 条用例；后续导入自动继承。只可选择当前范围内的候选测试类。`
-          : "仅维护当前项目版本和测试阶段需要执行 DDT 的测试类。仍被 SR 使用的测试类需先解除关联。"
-      }
+      title="测试类候选范围"
+      description="仅维护当前项目版本和测试阶段需要执行 DDT 的测试类。仍被需求分类或 SR 使用的类需先解除引用。"
       className="ddt-association-dialog"
       onClose={() => {
         if (!saving) onClose();
@@ -382,20 +376,18 @@ function DdtExecutionClassesDialog({
             className="button button-secondary"
             disabled={loading || saving}
             onClick={() => {
-              if (mapping) onSaved();
-              else setRefresh((value) => value + 1);
+              setRefresh((value) => value + 1);
             }}
           >
-            {mapping ? "关闭后刷新 SR" : "刷新范围"}
+            刷新范围
           </Button>
         </div>
       ) : null}
-      {mapping || canManage ? (
+      {canManage ? (
         <form
           className="search-field"
           onSubmit={(event) => {
             event.preventDefault();
-            setSelected("");
             setQuery(draft.trim());
           }}
         >
@@ -404,7 +396,7 @@ function DdtExecutionClassesDialog({
             aria-label="搜索测试类"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={mapping ? "在候选范围中搜索" : "搜索当前阶段的 TestNG 测试类"}
+            placeholder="搜索当前阶段的 TestNG 测试类"
             disabled={saving}
           />
           <Button className="button button-secondary" type="submit" disabled={loading || saving}>
@@ -414,52 +406,32 @@ function DdtExecutionClassesDialog({
       ) : null}
       <div
         className={
-          mapping || !canManage
-            ? "ddt-association-class-panels single"
-            : "ddt-association-class-panels"
+          !canManage ? "ddt-association-class-panels single" : "ddt-association-class-panels"
         }
       >
         <section aria-label="候选测试类范围">
-          <h3>{mapping ? "选择测试类" : "已加入范围"}</h3>
+          <h3>已加入范围</h3>
           <div className="ddt-association-class-list">
             {range.items.map((item) => (
               <div className="ddt-association-class-item" key={item.caseDefinitionId}>
-                {mapping ? (
-                  <label>
-                    <Input
-                      type="radio"
-                      name="sr-class"
-                      aria-label={item.className}
-                      checked={selected === item.className}
-                      disabled={loading || saving || !item.enabled || item.archived}
-                      onChange={() => setSelected(item.className)}
-                    />
-                    <ClassLabel item={item} />
-                  </label>
-                ) : (
-                  <>
-                    <ClassLabel item={item} />
-                    {canManage ? (
-                      <Button
-                        className="button button-secondary"
-                        disabled={loading || saving}
-                        onClick={() => void changeRange(item, false)}
-                        aria-label={`移除 ${item.className}`}
-                      >
-                        移除
-                      </Button>
-                    ) : null}
-                  </>
-                )}
+                <>
+                  <ClassLabel item={item} />
+                  {canManage ? (
+                    <Button
+                      className="button button-secondary"
+                      disabled={loading || saving}
+                      onClick={() => void changeRange(item, false)}
+                      aria-label={`移除 ${item.className}`}
+                    >
+                      移除
+                    </Button>
+                  ) : null}
+                </>
               </div>
             ))}
           </div>
           {!loading && !range.items.length ? (
-            <p className="ddt-association-hint">
-              {mapping
-                ? "暂无候选测试类，请先在“配置测试类范围”中添加。"
-                : "候选范围为空。从右侧加入需要执行 DDT 的测试类。"}
-            </p>
+            <p className="ddt-association-hint">候选范围为空。从右侧加入需要执行 DDT 的测试类。</p>
           ) : null}
           {range.nextCursor ? (
             <Button
@@ -471,7 +443,7 @@ function DdtExecutionClassesDialog({
             </Button>
           ) : null}
         </section>
-        {!mapping && canManage ? (
+        {canManage ? (
           <section aria-label="可加入的测试类">
             <h3>从 TestNG 用例库添加</h3>
             <div className="ddt-association-class-list">
@@ -514,26 +486,11 @@ function DdtExecutionClassesDialog({
       </div>
       <footer className="ddt-association-footer">
         <span>
-          {saving
-            ? "正在保存…"
-            : loading
-              ? "正在读取测试类…"
-              : mapping
-                ? "关联后对整个 SR 生效"
-                : "每次加入或移除均立即保存"}
+          {saving ? "正在保存…" : loading ? "正在读取测试类…" : "每次加入或移除均立即保存"}
         </span>
         <Button className="button button-secondary" disabled={saving} onClick={onClose}>
-          {mapping ? "取消" : "完成"}
+          完成
         </Button>
-        {mapping ? (
-          <Button
-            className="button button-primary"
-            disabled={!selected || loading || saving}
-            onClick={() => void saveMapping()}
-          >
-            保存 SR 关联
-          </Button>
-        ) : null}
       </footer>
     </ActionDialog>
   );

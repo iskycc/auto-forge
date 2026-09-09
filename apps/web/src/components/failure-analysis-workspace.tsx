@@ -48,6 +48,10 @@ import {
   FailureAnalysisExecutionHistory,
   type AnalysisLogComparison,
 } from "@/components/failure-analysis-execution-history";
+import {
+  FailureAnalysisRemark,
+  type AnalysisImagePreview,
+} from "@/components/failure-analysis-remark";
 import { FailureAnalysisConclusionPicker } from "@/components/failure-analysis-conclusion-picker";
 import { LoadingState } from "@/components/loading-state";
 import { Button, Input, Select, Textarea } from "@/components/ui";
@@ -1382,11 +1386,12 @@ function CompleteAnalysisDialog({
   const [caseFixEvidence, setCaseFixEvidence] = useState(initial?.caseFixEvidence ?? "");
   const [ticketReference, setTicketReference] = useState(initial?.ticketReference ?? "");
   const [remark, setRemark] = useState(initial?.remark ?? "");
+  const [remarkImages, setRemarkImages] = useState<File[]>([]);
   const [uploadedClaims, setUploadedClaims] = useState(claims);
   const [logClaim, setLogClaim] = useState<FailureAnalysisClaimView>();
   const [logComparison, setLogComparison] = useState<AnalysisLogComparison>();
   const closeLogComparison = useCallback(() => setLogComparison(undefined), []);
-  const [previewClaim, setPreviewClaim] = useState<FailureAnalysisClaimView>();
+  const [previewImage, setPreviewImage] = useState<AnalysisImagePreview>();
   const [imageZoomPercent, setImageZoomPercent] = useState(100);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1424,7 +1429,7 @@ function CompleteAnalysisDialog({
   const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
   const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
   const closeScreenshotPreview = useCallback(() => {
-    setPreviewClaim(undefined);
+    setPreviewImage(undefined);
     window.requestAnimationFrame(() => imagePreviewTriggerRef.current?.focus());
   }, []);
 
@@ -1463,22 +1468,34 @@ function CompleteAnalysisDialog({
   }, [caseDefinitionIds, currentAnalysisIds, historyBatchId, historyLimitPerCase, projectId]);
 
   useEffect(() => {
-    if (!previewClaim) return;
+    if (!previewImage) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeScreenshotPreview();
     };
     window.addEventListener("keydown", closeOnEscape);
     imageCloseButtonRef.current?.focus();
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [closeScreenshotPreview, previewClaim]);
+  }, [closeScreenshotPreview, previewImage]);
 
   function openScreenshotPreview(
     claim: FailureAnalysisClaimView,
     trigger: HTMLButtonElement,
   ): void {
+    if (!claim.screenshot) return;
+    openImagePreview(
+      {
+        ...claim.screenshot,
+        src: failureAnalysisEvidenceUrl(claim, projectId),
+        alt: `重跑通过截图大图：${claim.screenshot.fileName}`,
+      },
+      trigger,
+    );
+  }
+
+  function openImagePreview(image: AnalysisImagePreview, trigger: HTMLButtonElement): void {
     imagePreviewTriggerRef.current = trigger;
     setImageZoomPercent(100);
-    setPreviewClaim(claim);
+    setPreviewImage(image);
   }
 
   async function openPublicLog(claim: FailureAnalysisClaimView): Promise<void> {
@@ -1539,7 +1556,7 @@ function CompleteAnalysisDialog({
       readOnly ||
       logClaim ||
       logComparison ||
-      previewClaim ||
+      previewImage ||
       showCaseConfirmation ||
       showConclusionPicker ||
       inheritanceCandidate
@@ -1547,7 +1564,12 @@ function CompleteAnalysisDialog({
       return;
     }
     const handlePaste = (event: globalThis.ClipboardEvent): void => {
-      if (!event.clipboardData) return;
+      if (
+        !event.clipboardData ||
+        event.defaultPrevented ||
+        (event.target instanceof Element && event.target.closest("[data-analysis-remark]"))
+      )
+        return;
       const clipboardItems = [...event.clipboardData.items];
       const image = pastedImage(clipboardItems);
       if (!image) {
@@ -1569,7 +1591,7 @@ function CompleteAnalysisDialog({
     inheritanceCandidate,
     logClaim,
     logComparison,
-    previewClaim,
+    previewImage,
     readOnly,
     savePastedScreenshot,
     showCaseConfirmation,
@@ -1581,20 +1603,25 @@ function CompleteAnalysisDialog({
     setSubmitting(true);
     setError("");
     try {
+      const input = JSON.stringify({
+        projectId,
+        analysisIds: claims.map((claim) => claim.id),
+        category,
+        issueDescription,
+        caseFixEvidence,
+        ticketReference,
+        remark,
+        caseIssueConfirmed,
+        ...(inheritedFromAnalysisId ? { inheritedFromAnalysisId } : {}),
+      });
+      const form = new FormData();
+      form.set("input", input);
+      for (const file of remarkImages) form.append("remarkImages", file);
       const response = await fetch("/api/v1/failure-analysis/claims/complete", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          analysisIds: claims.map((claim) => claim.id),
-          category,
-          issueDescription,
-          caseFixEvidence,
-          ticketReference,
-          remark,
-          caseIssueConfirmed,
-          ...(inheritedFromAnalysisId ? { inheritedFromAnalysisId } : {}),
-        }),
+        ...(remarkImages.length > 0
+          ? { body: form }
+          : { headers: { "content-type": "application/json" }, body: input }),
       });
       if (!response.ok)
         throw new Error((await readApiErrorMessage(response, "提交用例分析失败。"))!);
@@ -1727,7 +1754,7 @@ function CompleteAnalysisDialog({
           aria-hidden={
             logClaim ||
             logComparison ||
-            previewClaim ||
+            previewImage ||
             showCaseConfirmation ||
             showConclusionPicker ||
             inheritanceCandidate
@@ -2036,18 +2063,17 @@ function CompleteAnalysisDialog({
               </label>
             ) : null}
             {category ? (
-              <label className="failure-analysis-field">
-                <span>
-                  备注说明 <small>选填</small>
-                </span>
-                <Textarea
-                  disabled={readOnly}
-                  onChange={(event) => setRemark(event.target.value)}
-                  placeholder="补充上下文、后续动作或其他说明"
-                  rows={3}
-                  value={remark}
-                />
-              </label>
+              <FailureAnalysisRemark
+                value={remark}
+                onChange={setRemark}
+                readOnly={readOnly}
+                disabled={submitting}
+                claims={uploadedClaims}
+                projectId={projectId}
+                onFilesChange={setRemarkImages}
+                onPreview={openImagePreview}
+                onError={setError}
+              />
             ) : null}
 
             {error ? <p className="form-error">{error}</p> : null}
@@ -2092,14 +2118,14 @@ function CompleteAnalysisDialog({
       {logComparison ? (
         <AttemptLogComparison comparison={logComparison} onClose={closeLogComparison} />
       ) : null}
-      {previewClaim?.screenshot ? (
+      {previewImage ? (
         <div
           className="failure-analysis-image-overlay"
           onClick={closeScreenshotPreview}
           role="presentation"
         >
           <section
-            aria-label={`图片预览 ${previewClaim.screenshot.fileName}`}
+            aria-label={`图片预览 ${previewImage.fileName}`}
             aria-modal="true"
             className="failure-analysis-image-dialog"
             onClick={(event) => event.stopPropagation()}
@@ -2107,8 +2133,8 @@ function CompleteAnalysisDialog({
           >
             <header>
               <span>
-                <strong>{previewClaim.screenshot.fileName}</strong>
-                <small>{formatFileSize(previewClaim.screenshot.sizeBytes)}</small>
+                <strong>{previewImage.fileName}</strong>
+                <small>{formatFileSize(previewImage.sizeBytes)}</small>
               </span>
               <div className="failure-analysis-image-controls" aria-label="图片缩放控制">
                 <Button
@@ -2156,8 +2182,8 @@ function CompleteAnalysisDialog({
             <div className="failure-analysis-image-viewport">
               {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
               <img
-                alt={`重跑通过截图大图：${previewClaim.screenshot.fileName}`}
-                src={failureAnalysisEvidenceUrl(previewClaim, projectId)}
+                alt={previewImage.alt}
+                src={previewImage.src}
                 style={{ width: `${imageZoomPercent}%` }}
               />
             </div>

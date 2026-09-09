@@ -24,7 +24,16 @@ export type DdtExecutionClass = {
   archived: boolean;
 };
 
+export type DdtRequirementCategory = {
+  id: string;
+  name: string;
+  revision: number;
+  executionClass?: DdtExecutionClass;
+};
+export type DdtRequirementCategoryPage = { items: DdtRequirementCategory[]; nextCursor?: string };
+
 export type DdtSrExecutionMapping = {
+  category?: { id: string; name: string };
   srNum: string;
   caseCount: number;
   revision: number;

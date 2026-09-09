@@ -113,21 +113,21 @@ DDT 单用例快捷执行使用 `POST /api/v1/ddt/cases/:caseId/execute`，URL �
 
 DDT 数据本身不是 Java class。“用例管理 → DDT 管理 → SR 测试类关联”打开独立页面
 `/cases/ddt-associations`。先在“配置测试类范围”中维护需要执行 DDT 的少量 TestNG 测试类，
-然后按 SR 选择其中一个测试类。候选范围与关联都按 `projectId + projectVersionId + testStageId`
+在“配置需求分类”中维护分类名称及执行类，再按 SR 设置分类，形成 `SR → category → CaseDefinition`。候选范围、分类与关联都按 `projectId + projectVersionId + testStageId`
 隔离；写操作需要 `case.manage`，查看需要 `case.read`。候选添加与 SR 关联都复核有效权威来源、
-启停和归档状态；仍被 SR 使用的候选类不能移除，必须先更换或解除关联。
+启停和归档状态；仍被分类或旧客户端直接关联的 SR 使用的候选类不能移除。分类名称在作用域内唯一，正在被 SR 使用的分类不能删除。
 
-平台只保存 SR 的关联，不再允许逐 CaseID 覆盖。同 SR 的现有用例、后续导入、回收恢复与
+平台保存分类的执行类引用和 SR 的分类引用，不允许逐 CaseID 覆盖。同 SR 的现有用例、后续导入、回收恢复与
 修改 SR 的用例，在读取或创建执行快照时自动继承该 SR 的关联；修改不扇出更新整个 SR 的
-DDT 用例，也不增加其数据修订号。关联用独立修订号防止并发覆盖，范围移除与关联写入在同一
+DDT 用例，也不增加其数据修订号。分类和 SR 关联分别使用独立修订号防止并发覆盖，分类编辑、删除、范围移除与关联写入在同一
 作用域内串行化。无关联、旧关联待确认或测试类不可用时，新执行会被预检拒绝。
-列表按 SR 前缀搜索，以游标按需读取最多 100 个 SR；只统计当前窗口的分组用例数量，浏览器
+分类支持名称搜索与游标读取，不批量更新 SR 或 DDT 记录。列表按 SR 前缀搜索，以游标按需读取最多 100 个 SR；只统计当前窗口的分组用例数量，浏览器
 会话缓存避免反复进入时重复查询。候选列表也按需加载，TestNG 搜索最多返回 50 个匹配项，
 需要时输入更具体类名缩小范围。没有引入 Redis、队列或新后台统计作为关联事实来源。
 
 DDT 用例可与普通用例加入同一个任务，任务详情将普通用例按包路径、DDT 用例按 SR 分别展示。
 平台保存的是 `CaseDefinition` 标识，不接受任意 JAR 路径；任务预检、任务详情和导出都读取
-SR 的关联。同一次任务读取跨多个 SQL 窗口时，每个 SR 固定首次读取到的关联，避免并发修改
+SR 的关联。同一次任务读取跨多个 SQL 窗口时，每个 SR 及共享的分类固定首次读取到的执行类，避免并发修改
 导致同一批次混用该 SR 的新旧测试类；重复测试类 ID 会合并查询。批次一旦创建，后续关联变更不会改变既有执行记录、重试或诊断重跑的快照。
 
 升级迁移为 SQLite `0068_ddt_sr_execution.sql` / PostgreSQL `0066_ddt_sr_execution.sql`，
@@ -136,6 +136,12 @@ SR 的关联。同一次任务读取跨多个 SQL 窗口时，每个 SR 固定�
 自动进入范围，原始逐用例字段保留用于升级核对，但不再参与新执行或作为回退。无历史关联的
 SR 保持未关联。升级前备份数据库；DDL/迁移数据在事务内，失败会回滚，可修复原因后重试。
 需要降级旧程序时必须恢复升级前备份，因为旧程序不能识别新的 SR 配置；不要仅回退二进制。
+
+分类升级使用 SQLite `0070_ddt_requirement_categories.sql` / PostgreSQL `0068_ddt_requirement_categories.sql`。
+原有非空 SR 关联按执行类转换为可重命名的“历史分类”，未关联与历史冲突保持原状。迁移不修改用例数据、修订号或历史执行。
+DDL 和转换在同一事务中；失败回滚后修复并重试。降级须恢复升级前数据库备份，旧程序不能解析分类引用。
+公开日志的 `casePath`、`displayName` 分别来自选中执行快照的 `className`、`displayName`，DDT 后者为 CaseID，
+不读取当前分类覆盖历史；`caseType` 为可选兼容新增字段，普通用例和 DDT 共用类路径展示。
 
 `case_suite_ddt_items` 对 DDT 资产使用限制删除。回收操作会先检查任务成员关系，并以
 `DDT_CASE_IN_USE` 拒绝仍在任务中的 CaseID；用户必须通过任务成员接口移除，使任务版本快照记录
@@ -161,7 +167,10 @@ Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都�
 - `GET /api/v1/ddt/execution-classes`
 - `POST /api/v1/ddt/cases/search|bulk-update|bulk-delete`
 - `GET/POST /api/v1/ddt/execution-range`（候选范围查询／加入移除，写入携带 `expectedRevision`）
-- `GET/POST /api/v1/ddt/sr-mappings`（SR 查询／关联或解除，写入携带 `expectedRevision`）
+- `GET /api/v1/ddt/sr-mappings`（SR、分类与解析后的执行类；旧 `POST` 直关联接口保留兼容，写入后解除该 SR 的分类引用）
+- `GET/POST /api/v1/ddt/requirement-categories`（分类游标列表、创建/编辑，编辑携带 `expectedRevision`）
+- `POST /api/v1/ddt/requirement-categories/delete`（删除未使用分类）
+- `POST /api/v1/ddt/sr-categories`（设置分类或传 `categoryId: null` 解除，携带 SR 的 `expectedRevision`）
 - 原 `POST /api/v1/ddt/cases/execution-class` 返回 `DDT_SR_MAPPING_REQUIRED`，提示改用 SR 关联
 - `GET /api/v1/ddt/cases/{CaseID}/history`
 - `POST /api/v1/ddt/cases/{CaseID}/history/{historyId}/restore`

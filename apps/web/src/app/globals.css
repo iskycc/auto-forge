@@ -19688,6 +19688,89 @@ button.icon-button:disabled {
   font-weight: 700;
 }
 
+.failure-analysis-remark {
+  min-width: 0;
+}
+
+.failure-analysis-remark > label small,
+.failure-analysis-remark-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+}
+
+.failure-analysis-remark-hint svg {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+.failure-analysis-remark-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.failure-analysis-remark-images figure {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-muted);
+}
+
+.failure-analysis-remark-images figure > button:first-child {
+  width: 100%;
+  height: 128px;
+  padding: var(--space-1);
+}
+
+.failure-analysis-remark-images img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.failure-analysis-remark-images figcaption {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.failure-analysis-remark-images figcaption > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-analysis-remark-images figcaption > small {
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-conclusion-ticket {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 4px 0 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  font-size: var(--font-size-control);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.failure-analysis-conclusion-ticket a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
 .failure-analysis-field > span strong {
   color: var(--color-danger);
 }
@@ -20794,4 +20877,18 @@ button.icon-button:disabled {
     grid-column: 1;
     grid-row: 2;
   }
+}
+
+.ddt-category-editor {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.ddt-category-list {
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+}
+.ddt-category-editor .ddt-association-footer > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }

@@ -44,11 +44,20 @@ describe("background snapshot contention reporting", () => {
       );
       try {
         const worker = state.workers[0]!;
-        worker.emit("message", { kind: "database_contention" });
+        const context = {
+          operation: "snapshot.build.case_directory",
+          database: mode === "lite" ? "sqlite" : "postgresql",
+          errorCode: mode === "lite" ? "SQLITE_BUSY" : "55P03",
+        };
+        worker.emit("message", { kind: "database_contention", context });
+        expect(state.priority.observeDatabaseContention).toHaveBeenCalledWith(context);
         expect(state.priority.observeDatabaseContention).toHaveBeenCalledOnce();
         expect(state.priority.report).not.toHaveBeenCalled();
         worker.emit("message", { kind: "background_refresh" });
-        expect(state.priority.report).toHaveBeenCalledWith("background_refresh");
+        expect(state.priority.report).toHaveBeenCalledWith("background_refresh", {
+          operation: "snapshot.worker",
+          database: mode === "lite" ? "sqlite" : "postgresql",
+        });
         worker.emit("error", new Error("thread failed"));
         expect(errors).toHaveBeenCalledWith(expect.objectContaining({ message: "thread failed" }));
       } finally {

@@ -653,6 +653,8 @@ public class MixedVisibleTest {
   await expect(caseImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
   await expect(page.locator(".inline-feedback")).toContainText("已从表格勾选 1 个用例");
+  // Collapsed directories stay unloaded; reveal the case before checking its selection.
+  await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await expect(page.getByLabel(`选择 ${taskCase.displayName}`)).toBeChecked();
 
   await page.getByLabel(`选择 ${taskCase.displayName}`).uncheck();
@@ -1233,7 +1235,7 @@ public class MixedVisibleTest {
     const anonymousPage = await anonymousContext.newPage();
     await anonymousPage.goto(sharePath!);
     expect(anonymousPage.url()).toContain("/share/attempt-log/");
-    await expect(anonymousPage.getByText("用例路径", { exact: true }).first()).toBeVisible();
+    await expect(anonymousPage.getByText("执行类路径", { exact: true }).first()).toBeVisible();
     const loginToRerun = anonymousPage.getByRole("link", { name: "登录后执行此用例" });
     await expect(loginToRerun).toBeVisible();
     await expect(loginToRerun).toHaveCSS("color", "rgb(255, 255, 255)");

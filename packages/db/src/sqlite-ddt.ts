@@ -1,5 +1,7 @@
 import {
   mapDdtExecutionClass,
+  mapDdtRequirementCategory,
+  type DdtRequirementCategoryRow,
   mapDdtSrMapping,
   ddtMappingConflict,
   type DdtExecutionClassRow,
@@ -272,7 +274,7 @@ export class SqliteDdtRepository implements DdtRepository {
  (SELECT COUNT(*)
          FROM ddt_cases
          WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND sr_num_normalized = names.sr_num_normalized) AS "caseCount",
- COALESCE(mapping.revision, 0) AS revision, COALESCE(mapping.legacy_conflict, 0) AS "legacyConflict", definition.id AS "caseDefinitionId", definition.class_name AS "className",
+ category.id AS "categoryId", category.name AS "categoryName", COALESCE(mapping.revision, 0) AS revision, COALESCE(mapping.legacy_conflict, 0) AS "legacyConflict", definition.id AS "caseDefinitionId", definition.class_name AS "className",
  definition.display_name AS "displayName", definition.source_id AS "sourceId",
  definition.current_version AS "currentVersion", CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled,
  CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
@@ -281,7 +283,8 @@ export class SqliteDdtRepository implements DdtRepository {
          LEFT JOIN ddt_sr_execution_mappings mapping
  ON mapping.project_id = ? AND mapping.project_version_id = ? AND mapping.test_stage_id = ? AND mapping.sr_num_normalized = names.sr_num_normalized
 
-         LEFT JOIN case_definitions definition ON definition.id = mapping.execution_case_definition_id
+         LEFT JOIN ddt_requirement_categories category ON category.id = mapping.category_id
+         LEFT JOIN case_definitions definition ON definition.id = CASE WHEN mapping.category_id IS NOT NULL THEN category.execution_case_definition_id ELSE mapping.execution_case_definition_id END
 
          ORDER BY names.sr_num_normalized`,
       )
@@ -348,6 +351,18 @@ export class SqliteDdtRepository implements DdtRepository {
           )
           .run(...scopeParameters(input.scope), input.executionCaseDefinitionId);
       } else {
+        const category = this.handle.client
+          .prepare(
+            `SELECT name FROM ddt_requirement_categories WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND execution_case_definition_id = ? LIMIT 1`,
+          )
+          .get(...scopeParameters(input.scope), input.executionCaseDefinitionId) as
+          { name: string } | undefined;
+        if (category)
+          throw new DomainError(
+            "DDT_EXECUTION_CLASS_IN_USE",
+            `需求分类 ${category.name} 仍使用此测试类，请先编辑或删除分类。`,
+          );
+
         const assigned = this.handle.client
           .prepare(
             `SELECT sr_num
@@ -417,14 +432,35 @@ export class SqliteDdtRepository implements DdtRepository {
         .get(...scopeParameters(input.scope), normalize(input.srNum)) as { id: string } | undefined;
       if (!current && !existingCase)
         throw new DomainError("DDT_SR_NOT_FOUND", "当前范围没有这个 SR，请刷新列表。");
-      if (input.executionCaseDefinitionId) {
+
+      let executionCaseDefinitionId = input.executionCaseDefinitionId;
+      if (input.categoryId) {
+        const category = this.handle.client
+          .prepare(
+            `SELECT execution_case_definition_id AS "executionCaseDefinitionId" FROM ddt_requirement_categories WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND id = ?`,
+          )
+          .get(...scopeParameters(input.scope), input.categoryId) as
+          { executionCaseDefinitionId: string | null } | undefined;
+        if (!category)
+          throw new DomainError(
+            "DDT_CATEGORY_NOT_FOUND",
+            "需求分类不存在或不属于当前范围，请刷新列表。",
+          );
+        if (!category.executionCaseDefinitionId)
+          throw new DomainError(
+            "DDT_EXECUTION_CLASS_UNAVAILABLE",
+            "需求分类的执行类已被删除，请先配置分类。",
+          );
+        executionCaseDefinitionId = category.executionCaseDefinitionId;
+      }
+      if (executionCaseDefinitionId) {
         const candidate = this.handle.client
           .prepare(
             `SELECT execution_case_definition_id
          FROM ddt_execution_class_range
          WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND execution_case_definition_id = ?`,
           )
-          .get(...scopeParameters(input.scope), input.executionCaseDefinitionId) as
+          .get(...scopeParameters(input.scope), executionCaseDefinitionId) as
           { execution_case_definition_id: string } | undefined;
         if (!candidate)
           throw new DomainError(
@@ -441,7 +477,7 @@ export class SqliteDdtRepository implements DdtRepository {
  AND definition.id = ? AND definition.enabled = 1 AND definition.archived = 0
  AND source.authoritative = 1 AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
           )
-          .get(...scopeParameters(input.scope), input.executionCaseDefinitionId) as
+          .get(...scopeParameters(input.scope), executionCaseDefinitionId) as
           { id: string } | undefined;
         if (!available)
           throw new DomainError(
@@ -451,21 +487,159 @@ export class SqliteDdtRepository implements DdtRepository {
       }
       this.handle.client
         .prepare(
-          `INSERT INTO ddt_sr_execution_mappings (project_id, project_version_id, test_stage_id, sr_num_normalized, sr_num, execution_case_definition_id, revision, legacy_conflict, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+          `INSERT INTO ddt_sr_execution_mappings (project_id, project_version_id, test_stage_id, sr_num_normalized, sr_num, execution_case_definition_id, revision, legacy_conflict, updated_at, category_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
          ON CONFLICT (project_id, project_version_id, test_stage_id, sr_num_normalized)
-         DO UPDATE SET sr_num = excluded.sr_num, execution_case_definition_id = excluded.execution_case_definition_id, revision = excluded.revision, legacy_conflict = 0, updated_at = excluded.updated_at`,
+         DO UPDATE SET sr_num = excluded.sr_num, execution_case_definition_id = excluded.execution_case_definition_id, category_id = excluded.category_id, revision = excluded.revision, legacy_conflict = 0, updated_at = excluded.updated_at`,
         )
         .run(
           ...scopeParameters(input.scope),
           normalize(input.srNum),
           input.srNum,
-          input.executionCaseDefinitionId,
+          input.categoryId ? null : executionCaseDefinitionId,
           input.expectedRevision + 1,
           input.updatedAt,
+          input.categoryId ?? null,
         );
     });
   }
+
+  async saveRequirementCategory(
+    input: Parameters<DdtRepository["saveRequirementCategory"]>[0],
+  ): Promise<void> {
+    runSqliteWriteTransaction(this.handle, () => {
+      this.handle.client
+        .prepare(
+          `INSERT INTO ddt_execution_configuration (project_id,project_version_id,test_stage_id) VALUES (?,?,?) ON CONFLICT DO NOTHING`,
+        )
+        .run(...scopeParameters(input.scope));
+      this.handle.client
+        .prepare(
+          `SELECT revision FROM ddt_execution_configuration WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
+        )
+        .get(...scopeParameters(input.scope)) as { revision: number } | undefined;
+      const current = this.handle.client
+        .prepare(
+          `SELECT revision FROM ddt_requirement_categories WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND id = ?`,
+        )
+        .get(...scopeParameters(input.scope), input.id) as { revision: number } | undefined;
+      if ((current?.revision ?? 0) !== input.expectedRevision) throw ddtMappingConflict();
+      const duplicate = this.handle.client
+        .prepare(
+          `SELECT id FROM ddt_requirement_categories WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND normalized_name = ? AND id <> ?`,
+        )
+        .get(...scopeParameters(input.scope), normalize(input.name), input.id) as
+        { id: string } | undefined;
+      if (duplicate)
+        throw new DomainError("DDT_CATEGORY_NAME_CONFLICT", "当前范围已存在同名需求分类。");
+      const candidate = this.handle.client
+        .prepare(
+          `SELECT definition.id FROM ddt_execution_class_range candidate
+ JOIN case_definitions definition ON definition.id = candidate.execution_case_definition_id
+ JOIN case_sources source ON source.id = definition.source_id
+ WHERE candidate.project_id = ? AND candidate.project_version_id = ? AND candidate.test_stage_id = ?
+ AND definition.project_id = candidate.project_id AND definition.project_version_id = candidate.project_version_id AND definition.test_stage_id = candidate.test_stage_id
+ AND candidate.execution_case_definition_id = ? AND definition.enabled = 1 AND definition.archived = 0 AND source.authoritative = 1 AND source.status = 'ready' AND source.lifecycle_status = 'active'`,
+        )
+        .get(...scopeParameters(input.scope), input.executionCaseDefinitionId) as
+        { id: string } | undefined;
+      if (!candidate)
+        throw new DomainError(
+          "DDT_EXECUTION_CLASS_OUT_OF_RANGE",
+          "请选择当前范围内可执行的候选测试类。",
+        );
+      if (current) {
+        this.handle.client
+          .prepare(
+            `UPDATE ddt_requirement_categories SET name = ?, normalized_name = ?, execution_case_definition_id = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND id = ?`,
+          )
+          .run(
+            input.name,
+            normalize(input.name),
+            input.executionCaseDefinitionId,
+            input.updatedAt,
+            ...scopeParameters(input.scope),
+            input.id,
+          );
+      } else {
+        this.handle.client
+          .prepare(
+            `INSERT INTO ddt_requirement_categories (id,project_id,project_version_id,test_stage_id,name,normalized_name,execution_case_definition_id,revision,updated_at) VALUES (?,?,?,?,?,?,?,1,?)`,
+          )
+          .run(
+            input.id,
+            ...scopeParameters(input.scope),
+            input.name,
+            normalize(input.name),
+            input.executionCaseDefinitionId,
+            input.updatedAt,
+          );
+      }
+    });
+  }
+
+  async deleteRequirementCategory(
+    input: Parameters<DdtRepository["deleteRequirementCategory"]>[0],
+  ): Promise<void> {
+    runSqliteWriteTransaction(this.handle, () => {
+      this.handle.client
+        .prepare(
+          `INSERT INTO ddt_execution_configuration (project_id,project_version_id,test_stage_id) VALUES (?,?,?) ON CONFLICT DO NOTHING`,
+        )
+        .run(...scopeParameters(input.scope));
+      this.handle.client
+        .prepare(
+          `SELECT revision FROM ddt_execution_configuration WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
+        )
+        .get(...scopeParameters(input.scope)) as { revision: number } | undefined;
+      const current = this.handle.client
+        .prepare(
+          `SELECT revision FROM ddt_requirement_categories WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND id = ?`,
+        )
+        .get(...scopeParameters(input.scope), input.id) as { revision: number } | undefined;
+      if (current?.revision !== input.expectedRevision) throw ddtMappingConflict();
+      const assigned = this.handle.client
+        .prepare(`SELECT sr_num FROM ddt_sr_execution_mappings WHERE category_id = ? LIMIT 1`)
+        .get(input.id) as { sr_num: string } | undefined;
+      if (assigned)
+        throw new DomainError(
+          "DDT_CATEGORY_IN_USE",
+          `SR ${assigned.sr_num} 仍使用此分类，请先更换或解除分类。`,
+        );
+      this.handle.client
+        .prepare(
+          `DELETE FROM ddt_requirement_categories WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND id = ?`,
+        )
+        .run(...scopeParameters(input.scope), input.id);
+    });
+  }
+
+  async listRequirementCategories(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number },
+  ) {
+    const pattern = `%${escapeLike(normalize(query.query))}%`;
+    const rows = this.handle.client
+      .prepare(
+        `SELECT category.id, category.name, category.revision,
+ definition.id AS "caseDefinitionId", definition.class_name AS "className", definition.display_name AS "displayName", definition.source_id AS "sourceId", definition.current_version AS "currentVersion",
+ CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled, CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
+ FROM ddt_requirement_categories category LEFT JOIN case_definitions definition ON definition.id = category.execution_case_definition_id
+ WHERE category.project_id = ? AND category.project_version_id = ? AND category.test_stage_id = ? AND category.id > ? AND category.normalized_name LIKE ? ESCAPE '\\'
+ ORDER BY category.id LIMIT ?`,
+      )
+      .all(
+        ...scopeParameters(scope),
+        query.cursor ?? "",
+        pattern,
+        query.limit + 1,
+      ) as DdtRequirementCategoryRow[];
+    return {
+      items: rows.slice(0, query.limit).map(mapDdtRequirementCategory),
+      ...(rows.length > query.limit ? { nextCursor: rows[query.limit - 1]!.id } : {}),
+    };
+  }
+
   async listGroups(scope: DdtScope, query = "", limit = 100) {
     const where = scopeSql(scope);
     const parameters: SqlValue[] = scopeParameters(scope);

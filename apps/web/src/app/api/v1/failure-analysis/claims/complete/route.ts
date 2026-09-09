@@ -1,11 +1,9 @@
-import {
-  completeFailureAnalysisInputSchema,
-  failureAnalysisClaimSchema,
-} from "@autoforge/contracts";
+import { failureAnalysisClaimSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
-import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
+import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { readFailureAnalysisCompletion } from "@/lib/failure-analysis-upload";
 import { getPlatformServices } from "@/lib/services";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -13,7 +11,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     requireSameOrigin(request);
     const identity = await authenticateRequest(request);
-    const input = completeFailureAnalysisInputSchema.parse(await readJsonBody(request, 32 * 1024));
+    const { input, remarkImages } = await readFailureAnalysisCompletion(request);
     const services = await getPlatformServices();
     services.identityAccess.authorize(identity, "analysis.manage", input.projectId);
     const claims = await services.failureAnalysis.complete({
@@ -25,6 +23,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       category: input.category,
       claimant: { id: identity.user.id, username: identity.user.username },
       caseIssueConfirmed: input.caseIssueConfirmed,
+      remarkImages,
       ...(input.issueDescription ? { issueDescription: input.issueDescription } : {}),
       ...(input.caseFixEvidence ? { caseFixEvidence: input.caseFixEvidence } : {}),
       ...(input.ticketReference ? { ticketReference: input.ticketReference } : {}),

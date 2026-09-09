@@ -1,3 +1,7 @@
+import {
+  runtimeDiagnosticContext,
+  isRuntimeDatabaseContention,
+} from "@autoforge/contracts/runtime-diagnostics";
 import { prioritizedExecutionControlRepository } from "./work-dispatch";
 import { runtimePriority } from "./runtime-priority";
 import { mkdir } from "node:fs/promises";
@@ -262,7 +266,13 @@ async function createPlatformServices() {
     });
     for (const handle of [database, executionDatabase]) {
       handle.pool.on("error", (error) => {
-        runtimePriority().report("database_busy");
+        runtimePriority().report(
+          "database_busy",
+          runtimeDiagnosticContext(error, {
+            operation: "postgresql.idleConnection",
+            database: "postgresql",
+          }),
+        );
         logServerError(
           error,
           "postgres-idle-connection",
@@ -708,15 +718,20 @@ async function createPlatformServices() {
     clock,
     config.mode === "full" ? (config.nodeId ?? "local") : "local",
   );
-  const runtimeNoticeLoop = runPeriodic(scheduleAbort.signal, 5_000, () =>
+  const runtimeNoticeLoop = runPeriodic(scheduleAbort.signal, 5_000, "notifications.deliver", () =>
     runtimeNotifications.deliverNextPage(),
   );
-  const roundRecoveryLoop = runPeriodic(scheduleAbort.signal, 5_000, async () => {
-    await roundRecovery.dispatchDue(`web-${process.pid}-round-recovery`);
-  });
+  const roundRecoveryLoop = runPeriodic(
+    scheduleAbort.signal,
+    5_000,
+    "round-recovery.dispatch",
+    async () => {
+      await roundRecovery.dispatchDue(`web-${process.pid}-round-recovery`);
+    },
+  );
   const scheduleLoop =
     config.mode === "lite"
-      ? runPeriodic(scheduleAbort.signal, 30_000, async () => {
+      ? runPeriodic(scheduleAbort.signal, 30_000, "schedules.trigger", async () => {
           if (dispatcher?.triggerDueSchedules) await dispatcher.triggerDueSchedules();
           else
             await platformOperations.triggerDueSchedules(async (schedule) => {
@@ -725,20 +740,31 @@ async function createPlatformServices() {
               });
               return batch.id;
             });
+        })
+      : Promise.resolve();
+  const notificationLoop =
+    config.mode === "lite"
+      ? runPeriodic(scheduleAbort.signal, 30_000, "notifications.generate", async () => {
           if (!runtimePriority().backgroundAllowed()) return;
           if (dispatcher) await dispatcher.runPlatformMaintenance("notifications");
           else await platformOperations.generateNotifications(100);
-          await webhooks.dispatchDue(`lite-web-${process.pid}-webhooks`);
+        })
+      : Promise.resolve();
+  const webhookLoop =
+    config.mode === "lite"
+      ? runPeriodic(scheduleAbort.signal, 30_000, "webhooks.dispatch", async () => {
+          if (runtimePriority().backgroundAllowed())
+            await webhooks.dispatchDue(`lite-web-${process.pid}-webhooks`);
         })
       : Promise.resolve();
   const nodeCleanupLoop = nodeLogs
-    ? runPeriodic(scheduleAbort.signal, 60_000, async () => {
+    ? runPeriodic(scheduleAbort.signal, 60_000, "logs.cleanupOrphans", async () => {
         if (runtimePriority().backgroundAllowed()) await nodeLogs!.cleanupOrphans();
       })
     : Promise.resolve();
   const retentionLoop =
     config.mode === "lite"
-      ? runPeriodic(scheduleAbort.signal, 3_600_000, async () => {
+      ? runPeriodic(scheduleAbort.signal, 3_600_000, "retention.cleanup", async () => {
           if (!runtimePriority().backgroundAllowed()) return;
           if (dispatcher) await dispatcher.runPlatformMaintenance("retention");
           else await platformOperations.runRetentionCycle(100);
@@ -754,6 +780,8 @@ async function createPlatformServices() {
       scheduleAbort.abort();
       await Promise.all([
         scheduleLoop,
+        notificationLoop,
+        webhookLoop,
         retentionLoop,
         roundRecoveryLoop,
         nodeCleanupLoop,
@@ -867,14 +895,20 @@ function secureEqual(left: string, right: string): boolean {
 async function runPeriodic(
   signal: AbortSignal,
   intervalMs: number,
+  operationName: string,
   operation: () => Promise<void>,
 ): Promise<void> {
   while (!signal.aborted) {
     try {
       await operation();
     } catch (error) {
-      runtimePriority().report("background_refresh");
+      const context = runtimeDiagnosticContext(error, { operation: operationName });
+      runtimePriority().report(
+        isRuntimeDatabaseContention(context) ? "database_busy" : "background_refresh",
+        context,
+      );
       workerLogger.error("periodic platform operation failed", {
+        ...context,
         error: error instanceof Error ? error.message : "unknown error",
       });
     }

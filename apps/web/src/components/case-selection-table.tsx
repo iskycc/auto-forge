@@ -57,6 +57,7 @@ export function CaseSelectionTable({
   caseManagementProjectIds,
   suiteManagementProjectIds,
   initialSearch = "",
+  initialSuiteId,
   latestOutcomes = new Map(),
   directoryTree,
 }: {
@@ -65,6 +66,7 @@ export function CaseSelectionTable({
   caseManagementProjectIds: string[] | undefined;
   suiteManagementProjectIds: string[] | undefined;
   initialSearch?: string;
+  initialSuiteId?: string | undefined;
   latestOutcomes?: ReadonlyMap<string, CaseLatestRun>;
   directoryTree?: {
     filter: CaseDirectoryFilter;
@@ -132,7 +134,7 @@ export function CaseSelectionTable({
   }
   const [activeCaseId, setActiveCaseId] = useState<string>();
   const [suiteId, setSuiteId] = useState(
-    directoryTree?.filter.missingSuiteId ?? suites[0]?.id ?? "",
+    initialSuiteId ?? directoryTree?.filter.missingSuiteId ?? suites[0]?.id ?? "",
   );
   const [missingOnly, setMissingOnly] = useState(Boolean(directoryTree?.filter.missingSuiteId));
   const [missingCaseIds, setMissingCaseIds] = useState<Set<string> | null>(null);

@@ -883,7 +883,6 @@ export function DdtManagementWorkspace({
                 <Button
                   className="button button-secondary"
                   type="button"
-                  disabled={suites.length === 0}
                   onClick={() => setShowAddToSuite(true)}
                 >
                   <ListPlus size={15} /> 加入用例任务
@@ -1081,6 +1080,7 @@ export function DdtManagementWorkspace({
             if (activeCaseId) await openCase(activeCaseId);
             setShowBulk(false);
             setSelected(new Set());
+            router.refresh();
           }}
         />
       ) : null}
@@ -1089,6 +1089,7 @@ export function DdtManagementWorkspace({
           caseIds={[...selected]}
           scope={scope}
           suites={suites}
+          initialSuiteId={searchParameters.get("targetSuiteId") ?? undefined}
           onClose={() => setShowAddToSuite(false)}
           onComplete={async (suiteName) => {
             toast.success(`已将 ${selected.size} 条 DDT 用例加入任务“${suiteName}”。`);
@@ -2232,25 +2233,46 @@ function AddDdtToSuiteDialog({
   caseIds,
   scope,
   suites,
+  initialSuiteId,
   onClose,
   onComplete,
 }: {
   caseIds: string[];
   scope: Scope;
+  initialSuiteId?: string | undefined;
   suites: Array<{ id: string; name: string }>;
   onClose(): void;
   onComplete(suiteName: string): Promise<void>;
 }) {
-  const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
+  const [suiteId, setSuiteId] = useState(
+    suites.some((suite) => suite.id === initialSuiteId)
+      ? initialSuiteId!
+      : (suites[0]?.id ?? "new"),
+  );
+  const [newSuiteName, setNewSuiteName] = useState("");
+  const [createdSuite, setCreatedSuite] = useState<{ id: string; name: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const save = async () => {
-    const suite = suites.find((item) => item.id === suiteId);
-    if (!suite) return;
+    let suite = suiteId === "new" ? createdSuite : suites.find((item) => item.id === suiteId);
     setBusy(true);
     setError("");
     try {
-      await requestJson(`/api/v1/case-suites/${encodeURIComponent(suiteId)}/ddt-cases`, {
+      if (!suite && suiteId === "new") {
+        suite = await requestJson<{ id: string; name: string }>("/api/v1/case-suites", {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({
+            name: newSuiteName.trim(),
+            projectId: scope.projectId,
+            projectVersionId: scope.projectVersionId,
+          }),
+        });
+        // Keep the created task on a membership failure so retrying cannot create duplicates.
+        setCreatedSuite(suite);
+      }
+      if (!suite) return;
+      await requestJson(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/ddt-cases`, {
         method: "POST",
         headers: jsonHeaders,
         body: JSON.stringify({ testStageId: scope.testStageId, caseIds }),
@@ -2258,35 +2280,66 @@ function AddDdtToSuiteDialog({
       await onComplete(suite.name);
     } catch (saveError) {
       setError(messageOf(saveError));
+    } finally {
       setBusy(false);
     }
   };
   return (
     <Dialog
       title={`将 ${caseIds.length} 条 DDT 用例加入任务`}
-      subtitle="任务会按 srNum 展示 DDT 目录，并在执行时固化每条用例的数据快照"
+      subtitle="可加入已有任务与普通用例混合执行，也可新建仅含 DDT 的任务。执行前所有 DDT 用例必须完成 SR 测试类关联，并在任务设置中启用 Adapter。"
       onClose={onClose}
+      closeDisabled={busy}
     >
       <div className="form-grid ddt-add-suite-dialog">
         {error ? <div className="inline-notice error full-span">{error}</div> : null}
         <label className="full-span">
           <span>目标用例任务</span>
-          <Select value={suiteId} onChange={(event) => setSuiteId(event.target.value)}>
+          <Select
+            value={suiteId}
+            disabled={busy || Boolean(createdSuite)}
+            onChange={(event) => setSuiteId(event.target.value)}
+          >
             {suites.map((suite) => (
               <option key={suite.id} value={suite.id}>
                 {suite.name}
               </option>
             ))}
+            <option value="new">新建用例任务</option>
           </Select>
         </label>
+        {suiteId === "new" ? (
+          <label className="full-span">
+            <span>新任务名称</span>
+            <Input
+              value={createdSuite?.name ?? newSuiteName}
+              maxLength={120}
+              disabled={busy || Boolean(createdSuite)}
+              onChange={(event) => setNewSuiteName(event.target.value)}
+              placeholder="例如：DDT 回归测试"
+            />
+          </label>
+        ) : null}
+        {createdSuite ? (
+          <p className="muted full-span">
+            任务“{createdSuite.name}”已创建，重新点击加入任务可重试添加所选用例。
+          </p>
+        ) : null}
         <footer className="full-span">
-          <Button className="button button-secondary" type="button" onClick={onClose}>
+          <Button
+            className="button button-secondary"
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+          >
             取消
           </Button>
           <Button
             className="button button-primary"
             type="button"
-            disabled={!suiteId || busy}
+            disabled={
+              busy || (suiteId === "new" ? !newSuiteName.trim() && !createdSuite : !suiteId)
+            }
             onClick={() => void save()}
           >
             {busy ? <LoaderCircle className="spin" size={15} /> : <ListPlus size={15} />}

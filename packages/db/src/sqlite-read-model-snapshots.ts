@@ -168,30 +168,43 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
   }
 
   async cleanup(before: string, limit: number) {
-    await retrySqliteLockContention(() =>
-      this.handle.client
-        .prepare(
-          `DELETE FROM read_model_snapshots WHERE id IN
-      (SELECT id FROM read_model_snapshots WHERE lease_token IS NULL ORDER BY accessed_at DESC,id DESC LIMIT ? OFFSET 2048)`,
-        )
-        .run(limit),
-    );
-    await retrySqliteLockContention(() =>
-      this.handle.client
-        .prepare(
-          `DELETE FROM read_model_snapshots WHERE id IN
-      (SELECT id FROM read_model_snapshots WHERE accessed_at<? AND (lease_token IS NULL OR lease_expires_at<?) LIMIT ?)`,
-        )
-        .run(before, before, limit),
-    );
-    await retrySqliteLockContention(() =>
-      this.handle.client
-        .prepare(
-          `DELETE FROM read_model_snapshot_parts WHERE rowid IN
-      (SELECT part.rowid FROM read_model_snapshot_parts part JOIN read_model_snapshots snapshot ON snapshot.id=part.snapshot_id
-       WHERE part.generation<>COALESCE(snapshot.generation,'') AND part.generation<>COALESCE(snapshot.lease_token,'') LIMIT ?)`,
-        )
-        .run(limit * READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT),
-    );
+    if (limit <= 0) return;
+    const candidates = [
+      {
+        table: "read_model_snapshots",
+        key: "id",
+        select:
+          "SELECT id FROM read_model_snapshots WHERE lease_token IS NULL ORDER BY accessed_at DESC,id DESC LIMIT ? OFFSET 2048",
+        parameters: [limit],
+      },
+      {
+        table: "read_model_snapshots",
+        key: "id",
+        select:
+          "SELECT id FROM read_model_snapshots WHERE accessed_at<? AND (lease_token IS NULL OR lease_expires_at<?) LIMIT ?",
+        parameters: [before, before, limit],
+      },
+      {
+        table: "read_model_snapshot_parts",
+        key: "rowid",
+        select: `SELECT part.rowid FROM read_model_snapshot_parts part JOIN read_model_snapshots snapshot ON snapshot.id=part.snapshot_id
+          WHERE part.generation<>COALESCE(snapshot.generation,'') AND part.generation<>COALESCE(snapshot.lease_token,'') LIMIT ?`,
+        parameters: [limit * READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT],
+      },
+    ];
+    for (const candidate of candidates) {
+      if (
+        !this.handle.client
+          .prepare(`SELECT 1 FROM (${candidate.select}) LIMIT 1`)
+          .get(...candidate.parameters)
+      )
+        continue;
+      // Repeat the selection inside DELETE so a concurrent refresh cannot lose its active generation.
+      await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(`DELETE FROM ${candidate.table} WHERE ${candidate.key} IN (${candidate.select})`)
+          .run(...candidate.parameters),
+      );
+    }
   }
 }

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { createSqliteDatabase } from "../src/database";
+import { SqliteWebhookRepository } from "../src/sqlite-webhook";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
 import { SqliteReadModelSnapshotRepository } from "../src/sqlite-read-model-snapshots";
 import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
@@ -103,6 +104,77 @@ describe("Runner heartbeat under SQLite writer contention", () => {
       await harness.close();
     }
   }, 5_000);
+
+  it("does not acquire the writer for any empty retention category", async () => {
+    const harness = await database();
+    try {
+      const operations = new SqlitePlatformOperationsRepository(harness.handle);
+      harness.writer.exec("BEGIN IMMEDIATE");
+      const results = await Promise.allSettled(
+        (
+          [
+            "artifact",
+            "log",
+            "analytics",
+            "execution",
+            "source",
+            "session",
+            "queue",
+            "audit",
+          ] as const
+        ).map((category) =>
+          operations.executeRetention({ category, cutoffAt: recordedAt, recordedAt, limit: 20 }),
+        ),
+      );
+      expect(results).toEqual(
+        Array.from({ length: 8 }, () => ({
+          status: "fulfilled",
+          value: { deletedRecords: 0, objectKeys: [] },
+        })),
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("keeps idle maintenance read-only while another connection holds the writer", async () => {
+    const harness = await database();
+    try {
+      const operations = new SqlitePlatformOperationsRepository(harness.handle);
+      const webhooks = new SqliteWebhookRepository(harness.handle);
+      harness.writer.exec("BEGIN IMMEDIATE");
+      const results = await Promise.allSettled([
+        new SqliteReadModelSnapshotRepository(harness.handle).cleanup(recordedAt, 20),
+        operations.generateNotifications({
+          now: recordedAt,
+          runnerOfflineBefore: recordedAt,
+          limit: 100,
+        }),
+        operations.claimRetentionCleanupJobs({
+          now: recordedAt,
+          owner: "maintenance",
+          leaseExpiresAt: "2026-09-08T00:02:00.000Z",
+          limit: 20,
+        }),
+        webhooks.materializeDeliveries({ now: recordedAt, limit: 100 }),
+        webhooks.claimDueDeliveries({
+          now: recordedAt,
+          owner: "webhooks",
+          leaseExpiresAt: "2026-09-08T00:02:00.000Z",
+          limit: 20,
+        }),
+      ]);
+      expect(results).toEqual([
+        { status: "fulfilled", value: undefined },
+        { status: "fulfilled", value: 0 },
+        { status: "fulfilled", value: [] },
+        { status: "fulfilled", value: 0 },
+        { status: "fulfilled", value: [] },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
 
   it("does not acquire a writer when snapshot claims and analytics fact refreshes have no work", async () => {
     const harness = await database();

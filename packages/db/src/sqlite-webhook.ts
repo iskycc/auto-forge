@@ -243,12 +243,8 @@ export class SqliteWebhookRepository implements WebhookRepository {
   }
 
   async materializeDeliveries(input: Parameters<WebhookRepository["materializeDeliveries"]>[0]) {
-    return this.handle.client
-      .prepare(
-        `INSERT OR IGNORE INTO webhook_deliveries
-          (id, webhook_id, batch_id, webhook_name, request_url, request_method,
-           request_body_template, status, attempts, available_at, created_at, updated_at)
-         SELECT 'webhook-delivery-' || w.id || '-' || b.id, w.id, b.id, w.name, w.target_url,
+    if (input.limit <= 0) return 0;
+    const candidateSql = `SELECT 'webhook-delivery-' || w.id || '-' || b.id, w.id, b.id, w.name, w.target_url,
                 w.method, w.body_template, 'pending', 0, e.recorded_at, e.recorded_at, ?
          FROM run_batch_status_events e
          JOIN run_batches b ON b.id = e.batch_id
@@ -264,20 +260,32 @@ export class SqliteWebhookRepository implements WebhookRepository {
            AND w.enabled = 1 AND w.deleted_at IS NULL
            AND w.enabled_at IS NOT NULL AND w.enabled_at <= e.recorded_at
          ORDER BY e.recorded_at, e.id, w.id
-         LIMIT ?`,
+         LIMIT ?`;
+    if (
+      !this.handle.client
+        .prepare(`SELECT 1 FROM (${candidateSql}) LIMIT 1`)
+        .get(input.now, input.limit)
+    )
+      return 0;
+    return this.handle.client
+      .prepare(
+        `INSERT OR IGNORE INTO webhook_deliveries
+      (id, webhook_id, batch_id, webhook_name, request_url, request_method,
+           request_body_template, status, attempts, available_at, created_at, updated_at) ${candidateSql}`,
       )
       .run(input.now, input.limit).changes;
   }
 
   async claimDueDeliveries(input: Parameters<WebhookRepository["claimDueDeliveries"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
-      const candidates = this.handle.client
-        .prepare(
-          `SELECT id FROM webhook_deliveries
+    if (input.limit <= 0) return [];
+    const candidateSql = `SELECT id FROM webhook_deliveries
            WHERE (status = 'pending' AND available_at <= ?)
               OR (status = 'delivering' AND lease_expires_at <= ?)
-           ORDER BY available_at, created_at, id LIMIT ?`,
-        )
+           ORDER BY available_at, created_at, id LIMIT ?`;
+    if (!this.handle.client.prepare(candidateSql).get(input.now, input.now, 1)) return [];
+    return runSqliteWriteTransaction(this.handle, () => {
+      const candidates = this.handle.client
+        .prepare(candidateSql)
         .all(input.now, input.now, input.limit) as Array<{ id: string }>;
       const claim = this.handle.client.prepare(
         `UPDATE webhook_deliveries
