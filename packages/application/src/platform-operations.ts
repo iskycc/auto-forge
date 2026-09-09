@@ -754,6 +754,7 @@ export class PlatformOperationsService {
 function batchSnapshot(batch: import("@autoforge/domain").RunBatchDetails) {
   return {
     batchId: batch.id,
+    sequenceNumber: batch.sequenceNumber,
     projectId: batch.projectId,
     suiteId: batch.suiteId,
     suiteVersion: batch.suiteVersion,
@@ -777,8 +778,11 @@ function comparisonCases(batch: import("@autoforge/domain").RunBatchDetails) {
         run.caseDefinitionId,
         {
           displayName: run.displayName,
+          className: run.className,
           version: run.caseVersion,
           outcome: attempt?.outcome ?? run.terminalOutcome,
+          attemptId: attempt?.id,
+          attemptNumber: attempt?.attemptNumber,
           durationMs: attempt?.durationMs,
         },
       ];

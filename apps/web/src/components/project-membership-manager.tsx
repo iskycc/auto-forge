@@ -31,6 +31,8 @@ export function ProjectMembershipManager({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [actionDialog, setActionDialog] = useState<"project" | "member" | "owner" | null>(null);
+  const [roleDialogMember, setRoleDialogMember] = useState<ProjectMember | null>(null);
+  const [roleDialogError, setRoleDialogError] = useState("");
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
@@ -58,6 +60,71 @@ export function ProjectMembershipManager({
       jsonRequest("POST", { projectId: project.id, roleId: form.get("roleId") }),
       "项目角色已分配，目标用户的旧会话已撤销。",
     );
+  }
+
+  function openMemberRoleDialog(member: ProjectMember): void {
+    setRoleDialogError("");
+    setRoleDialogMember({ user: member.user, roleIds: [...member.roleIds] });
+  }
+
+  async function addRoleToMember(roleId: string): Promise<void> {
+    const member = roleDialogMember;
+    if (!member || member.roleIds.includes(roleId)) return;
+    await updateMemberRole(member, roleId, "assign", "项目角色已添加，目标用户的旧会话已撤销。");
+  }
+
+  async function removeRoleFromMember(roleId: string): Promise<void> {
+    const member = roleDialogMember;
+    if (!member || !member.roleIds.includes(roleId)) return;
+    const accepted = await confirmAction({
+      title: "移除项目角色",
+      description: `从“${member.user.displayName}”移除“${roleName(roles, roleId)}”后，会立即撤销该用户的旧会话。`,
+      confirmLabel: "确认移除",
+      tone: "danger",
+    });
+    if (!accepted) return;
+    await updateMemberRole(
+      member,
+      roleId,
+      "remove",
+      member.roleIds.length === 1
+        ? "最后一个项目角色已移除，该用户已不再是项目成员。"
+        : "项目角色已移除，目标用户的旧会话已撤销。",
+    );
+  }
+
+  async function updateMemberRole(
+    member: ProjectMember,
+    roleId: string,
+    operation: "assign" | "remove",
+    success: string,
+  ): Promise<void> {
+    const assigning = operation === "assign";
+    const path = assigning
+      ? `/api/v1/users/${encodeURIComponent(member.user.id)}/project-roles`
+      : `/api/v1/users/${encodeURIComponent(member.user.id)}/project-roles/${encodeURIComponent(project.id)}/${encodeURIComponent(roleId)}`;
+    const init = assigning
+      ? jsonRequest("POST", { projectId: project.id, roleId })
+      : { method: "DELETE" };
+    setPending(true);
+    setRoleDialogError("");
+    try {
+      const response = await fetch(path, init);
+      const errorMessage = await readApiErrorMessage(response, "项目角色修改失败。");
+      if (errorMessage) throw new Error(errorMessage);
+      const nextRoleIds = assigning
+        ? [...member.roleIds, roleId]
+        : member.roleIds.filter((currentRoleId) => currentRoleId !== roleId);
+      setRoleDialogMember(
+        nextRoleIds.length > 0 ? { user: member.user, roleIds: nextRoleIds } : null,
+      );
+      toast.success(success);
+      router.refresh();
+    } catch (cause) {
+      setRoleDialogError(cause instanceof Error ? cause.message : "项目角色修改失败。");
+    } finally {
+      setPending(false);
+    }
   }
 
   function createProject(event: FormEvent<HTMLFormElement>) {
@@ -203,6 +270,84 @@ export function ProjectMembershipManager({
             </Button>
           </form>
         </ActionDialog>
+        <ActionDialog
+          className="member-role-dialog"
+          description={`直接添加或移除“${project.name}”内的项目角色；每次变更立即生效并撤销目标用户的旧会话。`}
+          onClose={() => !pending && setRoleDialogMember(null)}
+          open={roleDialogMember !== null}
+          title={
+            roleDialogMember
+              ? `管理“${roleDialogMember.user.displayName}”的项目角色`
+              : "管理项目角色"
+          }
+        >
+          {roleDialogMember ? (
+            <div className="member-role-dialog-content">
+              <div className="member-role-subject">
+                <strong>{roleDialogMember.user.displayName}</strong>
+                <span>
+                  {roleDialogMember.user.username} · {roleDialogMember.user.id}
+                </span>
+              </div>
+              {roleDialogError ? (
+                <p className="auth-error" role="alert">
+                  {roleDialogError}
+                </p>
+              ) : null}
+              <div className="role-grid member-role-grid">
+                {manageableProjectRoles(roles, roleDialogMember.roleIds).map((role) => {
+                  const assigned = roleDialogMember.roleIds.includes(role.id);
+                  return (
+                    <article className="role-card member-role-card" key={role.id}>
+                      <div>
+                        <strong>{role.name}</strong>
+                        <span
+                          className={`status-badge ${assigned ? "status-ready" : "status-muted"}`}
+                        >
+                          {assigned ? "已分配" : "未分配"}
+                        </span>
+                      </div>
+                      <p>{role.description}</p>
+                      {assigned ? (
+                        <Button
+                          aria-label={`移除项目角色 ${role.name}`}
+                          disabled={pending}
+                          onClick={() => void removeRoleFromMember(role.id)}
+                          size="compact"
+                          type="button"
+                          variant="danger"
+                        >
+                          移除角色
+                        </Button>
+                      ) : (
+                        <Button
+                          aria-label={`添加项目角色 ${role.name}`}
+                          disabled={pending || !role.assignable}
+                          onClick={() => void addRoleToMember(role.id)}
+                          size="compact"
+                          type="button"
+                          variant="secondary"
+                        >
+                          添加角色
+                        </Button>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+              <div className="action-dialog-actions">
+                <Button
+                  disabled={pending}
+                  onClick={() => setRoleDialogMember(null)}
+                  type="button"
+                  variant="secondary"
+                >
+                  完成
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </ActionDialog>
       </section>
 
       <section className="content-card settings-section">
@@ -246,33 +391,20 @@ export function ProjectMembershipManager({
                     </div>
                   </td>
                   <td>
-                    {canManage && !project.archived
-                      ? member.roleIds.map((roleId) => (
-                          <Button
-                            className="danger-text-button"
-                            disabled={pending}
-                            key={roleId}
-                            onClick={() => {
-                              void confirmAction({
-                                title: "撤销项目角色",
-                                description: `撤销“${roleName(roles, roleId)}”后会立即撤销该用户的旧会话。`,
-                                confirmLabel: "确认撤销",
-                                tone: "danger",
-                              }).then((accepted) => {
-                                if (!accepted) return;
-                                void request(
-                                  `/api/v1/users/${member.user.id}/project-roles/${project.id}/${roleId}`,
-                                  { method: "DELETE" },
-                                  "项目角色已撤销。",
-                                );
-                              });
-                            }}
-                            type="button"
-                          >
-                            撤销 {roleName(roles, roleId)}
-                          </Button>
-                        ))
-                      : "仅查看"}
+                    {canManage && !project.archived ? (
+                      <Button
+                        aria-haspopup="dialog"
+                        disabled={pending}
+                        onClick={() => openMemberRoleDialog(member)}
+                        size="compact"
+                        type="button"
+                        variant="secondary"
+                      >
+                        管理角色
+                      </Button>
+                    ) : (
+                      "仅查看"
+                    )}
                   </td>
                 </tr>
               ))}
@@ -281,7 +413,7 @@ export function ProjectMembershipManager({
         </div>
         {canManage ? (
           <p className="settings-note">
-            当前负责人最后一个项目管理角色受服务端保护；请先转移负责人再撤销。所有角色变更都会撤销目标用户的旧会话。
+            点击成员行的“管理角色”可直接添加或移除项目角色。当前负责人最后一个项目管理角色受服务端保护；请先转移负责人再移除。所有角色变更都会撤销目标用户的旧会话。
           </p>
         ) : null}
       </section>
@@ -291,6 +423,32 @@ export function ProjectMembershipManager({
 
 function roleName(roles: Role[], roleId: string): string {
   return roles.find((role) => role.id === roleId)?.name ?? roleId;
+}
+
+function manageableProjectRoles(
+  roles: Role[],
+  assignedRoleIds: readonly string[],
+): Array<{ id: string; name: string; description: string; assignable: boolean }> {
+  const projectRoles = roles
+    .filter((role) => role.scope === "project")
+    .map((role) => ({
+      id: role.id,
+      name: role.name,
+      description: role.description || "该角色没有补充说明。",
+      assignable: role.active,
+    }));
+  const knownRoleIds = new Set(projectRoles.map((role) => role.id));
+  return [
+    ...projectRoles,
+    ...assignedRoleIds
+      .filter((roleId) => !knownRoleIds.has(roleId))
+      .map((roleId) => ({
+        id: roleId,
+        name: roleId,
+        description: "该角色已停用或当前不可分配，可以移除现有绑定。",
+        assignable: false,
+      })),
+  ];
 }
 
 function jsonRequest(method: string, body: unknown): RequestInit {

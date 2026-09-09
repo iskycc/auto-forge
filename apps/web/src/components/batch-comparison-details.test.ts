@@ -10,16 +10,27 @@ describe("BatchComparisonDetails", () => {
     const cases: AnalyticsBatchComparison["cases"] = Array.from({ length: 120 }, (_, index) => ({
       caseDefinitionId: `case-${index + 1}`,
       displayName: `用例 ${index + 1}`,
+      className: `example.Case${index + 1}`,
       leftVersion: 1,
       rightVersion: 2,
       leftOutcome: "succeeded",
       rightOutcome: "failed",
+      leftAttemptId: `left-attempt-${index + 1}`,
+      rightAttemptId: `right-attempt-${index + 1}`,
+      leftAttemptNumber: 1,
+      rightAttemptNumber: 2,
       leftDurationMs: 100,
       rightDurationMs: 120,
       durationDeltaMs: 20,
     }));
 
-    const html = renderToStaticMarkup(createElement(BatchComparisonDetails, { cases }));
+    const html = renderToStaticMarkup(
+      createElement(BatchComparisonDetails, {
+        cases,
+        left: batchSnapshot("left", 12),
+        right: batchSnapshot("right", 15),
+      }),
+    );
 
     expect(html.match(/<tbody>[\s\S]*<\/tbody>/u)?.[0].match(/<tr>/gu)).toHaveLength(50);
     expect(html).toContain("第 1–50 项，共 120 项");
@@ -27,6 +38,7 @@ describe("BatchComparisonDetails", () => {
     expect(html).not.toContain("用例 51");
     expect(html).toContain("成功");
     expect(html).toContain("失败");
+    expect(html).toContain("日志对比");
     expect(html.match(/<tbody>[\s\S]*<\/tbody>/u)?.[0]).not.toContain("succeeded");
   });
 
@@ -63,9 +75,22 @@ function comparisonCase(
   return {
     caseDefinitionId,
     displayName: caseDefinitionId,
+    className: `example.${caseDefinitionId}`,
     leftVersion: 1,
     rightVersion: 2,
     leftOutcome,
     rightOutcome,
+  };
+}
+
+function batchSnapshot(batchId: string, sequenceNumber: number): AnalyticsBatchComparison["left"] {
+  return {
+    batchId,
+    sequenceNumber,
+    projectId: "project-1",
+    suiteId: "suite-1",
+    suiteVersion: 1,
+    selectedRunnerIds: [],
+    caseCount: 120,
   };
 }

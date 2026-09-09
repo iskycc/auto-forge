@@ -53,12 +53,14 @@ describe("isolated upload parsing", () => {
           value: { classes: [{ className: "example.Sample" }] },
         });
         expect(ddt).toMatchObject({
-          status: "rejected",
-          reason: {
-            code: "DDT_DUPLICATE_COLUMNS",
-            fileName: "cases.csv",
-            conflicts: expect.any(Array),
-          },
+          status: "fulfilled",
+          value: [
+            {
+              fileName: "cases.csv",
+              errorSummary: expect.stringContaining("发现重复列名"),
+              columnConflicts: expect.any(Array),
+            },
+          ],
         });
         await expect(
           pool.parseFile("parse-ddt", {
@@ -88,6 +90,47 @@ describe("isolated upload parsing", () => {
             parseLimits: { maximumZipSpreadsheets: 2 },
           }),
         ).resolves.toHaveLength(2);
+
+        const conflictedArchive = zipSync({
+          "nested/conflict.csv": Buffer.from(
+            "CaseID,srNum,environment,environment\na,A,test,production\n",
+          ),
+        });
+        await expect(
+          pool.parseFile("parse-ddt", {
+            fileName: "conflicted.zip",
+            mediaType: "application/zip",
+            content: conflictedArchive,
+          }),
+        ).resolves.toMatchObject([
+          {
+            archiveEntryName: "nested/conflict.csv",
+            errorSummary: expect.stringContaining("发现重复列名"),
+            columnConflicts: [expect.objectContaining({ archiveEntryName: "nested/conflict.csv" })],
+          },
+        ]);
+        await expect(
+          pool.parseFile("parse-ddt", {
+            fileName: "conflicted.zip",
+            mediaType: "application/zip",
+            content: conflictedArchive,
+            columnResolutions: [
+              {
+                archiveEntryName: "nested/conflict.csv",
+                sheetName: "Sheet1",
+                columnIndex: 3,
+                resolvedName: "targetEnvironment",
+              },
+            ],
+          }),
+        ).resolves.toMatchObject([
+          {
+            archiveEntryName: "nested/conflict.csv",
+            rows: [
+              expect.objectContaining({ environment: "test", targetEnvironment: "production" }),
+            ],
+          },
+        ]);
       } finally {
         await pool.close();
       }

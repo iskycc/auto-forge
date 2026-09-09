@@ -8583,6 +8583,7 @@ button.icon-button:disabled {
 }
 .ddt-column-conflict-backdrop .ddt-dialog {
   width: min(960px, calc(100dvw - 40px));
+  overflow: hidden;
 }
 .ddt-column-conflict-notice {
   display: flex;
@@ -8605,9 +8606,12 @@ button.icon-button:disabled {
   color: var(--color-text-secondary);
 }
 .ddt-column-conflict-dialog {
-  display: grid;
+  display: flex;
   min-height: 0;
+  flex: 1;
+  flex-direction: column;
   gap: 14px;
+  overflow: hidden;
   padding: 20px;
 }
 .ddt-column-conflict-guidance {
@@ -8621,6 +8625,8 @@ button.icon-button:disabled {
 }
 .ddt-column-conflict-guidance p {
   display: grid;
+  min-width: 0;
+  flex: 1;
   margin: 0;
   gap: 2px;
 }
@@ -8630,9 +8636,12 @@ button.icon-button:disabled {
 }
 .ddt-column-conflict-list {
   display: grid;
-  max-height: min(440px, 52dvh);
+  min-height: 0;
+  flex: 1 1 auto;
   gap: 10px;
   overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 3px;
 }
 .ddt-column-conflict-list > section {
   overflow: hidden;
@@ -8649,20 +8658,35 @@ button.icon-button:disabled {
   padding: 10px 12px;
   background: var(--color-surface-muted);
 }
-.ddt-column-conflict-list > section > header span {
+.ddt-column-conflict-location {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+.ddt-column-conflict-location > span {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 7px;
 }
-.ddt-column-conflict-list > section > header strong {
+.ddt-column-conflict-location strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ddt-column-conflict-list > section > header small {
-  flex: 0 0 auto;
+.ddt-column-conflict-location > small {
   color: var(--color-danger);
+}
+.ddt-column-conflict-group-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+}
+.ddt-column-conflict-group-actions > small {
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 .ddt-column-conflict-list > section > div {
   display: grid;
@@ -8782,6 +8806,34 @@ button.icon-button:disabled {
 }
 .ddt-column-choice.is-deleted .ddt-column-name-field > span {
   color: var(--color-danger);
+}
+.ddt-column-keep-only {
+  width: fit-content;
+  justify-self: end;
+}
+.ddt-column-resolution-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 24%, var(--color-border));
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.ddt-column-resolution-summary > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ddt-column-resolution-summary small {
+  color: var(--color-text-secondary);
+  font-weight: 500;
 }
 .ddt-column-conflict-dialog footer {
   display: flex;
@@ -10986,7 +11038,11 @@ button.icon-button:disabled {
 }
 
 .insight-comparison-table th:first-child {
-  width: 36%;
+  width: 30%;
+}
+
+.insight-comparison-table th:last-child {
+  width: 116px;
 }
 
 .insight-comparison-table td:first-child {
@@ -11003,6 +11059,10 @@ button.icon-button:disabled {
 .insight-comparison-table .table-secondary {
   display: inline;
   margin-left: 8px;
+}
+
+.insight-comparison-log-button {
+  white-space: nowrap;
 }
 
 .insight-line-chart {
@@ -16114,6 +16174,38 @@ button.icon-button:disabled {
   width: min(700px, calc(100dvw - 40px));
 }
 
+.member-role-dialog {
+  width: min(720px, calc(100dvw - 40px));
+}
+
+.member-role-dialog-content,
+.member-role-subject {
+  display: grid;
+  gap: 12px;
+}
+
+.member-role-subject {
+  gap: 3px;
+  border-radius: var(--radius-control);
+  padding: 12px 14px;
+  background: var(--color-surface-muted);
+}
+
+.member-role-subject span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.member-role-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.member-role-card .ui-button {
+  width: fit-content;
+  justify-self: end;
+}
+
 .rerun-failures-form {
   display: grid;
   gap: 16px;
@@ -17951,6 +18043,21 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+.failure-analysis-case-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.failure-analysis-table td .failure-analysis-case-meta small {
+  display: inline;
+  flex: 0 0 auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .failure-analysis-table td code {
   overflow-wrap: anywhere;
   color: var(--color-violet);
@@ -18107,10 +18214,39 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-card-title h3 {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.failure-analysis-recent-success {
+  display: inline-flex;
+  min-height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 24%, var(--color-border));
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: linear-gradient(
+    135deg,
+    var(--color-success-soft),
+    color-mix(in srgb, var(--color-info-soft) 44%, var(--color-surface))
+  );
+  color: var(--color-success);
+  font-size: var(--font-size-caption);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.failure-analysis-table .failure-analysis-recent-success {
+  min-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 1px 5px;
+  text-overflow: ellipsis;
 }
 
 .failure-analysis-card h3,
@@ -19844,6 +19980,39 @@ button.icon-button:disabled {
   flex-shrink: 0;
 }
 
+.analysis-log-load-progress {
+  display: grid;
+  flex-shrink: 0;
+  gap: var(--space-2);
+  margin: 0 var(--space-4) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-info) 18%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--color-info-soft);
+}
+
+.analysis-log-load-progress > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.analysis-log-load-progress strong,
+.analysis-log-load-progress span {
+  font-size: var(--font-size-caption);
+}
+
+.analysis-log-load-progress span {
+  color: var(--color-text-secondary);
+}
+
+.analysis-log-load-progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--color-info);
+}
+
 .analysis-log-diff-notice {
   margin: 0 var(--space-4) var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -19910,6 +20079,8 @@ button.icon-button:disabled {
 .analysis-log-line-list {
   min-width: 100%;
   width: max-content;
+  box-sizing: border-box;
+  overflow-anchor: none;
 }
 .analysis-log-line {
   display: flex;

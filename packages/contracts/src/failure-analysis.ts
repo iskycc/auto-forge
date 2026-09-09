@@ -24,6 +24,12 @@ export const failureAnalysisSortSchema = z.enum([
 
 export const failureAnalysisCompletionOrderSchema = z.enum(["pending_first", "completed_first"]);
 
+export const failureAnalysisRecentSuccessSchema = z.object({
+  batchId: z.string().min(1),
+  batchSequenceNumber: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+});
+
 export const failureAnalysisCandidateSchema = z.object({
   executionRunId: z.string().min(1),
   caseDefinitionId: z.string().min(1),
@@ -33,6 +39,7 @@ export const failureAnalysisCandidateSchema = z.object({
   attemptNumber: z.number().int().positive(),
   failureSummary: z.string(),
   resultCode: z.string().optional(),
+  recentSuccessfulExecution: failureAnalysisRecentSuccessSchema.optional(),
   claim: z
     .object({
       id: z.string().min(1),
@@ -119,6 +126,7 @@ export const failureAnalysisClaimSchema = z.object({
   rerunProofAttemptId: z.string().optional(),
   rerunProofUrl: z.string().optional(),
   screenshot: failureAnalysisScreenshotSchema.optional(),
+  recentSuccessfulExecution: failureAnalysisRecentSuccessSchema.optional(),
   updatedAt: z.string().datetime(),
 });
 
@@ -190,6 +198,7 @@ export const failureAnalysisExecutionHistorySchema = z.object({
 
 export type FailureAnalysisExecution = z.infer<typeof failureAnalysisExecutionSchema>;
 export type FailureAnalysisExecutionHistory = z.infer<typeof failureAnalysisExecutionHistorySchema>;
+export type FailureAnalysisRecentSuccess = z.infer<typeof failureAnalysisRecentSuccessSchema>;
 
 export const claimFailureAnalysisInputSchema = z.object({
   projectId: z.string().min(1),

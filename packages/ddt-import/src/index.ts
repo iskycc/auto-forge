@@ -27,6 +27,14 @@ export type DdtImportParseLimits = {
   maximumZipSpreadsheets: number;
 };
 
+export type ParsedDdtUploadFile = {
+  fileName: string;
+  archiveEntryName?: string;
+  rows: ReturnType<typeof parseSpreadsheet>["rows"];
+  errorSummary?: string;
+  columnConflicts?: DdtImportColumnConflict[];
+};
+
 const DEFAULT_PARSE_LIMITS: DdtImportParseLimits = {
   maximumZipSpreadsheets: DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
 };
@@ -36,12 +44,13 @@ export async function parseDdtUpload(
   limits: DdtImportParseLimits = DEFAULT_PARSE_LIMITS,
 ) {
   if (!isZipFile(upload.fileName)) {
-    const parsed = parseSpreadsheet(
-      Buffer.from(upload.content),
-      upload.fileName,
-      (upload.columnResolutions ?? []).filter((resolution) => !resolution.archiveEntryName),
-    );
-    return [{ fileName: parsed.fileName, rows: parsed.rows }];
+    return [
+      parseSpreadsheetOutcome(
+        Buffer.from(upload.content),
+        upload.fileName,
+        (upload.columnResolutions ?? []).filter((resolution) => !resolution.archiveEntryName),
+      ),
+    ];
   }
   const extracted = await extractSpreadsheetsFromZip(Buffer.from(upload.content), {
     archiveName: upload.fileName,
@@ -50,35 +59,59 @@ export async function parseDdtUpload(
     maxTotalBytes: DDT_IMPORT_TOTAL_BYTES,
     maxEntries: DDT_IMPORT_ARCHIVE_ENTRY_LIMIT,
   });
-  const parsedFiles = [];
-  const conflicts: DdtImportColumnConflict[] = [];
+  const parsedFiles: ParsedDdtUploadFile[] = [];
   for (const file of extracted) {
-    try {
-      const parsed = parseSpreadsheet(
+    parsedFiles.push(
+      parseSpreadsheetOutcome(
         file.buffer,
         file.fileName,
         (upload.columnResolutions ?? []).filter(
           (resolution) => resolution.archiveEntryName === file.archiveEntryName,
         ),
-      );
-      parsedFiles.push({
-        fileName: parsed.fileName,
-        archiveEntryName: file.archiveEntryName,
-        rows: parsed.rows,
-      });
-    } catch (error) {
-      if (!(error instanceof DdtDuplicateColumnsError)) throw error;
-      conflicts.push(
-        ...error.conflicts.map((conflict) => ({
-          ...conflict,
-          archiveEntryName: file.archiveEntryName,
-        })),
-      );
-    }
+        file.archiveEntryName,
+      ),
+    );
   }
+  const conflicts = parsedFiles.flatMap((file) => file.columnConflicts ?? []);
   if (conflicts.length) {
     assertResolvableColumnConflictLimit(conflicts, "ZIP ");
-    throw new DdtDuplicateColumnsError(upload.fileName, conflicts);
   }
   return parsedFiles;
+}
+
+function parseSpreadsheetOutcome(
+  content: Buffer,
+  fileName: string,
+  columnResolutions: readonly DdtColumnResolution[],
+  archiveEntryName?: string,
+): ParsedDdtUploadFile {
+  try {
+    const parsed = parseSpreadsheet(content, fileName, columnResolutions);
+    return {
+      fileName: parsed.fileName,
+      ...(archiveEntryName ? { archiveEntryName } : {}),
+      rows: parsed.rows,
+    };
+  } catch (error) {
+    const columnConflicts =
+      error instanceof DdtDuplicateColumnsError
+        ? error.conflicts.map((conflict) => ({
+            ...conflict,
+            ...(archiveEntryName ? { archiveEntryName } : {}),
+          }))
+        : undefined;
+    return {
+      fileName,
+      ...(archiveEntryName ? { archiveEntryName } : {}),
+      rows: [],
+      errorSummary: columnConflicts
+        ? "发现重复列名，请人工选择保留、改名或删除冲突列。"
+        : spreadsheetErrorMessage(error),
+      ...(columnConflicts ? { columnConflicts } : {}),
+    };
+  }
+}
+
+function spreadsheetErrorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : "DDT 表格解析失败。").slice(0, 1_000);
 }

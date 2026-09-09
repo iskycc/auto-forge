@@ -17,6 +17,7 @@ import { getPlatformServices } from "@/lib/services";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
+import { BatchComparisonForm } from "@/components/batch-comparison-form";
 import { CachedBatchComparison } from "@/components/cached-batch-comparison";
 import { InsightDetailDialog } from "@/components/insight-detail-dialog";
 import { NavigationSubmitButton } from "@/components/navigation-submit-button";
@@ -151,6 +152,7 @@ export default async function InsightsPage({
     typeof parameters.leftBatchId === "string" && typeof parameters.rightBatchId === "string"
       ? await services.readModels.read({
           kind: "batch_comparison",
+          snapshotVersion: 2,
           projectId: caseProjectId,
           projectVersionId: hierarchy.projectVersionId,
           leftBatchId: parameters.leftBatchId,
@@ -532,46 +534,23 @@ export default async function InsightsPage({
                 title="批次对比明细"
               >
                 <CachedBatchComparison
+                  left={comparison.left}
+                  right={comparison.right}
                   snapshot={comparisonProjection.status}
                   partCount={comparison.partCount}
                 />
               </InsightDetailDialog>
             ) : null}
           </div>
-          <form className="batch-comparison-form" method="get">
-            <Select
-              defaultValue={stringParameter(parameters.leftBatchId)}
-              name="leftBatchId"
-              required
-            >
-              <option value="">选择基准批次</option>
-              {recentBatches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
-                </option>
-              ))}
-            </Select>
-            <Select
-              defaultValue={stringParameter(parameters.rightBatchId)}
-              name="rightBatchId"
-              required
-            >
-              <option value="">选择对比批次</option>
-              {recentBatches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
-                </option>
-              ))}
-            </Select>
-            <NavigationSubmitButton
-              className="button button-secondary"
-              key={`comparison-${stringParameter(parameters.leftBatchId)}-${stringParameter(parameters.rightBatchId)}`}
-              pendingLabel="正在生成批次对比…"
-              type="submit"
-            >
-              开始对比
-            </NavigationSubmitButton>
-          </form>
+          <BatchComparisonForm
+            initialLeftBatchId={stringParameter(parameters.leftBatchId)}
+            initialRightBatchId={stringParameter(parameters.rightBatchId)}
+            key={`${caseProjectId}-${hierarchy.projectVersionId}-${stringParameter(parameters.leftBatchId)}-${stringParameter(parameters.rightBatchId)}`}
+            options={recentBatches.map((batch) => ({
+              id: batch.id,
+              label: `#${batch.sequenceNumber} · ${batch.suiteName} · ${runBatchStatusLabel(batch.status)}`,
+            }))}
+          />
           <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
           {comparisonProjection ? (
             <ReadModelStatusBar snapshots={[comparisonProjection.status]} />

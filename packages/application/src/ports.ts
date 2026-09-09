@@ -31,6 +31,7 @@ import type {
   RetentionPreview,
   ServiceAccount,
   FailureAnalysisExecution,
+  FailureAnalysisRecentSuccess,
 } from "@autoforge/contracts";
 import type {
   AuditEvent,
@@ -1689,6 +1690,15 @@ export interface FailureAnalysisRepository {
     caseDefinitionId: string;
     limit: number;
   }): Promise<FailureAnalysisExecution[]>;
+  listRecentSuccessfulExecutions(input: {
+    projectId: string;
+    anchors: ReadonlyArray<{
+      referenceId: string;
+      batchId: string;
+      caseDefinitionId: string;
+    }>;
+    limitPerCase: number;
+  }): Promise<Array<FailureAnalysisRecentSuccess & { referenceId: string }>>;
   readBatchProgress(
     projectId: string,
     batchId: string,

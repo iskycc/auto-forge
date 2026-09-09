@@ -1,8 +1,10 @@
 "use client";
 
 import type { AnalyticsBatchComparison } from "@autoforge/contracts";
+import { GitCompareArrows } from "lucide-react";
 import { useState } from "react";
 
+import { AttemptLogComparison, type AttemptLogComparisonSelection } from "./attempt-log-comparison";
 import { Button, Select } from "./ui";
 
 const COMPARISON_DETAIL_PAGE_SIZE = 50;
@@ -34,11 +36,20 @@ export function filterBatchComparisonCases(
   );
 }
 
-export function BatchComparisonDetails({ cases }: { cases: AnalyticsBatchComparison["cases"] }) {
+export function BatchComparisonDetails({
+  cases,
+  left,
+  right,
+}: {
+  cases: AnalyticsBatchComparison["cases"];
+  left: AnalyticsBatchComparison["left"];
+  right: AnalyticsBatchComparison["right"];
+}) {
   const [pageIndex, setPageIndex] = useState(0);
   const [difference, setDifference] = useState<ComparisonDifferenceFilter>("all");
   const [leftOutcome, setLeftOutcome] = useState<ComparisonOutcomeFilter>("all");
   const [rightOutcome, setRightOutcome] = useState<ComparisonOutcomeFilter>("all");
+  const [logComparison, setLogComparison] = useState<AttemptLogComparisonSelection>();
   const filteredCases = filterBatchComparisonCases(cases, {
     difference,
     leftOutcome,
@@ -117,6 +128,7 @@ export function BatchComparisonDetails({ cases }: { cases: AnalyticsBatchCompari
               <th>版本变化</th>
               <th>结果变化</th>
               <th>耗时变化</th>
+              <th>执行日志</th>
             </tr>
           </thead>
           <tbody>
@@ -137,6 +149,47 @@ export function BatchComparisonDetails({ cases }: { cases: AnalyticsBatchCompari
                   {item.durationDeltaMs === undefined
                     ? "—"
                     : `${item.durationDeltaMs >= 0 ? "+" : ""}${item.durationDeltaMs} ms`}
+                </td>
+                <td>
+                  <Button
+                    aria-label={`对比 ${item.displayName} 的两次执行日志`}
+                    className="insight-comparison-log-button"
+                    disabled={!item.leftAttemptId || !item.rightAttemptId}
+                    onClick={() =>
+                      setLogComparison({
+                        name: item.displayName,
+                        context: `${item.displayName} · ${item.className}`,
+                        left: {
+                          attemptId: item.leftAttemptId,
+                          title: "基准批次日志",
+                          subtitle: batchAttemptSubtitle(
+                            left.sequenceNumber,
+                            item.leftOutcome,
+                            item.leftAttemptNumber,
+                          ),
+                        },
+                        right: {
+                          attemptId: item.rightAttemptId,
+                          title: "对比批次日志",
+                          subtitle: batchAttemptSubtitle(
+                            right.sequenceNumber,
+                            item.rightOutcome,
+                            item.rightAttemptNumber,
+                          ),
+                        },
+                      })
+                    }
+                    size="compact"
+                    title={
+                      item.leftAttemptId && item.rightAttemptId
+                        ? "对比该用例在两个批次中的执行日志"
+                        : "其中一个批次没有执行尝试，暂无两侧日志可对比"
+                    }
+                    type="button"
+                    variant="secondary"
+                  >
+                    <GitCompareArrows aria-hidden="true" size={14} /> 日志对比
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -174,8 +227,22 @@ export function BatchComparisonDetails({ cases }: { cases: AnalyticsBatchCompari
           </div>
         </nav>
       ) : null}
+      {logComparison ? (
+        <AttemptLogComparison
+          comparison={logComparison}
+          onClose={() => setLogComparison(undefined)}
+        />
+      ) : null}
     </div>
   );
+}
+
+function batchAttemptSubtitle(
+  sequenceNumber: number,
+  outcome: string | undefined,
+  attemptNumber: number | undefined,
+): string {
+  return `批次 #${sequenceNumber} · ${comparisonOutcomeLabel(outcome)} · ${attemptNumber ? `第 ${attemptNumber} 次尝试` : "执行尝试"}`;
 }
 
 function comparisonOutcomeLabel(outcome: string | undefined): string {

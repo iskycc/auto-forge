@@ -142,22 +142,48 @@ function duplicateColumnConflicts(
 
   return [...indexesByName.entries()]
     .filter(([, indexes]) => indexes.length > 1)
-    .map(([normalizedName, indexes]) => ({
-      sheetName,
-      normalizedName: normalizedName.slice(0, 256),
-      columns: indexes.map((columnIndex, occurrenceIndex) => {
-        const currentName = columns[columnIndex]!;
-        const suggestedName = availableColumnName(currentName, occurrenceIndex + 1, usedNames);
-        usedNames.add(suggestedName.toLocaleLowerCase("en-US"));
-        return {
+    .map(([normalizedName, indexes]) => {
+      const suggestedNames = suggestedConflictColumnNames(
+        normalizedName,
+        indexes,
+        columns,
+        usedNames,
+      );
+      return {
+        sheetName,
+        normalizedName: normalizedName.slice(0, 256),
+        columns: indexes.map((columnIndex) => ({
           columnIndex,
           originalName: originalColumns[columnIndex]!,
-          currentName,
-          suggestedName,
+          currentName: columns[columnIndex]!,
+          suggestedName: suggestedNames.get(columnIndex)!,
           ...columnContentSummary(matrix, columnIndex),
-        };
-      }),
-    }));
+        })),
+      };
+    });
+}
+
+function suggestedConflictColumnNames(
+  normalizedName: string,
+  indexes: readonly number[],
+  columns: readonly (string | undefined)[],
+  usedNames: Set<string>,
+): Map<number, string> {
+  const requiredName =
+    normalizedName === "caseid" ? "CaseID" : normalizedName === "srnum" ? "srNum" : undefined;
+  const preferredIndex =
+    (requiredName
+      ? indexes.find((columnIndex) => columns[columnIndex] === requiredName)
+      : undefined) ?? indexes[0]!;
+  const orderedIndexes = [preferredIndex, ...indexes.filter((index) => index !== preferredIndex)];
+  const suggestedNames = new Map<number, string>();
+  orderedIndexes.forEach((columnIndex, suggestionIndex) => {
+    const baseName = suggestionIndex === 0 && requiredName ? requiredName : columns[columnIndex]!;
+    const suggestedName = availableColumnName(baseName, suggestionIndex + 1, usedNames);
+    usedNames.add(suggestedName.toLocaleLowerCase("en-US"));
+    suggestedNames.set(columnIndex, suggestedName);
+  });
+  return suggestedNames;
 }
 
 function columnContentSummary(

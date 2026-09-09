@@ -22,6 +22,7 @@ export async function GET(request: Request): Promise<Response> {
     ]);
     const query = {
       kind: "batch_comparison" as const,
+      snapshotVersion: 2 as const,
       projectId: left.projectId,
       rightProjectId: right.projectId,
       ...input,

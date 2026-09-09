@@ -4,6 +4,7 @@ import {
   failureAnalysisCompletionOrderSchema,
   failureAnalysisSortSchema,
   type FailureAnalysisCompletionOrder,
+  type FailureAnalysisRecentSuccess,
   type FailureAnalysisSort,
 } from "@autoforge/contracts";
 import {
@@ -31,6 +32,25 @@ export class FailureAnalysisService {
     private readonly objectStore?: Pick<JarObjectStorePort, "putObject" | "read" | "delete">,
     private readonly attemptLogShares?: Pick<AttemptLogShareService, "ensureSharesForAttempts">,
   ) {}
+
+  private async readRecentSuccesses(
+    projectId: string,
+    anchors: ReadonlyArray<{
+      referenceId: string;
+      batchId: string;
+      caseDefinitionId: string;
+    }>,
+  ): Promise<Map<string, FailureAnalysisRecentSuccess>> {
+    if (anchors.length === 0) return new Map<string, FailureAnalysisRecentSuccess>();
+    const executions = await this.repository.listRecentSuccessfulExecutions({
+      projectId,
+      anchors,
+      limitPerCase: 5,
+    });
+    return new Map(
+      executions.map(({ referenceId, ...execution }) => [referenceId, execution] as const),
+    );
+  }
 
   listBatches(input: {
     projectId: string;
@@ -111,7 +131,7 @@ export class FailureAnalysisService {
     return result;
   }
 
-  listCandidates(input: {
+  async listCandidates(input: {
     projectId: string;
     projectVersionId: string;
     batchId: string;
@@ -122,7 +142,7 @@ export class FailureAnalysisService {
     limit?: number;
   }) {
     const query = boundedSearchQuery(input.query);
-    return this.repository.listCandidates({
+    const page = await this.repository.listCandidates({
       projectId: input.projectId,
       projectVersionId: input.projectVersionId,
       batchId: input.batchId,
@@ -132,6 +152,22 @@ export class FailureAnalysisService {
       ...(query ? { query } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),
     });
+    if (!page || page.items.length === 0) return page;
+    const recentSuccesses = await this.readRecentSuccesses(
+      input.projectId,
+      page.items.map((candidate) => ({
+        referenceId: candidate.executionRunId,
+        batchId: input.batchId,
+        caseDefinitionId: candidate.caseDefinitionId,
+      })),
+    );
+    return {
+      ...page,
+      items: page.items.map((candidate) => {
+        const recentSuccessfulExecution = recentSuccesses.get(candidate.executionRunId);
+        return recentSuccessfulExecution ? { ...candidate, recentSuccessfulExecution } : candidate;
+      }),
+    };
   }
 
   async claim(input: {
@@ -173,7 +209,7 @@ export class FailureAnalysisService {
     };
   }
 
-  listMyClaims(input: {
+  async listMyClaims(input: {
     projectId: string;
     projectVersionId?: string;
     claimantId: string;
@@ -187,7 +223,7 @@ export class FailureAnalysisService {
     limit?: number;
   }) {
     const query = boundedSearchQuery(input.query);
-    return this.repository.listClaims({
+    const page = await this.repository.listClaims({
       projectId: input.projectId,
       claimantId: input.claimantId,
       sort: failureAnalysisSortSchema.parse(input.sort ?? "class_path"),
@@ -202,6 +238,22 @@ export class FailureAnalysisService {
       ...(query ? { query } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),
     });
+    if (page.items.length === 0) return page;
+    const recentSuccesses = await this.readRecentSuccesses(
+      input.projectId,
+      page.items.map((claim) => ({
+        referenceId: claim.id,
+        batchId: claim.batchId,
+        caseDefinitionId: claim.caseDefinitionId,
+      })),
+    );
+    return {
+      ...page,
+      items: page.items.map((claim) => {
+        const recentSuccessfulExecution = recentSuccesses.get(claim.id);
+        return recentSuccessfulExecution ? { ...claim, recentSuccessfulExecution } : claim;
+      }),
+    };
   }
 
   countMyClaims(input: {

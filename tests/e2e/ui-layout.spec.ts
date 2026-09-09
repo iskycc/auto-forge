@@ -461,6 +461,18 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     await page.keyboard.press("Escape");
     await expect(projectBackdrop).toHaveCount(0);
 
+    const administratorRow = page.getByRole("row").filter({ hasText: "E2E Administrator" });
+    await administratorRow.getByRole("button", { name: "管理角色" }).click();
+    const memberRoleBackdrop = page.locator("body > .action-dialog-backdrop");
+    const memberRoleDialog = page.getByRole("dialog", {
+      name: "管理“E2E Administrator”的项目角色",
+    });
+    await expect(memberRoleDialog.getByText("项目管理员", { exact: true })).toBeVisible();
+    await expectViewportDialog(memberRoleBackdrop, memberRoleDialog, viewport);
+    await captureUi(page, "/project-member-role-dialog", viewport.width, false);
+    await page.keyboard.press("Escape");
+    await expect(memberRoleBackdrop).toHaveCount(0);
+
     await page.goto("/settings/access?section=users");
     await page.getByRole("button", { name: "创建用户", exact: true }).click();
     const userBackdrop = page.locator("body > .action-dialog-backdrop");

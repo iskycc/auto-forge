@@ -8,15 +8,13 @@ import {
 import { GitCompareArrows, History, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import type { AttemptLogComparisonSelection } from "@/components/attempt-log-comparison";
 import { Button, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { sharedOutcomeLabel, sharedOutcomeClass } from "@/lib/shared-attempt-log";
 
-export type AnalysisLogComparison = {
-  claim: FailureAnalysisClaimView;
-  execution: FailureAnalysisExecution;
-};
+export type AnalysisLogComparison = AttemptLogComparisonSelection;
 
 export function FailureAnalysisExecutionHistory({
   claims,
@@ -173,7 +171,22 @@ function ExecutionHistoryResults({
                     ? "与本次分析的日志对比"
                     : "该次执行未产生执行尝试，无日志可对比"
                 }
-                onClick={() => onCompare({ claim, execution })}
+                onClick={() =>
+                  onCompare({
+                    name: claim.caseName,
+                    context: `${claim.caseName} · ${claim.className}`,
+                    left: {
+                      attemptId: execution.attemptId,
+                      title: "历史日志",
+                      subtitle: `批次 #${execution.batchSequenceNumber} · ${sharedOutcomeLabel(execution.outcome)} · ${formatPlatformDateTime(execution.createdAt)}`,
+                    },
+                    right: {
+                      attemptId: claim.attemptId,
+                      title: "本次分析日志",
+                      subtitle: `第 ${claim.attemptNumber} 次尝试 · 失败 · ${claim.caseName}`,
+                    },
+                  })
+                }
               >
                 <GitCompareArrows size={14} /> 日志对比
               </Button>

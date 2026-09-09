@@ -81,6 +81,7 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
   scope.extend({ kind: z.literal("analytics"), filter: analyticsFilterSchema }),
   analysisScope.extend({
     kind: z.literal("batch_comparison"),
+    snapshotVersion: z.literal(2).optional(),
     rightProjectId: identifier.optional(),
     leftBatchId: identifier,
     rightBatchId: identifier,

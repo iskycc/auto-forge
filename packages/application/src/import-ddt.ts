@@ -33,6 +33,8 @@ export type ParsedDdtFile = {
   fileName: string;
   archiveEntryName?: string;
   rows: DdtCaseData[];
+  errorSummary?: string;
+  columnConflicts?: DdtImportColumnConflict[];
 };
 
 export type DdtSpreadsheetLimits = {
@@ -113,7 +115,18 @@ export class DdtImportService {
           });
           continue;
         }
+        const columnConflicts = parsedFiles.flatMap((file) => file.columnConflicts ?? []);
+        if (columnConflicts.length) {
+          storedUploads[storedUploads.length - 1] = {
+            ...uploadReference,
+            columnConflicts,
+          };
+        }
         for (const parsed of parsedFiles) {
+          if (parsed.errorSummary) {
+            previewFiles.push(this.failedParsedFile(uploadReference.id, parsed));
+            continue;
+          }
           previewFiles.push(
             await this.previewParsedFile(scope, uploadReference.id, parsed, seenCaseIds, templates),
           );
@@ -211,7 +224,13 @@ export class DdtImportService {
           },
           spreadsheetLimits,
         );
+        const columnConflicts = parsedFiles.flatMap((file) => file.columnConflicts ?? []);
+        if (columnConflicts.length) nextUpload = { ...nextUpload, columnConflicts };
         for (const parsed of parsedFiles) {
+          if (parsed.errorSummary) {
+            previewFiles.push(this.failedParsedFile(storedUpload.id, parsed));
+            continue;
+          }
           previewFiles.push(
             await this.previewParsedFile(current, storedUpload.id, parsed, seenCaseIds, templates),
           );
@@ -522,6 +541,20 @@ export class DdtImportService {
     }
   }
 
+  private failedParsedFile(uploadId: string, parsed: ParsedDdtFile): DdtImportPreviewFile {
+    return {
+      id: this.ids.next(),
+      uploadId,
+      fileName: parsed.fileName,
+      ...(parsed.archiveEntryName ? { archiveEntryName: parsed.archiveEntryName } : {}),
+      rowCount: 0,
+      insertedCount: 0,
+      updatedCount: 0,
+      unchangedCount: 0,
+      errorSummary: parsed.errorSummary ?? "表格解析失败。",
+    };
+  }
+
   private async parseJobUploads(job: DdtImportJob): Promise<Map<string, ParsedDdtFile>> {
     const parsedByFile = new Map<string, ParsedDdtFile>();
     const spreadsheetLimits = {
@@ -538,9 +571,10 @@ export class DdtImportService {
         },
         spreadsheetLimits,
       );
+      const validParsedFiles = parsed.filter((file) => !file.errorSummary);
       const expected = job.files.filter((file) => file.uploadId === upload.id);
       for (const file of expected) {
-        const match = parsed.find(
+        const match = validParsedFiles.find(
           (candidate) =>
             candidate.fileName === file.fileName &&
             candidate.archiveEntryName === file.archiveEntryName,

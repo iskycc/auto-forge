@@ -1,4 +1,5 @@
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
+import { insertAnalysisExecutionHistory } from "./support/analysis-execution-history-fixture";
 import { expect, test } from "@playwright/test";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { mkdir, readFile } from "node:fs/promises";
@@ -28,6 +29,11 @@ test("terminal task failures support durable single and batch analysis with evid
   const fixture = insertFailureAnalysisFixture(
     requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
     version.body.id,
+    suffix,
+  );
+  await insertAnalysisExecutionHistory(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    fixture.batchId,
     suffix,
   );
 
@@ -76,6 +82,15 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(page).toHaveURL(new RegExp(`/case-analysis/${fixture.batchId}`));
   await expect(page.getByText(fixture.failedNames[0], { exact: true })).toBeVisible();
   await expect(page.getByText(fixture.passedName, { exact: true })).toHaveCount(0);
+  await expect(
+    candidateRow(page, fixture.failedNames[0]).getByLabel("同一任务近 5 批次执行有成功"),
+  ).toBeVisible();
+  await expect(
+    candidateRow(page, fixture.failedNames[1]).getByLabel("同一任务近 5 批次执行有成功"),
+  ).toBeVisible();
+  await expect(
+    candidateRow(page, fixture.failedNames[2]).getByLabel("同一任务近 5 批次执行有成功"),
+  ).toHaveCount(0);
   for (const viewport of [
     { width: 1536, height: 960 },
     { width: 1024, height: 768 },
@@ -150,6 +165,14 @@ test("terminal task failures support durable single and batch analysis with evid
   await page.getByLabel(`认领 ${temporarilyClaimedName}`).check();
   await page.getByRole("button", { name: "认领并进入分析" }).click();
   await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
+  await expect(analysisCard(page, temporarilyClaimedName)).toContainText("近 5 批次有成功");
+
+  await page.goto(`/case-analysis/${fixture.batchId}`);
+  await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "我的分析 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 
   const rankedCandidateResponse = page.waitForResponse((response) =>
     response.url().includes("/api/v1/failure-analysis/candidates?"),
@@ -246,6 +269,9 @@ test("terminal task failures support durable single and batch analysis with evid
   await analysisSearchInput.press("Enter");
   expect((await clearedAnalysisSearch).status()).toBe(200);
   await expect(page.locator(".failure-analysis-card")).toHaveCount(4);
+  await expect(analysisCard(page, fixture.failedNames[0])).toContainText("近 5 批次有成功");
+  await expect(analysisCard(page, fixture.failedNames[1])).toContainText("近 5 批次有成功");
+  await expect(analysisCard(page, fixture.failedNames[2])).not.toContainText("近 5 批次有成功");
   const claimSortResponse = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -662,6 +688,10 @@ async function expectDialogFitsViewport(
 
 function analysisCard(page: import("@playwright/test").Page, caseName: string) {
   return page.locator(".failure-analysis-card").filter({ hasText: caseName });
+}
+
+function candidateRow(page: import("@playwright/test").Page, caseName: string) {
+  return page.locator(".failure-analysis-table tbody tr").filter({ hasText: caseName });
 }
 
 async function pastePng(page: import("@playwright/test").Page): Promise<void> {

@@ -48,6 +48,39 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         expect(failureAnalysisExecutionHistorySchema.parse({ items }).items).toEqual(items);
       });
 
+      it("finds the newest success only within each anchor's five recent task executions", async () => {
+        await expect(
+          harness.repository.listRecentSuccessfulExecutions({
+            projectId: harness.query.projectId,
+            anchors: [
+              {
+                referenceId: "analysis-with-history",
+                batchId: harness.query.batchId,
+                caseDefinitionId: harness.query.caseDefinitionId,
+              },
+              {
+                referenceId: "analysis-without-history",
+                batchId: harness.query.batchId,
+                caseDefinitionId: "missing-case",
+              },
+              {
+                referenceId: "analysis-success-outside-window",
+                batchId: harness.query.batchId,
+                caseDefinitionId: harness.outsideWindowCaseDefinitionId,
+              },
+            ],
+            limitPerCase: 5,
+          }),
+        ).resolves.toEqual([
+          {
+            referenceId: "analysis-with-history",
+            batchId: expect.stringContaining("batch-90-"),
+            batchSequenceNumber: 90,
+            createdAt: NOW,
+          },
+        ]);
+      });
+
       it("returns an empty history for a missing case or an anchor outside the project", async () => {
         for (const override of [
           { projectId: harness.otherProjectId },
@@ -100,6 +133,7 @@ async function createHarness(dialect: "sqlite" | "postgres") {
   const suiteId = `history-suite-${suffix}`;
   const batchId = `anchor-${suffix}`;
   const caseDefinitionId = `case-${suffix}`;
+  const outsideWindowCaseDefinitionId = `outside-window-case-${suffix}`;
   const runnerId = `runner-${suffix}`;
   const otherProjectId = `other-${suffix}`;
   const batchIds: string[] = [];
@@ -206,6 +240,26 @@ async function createHarness(dialect: "sqlite" | "postgres") {
     ].entries()) {
       await seedExecution({ sequence: 90 - index, outcome, noAttempt: index === 2 });
     }
+    for (let index = 0; index < 6; index += 1) {
+      const sequence = 90 - index;
+      const historyBatchId = `batch-${sequence}-${suffix}`;
+      const outcome = index === 5 ? "succeeded" : "failed";
+      await execute(
+        `INSERT INTO execution_runs
+        (id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,
+         execution_round,terminal_outcome,created_at,updated_at)
+        VALUES (?,?,?,2,'窗口外成功用例','example.OutsideWindowTest',?,0,2,?,?,?)`,
+        [
+          `outside-window-run-${historyBatchId}`,
+          historyBatchId,
+          outsideWindowCaseDefinitionId,
+          outcome,
+          outcome,
+          NOW,
+          NOW,
+        ],
+      );
+    }
     // These would be newer than the five eligible records if any scope constraint regressed.
     await seedExecution({ sequence: 101 });
     await seedExecution({ sequence: 99, createdAt: "2026-09-08T00:00:00.000Z" });
@@ -218,6 +272,7 @@ async function createHarness(dialect: "sqlite" | "postgres") {
     return {
       repository,
       otherProjectId,
+      outsideWindowCaseDefinitionId,
       query: { projectId: DEFAULT_PROJECT_ID, batchId, caseDefinitionId, limit: 5 },
       dispose,
     };

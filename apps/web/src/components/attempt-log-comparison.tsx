@@ -3,26 +3,46 @@
 import { ChevronLeft, ChevronRight, GitCompareArrows, RefreshCw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
-import type { AnalysisLogComparison } from "@/components/failure-analysis-execution-history";
-import { Button, Select } from "@/components/ui";
-import { compareAttemptLogs, type LogDiffRow } from "@/lib/attempt-log-diff";
+import { compareAttemptLogs, type LogDiffRow } from "../lib/attempt-log-diff";
 import {
   loadComparisonLog,
   type ComparisonLog,
+  type ComparisonLogProgress,
   type ComparisonLogStream,
-} from "@/lib/load-comparison-log";
-import { formatPlatformDateTime } from "@/lib/platform-date-time";
-import { sharedOutcomeLabel } from "@/lib/shared-attempt-log";
+} from "../lib/load-comparison-log";
+import { Button, Select } from "./ui";
 
-const ROWS_PER_PAGE = 200;
+const LOG_ROW_HEIGHT_PX = 24;
+const LOG_ROW_OVERSCAN = 16;
 const EMPTY_DIFF_ROWS: LogDiffRow[] = [];
 type LoadedLog = { log: ComparisonLog } | { error: string };
+type VisibleLogRows = { start: number; end: number };
+
+const EMPTY_LOAD_PROGRESS: ComparisonLogProgress = {
+  loadedCharacters: 0,
+  loadedChunks: 0,
+};
+
+export type AttemptLogComparisonSelection = {
+  name: string;
+  context: string;
+  left: {
+    attemptId?: string | undefined;
+    title: string;
+    subtitle: string;
+  };
+  right: {
+    attemptId?: string | undefined;
+    title: string;
+    subtitle: string;
+  };
+};
 
 export function AttemptLogComparison({
   comparison,
   onClose,
 }: {
-  comparison: AnalysisLogComparison;
+  comparison: AttemptLogComparisonSelection;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -43,7 +63,7 @@ export function AttemptLogComparison({
     <dialog
       ref={dialogRef}
       className="analysis-log-comparison"
-      aria-label={`日志对比 · ${comparison.claim.caseName}`}
+      aria-label={`日志对比 · ${comparison.name}`}
       onCancel={(event) => {
         event.preventDefault();
         onClose();
@@ -57,9 +77,7 @@ export function AttemptLogComparison({
           <GitCompareArrows size={20} />
           <span>
             <strong>日志对比</strong>
-            <small title={comparison.claim.className}>
-              {comparison.claim.caseName} · {comparison.claim.className}
-            </small>
+            <small title={comparison.context}>{comparison.context}</small>
           </span>
         </div>
         <div>
@@ -87,7 +105,7 @@ export function AttemptLogComparison({
             onClick={onClose}
             aria-label="关闭日志对比"
           >
-            <X size={16} /> 返回分析
+            <X size={16} /> 关闭对比
           </Button>
         </div>
       </header>
@@ -100,31 +118,43 @@ function LogComparisonContent({
   comparison,
   stream,
 }: {
-  comparison: AnalysisLogComparison;
+  comparison: AttemptLogComparisonSelection;
   stream: ComparisonLogStream;
 }) {
   const [loaded, setLoaded] = useState<{ previous: LoadedLog; current: LoadedLog }>();
-  const [page, setPage] = useState(0);
+  const [loadProgress, setLoadProgress] = useState({
+    previous: EMPTY_LOAD_PROGRESS,
+    current: EMPTY_LOAD_PROGRESS,
+  });
   const [difference, setDifference] = useState(-1);
   const previousRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
-  const previousAttemptId = comparison.execution.attemptId;
-  const currentAttemptId = comparison.claim.attemptId;
+  const previousAttemptId = comparison.left.attemptId;
+  const currentAttemptId = comparison.right.attemptId;
   useEffect(() => {
     const controller = new AbortController();
-    async function readLog(attemptId: string | undefined): Promise<LoadedLog> {
+    async function readLog(
+      side: "previous" | "current",
+      attemptId: string | undefined,
+    ): Promise<LoadedLog> {
       if (!attemptId) return { error: "该次执行没有可对比的日志。" };
       try {
-        return { log: await loadComparisonLog(attemptId, stream, controller.signal) };
+        return {
+          log: await loadComparisonLog(attemptId, stream, controller.signal, (progress) => {
+            if (controller.signal.aborted) return;
+            setLoadProgress((current) => ({ ...current, [side]: progress }));
+          }),
+        };
       } catch (error) {
         return { error: error instanceof Error ? error.message : "读取日志失败。" };
       }
     }
-    void Promise.all([readLog(previousAttemptId), readLog(currentAttemptId)]).then(
-      ([previous, current]) => {
-        if (!controller.signal.aborted) setLoaded({ previous, current });
-      },
-    );
+    void Promise.all([
+      readLog("previous", previousAttemptId),
+      readLog("current", currentAttemptId),
+    ]).then(([previous, current]) => {
+      if (!controller.signal.aborted) setLoaded({ previous, current });
+    });
     return () => controller.abort();
   }, [previousAttemptId, currentAttemptId, stream]);
   const previousLog =
@@ -143,27 +173,23 @@ function LogComparisonContent({
       ),
     [rows],
   );
-  const pages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
   const limited = diff?.limited || previousLog?.limited || currentLog?.limited;
   const incomplete = previousLog?.incomplete || currentLog?.incomplete;
-  const pageRows = rows.slice(page * ROWS_PER_PAGE, (page + 1) * ROWS_PER_PAGE);
   const selectedRow = differenceStarts[difference];
   useEffect(() => {
     for (const viewport of [previousRef.current, currentRef.current]) {
       if (!viewport) continue;
-      const row =
-        selectedRow === undefined
-          ? null
-          : viewport.querySelector<HTMLElement>(`[data-diff-row="${selectedRow}"]`);
-      viewport.scrollTop = row ? Math.max(0, row.offsetTop - row.offsetHeight * 2) : 0;
+      viewport.scrollTop =
+        selectedRow === undefined ? 0 : Math.max(0, (selectedRow - 2) * LOG_ROW_HEIGHT_PX);
     }
-  }, [page, selectedRow]);
+  }, [selectedRow]);
   function moveDifference(next: number) {
-    const row = differenceStarts[next];
-    if (row === undefined) return;
+    if (differenceStarts[next] === undefined) return;
     setDifference(next);
-    setPage(Math.floor(row / ROWS_PER_PAGE));
   }
+  const loadedChunks = loadProgress.previous.loadedChunks + loadProgress.current.loadedChunks;
+  const loadedCharacters =
+    loadProgress.previous.loadedCharacters + loadProgress.current.loadedCharacters;
   return (
     <>
       <div className="analysis-log-diff-toolbar">
@@ -197,6 +223,19 @@ function LogComparisonContent({
           </Button>
         </div>
       </div>
+      {!loaded ? (
+        <div className="analysis-log-load-progress" role="status">
+          <div>
+            <strong>正在连续加载两侧日志</strong>
+            <span>
+              {loadedChunks > 0
+                ? `已读取 ${loadedChunks.toLocaleString("zh-CN")} 个日志块 · ${loadedCharacters.toLocaleString("zh-CN")} 个字符`
+                : "正在请求首批日志…"}
+            </span>
+          </div>
+          <progress aria-label="日志加载进度" />
+        </div>
+      ) : null}
       {limited || incomplete ? (
         <p className="analysis-log-diff-notice" role="status">
           {limited
@@ -207,24 +246,22 @@ function LogComparisonContent({
       ) : null}
       <div className="analysis-log-windows">
         <ComparisonWindow
-          title="历史日志"
-          subtitle={`批次 #${comparison.execution.batchSequenceNumber} · ${sharedOutcomeLabel(comparison.execution.outcome)} · ${formatPlatformDateTime(comparison.execution.createdAt)}`}
+          title={comparison.left.title}
+          subtitle={comparison.left.subtitle}
           side="previous"
           loaded={loaded?.previous}
-          rows={pageRows}
-          offset={page * ROWS_PER_PAGE}
+          rows={rows}
           selectedRow={selectedRow}
           viewportRef={previousRef}
           pairedRef={currentRef}
           comparisonReady={Boolean(diff)}
         />
         <ComparisonWindow
-          title="本次分析日志"
-          subtitle={`第 ${comparison.claim.attemptNumber} 次尝试 · 失败 · ${comparison.claim.caseName}`}
+          title={comparison.right.title}
+          subtitle={comparison.right.subtitle}
           side="current"
           loaded={loaded?.current}
-          rows={pageRows}
-          offset={page * ROWS_PER_PAGE}
+          rows={rows}
           selectedRow={selectedRow}
           viewportRef={currentRef}
           pairedRef={previousRef}
@@ -232,34 +269,13 @@ function LogComparisonContent({
         />
       </div>
       <footer className="analysis-log-diff-footer">
-        <span>两侧同步滚动 · 按 Esc 返回分析</span>
-        <div>
-          <Button
-            size="compact"
-            type="button"
-            disabled={page === 0}
-            onClick={() => {
-              setPage(page - 1);
-              setDifference(-1);
-            }}
-          >
-            上一页日志
-          </Button>
-          <span>
-            第 {page + 1} / {pages} 页
-          </span>
-          <Button
-            size="compact"
-            type="button"
-            disabled={page + 1 >= pages}
-            onClick={() => {
-              setPage(page + 1);
-              setDifference(-1);
-            }}
-          >
-            下一页日志
-          </Button>
-        </div>
+        <span>
+          {loaded
+            ? diff
+              ? `单页连续对比 ${rows.length.toLocaleString("zh-CN")} 行 · 两侧同步滚动 · 按 Esc 关闭对比`
+              : "日志读取成功后将在同一页面连续展示 · 按 Esc 关闭对比"
+            : "加载完成后将在同一页面连续展示 · 两侧同步滚动 · 按 Esc 关闭对比"}
+        </span>
       </footer>
     </>
   );
@@ -271,7 +287,6 @@ function ComparisonWindow({
   side,
   loaded,
   rows,
-  offset,
   selectedRow,
   viewportRef,
   pairedRef,
@@ -282,12 +297,27 @@ function ComparisonWindow({
   side: "previous" | "current";
   loaded: LoadedLog | undefined;
   rows: LogDiffRow[];
-  offset: number;
   selectedRow: number | undefined;
   viewportRef: RefObject<HTMLDivElement | null>;
   pairedRef: RefObject<HTMLDivElement | null>;
   comparisonReady: boolean;
 }) {
+  const [visibleRows, setVisibleRows] = useState<VisibleLogRows>({ start: 0, end: 0 });
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateVisibleRows = () => {
+      const next = visibleLogRows(rows.length, viewport.scrollTop, viewport.clientHeight);
+      setVisibleRows((current) =>
+        current.start === next.start && current.end === next.end ? current : next,
+      );
+    };
+    updateVisibleRows();
+    const observer = new ResizeObserver(updateVisibleRows);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [rows.length, viewportRef]);
+  const renderedRows = rows.slice(visibleRows.start, visibleRows.end);
   return (
     <section className="analysis-log-window" aria-label={title}>
       <header>
@@ -300,6 +330,14 @@ function ComparisonWindow({
         tabIndex={0}
         aria-label={`${title}内容`}
         onScroll={(event) => {
+          const next = visibleLogRows(
+            rows.length,
+            event.currentTarget.scrollTop,
+            event.currentTarget.clientHeight,
+          );
+          setVisibleRows((current) =>
+            current.start === next.start && current.end === next.end ? current : next,
+          );
           const paired = pairedRef.current;
           if (paired && Math.abs(paired.scrollTop - event.currentTarget.scrollTop) > 1)
             paired.scrollTop = event.currentTarget.scrollTop;
@@ -314,16 +352,23 @@ function ComparisonWindow({
         ) : !rows.length ? (
           <p>当前日志流暂无内容。</p>
         ) : (
-          <div className="analysis-log-line-list">
-            {rows.map((row, index) => {
+          <div
+            className="analysis-log-line-list"
+            style={{
+              paddingBlockStart: visibleRows.start * LOG_ROW_HEIGHT_PX,
+              paddingBlockEnd: (rows.length - visibleRows.end) * LOG_ROW_HEIGHT_PX,
+            }}
+          >
+            {renderedRows.map((row, index) => {
+              const rowIndex = visibleRows.start + index;
               const line = row[side];
               const changed = row.kind !== "equal" && line !== undefined;
               return (
                 <div
-                  key={offset + index}
+                  key={rowIndex}
                   className="analysis-log-line"
-                  data-diff-row={offset + index}
-                  data-selected={selectedRow === offset + index || undefined}
+                  data-diff-row={rowIndex}
+                  data-selected={selectedRow === rowIndex || undefined}
                   data-change={changed ? (side === "previous" ? "removed" : "added") : undefined}
                 >
                   <span className="analysis-log-line-number" aria-hidden="true">
@@ -346,4 +391,18 @@ function ComparisonWindow({
       </div>
     </section>
   );
+}
+
+function visibleLogRows(
+  rowCount: number,
+  scrollTop: number,
+  viewportHeight: number,
+): VisibleLogRows {
+  const firstVisible = Math.floor(scrollTop / LOG_ROW_HEIGHT_PX);
+  const visibleCount = Math.ceil(viewportHeight / LOG_ROW_HEIGHT_PX);
+  const start = Math.max(0, firstVisible - LOG_ROW_OVERSCAN);
+  return {
+    start,
+    end: Math.min(rowCount, firstVisible + visibleCount + LOG_ROW_OVERSCAN),
+  };
 }

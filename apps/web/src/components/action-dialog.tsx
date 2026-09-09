@@ -47,6 +47,10 @@ export function ActionDialog({
         (element) => element.getClientRects().length > 0,
       );
     const handleKeyboard = (event: KeyboardEvent) => {
+      // Native modal dialogs can be opened from an action dialog (for example,
+      // the reusable log comparison). Let the top-layer dialog own Escape and
+      // focus traversal until it closes.
+      if (document.querySelector("dialog[open]")) return;
       if (event.key === "Escape") {
         onCloseRef.current();
         return;

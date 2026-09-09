@@ -169,6 +169,8 @@ describe("PlatformOperationsService analytics", () => {
     } as const;
     const summary = await buildBatchComparisonSnapshot(repository, query, writePart);
     expect(summary).toMatchObject({
+      left: { sequenceNumber: 1 },
+      right: { sequenceNumber: 2 },
       commonCaseCount: 1,
       onlyLeftCaseCount: 0,
       onlyRightCaseCount: 1,
@@ -178,7 +180,15 @@ describe("PlatformOperationsService analytics", () => {
     expect(writePart).toHaveBeenCalledWith(
       0,
       expect.arrayContaining([
-        expect.objectContaining({ caseDefinitionId: "case-a", durationDeltaMs: 60 }),
+        expect.objectContaining({
+          caseDefinitionId: "case-a",
+          className: "example.case-a",
+          leftAttemptId: "left-attempt",
+          rightAttemptId: "right-attempt",
+          leftAttemptNumber: 1,
+          rightAttemptNumber: 1,
+          durationDeltaMs: 60,
+        }),
       ]),
     );
     expect(listCasePage).toHaveBeenCalledWith(
@@ -223,6 +233,8 @@ describe("PlatformOperationsService analytics", () => {
     const comparison = await service.compareBatches(identity, "left", "right");
 
     expect(comparison).toMatchObject({
+      left: { sequenceNumber: 1 },
+      right: { sequenceNumber: 2 },
       commonCaseCount: 1,
       onlyLeftCaseCount: 1,
       onlyRightCaseCount: 1,
@@ -234,6 +246,8 @@ describe("PlatformOperationsService analytics", () => {
           rightVersion: 2,
           leftOutcome: "succeeded",
           rightOutcome: "failed",
+          leftAttemptId: "attempt-a-left",
+          rightAttemptId: "attempt-a-right",
           durationDeltaMs: 60,
         }),
       ]),

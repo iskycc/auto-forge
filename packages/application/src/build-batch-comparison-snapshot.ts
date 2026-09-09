@@ -77,10 +77,12 @@ export async function buildBatchComparisonSnapshot(
       for (const { run, attempt } of page.items)
         cases.set(run.caseDefinitionId, {
           displayName: run.displayName,
+          className: run.className,
           version: run.caseVersion,
           ...((attempt?.outcome ?? run.terminalOutcome)
             ? { outcome: attempt?.outcome ?? run.terminalOutcome }
             : {}),
+          ...(attempt ? { attemptId: attempt.id, attemptNumber: attempt.attemptNumber } : {}),
           ...(attempt?.durationMs === undefined ? {} : { durationMs: attempt.durationMs }),
         });
       if (offset + page.items.length >= page.total) return cases;
@@ -92,6 +94,7 @@ export async function buildBatchComparisonSnapshot(
 function describe(batch: RunBatch) {
   return {
     batchId: batch.id,
+    sequenceNumber: batch.sequenceNumber,
     projectId: batch.projectId,
     suiteId: batch.suiteId,
     suiteVersion: batch.suiteVersion,

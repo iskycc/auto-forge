@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   BarChart3,
   Boxes,
+  CheckCircle2,
   ChevronRight,
   Code2,
   Download,
@@ -1772,6 +1773,27 @@ function ColumnConflictDialog({
   onClose(): void;
   onConfirm(): void;
 }) {
+  const validationError = validateColumnResolutions(resolutions, conflicts);
+  const conflictColumnCount = conflicts.reduce(
+    (total, conflict) => total + conflict.columns.length,
+    0,
+  );
+  const currentConflictColumnKeys = new Set(
+    conflicts.flatMap((conflict) =>
+      conflict.columns.map((column) =>
+        columnResolutionKey(columnResolutionIdentity(conflict, column.columnIndex)),
+      ),
+    ),
+  );
+  const deletedColumnCount = resolutions.filter(
+    (resolution) =>
+      resolution.deleteColumn && currentConflictColumnKeys.has(columnResolutionKey(resolution)),
+  ).length;
+  const affectedFileCount = new Set(
+    conflicts.map((conflict) =>
+      [conflict.uploadIndex, conflict.archiveEntryName ?? conflict.uploadName].join("\u0000"),
+    ),
+  ).size;
   const firstColumn = conflicts[0]?.columns[0];
   const firstColumnKey = firstColumn
     ? columnResolutionKey({
@@ -1794,30 +1816,63 @@ function ColumnConflictDialog({
         <div className="ddt-column-conflict-guidance">
           <AlertTriangle size={18} />
           <p>
-            <strong>检测到 {conflicts.length} 组冲突</strong>
-            <span>每组至少保留一列；列名不区分大小写，CaseID 与 srNum 必须保留一个原始列名。</span>
+            <strong>
+              {affectedFileCount} 个文件 · {conflicts.length} 组冲突 · {conflictColumnCount}{" "}
+              个重复列
+            </strong>
+            <span>
+              默认安全方案会保留全部内容并自动生成唯一列名；也可以对照内容后仅保留指定列。
+            </span>
           </p>
+          <Button
+            className="button button-secondary"
+            disabled={busy}
+            size="compact"
+            type="button"
+            onClick={() => onChange(applySuggestedColumnNames(resolutions, conflicts))}
+          >
+            全部按建议改名
+          </Button>
         </div>
-        {error ? (
+        {error || validationError ? (
           <div className="inline-notice error" role="alert">
-            {error}
+            {error || validationError}
           </div>
         ) : null}
         <div className="ddt-column-conflict-list">
-          {conflicts.map((conflict) => {
-            const location = conflict.archiveEntryName ?? conflict.uploadName;
+          {conflicts.map((conflict, conflictIndex) => {
+            const location = conflict.archiveEntryName
+              ? `${conflict.uploadName} / ${conflict.archiveEntryName}`
+              : conflict.uploadName;
+            const retainedColumnCount = countRetainedConflictColumns(resolutions, conflict);
             return (
               <section
                 key={`${conflict.uploadIndex}-${location}-${conflict.sheetName}-${conflict.normalizedName}`}
               >
                 <header>
-                  <span>
-                    <FileSpreadsheet size={16} />
-                    <strong title={location}>{location}</strong>
-                  </span>
-                  <small>
-                    {conflict.sheetName} Sheet · “{conflict.columns[0]?.currentName}”重复
-                  </small>
+                  <div className="ddt-column-conflict-location">
+                    <span>
+                      <FileSpreadsheet size={16} />
+                      <strong title={location}>{location}</strong>
+                    </span>
+                    <small>
+                      {conflict.sheetName} Sheet · “{conflict.columns[0]?.currentName}”重复
+                    </small>
+                  </div>
+                  <div className="ddt-column-conflict-group-actions">
+                    <small>
+                      第 {conflictIndex + 1} / {conflicts.length} 组
+                    </small>
+                    <Button
+                      className="button button-secondary"
+                      disabled={busy}
+                      size="compact"
+                      type="button"
+                      onClick={() => onChange(applySuggestedColumnNames(resolutions, [conflict]))}
+                    >
+                      本组全部改名保留
+                    </Button>
+                  </div>
                 </header>
                 <div>
                   {conflict.columns.map((column) => {
@@ -1882,6 +1937,19 @@ function ColumnConflictDialog({
                             <p>该列没有非空内容</p>
                           )}
                         </div>
+                        <Button
+                          className="ddt-column-keep-only button button-secondary"
+                          disabled={busy || (!deleteColumn && retainedColumnCount === 1)}
+                          size="compact"
+                          type="button"
+                          onClick={() =>
+                            onChange(
+                              keepOnlyConflictColumn(resolutions, conflict, column.columnIndex),
+                            )
+                          }
+                        >
+                          仅保留此列
+                        </Button>
                         <label className="ddt-column-name-field">
                           <span>{deleteColumn ? "该列将在导入时忽略" : "保留后的列名"}</span>
                           <Input
@@ -1917,6 +1985,15 @@ function ColumnConflictDialog({
             value={uploadProgress.percent}
           />
         ) : null}
+        <div className="ddt-column-resolution-summary" aria-live="polite">
+          <CheckCircle2 aria-hidden="true" size={16} />
+          <span>
+            已配置 {conflictColumnCount} 列
+            <small>
+              保留 {conflictColumnCount - deletedColumnCount} 列 · 删除 {deletedColumnCount} 列
+            </small>
+          </span>
+        </div>
         <footer>
           <Button
             className="button button-secondary"
@@ -1929,7 +2006,7 @@ function ColumnConflictDialog({
           <Button
             className="button button-primary"
             type="button"
-            disabled={busy || conflicts.length === 0}
+            disabled={busy || conflicts.length === 0 || Boolean(validationError)}
             onClick={onConfirm}
           >
             {busy ? <LoaderCircle className="spin" size={15} /> : null}
@@ -2447,14 +2524,87 @@ function defaultColumnResolutions(
   );
 }
 
+function applySuggestedColumnNames(
+  resolutions: readonly ColumnResolution[],
+  conflicts: readonly LocatedColumnConflict[],
+): ColumnResolution[] {
+  let next = [...resolutions];
+  for (const conflict of conflicts) {
+    for (const column of conflict.columns) {
+      next = replaceColumnResolution(next, {
+        ...columnResolutionIdentity(conflict, column.columnIndex),
+        resolvedName: column.suggestedName,
+      });
+    }
+  }
+  return next;
+}
+
+function keepOnlyConflictColumn(
+  resolutions: readonly ColumnResolution[],
+  conflict: LocatedColumnConflict,
+  retainedColumnIndex: number,
+): ColumnResolution[] {
+  const requiredName =
+    conflict.normalizedName === "caseid"
+      ? "CaseID"
+      : conflict.normalizedName === "srnum"
+        ? "srNum"
+        : undefined;
+  let next = [...resolutions];
+  for (const column of conflict.columns) {
+    const identity = columnResolutionIdentity(conflict, column.columnIndex);
+    const existing = next.find(
+      (resolution) => columnResolutionKey(resolution) === columnResolutionKey(identity),
+    );
+    const retained = column.columnIndex === retainedColumnIndex;
+    next = replaceColumnResolution(next, {
+      ...identity,
+      resolvedName: retained
+        ? (requiredName ?? column.currentName)
+        : (existing?.resolvedName ?? column.suggestedName),
+      ...(retained ? {} : { deleteColumn: true }),
+    });
+  }
+  return next;
+}
+
+function countRetainedConflictColumns(
+  resolutions: readonly ColumnResolution[],
+  conflict: LocatedColumnConflict,
+): number {
+  return conflict.columns.filter((column) => {
+    const key = columnResolutionKey(columnResolutionIdentity(conflict, column.columnIndex));
+    return (
+      resolutions.find((resolution) => columnResolutionKey(resolution) === key)?.deleteColumn !==
+      true
+    );
+  }).length;
+}
+
+function columnResolutionIdentity(
+  conflict: LocatedColumnConflict,
+  columnIndex: number,
+): Pick<ColumnResolution, "uploadIndex" | "archiveEntryName" | "sheetName" | "columnIndex"> {
+  return {
+    uploadIndex: conflict.uploadIndex,
+    ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
+    sheetName: conflict.sheetName,
+    columnIndex,
+  };
+}
+
 function replaceColumnResolution(
   resolutions: readonly ColumnResolution[],
   replacement: ColumnResolution,
 ): ColumnResolution[] {
   const key = columnResolutionKey(replacement);
-  return resolutions.map((resolution) =>
-    columnResolutionKey(resolution) === key ? replacement : resolution,
-  );
+  const found = resolutions.some((resolution) => columnResolutionKey(resolution) === key);
+  return found
+    ? resolutions.map((resolution) =>
+        columnResolutionKey(resolution) === key ? replacement : resolution,
+      )
+    : [...resolutions, replacement];
 }
 
 function validateColumnResolutions(

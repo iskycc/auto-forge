@@ -23,8 +23,11 @@ import {
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   previousExecutionsSql,
+  recentSuccessfulExecutionsSql,
   toFailureAnalysisExecution,
+  toFailureAnalysisRecentSuccess,
   type FailureAnalysisExecutionRow,
+  type FailureAnalysisRecentSuccessRow,
 } from "./failure-analysis-executions";
 
 type BatchRow = {
@@ -58,6 +61,31 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
         input.limit,
       ) as FailureAnalysisExecutionRow[];
     return rows.map(toFailureAnalysisExecution);
+  }
+
+  async listRecentSuccessfulExecutions(
+    input: Parameters<FailureAnalysisRepository["listRecentSuccessfulExecutions"]>[0],
+  ) {
+    if (input.anchors.length === 0) return [];
+    const targetsSql = `VALUES ${input.anchors.map(() => "(?,?,?)").join(",")}`;
+    const rows = this.handle.client
+      .prepare(
+        recentSuccessfulExecutionsSql({
+          targetsSql,
+          projectIdPlaceholder: "?",
+          limitPlaceholder: "?",
+        }),
+      )
+      .all(
+        ...input.anchors.flatMap((anchor) => [
+          anchor.referenceId,
+          anchor.batchId,
+          anchor.caseDefinitionId,
+        ]),
+        input.projectId,
+        input.limitPerCase,
+      ) as FailureAnalysisRecentSuccessRow[];
+    return rows.map(toFailureAnalysisRecentSuccess);
   }
 
   async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {

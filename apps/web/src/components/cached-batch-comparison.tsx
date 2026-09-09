@@ -15,9 +15,13 @@ import { BatchComparisonDetails } from "./batch-comparison-details";
 import { Button } from "./ui";
 
 export function CachedBatchComparison({
+  left,
+  right,
   snapshot,
   partCount,
 }: {
+  left: AnalyticsBatchComparison["left"];
+  right: AnalyticsBatchComparison["right"];
   snapshot: ReadModelStatus;
   partCount: number;
 }) {
@@ -67,7 +71,7 @@ export function CachedBatchComparison({
         </p>
       ) : null}
       {cases ? (
-        <BatchComparisonDetails cases={cases} />
+        <BatchComparisonDetails cases={cases} left={left} right={right} />
       ) : (
         <p aria-live="polite">正在载入对比明细…</p>
       )}

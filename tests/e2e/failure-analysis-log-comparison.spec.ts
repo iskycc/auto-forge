@@ -34,9 +34,20 @@ test("single and bulk analysis show previous executions and compare real logs wi
   await history.scrollIntoViewIfNeeded();
   await screenshot(page, "single-history-1536");
   const compareButton = history.getByRole("button", { name: "日志对比" }).first();
+  let delayLogReads = true;
+  await page.route("**/api/v1/run-attempts/*/logs?**", async (route) => {
+    if (delayLogReads) await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
+    await route.continue();
+  });
   await compareButton.click();
   const comparison = page.getByRole("dialog", { name: `日志对比 · ${fixture.failedNames[0]}` });
+  await expect(comparison.getByRole("progressbar", { name: "日志加载进度" })).toBeVisible();
+  await expect(comparison).toContainText("正在连续加载两侧日志");
+  await screenshot(page, "log-comparison-loading-1536");
   await expect(comparison).toContainText("2 处差异");
+  delayLogReads = false;
+  await page.unroute("**/api/v1/run-attempts/*/logs?**");
+  await expect(comparison.getByRole("progressbar", { name: "日志加载进度" })).toHaveCount(0);
   await expect(comparison.getByRole("region", { name: "历史日志", exact: true })).toContainText(
     "响应状态：200",
   );
@@ -45,6 +56,8 @@ test("single and bulk analysis show previous executions and compare real logs wi
   );
   await expect(comparison.locator('[data-change="removed"]')).toHaveCount(1);
   await expect(comparison.locator('[data-change="added"]')).toHaveCount(1);
+  await expect(comparison).toContainText("单页连续对比 420 行");
+  await expect(comparison.getByRole("button", { name: /上一页日志|下一页日志/u })).toHaveCount(0);
   for (const width of [1536, 1024]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await expectUiIntegrity(page);
@@ -57,11 +70,20 @@ test("single and bulk analysis show previous executions and compare real logs wi
   await expect.poll(() => windows.last().evaluate((element) => element.scrollTop)).toBe(400);
   await comparison.getByRole("button", { name: "下一处差异" }).click();
   await comparison.getByRole("button", { name: "下一处差异" }).click();
-  await expect(comparison).toContainText("第 2 / 3 页");
   await expect(comparison.locator('[data-selected="true"]').first()).toBeVisible();
   await comparison.getByRole("button", { name: "对比日志流" }).click();
   await comparison.getByRole("option", { name: "执行机诊断" }).click();
   await expect(comparison).toContainText("本次仅对比各日志开头最多 2,000 行");
+  await expect(comparison).toContainText("单页连续对比 2,000 行");
+  const longLogWindows = comparison.locator(".analysis-log-lines");
+  expect(await comparison.locator(".analysis-log-line").count()).toBeLessThan(160);
+  await longLogWindows.first().evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(() => longLogWindows.last().evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  await expect(longLogWindows.first().locator('[data-diff-row="1999"]')).toHaveCount(1);
   await comparison.getByRole("button", { name: "对比日志流" }).click();
   await comparison.getByRole("option", { name: "错误输出" }).click();
   await expect(comparison).toContainText("两侧均暂无日志");
@@ -164,6 +186,75 @@ test("history and log failures are recoverable and missing executions do not bec
   await expect(page.getByRole("dialog", { name: `分析 ${fixture.failedNames[3]}` })).toContainText(
     "暂无更早的执行结果",
   );
+});
+
+test("quality insight comparison preserves scroll, can rerun, and compares both batch logs", async ({
+  page,
+}) => {
+  const fixture = await prepareAnalysis(page);
+  await page.setViewportSize({ width: 1536, height: 960 });
+  await page.goto("/insights");
+  const comparisonCard = page.locator(".insight-comparison-card");
+  await expect(comparisonCard).toBeVisible({ timeout: 30_000 });
+  await comparisonCard.getByRole("button", { name: "选择基准批次" }).click();
+  const baselineOption = page.getByRole("option", { name: /^#980/u });
+  await expect(baselineOption).toBeVisible({ timeout: 10_000 });
+  await baselineOption.click();
+  await comparisonCard.getByRole("button", { name: "选择对比批次" }).click();
+  const candidateOption = page.getByRole("option", { name: /^#991/u });
+  await expect(candidateOption).toBeVisible({ timeout: 10_000 });
+  await candidateOption.click();
+  await comparisonCard.scrollIntoViewIfNeeded();
+  const initialScrollTop = await page.evaluate(() => window.scrollY);
+  expect(initialScrollTop).toBeGreaterThan(0);
+
+  const startComparison = comparisonCard.getByRole("button", { name: "开始对比" });
+  await startComparison.click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("leftBatchId"))
+    .toBe(fixture.historyBatchIds[0]);
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("rightBatchId"))
+    .toBe(fixture.batchId);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(initialScrollTop);
+  await expect(comparisonCard.getByRole("button", { name: "查看明细" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(startComparison).toBeEnabled();
+
+  const repeatedScrollTop = await page.evaluate(() => window.scrollY);
+  await startComparison.click();
+  await expect(startComparison).toBeEnabled({ timeout: 15_000 });
+  await expect(startComparison).toHaveText("开始对比");
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(repeatedScrollTop);
+  await expectUiIntegrity(page);
+  await screenshot(page, "quality-comparison-1536");
+
+  await comparisonCard.getByRole("button", { name: "查看明细" }).click();
+  const details = page.getByRole("dialog", { name: "批次对比明细" });
+  const compareLogs = details.getByRole("button", { name: /对比 .* 的两次执行日志/u }).first();
+  await expect(compareLogs).toBeEnabled();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expectUiIntegrity(page);
+  await screenshot(page, "quality-comparison-details-1024");
+  await compareLogs.click();
+  const logComparison = page.getByRole("dialog", { name: /日志对比 ·/u });
+  await expect(logComparison.getByRole("region", { name: "基准批次日志" })).toContainText(
+    "响应状态：200",
+  );
+  await expect(logComparison.getByRole("region", { name: "对比批次日志" })).toContainText(
+    "响应状态：500",
+  );
+  await expect(logComparison).toContainText("单页连续对比 420 行");
+  await expectUiIntegrity(page);
+  await screenshot(page, "quality-comparison-log-diff-1024");
+  await page.setViewportSize({ width: 1536, height: 960 });
+  await expectUiIntegrity(page);
+  await screenshot(page, "quality-comparison-log-diff-1536");
+  await page.keyboard.press("Escape");
+  await expect(logComparison).toHaveCount(0);
+  await expect(details).toBeVisible();
+  await expect(compareLogs).toBeFocused();
 });
 
 async function prepareAnalysis(page: Page) {

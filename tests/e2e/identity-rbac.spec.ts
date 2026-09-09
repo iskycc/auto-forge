@@ -222,6 +222,47 @@ test("administrator unlocks and disables a locked user and manages a custom role
   expect(user.id).toBeTruthy();
 });
 
+test("project administrator manages member roles from the member dialog", async ({ page }) => {
+  await ensureAdministrator(page);
+  const username = uniqueName("member-roles");
+  const user = await createActiveUser(page, username, "MemberRoles!Password123");
+  expect(
+    await browserStatus(page, `/api/v1/users/${user.id}/project-roles`, "POST", {
+      projectId: DEFAULT_PROJECT_ID,
+      roleId: VIEWER_ROLE_ID,
+    }),
+  ).toBe(204);
+
+  await page.goto(`/settings/projects?section=members&query=${encodeURIComponent(username)}`);
+  const memberRow = page.getByRole("row").filter({ hasText: username });
+  await memberRow.getByRole("button", { name: "管理角色" }).click();
+
+  const dialog = page.getByRole("dialog", {
+    name: `管理“${username}”的项目角色`,
+  });
+  const viewerRole = dialog.locator(".member-role-card").filter({ hasText: "只读观察者" });
+  const testManagerRole = dialog.locator(".member-role-card").filter({ hasText: "测试管理员" });
+  await expect(viewerRole.getByText("已分配", { exact: true })).toBeVisible();
+  await expect(testManagerRole.getByText("未分配", { exact: true })).toBeVisible();
+
+  await testManagerRole.getByRole("button", { name: "添加项目角色 测试管理员" }).click();
+  await expect(page.locator(".toast-card")).toContainText(
+    "项目角色已添加，目标用户的旧会话已撤销。",
+  );
+  await expect(testManagerRole.getByText("已分配", { exact: true })).toBeVisible();
+
+  await viewerRole.getByRole("button", { name: "移除项目角色 只读观察者" }).click();
+  await acceptSystemDialog(page, "移除项目角色", "确认移除");
+  await expect(page.locator(".toast-card")).toContainText(
+    "项目角色已移除，目标用户的旧会话已撤销。",
+  );
+  await expect(viewerRole.getByText("未分配", { exact: true })).toBeVisible();
+
+  await dialog.getByRole("button", { name: "完成" }).click();
+  await expect(memberRow.locator(".permission-list")).toContainText("测试管理员");
+  await expect(memberRow.locator(".permission-list")).not.toContainText("只读观察者");
+});
+
 test("every built-in role receives only its authorized navigation and API surface", async ({
   browser,
   page,

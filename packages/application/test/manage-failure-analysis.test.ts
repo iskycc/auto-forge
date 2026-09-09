@@ -63,6 +63,102 @@ describe("FailureAnalysisService", () => {
     );
   });
 
+  it("marks personal claims when one of the five recent task executions succeeded", async () => {
+    const claim = failureAnalysisClaim();
+    const listClaims = vi.fn(async () => ({ items: [claim] }));
+    const listRecentSuccessfulExecutions = vi.fn(async () => [
+      {
+        referenceId: claim.id,
+        batchId: "successful-batch",
+        batchSequenceNumber: 78,
+        createdAt: "2026-08-31T02:00:00.000Z",
+      },
+    ]);
+    const service = createService({ listClaims, listRecentSuccessfulExecutions });
+
+    await expect(
+      service.listMyClaims({
+        projectId: claim.projectId,
+        claimantId: claim.claimantId,
+        batchId: claim.batchId,
+      }),
+    ).resolves.toEqual({
+      items: [
+        {
+          ...claim,
+          recentSuccessfulExecution: {
+            batchId: "successful-batch",
+            batchSequenceNumber: 78,
+            createdAt: "2026-08-31T02:00:00.000Z",
+          },
+        },
+      ],
+    });
+    expect(listRecentSuccessfulExecutions).toHaveBeenCalledWith({
+      projectId: claim.projectId,
+      anchors: [
+        {
+          referenceId: claim.id,
+          batchId: claim.batchId,
+          caseDefinitionId: claim.caseDefinitionId,
+        },
+      ],
+      limitPerCase: 5,
+    });
+  });
+
+  it("marks claim candidates when one of the five recent task executions succeeded", async () => {
+    const candidate = {
+      executionRunId: "run-a",
+      caseDefinitionId: "case-a",
+      attemptId: "attempt-a",
+      caseName: "失败用例 A",
+      className: "example.FailedTest",
+      attemptNumber: 2,
+      failureSummary: "AssertionError",
+    };
+    const listCandidates = vi.fn(async () => ({ items: [candidate] }));
+    const listRecentSuccessfulExecutions = vi.fn(async () => [
+      {
+        referenceId: candidate.executionRunId,
+        batchId: "successful-batch",
+        batchSequenceNumber: 78,
+        createdAt: "2026-08-31T02:00:00.000Z",
+      },
+    ]);
+    const service = createService({ listCandidates, listRecentSuccessfulExecutions });
+
+    await expect(
+      service.listCandidates({
+        projectId: "project-a",
+        projectVersionId: "version-a",
+        batchId: "batch-a",
+      }),
+    ).resolves.toEqual({
+      items: [
+        {
+          ...candidate,
+          recentSuccessfulExecution: {
+            batchId: "successful-batch",
+            batchSequenceNumber: 78,
+            createdAt: "2026-08-31T02:00:00.000Z",
+          },
+        },
+      ],
+    });
+    expect(listRecentSuccessfulExecutions).toHaveBeenCalledWith({
+      projectId: "project-a",
+      anchors: [
+        {
+          referenceId: candidate.executionRunId,
+          batchId: "batch-a",
+          caseDefinitionId: candidate.caseDefinitionId,
+        },
+      ],
+      limitPerCase: 5,
+    });
+  });
+
   it("loads export claims by indexed execution run ids and deduplicates the query", async () => {
     const requestedExecutionRunIds: string[][] = [];
     const findClaimsByExecutionRunIds = vi.fn(

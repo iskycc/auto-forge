@@ -39,7 +39,7 @@ export default async function CaseAnalysisDetailPage({
     await services.projectStructures.list(projectId),
   );
   if (!hierarchy.projectVersionId) notFound();
-  const initialView = singleParameter(parameters.view) === "workbench" ? "workbench" : "claim";
+  const requestedView = workspaceViewParameter(parameters.view);
   const initialFilters = {
     candidateQuery: searchQueryParameter(parameters.candidateQuery),
     candidateSort: enumParameter(parameters.candidateSort, failureAnalysisSortSchema, "class_path"),
@@ -63,43 +63,43 @@ export default async function CaseAnalysisDetailPage({
   if (!projection.generation) return <ReadModelStatusBar snapshots={[projection.status]} />;
   const batch = projection.payload ? failureAnalysisBatchSchema.parse(projection.payload) : null;
   if (!batch) notFound();
-  const [initialCandidatePage, initialClaimPage, initialMyClaimCount, progress] = await Promise.all(
-    [
-      initialView === "claim"
-        ? services.failureAnalysis.listCandidates({
-            projectId,
-            projectVersionId: hierarchy.projectVersionId,
-            batchId,
-            sort: initialFilters.candidateSort,
-            direction: initialFilters.candidateDirection,
-            limit: 50,
-            ...(initialFilters.candidateQuery ? { query: initialFilters.candidateQuery } : {}),
-          })
-        : undefined,
-      initialView === "workbench"
-        ? services.failureAnalysis.listMyClaims({
-            projectId,
-            projectVersionId: hierarchy.projectVersionId,
-            claimantId: identity.user.id,
-            batchId,
-            sort: initialFilters.analysisSort,
-            direction: initialFilters.analysisDirection,
-            completionOrder: initialFilters.completionOrder,
-            includeCompleted: initialFilters.includeCompleted,
-            limit: 50,
-            ...(initialFilters.analysisQuery ? { query: initialFilters.analysisQuery } : {}),
-          })
-        : undefined,
-      services.failureAnalysis.countMyClaims({
-        projectId,
-        projectVersionId: hierarchy.projectVersionId,
-        claimantId: identity.user.id,
-        batchId,
-      }),
-      services.failureAnalysis.readBatchProgress(projectId, batchId),
-    ],
-  );
-  if (!batch) notFound();
+  const [initialMyClaimCount, progress] = await Promise.all([
+    services.failureAnalysis.countMyClaims({
+      projectId,
+      projectVersionId: hierarchy.projectVersionId,
+      claimantId: identity.user.id,
+      batchId,
+    }),
+    services.failureAnalysis.readBatchProgress(projectId, batchId),
+  ]);
+  const initialView = requestedView ?? (initialMyClaimCount > 0 ? "workbench" : "claim");
+  const [initialCandidatePage, initialClaimPage] = await Promise.all([
+    initialView === "claim"
+      ? services.failureAnalysis.listCandidates({
+          projectId,
+          projectVersionId: hierarchy.projectVersionId,
+          batchId,
+          sort: initialFilters.candidateSort,
+          direction: initialFilters.candidateDirection,
+          limit: 50,
+          ...(initialFilters.candidateQuery ? { query: initialFilters.candidateQuery } : {}),
+        })
+      : undefined,
+    initialView === "workbench"
+      ? services.failureAnalysis.listMyClaims({
+          projectId,
+          projectVersionId: hierarchy.projectVersionId,
+          claimantId: identity.user.id,
+          batchId,
+          sort: initialFilters.analysisSort,
+          direction: initialFilters.analysisDirection,
+          completionOrder: initialFilters.completionOrder,
+          includeCompleted: initialFilters.includeCompleted,
+          limit: 50,
+          ...(initialFilters.analysisQuery ? { query: initialFilters.analysisQuery } : {}),
+        })
+      : undefined,
+  ]);
 
   return (
     <FailureAnalysisDetail
@@ -129,6 +129,13 @@ export default async function CaseAnalysisDetailPage({
 
 function singleParameter(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function workspaceViewParameter(
+  value: string | string[] | undefined,
+): "claim" | "workbench" | undefined {
+  const view = singleParameter(value);
+  return view === "claim" || view === "workbench" ? view : undefined;
 }
 
 function searchQueryParameter(value: string | string[] | undefined): string {

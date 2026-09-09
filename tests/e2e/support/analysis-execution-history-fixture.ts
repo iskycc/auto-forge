@@ -13,13 +13,15 @@ export async function insertAnalysisExecutionHistory(
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
   const logs = createAttemptLogStore(resolve(dataDirectory, "attempt-logs"));
   const previousAttemptIds: string[] = [];
+  const historyBatchIds: string[] = [];
   try {
     database.exec("PRAGMA busy_timeout = 5000");
     const anchor = database
-      .prepare("SELECT created_at FROM run_batches WHERE id=?")
-      .get(batchId) as { created_at: string };
+      .prepare("SELECT created_at, policy_json FROM run_batches WHERE id=?")
+      .get(batchId) as { created_at: string; policy_json: string };
     for (let index = 0; index < 6; index += 1) {
       const historyBatchId = randomUUID();
+      historyBatchIds.push(historyBatchId);
       const recordedAt = new Date(
         Date.parse(anchor.created_at) - (index + 1) * 86_400_000,
       ).toISOString();
@@ -28,13 +30,14 @@ export async function insertAnalysisExecutionHistory(
           `INSERT INTO run_batches
         (id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,environment_json,
          total_runs,project_id,policy_json,created_at,updated_at)
-        VALUES (?,?,?,'历史执行',1,'succeeded',0,'[]',2,?,'{}',?,?)`,
+        VALUES (?,?,?,'历史执行',1,'succeeded',0,'[]',2,?,?,?,?)`,
         )
         .run(
           historyBatchId,
           980 - index,
           `suite-${suffix}`,
           DEFAULT_PROJECT_ID,
+          anchor.policy_json,
           recordedAt,
           recordedAt,
         );
@@ -117,7 +120,7 @@ export async function insertAnalysisExecutionHistory(
         ],
       });
     }
-    return { previousAttemptIds };
+    return { historyBatchIds, previousAttemptIds };
   } finally {
     logs.close();
     database.close();

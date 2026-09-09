@@ -179,6 +179,7 @@ export const analyticsFilterSchema = z.object({
 
 const analyticsBatchSnapshotSchema = z.object({
   batchId: identifierSchema,
+  sequenceNumber: z.number().int().positive(),
   projectId: identifierSchema,
   suiteId: identifierSchema,
   suiteVersion: z.number().int().positive(),
@@ -197,10 +198,15 @@ export const analyticsBatchComparisonSchema = z.object({
     z.object({
       caseDefinitionId: identifierSchema,
       displayName: z.string(),
+      className: z.string(),
       leftVersion: z.number().int().positive().optional(),
       rightVersion: z.number().int().positive().optional(),
       leftOutcome: z.string().optional(),
       rightOutcome: z.string().optional(),
+      leftAttemptId: identifierSchema.optional(),
+      rightAttemptId: identifierSchema.optional(),
+      leftAttemptNumber: z.number().int().positive().optional(),
+      rightAttemptNumber: z.number().int().positive().optional(),
       leftDurationMs: z.number().int().nonnegative().optional(),
       rightDurationMs: z.number().int().nonnegative().optional(),
       durationDeltaMs: z.number().int().optional(),

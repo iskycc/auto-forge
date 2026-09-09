@@ -9,6 +9,7 @@ import {
   type FailureAnalysisClaimView,
   type FailureAnalysisCompletionOrder,
   type FailureAnalysisHistoryItemView,
+  type FailureAnalysisRecentSuccess,
   type FailureAnalysisRerunProofLookupResult,
   type FailureAnalysisSort,
 } from "@autoforge/contracts";
@@ -556,7 +557,15 @@ export function FailureAnalysisWorkspace({
 
   function applyCompletedClaims(updatedClaims: FailureAnalysisClaimView[]): void {
     const updates = new Map(updatedClaims.map((claim) => [claim.id, claim]));
-    setClaims((current) => current.map((claim) => updates.get(claim.id) ?? claim));
+    setClaims((current) =>
+      current.map((claim) => {
+        const updated = updates.get(claim.id);
+        if (!updated) return claim;
+        return claim.recentSuccessfulExecution
+          ? { ...updated, recentSuccessfulExecution: claim.recentSuccessfulExecution }
+          : updated;
+      }),
+    );
     setCandidates((current) =>
       current.map((candidate) => {
         const updated = candidate.claim ? updates.get(candidate.claim.id) : undefined;
@@ -880,6 +889,7 @@ export function FailureAnalysisWorkspace({
                               <div className="failure-analysis-card-main">
                                 <div className="failure-analysis-card-title">
                                   <h3>{claim.caseName}</h3>
+                                  <RecentSuccessBadge execution={claim.recentSuccessfulExecution} />
                                   <span className={`analysis-status ${claim.status}`}>
                                     {statusLabel(claim.status)}
                                   </span>
@@ -1203,7 +1213,10 @@ function CandidateTable({
                 <strong className="failure-analysis-case-name" title={candidate.caseName}>
                   {candidate.caseName}
                 </strong>
-                <small>最终失败 · 第 {candidate.attemptNumber} 次尝试</small>
+                <div className="failure-analysis-case-meta">
+                  <small>第 {candidate.attemptNumber} 次尝试</small>
+                  <RecentSuccessBadge compact execution={candidate.recentSuccessfulExecution} />
+                </div>
               </td>
               <td>
                 <code className="failure-analysis-class-path" title={candidate.className}>
@@ -1230,6 +1243,25 @@ function CandidateTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function RecentSuccessBadge({
+  compact = false,
+  execution,
+}: {
+  compact?: boolean;
+  execution: FailureAnalysisRecentSuccess | undefined;
+}) {
+  if (!execution) return null;
+  return (
+    <span
+      aria-label="同一任务近 5 批次执行有成功"
+      className="failure-analysis-recent-success"
+      title={`同一任务最近 5 个更早批次中，批次 #${execution.batchSequenceNumber} 执行成功`}
+    >
+      <History aria-hidden="true" size={13} /> {compact ? "近 5 批成功" : "近 5 批次有成功"}
+    </span>
   );
 }
 

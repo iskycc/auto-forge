@@ -145,6 +145,68 @@ describe("DDT spreadsheet compatibility", () => {
     ).toThrow("至少需要保留一列");
   });
 
+  it("keeps canonical identity names in the suggested duplicate-column resolution", () => {
+    const content = Buffer.from(
+      "caseid,srnum,CaseID,srNum\nwrong-id,wrong-sr,CASE-1,CORE\n",
+      "utf8",
+    );
+
+    let duplicateColumns: DdtDuplicateColumnsError | undefined;
+    try {
+      parseSpreadsheet(content, "identity-columns.csv");
+    } catch (error) {
+      if (error instanceof DdtDuplicateColumnsError) duplicateColumns = error;
+      else throw error;
+    }
+    expect(duplicateColumns?.conflicts).toEqual([
+      expect.objectContaining({
+        normalizedName: "caseid",
+        columns: [
+          expect.objectContaining({ columnIndex: 0, suggestedName: "caseid_2" }),
+          expect.objectContaining({ columnIndex: 2, suggestedName: "CaseID" }),
+        ],
+      }),
+      expect.objectContaining({
+        normalizedName: "srnum",
+        columns: [
+          expect.objectContaining({ columnIndex: 1, suggestedName: "srnum_2" }),
+          expect.objectContaining({ columnIndex: 3, suggestedName: "srNum" }),
+        ],
+      }),
+    ]);
+  });
+
+  it("suggests canonical identity names when duplicate headers use only non-canonical casing", () => {
+    const content = Buffer.from(
+      "caseid,srnum,CASEID,SRNUM\nCASE-1,CORE,wrong-id,wrong-sr\n",
+      "utf8",
+    );
+
+    let duplicateColumns: DdtDuplicateColumnsError | undefined;
+    try {
+      parseSpreadsheet(content, "non-canonical-identity-columns.csv");
+    } catch (error) {
+      if (error instanceof DdtDuplicateColumnsError) duplicateColumns = error;
+      else throw error;
+    }
+    expect(duplicateColumns?.conflicts).toEqual([
+      expect.objectContaining({
+        normalizedName: "caseid",
+        columns: [
+          expect.objectContaining({ columnIndex: 0, suggestedName: "CaseID" }),
+          expect.objectContaining({ columnIndex: 2, suggestedName: "CASEID_2" }),
+        ],
+      }),
+      expect.objectContaining({
+        normalizedName: "srnum",
+        columns: [
+          expect.objectContaining({ columnIndex: 1, suggestedName: "srNum" }),
+          expect.objectContaining({ columnIndex: 3, suggestedName: "SRNUM_2" }),
+        ],
+      }),
+    ]);
+  });
+
   it("applies duplicate column resolutions to a spreadsheet inside ZIP", async () => {
     const archive = zipSync({
       "回归/冲突.csv": new TextEncoder().encode(
@@ -158,10 +220,13 @@ describe("DDT spreadsheet compatibility", () => {
         mediaType: "application/zip",
         content: archive,
       }),
-    ).rejects.toMatchObject({
-      code: "DDT_DUPLICATE_COLUMNS",
-      conflicts: [expect.objectContaining({ archiveEntryName: "回归/冲突.csv" })],
-    });
+    ).resolves.toEqual([
+      expect.objectContaining({
+        archiveEntryName: "回归/冲突.csv",
+        errorSummary: expect.stringContaining("发现重复列名"),
+        columnConflicts: [expect.objectContaining({ archiveEntryName: "回归/冲突.csv" })],
+      }),
+    ]);
 
     const files = await parseDdtUpload({
       fileName: "冲突数据.zip",
@@ -179,5 +244,35 @@ describe("DDT spreadsheet compatibility", () => {
     expect(files[0]?.rows).toEqual([
       expect.objectContaining({ CaseID: "CASE-ZIP", 环境: "test", 目标环境: "production" }),
     ]);
+  });
+
+  it("keeps every ZIP entry visible when valid, conflicted and invalid sheets are mixed", async () => {
+    const archive = zipSync({
+      "valid.csv": new TextEncoder().encode("CaseID,srNum,name\nVALID,CORE,ok\n"),
+      "conflicted.csv": new TextEncoder().encode(
+        "CaseID,srNum,owner,OWNER\nCONFLICT,CORE,alice,bob\n",
+      ),
+      "invalid.csv": new TextEncoder().encode("CaseID,name\nINVALID,missing srNum\n"),
+    });
+
+    const files = await parseDdtUpload({
+      fileName: "mixed.zip",
+      mediaType: "application/zip",
+      content: archive,
+    });
+
+    expect(files).toHaveLength(3);
+    expect(files.find((file) => file.archiveEntryName === "valid.csv")).toMatchObject({
+      rows: [expect.objectContaining({ CaseID: "VALID" })],
+    });
+    expect(files.find((file) => file.archiveEntryName === "conflicted.csv")).toMatchObject({
+      rows: [],
+      errorSummary: expect.stringContaining("发现重复列名"),
+      columnConflicts: [expect.objectContaining({ archiveEntryName: "conflicted.csv" })],
+    });
+    expect(files.find((file) => file.archiveEntryName === "invalid.csv")).toMatchObject({
+      rows: [],
+      errorSummary: expect.stringContaining("缺少必需列 srNum"),
+    });
   });
 });

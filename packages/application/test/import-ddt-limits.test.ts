@@ -63,6 +63,89 @@ describe("DDT import limits", () => {
       { maximumZipSpreadsheets: 8 },
     ]);
   });
+
+  it("keeps valid and invalid ZIP entries while exposing resolvable column conflicts", async () => {
+    let sequence = 0;
+    const repository = {
+      listTemplates: vi.fn(async () => []),
+      findCaseData: vi.fn(async () => new Map()),
+      createImportPreview: vi.fn(async ({ job, files }) => ({ ...job, files })),
+    };
+    const objectStore = {
+      putObject: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+    const service = new DdtImportService(
+      repository as unknown as DdtRepository,
+      objectStore as unknown as JarObjectStorePort,
+      {
+        parseUpload: vi.fn(async () => [
+          {
+            fileName: "bundle.zip / valid.csv",
+            archiveEntryName: "valid.csv",
+            rows: [{ CaseID: "VALID", srNum: "CORE" }],
+          },
+          {
+            fileName: "bundle.zip / conflict.csv",
+            archiveEntryName: "conflict.csv",
+            rows: [],
+            errorSummary: "发现重复列名，请人工处理。",
+            columnConflicts: [
+              {
+                archiveEntryName: "conflict.csv",
+                sheetName: "Sheet1",
+                normalizedName: "owner",
+                columns: [
+                  {
+                    columnIndex: 2,
+                    originalName: "owner",
+                    currentName: "owner",
+                    suggestedName: "owner",
+                    nonEmptyCount: 1,
+                    sampleValues: [{ rowNumber: 2, value: "alice" }],
+                  },
+                  {
+                    columnIndex: 3,
+                    originalName: "OWNER",
+                    currentName: "OWNER",
+                    suggestedName: "OWNER_2",
+                    nonEmptyCount: 1,
+                    sampleValues: [{ rowNumber: 2, value: "bob" }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            fileName: "bundle.zip / invalid.csv",
+            archiveEntryName: "invalid.csv",
+            rows: [],
+            errorSummary: "缺少必需列 srNum",
+          },
+        ]),
+      },
+      { now: () => new Date("2026-09-08T00:00:00.000Z") },
+      { next: () => `id-${++sequence}` },
+    );
+
+    const job = await service.preview(scope, [
+      {
+        fileName: "bundle.zip",
+        mediaType: "application/zip",
+        content: new Uint8Array([1, 2, 3]),
+      },
+    ]);
+
+    expect(job).toMatchObject({ totalFiles: 3, validFiles: 1, failedFiles: 2, totalRows: 1 });
+    expect(job.uploads[0]?.columnConflicts).toEqual([
+      expect.objectContaining({ archiveEntryName: "conflict.csv", normalizedName: "owner" }),
+    ]);
+    expect(job.files.map((file) => [file.archiveEntryName, file.errorSummary])).toEqual([
+      ["valid.csv", undefined],
+      ["conflict.csv", "发现重复列名，请人工处理。"],
+      ["invalid.csv", "缺少必需列 srNum"],
+    ]);
+  });
 });
 
 function upload(fileName: string) {

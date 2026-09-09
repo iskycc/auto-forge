@@ -24,8 +24,11 @@ import {
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   previousExecutionsSql,
+  recentSuccessfulExecutionsSql,
   toFailureAnalysisExecution,
+  toFailureAnalysisRecentSuccess,
   type FailureAnalysisExecutionRow,
+  type FailureAnalysisRecentSuccessRow,
 } from "./failure-analysis-executions";
 
 type BatchRow = {
@@ -56,6 +59,28 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       [input.projectId, input.batchId, input.caseDefinitionId, input.limit],
     );
     return result.rows.map(toFailureAnalysisExecution);
+  }
+
+  async listRecentSuccessfulExecutions(
+    input: Parameters<FailureAnalysisRepository["listRecentSuccessfulExecutions"]>[0],
+  ) {
+    if (input.anchors.length === 0) return [];
+    await this.handle.ready;
+    const result = await this.handle.pool.query<FailureAnalysisRecentSuccessRow>(
+      recentSuccessfulExecutionsSql({
+        targetsSql: "SELECT * FROM UNNEST($1::text[],$2::text[],$3::text[])",
+        projectIdPlaceholder: "$4",
+        limitPlaceholder: "$5",
+      }),
+      [
+        input.anchors.map((anchor) => anchor.referenceId),
+        input.anchors.map((anchor) => anchor.batchId),
+        input.anchors.map((anchor) => anchor.caseDefinitionId),
+        input.projectId,
+        input.limitPerCase,
+      ],
+    );
+    return result.rows.map(toFailureAnalysisRecentSuccess);
   }
 
   async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {

@@ -39,7 +39,7 @@ test("DDT import resolves duplicate column names before background import", asyn
 
   const conflictDialog = page.getByRole("dialog", { name: "解决重复列名" });
   await expect(conflictDialog).toBeVisible();
-  await expect(conflictDialog).toContainText("检测到 1 组冲突");
+  await expect(conflictDialog).toContainText("1 个文件 · 1 组冲突 · 2 个重复列");
   const columnChoices = conflictDialog.locator(".ddt-column-choice");
   await expect(columnChoices).toHaveCount(2);
   await expect(columnChoices.nth(0)).toContainText("test");
@@ -52,13 +52,12 @@ test("DDT import resolves duplicate column names before background import", asyn
   await expect(secondColumn).toHaveValue("环境_2");
 
   await secondColumn.fill("环境");
-  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
   await expect(conflictDialog.getByRole("alert")).toContainText("仍然重复");
+  await expect(conflictDialog.getByRole("button", { name: "应用并重新预检" })).toBeDisabled();
   const firstDelete = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 删除第 3 列 环境`);
   const secondDelete = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 删除第 4 列 环境`);
   await firstDelete.check();
   await secondDelete.check();
-  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
   await expect(conflictDialog.getByRole("alert")).toContainText("至少需要保留一列");
   await firstDelete.uncheck();
   await expect(secondDelete).toBeChecked();
@@ -108,6 +107,76 @@ test("DDT import resolves duplicate column names before background import", asyn
   expect(imported.body.data).toMatchObject({ 环境: "test" });
   expect(imported.body.data).not.toHaveProperty("目标环境");
   expect(Object.values(imported.body.data)).not.toContain("production");
+});
+
+test("DDT ZIP import resolves conflicts in multiple archive entries", async ({ page }) => {
+  test.setTimeout(120_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt");
+
+  await page.getByRole("button", { name: "导入表格" }).click();
+  const importDialog = page.getByRole("dialog", { name: "导入 DDT 用例" });
+  const archiveName = `ddt-column-conflicts-${hierarchy.suffix}.zip`;
+  await importDialog.locator('input[type="file"]').setInputFiles({
+    name: archiveName,
+    mimeType: "application/zip",
+    buffer: Buffer.from(
+      zipSync({
+        "支付/冲突一.csv": new TextEncoder().encode(
+          `CaseID,srNum,环境,环境\nZIP-A-${hierarchy.suffix},PAY,test,production\n`,
+        ),
+        "订单/冲突二.csv": new TextEncoder().encode(
+          `CaseID,srNum,负责人,负责人\nZIP-B-${hierarchy.suffix},ORDER,alice,bob\n`,
+        ),
+        "正常.csv": new TextEncoder().encode(
+          `CaseID,srNum,场景\nZIP-C-${hierarchy.suffix},CORE,健康检查\n`,
+        ),
+      }),
+    ),
+  });
+  await importDialog.getByRole("button", { name: "开始预检" }).click();
+
+  const conflictDialog = page.getByRole("dialog", { name: "解决重复列名" });
+  await expect(conflictDialog).toBeVisible();
+  await expect(conflictDialog).toContainText("2 个文件 · 2 组冲突 · 4 个重复列");
+  await expect(conflictDialog).toContainText("支付/冲突一.csv");
+  await expect(conflictDialog).toContainText("订单/冲突二.csv");
+  await expect(conflictDialog.getByText(archiveName, { exact: false }).first()).toBeVisible();
+  for (const viewport of [
+    { width: 1536, height: 960 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-zip-column-resolution-${viewport.width}`);
+  }
+  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+
+  await expect(conflictDialog).toBeHidden();
+  await expect(importDialog.locator(".ddt-preview-summary")).toContainText("3 / 3");
+  await expect(importDialog.locator(".ddt-preview-files")).toContainText("支付/冲突一.csv");
+  await expect(importDialog.locator(".ddt-preview-files")).toContainText("订单/冲突二.csv");
+  await expect(importDialog.locator(".ddt-preview-files")).toContainText("正常.csv");
+  await importDialog.getByRole("button", { name: "确认并后台导入" }).click();
+
+  await expect(page.locator(".ddt-status.succeeded", { hasText: "已完成" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const expectedImportedData = new Map<string, Record<string, unknown>>([
+    ["ZIP-A", { 环境: "test", 环境_2: "production" }],
+    ["ZIP-B", { 负责人: "alice", 负责人_2: "bob" }],
+    ["ZIP-C", { 场景: "健康检查" }],
+  ]);
+  for (const [caseId, expectedData] of expectedImportedData) {
+    const imported = await browserJson<{ data: Record<string, unknown> }>(
+      page,
+      ddtPath(hierarchy, `cases/${encodeURIComponent(`${caseId}-${hierarchy.suffix}`)}`),
+    );
+    expect(imported.status).toBe(200);
+    expect(imported.body.data).toMatchObject(expectedData);
+  }
 });
 
 test("DDT workspace imports, edits, validates and recovers version-scoped cases", async ({

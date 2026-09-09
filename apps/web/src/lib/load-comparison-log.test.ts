@@ -22,7 +22,8 @@ describe("comparison log loading", () => {
       .mockResolvedValueOnce(logResponse("ial\n", 1));
     vi.stubGlobal("fetch", fetch);
     const signal = new AbortController().signal;
-    await expect(loadComparisonLog("attempt/a", "stdout", signal)).resolves.toEqual({
+    const onProgress = vi.fn();
+    await expect(loadComparisonLog("attempt/a", "stdout", signal, onProgress)).resolves.toEqual({
       text: "first\npartial\n",
       limited: false,
       incomplete: false,
@@ -30,6 +31,14 @@ describe("comparison log loading", () => {
     expect(fetch.mock.calls[0]?.[0]).toContain("attempt%2Fa/logs?");
     expect(fetch.mock.calls[1]?.[0]).toContain("afterSequence=0");
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ signal, cache: "no-store" });
+    expect(onProgress).toHaveBeenNthCalledWith(1, {
+      loadedCharacters: 10,
+      loadedChunks: 1,
+    });
+    expect(onProgress).toHaveBeenNthCalledWith(2, {
+      loadedCharacters: 14,
+      loadedChunks: 2,
+    });
   });
 
   it("stops at the content budget without requesting the remaining pages", async () => {

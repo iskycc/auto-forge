@@ -27,9 +27,42 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
   const report = await page.evaluate((): UiIntegrityReport => {
     const minimumFontSize = 12;
     const minimumControlHeight = 32;
+    type PaintedBounds = {
+      bottom: number;
+      height: number;
+      left: number;
+      right: number;
+      top: number;
+      width: number;
+    };
+    const clippedOverflowValues = new Set(["auto", "clip", "hidden", "scroll"]);
+    const paintedBounds = (element: HTMLElement): PaintedBounds => {
+      const elementBounds = element.getBoundingClientRect();
+      let left = Math.max(0, elementBounds.left);
+      let right = Math.min(window.innerWidth, elementBounds.right);
+      let top = Math.max(0, elementBounds.top);
+      let bottom = Math.min(window.innerHeight, elementBounds.bottom);
+
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const ancestorStyle = window.getComputedStyle(ancestor);
+        const ancestorBounds = ancestor.getBoundingClientRect();
+        if (clippedOverflowValues.has(ancestorStyle.overflowX)) {
+          left = Math.max(left, ancestorBounds.left);
+          right = Math.min(right, ancestorBounds.right);
+        }
+        if (clippedOverflowValues.has(ancestorStyle.overflowY)) {
+          top = Math.max(top, ancestorBounds.top);
+          bottom = Math.min(bottom, ancestorBounds.bottom);
+        }
+      }
+
+      const width = Math.max(0, right - left);
+      const height = Math.max(0, bottom - top);
+      return { bottom, height, left, right, top, width };
+    };
     const isVisible = (element: HTMLElement): boolean => {
       const style = window.getComputedStyle(element);
-      const bounds = element.getBoundingClientRect();
+      const bounds = paintedBounds(element);
       const closedDetails = element.closest("details:not([open])");
       const visibleSummary = closedDetails?.querySelector(":scope > summary");
       if (closedDetails && !visibleSummary?.contains(element)) return false;
@@ -98,11 +131,11 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
     for (let index = 0; index < interactiveElements.length; index += 1) {
       const current = interactiveElements[index];
       if (!current) continue;
-      const currentBounds = current.getBoundingClientRect();
+      const currentBounds = paintedBounds(current);
       for (let peerIndex = index + 1; peerIndex < interactiveElements.length; peerIndex += 1) {
         const peer = interactiveElements[peerIndex];
         if (!peer || current.contains(peer) || peer.contains(current)) continue;
-        const peerBounds = peer.getBoundingClientRect();
+        const peerBounds = paintedBounds(peer);
         const overlapWidth =
           Math.min(currentBounds.right, peerBounds.right) -
           Math.max(currentBounds.left, peerBounds.left);
