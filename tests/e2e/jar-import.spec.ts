@@ -1313,6 +1313,11 @@ public class MixedVisibleTest {
       .locator(".insight-comparison-table tbody tr")
       .evaluate((row) => row.getBoundingClientRect().height),
   ).toBeLessThanOrEqual(42);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expectUiConsistency(page);
+    await captureUi(page, `batch-comparison-compact-${width}`, false);
+  }
   await comparisonDialog.locator('select[aria-label="左侧批次结果"]').selectOption("failed");
   await expect(comparisonDialog.getByText("没有符合当前条件的用例。")).toBeVisible();
   await comparisonDialog.locator('select[aria-label="左侧批次结果"]').selectOption("all");

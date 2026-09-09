@@ -53,7 +53,15 @@ test("DDT import resolves duplicate column names before background import", asyn
 
   await secondColumn.fill("环境");
   await expect(conflictDialog.getByRole("alert")).toContainText("仍然重复");
+  await expectBelow(
+    conflictDialog.locator(".ddt-column-conflict-list"),
+    conflictDialog.getByRole("alert"),
+  );
+  await expect(conflictDialog.locator(".ddt-column-resolution-summary")).toBeHidden();
   await expect(conflictDialog.getByRole("button", { name: "应用并重新预检" })).toBeDisabled();
+  await firstColumn.fill("测试环境");
+  await columnChoices.nth(0).getByRole("button", { name: "仅保留此列" }).click();
+  await expect(firstColumn).toHaveValue("测试环境");
   const firstDelete = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 删除第 3 列 环境`);
   const secondDelete = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 删除第 4 列 环境`);
   await firstDelete.check();
@@ -64,10 +72,74 @@ test("DDT import resolves duplicate column names before background import", asyn
   await expect(secondColumn).toBeDisabled();
   await expect(columnChoices.nth(1)).toContainText("该列将在导入时忽略");
   await expect(conflictDialog.getByRole("alert")).toBeHidden();
+
+  await conflictDialog.getByRole("button", { name: "暂不处理" }).click();
+  await expect(conflictDialog).toBeHidden();
+  await expect(importDialog.getByRole("button", { name: "确认并后台导入" })).toBeDisabled();
+  await expectBelow(
+    importDialog.locator(".ddt-preview-files"),
+    importDialog.locator(".ddt-column-conflict-notice"),
+  );
+  for (const width of [1536, 1024]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-import-conflict-notice-${width}`);
+  }
+  await importDialog.getByRole("button", { name: "处理重复列名" }).click();
+  await expect(firstColumn).toHaveValue("测试环境");
+  await expect(secondDelete).toBeChecked();
+  await page.setViewportSize({ width: 1536, height: 960 });
   await captureDdtUi(page, "ddt-duplicate-column-resolution-1536");
   await page.setViewportSize({ width: 1024, height: 768 });
   await captureDdtUi(page, "ddt-duplicate-column-resolution-1024");
   await expectUiIntegrity(page);
+
+  let releaseResolution!: () => void;
+  const resolutionMayFinish = new Promise<void>((resolve) => {
+    releaseResolution = resolve;
+  });
+  await page.route(
+    "**/imports/*/resolve-columns?*",
+    async (route) => {
+      await resolutionMayFinish;
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台暂时繁忙，请重试。",
+            requestId: "ddt-resolution-retry",
+          },
+        },
+      });
+    },
+    { times: 1 },
+  );
+  try {
+    await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+    await expect(conflictDialog.locator(".ui-operation-progress")).toContainText(
+      "正在应用并重新预检",
+    );
+    await expect(firstColumn).toBeDisabled();
+    await expect(firstDelete).toBeDisabled();
+    await expect(conflictDialog.getByRole("button", { name: "关闭弹窗" })).toBeDisabled();
+    await expect(conflictDialog.getByRole("button", { name: "全部按建议改名" })).toBeDisabled();
+  } finally {
+    releaseResolution();
+  }
+  await expect(conflictDialog.getByRole("alert")).toContainText("平台暂时繁忙，请重试。");
+  await expectBelow(
+    conflictDialog.locator(".ddt-column-conflict-list"),
+    conflictDialog.getByRole("alert"),
+  );
+  await expect(firstColumn).toHaveValue("测试环境");
+  await expect(firstColumn).toBeEnabled();
+  await expect(secondDelete).toBeChecked();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-column-resolution-retry-${width}`);
+  }
   await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
 
   await expect(conflictDialog).toBeHidden();
@@ -104,9 +176,11 @@ test("DDT import resolves duplicate column names before background import", asyn
     data: Record<string, unknown>;
   }>(page, ddtPath(hierarchy, `cases/${encodeURIComponent(`DUPLICATE-${hierarchy.suffix}`)}`));
   expect(imported.status).toBe(200);
-  expect(imported.body.data).toMatchObject({ 环境: "test" });
-  expect(imported.body.data).not.toHaveProperty("目标环境");
-  expect(Object.values(imported.body.data)).not.toContain("production");
+  expect(imported.body.data).toEqual({
+    CaseID: `DUPLICATE-${hierarchy.suffix}`,
+    srNum: "CORE",
+    测试环境: "test",
+  });
 });
 
 test("DDT ZIP import resolves conflicts in multiple archive entries", async ({ page }) => {
@@ -152,6 +226,12 @@ test("DDT ZIP import resolves conflicts in multiple archive entries", async ({ p
     await expectUiIntegrity(page);
     await captureDdtUi(page, `ddt-zip-column-resolution-${viewport.width}`);
   }
+  const lastGroup = conflictDialog.locator(".ddt-column-conflict-list > section").last();
+  const lastColumnName = lastGroup.getByRole("textbox").last();
+  await lastColumnName.scrollIntoViewIfNeeded();
+  await expect(lastColumnName).toBeInViewport();
+  await expect(conflictDialog.getByRole("button", { name: "应用并重新预检" })).toBeInViewport();
+  await captureDdtUi(page, "ddt-zip-column-resolution-last-group-1024");
   await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
 
   await expect(conflictDialog).toBeHidden();
@@ -177,6 +257,207 @@ test("DDT ZIP import resolves conflicts in multiple archive entries", async ({ p
     expect(imported.status).toBe(200);
     expect(imported.body.data).toMatchObject(expectedData);
   }
+});
+
+test("DDT conflict resolution preserves identity choices when renaming reveals another conflict", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("button", { name: "导入表格" }).click();
+  const importDialog = page.getByRole("dialog", { name: "导入 DDT 用例" });
+  const fileName = `identity-conflicts-${hierarchy.suffix}.csv`;
+  const caseId = `IDENTITY-${hierarchy.suffix}`;
+  await importDialog.locator('input[type="file"]').setInputFiles({
+    name: fileName,
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      `CaseID,caseid,srNum,srnum,环境,环境,负责人\nwrong-id,${caseId},wrong-sr,CORE,test,production,alice\n`,
+      "utf8",
+    ),
+  });
+  await importDialog.getByRole("button", { name: "开始预检" }).click();
+  const conflictDialog = page.getByRole("dialog", { name: "解决重复列名" });
+  const groups = conflictDialog.locator(".ddt-column-conflict-list > section");
+  await expect(groups).toHaveCount(3);
+  const identityGroup = groups.filter({ has: page.getByText("“CaseID”重复", { exact: false }) });
+  const srGroup = groups.filter({ has: page.getByText("“srNum”重复", { exact: false }) });
+  await identityGroup
+    .locator(".ddt-column-choice")
+    .nth(1)
+    .getByRole("button", { name: "仅保留此列" })
+    .click();
+  await srGroup
+    .locator(".ddt-column-choice")
+    .nth(1)
+    .getByRole("button", { name: "仅保留此列" })
+    .click();
+  await expect(conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 2 列的新列名`)).toHaveValue(
+    "CaseID",
+  );
+  const srName = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 4 列的新列名`);
+  await expect(srName).toHaveValue("srNum");
+  await srName.fill("业务组");
+  await expect(conflictDialog.getByRole("alert")).toContainText("必须保留一列名为 srNum");
+  await expect(conflictDialog.getByRole("button", { name: "应用并重新预检" })).toBeDisabled();
+  await srName.fill("srNum");
+  await conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 6 列的新列名`).fill("负责人");
+  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+  await expect(groups).toHaveCount(1);
+  await expect(groups).toContainText("负责人");
+  await expect(conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 7 列的新列名`)).toHaveValue(
+    "负责人_2",
+  );
+  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+  await expect(conflictDialog).toBeHidden();
+  await expect(importDialog.locator(".ddt-preview-summary")).toContainText("1 / 1");
+  await importDialog.getByRole("button", { name: "确认并后台导入" }).click();
+  await expect(page.locator(".ddt-status.succeeded", { hasText: "已完成" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const imported = await browserJson<{ data: Record<string, unknown> }>(
+    page,
+    ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}`),
+  );
+  expect(imported.status).toBe(200);
+  expect(imported.body.data).toEqual({
+    CaseID: caseId,
+    srNum: "CORE",
+    环境: "test",
+    负责人: "production",
+    负责人_2: "alice",
+  });
+  const jobs = await browserJson<{ items: Array<{ id: string }> }>(
+    page,
+    ddtPath(hierarchy, "imports"),
+  );
+  expect(jobs.body.items).toHaveLength(1);
+});
+
+test("DDT CaseID conflict strategies preserve existing data and report the outcome", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt");
+  const existingCaseId = `EXISTING-${hierarchy.suffix}`;
+  const addedCaseId = `ADDED-${hierarchy.suffix}`;
+  const originalData = { CaseID: existingCaseId, srNum: "CORE", 环境: "original" };
+
+  const submitImport = async (fileName: string, csv: string, strategy: string) => {
+    await page.getByRole("button", { name: "导入表格", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "导入 DDT 用例" });
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: fileName,
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv, "utf8"),
+    });
+    await dialog.getByRole("button", { name: "开始预检" }).click();
+    if (fileName !== "original.csv") {
+      const conflicts = page.getByRole("dialog", { name: "解决重复列名" });
+      await conflicts.getByRole("button", { name: "应用并重新预检" }).click();
+      await expect(conflicts).toBeHidden();
+      await expect(dialog.locator(".ddt-preview-summary")).toContainText("预计更新1");
+    }
+    await dialog.getByRole("radio", { name: strategy, exact: true }).check();
+    const confirmation = page.waitForResponse(
+      (response) => response.url().includes("/confirm?") && response.request().method() === "POST",
+    );
+    await dialog.getByRole("button", { name: "确认并后台导入" }).click();
+    const response = await confirmation;
+    expect(response.status()).toBe(200);
+    const job = (await response.json()) as { id: string };
+    await expect(dialog).toBeHidden();
+    return job.id;
+  };
+  const waitForImport = async (id: string, status: "succeeded" | "failed") => {
+    await expect
+      .poll(
+        async () => {
+          const response = await browserJson<{ status: string }>(
+            page,
+            ddtPath(hierarchy, `imports/${id}`),
+          );
+          expect(response.status).toBe(200);
+          return response.body.status;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(status);
+  };
+  const readCase = (caseId: string) =>
+    browserJson<{ data: Record<string, unknown> }>(
+      page,
+      ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}`),
+    );
+  const originalJob = await submitImport(
+    "original.csv",
+    `CaseID,srNum,环境\n${existingCaseId},CORE,original\n`,
+    "覆盖并保留历史",
+  );
+  await waitForImport(originalJob, "succeeded");
+  const replacementCsv = `CaseID,srNum,环境,环境\n${addedCaseId},CORE,new,secondary\n${existingCaseId},CORE,replaced,production\n`;
+
+  const rejectedJob = await submitImport("conflict-error.csv", replacementCsv, "遇到冲突终止");
+  await waitForImport(rejectedJob, "failed");
+  expect((await readCase(existingCaseId)).body.data).toEqual(originalData);
+  expect((await readCase(addedCaseId)).status).toBe(404);
+  const failedCard = page
+    .locator(".ddt-job")
+    .filter({ has: page.getByText("conflict-error.csv", { exact: true }) });
+  await expect(failedCard).toContainText("当前范围已存在相同 CaseID");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-id-conflict-${width}`);
+  }
+
+  const skippedJob = await submitImport("conflict-skip.csv", replacementCsv, "跳过已有用例");
+  await waitForImport(skippedJob, "succeeded");
+  expect((await readCase(existingCaseId)).body.data).toEqual(originalData);
+  expect((await readCase(addedCaseId)).body.data).toEqual({
+    CaseID: addedCaseId,
+    srNum: "CORE",
+    环境: "new",
+    环境_2: "secondary",
+  });
+  const skippedCard = page
+    .locator(".ddt-job")
+    .filter({ has: page.getByText("conflict-skip.csv", { exact: true }) });
+  await expect(skippedCard.locator(".ddt-job-results")).toContainText("跳过 1");
+
+  const replacedJob = await submitImport(
+    "conflict-overwrite.csv",
+    `CaseID,srNum,环境,环境\n${existingCaseId},CORE,replaced,production\n`,
+    "覆盖并保留历史",
+  );
+  await waitForImport(replacedJob, "succeeded");
+  const replacementData = {
+    CaseID: existingCaseId,
+    srNum: "CORE",
+    环境: "replaced",
+    环境_2: "production",
+  };
+  expect((await readCase(existingCaseId)).body.data).toEqual(replacementData);
+  const history = await browserJson<{
+    items: Array<{
+      changeType: string;
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    }>;
+  }>(page, ddtPath(hierarchy, `cases/${encodeURIComponent(existingCaseId)}/history`));
+  expect(history.status).toBe(200);
+  expect(history.body.items).toHaveLength(1);
+  expect(history.body.items[0]).toMatchObject({
+    changeType: "import_overwrite",
+    before: originalData,
+    after: replacementData,
+  });
 });
 
 test("DDT workspace imports, edits, validates and recovers version-scoped cases", async ({
@@ -684,4 +965,17 @@ async function captureDdtUi(page: Page, name: string): Promise<void> {
     fullPage: false,
     animations: "disabled",
   });
+}
+
+async function expectBelow(list: Locator, feedback: Locator): Promise<void> {
+  await expect(feedback).toBeVisible();
+  await expect
+    .poll(async () => {
+      const [listBox, feedbackBox] = await Promise.all([
+        list.boundingBox(),
+        feedback.boundingBox(),
+      ]);
+      return listBox && feedbackBox ? feedbackBox.y - (listBox.y + listBox.height) : -1;
+    })
+    .toBeGreaterThanOrEqual(0);
 }

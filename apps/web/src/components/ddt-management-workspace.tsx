@@ -126,6 +126,7 @@ type ImportJob = Scope & {
   unchangedCount: number;
   skippedCount: number;
   failedFiles: number;
+  errorSummary?: string;
   uploads: ImportUpload[];
   files: ImportFile[];
   createdAt: string;
@@ -1037,9 +1038,17 @@ function ImportJobs({
                   未变 <strong>{job.unchangedCount}</strong>
                 </span>
                 <span>
+                  跳过 <strong>{job.skippedCount}</strong>
+                </span>
+                <span>
                   失败文件 <strong>{job.failedFiles}</strong>
                 </span>
               </div>
+              {job.errorSummary ? (
+                <div className="inline-notice error" role="alert">
+                  {job.errorSummary}
+                </div>
+              ) : null}
               {canManage && ["previewed", "queued", "running"].includes(job.status) ? (
                 <Button
                   className="text-button danger"
@@ -1553,6 +1562,7 @@ function ImportDialog({
   const confirm = async () => {
     if (!job) return;
     setBusy(true);
+    setError("");
     try {
       await requestJson(endpoint(`imports/${job.id}/confirm`), {
         method: "POST",
@@ -1573,6 +1583,7 @@ function ImportDialog({
         subtitle="先预检，再选择冲突策略启动后台导入"
         onClose={onClose}
         inactive={showColumnConflicts}
+        closeDisabled={busy}
       >
         <div className="ddt-import-dialog">
           {error ? <div className="inline-notice error">{error}</div> : null}
@@ -1601,6 +1612,7 @@ function ImportDialog({
                 hidden
                 multiple
                 type="file"
+                disabled={busy}
                 accept={DDT_IMPORT_FILE_ACCEPT}
                 onChange={(event) => {
                   selectFiles([...(event.target.files ?? [])]);
@@ -1626,7 +1638,12 @@ function ImportDialog({
                 />
               ) : null}
               <footer>
-                <Button className="button button-secondary" type="button" onClick={onClose}>
+                <Button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={onClose}
+                  disabled={busy}
+                >
                   取消
                 </Button>
                 <Button
@@ -1641,22 +1658,6 @@ function ImportDialog({
             </>
           ) : (
             <>
-              {unresolvedColumnConflicts.length ? (
-                <div className="ddt-column-conflict-notice" role="alert">
-                  <AlertTriangle size={18} />
-                  <span>
-                    <strong>发现重复列名</strong>
-                    <small>需要先对照内容并选择保留、改名或删除，才能启动导入。</small>
-                  </span>
-                  <Button
-                    className="button button-secondary"
-                    type="button"
-                    onClick={() => setShowColumnConflicts(true)}
-                  >
-                    处理重复列名
-                  </Button>
-                </div>
-              ) : null}
               <div className="ddt-preview-summary">
                 <span>
                   <small>有效表格</small>
@@ -1686,7 +1687,29 @@ function ImportDialog({
                   </div>
                 ))}
               </div>
-              <fieldset className="ddt-strategy">
+              {unresolvedColumnConflicts.length ? (
+                <div className="ddt-column-conflict-notice" role="alert">
+                  <AlertTriangle size={18} aria-hidden="true" />
+                  <span>
+                    <strong>发现重复列名</strong>
+                    <small>
+                      请先处理上方文件中的重复列名，再确认导入。暂不处理会保留当前选择。
+                    </small>
+                  </span>
+                  <Button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setShowColumnConflicts(true)}
+                  >
+                    处理重复列名
+                  </Button>
+                </div>
+              ) : null}
+              <fieldset
+                className="ddt-strategy"
+                disabled={busy || unresolvedColumnConflicts.length > 0}
+              >
                 <legend>CaseID 冲突时</legend>
                 {(
                   [
@@ -1713,6 +1736,7 @@ function ImportDialog({
                 <Button
                   className="button button-secondary"
                   type="button"
+                  disabled={busy}
                   onClick={() => setJob(undefined)}
                 >
                   重新选择
@@ -1810,6 +1834,7 @@ function ColumnConflictDialog({
       title="解决重复列名"
       subtitle="对照两列内容后选择改名保留或删除，平台会使用已保存的原文件重新预检"
       onClose={onClose}
+      closeDisabled={busy}
       backdropClassName="ddt-column-conflict-backdrop"
     >
       <div className="ddt-column-conflict-dialog">
@@ -1820,9 +1845,6 @@ function ColumnConflictDialog({
               {affectedFileCount} 个文件 · {conflicts.length} 组冲突 · {conflictColumnCount}{" "}
               个重复列
             </strong>
-            <span>
-              默认安全方案会保留全部内容并自动生成唯一列名；也可以对照内容后仅保留指定列。
-            </span>
           </p>
           <Button
             className="button button-secondary"
@@ -1834,11 +1856,6 @@ function ColumnConflictDialog({
             全部按建议改名
           </Button>
         </div>
-        {error || validationError ? (
-          <div className="inline-notice error" role="alert">
-            {error || validationError}
-          </div>
-        ) : null}
         <div className="ddt-column-conflict-list">
           {conflicts.map((conflict, conflictIndex) => {
             const location = conflict.archiveEntryName
@@ -1903,6 +1920,7 @@ function ColumnConflictDialog({
                           <label className="ddt-column-delete-option">
                             <Input
                               type="checkbox"
+                              disabled={busy}
                               checked={deleteColumn}
                               aria-label={`${location} ${conflict.sheetName} Sheet 删除第 ${column.columnIndex + 1} 列 ${column.originalName}`}
                               onChange={(event) =>
@@ -1954,7 +1972,7 @@ function ColumnConflictDialog({
                           <span>{deleteColumn ? "该列将在导入时忽略" : "保留后的列名"}</span>
                           <Input
                             autoFocus={key === firstColumnKey}
-                            disabled={deleteColumn}
+                            disabled={busy || deleteColumn}
                             maxLength={256}
                             value={resolvedName}
                             aria-label={`${location} ${conflict.sheetName} Sheet 第 ${column.columnIndex + 1} 列的新列名`}
@@ -1985,14 +2003,25 @@ function ColumnConflictDialog({
             value={uploadProgress.percent}
           />
         ) : null}
-        <div className="ddt-column-resolution-summary" aria-live="polite">
-          <CheckCircle2 aria-hidden="true" size={16} />
-          <span>
-            已配置 {conflictColumnCount} 列
-            <small>
-              保留 {conflictColumnCount - deletedColumnCount} 列 · 删除 {deletedColumnCount} 列
-            </small>
-          </span>
+        <div className="ddt-column-resolution-feedback">
+          {error || validationError ? (
+            <div className="inline-notice error" role="alert">
+              {error || validationError}
+            </div>
+          ) : (
+            <div className="ddt-column-resolution-summary" aria-live="polite">
+              <CheckCircle2 aria-hidden="true" size={16} />
+              <span>
+                待应用的列名方案
+                <small>
+                  保留 {conflictColumnCount - deletedColumnCount} 列 · 删除 {deletedColumnCount} 列
+                </small>
+              </span>
+            </div>
+          )}
+          <p className="ddt-column-resolution-help">
+            对照上方内容，改名可保留全部数据，也可仅保留指定列。应用后会重新预检，此时还不会导入用例。
+          </p>
         </div>
         <footer>
           <Button
@@ -2418,6 +2447,7 @@ function Dialog({
   onClose,
   children,
   inactive = false,
+  closeDisabled = false,
   backdropClassName,
 }: {
   title: string;
@@ -2425,6 +2455,7 @@ function Dialog({
   onClose(): void;
   children: ReactNode;
   inactive?: boolean;
+  closeDisabled?: boolean;
   backdropClassName?: string;
 }) {
   const titleId = useId();
@@ -2433,7 +2464,7 @@ function Dialog({
       className={`modal-backdrop${backdropClassName ? ` ${backdropClassName}` : ""}`}
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (!inactive && !closeDisabled && event.target === event.currentTarget) onClose();
       }}
     >
       <section
@@ -2449,7 +2480,13 @@ function Dialog({
             <h2 id={titleId}>{title}</h2>
             <p>{subtitle}</p>
           </div>
-          <Button className="icon-button" type="button" aria-label="关闭弹窗" onClick={onClose}>
+          <Button
+            className="icon-button"
+            type="button"
+            aria-label="关闭弹窗"
+            disabled={closeDisabled}
+            onClick={onClose}
+          >
             <X size={18} />
           </Button>
         </header>
@@ -2561,7 +2598,7 @@ function keepOnlyConflictColumn(
     next = replaceColumnResolution(next, {
       ...identity,
       resolvedName: retained
-        ? (requiredName ?? column.currentName)
+        ? (requiredName ?? existing?.resolvedName ?? column.currentName)
         : (existing?.resolvedName ?? column.suggestedName),
       ...(retained ? {} : { deleteColumn: true }),
     });

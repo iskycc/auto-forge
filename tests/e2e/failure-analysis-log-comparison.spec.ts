@@ -234,9 +234,24 @@ test("quality insight comparison preserves scroll, can rerun, and compares both 
   const details = page.getByRole("dialog", { name: "批次对比明细" });
   const compareLogs = details.getByRole("button", { name: /对比 .* 的两次执行日志/u }).first();
   await expect(compareLogs).toBeEnabled();
-  await page.setViewportSize({ width: 1024, height: 768 });
-  await expectUiIntegrity(page);
-  await screenshot(page, "quality-comparison-details-1024");
+  for (const width of [1536, 1024]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await expect
+      .poll(() =>
+        compareLogs.evaluate((button) => {
+          const cell = button.closest("td")!;
+          const cellBounds = cell.getBoundingClientRect();
+          return (
+            button.getBoundingClientRect().right +
+            Number.parseFloat(getComputedStyle(cell).paddingRight) -
+            cellBounds.right
+          );
+        }),
+      )
+      .toBeLessThanOrEqual(0);
+    await screenshot(page, `quality-comparison-details-${width}`);
+  }
   await compareLogs.click();
   const logComparison = page.getByRole("dialog", { name: /日志对比 ·/u });
   await expect(logComparison.getByRole("region", { name: "基准批次日志" })).toContainText(
