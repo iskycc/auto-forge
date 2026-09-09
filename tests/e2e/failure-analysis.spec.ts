@@ -15,6 +15,127 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("long case names keep single, bulk and completed analysis dialogs within their width", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("analysis-width");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: `长用例分析 ${suffix}` },
+    },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const fixture = insertFailureAnalysisFixture(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    version.body.id,
+    suffix,
+    {
+      caseNameSuffix: `长用例名称${"LongUnbrokenCaseIdentifier".repeat(8)}`,
+      classNamePrefix: `e2e.analysis.${"LongUnbrokenPackageIdentifier".repeat(8)}`,
+    },
+  );
+  const scope = {
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: version.body.id,
+    batchId: fixture.batchId,
+  };
+  expect(
+    (await browserJson(page, "/api/v1/failure-analysis/batches", { method: "POST", body: scope }))
+      .status,
+  ).toBe(201);
+  expect(
+    (
+      await browserJson(page, "/api/v1/failure-analysis/claims", {
+        method: "POST",
+        body: {
+          ...scope,
+          executionRunIds: [0, 1, 2].map((index) => `run-failed-${index}-${suffix}`),
+        },
+      })
+    ).status,
+  ).toBe(201);
+  await page.goto(`/case-analysis/${fixture.batchId}?view=workbench`);
+  const first = analysisCard(page, fixture.failedNames[0]);
+  await first.getByRole("button", { name: "开始分析" }).click();
+  const single = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[0]}` });
+  await expectLongAnalysisDialog(page, single, "single");
+  await installClipboardCapture(page);
+  await single.getByRole("button", { name: "复制用例信息" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (Reflect.get(window, "__autoforgeCopiedFailureAnalysis") as { text: string } | undefined)
+            ?.text,
+      ),
+    )
+    .toContain(fixture.failedNames[0]);
+  await single.getByLabel("代码问题已提单", { exact: false }).check();
+  await single.getByLabel("问题说明 *").fill("长名称不影响正常提交分析");
+  await single.getByLabel("问题单链接或问题单号 *").fill("BUG-LONG-NAME");
+  await single.getByRole("button", { name: "提交分析" }).click();
+  await expect(single).toBeHidden();
+  await page.getByLabel("显示已完成分析").check();
+  await first.getByRole("button", { name: "查看分析详情" }).click();
+  await expect(single.getByLabel("问题说明 *")).toHaveValue("长名称不影响正常提交分析");
+  await expectLongAnalysisDialog(page, single, "completed");
+  await single.getByRole("button", { name: "关闭分析弹窗" }).click();
+  for (const name of fixture.failedNames.slice(1, 3))
+    await analysisCard(page, name).getByRole("checkbox").check();
+  await page.getByRole("button", { name: "批量分析", exact: true }).click();
+  const bulk = page.getByRole("dialog", { name: "批量分析 2 个用例" });
+  await expect(bulk.getByRole("button", { name: "弹窗日志", exact: true })).toHaveCount(2);
+  await expectLongAnalysisDialog(page, bulk, "bulk");
+  await bulk.getByRole("button", { name: "关闭分析弹窗" }).click();
+});
+
+async function expectLongAnalysisDialog(
+  page: import("@playwright/test").Page,
+  dialog: import("@playwright/test").Locator,
+  state: string,
+) {
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(dialog).toBeVisible();
+    await dialog.locator(".runner-update-body").evaluate((element) => element.scrollTo(0, 0));
+    await captureUi(page, `analysis-long-name-${state}-${viewport.width}`);
+    await expectDialogFitsViewport(page, dialog);
+    const widths = await dialog.evaluate((element) =>
+      [
+        element,
+        ...Array.from(
+          element.querySelectorAll<HTMLElement>(
+            ".runner-update-titlebar, .runner-update-body, .failure-analysis-case-summary, .failure-analysis-case-list, .failure-analysis-case-list article, .analysis-execution-history, .failure-analysis-history-panel, .failure-analysis-history-cards, .failure-analysis-history-cards > article",
+          ),
+        ),
+      ].map((panel) => ({
+        panel: panel.className,
+        overflow: panel.scrollWidth - panel.clientWidth,
+      })),
+    );
+    expect(
+      widths.filter((panel) => panel.overflow > 1),
+      "analysis panels must not gain horizontal scrolling from case text",
+    ).toEqual([]);
+    await expectUiIntegrity(page);
+    for (const button of await dialog
+      .getByRole("button", { name: "公开日志", exact: true })
+      .all()) {
+      const bounds = await button.boundingBox();
+      const dialogBounds = await dialog.boundingBox();
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(dialogBounds!.x + dialogBounds!.width);
+    }
+  }
+}
+
 test("terminal task failures support durable single and batch analysis with evidence", async ({
   page,
 }) => {

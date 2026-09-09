@@ -19097,10 +19097,14 @@ button.icon-button:disabled {
 
 .failure-analysis-completion-dialog {
   width: min(980px, calc(100vw - 56px));
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   max-height: calc(100vh - 48px);
 }
 
 .failure-analysis-completion-dialog .runner-update-body {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   overflow-y: auto;
 }
 
@@ -19153,6 +19157,8 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-case-summary {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   border-color: color-mix(in srgb, var(--color-violet) 20%, var(--color-border));
   background:
     radial-gradient(
@@ -19161,6 +19167,11 @@ button.icon-button:disabled {
       transparent 42%
     ),
     var(--color-surface-muted);
+}
+
+.failure-analysis-case-summary h3,
+.failure-analysis-case-list strong {
+  overflow-wrap: anywhere;
 }
 
 .failure-analysis-history-panel {
@@ -19351,6 +19362,8 @@ button.icon-button:disabled {
 
 .failure-analysis-case-list {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   max-height: 236px;
   gap: 4px;
   overflow-y: auto;

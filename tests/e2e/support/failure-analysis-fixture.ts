@@ -7,16 +7,20 @@ export function insertFailureAnalysisFixture(
   dataDirectory: string,
   projectVersionId: string,
   suffix: string,
+  caseLabels: { caseNameSuffix?: string; classNamePrefix?: string } = {},
 ) {
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
   const batchId = randomUUID();
   const runnerId = `analysis-runner-${suffix}`;
   const suiteName = `E2E 失败分析任务 ${suffix}`;
+  const caseNameSuffix = caseLabels.caseNameSuffix ?? suffix;
+  const failedClassName = (index: number) =>
+    `${caseLabels.classNamePrefix ?? "e2e.analysis"}.Failed${index}Test`;
   const failedNames: [string, string, string, string] = [
-    `失败 Alpha ${suffix}`,
-    `失败 Beta ${suffix}`,
-    `失败 Gamma ${suffix}`,
-    `失败 Zeta ${suffix}`,
+    `失败 Alpha ${caseNameSuffix}`,
+    `失败 Beta ${caseNameSuffix}`,
+    `失败 Gamma ${caseNameSuffix}`,
+    `失败 Zeta ${caseNameSuffix}`,
   ];
   const passedName = `通过用例 ${suffix}`;
   const recordedAt = new Date().toISOString();
@@ -86,7 +90,7 @@ export function insertFailureAnalysisFixture(
         historicalBatchId,
         historicalCaseDefinitionId,
         failedNames[2],
-        "e2e.analysis.Failed2Test",
+        failedClassName(2),
         historicalRecordedAt,
         historicalRecordedAt,
       );
@@ -123,7 +127,7 @@ export function insertFailureAnalysisFixture(
         historicalCaseDefinitionId,
         historicalAttemptId,
         failedNames[2],
-        "e2e.analysis.Failed2Test",
+        failedClassName(2),
         "Historical assertion failure",
         historicalRecordedAt,
         historicalRecordedAt,
@@ -139,7 +143,7 @@ export function insertFailureAnalysisFixture(
           [
             `run-failed-${index}-${suffix}`,
             name,
-            `e2e.analysis.Failed${index}Test`,
+            failedClassName(index),
             `Assertion failure ${index}`,
             "failed",
           ] as const,
