@@ -78,9 +78,21 @@ export const bulkDdtCaseIdsInputSchema = z.object({
   caseIds: z.array(z.string().min(1).max(512)).min(1).max(DDT_BULK_MUTATION_LIMIT),
 });
 
-export const setDdtExecutionClassInputSchema = z.object({
-  caseIds: z.array(z.string().min(1).max(512)).min(1).max(DDT_BULK_MUTATION_LIMIT),
+export const setDdtSrExecutionClassInputSchema = z.object({
+  srNum: z.string().trim().min(1).max(512),
+  className: z.string().trim().min(1).max(1_024).nullable(),
+  expectedRevision: z.number().int().min(0),
+});
+export const changeDdtExecutionClassRangeInputSchema = z.object({
+  caseDefinitionId: z.string().min(1).max(128),
   className: z.string().trim().min(1).max(1_024),
+  included: z.boolean(),
+  expectedRevision: z.number().int().min(0),
+});
+export const ddtExecutionMappingListInputSchema = z.object({
+  query: z.string().trim().max(512).default(""),
+  cursor: z.string().max(1_024).optional(),
+  limit: z.number().int().min(1).max(100).default(60),
 });
 
 export const addCaseSuiteDdtItemsInputSchema = z.object({

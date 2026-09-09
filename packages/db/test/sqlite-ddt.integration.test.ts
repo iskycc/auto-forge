@@ -1,3 +1,6 @@
+import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
+import { expectDdtSrExecutionContract } from "./ddt-sr-execution-contract";
+import { ddtLiteralSearchFields, expectDdtLiteralFieldSearch } from "./ddt-search-contract";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -179,7 +182,7 @@ describe("SQLite DDT repository", () => {
             id: "ddt-case-2",
             caseId: "ORDER-2",
             srNum: "ORDER",
-            data: { CaseID: "ORDER-2", srNum: "ORDER", amount: 20 },
+            data: { CaseID: "ORDER-2", srNum: "ORDER", amount: 20, ...ddtLiteralSearchFields },
           },
         ],
         conflictStrategy: "overwrite",
@@ -187,6 +190,7 @@ describe("SQLite DDT repository", () => {
         historyIds: ["history-import-1", "history-import-2"],
       });
       expect(imported).toMatchObject({ insertedCount: 2, updatedCount: 0 });
+      await expectDdtLiteralFieldSearch(repository, scope, "ORDER-2");
       insertExecutionClass(handle, scope);
       await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([
         expect.objectContaining({
@@ -195,15 +199,19 @@ describe("SQLite DDT repository", () => {
           displayName: "订单 DDT 执行类",
         }),
       ]);
-      await expect(
-        repository.setExecutionClass({
-          scope,
-          caseIds: ["ORDER-1", "ORDER-2"],
-          executionCaseDefinitionId: "ddt-execution-definition",
-          updatedAt: now,
-        }),
-      ).resolves.toBe(2);
+      await expectDdtSrExecutionContract(
+        repository,
+        scope,
+        ["ORDER-1", "ORDER-2"],
+        "ddt-execution-definition",
+        now,
+      );
       insertDdtSuiteMembership(handle, "ddt-case-1");
+      await expect(new SqliteCaseSuiteRepository(handle).get("ddt-suite")).resolves.toMatchObject({
+        ddtItems: [
+          { ddtCase: { executionClass: { caseDefinitionId: "ddt-execution-definition" } } },
+        ],
+      });
       await expect(
         repository.trashCases({
           scope,
@@ -238,7 +246,7 @@ describe("SQLite DDT repository", () => {
         {
           scope,
           caseId: "ORDER-1",
-          expectedRevision: 2,
+          expectedRevision: 1,
           nextData: { CaseID: "ORDER-1", srNum: "ORDER", amount: 15 },
           historyId: "history-edit",
           historyType: "edit",
@@ -256,7 +264,7 @@ describe("SQLite DDT repository", () => {
           {
             scope,
             caseId: "ORDER-1",
-            expectedRevision: 3,
+            expectedRevision: 2,
             nextData: { CaseID: "ORDER-2", srNum: "ORDER", amount: 15 },
             historyId: "history-conflict",
             historyType: "edit",

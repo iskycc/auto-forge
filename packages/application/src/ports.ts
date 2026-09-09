@@ -122,6 +122,8 @@ import type {
   DdtCaseHistory,
   DdtCaseTemplate,
   DdtScope,
+  DdtSrExecutionMappingPage,
+  DdtExecutionClassRangePage,
 } from "@autoforge/domain";
 
 export type CreateProjectVersionRecord = {
@@ -1081,13 +1083,28 @@ export interface DdtRepository {
     limit?: number,
   ): Promise<DdtExecutionClass[]>;
   findExecutionClass(scope: DdtScope, className: string): Promise<DdtExecutionClass | null>;
-  setExecutionClass(input: {
+  listSrExecutionMappings(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number },
+  ): Promise<DdtSrExecutionMappingPage>;
+  listExecutionClassRange(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number },
+  ): Promise<DdtExecutionClassRangePage>;
+  changeExecutionClassRange(input: {
     scope: DdtScope;
-    caseIds: readonly string[];
     executionCaseDefinitionId: string;
-    actorId?: string;
+    included: boolean;
+    expectedRevision: number;
     updatedAt: string;
-  }): Promise<number>;
+  }): Promise<void>;
+  setSrExecutionClass(input: {
+    scope: DdtScope;
+    srNum: string;
+    executionCaseDefinitionId: string | null;
+    expectedRevision: number;
+    updatedAt: string;
+  }): Promise<void>;
   listGroups(
     scope: DdtScope,
     query?: string,

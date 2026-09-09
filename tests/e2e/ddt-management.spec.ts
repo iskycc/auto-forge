@@ -1,3 +1,4 @@
+import { associateDdtSr } from "./support/ddt-associations";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -554,14 +555,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await expect(page.getByText("用户旅程", { exact: true })).toBeVisible();
 
   const orderCaseId = `ORDER-${hierarchy.suffix}`;
-  await page.getByLabel(`选择 ${orderCaseId}`).check();
-  await page.getByRole("button", { name: "设置执行类" }).click();
-  const executionClassDialog = page.getByRole("dialog", { name: /设置 1 条 DDT 用例的执行类/u });
-  await executionClassDialog.getByLabel(executionClassName, { exact: false }).check();
-  await executionClassDialog.getByRole("button", { name: "保存执行类" }).click();
-  await expect(
-    page.getByText(`已将 1 条 DDT 用例的执行类设置为 ${executionClassName}。`),
-  ).toBeVisible();
+  await associateDdtSr(page, "ORDER", executionClassName);
 
   await page.getByLabel(`选择 ${orderCaseId}`).check();
   // Returning to the browser must not poll a hidden TestNG panel or clear DDT selection.
@@ -628,10 +622,13 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   }
 
   await page.getByRole("button", { name: `LOGIN-${hierarchy.suffix}`, exact: true }).click();
-  const caseDrawer = page.getByRole("dialog", { name: `LOGIN-${hierarchy.suffix}` });
-  await expect(caseDrawer.getByText("username", { exact: true })).toBeVisible();
-  await caseDrawer.getByRole("button", { name: "编辑动态字段" }).click();
-  await caseDrawer.getByLabel("用例数据 JSON").fill(
+  const caseDetail = page.getByRole("region", { name: "DDT 用例详情" });
+  await expect(page.locator(".ddt-case-browser")).toBeVisible();
+  await expect(page.locator(".ddt-case-navigation")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: `LOGIN-${hierarchy.suffix}` })).toHaveCount(0);
+  await expect(caseDetail.getByText("username", { exact: true })).toBeVisible();
+  await caseDetail.getByRole("button", { name: "编辑动态字段" }).click();
+  await caseDetail.getByLabel("用例数据 JSON").fill(
     JSON.stringify(
       {
         CaseID: `LOGIN-${hierarchy.suffix}`,
@@ -664,18 +661,50 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
       }),
     });
   });
-  await caseDrawer.getByRole("button", { name: "保存修改" }).click();
+  await caseDetail.getByRole("button", { name: "保存修改" }).click();
   const conflictDialog = page.getByRole("dialog", { name: "DDT 用例已被其他人修改" });
   await expect(conflictDialog).toBeVisible();
   await expectUiIntegrity(page);
   await conflictDialog.getByRole("button", { name: "暂不重新加载" }).click();
-  await expect(caseDrawer.getByLabel("用例数据 JSON")).toHaveValue(/quality-team/u);
-  await caseDrawer.getByRole("button", { name: "保存修改" }).click();
+  await expect(caseDetail.getByLabel("用例数据 JSON")).toHaveValue(/quality-team/u);
+  await caseDetail.getByRole("button", { name: "保存修改" }).click();
   await page.unroute(ddtCaseMutationUrl);
   await expect(page.getByText(`已保存 LOGIN-${hierarchy.suffix}`)).toBeVisible();
-  await expect(caseDrawer.getByText("quality-team", { exact: true })).toBeVisible();
-  await expect(caseDrawer.getByText("人工编辑", { exact: true })).toBeVisible();
-  await caseDrawer.getByRole("button", { name: "关闭用例详情" }).click();
+  await expect(caseDetail.getByText("quality-team", { exact: true })).toBeVisible();
+  await expect(caseDetail.getByText("人工编辑", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: orderCaseId, exact: true }).click();
+  await expect(caseDetail.getByRole("heading", { name: orderCaseId, exact: true })).toBeVisible();
+  await caseDetail.getByRole("tab", { name: "step2", exact: true }).click();
+  await expect(caseDetail.locator(".ddt-field-card", { hasText: "action" })).toContainText("pay");
+  await caseDetail.getByRole("button", { name: "编辑字段 action", exact: true }).click();
+  await caseDetail.getByLabel("action 的值").fill("paid");
+  await caseDetail.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(caseDetail.locator(".ddt-field-card", { hasText: "action" })).toContainText("paid");
+  await caseDetail.getByRole("button", { name: "编辑字段 srNum", exact: true }).click();
+  await caseDetail.getByLabel("srNum 的值").fill("ORDER-UPDATED");
+  await caseDetail.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(
+    caseDetail.getByRole("button", { name: "编辑字段 srNum", exact: true }),
+  ).toBeEnabled();
+  const journey = await browserJson<{
+    data: { srNum: string; 用户旅程: Record<string, { srNum: string; action: string }> };
+  }>(page, ddtPath(hierarchy, `cases/${encodeURIComponent(orderCaseId)}`));
+  expect(journey.body.data).toMatchObject({
+    srNum: "ORDER-UPDATED",
+    用户旅程: {
+      step1: { srNum: "ORDER-UPDATED", action: "create" },
+      step2: { srNum: "ORDER-UPDATED", action: "paid" },
+    },
+  });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await page.locator(".ddt-case-browser").scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-workspace-journey-${width}`);
+    const navigation = await page.locator(".ddt-case-navigation").boundingBox();
+    const detail = await caseDetail.boundingBox();
+    expect(navigation!.x + navigation!.width).toBeLessThanOrEqual(detail!.x);
+  }
 
   await page.getByRole("tab", { name: "字段模板" }).click();
   await page.getByRole("button", { name: "新建模板" }).click();
@@ -798,8 +827,259 @@ async function dispatchFileDrag(
   );
 }
 
-async function issueDdtApiToken(page: Page, projectId: string): Promise<string> {
-  const permissions = ["case.read", "case.manage"];
+test("DDT split workspace loads details on demand and keeps field edits and navigation consistent", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("button", { name: "导入表格" }).click();
+  const dialog = page.getByRole("dialog", { name: "导入 DDT 用例" });
+  const rows = Array.from({ length: 62 }, (_, index) => ({
+    CaseID: `CASE-${String(index).padStart(3, "0")}`,
+    srNum: index === 61 ? "PAYMENT" : "AUTH",
+    描述:
+      index === 0
+        ? "验证登录后能够查看用户资料。预期返回完整的姓名、角色与访问权限。"
+        : `用例 ${index}`,
+    enabled: true,
+    retries: 2,
+  }));
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "workspace-cases.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: buildExportWorkbook(rows),
+  });
+  await dialog.getByRole("button", { name: "开始预检" }).click();
+  await expect(dialog.getByRole("button", { name: "确认并后台导入" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "确认并后台导入" }).click();
+  await expect(page.locator(".ddt-status.succeeded")).toBeVisible({ timeout: 30_000 });
+
+  const numericCase = await browserJson<{ revision: number; data: Record<string, string> }>(
+    page,
+    ddtPath(hierarchy, "cases/CASE-000"),
+  );
+  const typedUpdate = await browserJson(page, ddtPath(hierarchy, "cases/CASE-000"), {
+    method: "PATCH",
+    body: {
+      expectedRevision: numericCase.body.revision,
+      data: { ...numericCase.body.data, retries: 2, enabled: true },
+    },
+  });
+  expect(typedUpdate.status).toBe(200);
+
+  const detailRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/ddt\/cases\/CASE-/u.test(new URL(request.url()).pathname))
+      detailRequests.push(new URL(request.url()).pathname);
+  });
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
+  const workspace = page.locator(".ddt-case-browser");
+  const details = page.getByRole("region", { name: "DDT 用例详情" });
+  const navigation = page.getByRole("region", { name: "DDT 用例导航" });
+  await expect(details.getByRole("heading", { name: "CASE-000", exact: true })).toBeVisible();
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(60);
+  expect(detailRequests).toHaveLength(2);
+  expect(detailRequests.every((path) => path.includes("CASE-000"))).toBe(true);
+  await expect(workspace.getByRole("table")).toHaveCount(0);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await workspace.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-workspace-fields-${width}`);
+  }
+
+  await details.getByRole("button", { name: "编辑字段 描述", exact: true }).click();
+  await details.getByLabel("描述 的值").fill("保存前切换用例仍应保留此草稿");
+  await navigation.getByRole("button", { name: "CASE-001", exact: true }).click();
+  const discard = page.getByRole("dialog", { name: "放弃未保存的修改" });
+  await discard.getByRole("button", { name: "继续编辑" }).click();
+  await expect(details.getByLabel("描述 的值")).toHaveValue("保存前切换用例仍应保留此草稿");
+  let releaseStatistics!: () => void;
+  const statisticsMayFinish = new Promise<void>((resolve) => {
+    releaseStatistics = resolve;
+  });
+  await page.route(
+    "**/ddt/dashboard?*",
+    async (route) => {
+      await statisticsMayFinish;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  try {
+    await details.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(
+      details.getByRole("button", { name: "编辑字段 retries", exact: true }),
+    ).toBeEnabled();
+    await expect(details.locator(".ddt-field-card", { hasText: "描述" })).toContainText(
+      "保存前切换用例仍应保留此草稿",
+    );
+  } finally {
+    releaseStatistics();
+  }
+  await details.getByRole("button", { name: "编辑字段 retries", exact: true }).click();
+  await details.getByLabel("retries 的值").fill("not-a-number");
+  await details.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(details.getByRole("alert")).toContainText("请输入有效的数字");
+  await details.getByLabel("retries 的值").fill("4");
+  await details.getByRole("button", { name: "保存修改", exact: true }).click();
+  const stored = await browserJson<{ data: { retries: number; enabled: boolean; 描述: string } }>(
+    page,
+    ddtPath(hierarchy, "cases/CASE-000"),
+  );
+  expect(stored.body.data).toMatchObject({
+    retries: 4,
+    enabled: true,
+    描述: "保存前切换用例仍应保留此草稿",
+  });
+
+  await details
+    .locator(".ddt-history article")
+    .last()
+    .getByRole("button", { name: "恢复此版本" })
+    .click();
+  await expect(
+    details.locator(".ddt-field-card", { hasText: "retries" }).locator("pre"),
+  ).toHaveText("2");
+
+  // A delayed response for an older selection must never replace the newer detail.
+  let releaseOld!: () => void;
+  const oldMayFinish = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  let oldRequested = false;
+  await page.route(
+    "**/ddt/cases/CASE-001?*",
+    async (route) => {
+      const response = await route.fetch();
+      oldRequested = true;
+      await oldMayFinish;
+      await route.fulfill({ response });
+    },
+    { times: 1 },
+  );
+  try {
+    await navigation.getByRole("button", { name: "CASE-001", exact: true }).click();
+    await expect.poll(() => oldRequested).toBe(true);
+    await navigation.getByRole("button", { name: "CASE-002", exact: true }).click();
+    await expect(details.getByRole("heading", { name: "CASE-002", exact: true })).toBeVisible();
+  } finally {
+    releaseOld();
+  }
+  await expect(details.getByRole("heading", { name: "CASE-002", exact: true })).toBeVisible();
+  await page.route(
+    "**/ddt/cases/CASE-004?*",
+    async (route) => {
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台暂时繁忙，请重试。",
+            requestId: "ddt-detail-retry",
+          },
+        },
+      });
+    },
+    { times: 1 },
+  );
+  await navigation.getByRole("button", { name: "CASE-004", exact: true }).click();
+  await expect(details.getByRole("alert")).toContainText("平台暂时繁忙");
+  await expect(details.getByRole("heading", { name: "CASE-002", exact: true })).toHaveCount(0);
+  await details.getByRole("button", { name: "重试读取用例" }).click();
+  await expect(details.getByRole("heading", { name: "CASE-004", exact: true })).toBeVisible();
+  await navigation.getByRole("button", { name: "CASE-002", exact: true }).click();
+  await navigation.getByRole("button", { name: "CASE-002", exact: true }).press("ArrowDown");
+  await expect(details.getByRole("heading", { name: "CASE-003", exact: true })).toBeVisible();
+
+  await navigation.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(62);
+  await expect(navigation.getByRole("button", { name: "加载更多", exact: true })).toBeHidden();
+  await selectDdtGroup(navigation, "PAYMENT");
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(1);
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/ddtGroup=PAYMENT/u);
+  await page.reload();
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+  await selectDdtGroup(navigation, "AUTH");
+  await expect(details.getByRole("heading", { name: "CASE-000", exact: true })).toBeVisible();
+  await details.getByRole("button", { name: "编辑字段 描述", exact: true }).click();
+  await details.getByLabel("描述 的值").fill("浏览器后退保留草稿");
+  await page.goBack();
+  await page
+    .getByRole("dialog", { name: "放弃未保存的修改" })
+    .getByRole("button", { name: "继续编辑" })
+    .click();
+  await expect(details.getByLabel("描述 的值")).toHaveValue("浏览器后退保留草稿");
+  await expect(page).toHaveURL(/ddtGroup=AUTH/u);
+  await details.getByRole("button", { name: "取消", exact: true }).click();
+  await selectDdtGroup(navigation, "PAYMENT");
+  await selectDdtGroup(navigation, "AUTH");
+  await page.goBack();
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+  await navigation.getByLabel("搜索 DDT 用例").fill("DOES-NOT-EXIST");
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(0);
+  await expect(details.getByText("选择用例查看详情", { exact: true })).toBeVisible();
+  await navigation.getByLabel("搜索 DDT 用例").fill("");
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+
+  await navigation.locator(".ddt-advanced-filters > summary").click();
+  await navigation.getByLabel("DDT 动态字段", { exact: true }).fill("描述");
+  await navigation.getByLabel("动态字段值", { exact: true }).fill("用例 61");
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await workspace.scrollIntoViewIfNeeded();
+    // The filter popover intentionally covers navigation rows; check its own bounds.
+    const filterBounds = await navigation.locator(".ddt-advanced-filter-fields").boundingBox();
+    const workspaceBounds = await workspace.boundingBox();
+    expect(filterBounds!.x).toBeGreaterThanOrEqual(workspaceBounds!.x);
+    expect(filterBounds!.x + filterBounds!.width).toBeLessThanOrEqual(
+      workspaceBounds!.x + workspaceBounds!.width,
+    );
+    expect(filterBounds!.y + filterBounds!.height).toBeLessThanOrEqual(
+      workspaceBounds!.y + workspaceBounds!.height,
+    );
+    await captureDdtUi(page, `ddt-case-workspace-filter-${width}`);
+  }
+  await navigation.getByLabel("DDT 动态字段", { exact: true }).fill("");
+  await navigation.locator(".ddt-advanced-filters > summary").click();
+  const resizer = workspace.getByRole("separator", { name: "调整 CaseID 列表宽度" });
+  await resizer.focus();
+  await resizer.press("ArrowRight");
+  await expect(resizer).toHaveAttribute("aria-valuenow", "300");
+  await navigation.getByRole("button", { name: "收起 CaseID 列表" }).click();
+  await expect(navigation.locator(".ddt-case-navigation-content")).toBeHidden();
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+  await navigation.getByRole("button", { name: "展开 CaseID 列表" }).click();
+  await navigation.getByLabel("选择 CASE-061", { exact: true }).check();
+  await expect(details.getByRole("heading", { name: "已选择 1 条用例" })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await workspace.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-workspace-selection-${width}`);
+  }
+  await details.getByRole("button", { name: "清空选择" }).click();
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
+
+async function selectDdtGroup(navigation: Locator, group: string): Promise<void> {
+  await navigation.getByRole("button", { name: "DDT 业务分组", exact: true }).click();
+  await navigation.getByRole("option", { name: group, exact: true }).click();
+}
+
+async function issueDdtApiToken(
+  page: Page,
+  projectId: string,
+  permissions = ["case.read", "case.manage"],
+): Promise<string> {
   const account = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
     method: "POST",
     body: {
@@ -825,6 +1105,143 @@ async function issueDdtApiToken(page: Page, projectId: string): Promise<string> 
   expect(token.body.token).toMatch(/^af_api_/u);
   return token.body.token;
 }
+
+test("SR associations restrict candidates and automatically cover imported and moved DDT cases", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const className = `com.example.SrExecution${Date.now()}Test`;
+  const definition = await importExecutionClass(page, hierarchy, className);
+  const caseIds = [`SR-A-${hierarchy.suffix}`, `SR-B-${hierarchy.suffix}`];
+  const importRows = async (ids: string[]) => {
+    await page.goto("/cases?tab=ddt");
+    await page.getByRole("button", { name: "导入表格" }).click();
+    const dialog = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: `sr-${ids.length}-${Date.now()}.xlsx`,
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: buildExportWorkbook(
+        ids.map((CaseID) => ({ CaseID, srNum: "PAYMENTS", description: "支付场景" })),
+      ),
+    });
+    await dialog.getByRole("button", { name: "开始预检" }).click();
+    await dialog.getByRole("button", { name: "确认并后台导入" }).click();
+    await expect(page.locator(".ddt-status.succeeded").first()).toBeVisible({ timeout: 30_000 });
+  };
+  await importRows(caseIds);
+  const rejected = await browserJson<{ error: { code: string } }>(
+    page,
+    ddtPath(hierarchy, "sr-mappings"),
+    { method: "POST", body: { srNum: "PAYMENTS", className, expectedRevision: 0 } },
+  );
+  expect(rejected.status).toBe(400);
+  expect(rejected.body.error.code).toBe("DDT_EXECUTION_CLASS_OUT_OF_RANGE");
+  const oldEndpoint = await browserJson<{ error: { code: string } }>(
+    page,
+    ddtPath(hierarchy, "cases/execution-class"),
+    { method: "POST", body: { caseIds: [caseIds[0]!], className } },
+  );
+  expect(oldEndpoint.body.error.code).toBe("DDT_SR_MAPPING_REQUIRED");
+  await associateDdtSr(page, "PAYMENTS", className);
+  const readerToken = await issueDdtApiToken(page, hierarchy.projectId, ["case.read"]);
+  const readerHeaders = { authorization: `Bearer ${readerToken}` };
+  expect(
+    (
+      await page.request.get(ddtPath(hierarchy, "sr-mappings"), { headers: readerHeaders })
+    ).status(),
+  ).toBe(200);
+  for (const [path, body] of [
+    ["sr-mappings", { srNum: "PAYMENTS", className: null, expectedRevision: 1 }],
+    [
+      "execution-range",
+      { caseDefinitionId: definition.id, className, included: false, expectedRevision: 1 },
+    ],
+  ] as const) {
+    expect(
+      (
+        await page.request.post(ddtPath(hierarchy, path), { headers: readerHeaders, data: body })
+      ).status(),
+    ).toBe(403);
+  }
+  const getCase = (id: string) =>
+    browserJson<{
+      revision: number;
+      data: Record<string, string>;
+      executionClass?: { caseDefinitionId: string };
+    }>(page, ddtPath(hierarchy, `cases/${encodeURIComponent(id)}`));
+  for (const id of caseIds)
+    expect((await getCase(id)).body).toMatchObject({
+      revision: 1,
+      executionClass: { caseDefinitionId: definition.id },
+    });
+  const newCaseId = `SR-LATER-${hierarchy.suffix}`;
+  await importRows([newCaseId]);
+  await expect
+    .poll(async () => (await getCase(newCaseId)).body.executionClass?.caseDefinitionId)
+    .toBe(definition.id);
+  const newCase = (await getCase(newCaseId)).body;
+  const moved = await browserJson(
+    page,
+    ddtPath(hierarchy, `cases/${encodeURIComponent(newCaseId)}`),
+    {
+      method: "PATCH",
+      body: { expectedRevision: newCase.revision, data: { ...newCase.data, srNum: "OTHER" } },
+    },
+  );
+  expect(moved.status).toBe(200);
+  expect((await getCase(newCaseId)).body.executionClass).toBeUndefined();
+  await page.goto("/cases/ddt-associations");
+  const srRow = page.locator('.ddt-sr-row[data-sr="PAYMENTS"]');
+  await expect(srRow).toContainText(className);
+  await page.getByLabel("搜索 SR", { exact: true }).fill("PAY");
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(page).toHaveURL(/query=PAY/);
+  await expect(page.locator('.ddt-sr-row[data-sr="OTHER"]')).toHaveCount(0);
+  await page.goBack();
+  await expect(page.getByLabel("搜索 SR", { exact: true })).toHaveValue("");
+  await expect(page.locator('.ddt-sr-row[data-sr="OTHER"]')).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 1024 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-sr-associations-${width}`);
+  }
+  await page.getByRole("button", { name: "配置测试类范围" }).click();
+  const range = page.getByRole("dialog", { name: "测试类候选范围", exact: true });
+  await range.getByRole("button", { name: `移除 ${className}`, exact: true }).click();
+  await expect(range.getByRole("alert")).toContainText("仍关联此测试类");
+  await expect(page.locator(".toast-viewport")).toContainText("仍关联此测试类");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 1024 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-sr-range-${width}`);
+  }
+  await range.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByRole("button", { name: "关联 PAYMENTS 的测试类", exact: true }).click();
+  const mapping = page.getByRole("dialog", { name: "关联 SR PAYMENTS", exact: true });
+  await mapping.getByRole("radio", { name: className, exact: true }).check();
+  const concurrent = await browserJson(page, ddtPath(hierarchy, "sr-mappings"), {
+    method: "POST",
+    body: { srNum: "PAYMENTS", className, expectedRevision: 1 },
+  });
+  expect(concurrent.status).toBe(200);
+  await mapping.getByRole("button", { name: "保存 SR 关联" }).click();
+  await expect(mapping.getByRole("alert")).toContainText("已被修改");
+  await mapping.getByRole("button", { name: "关闭后刷新 SR" }).click();
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await page.getByRole("button", { name: "解除 PAYMENTS 的关联", exact: true }).click();
+  await acceptSystemDialog(page, "解除 PAYMENTS 的关联", "解除关联");
+  await expect(srRow).toContainText("未关联");
+  for (const id of caseIds) expect((await getCase(id)).body.executionClass).toBeUndefined();
+  await page.getByRole("button", { name: "配置测试类范围" }).click();
+  await range.getByRole("button", { name: `移除 ${className}`, exact: true }).click();
+  await expect(range.getByRole("button", { name: `移除 ${className}`, exact: true })).toHaveCount(
+    0,
+  );
+  await expect(range.getByRole("region", { name: "候选测试类范围" })).toContainText("候选范围为空");
+});
 
 async function createHierarchy(page: Page) {
   const suffix = uniqueName("ddt");

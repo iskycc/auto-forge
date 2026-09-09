@@ -1,3 +1,5 @@
+import { ddtExecutionClassIdSql, freezeDdtSrExecutionClasses } from "./ddt-execution-sql";
+import { getTableColumns } from "drizzle-orm";
 import type {
   CaseSuiteRepository,
   CaseSuiteExportPageQuery,
@@ -231,7 +233,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .from(caseSuiteDdtItems)
       .innerJoin(caseSuites, eq(caseSuites.id, caseSuiteDdtItems.suiteId))
       .innerJoin(ddtCases, eq(ddtCases.id, caseSuiteDdtItems.ddtCaseId))
-      .leftJoin(caseDefinitions, eq(caseDefinitions.id, ddtCases.executionCaseDefinitionId))
+      .leftJoin(caseDefinitions, eq(caseDefinitions.id, sql`${sql.raw(ddtExecutionClassIdSql)}`))
       .where(
         and(
           eq(caseSuiteDdtItems.suiteId, input.suiteId),
@@ -363,12 +365,25 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     if (page) ddtItemRowsQuery.limit(page.limit);
     const ddtItemRows = ddtItemRowsQuery.all();
     const ddtIds = ddtItemRows.map((item) => item.ddtCaseId);
-    const ddtRows = batchesOf(ddtIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
-      this.handle.db.select().from(ddtCases).where(inArray(ddtCases.id, ids)).all(),
+    const ddtRows = freezeDdtSrExecutionClasses(
+      batchesOf(ddtIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+        this.handle.db
+          .select({
+            ...getTableColumns(ddtCases),
+            executionCaseDefinitionId: sql<string | null>`${sql.raw(ddtExecutionClassIdSql)}`,
+          })
+          .from(ddtCases)
+          .where(inArray(ddtCases.id, ids))
+          .all(),
+      ),
     );
-    const executionIds = ddtRows.flatMap((row) =>
-      row.executionCaseDefinitionId ? [row.executionCaseDefinitionId] : [],
-    );
+    const executionIds = [
+      ...new Set(
+        ddtRows.flatMap((row) =>
+          row.executionCaseDefinitionId ? [row.executionCaseDefinitionId] : [],
+        ),
+      ),
+    ];
     const executionRows = batchesOf(executionIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
       this.handle.db.select().from(caseDefinitions).where(inArray(caseDefinitions.id, ids)).all(),
     );

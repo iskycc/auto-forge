@@ -1,3 +1,11 @@
+import {
+  mapDdtExecutionClass,
+  mapDdtSrMapping,
+  ddtMappingConflict,
+  type DdtExecutionClassRow,
+  type DdtSrMappingRow,
+} from "./ddt-execution-sql";
+import { ddtExecutionClassIdSql } from "./ddt-execution-sql";
 import type {
   DdtCaseListQuery,
   DdtDeletedCase,
@@ -125,34 +133,263 @@ export class PostgresDdtRepository implements DdtRepository {
     return result.rows[0] ? mapExecutionClassRow(result.rows[0]) : null;
   }
 
-  async setExecutionClass(input: Parameters<DdtRepository["setExecutionClass"]>[0]) {
+  async listExecutionClassRange(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number },
+  ) {
     await this.ready();
-    let updated = 0;
-    await transaction(this.handle, async (client) => {
-      for (const caseIds of batchesOf(
-        input.caseIds.map(normalize),
-        RELATIONAL_ID_QUERY_BATCH_SIZE,
-      )) {
-        const result = await client.query(
-          `UPDATE ddt_cases
-           SET execution_case_definition_id = $1, revision = revision + 1,
-               updated_by = $2, updated_at = $3
-           WHERE project_id = $4 AND project_version_id = $5 AND test_stage_id = $6
-             AND case_id_normalized = ANY($7::text[])`,
-          [
-            input.executionCaseDefinitionId,
-            input.actorId ?? null,
-            input.updatedAt,
-            ...scopeValues(input.scope),
-            caseIds,
-          ],
-        );
-        updated += result.rowCount ?? 0;
-      }
-    });
-    return updated;
+    const revision =
+      (
+        await this.handle.pool.query<{ revision: number }>(
+          `SELECT revision
+         FROM ddt_execution_configuration
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3`,
+          [...scopeValues(scope)],
+        )
+      ).rows[0]?.revision ?? 0;
+    const pattern = `%${escapeLike(query.query.toLocaleLowerCase("en-US"))}%`;
+    const rows = (
+      await this.handle.pool.query<DdtExecutionClassRow>(
+        `SELECT definition.id AS "caseDefinitionId", definition.class_name AS "className",
+ definition.display_name AS "displayName", definition.source_id AS "sourceId",
+ definition.current_version AS "currentVersion", CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled,
+ CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
+         FROM ddt_execution_class_range candidate
+         JOIN case_definitions definition ON definition.id = candidate.execution_case_definition_id
+         WHERE candidate.project_id = $1 AND candidate.project_version_id = $2 AND candidate.test_stage_id = $3 AND definition.class_name > $4 AND (lower(definition.class_name) LIKE $5 ESCAPE '\\' OR lower(definition.display_name) LIKE $6 ESCAPE '\\')
+         ORDER BY definition.class_name, definition.id
+         LIMIT $7`,
+        [...scopeValues(scope), query.cursor ?? "", pattern, pattern, query.limit + 1],
+      )
+    ).rows;
+    return {
+      revision,
+      items: rows.slice(0, query.limit).map(mapDdtExecutionClass),
+      ...(rows.length > query.limit ? { nextCursor: rows[query.limit - 1]!.className } : {}),
+    };
   }
 
+  async listSrExecutionMappings(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number },
+  ) {
+    await this.ready();
+    const pattern = `${escapeLike(normalize(query.query))}%`;
+    const rows = (
+      await this.handle.pool.query<DdtSrMappingRow>(
+        `WITH sr_names AS (
+ SELECT sr_num_normalized
+         FROM ddt_cases
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 AND sr_num_normalized > $4 AND sr_num_normalized LIKE $5 ESCAPE '\\'
+
+         GROUP BY sr_num_normalized
+ UNION
+ SELECT sr_num_normalized
+         FROM ddt_sr_execution_mappings
+         WHERE project_id = $6 AND project_version_id = $7 AND test_stage_id = $8 AND sr_num_normalized > $9 AND sr_num_normalized LIKE $10 ESCAPE '\\'
+
+         ORDER BY sr_num_normalized
+         LIMIT $11
+ ) SELECT names.sr_num_normalized AS cursor,
+ COALESCE(mapping.sr_num, (SELECT sr_num
+         FROM ddt_cases
+         WHERE project_id = $12 AND project_version_id = $13 AND test_stage_id = $14 AND sr_num_normalized = names.sr_num_normalized
+         LIMIT 1)) AS "srNum",
+ (SELECT COUNT(*)
+         FROM ddt_cases
+         WHERE project_id = $15 AND project_version_id = $16 AND test_stage_id = $17 AND sr_num_normalized = names.sr_num_normalized) AS "caseCount",
+ COALESCE(mapping.revision, 0) AS revision, COALESCE(mapping.legacy_conflict, 0) AS "legacyConflict", definition.id AS "caseDefinitionId", definition.class_name AS "className",
+ definition.display_name AS "displayName", definition.source_id AS "sourceId",
+ definition.current_version AS "currentVersion", CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled,
+ CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
+
+         FROM sr_names names
+         LEFT JOIN ddt_sr_execution_mappings mapping
+ ON mapping.project_id = $18 AND mapping.project_version_id = $19 AND mapping.test_stage_id = $20 AND mapping.sr_num_normalized = names.sr_num_normalized
+
+         LEFT JOIN case_definitions definition ON definition.id = mapping.execution_case_definition_id
+
+         ORDER BY names.sr_num_normalized`,
+        [
+          ...scopeValues(scope),
+          query.cursor ?? "",
+          pattern,
+          ...scopeValues(scope),
+          query.cursor ?? "",
+          pattern,
+          query.limit + 1,
+          ...scopeValues(scope),
+          ...scopeValues(scope),
+          ...scopeValues(scope),
+        ],
+      )
+    ).rows;
+    return {
+      items: rows.slice(0, query.limit).map(mapDdtSrMapping),
+      ...(rows.length > query.limit ? { nextCursor: rows[query.limit - 1]!.cursor } : {}),
+    };
+  }
+
+  async changeExecutionClassRange(
+    input: Parameters<DdtRepository["changeExecutionClassRange"]>[0],
+  ): Promise<void> {
+    await this.ready();
+    await transaction(this.handle, async (client) => {
+      await client.query(
+        `INSERT INTO ddt_execution_configuration (project_id, project_version_id, test_stage_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [...scopeValues(input.scope)],
+      );
+      const configuration = (
+        await client.query<{ revision: number }>(
+          `SELECT revision
+         FROM ddt_execution_configuration
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 FOR UPDATE`,
+          [...scopeValues(input.scope)],
+        )
+      ).rows[0];
+      if (configuration?.revision !== input.expectedRevision) throw ddtMappingConflict();
+      if (input.included) {
+        const available = (
+          await client.query<{ id: string }>(
+            `SELECT definition.id
+         FROM case_definitions definition
+         JOIN case_sources source ON source.id = definition.source_id
+
+         WHERE definition.project_id = $1 AND definition.project_version_id = $2 AND definition.test_stage_id = $3
+ AND definition.id = $4 AND definition.enabled = TRUE AND definition.archived = FALSE
+ AND source.authoritative = TRUE AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
+            [...scopeValues(input.scope), input.executionCaseDefinitionId],
+          )
+        ).rows[0];
+        if (!available)
+          throw new DomainError(
+            "DDT_EXECUTION_CLASS_UNAVAILABLE",
+            "测试类已不可执行，请刷新候选列表。",
+          );
+        await client.query(
+          `INSERT INTO ddt_execution_class_range (project_id, project_version_id, test_stage_id, execution_case_definition_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+          [...scopeValues(input.scope), input.executionCaseDefinitionId],
+        );
+      } else {
+        const assigned = (
+          await client.query<{ sr_num: string }>(
+            `SELECT sr_num
+         FROM ddt_sr_execution_mappings
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 AND execution_case_definition_id = $4
+         LIMIT 1`,
+            [...scopeValues(input.scope), input.executionCaseDefinitionId],
+          )
+        ).rows[0];
+        if (assigned)
+          throw new DomainError(
+            "DDT_EXECUTION_CLASS_IN_USE",
+            `SR ${assigned.sr_num} 仍关联此测试类，请先解除或更换关联。`,
+          );
+        await client.query(
+          `DELETE
+         FROM ddt_execution_class_range
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 AND execution_case_definition_id = $4`,
+          [...scopeValues(input.scope), input.executionCaseDefinitionId],
+        );
+      }
+      await client.query(
+        `UPDATE ddt_execution_configuration SET revision = revision + 1
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3`,
+        [...scopeValues(input.scope)],
+      );
+    });
+  }
+
+  async setSrExecutionClass(
+    input: Parameters<DdtRepository["setSrExecutionClass"]>[0],
+  ): Promise<void> {
+    await this.ready();
+    await transaction(this.handle, async (client) => {
+      await client.query(
+        `INSERT INTO ddt_execution_configuration (project_id, project_version_id, test_stage_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [...scopeValues(input.scope)],
+      );
+      // Serialize range removal with assignment so no mapping can escape its candidate range.
+      await client.query(
+        `SELECT revision
+         FROM ddt_execution_configuration
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 FOR UPDATE`,
+        scopeValues(input.scope),
+      );
+      const current = (
+        await client.query<{ revision: number }>(
+          `SELECT revision
+         FROM ddt_sr_execution_mappings
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 AND sr_num_normalized = $4`,
+          [...scopeValues(input.scope), normalize(input.srNum)],
+        )
+      ).rows[0];
+      if ((current?.revision ?? 0) !== input.expectedRevision) throw ddtMappingConflict();
+      const existingCase = (
+        await client.query<{ id: string }>(
+          `SELECT id
+         FROM ddt_cases
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 AND sr_num_normalized = $4
+         LIMIT 1`,
+          [...scopeValues(input.scope), normalize(input.srNum)],
+        )
+      ).rows[0];
+      if (!current && !existingCase)
+        throw new DomainError("DDT_SR_NOT_FOUND", "当前范围没有这个 SR，请刷新列表。");
+      if (input.executionCaseDefinitionId) {
+        const candidate = (
+          await client.query<{ execution_case_definition_id: string }>(
+            `SELECT execution_case_definition_id
+         FROM ddt_execution_class_range
+         WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3 AND execution_case_definition_id = $4`,
+            [...scopeValues(input.scope), input.executionCaseDefinitionId],
+          )
+        ).rows[0];
+        if (!candidate)
+          throw new DomainError(
+            "DDT_EXECUTION_CLASS_OUT_OF_RANGE",
+            "此测试类未加入当前范围的候选列表，请先配置测试类范围。",
+          );
+        const available = (
+          await client.query<{ id: string }>(
+            `SELECT definition.id
+         FROM case_definitions definition
+         JOIN case_sources source ON source.id = definition.source_id
+
+         WHERE definition.project_id = $1 AND definition.project_version_id = $2 AND definition.test_stage_id = $3
+ AND definition.id = $4 AND definition.enabled = TRUE AND definition.archived = FALSE
+ AND source.authoritative = TRUE AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
+            [...scopeValues(input.scope), input.executionCaseDefinitionId],
+          )
+        ).rows[0];
+        if (!available)
+          throw new DomainError(
+            "DDT_EXECUTION_CLASS_UNAVAILABLE",
+            "测试类已不可执行，请刷新候选列表。",
+          );
+      }
+      await client.query(
+        `INSERT INTO ddt_sr_execution_mappings (project_id, project_version_id, test_stage_id, sr_num_normalized, sr_num, execution_case_definition_id, revision, legacy_conflict, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8)
+         ON CONFLICT (project_id, project_version_id, test_stage_id, sr_num_normalized)
+         DO UPDATE SET sr_num = excluded.sr_num, execution_case_definition_id = excluded.execution_case_definition_id, revision = excluded.revision, legacy_conflict = 0, updated_at = excluded.updated_at`,
+        [
+          ...scopeValues(input.scope),
+          normalize(input.srNum),
+          input.srNum,
+          input.executionCaseDefinitionId,
+          input.expectedRevision + 1,
+          input.updatedAt,
+        ],
+      );
+    });
+  }
   async listGroups(scope: DdtScope, query = "", limit = 100) {
     await this.ready();
     const builder = new PgWhereBuilder(scope);
@@ -1120,13 +1357,13 @@ const emptyDashboardCounts: DashboardCountRow = {
   updated_today: "0",
 };
 
-const executionClassColumns = `execution_case_definition_id,
-  (SELECT class_name FROM case_definitions WHERE id = execution_case_definition_id) AS execution_class_name,
-  (SELECT display_name FROM case_definitions WHERE id = execution_case_definition_id) AS execution_display_name,
-  (SELECT source_id FROM case_definitions WHERE id = execution_case_definition_id) AS execution_source_id,
-  (SELECT current_version FROM case_definitions WHERE id = execution_case_definition_id) AS execution_current_version,
-  (SELECT enabled FROM case_definitions WHERE id = execution_case_definition_id) AS execution_enabled,
-  (SELECT archived FROM case_definitions WHERE id = execution_case_definition_id) AS execution_archived`;
+const executionClassColumns = `${ddtExecutionClassIdSql} AS execution_case_definition_id,
+  (SELECT class_name FROM case_definitions WHERE id = ${ddtExecutionClassIdSql}) AS execution_class_name,
+  (SELECT display_name FROM case_definitions WHERE id = ${ddtExecutionClassIdSql}) AS execution_display_name,
+  (SELECT source_id FROM case_definitions WHERE id = ${ddtExecutionClassIdSql}) AS execution_source_id,
+  (SELECT current_version FROM case_definitions WHERE id = ${ddtExecutionClassIdSql}) AS execution_current_version,
+  (SELECT enabled FROM case_definitions WHERE id = ${ddtExecutionClassIdSql}) AS execution_enabled,
+  (SELECT archived FROM case_definitions WHERE id = ${ddtExecutionClassIdSql}) AS execution_archived`;
 
 const caseSelect = `SELECT id, project_id, project_version_id, test_stage_id, case_id,
   sr_num, case_kind, data_json, source_name, revision, created_at, updated_at, updated_by,

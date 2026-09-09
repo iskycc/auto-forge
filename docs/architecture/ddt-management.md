@@ -24,8 +24,34 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 | 永久历史与恢复                             | 修改前后快照和字段差异；恢复会生成新的历史记录，不覆盖旧记录                                                                   |
 | 回收站恢复与永久清除                       | 软删除快照、CaseID 冲突保护、明确二次确认                                                                                      |
 | 仪表盘                                     | 总量、业务组、来源、用户旅程、当日变化和近七日图表                                                                             |
-| CoTest `classDataFile` 执行                | DDT 用例批量绑定同版本、同阶段的普通 TestNG 类；批次为每个 CaseID 固化独立 JSON 数据文件                                       |
+| CoTest `classDataFile` 执行                | SR 统一关联同版本、同阶段候选范围内的 TestNG 类；批次为每个 CaseID 固化独立 JSON 数据文件                                      |
 | Open API 与示例                            | 融入已认证、项目隔离的 `/api/v1/ddt/**`，不保留匿名全局接口                                                                    |
+
+## 用例工作台布局
+
+“用例”页按 [ddt-insight `705f552` 的 CaseWorkspace](https://github.com/iskycc/ddt-insight/blob/705f552ab77be489186f47f95088c071fdf954b4/components/workspace-client.tsx)
+采用左右分栏。左侧集中 CaseID 搜索、srNum 分组、高级字段筛选和可勾选的用例导航；右侧常驻
+当前用例的来源、分组、修订、更新时间、执行类、字段卡片及历史。项目、版本与阶段沿用顶栏，
+DDT 页不再重复展示 TestNG 的目录范围说明。列表可收起、拖动分隔线或用左右方向键调宽，双击
+分隔线或按 Home 恢复默认宽度；列表内用 ↑/↓ 或 J/K 切换已加载用例。
+
+首次进入读取 60 条摘要，只加载当前用例的正文和历史；点击“加载更多”继续读取下一游标窗口，
+未选择的用例不预取正文。列表和详情独立滚动，快速切换会取消旧详情请求，旧响应不得覆盖新的
+选择。筛选条件写入 `ddtQuery`、`ddtGroup`、`ddtField`、`ddtOperator`、`ddtValue` URL 参数，
+刷新与浏览器前进后退可以恢复筛选；有筛选的链接通过 `ddtView=cases` 直接进入用例视图。
+现有浏览器摘要缓存与后台统计快照保持复用；统计请求独立完成，不阻塞列表读取或用例保存反馈。
+
+普通字段以卡片展示，支持单字段复制、编辑及文本/数字/布尔/空值类型；整份 JSON 编辑保留，
+便于新增或删除字段。用户旅程仅展示所选 Step，身份字段修改复用共享领域规则同步全部步骤。
+保存继续提交 `expectedRevision`，并发冲突保留草稿并使用平台统一提示。点击其他用例、筛选、
+DDT 功能页签或勾选批量操作前，未保存的编辑需明确放弃；保存期间禁止这些切换。勾选用例后，
+右侧切换为所选范围的批量操作区，继续提供修改、导出、回收和加入任务。
+
+Lite 动态字段筛选修正为 SQLite 的点号加带引号对象键路径，并以参数绑定传入；中文、点号、括号、
+引号和反斜杠不会被当作嵌套路径。采用 [SQLite JSON 路径语法](https://www.sqlite.org/json1.html#path_arguments)，
+通过同一筛选契约验证 SQLite/PostgreSQL 的字面字段匹配。
+
+该调整不修改数据库 schema、API、Runner Protocol 或离线依赖，Lite/Full 使用同一页面和应用用例。
 
 ## 经确认不重复迁移的能力
 
@@ -68,11 +94,31 @@ ObjectStore 中的原始文件并原子替换同一个预检任务的逐文件�
 
 ## DDT 执行快照
 
-DDT 数据本身不是 Java class。管理员在 DDT 列表中选择一条或多条 CaseID，批量绑定当前
-`projectId + projectVersionId + testStageId` 下权威、可用来源中的普通 TestNG 类。平台保存的是
-`CaseDefinition` 标识，不接受任意 JAR 路径；类被停用、归档或移出当前版本后，任务预检会明确
-阻止执行。DDT 用例可与普通用例加入同一个任务，任务详情将普通用例按包路径、DDT 用例按 SR
-分别展示。
+DDT 数据本身不是 Java class。“用例管理 → DDT 管理 → SR 测试类关联”打开独立页面
+`/cases/ddt-associations`。先在“配置测试类范围”中维护需要执行 DDT 的少量 TestNG 测试类，
+然后按 SR 选择其中一个测试类。候选范围与关联都按 `projectId + projectVersionId + testStageId`
+隔离；写操作需要 `case.manage`，查看需要 `case.read`。候选添加与 SR 关联都复核有效权威来源、
+启停和归档状态；仍被 SR 使用的候选类不能移除，必须先更换或解除关联。
+
+平台只保存 SR 的关联，不再允许逐 CaseID 覆盖。同 SR 的现有用例、后续导入、回收恢复与
+修改 SR 的用例，在读取或创建执行快照时自动继承该 SR 的关联；修改不扇出更新整个 SR 的
+DDT 用例，也不增加其数据修订号。关联用独立修订号防止并发覆盖，范围移除与关联写入在同一
+作用域内串行化。无关联、旧关联待确认或测试类不可用时，新执行会被预检拒绝。
+列表按 SR 前缀搜索，以游标按需读取最多 100 个 SR；只统计当前窗口的分组用例数量，浏览器
+会话缓存避免反复进入时重复查询。候选列表也按需加载，TestNG 搜索最多返回 50 个匹配项，
+需要时输入更具体类名缩小范围。没有引入 Redis、队列或新后台统计作为关联事实来源。
+
+DDT 用例可与普通用例加入同一个任务，任务详情将普通用例按包路径、DDT 用例按 SR 分别展示。
+平台保存的是 `CaseDefinition` 标识，不接受任意 JAR 路径；任务预检、任务详情和导出都读取
+SR 的关联。同一次任务读取跨多个 SQL 窗口时，每个 SR 固定首次读取到的关联，避免并发修改
+导致同一批次混用该 SR 的新旧测试类；重复测试类 ID 会合并查询。批次一旦创建，后续关联变更不会改变既有执行记录、重试或诊断重跑的快照。
+
+升级迁移为 SQLite `0068_ddt_sr_execution.sql` / PostgreSQL `0066_ddt_sr_execution.sql`，
+新增候选范围、范围修订与 SR 映射表。迁移同时检查活动用例和回收站：同一作用域/SR 的非空
+旧关联一致时自动继承，出现多个不同测试类时标为“旧关联待确认”，不擅自选择；已有候选类
+自动进入范围，原始逐用例字段保留用于升级核对，但不再参与新执行或作为回退。无历史关联的
+SR 保持未关联。升级前备份数据库；DDL/迁移数据在事务内，失败会回滚，可修复原因后重试。
+需要降级旧程序时必须恢复升级前备份，因为旧程序不能识别新的 SR 配置；不要仅回退二进制。
 
 `case_suite_ddt_items` 对 DDT 资产使用限制删除。回收操作会先检查任务成员关系，并以
 `DDT_CASE_IN_USE` 拒绝仍在任务中的 CaseID；用户必须通过任务成员接口移除，使任务版本快照记录
@@ -96,7 +142,10 @@ Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都�
 - `GET /api/v1/ddt/dashboard|groups|cases|templates|recycle|imports`
 - `GET/PATCH/DELETE /api/v1/ddt/cases/{CaseID}`
 - `GET /api/v1/ddt/execution-classes`
-- `POST /api/v1/ddt/cases/search|bulk-update|bulk-delete|execution-class`
+- `POST /api/v1/ddt/cases/search|bulk-update|bulk-delete`
+- `GET/POST /api/v1/ddt/execution-range`（候选范围查询／加入移除，写入携带 `expectedRevision`）
+- `GET/POST /api/v1/ddt/sr-mappings`（SR 查询／关联或解除，写入携带 `expectedRevision`）
+- 原 `POST /api/v1/ddt/cases/execution-class` 返回 `DDT_SR_MAPPING_REQUIRED`，提示改用 SR 关联
 - `GET /api/v1/ddt/cases/{CaseID}/history`
 - `POST /api/v1/ddt/cases/{CaseID}/history/{historyId}/restore`
 - `POST /api/v1/ddt/imports/preview`（`multipart/form-data` 的 `files`）

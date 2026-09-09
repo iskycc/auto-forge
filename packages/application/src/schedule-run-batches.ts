@@ -1050,7 +1050,7 @@ export class RunBatchSchedulingService {
             blocker(
               "DDT_EXECUTION_CLASS_REQUIRED",
               "input",
-              `DDT 用例 ${item.ddtCase.caseId} 尚未设置执行类。`,
+              `DDT 用例 ${item.ddtCase.caseId} 所属 SR ${item.ddtCase.srNum} 尚未关联测试类，请在 SR 测试类关联页面配置。`,
               { caseDefinitionId: item.ddtCase.id },
             ),
           );
@@ -1478,7 +1478,7 @@ function ddtExecutionRun(
   if (!executionClass) {
     throw new DomainError(
       "DDT_EXECUTION_CLASS_REQUIRED",
-      `DDT 用例 ${ddtCase.caseId} 尚未设置执行类。`,
+      `DDT 用例 ${ddtCase.caseId} 所属 SR ${ddtCase.srNum} 尚未关联测试类，请在 SR 测试类关联页面配置。`,
     );
   }
   const json = `${JSON.stringify(ddtCase.data)}\n`;

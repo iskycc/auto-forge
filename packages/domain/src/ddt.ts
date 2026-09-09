@@ -24,6 +24,20 @@ export type DdtExecutionClass = {
   archived: boolean;
 };
 
+export type DdtSrExecutionMapping = {
+  srNum: string;
+  caseCount: number;
+  revision: number;
+  legacyConflict: boolean;
+  executionClass?: DdtExecutionClass;
+};
+export type DdtSrExecutionMappingPage = { items: DdtSrExecutionMapping[]; nextCursor?: string };
+export type DdtExecutionClassRangePage = {
+  revision: number;
+  items: DdtExecutionClass[];
+  nextCursor?: string;
+};
+
 export type DdtCaseSummary = DdtScope & {
   id: string;
   caseId: string;

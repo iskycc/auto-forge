@@ -1,3 +1,4 @@
+import { associateDdtSr } from "./support/ddt-associations";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -6,7 +7,12 @@ import { basename, resolve } from "node:path";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { buildExportWorkbook } from "../../packages/ddt-import/src";
-import { ensureAdministrator, selectProjectContext, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -553,6 +559,28 @@ async function exerciseDdtExecution(
   await expect(page.locator(".execution-log")).toContainText(
     "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
   );
+  const snapshotUrl = `/api/v1/run-batches/${encodeURIComponent(batchId)}`;
+  const before = await browserJson<{
+    runs: Array<{ caseType: string; executionCaseDefinitionId: string; className: string }>;
+  }>(page, snapshotUrl);
+  expect(before.body.runs).toHaveLength(1);
+  expect(before.body.runs[0]).toMatchObject({
+    caseType: "ddt",
+    className: "com.autoforge.javacases.JavaCasesDdtFixture",
+  });
+  const scopeQuery = new URLSearchParams(hierarchy);
+  const unlinked = await browserJson(page, `/api/v1/ddt/sr-mappings?${scopeQuery}`, {
+    method: "POST",
+    body: { srNum: "EXECUTION", className: null, expectedRevision: 1 },
+  });
+  expect(unlinked.status).toBe(200);
+  const currentCase = await browserJson<{ executionClass?: unknown }>(
+    page,
+    `/api/v1/ddt/cases/${encodeURIComponent(caseId)}?${scopeQuery}`,
+  );
+  expect(currentCase.body.executionClass).toBeUndefined();
+  const after = await browserJson<{ runs: unknown[] }>(page, snapshotUrl);
+  expect(after.body.runs).toEqual(before.body.runs);
 }
 
 async function importDdtCase(
@@ -603,12 +631,7 @@ async function addDdtCaseToSuite(
   );
   await page.goto("/cases?tab=ddt");
   await page.getByRole("tab", { name: "用例" }).click();
-  await page.getByLabel(`选择 ${caseId}`).check();
-  await page.getByRole("button", { name: "设置执行类" }).click();
-  const classDialog = page.getByRole("dialog", { name: /设置 1 条 DDT 用例的执行类/u });
-  await classDialog.getByLabel("JavaCasesDdtFixture", { exact: false }).check();
-  await classDialog.getByRole("button", { name: "保存执行类" }).click();
-  await expect(page.getByText(/已将 1 条 DDT 用例的执行类设置为/u)).toBeVisible();
+  await associateDdtSr(page, "EXECUTION", "com.autoforge.javacases.JavaCasesDdtFixture");
 
   await page.getByLabel(`选择 ${caseId}`).check();
   await page.getByRole("button", { name: "加入用例任务" }).click();

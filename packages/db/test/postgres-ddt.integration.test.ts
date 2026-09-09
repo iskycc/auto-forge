@@ -1,3 +1,5 @@
+import { expectDdtSrExecutionContract } from "./ddt-sr-execution-contract";
+import { ddtLiteralSearchFields, expectDdtLiteralFieldSearch } from "./ddt-search-contract";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
@@ -143,7 +145,7 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
               id: `case-second-${suffix}`,
               caseId: secondCaseId,
               srNum: "ORDER",
-              data: { CaseID: secondCaseId, srNum: "ORDER", amount: 99 },
+              data: { CaseID: secondCaseId, srNum: "ORDER", amount: 99, ...ddtLiteralSearchFields },
             },
           ],
           conflictStrategy: "overwrite",
@@ -151,6 +153,7 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           historyIds: [`history-import-${suffix}`, `history-import-second-${suffix}`],
         }),
       ).resolves.toMatchObject({ insertedCount: 2 });
+      await expectDdtLiteralFieldSearch(repository, scope, secondCaseId);
       const executionDefinitionId = `ddt-execution-definition-${suffix}`;
       await insertExecutionClass(handle, scope, suffix, executionDefinitionId);
       await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([
@@ -160,15 +163,19 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           displayName: "订单 DDT 执行类",
         }),
       ]);
-      await expect(
-        repository.setExecutionClass({
-          scope,
-          caseIds: [caseId, secondCaseId],
-          executionCaseDefinitionId: executionDefinitionId,
-          updatedAt: now,
-        }),
-      ).resolves.toBe(2);
+      await expectDdtSrExecutionContract(
+        repository,
+        scope,
+        [caseId, secondCaseId],
+        executionDefinitionId,
+        now,
+      );
       await insertDdtSuiteMembership(handle, suffix, `case-second-${suffix}`);
+      await expect(
+        new PostgresCaseSuiteRepository(handle).get(`ddt-suite-${suffix}`),
+      ).resolves.toMatchObject({
+        ddtItems: [{ ddtCase: { executionClass: { caseDefinitionId: executionDefinitionId } } }],
+      });
       await expect(
         new PostgresCaseSuiteRepository(handle).listExportRowsPage({
           suiteId: `ddt-suite-${suffix}`,
@@ -210,7 +217,7 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
         {
           scope,
           caseId,
-          expectedRevision: 2,
+          expectedRevision: 1,
           nextData: { CaseID: caseId, srNum: "ORDER", amount: 20 },
           historyId: `history-${suffix}`,
           historyType: "edit",
@@ -226,7 +233,7 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           {
             scope,
             caseId,
-            expectedRevision: 3,
+            expectedRevision: 2,
             nextData: { CaseID: secondCaseId, srNum: "ORDER", amount: 20 },
             historyId: `history-conflict-${suffix}`,
             historyType: "edit",

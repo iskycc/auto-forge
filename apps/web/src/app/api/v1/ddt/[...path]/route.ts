@@ -5,7 +5,9 @@ import {
   confirmDdtImportInputSchema,
   ddtCaseListInputSchema,
   resolveDdtImportColumnsInputSchema,
-  setDdtExecutionClassInputSchema,
+  setDdtSrExecutionClassInputSchema,
+  changeDdtExecutionClassRangeInputSchema,
+  ddtExecutionMappingListInputSchema,
   updateDdtCaseInputSchema,
   upsertDdtTemplateInputSchema,
 } from "@autoforge/contracts";
@@ -55,6 +57,26 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           boundedLimit(url, 100, 500),
         ),
       });
+    }
+    if (matches(path, "sr-mappings") || matches(path, "execution-range")) {
+      const query = ddtExecutionMappingListInputSchema.parse({
+        query: url.searchParams.get("query") ?? "",
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      });
+      return NextResponse.json(
+        matches(path, "sr-mappings")
+          ? await services.ddtCases.srExecutionMappings(scope, {
+              query: query.query,
+              limit: query.limit,
+              ...(query.cursor ? { cursor: query.cursor } : {}),
+            })
+          : await services.ddtCases.executionClassRange(scope, {
+              query: query.query,
+              limit: query.limit,
+              ...(query.cursor ? { cursor: query.cursor } : {}),
+            }),
+      );
     }
     if (matches(path, "execution-classes")) {
       return NextResponse.json({
@@ -177,20 +199,33 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         return NextResponse.json(result);
       }
       if (matches(path, "cases", "execution-class")) {
-        const input = setDdtExecutionClassInputSchema.parse(
-          await readJsonBody(request, 4 * 1_024 * 1_024),
+        throw new DomainError(
+          "DDT_SR_MAPPING_REQUIRED",
+          "逐条用例关联已停用，请在 SR 测试类关联页面按 SR 设置执行类。",
         );
-        const result = await services.ddtCases.setExecutionClass(
+      }
+      if (matches(path, "sr-mappings")) {
+        const input = setDdtSrExecutionClassInputSchema.parse(
+          await readJsonBody(request, 8 * 1_024),
+        );
+        await services.ddtCases.setSrExecutionClass(scope, input);
+        await audit(identity, services, scope, currentRequestId, "ddt_sr.execution_class", input);
+        return NextResponse.json({ saved: true });
+      }
+      if (matches(path, "execution-range")) {
+        const input = changeDdtExecutionClassRangeInputSchema.parse(
+          await readJsonBody(request, 8 * 1_024),
+        );
+        await services.ddtCases.changeExecutionClassRange(scope, input);
+        await audit(
+          identity,
+          services,
           scope,
-          input.caseIds,
-          input.className,
-          ddtActorId(identity),
+          currentRequestId,
+          "ddt_execution_range.update",
+          input,
         );
-        await audit(identity, services, scope, currentRequestId, "ddt_case.execution_class", {
-          updatedCount: result.updatedCount,
-          executionClassName: result.executionClass.className,
-        });
-        return NextResponse.json(result);
+        return NextResponse.json({ saved: true });
       }
       if (matches(path, "cases", "bulk-delete")) {
         const input = bulkDdtCaseIdsInputSchema.parse(

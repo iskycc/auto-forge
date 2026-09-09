@@ -1,3 +1,4 @@
+import { ddtExecutionClassIdSql, freezeDdtSrExecutionClasses } from "./ddt-execution-sql";
 import { getTableColumns } from "drizzle-orm";
 import type {
   CaseCatalogRepository,
@@ -2098,7 +2099,10 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       .from(pgCaseSuiteDdtItems)
       .innerJoin(pgCaseSuites, eq(pgCaseSuites.id, pgCaseSuiteDdtItems.suiteId))
       .innerJoin(pgDdtCases, eq(pgDdtCases.id, pgCaseSuiteDdtItems.ddtCaseId))
-      .leftJoin(pgCaseDefinitions, eq(pgCaseDefinitions.id, pgDdtCases.executionCaseDefinitionId))
+      .leftJoin(
+        pgCaseDefinitions,
+        eq(pgCaseDefinitions.id, sql`${sql.raw(ddtExecutionClassIdSql)}`),
+      )
       .where(
         and(
           eq(pgCaseSuiteDdtItems.suiteId, input.suiteId),
@@ -2232,15 +2236,26 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     if (page) ddtItemRowsQuery.limit(page.limit);
     const ddtItemRows = await ddtItemRowsQuery;
     const ddtIds = ddtItemRows.map((item) => item.ddtCaseId);
-    const ddtRows = [];
+    const loadedDdtRows = [];
     for (const idBatch of batchesOf(ddtIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
-      ddtRows.push(
-        ...(await this.handle.db.select().from(pgDdtCases).where(inArray(pgDdtCases.id, idBatch))),
+      loadedDdtRows.push(
+        ...(await this.handle.db
+          .select({
+            ...getTableColumns(pgDdtCases),
+            executionCaseDefinitionId: sql<string | null>`${sql.raw(ddtExecutionClassIdSql)}`,
+          })
+          .from(pgDdtCases)
+          .where(inArray(pgDdtCases.id, idBatch))),
       );
     }
-    const executionIds = ddtRows.flatMap((row) =>
-      row.executionCaseDefinitionId ? [row.executionCaseDefinitionId] : [],
-    );
+    const ddtRows = freezeDdtSrExecutionClasses(loadedDdtRows);
+    const executionIds = [
+      ...new Set(
+        ddtRows.flatMap((row) =>
+          row.executionCaseDefinitionId ? [row.executionCaseDefinitionId] : [],
+        ),
+      ),
+    ];
     const executionRows = [];
     for (const idBatch of batchesOf(executionIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
       executionRows.push(

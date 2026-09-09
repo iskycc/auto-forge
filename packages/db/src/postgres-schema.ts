@@ -1660,6 +1660,61 @@ export const pgDdtImportFiles = pgTable(
   (table) => [index("ddt_import_files_job_idx").on(table.jobId, table.createdAt, table.id)],
 );
 
+export const pgDdtExecutionConfiguration = pgTable(
+  "ddt_execution_configuration",
+  {
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    revision: integer("revision").notNull().default(0),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.projectVersionId, table.testStageId] }),
+  ],
+);
+export const pgDdtExecutionClassRange = pgTable(
+  "ddt_execution_class_range",
+  {
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id")
+      .notNull()
+      .references(() => pgCaseDefinitions.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.projectId,
+        table.projectVersionId,
+        table.testStageId,
+        table.executionCaseDefinitionId,
+      ],
+    }),
+  ],
+);
+export const pgDdtSrExecutionMappings = pgTable(
+  "ddt_sr_execution_mappings",
+  {
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    srNumNormalized: text("sr_num_normalized").notNull(),
+    srNum: text("sr_num").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id").references(
+      () => pgCaseDefinitions.id,
+      { onDelete: "set null" },
+    ),
+    legacyConflict: integer("legacy_conflict").notNull().default(0),
+    revision: integer("revision").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.projectId, table.projectVersionId, table.testStageId, table.srNumNormalized],
+    }),
+  ],
+);
 export const pgDdtCases = pgTable(
   "ddt_cases",
   {
@@ -1932,6 +1987,10 @@ export const postgresSchema = {
   ddtImportJobs: pgDdtImportJobs,
   ddtImportFiles: pgDdtImportFiles,
   ddtCases: pgDdtCases,
+  ddtExecutionConfiguration: pgDdtExecutionConfiguration,
+  ddtExecutionClassRange: pgDdtExecutionClassRange,
+  ddtSrExecutionMappings: pgDdtSrExecutionMappings,
+
   ddtCaseHistory: pgDdtCaseHistory,
   ddtDeletedCases: pgDdtDeletedCases,
   ddtCaseTemplates: pgDdtCaseTemplates,

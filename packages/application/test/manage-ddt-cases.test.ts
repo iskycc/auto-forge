@@ -1,83 +1,90 @@
 import { describe, expect, it, vi } from "vitest";
-
 import { DdtCaseService } from "../src/manage-ddt-cases";
 import type { DdtRepository } from "../src/ports";
 
-const scope = {
-  projectId: "project-1",
-  projectVersionId: "version-1",
-  testStageId: "stage-1",
-};
+const scope = { projectId: "project-1", projectVersionId: "version-1", testStageId: "stage-1" };
 const timestamp = "2026-08-28T00:00:00.000Z";
-
-describe("DDT execution class mapping", () => {
-  it("sets one ordinary TestNG class on every selected DDT CaseID", async () => {
-    const repository = {
-      getCases: vi.fn().mockResolvedValue([ddtCase("ddt-1", "CASE-1"), ddtCase("ddt-2", "CASE-2")]),
-      findExecutionClass: vi.fn().mockResolvedValue({
-        caseDefinitionId: "class-1",
-        className: "com.example.CheckoutDdtTest",
-        displayName: "结算 DDT 执行类",
-        sourceId: "source-1",
-        currentVersion: 3,
-        enabled: true,
-        archived: false,
-      }),
-      setExecutionClass: vi.fn().mockResolvedValue(2),
-    } as unknown as DdtRepository;
-    const service = new DdtCaseService(
+const executionClass = {
+  caseDefinitionId: "class-1",
+  className: "com.example.CheckoutDdtTest",
+  displayName: "结算",
+  sourceId: "source-1",
+  currentVersion: 3,
+  enabled: true,
+  archived: false,
+};
+function fixture(found: typeof executionClass | null = executionClass) {
+  const repository = {
+    findExecutionClass: vi.fn().mockResolvedValue(found),
+    setSrExecutionClass: vi.fn().mockResolvedValue(undefined),
+    changeExecutionClassRange: vi.fn().mockResolvedValue(undefined),
+  } as unknown as DdtRepository;
+  return {
+    repository,
+    service: new DdtCaseService(
       repository,
       { now: () => new Date(timestamp) },
       { next: () => "unused" },
-    );
-
-    const result = await service.setExecutionClass(
+    ),
+  };
+}
+describe("SR execution class mapping", () => {
+  it("stores one SR association without loading or updating every DDT case", async () => {
+    const { service, repository } = fixture();
+    await service.setSrExecutionClass(scope, {
+      srNum: " SR-ORDER ",
+      className: executionClass.className,
+      expectedRevision: 0,
+    });
+    expect(repository.setSrExecutionClass).toHaveBeenCalledWith({
       scope,
-      ["CASE-1", "CASE-2", "CASE-1"],
-      "com.example.CheckoutDdtTest",
-      "user-1",
-    );
-
-    expect(result.updatedCount).toBe(2);
-    expect(repository.setExecutionClass).toHaveBeenCalledWith({
-      scope,
-      caseIds: ["CASE-1", "CASE-2"],
+      srNum: "SR-ORDER",
       executionCaseDefinitionId: "class-1",
-      actorId: "user-1",
+      expectedRevision: 0,
       updatedAt: timestamp,
     });
   });
-
-  it("rejects a class outside the selected project version and stage", async () => {
-    const repository = {
-      getCases: vi.fn().mockResolvedValue([ddtCase("ddt-1", "CASE-1")]),
-      findExecutionClass: vi.fn().mockResolvedValue(null),
-      setExecutionClass: vi.fn(),
-    } as unknown as DdtRepository;
-    const service = new DdtCaseService(
-      repository,
-      { now: () => new Date(timestamp) },
-      { next: () => "unused" },
-    );
-
+  it("rejects classes outside the scope or an available authoritative source", async () => {
+    const { service, repository } = fixture(null);
     await expect(
-      service.setExecutionClass(scope, ["CASE-1"], "com.other.WrongVersion"),
+      service.setSrExecutionClass(scope, {
+        srNum: "ORDER",
+        className: "other.Class",
+        expectedRevision: 0,
+      }),
     ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_NOT_FOUND" });
-    expect(repository.setExecutionClass).not.toHaveBeenCalled();
+    expect(repository.setSrExecutionClass).not.toHaveBeenCalled();
+  });
+  it("rejects disabled classes when adding a candidate or assigning an SR", async () => {
+    const { service } = fixture({ ...executionClass, enabled: false });
+    await expect(
+      service.changeExecutionClassRange(scope, {
+        caseDefinitionId: "class-1",
+        className: executionClass.className,
+        included: true,
+        expectedRevision: 0,
+      }),
+    ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_UNAVAILABLE" });
+  });
+  it("can unlink an SR and remove a no-longer-available candidate", async () => {
+    const { service, repository } = fixture(null);
+    await service.setSrExecutionClass(scope, {
+      srNum: "ORDER",
+      className: null,
+      expectedRevision: 4,
+    });
+    expect(repository.setSrExecutionClass).toHaveBeenCalledWith(
+      expect.objectContaining({ executionCaseDefinitionId: null, expectedRevision: 4 }),
+    );
+    await service.changeExecutionClassRange(scope, {
+      caseDefinitionId: "class-1",
+      className: executionClass.className,
+      included: false,
+      expectedRevision: 3,
+    });
+    expect(repository.findExecutionClass).not.toHaveBeenCalled();
+    expect(repository.changeExecutionClassRange).toHaveBeenCalledWith(
+      expect.objectContaining({ executionCaseDefinitionId: "class-1", included: false }),
+    );
   });
 });
-
-function ddtCase(id: string, caseId: string) {
-  return {
-    ...scope,
-    id,
-    caseId,
-    srNum: "SR-ORDER",
-    kind: "standard" as const,
-    data: { CaseID: caseId, srNum: "SR-ORDER" },
-    sourceName: "orders.xlsx",
-    revision: 1,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
-}

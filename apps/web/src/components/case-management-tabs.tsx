@@ -36,7 +36,7 @@ export function CaseManagementTabs({
 
   return (
     <>
-      <section className="page-hero">
+      <section className={`page-hero${activeTab === "ddt" ? " ddt-page-hero" : ""}`}>
         <div>
           <span className="eyebrow">{activeTab === "ddt" ? "数据驱动测试" : "TestNG 资产"}</span>
           <h1>用例管理</h1>
@@ -72,7 +72,7 @@ export function CaseManagementTabs({
         </a>
       </nav>
 
-      {scopeContent}
+      {activeTab === "testng" ? scopeContent : null}
 
       <section aria-label="TestNG 用例" hidden={activeTab !== "testng"} id="testng-case-panel">
         {visitedTabs.has("testng") ? testngContent : null}

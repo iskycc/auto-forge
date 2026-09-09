@@ -6,6 +6,13 @@ import {
   writeBrowserSnapshot,
   clearBrowserSnapshots,
 } from "@/lib/browser-read-cache";
+import type { DdtScope as Scope, DdtCaseSummary as CaseSummary, DdtCase } from "@autoforge/domain";
+import {
+  DdtCaseBrowser,
+  DdtCaseDetail,
+  type DdtEditorStatus,
+  type DdtHistoryItem,
+} from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import {
@@ -14,12 +21,10 @@ import {
   BarChart3,
   Boxes,
   CheckCircle2,
-  ChevronRight,
   Code2,
   Download,
   FileSpreadsheet,
   Filter,
-  History,
   Layers3,
   LoaderCircle,
   ListPlus,
@@ -33,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 
 import { Button, Input, OperationProgress, Select, Textarea } from "@/components/ui";
@@ -42,27 +48,7 @@ import { useConfirm, useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { readApiError } from "@/lib/client-api";
 
-type Scope = { projectId: string; projectVersionId: string; testStageId: string };
-type ExecutionClass = {
-  caseDefinitionId: string;
-  className: string;
-  displayName: string;
-  sourceId: string;
-  currentVersion: number;
-  enabled: boolean;
-  archived: boolean;
-};
-type CaseSummary = Scope & {
-  id: string;
-  caseId: string;
-  srNum: string;
-  kind: "standard" | "journey";
-  sourceName: string;
-  revision: number;
-  updatedAt: string;
-  executionClass?: ExecutionClass;
-};
-type DdtCase = CaseSummary & { data: Record<string, unknown>; createdAt: string };
+type HistoryItem = DdtHistoryItem;
 type Dashboard = {
   caseCount: number;
   groupCount: number;
@@ -151,17 +137,18 @@ type DeletedCase = {
   sourceName: string;
   deletedAt: string;
 };
-type HistoryItem = {
-  id: string;
-  changeType: string;
-  sourceName: string;
-  changes: Array<{ field: string }>;
-  createdAt: string;
-};
 type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle";
 
 const DDT_IMPORT_FILE_ACCEPT = ".xlsx,.xls,.xlsb,.csv,.ods,.zip";
 const DDT_IMPORT_FILE_EXTENSIONS = new Set(["xlsx", "xls", "xlsb", "csv", "ods", "zip"]);
+
+const discardDdtEdits = {
+  title: "放弃未保存的修改",
+  description: "当前用例仍有未保存的编辑，切换后这些修改将被丢弃。",
+  confirmLabel: "放弃修改",
+  cancelLabel: "继续编辑",
+  tone: "warning",
+} as const;
 
 const emptyDashboard: Dashboard = {
   caseCount: 0,
@@ -188,28 +175,52 @@ export function DdtManagementWorkspace({
   const confirmAction = useConfirm();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
-  const [tab, setTab] = useState<WorkspaceTab>("overview");
+  const router = useRouter();
+  const searchParameters = useSearchParams();
+  const initialView = searchParameters.get("ddtView");
+  const [tab, setTab] = useState<WorkspaceTab>(initialView === "cases" ? "cases" : "overview");
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string>();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [imports, setImports] = useState<ImportJob[]>([]);
   const [deletedCases, setDeletedCases] = useState<DeletedCase[]>([]);
-  const [query, setQuery] = useState("");
-  const [srNum, setSrNum] = useState("");
-  const [advancedField, setAdvancedField] = useState("");
-  const [advancedOperator, setAdvancedOperator] = useState("contains");
-  const [advancedValue, setAdvancedValue] = useState("");
+  const query = searchParameters.get("ddtQuery") ?? "";
+  const srNum = searchParameters.get("ddtGroup") ?? "";
+  const advancedField = searchParameters.get("ddtField") ?? "";
+  const advancedOperator = searchParameters.get("ddtOperator") ?? "contains";
+  const advancedValue = searchParameters.get("ddtValue") ?? "";
+  const updateFilterUrl = (key: string, value: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", "ddt");
+    url.searchParams.set("ddtView", "cases");
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+    window.history.pushState(null, "", url);
+  };
+  const setQuery = (value: string) => updateFilterUrl("ddtQuery", value);
+  const setSrNum = (value: string) => updateFilterUrl("ddtGroup", value);
+  const setAdvancedField = (value: string) => updateFilterUrl("ddtField", value);
+  const setAdvancedOperator = (value: string) => updateFilterUrl("ddtOperator", value);
+  const setAdvancedValue = (value: string) => updateFilterUrl("ddtValue", value);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<DdtCase>();
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [activeCaseId, setActiveCaseId] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [editorEpoch, setEditorEpoch] = useState(0);
+  const editorStatus = useRef<DdtEditorStatus>("idle");
+  const [savingCase, setSavingCase] = useState(false);
+  const detailRequest = useRef<AbortController | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
   const [busy, setBusy] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
-  const [showExecutionClass, setShowExecutionClass] = useState(false);
   const [showAddToSuite, setShowAddToSuite] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{
     completed: number;
@@ -218,6 +229,8 @@ export function DdtManagementWorkspace({
   }>();
   const hasLoaded = useRef(false);
   const loadGeneration = useRef(0);
+  const appliedFilters = useRef<{ key: string; url: string } | null>(null);
+  const filterKey = JSON.stringify([query, srNum, advancedField, advancedOperator, advancedValue]);
 
   const { projectId, projectVersionId, testStageId } = scope;
   const endpoint = useCallback(
@@ -235,7 +248,7 @@ export function DdtManagementWorkspace({
     else setBusy(true);
     setError("");
     // A cold statistical projection must not delay the bounded case list.
-    const dashboardRefresh = requestJson<Dashboard>(endpoint("dashboard"))
+    void requestJson<Dashboard>(endpoint("dashboard"))
       .then((next) => {
         if (generation === loadGeneration.current) setDashboard(next);
       })
@@ -281,19 +294,59 @@ export function DdtManagementWorkspace({
         setRefreshing(false);
       }
     }
-    await dashboardRefresh;
-  }, [advancedField, advancedOperator, advancedValue, endpoint, query, srNum]);
+  }, [
+    advancedField,
+    advancedOperator,
+    advancedValue,
+    endpoint,
+    query,
+    srNum,
+    setRefreshing,
+    setBusy,
+    setError,
+    setDashboard,
+    setCases,
+    setNextCursor,
+    setTemplates,
+    setImports,
+    setDeletedCases,
+  ]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    let cancelled = false;
+    const applyFilter = async () => {
+      // Returning to a recently requested filter must restart its cancelled read.
+      if (appliedFilters.current?.key === filterKey && editorStatus.current !== "idle") return;
+      // Back/forward can change the URL without passing through the filter controls.
+      if (editorStatus.current !== "idle") {
+        const discard = editorStatus.current !== "saving" && (await confirmAction(discardDdtEdits));
+        if (cancelled) return;
+        if (!discard) {
+          if (appliedFilters.current)
+            window.history.replaceState(null, "", appliedFilters.current.url);
+          return;
+        }
+        editorStatus.current = "idle";
+        setEditorEpoch((epoch) => epoch + 1);
+      }
+      appliedFilters.current = {
+        key: filterKey,
+        url: window.location.pathname + window.location.search,
+      };
       setSelected(new Set());
-      void load();
-    }, 0);
+      detailRequest.current?.abort();
+      setDetail(undefined);
+      setDetailLoading(false);
+      setActiveCaseId("");
+      await load();
+    };
+    const timer = window.setTimeout(() => void applyFilter(), 0);
     return () => {
+      cancelled = true;
       window.clearTimeout(timer);
       loadGeneration.current += 1;
     };
-  }, [load]);
+  }, [confirmAction, filterKey, load]);
 
   useEffect(() => {
     if (!imports.some((job) => ["queued", "running", "cancel_requested"].includes(job.status)))
@@ -326,24 +379,92 @@ export function DdtManagementWorkspace({
     };
   }, [endpoint]);
 
-  const openCase = async (caseId: string) => {
-    setError("");
+  const openCase = useCallback(
+    async (caseId: string) => {
+      detailRequest.current?.abort();
+      const controller = new AbortController();
+      detailRequest.current = controller;
+      setActiveCaseId(caseId);
+      setDetail(undefined);
+      setHistory([]);
+      setDetailError("");
+      setDetailLoading(true);
+      try {
+        const [item, historyPage] = await Promise.all([
+          requestJson<DdtCase>(endpoint(`cases/${encodeURIComponent(caseId)}`), {
+            signal: controller.signal,
+          }),
+          requestJson<{ items: HistoryItem[] }>(
+            endpoint(`cases/${encodeURIComponent(caseId)}/history`),
+            { signal: controller.signal },
+          ),
+        ]);
+        if (controller.signal.aborted) return;
+        setDetail(item);
+        setHistory(historyPage.items);
+      } catch (openError) {
+        if (!controller.signal.aborted) setDetailError(messageOf(openError));
+      } finally {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      }
+    },
+    [endpoint, setActiveCaseId, setDetail, setHistory, setDetailError, setDetailLoading],
+  );
+
+  useEffect(() => () => detailRequest.current?.abort(), [endpoint]);
+
+  useEffect(() => {
+    if (tab !== "cases" || busy || refreshing || activeCaseId || !cases[0]) return;
+    const timer = window.setTimeout(() => void openCase(cases[0]!.caseId), 0);
+    return () => window.clearTimeout(timer);
+  }, [tab, busy, refreshing, activeCaseId, cases, openCase]);
+
+  const leaveEditor = async (): Promise<boolean> => {
+    if (editorStatus.current === "saving") return false;
+    if (editorStatus.current === "editing") {
+      if (!(await confirmAction(discardDdtEdits))) return false;
+      editorStatus.current = "idle";
+      setEditorEpoch((epoch) => epoch + 1);
+    }
+    return true;
+  };
+  const navigateCase = async (caseId: string) => {
+    if (!(await leaveEditor())) return;
+    setSelected(new Set());
+    await openCase(caseId);
+  };
+  const changeFilter = async (change: () => void) => {
+    if (!(await leaveEditor())) return;
+    detailRequest.current?.abort();
+    setDetail(undefined);
+    setActiveCaseId("");
+    setDetailError("");
+    setCases([]);
+    setNextCursor(undefined);
+    setSelected(new Set());
+    change();
+  };
+  const savedCase = async (next: DdtCase) => {
+    toast.success(`已保存 ${next.caseId}`);
+    setActiveCaseId(next.caseId);
+    setDetail(next);
+    await load();
     try {
-      const [item, historyPage] = await Promise.all([
-        requestJson<DdtCase>(endpoint(`cases/${encodeURIComponent(caseId)}`)),
-        requestJson<{ items: HistoryItem[] }>(
-          endpoint(`cases/${encodeURIComponent(caseId)}/history`),
-        ),
-      ]);
-      setDetail(item);
+      const historyPage = await requestJson<{ items: HistoryItem[] }>(
+        endpoint(`cases/${encodeURIComponent(next.caseId)}/history`),
+      );
       setHistory(historyPage.items);
-    } catch (openError) {
-      setError(messageOf(openError));
+    } catch (historyError) {
+      setHistory([]);
+      toast.error(`用例已保存，但修改历史刷新失败：${messageOf(historyError)}`);
     }
   };
 
   const loadMore = async () => {
-    if (!nextCursor) return;
+    if (!nextCursor || loadingMoreRef.current) return;
+    const generation = loadGeneration.current;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
     const parameters = new URLSearchParams({ limit: "60", cursor: nextCursor });
     if (query.trim()) parameters.set("query", query.trim());
     if (srNum) parameters.set("srNum", srNum);
@@ -363,10 +484,14 @@ export function DdtManagementWorkspace({
       const page = await requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
         endpoint("cases", parameters),
       );
+      if (generation !== loadGeneration.current) return;
       setCases((current) => [...current, ...page.items]);
       setNextCursor(page.nextCursor);
     } catch (loadError) {
-      setError(messageOf(loadError));
+      if (generation === loadGeneration.current) setError(messageOf(loadError));
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
     }
   };
 
@@ -395,6 +520,12 @@ export function DdtManagementWorkspace({
         label: "删除完成，正在刷新用例列表",
       });
       toast.success(`已将 ${caseIds.length} 条用例移入回收站。`);
+      setSelected(new Set());
+      if (caseIds.includes(activeCaseId)) {
+        detailRequest.current?.abort();
+        setActiveCaseId("");
+        setDetail(undefined);
+      }
       await load();
     } catch (deleteError) {
       setError(messageOf(deleteError));
@@ -417,6 +548,9 @@ export function DdtManagementWorkspace({
     }
   };
 
+  const activeCaseIndex = cases.findIndex((item) => item.caseId === activeCaseId);
+  const previousCase = cases[activeCaseIndex - 1];
+  const nextCase = activeCaseIndex >= 0 ? cases[activeCaseIndex + 1] : undefined;
   const maximumTimeline = Math.max(...dashboard.timeline.map((point) => point.count), 1);
 
   return (
@@ -429,11 +563,23 @@ export function DdtManagementWorkspace({
         <Button
           className="button button-secondary"
           type="button"
-          onClick={() => {
-            clearBrowserSnapshots();
-            void load();
+          disabled={savingCase}
+          onClick={async () => {
+            if (await leaveEditor()) router.push("/cases/ddt-associations");
           }}
-          disabled={busy || refreshing}
+        >
+          <Code2 size={15} /> SR 测试类关联
+        </Button>
+        <Button
+          className="button button-secondary"
+          type="button"
+          onClick={async () => {
+            if (!(await leaveEditor())) return;
+            clearBrowserSnapshots();
+            await load();
+            if (activeCaseId) await openCase(activeCaseId);
+          }}
+          disabled={busy || refreshing || savingCase}
         >
           <RefreshCw size={15} className={busy || refreshing ? "spin" : ""} /> 刷新
         </Button>
@@ -441,7 +587,9 @@ export function DdtManagementWorkspace({
           <Button
             className="button button-primary"
             type="button"
-            onClick={() => setShowImport(true)}
+            onClick={async () => {
+              if (await leaveEditor()) setShowImport(true);
+            }}
           >
             <Upload size={16} /> 导入表格
           </Button>
@@ -464,7 +612,10 @@ export function DdtManagementWorkspace({
             type="button"
             role="tab"
             aria-selected={tab === value}
-            onClick={() => setTab(value)}
+            disabled={savingCase}
+            onClick={async () => {
+              if (await leaveEditor()) setTab(value);
+            }}
           >
             <Icon size={16} /> {label}
             {value === "recycle" && deletedCases.length ? (
@@ -549,8 +700,10 @@ export function DdtManagementWorkspace({
                       key={group.srNum}
                       type="button"
                       onClick={() => {
-                        setSrNum(group.srNum);
-                        setTab("cases");
+                        void changeFilter(() => {
+                          setSrNum(group.srNum);
+                          setTab("cases");
+                        });
                       }}
                     >
                       <span>{index + 1}</span>
@@ -573,77 +726,120 @@ export function DdtManagementWorkspace({
       ) : null}
 
       {!busy && tab === "cases" ? (
-        <div className="ddt-case-panel">
-          <div className="ddt-filterbar">
-            <label className="search-field">
-              <Search size={16} />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="按 CaseID 前缀搜索"
-                aria-label="搜索 DDT 用例"
-              />
-            </label>
-            <label>
-              <span>业务分组</span>
-              <Select value={srNum} onChange={(event) => setSrNum(event.target.value)}>
-                <option value="">全部 srNum</option>
-                {dashboard.groups.map((group) => (
-                  <option key={group.srNum}>{group.srNum}</option>
-                ))}
-              </Select>
-            </label>
-            <label>
-              <span>动态字段</span>
-              <Input
-                value={advancedField}
-                onChange={(event) => setAdvancedField(event.target.value)}
-                placeholder="例如 owner"
-                aria-label="DDT 动态字段"
-              />
-            </label>
-            <label>
-              <span>匹配方式</span>
-              <Select
-                value={advancedOperator}
-                onChange={(event) => setAdvancedOperator(event.target.value)}
-                aria-label="动态字段匹配方式"
-              >
-                <option value="contains">包含</option>
-                <option value="eq">等于</option>
-                <option value="prefix">前缀</option>
-                <option value="ne">不等于</option>
-                <option value="exists">存在</option>
-                <option value="gt">大于</option>
-                <option value="gte">大于等于</option>
-                <option value="lt">小于</option>
-                <option value="lte">小于等于</option>
-              </Select>
-            </label>
-            {advancedOperator !== "exists" ? (
-              <label>
-                <span>字段值</span>
+        <DdtCaseBrowser
+          cases={cases}
+          activeCaseId={activeCaseId}
+          selected={selected}
+          hasMore={Boolean(nextCursor)}
+          loadingMore={loadingMore}
+          refreshing={refreshing}
+          savingCase={savingCase}
+          onLoadMore={() => void loadMore()}
+          onOpen={(caseId) => void navigateCase(caseId)}
+          onSelect={async (caseId) => {
+            if (await leaveEditor()) setSelected((current) => toggleSet(current, caseId));
+          }}
+          onSelectAll={async (checked) => {
+            if (await leaveEditor())
+              setSelected(checked ? new Set(cases.map((item) => item.caseId)) : new Set());
+          }}
+          filters={
+            <>
+              <label className="search-field">
+                <Search size={16} />
                 <Input
-                  value={advancedValue}
-                  onChange={(event) => setAdvancedValue(event.target.value)}
-                  aria-label="动态字段值"
+                  value={query}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    void changeFilter(() => setQuery(value));
+                  }}
+                  placeholder="按 CaseID 前缀搜索"
+                  aria-label="搜索 DDT 用例"
                 />
               </label>
-            ) : null}
-            <span className="ddt-filter-count">
-              <Filter size={14} /> 当前 {cases.length} 条
-            </span>
-            <Button
-              className="button button-secondary"
-              type="button"
-              onClick={() => void exportSelection()}
-            >
-              <Download size={15} /> {selected.size ? `导出 ${selected.size} 条` : "导出当前范围"}
-            </Button>
-          </div>
-          {selected.size ? (
+              <label>
+                <span>业务分组</span>
+                <Select
+                  value={srNum}
+                  aria-label="DDT 业务分组"
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    void changeFilter(() => setSrNum(value));
+                  }}
+                >
+                  <option value="">全部 srNum</option>
+                  {dashboard.groups.map((group) => (
+                    <option key={group.srNum}>{group.srNum}</option>
+                  ))}
+                </Select>
+              </label>
+              <details className="ddt-advanced-filters">
+                <summary>
+                  <Filter size={14} /> 高级筛选
+                </summary>
+                <div className="ddt-advanced-filter-fields">
+                  <label>
+                    <span>动态字段</span>
+                    <Input
+                      value={advancedField}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        void changeFilter(() => setAdvancedField(value));
+                      }}
+                      placeholder="例如 owner"
+                      aria-label="DDT 动态字段"
+                    />
+                  </label>
+                  <label>
+                    <span>匹配方式</span>
+                    <Select
+                      value={advancedOperator}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        void changeFilter(() => setAdvancedOperator(value));
+                      }}
+                      aria-label="动态字段匹配方式"
+                    >
+                      <option value="contains">包含</option>
+                      <option value="eq">等于</option>
+                      <option value="prefix">前缀</option>
+                      <option value="ne">不等于</option>
+                      <option value="exists">存在</option>
+                      <option value="gt">大于</option>
+                      <option value="gte">大于等于</option>
+                      <option value="lt">小于</option>
+                      <option value="lte">小于等于</option>
+                    </Select>
+                  </label>
+                  {advancedOperator !== "exists" ? (
+                    <label>
+                      <span>字段值</span>
+                      <Input
+                        value={advancedValue}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          void changeFilter(() => setAdvancedValue(value));
+                        }}
+                        aria-label="动态字段值"
+                      />
+                    </label>
+                  ) : null}
+                </div>
+              </details>
+              <Button className="text-button" type="button" onClick={() => void exportSelection()}>
+                <Download size={15} /> 导出当前范围
+              </Button>
+            </>
+          }
+          selectionActions={
             <div className="ddt-selection-bar">
-              <strong>已选择 {selected.size} 条</strong>
+              <Button
+                className="button button-secondary"
+                type="button"
+                onClick={() => void exportSelection()}
+              >
+                <Download size={15} /> 导出 {selected.size} 条
+              </Button>
               {canManage ? (
                 <>
                   <Button
@@ -652,13 +848,6 @@ export function DdtManagementWorkspace({
                     onClick={() => setShowBulk(true)}
                   >
                     <PencilLine size={15} /> 批量修改
-                  </Button>
-                  <Button
-                    className="button button-secondary"
-                    type="button"
-                    onClick={() => setShowExecutionClass(true)}
-                  >
-                    <Code2 size={15} /> 设置执行类
                   </Button>
                   <Button
                     className="button button-danger"
@@ -689,105 +878,67 @@ export function DdtManagementWorkspace({
                 清空选择
               </Button>
             </div>
-          ) : null}
-          <div className="ddt-table-shell">
-            <table className="data-table ddt-table">
-              <thead>
-                <tr>
-                  <th className="selection-column">
-                    <Input
-                      type="checkbox"
-                      aria-label="选择当前页全部 DDT 用例"
-                      checked={cases.length > 0 && cases.every((item) => selected.has(item.caseId))}
-                      onChange={(event) =>
-                        setSelected(
-                          event.target.checked
-                            ? new Set(cases.map((item) => item.caseId))
-                            : new Set(),
-                        )
-                      }
-                    />
-                  </th>
-                  <th>CaseID</th>
-                  <th>srNum</th>
-                  <th>结构</th>
-                  <th>执行类</th>
-                  <th>来源</th>
-                  <th>更新时间</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {cases.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <Input
-                        type="checkbox"
-                        aria-label={`选择 ${item.caseId}`}
-                        checked={selected.has(item.caseId)}
-                        onChange={() => setSelected(toggleSet(selected, item.caseId))}
-                      />
-                    </td>
-                    <td>
-                      <Button
-                        className="ddt-case-link"
-                        type="button"
-                        onClick={() => void openCase(item.caseId)}
-                      >
-                        {item.caseId}
-                      </Button>
-                    </td>
-                    <td>
-                      <span className="ddt-group-tag">{item.srNum}</span>
-                    </td>
-                    <td>
-                      <span className={`ddt-kind ${item.kind}`}>
-                        {item.kind === "journey" ? "用户旅程" : "普通用例"}
-                      </span>
-                    </td>
-                    <td className="ddt-execution-class-cell">
-                      {item.executionClass ? (
-                        <span title={item.executionClass.className}>
-                          <strong>{item.executionClass.displayName}</strong>
-                          <small>{item.executionClass.className}</small>
-                        </span>
-                      ) : (
-                        <span className="ddt-unmapped-class">未设置</span>
-                      )}
-                    </td>
-                    <td title={item.sourceName}>{item.sourceName || "人工维护"}</td>
-                    <td>{formatDate(item.updatedAt)}</td>
-                    <td>
-                      <Button
-                        className="icon-button"
-                        type="button"
-                        aria-label={`查看 ${item.caseId}`}
-                        onClick={() => void openCase(item.caseId)}
-                      >
-                        <ChevronRight size={17} />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!cases.length ? (
-              <Empty
-                title="没有符合条件的 DDT 用例"
-                description="调整筛选条件，或导入 data / step 表格。"
-              />
-            ) : null}
-          </div>
-          {nextCursor ? (
-            <Button
-              className="button button-secondary ddt-load-more"
-              type="button"
-              onClick={() => void loadMore()}
-            >
-              加载更多
-            </Button>
-          ) : null}
-        </div>
+          }
+        >
+          {detailLoading ? (
+            <LoadingState label="正在读取用例" description="正在加载所选用例的字段与修改历史。" />
+          ) : detailError ? (
+            <div className="ddt-detail-error">
+              <div className="inline-notice error" role="alert">
+                {detailError}
+              </div>
+              <Button
+                type="button"
+                className="button button-secondary"
+                onClick={() => void openCase(activeCaseId)}
+              >
+                重试读取用例
+              </Button>
+            </div>
+          ) : detail ? (
+            <DdtCaseDetail
+              key={`${detail.id}:${editorEpoch}`}
+              item={detail}
+              history={history}
+              canManage={canManage}
+              onStatusChange={(status) => {
+                editorStatus.current = status;
+                setSavingCase(status === "saving");
+              }}
+              onPrevious={previousCase ? () => void navigateCase(previousCase.caseId) : undefined}
+              onNext={nextCase ? () => void navigateCase(nextCase.caseId) : undefined}
+              onSave={async (data) => {
+                const next = await requestJson<DdtCase>(
+                  endpoint(`cases/${encodeURIComponent(detail.caseId)}`),
+                  {
+                    method: "PATCH",
+                    headers: jsonHeaders,
+                    body: JSON.stringify({ expectedRevision: detail.revision, data }),
+                  },
+                );
+                await savedCase(next);
+              }}
+              onRestore={async (historyId) => {
+                const next = await requestJson<DdtCase>(
+                  endpoint(
+                    `cases/${encodeURIComponent(detail.caseId)}/history/${historyId}/restore`,
+                  ),
+                  {
+                    method: "POST",
+                    headers: jsonHeaders,
+                    body: JSON.stringify({ snapshot: "after" }),
+                  },
+                );
+                await savedCase(next);
+              }}
+            />
+          ) : (
+            <Empty
+              title="选择用例查看详情"
+              description="从左侧选择 CaseID，在这里查看字段、旅程步骤和修改历史。"
+            />
+          )}
+        </DdtCaseBrowser>
       ) : null}
 
       {!busy && tab === "imports" ? (
@@ -873,20 +1024,6 @@ export function DdtManagementWorkspace({
         />
       ) : null}
 
-      {detail ? (
-        <CaseDrawer
-          item={detail}
-          history={history}
-          canManage={canManage}
-          onClose={() => setDetail(undefined)}
-          onSaved={async (next) => {
-            toast.success(`已保存 ${next.caseId}`);
-            await load();
-            await openCase(next.caseId);
-          }}
-          endpoint={endpoint}
-        />
-      ) : null}
       {showImport ? (
         <ImportDialog
           endpoint={endpoint}
@@ -917,24 +1054,9 @@ export function DdtManagementWorkspace({
           onClose={() => setShowBulk(false)}
           onComplete={async () => {
             await load();
+            if (activeCaseId) await openCase(activeCaseId);
             setShowBulk(false);
             setSelected(new Set());
-          }}
-        />
-      ) : null}
-      {showExecutionClass ? (
-        <ExecutionClassDialog
-          count={selected.size}
-          caseIds={[...selected]}
-          endpoint={endpoint}
-          onClose={() => setShowExecutionClass(false)}
-          onComplete={async (executionClass) => {
-            toast.success(
-              `已将 ${selected.size} 条 DDT 用例的执行类设置为 ${executionClass.className}。`,
-            );
-            setShowExecutionClass(false);
-            setSelected(new Set());
-            await load();
           }}
         />
       ) : null}
@@ -1228,180 +1350,6 @@ function Recycle({
       ) : (
         <Empty title="回收站为空" description="被删除的 DDT 用例会保留在这里，直到永久清除。" />
       )}
-    </div>
-  );
-}
-
-function CaseDrawer({
-  item,
-  history,
-  canManage,
-  onClose,
-  onSaved,
-  endpoint,
-}: {
-  item: DdtCase;
-  history: HistoryItem[];
-  canManage: boolean;
-  onClose(): void;
-  onSaved(item: DdtCase): Promise<void>;
-  endpoint(path: string, extra?: URLSearchParams): string;
-}) {
-  const showConcurrentModification = useConcurrentModificationFeedback();
-  const [editing, setEditing] = useState(false);
-  const [json, setJson] = useState(() => JSON.stringify(item.data, null, 2));
-  const [error, setError] = useState("");
-  const fields = Object.entries(item.data);
-  const save = async () => {
-    try {
-      const data = JSON.parse(json) as Record<string, unknown>;
-      const next = await requestJson<DdtCase>(
-        endpoint(`cases/${encodeURIComponent(item.caseId)}`),
-        {
-          method: "PATCH",
-          headers: jsonHeaders,
-          body: JSON.stringify({ expectedRevision: item.revision, data }),
-        },
-      );
-      setEditing(false);
-      await onSaved(next);
-    } catch (saveError) {
-      if (await showConcurrentModification(saveError)) return;
-      setError(messageOf(saveError));
-    }
-  };
-  return (
-    <div
-      className="modal-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <aside
-        className="ddt-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ddt-case-title"
-      >
-        <header>
-          <div>
-            <span className="eyebrow">{item.kind === "journey" ? "用户旅程" : "普通用例"}</span>
-            <h2 id="ddt-case-title">{item.caseId}</h2>
-            <p>
-              {item.srNum} · 修订 {item.revision}
-            </p>
-          </div>
-          <Button className="icon-button" type="button" aria-label="关闭用例详情" onClick={onClose}>
-            <X size={18} />
-          </Button>
-        </header>
-        {error ? <div className="inline-notice error">{error}</div> : null}
-        <div className="ddt-drawer-body">
-          <section className="ddt-execution-class-summary" aria-label="DDT 执行类">
-            <span>执行类型</span>
-            <strong>DDT · classDataFile = {item.caseId}</strong>
-            <small>
-              {item.executionClass
-                ? `${item.executionClass.displayName} · ${item.executionClass.className}`
-                : "尚未设置普通用例执行类，加入任务后将无法通过执行预检。"}
-            </small>
-          </section>
-          {editing ? (
-            <label className="ddt-json-editor">
-              <span>用例数据 JSON</span>
-              <Textarea
-                value={json}
-                onChange={(event) => setJson(event.target.value)}
-                spellCheck={false}
-              />
-              <small>
-                CaseID 与 srNum 为身份字段；用户旅程的 step1…stepN 位于“用户旅程”对象中。
-              </small>
-            </label>
-          ) : (
-            <div className="ddt-field-list">
-              {fields.map(([field, value]) => (
-                <div key={field}>
-                  <span>{field}</span>
-                  {typeof value === "object" && value !== null ? (
-                    <pre>{JSON.stringify(value, null, 2)}</pre>
-                  ) : (
-                    <strong>{String(value ?? "—")}</strong>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <section className="ddt-history">
-            <h3>
-              <History size={16} /> 修改历史
-            </h3>
-            {history.length ? (
-              history.map((entry) => (
-                <article key={entry.id}>
-                  <div>
-                    <strong>{changeLabel(entry.changeType)}</strong>
-                    <span>{entry.sourceName}</span>
-                    <small>
-                      {formatDate(entry.createdAt)} · {entry.changes.length} 个字段
-                    </small>
-                  </div>
-                  {canManage ? (
-                    <Button
-                      className="text-button"
-                      type="button"
-                      onClick={async () => {
-                        const next = await requestJson<DdtCase>(
-                          endpoint(
-                            `cases/${encodeURIComponent(item.caseId)}/history/${entry.id}/restore`,
-                          ),
-                          {
-                            method: "POST",
-                            headers: jsonHeaders,
-                            body: JSON.stringify({ snapshot: "after" }),
-                          },
-                        );
-                        await onSaved(next);
-                      }}
-                    >
-                      恢复此版本
-                    </Button>
-                  ) : null}
-                </article>
-              ))
-            ) : (
-              <p>暂无修改历史</p>
-            )}
-          </section>
-        </div>
-        {canManage ? (
-          <footer>
-            {editing ? (
-              <>
-                <Button
-                  className="button button-secondary"
-                  type="button"
-                  onClick={() => setEditing(false)}
-                >
-                  取消
-                </Button>
-                <Button className="button button-primary" type="button" onClick={() => void save()}>
-                  保存修改
-                </Button>
-              </>
-            ) : (
-              <Button
-                className="button button-primary"
-                type="button"
-                onClick={() => setEditing(true)}
-              >
-                <PencilLine size={15} /> 编辑动态字段
-              </Button>
-            )}
-          </footer>
-        ) : null}
-      </aside>
     </div>
   );
 }
@@ -2256,121 +2204,6 @@ function BulkDialog({
   );
 }
 
-function ExecutionClassDialog({
-  count,
-  caseIds,
-  endpoint,
-  onClose,
-  onComplete,
-}: {
-  count: number;
-  caseIds: string[];
-  endpoint(path: string, extra?: URLSearchParams): string;
-  onClose(): void;
-  onComplete(executionClass: ExecutionClass): Promise<void>;
-}) {
-  const [query, setQuery] = useState("");
-  const [items, setItems] = useState<ExecutionClass[]>([]);
-  const [selectedClassName, setSelectedClassName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const search = useCallback(async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await requestJson<{ items: ExecutionClass[] }>(
-        endpoint("execution-classes", new URLSearchParams({ query, limit: "50" })),
-      );
-      setItems(result.items);
-    } catch (searchError) {
-      setError(messageOf(searchError));
-    } finally {
-      setBusy(false);
-    }
-  }, [endpoint, query]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void search(), 250);
-    return () => window.clearTimeout(timer);
-  }, [search]);
-
-  const save = async () => {
-    const executionClass = items.find((item) => item.className === selectedClassName);
-    if (!executionClass) return;
-    setBusy(true);
-    setError("");
-    try {
-      await requestJson(endpoint("cases/execution-class"), {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({ caseIds, className: executionClass.className }),
-      });
-      await onComplete(executionClass);
-    } catch (saveError) {
-      setError(messageOf(saveError));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog
-      title={`设置 ${count} 条 DDT 用例的执行类`}
-      subtitle="选择当前项目版本与测试阶段中的普通 TestNG 用例类"
-      onClose={onClose}
-    >
-      <div className="ddt-execution-class-dialog">
-        {error ? <div className="inline-notice error">{error}</div> : null}
-        <label className="search-field">
-          <Search size={16} />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索类名或人类友好名称"
-            aria-label="搜索 DDT 执行类"
-          />
-        </label>
-        <div className="ddt-execution-class-options" role="radiogroup" aria-label="执行类">
-          {items.map((item) => (
-            <label key={item.caseDefinitionId}>
-              <Input
-                type="radio"
-                name="ddt-execution-class"
-                value={item.className}
-                checked={selectedClassName === item.className}
-                onChange={() => setSelectedClassName(item.className)}
-              />
-              <span>
-                <strong>{item.displayName}</strong>
-                <small>{item.className}</small>
-              </span>
-            </label>
-          ))}
-          {!busy && items.length === 0 ? <p>当前范围没有可选的普通用例类。</p> : null}
-          {busy ? (
-            <p>
-              <LoaderCircle className="spin" size={16} /> 正在读取执行类…
-            </p>
-          ) : null}
-        </div>
-        <footer>
-          <Button className="button button-secondary" type="button" onClick={onClose}>
-            取消
-          </Button>
-          <Button
-            className="button button-primary"
-            type="button"
-            disabled={!selectedClassName || busy}
-            onClick={() => void save()}
-          >
-            保存执行类
-          </Button>
-        </footer>
-      </div>
-    </Dialog>
-  );
-}
-
 function AddDdtToSuiteDialog({
   caseIds,
   scope,
@@ -2762,18 +2595,7 @@ function statusLabel(value: string): string {
     )[value] ?? value
   );
 }
-function changeLabel(value: string): string {
-  return (
-    (
-      {
-        edit: "人工编辑",
-        bulk_edit: "批量修改",
-        import_overwrite: "导入覆盖",
-        restore: "历史恢复",
-      } as Record<string, string>
-    )[value] ?? value
-  );
-}
+
 function downloadBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
