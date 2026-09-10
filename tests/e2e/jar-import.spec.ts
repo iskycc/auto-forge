@@ -163,8 +163,10 @@ public class MixedVisibleTest {
   const setup = (await setupStatus.json()) as { setupRequired: boolean };
   if (setup.setupRequired) {
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: /汇聚到一个可信控制面/ })).toBeVisible();
-    await expect(page.getByText("平台数据实时同步")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /让每一次执行，\s*都可控、可追溯。/u }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "刷新公开统计" })).toBeVisible();
     await expectDesktopLayoutFits(page, 1024, 768);
     await expectUiConsistency(page);
 

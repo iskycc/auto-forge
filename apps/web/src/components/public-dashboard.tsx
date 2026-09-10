@@ -1,29 +1,35 @@
 "use client";
 
-import { formatPlatformTime } from "@/lib/platform-date-time";
-
+import type { PublicPlatformStatistics } from "@autoforge/contracts";
 import {
-  publicPlatformStatisticsSchema,
-  type PublicPlatformStatistics,
-} from "@autoforge/contracts";
-import {
-  Activity,
   ArrowRight,
   BookOpenCheck,
   Boxes,
   CheckCircle2,
-  Clock3,
-  Cpu,
   Database,
   FileCode2,
+  Fingerprint,
+  Layers3,
   LockKeyhole,
-  RefreshCw,
+  Network,
   Server,
   ShieldCheck,
   Sparkles,
+  Workflow,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+
+import { PublicControlPreview, publicSnapshotPresentation } from "./public-control-preview";
+import { usePublicStatistics } from "./use-public-statistics";
+import styles from "./public-dashboard.module.css";
+
+const executionStages = [
+  { icon: BookOpenCheck, title: "用例入库", description: "TestNG / DDT 统一管理" },
+  { icon: Layers3, title: "任务编排", description: "固化版本与执行策略" },
+  { icon: Server, title: "Runner 执行", description: "资源调度与故障恢复" },
+  { icon: Fingerprint, title: "结果分析", description: "日志对比与质量洞察" },
+] as const;
 
 export function PublicDashboard({
   initialStatistics,
@@ -32,277 +38,282 @@ export function PublicDashboard({
   initialStatistics: PublicPlatformStatistics;
   setupRequired: boolean;
 }) {
-  const [statistics, setStatistics] = useState(initialStatistics);
-  const [synchronizing, setSynchronizing] = useState(false);
-  const [syncFailed, setSyncFailed] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const synchronize = async () => {
-      if (document.visibilityState !== "visible") return;
-      setSynchronizing(true);
-      try {
-        const response = await fetch("/api/v1/public/statistics", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("公开统计同步失败。");
-        setStatistics(publicPlatformStatisticsSchema.parse(await response.json()));
-        setSyncFailed(false);
-      } catch {
-        if (!controller.signal.aborted) setSyncFailed(true);
-      } finally {
-        if (!controller.signal.aborted) setSynchronizing(false);
-      }
-    };
-    const timer = window.setInterval(() => void synchronize(), statistics.refreshSeconds * 1_000);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
-    };
-  }, [statistics.refreshSeconds]);
-
-  const enabledRate = percentage(statistics.enabledMethodCount, statistics.methodCount);
-  const runnerOnlineRate = percentage(statistics.onlineRunnerCount, statistics.runnerCount);
+  const { statistics, synchronizing, syncFailed, refresh } = usePublicStatistics(initialStatistics);
+  const { hasStatistics } = publicSnapshotPresentation(statistics, syncFailed);
+  const count = (value: number) => (hasStatistics ? value.toLocaleString("zh-CN") : "—");
+  const entryHref = setupRequired ? "/setup" : "/login";
+  const entryLabel = setupRequired ? "初始化平台" : "登录控制台";
 
   return (
-    <main className="public-dashboard">
-      <header className="public-header">
-        <Link className="public-brand" href="/" aria-label="AutoForge 公开首页">
-          <span className="public-brand-mark" aria-hidden="true">
-            <Sparkles size={20} />
+    <main className={styles.page}>
+      <header className={styles.header + " public-header"}>
+        <Link className={styles.brand} href="/" aria-label="AutoForge 公开首页">
+          <span className={styles.brandMark}>
+            <Sparkles aria-hidden="true" size={22} strokeWidth={2} />
           </span>
           <span>
             <strong>AutoForge</strong>
-            <small>Automation Control Plane</small>
+            <small>AUTOMATION CONTROL PLANE</small>
           </span>
         </Link>
-        <div className="public-header-actions">
-          <span className={`public-live-state ${syncFailed ? "is-stale" : ""}`}>
-            {synchronizing ? <RefreshCw className="spin" size={14} /> : <Activity size={14} />}
-            {syncFailed ? "数据同步暂时中断" : "平台数据实时同步"}
-          </span>
-          <Link className="button button-secondary" href={setupRequired ? "/setup" : "/login"}>
-            <LockKeyhole size={16} /> {setupRequired ? "初始化平台" : "登录控制台"}
-          </Link>
-        </div>
+        <nav className={styles.navigation} aria-label="公开首页导航">
+          <a href="#capabilities">平台能力</a>
+          <a href="#architecture">执行链路</a>
+          <a href="#deployment">部署方式</a>
+        </nav>
+        <Link className={"button " + styles.headerEntry} href={entryHref}>
+          <LockKeyhole aria-hidden="true" size={15} />
+          {entryLabel}
+          <ArrowRight aria-hidden="true" size={15} />
+        </Link>
       </header>
 
-      <section className="public-hero">
-        <div className="public-hero-copy">
-          <span className="public-kicker">
-            <ShieldCheck size={15} /> 离线优先 · 双模式共享核心 · 受控执行
-          </span>
-          <h1>
-            把自动化测试资产与执行资源
-            <span>汇聚到一个可信控制面</span>
+      <section className={styles.hero + " public-hero"} aria-labelledby="public-heading">
+        <div className={styles.heroCopy}>
+          <div className={styles.kicker}>
+            <span aria-hidden="true" />
+            可信控制面 · 离线优先
+          </div>
+          <h1 id="public-heading">
+            <span>让每一次执行，</span>
+            <span>
+              都可控、<em>可追溯。</em>
+            </span>
           </h1>
           <p>
-            AutoForge 统一管理 TestNG
-            用例、执行策略、Runner、日志与产物。在没有公网和外部服务的环境中，Lite
-            模式也能独立完成核心执行闭环。
+            从用例入库到质量洞察，让自动化测试有序运转。
+            <br />
+            统一资产、执行与分析，让团队专注于交付质量。
           </p>
-          <div className="public-hero-actions">
-            <Link
-              className="button button-primary button-large"
-              href={setupRequired ? "/setup" : "/login"}
-            >
-              {setupRequired ? "开始初始化" : "进入管理平台"} <ArrowRight size={17} />
+          <div className={styles.heroActions}>
+            <Link className={"button " + styles.primaryEntry} href={entryHref}>
+              {setupRequired ? "开始初始化" : "进入管理平台"}
+              <ArrowRight aria-hidden="true" size={17} />
             </Link>
+            <a className={"button " + styles.secondaryEntry} href="#capabilities">
+              了解平台能力
+              <ArrowRight aria-hidden="true" size={16} />
+            </a>
+          </div>
+          <div className={styles.entryHint}>
+            <LockKeyhole aria-hidden="true" size={13} />
+            {setupRequired
+              ? "首次使用 · 创建管理员后即可开始"
+              : "使用平台账号登录，进入你的工作空间"}
+          </div>
+          <div className={styles.trustPoints} aria-label="平台关键保障">
             <span>
-              <Clock3 size={15} />{" "}
-              {statistics.snapshotState === "pending"
-                ? "正在准备平台统计"
-                : statistics.snapshotState === "failed"
-                  ? "统计暂时不可用"
-                  : `最近同步 ${formatTime(statistics.generatedAt)}`}
+              <ShieldCheck aria-hidden="true" size={15} />
+              支持离线部署
+            </span>
+            <span>
+              <LockKeyhole aria-hidden="true" size={15} />
+              角色权限管控
+            </span>
+            <span>
+              <Fingerprint aria-hidden="true" size={15} />
+              执行全程留痕
             </span>
           </div>
         </div>
-
-        <div className="public-system-card" aria-label="系统实时状态">
-          <div className="public-system-heading">
-            <span>
-              <i /> System pulse
-            </span>
-            <small>每 {statistics.refreshSeconds} 秒刷新</small>
-          </div>
-          <div className="public-system-score">
-            <span
-              className="public-score-ring"
-              style={{ "--score": `${runnerOnlineRate * 3.6}deg` } as CSSProperties}
-            >
-              <strong>{runnerOnlineRate}%</strong>
-              <small>Runner 在线</small>
-            </span>
-            <div>
-              <span>活动批次</span>
-              <strong>{statistics.activeBatchCount}</strong>
-              <small>{statistics.busyRunnerCount} 台执行机正在工作</small>
-            </div>
-          </div>
-          <div className="public-system-lines" aria-hidden="true">
-            {[32, 45, 39, 62, 54, 76, 69, 88, 73, 92, 84, 96].map((height, index) => (
-              <i key={`${height}-${index}`} style={{ height: `${height}%` }} />
-            ))}
-          </div>
-        </div>
+        <PublicControlPreview
+          statistics={statistics}
+          syncFailed={syncFailed}
+          synchronizing={synchronizing}
+          onRefresh={refresh}
+        />
       </section>
 
-      <section className="public-metrics" aria-label="公开平台统计">
+      <section className={styles.metrics} aria-label="公开平台统计">
         <Metric
           icon={FileCode2}
-          label="测试用例"
-          value={statistics.caseCount}
-          detail={`${statistics.methodCount} 个测试方法`}
-          tone="violet"
+          label="TestNG 用例"
+          value={count(statistics.caseCount)}
+          detail="纳管的测试类资产"
+        />
+        <Metric
+          icon={BookOpenCheck}
+          label="测试方法"
+          value={count(statistics.methodCount)}
+          detail={
+            hasStatistics ? count(statistics.enabledMethodCount) + " 个已启用" : "等待统计快照"
+          }
         />
         <Metric
           icon={Boxes}
           label="JAR 来源"
-          value={statistics.sourceCount}
-          detail={`${enabledRate}% 方法已启用`}
-          tone="blue"
+          value={count(statistics.sourceCount)}
+          detail="可追溯的用例来源"
         />
         <Metric
-          icon={Server}
-          label="执行机"
-          value={statistics.runnerCount}
-          detail={`${statistics.onlineRunnerCount} 台在线`}
-          tone="green"
-        />
-        <Metric
-          icon={CheckCircle2}
-          label="执行成功率"
-          value={`${statistics.successRatePercent}%`}
-          detail={`${statistics.totalRunCount} 次执行样本`}
-          tone="amber"
+          icon={Workflow}
+          label="累计执行"
+          value={count(statistics.totalRunCount)}
+          detail={
+            hasStatistics
+              ? statistics.runnerCount === 0
+                ? "尚未接入执行机"
+                : count(statistics.runnerCount) + " 台执行机已接入"
+              : "等待统计快照"
+          }
         />
       </section>
 
-      <section className="public-content-grid">
-        <article className="public-panel public-execution-panel">
-          <div className="public-panel-heading">
-            <div>
-              <span className="eyebrow">Execution overview</span>
-              <h2>稳定、可恢复的执行链路</h2>
-            </div>
-            <Cpu size={22} />
+      <section className={styles.capabilities} id="capabilities" aria-label="AutoForge 核心能力">
+        <div className={styles.sectionHeading}>
+          <div>
+            <small>BUILT FOR YOUR WORKFLOW</small>
+            <h2>从用例资产，到质量结论。</h2>
           </div>
-          <div className="public-execution-summary">
-            <div>
-              <strong>{statistics.succeededRunCount}</strong>
-              <span>成功执行</span>
-            </div>
-            <div>
-              <strong>{statistics.failedRunCount}</strong>
-              <span>失败与超时</span>
-            </div>
-            <div>
-              <strong>{statistics.completedBatchCount}</strong>
-              <span>已完成批次</span>
-            </div>
-          </div>
-          <div
-            className="public-progress-track"
-            aria-label={`执行成功率 ${statistics.successRatePercent}%`}
-          >
-            <span style={{ width: `${statistics.successRatePercent}%` }} />
-          </div>
-          <p>
-            Assignment、lease、日志和完成上报均使用版本条件与幂等语义，网络中断后可以从确认水位继续。
-          </p>
-        </article>
+          <p>每个环节紧密衔接，每次执行有据可查。</p>
+        </div>
+        <div className={styles.capabilityGrid}>
+          <CapabilityCard
+            number="01"
+            icon={BookOpenCheck}
+            tone="brand"
+            title="统一用例资产"
+            text="TestNG 与 DDT 在同一工作台管理。按项目、版本和测试阶段组织用例，变更有历史，执行有快照。"
+            points={["TestNG / DDT", "版本历史", "执行快照"]}
+          />
+          <CapabilityCard
+            number="02"
+            icon={Workflow}
+            tone="info"
+            title="可靠执行链路"
+            text="将策略交给任务，将执行交给 Runner。从资源调度到中断恢复，日志、结果与产物始终关联。"
+            points={["批量编排", "中断恢复", "日志对比"]}
+          />
+          <CapabilityCard
+            number="03"
+            icon={ShieldCheck}
+            tone="success"
+            title="清晰的安全边界"
+            text="角色决定权限，项目隔离访问范围。平台支持离线运行，Runner 通过受控协议连接控制面。"
+            points={["RBAC 权限", "操作审计", "离线运行"]}
+          />
+        </div>
+        <section className={styles.executionFlow} id="architecture" aria-label="自动化执行链路">
+          <ol>
+            {executionStages.map(({ icon: Icon, title, description }, index) => (
+              <li key={title}>
+                <span className={styles.stageIcon}>
+                  <Icon aria-hidden="true" size={18} />
+                </span>
+                <div>
+                  <strong>{title}</strong>
+                  <small>{description}</small>
+                </div>
+                {index < executionStages.length - 1 && (
+                  <ArrowRight className={styles.stageArrow} aria-hidden="true" size={16} />
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      </section>
 
-        <article className="public-panel public-capability-panel">
-          <div className="public-panel-heading">
-            <div>
-              <span className="eyebrow">Platform capabilities</span>
-              <h2>面向内网环境的完整能力</h2>
-            </div>
-            <Database size={22} />
+      <section className={styles.deployment} id="deployment" aria-label="部署与运行保障">
+        <div className={styles.deploymentIntro}>
+          <small>DEPLOY YOUR WAY</small>
+          <h2>轻装起步，从容扩展。</h2>
+          <p>两种部署形态，同一套操作体验。</p>
+        </div>
+        <article>
+          <span className={styles.deploymentIcon}>
+            <Database aria-hidden="true" size={22} />
+          </span>
+          <div>
+            <h3>
+              Lite <small>单机部署</small>
+            </h3>
+            <p>SQLite 与本地存储，无外部服务依赖。</p>
           </div>
-          <div className="public-capability-list">
-            <Capability
-              icon={BookOpenCheck}
-              title="版本化用例资产"
-              text="静态发现 TestNG JAR，保留来源、版本和不可变执行快照。"
-            />
-            <Capability
-              icon={Server}
-              title="集中 Runner 管理"
-              text="统一注册、心跳、能力匹配、排空、凭据轮换和受控安装。"
-            />
-            <Capability
-              icon={ShieldCheck}
-              title="离线与安全边界"
-              text="无 CDN、SaaS 遥测或运行期下载，密文只在有效 lease 下按需注入。"
-            />
+        </article>
+        <article>
+          <span className={styles.deploymentIcon}>
+            <Network aria-hidden="true" size={22} />
+          </span>
+          <div>
+            <h3>
+              Full <small>集群部署</small>
+            </h3>
+            <p>独立扩展 Web、调度器与工作器。</p>
           </div>
         </article>
       </section>
 
-      <footer className="public-footer">
-        <span>AutoForge · 离线优先的自动化用例工厂</span>
-        <span>公开页面仅展示脱敏聚合数据</span>
+      <footer className={styles.footer + " public-footer"}>
+        <span>
+          <strong>AutoForge</strong>让自动化执行，更进一步。
+        </span>
+        <span>
+          <ShieldCheck aria-hidden="true" size={14} />
+          公开页面仅展示脱敏聚合数据
+        </span>
       </footer>
     </main>
   );
 }
 
 function Metric({
+  detail,
   icon: Icon,
   label,
   value,
-  detail,
-  tone,
 }: {
-  icon: typeof Server;
-  label: string;
-  value: string | number;
   detail: string;
-  tone: string;
+  icon: LucideIcon;
+  label: string;
+  value: string;
 }) {
   return (
-    <article className="public-metric-card">
-      <span className={`public-metric-icon ${tone}`}>
-        <Icon size={20} />
-      </span>
-      <span>
-        <small>{label}</small>
-        <strong>{value}</strong>
-        <em>{detail}</em>
-      </span>
+    <article className={styles.metric}>
+      <div>
+        <span className={styles.metricIcon}>
+          <Icon aria-hidden="true" size={17} />
+        </span>
+        <h2>{label}</h2>
+      </div>
+      <strong>{value}</strong>
+      <small>{detail}</small>
     </article>
   );
 }
 
-function Capability({
+function CapabilityCard({
+  number,
   icon: Icon,
+  tone,
   title,
   text,
+  points,
 }: {
-  icon: typeof Server;
+  number: string;
+  icon: LucideIcon;
+  tone: string;
   title: string;
   text: string;
+  points: readonly string[];
 }) {
   return (
-    <div className="public-capability-item">
-      <span>
-        <Icon size={18} />
-      </span>
-      <div>
-        <strong>{title}</strong>
-        <p>{text}</p>
+    <article className={styles.capability} data-tone={tone}>
+      <div className={styles.capabilityTop}>
+        <span>
+          <Icon aria-hidden="true" size={23} />
+        </span>
+        <small>{number}</small>
       </div>
-    </div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      <ul>
+        {points.map((point) => (
+          <li key={point}>
+            <CheckCircle2 aria-hidden="true" size={13} />
+            {point}
+          </li>
+        ))}
+      </ul>
+    </article>
   );
-}
-
-function percentage(value: number, total: number): number {
-  return total === 0 ? 0 : Math.round((value / total) * 1_000) / 10;
-}
-
-function formatTime(value: string): string {
-  return formatPlatformTime(value);
 }

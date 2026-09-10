@@ -13,6 +13,7 @@ apps/web/dist-server/
 coverage/
 playwright-report/
 test-results/
+/ui-review/
 *.prof
 *.test
 
