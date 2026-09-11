@@ -25,6 +25,9 @@ import {
 import {
   analysisHistoryTaskScopeSql,
   analysisInheritanceScopeSql,
+  recentTaskAnalysisBatchIdsSql,
+  taskConclusionCasesCteSql,
+  taskConclusionSearchSql,
   requireMatchingAnalysisInheritance,
 } from "./failure-analysis-inheritance";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
@@ -722,16 +725,21 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     const cursor = decodeRunBatchCursor(input.cursor);
     const where = [
       "claim.project_id=?",
-      analysisHistoryTaskScopeSql("?"),
-      "claim.case_definition_id=?",
+      input.scope === "task_recent_batches"
+        ? `claim.batch_id IN (${recentTaskAnalysisBatchIdsSql("?")})`
+        : analysisHistoryTaskScopeSql("?"),
       "claim.status='completed'",
       "claim.completed_at IS NOT NULL",
     ];
-    const parameters: Array<string | number> = [
-      input.projectId,
-      input.batchId,
-      input.caseDefinitionId,
-    ];
+    const parameters: Array<string | number> = [input.projectId, input.batchId];
+    if (input.scope !== "task_recent_batches") {
+      where.push("claim.case_definition_id=?");
+      parameters.push(input.caseDefinitionId);
+    }
+    if (input.caseDefinitionFilter) {
+      parameters.push(input.caseDefinitionFilter);
+      where.push("claim.case_definition_id=?");
+    }
     const query = input.query?.trim().slice(0, 200);
     if (query) {
       where.push(`(LOWER(claim.case_name) LIKE ? ESCAPE '\\'
@@ -758,6 +766,53 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       )
       .all(...parameters) as FailureAnalysisHistoryRow[];
     return historyPage(rows, input.limit);
+  }
+
+  async listTaskConclusionCases(
+    input: Parameters<FailureAnalysisRepository["listTaskConclusionCases"]>[0],
+  ) {
+    const parameters: Record<string, string | number> = {
+      projectId: input.projectId,
+      batchId: input.batchId,
+      limit: input.limit + 1,
+    };
+    const query = input.query?.trim().slice(0, 200);
+    let searchMatch = "1=1";
+    if (query) {
+      parameters.query = `%${escapeSqliteLike(query.toLowerCase())}%`;
+      searchMatch = taskConclusionSearchSql("@query", "sqlite");
+    }
+    const cursor = decodeRunBatchCursor(input.cursor);
+    let cursorCondition = "1=1";
+    if (cursor) {
+      parameters.cursorTime = cursor.createdAt;
+      parameters.cursorId = cursor.id;
+      cursorCondition =
+        "(ranked.completed_at<@cursorTime OR (ranked.completed_at=@cursorTime AND ranked.id<@cursorId))";
+    }
+    const cte = taskConclusionCasesCteSql({
+      projectId: "@projectId",
+      batchId: "@batchId",
+      searchMatch,
+      cursorCondition,
+      limit: "@limit",
+    });
+    const sql = `${cte}
+      ${claimSelectSql('batch.sequence_number AS "batchSequenceNumber",batch.suite_name AS "batchName",latest.conclusion_count AS "conclusionCount"')}
+      JOIN latest_conclusions latest ON latest.id=claim.id
+      JOIN run_batches batch ON batch.id=claim.batch_id
+      ORDER BY claim.completed_at DESC,claim.id DESC`;
+    const rows = this.handle.client.prepare(sql).all(parameters) as Array<
+      FailureAnalysisHistoryRow & { conclusionCount: number }
+    >;
+    const page = historyPage(rows, input.limit);
+    return {
+      ...page,
+      items: page.items.map((latest, index) => ({
+        latest,
+        conclusionCount: Number(rows[index]!.conclusionCount),
+      })),
+    };
   }
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
@@ -868,7 +923,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
         const matches = this.handle.client
           .prepare(
             `SELECT target_claim.id
-          ${analysisInheritanceScopeSql}
+          ${analysisInheritanceScopeSql(input.inheritanceScope)}
           AND source_claim.id=? AND target_claim.project_id=? AND target_claim.claimant_id=?
           AND target_claim.id IN (${placeholders})`,
           )
@@ -878,7 +933,11 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
             input.claimantId,
             ...input.analysisIds,
           );
-        requireMatchingAnalysisInheritance(matches.length, input.analysisIds.length);
+        requireMatchingAnalysisInheritance(
+          matches.length,
+          input.analysisIds.length,
+          input.inheritanceScope,
+        );
       }
       const update = this.handle.client.prepare(
         `UPDATE failure_analysis_claims

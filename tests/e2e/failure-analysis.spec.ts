@@ -173,7 +173,7 @@ test("terminal task failures support durable single and batch analysis with evid
   const conclusionScope = insertAnalysisConclusionScopeFixture(
     requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
     suffix,
-    fixture.failedNames[3],
+    fixture.failedNames[0],
   );
   await insertAnalysisExecutionHistory(
     requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
@@ -467,7 +467,11 @@ test("terminal task failures support durable single and batch analysis with evid
   const batchDialog = page.getByRole("dialog", { name: "批量分析 2 个用例" });
   await expect(page.locator(".failure-analysis-shell")).toHaveAttribute("inert", "");
   await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("hidden");
-  await expect(batchDialog.getByText(fixture.failedNames[0], { exact: true })).toBeVisible();
+  await expect(
+    batchDialog
+      .locator(".failure-analysis-case-list")
+      .getByText(fixture.failedNames[0], { exact: true }),
+  ).toBeVisible();
   await expect(batchDialog.getByRole("button", { name: "弹窗日志" })).toHaveCount(2);
   await expectDialogFitsViewport(page, batchDialog);
   await captureUi(page, "failure-analysis-batch-dialog-1024", false);
@@ -601,8 +605,8 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(codeDialog.getByText("历史分析结论", { exact: true })).toBeVisible();
   await expect(codeDialog).toContainText("BUG-1023");
   await expect(codeDialog).not.toContainText("OTHER-TASK-ISSUE");
-  await codeDialog.getByRole("button", { name: "从该用例历史继承" }).click();
-  const codeConclusionPicker = page.getByRole("dialog", { name: "选择已分析用例结论" });
+  await codeDialog.getByRole("button", { name: "从本任务近 5 次批跑继承" }).click();
+  const codeConclusionPicker = page.getByRole("dialog", { name: "本任务近 5 次批跑结论" });
   await expect(codeConclusionPicker.locator(".failure-analysis-conclusion-ticket")).toHaveText(
     "问题单：BUG-1023",
   );
@@ -626,23 +630,26 @@ test("terminal task failures support durable single and batch analysis with evid
   const codeClaim = currentClaims.body.items.find(
     (claim) => claim.caseName === fixture.failedNames[2],
   )!;
-  const rejectedInheritance = await browserJson<{ error: { code: string } }>(
-    page,
-    "/api/v1/failure-analysis/claims/complete",
-    {
-      method: "POST",
-      body: {
-        projectId: DEFAULT_PROJECT_ID,
-        analysisIds: [codeClaim.id],
-        inheritedFromAnalysisId: conclusionScope.otherTaskAnalysisId,
-        category: "code_issue_filed",
-        issueDescription: "Forged source",
-        ticketReference: "OTHER-TASK-ISSUE",
+  for (const inheritanceScope of ["same_case", "task_recent_batches"]) {
+    const rejectedInheritance = await browserJson<{ error: { code: string } }>(
+      page,
+      "/api/v1/failure-analysis/claims/complete",
+      {
+        method: "POST",
+        body: {
+          projectId: DEFAULT_PROJECT_ID,
+          analysisIds: [codeClaim.id],
+          inheritedFromAnalysisId: conclusionScope.otherTaskAnalysisId,
+          inheritanceScope,
+          category: "code_issue_filed",
+          issueDescription: "Forged source",
+          ticketReference: "OTHER-TASK-ISSUE",
+        },
       },
-    },
-  );
-  expect(rejectedInheritance.status).toBeGreaterThanOrEqual(400);
-  expect(rejectedInheritance.body.error.code).toBe("FAILURE_ANALYSIS_INHERITANCE_SCOPE_INVALID");
+    );
+    expect(rejectedInheritance.status).toBeGreaterThanOrEqual(400);
+    expect(rejectedInheritance.body.error.code).toBe("FAILURE_ANALYSIS_INHERITANCE_SCOPE_INVALID");
+  }
   for (const endpoint of ["history", "conclusions"]) {
     const unscoped = await browserJson(
       page,
@@ -752,10 +759,11 @@ test("terminal task failures support durable single and batch analysis with evid
   const rerunCard = analysisCard(page, fixture.failedNames[3]);
   await rerunCard.getByRole("button", { name: "开始分析" }).click();
   const rerunDialog = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[3]}` });
-  await rerunDialog.getByRole("button", { name: "从该用例历史继承" }).click();
-  const conclusionPicker = page.getByRole("dialog", { name: "选择已分析用例结论" });
-  await expect(conclusionPicker).toContainText("仅搜索同一任务、同一用例");
-  for (const forbiddenQuery of [fixture.failedNames[0], "OTHER-TASK-ISSUE"]) {
+  await expect(rerunDialog.getByRole("button", { name: "继承此结论", exact: true })).toHaveCount(0);
+  await rerunDialog.getByRole("button", { name: "从本任务近 5 次批跑继承" }).click();
+  const conclusionPicker = page.getByRole("dialog", { name: "本任务近 5 次批跑结论" });
+  await expect(conclusionPicker).toContainText("此前最近 5 次已结束批跑 · 每个用例");
+  for (const forbiddenQuery of ["OTHER-TASK-ISSUE", "OUTSIDE-FIVE-BATCHES", "BUG-2048"]) {
     const response = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
@@ -773,10 +781,10 @@ test("terminal task failures support durable single and batch analysis with evid
     const url = new URL(response.url());
     return (
       url.pathname === "/api/v1/failure-analysis/conclusions" &&
-      url.searchParams.get("query") === fixture.failedNames[3]
+      url.searchParams.get("query") === fixture.failedNames[0]
     );
   });
-  await conclusionPicker.getByLabel("搜索已分析用例").fill(fixture.failedNames[3]);
+  await conclusionPicker.getByLabel("搜索已分析用例").fill(fixture.failedNames[0]);
   await conclusionPicker.getByRole("button", { name: "搜索", exact: true }).click();
   expect((await allowedResponse).status()).toBe(200);
   for (const viewport of [
@@ -789,11 +797,13 @@ test("terminal task failures support durable single and batch analysis with evid
   }
   await page.setViewportSize({ width: 1024, height: 768 });
   await conclusionPicker
-    .getByRole("button", { name: `选择并继承 ${fixture.failedNames[3]}` })
+    .getByRole("button", { name: `选择并继承 ${fixture.failedNames[0]}` })
     .click();
   const generalInheritanceConfirmation = page.getByRole("alertdialog", {
     name: "确认继承分析结论",
   });
+  await expect(generalInheritanceConfirmation).toContainText(fixture.failedNames[0]);
+  await expect(generalInheritanceConfirmation).toContainText("本任务近 5 次批跑");
   await generalInheritanceConfirmation.getByRole("button", { name: "确认继承结论" }).click();
   await expect(rerunDialog.getByLabel("用例问题已修改", { exact: false })).toBeChecked();
   await expect(rerunDialog.getByAltText("备注图片：batch-remark.png")).toHaveCount(0);
@@ -835,7 +845,21 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(rerunDialog.getByAltText("重跑通过截图：rerun-passed.png")).toBeVisible();
   await expect(rerunSubmit).toBeEnabled();
   await captureUi(page, "failure-analysis-rerun-evidence-1024", false);
+  const inheritedCompletion = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/v1/failure-analysis/claims/complete",
+  );
   await rerunSubmit.click();
+  const inheritedResponse = await inheritedCompletion;
+  expect(inheritedResponse.status()).toBe(200);
+  expect((await inheritedResponse.json()).items).toEqual([
+    expect.objectContaining({
+      caseName: fixture.failedNames[3],
+      status: "completed",
+      category: "rerun_passed",
+      issueDescription: "测试数据字段已经失效",
+      caseFixEvidence: "commit abc123，已更新断言数据",
+    }),
+  ]);
   await expect(rerunDialog).toBeHidden();
   await expect(rerunCard).toContainText("重跑通过");
 
@@ -974,6 +998,197 @@ test("terminal task failures support durable single and batch analysis with evid
     await captureUi(page, `failure-analysis-empty-${viewport.width}`);
   }
 });
+
+test("task conclusion picker groups cases, loads older conclusions on demand and contains long text", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("analysis-groups");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: `历史分组 ${suffix}` } },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const fixture = insertFailureAnalysisFixture(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    version.body.id,
+    suffix,
+    {
+      caseNameSuffix: `LongCaseIdentifier${"UnbrokenLongCaseIdentifier".repeat(20)}${suffix}`,
+      classNamePrefix: `e2e.${"UnbrokenLongPackageIdentifier".repeat(18)}`,
+    },
+  );
+  const grouped = insertAnalysisConclusionScopeFixture(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    suffix,
+    fixture.failedNames[0],
+    {
+      className: `e2e.${"UnbrokenLongPackageIdentifier".repeat(18)}.Test`,
+      olderIssueDescription: `OLDER-CASE-CONCLUSION：${"LongRootCause".repeat(35)}`,
+      olderTicketReference: `https://issues.example.test/${"UnbrokenTicketIdentifier".repeat(24)}`,
+    },
+  );
+  await insertAnalysisExecutionHistory(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    fixture.batchId,
+    suffix,
+  );
+  const scope = {
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: version.body.id,
+    batchId: fixture.batchId,
+  };
+  expect(
+    (await browserJson(page, "/api/v1/failure-analysis/batches", { method: "POST", body: scope }))
+      .status,
+  ).toBe(201);
+  expect(
+    (
+      await browserJson(page, "/api/v1/failure-analysis/claims", {
+        method: "POST",
+        body: { ...scope, executionRunIds: [`run-failed-3-${suffix}`] },
+      })
+    ).status,
+  ).toBe(201);
+  await page.goto(`/case-analysis/${fixture.batchId}?view=workbench`);
+  await analysisCard(page, fixture.failedNames[3])
+    .getByRole("button", { name: "开始分析" })
+    .click();
+  const dialog = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[3]}` });
+  let historyRequests = 0;
+  let rejectFirstHistoryRequest = true;
+  await page.route("**/api/v1/failure-analysis/conclusions?**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("view") === "case_history") {
+      historyRequests += 1;
+      expect(url.searchParams.get("caseDefinitionId")).toBe(`case-run-failed-0-${suffix}`);
+      expect(url.searchParams.has("query")).toBe(false);
+      if (rejectFirstHistoryRequest) {
+        rejectFirstHistoryRequest = false;
+        await route.fulfill({
+          status: 503,
+          json: {
+            error: {
+              code: "PLATFORM_BUSY",
+              message: "历史读取暂时失败，请重试。",
+              requestId: "grouped-history-retry",
+            },
+          },
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await dialog.getByRole("button", { name: "从本任务近 5 次批跑继承" }).click();
+  const picker = page.getByRole("dialog", { name: "本任务近 5 次批跑结论" });
+  const caseCard = picker.locator(`[data-case-id="case-run-failed-0-${suffix}"]`);
+  await expect(picker.locator(".failure-analysis-conclusion-case")).toHaveCount(2);
+  await expect(caseCard).toHaveCount(1);
+  await expect(caseCard.getByText("测试数据字段已经失效", { exact: true })).toBeVisible();
+  await expect(caseCard.locator(".failure-analysis-conclusion-entry")).toHaveCount(1);
+  expect(historyRequests).toBe(0);
+  await expectGroupedConclusionLayout(page, picker, "collapsed");
+  await caseCard
+    .getByRole("button", { name: `展开 ${fixture.failedNames[0]} 的其他分析结论` })
+    .click();
+  await expect(caseCard.getByRole("alert")).toContainText("历史读取暂时失败");
+  await caseCard.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(caseCard.locator(".failure-analysis-conclusion-history")).toContainText(
+    grouped.olderIssueDescription,
+  );
+  await expect(caseCard.locator(".failure-analysis-conclusion-entry")).toHaveCount(2);
+  await expectGroupedConclusionLayout(page, picker, "expanded");
+  await caseCard
+    .getByRole("button", { name: `收起 ${fixture.failedNames[0]} 的其他分析结论` })
+    .click();
+  await expect(caseCard.locator(".failure-analysis-conclusion-entry")).toHaveCount(1);
+  await caseCard
+    .getByRole("button", { name: `展开 ${fixture.failedNames[0]} 的其他分析结论` })
+    .click();
+  await expect(caseCard.locator(".failure-analysis-conclusion-entry")).toHaveCount(2);
+  expect(historyRequests).toBe(2);
+  const searched = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/conclusions" &&
+      url.searchParams.get("view") === "cases" &&
+      url.searchParams.get("query") === "OLDER-CASE-CONCLUSION"
+    );
+  });
+  await picker.getByLabel("搜索已分析用例").fill("OLDER-CASE-CONCLUSION");
+  await picker.getByRole("button", { name: "搜索", exact: true }).click();
+  expect((await searched).status()).toBe(200);
+  await expect(picker.locator(".failure-analysis-conclusion-case")).toHaveCount(1);
+  await expect(caseCard.getByText("测试数据字段已经失效", { exact: true })).toBeVisible();
+  await expect(caseCard.locator(".failure-analysis-conclusion-history")).toHaveCount(0);
+  await caseCard
+    .getByRole("button", { name: `展开 ${fixture.failedNames[0]} 的其他分析结论` })
+    .click();
+  await caseCard.getByRole("button", { name: "继承批次 #995 的结论" }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "确认继承未闭环代码问题" });
+  await expect(confirmation).toContainText(grouped.olderTicketReference);
+  await expectGroupedConclusionLayout(page, confirmation, "confirm");
+  await confirmation.getByRole("button", { name: "问题仍存在，继承结论" }).click();
+  await expect(dialog.getByLabel("问题说明 *")).toHaveValue(grouped.olderIssueDescription);
+  await expect(dialog.getByLabel("问题单链接或问题单号 *")).toHaveValue(
+    grouped.olderTicketReference,
+  );
+  const saved = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/v1/failure-analysis/claims/complete",
+  );
+  await dialog.getByRole("button", { name: "提交分析" }).click();
+  const response = await saved;
+  expect(response.status()).toBe(200);
+  expect((await response.json()).items).toEqual([
+    expect.objectContaining({
+      caseName: fixture.failedNames[3],
+      issueDescription: grouped.olderIssueDescription,
+      ticketReference: grouped.olderTicketReference,
+      status: "completed",
+    }),
+  ]);
+  await expect(dialog).toBeHidden();
+});
+
+async function expectGroupedConclusionLayout(
+  page: import("@playwright/test").Page,
+  dialog: import("@playwright/test").Locator,
+  state: string,
+) {
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectDialogFitsViewport(page, dialog);
+    await dialog.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
+    const overflow = await dialog.evaluate((element) =>
+      [
+        element,
+        ...Array.from(
+          element.querySelectorAll<HTMLElement>(
+            ".runner-update-body,.runner-update-titlebar,.failure-analysis-conclusion-case,.failure-analysis-conclusion-entry,.failure-analysis-conclusion-history",
+          ),
+        ),
+      ]
+        .map((node) => ({
+          className: node.className,
+          overflow: node.scrollWidth - node.clientWidth,
+        }))
+        .filter((node) => node.overflow > 1),
+    );
+    expect(overflow).toEqual([]);
+    if (state === "confirm") {
+      await expect(dialog.getByRole("button", { name: "问题仍存在，继承结论" })).toBeInViewport();
+    }
+    await captureUi(page, `analysis-grouped-${state}-${viewport.width}`);
+  }
+}
 
 async function captureUi(
   page: import("@playwright/test").Page,

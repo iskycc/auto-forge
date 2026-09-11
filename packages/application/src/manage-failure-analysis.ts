@@ -7,6 +7,7 @@ import {
   failureAnalysisCompletionOrderSchema,
   failureAnalysisSortSchema,
   type FailureAnalysisCompletionOrder,
+  type FailureAnalysisInheritanceScope,
   type FailureAnalysisRecentSuccess,
   type FailureAnalysisSort,
 } from "@autoforge/contracts";
@@ -369,6 +370,7 @@ export class FailureAnalysisService {
     projectId: string;
     batchId: string;
     caseDefinitionId: string;
+    scope?: FailureAnalysisInheritanceScope;
     query?: string;
     cursor?: string;
     limit?: number;
@@ -378,9 +380,40 @@ export class FailureAnalysisService {
       projectId: input.projectId,
       batchId: input.batchId,
       caseDefinitionId: input.caseDefinitionId,
+      ...(input.scope ? { scope: input.scope } : {}),
       ...(query ? { query: query.slice(0, 200) } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),
       limit: boundedPageSize(input.limit),
+    });
+  }
+
+  listTaskConclusionCases(input: {
+    projectId: string;
+    batchId: string;
+    query?: string;
+    cursor?: string;
+    limit?: number;
+  }) {
+    const query = optionalTrimmed(input.query);
+    return this.repository.listTaskConclusionCases({
+      projectId: input.projectId,
+      batchId: input.batchId,
+      ...(query ? { query: query.slice(0, 200) } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: boundedPageSize(input.limit),
+    });
+  }
+
+  listTaskCaseConclusionHistory(input: {
+    projectId: string;
+    batchId: string;
+    caseDefinitionId: string;
+  }) {
+    return this.repository.listCompletedConclusions({
+      ...input,
+      scope: "task_recent_batches",
+      caseDefinitionFilter: input.caseDefinitionId,
+      limit: 5,
     });
   }
 
@@ -481,6 +514,7 @@ export class FailureAnalysisService {
     analysisIds: readonly string[];
     projectId: string;
     inheritedFromAnalysisId?: string;
+    inheritanceScope?: FailureAnalysisInheritanceScope;
     claimant: { id: string; username: string };
     category: FailureAnalysisCategory;
     issueDescription?: string;
@@ -530,7 +564,10 @@ export class FailureAnalysisService {
       this.repository.complete({
         analysisIds,
         ...(input.inheritedFromAnalysisId
-          ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+          ? {
+              inheritedFromAnalysisId: input.inheritedFromAnalysisId,
+              ...(input.inheritanceScope ? { inheritanceScope: input.inheritanceScope } : {}),
+            }
           : {}),
         projectId: input.projectId,
         claimantId: input.claimant.id,

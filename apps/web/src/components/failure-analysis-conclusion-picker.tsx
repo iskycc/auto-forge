@@ -1,12 +1,17 @@
 "use client";
 
-import type { FailureAnalysisHistoryItemView } from "@autoforge/contracts";
+import {
+  failureAnalysisCaseConclusionPageSchema,
+  type FailureAnalysisCaseConclusionView,
+  type FailureAnalysisHistoryItemView,
+} from "@autoforge/contracts";
 import { ClipboardPaste, LoaderCircle, Search, X } from "lucide-react";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
 
 import { Button, Input } from "./ui";
+import { FailureAnalysisConclusionCard } from "./failure-analysis-conclusion-card";
 
 export function FailureAnalysisConclusionPicker({
   projectId,
@@ -25,13 +30,23 @@ export function FailureAnalysisConclusionPicker({
 }) {
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<FailureAnalysisHistoryItemView[]>([]);
+  const [items, setItems] = useState<FailureAnalysisCaseConclusionView[]>([]);
   const [nextCursor, setNextCursor] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const activeRequest = useRef<AbortController | null>(null);
+
   const load = useCallback(
-    async (cursor?: string, append = false, signal?: AbortSignal) => {
+    async (cursor?: string, append = false) => {
+      activeRequest.current?.abort();
+      const controller = new AbortController();
+      activeRequest.current = controller;
+      const { signal } = controller;
+      if (!append) {
+        setItems([]);
+        setNextCursor(undefined);
+      }
       setLoading(true);
       setError("");
       try {
@@ -40,40 +55,50 @@ export function FailureAnalysisConclusionPicker({
           batchId,
           caseDefinitionId,
           limit: "20",
+          scope: "task_recent_batches",
+          view: "cases",
         });
         if (query) parameters.set("query", query);
         if (cursor) parameters.set("cursor", cursor);
         const response = await fetch(`/api/v1/failure-analysis/conclusions?${parameters}`, {
           cache: "no-store",
-          ...(signal ? { signal } : {}),
+          signal,
         });
         if (!response.ok) {
           throw new Error((await readApiErrorMessage(response, "读取已分析用例失败。"))!);
         }
-        const page = (await response.json()) as {
-          items: FailureAnalysisHistoryItemView[];
-          nextCursor?: string;
-        };
-        if (signal?.aborted) return;
-        const availableItems = page.items.filter((item) => !excludedAnalysisIds.has(item.claim.id));
-        setItems((current) => (append ? [...current, ...availableItems] : availableItems));
+        const page = failureAnalysisCaseConclusionPageSchema.parse(await response.json());
+        if (signal.aborted) return;
+        const availableItems = page.items.filter(
+          (item) => !excludedAnalysisIds.has(item.latest.claim.id),
+        );
+        setItems((current) => {
+          if (!append) return availableItems;
+          const loadedCaseIds = new Set(current.map((item) => item.latest.claim.caseDefinitionId));
+          const newCases = availableItems.filter((item) => {
+            const caseId = item.latest.claim.caseDefinitionId;
+            if (loadedCaseIds.has(caseId)) return false;
+            loadedCaseIds.add(caseId);
+            return true;
+          });
+          return [...current, ...newCases];
+        });
         setNextCursor(page.nextCursor);
       } catch (loadError) {
-        if (signal?.aborted) return;
+        if (signal.aborted) return;
         setError(loadError instanceof Error ? loadError.message : "读取已分析用例失败。");
       } finally {
-        if (!signal?.aborted) setLoading(false);
+        if (!signal.aborted) setLoading(false);
       }
     },
     [batchId, caseDefinitionId, excludedAnalysisIds, projectId, query],
   );
 
   useEffect(() => {
-    const controller = new AbortController();
-    const deferredLoad = window.setTimeout(() => void load(undefined, false, controller.signal), 0);
+    const deferredLoad = window.setTimeout(() => void load(), 0);
     return () => {
       window.clearTimeout(deferredLoad);
-      controller.abort();
+      activeRequest.current?.abort();
     };
   }, [load]);
 
@@ -91,7 +116,7 @@ export function FailureAnalysisConclusionPicker({
       role="presentation"
     >
       <section
-        aria-label="选择已分析用例结论"
+        aria-label="本任务近 5 次批跑结论"
         aria-modal="true"
         className="runner-update-dialog failure-analysis-conclusion-picker"
         onClick={(event) => event.stopPropagation()}
@@ -100,8 +125,8 @@ export function FailureAnalysisConclusionPicker({
         <header className="runner-update-titlebar">
           <span>
             <ClipboardPaste size={17} />
-            <strong>选择已分析用例结论</strong>
-            <small>仅搜索同一任务、同一用例的已完成分析；不继承证明材料</small>
+            <strong>本任务近 5 次批跑结论</strong>
+            <small>此前最近 5 次已结束批跑 · 每个用例默认显示最近结论，可展开其他结论</small>
           </span>
           <Button aria-label="关闭结论选择弹窗" onClick={onClose} type="button">
             <X size={16} />
@@ -116,7 +141,7 @@ export function FailureAnalysisConclusionPicker({
                 autoFocus
                 maxLength={200}
                 onChange={(event) => setQueryInput(event.target.value)}
-                placeholder="失败概要、问题说明、问题单"
+                placeholder="用例名称、执行类、失败概要、问题说明、问题单"
                 value={queryInput}
               />
             </span>
@@ -124,50 +149,26 @@ export function FailureAnalysisConclusionPicker({
               搜索
             </Button>
           </form>
-          {error ? <p className="form-error">{error}</p> : null}
-          {!loading && items.length === 0 ? (
+          {error ? (
+            <div className="failure-analysis-conclusion-load-error" role="alert">
+              <p>{error}</p>
+              <Button onClick={() => void load()} type="button">
+                重试
+              </Button>
+            </div>
+          ) : null}
+          {!loading && !error && items.length === 0 ? (
             <div className="failure-analysis-history-state">没有找到可继承的已完成结论。</div>
           ) : (
             <div className="failure-analysis-conclusion-results">
-              {items.map((item) => (
-                <article key={item.claim.id}>
-                  <div>
-                    <span className="analysis-status completed">
-                      {conclusionCategoryLabel(item.claim.category)}
-                    </span>
-                    <strong>{item.claim.caseName}</strong>
-                    <code>{item.claim.className}</code>
-                    <small>
-                      #{item.batchSequenceNumber} {item.batchName} · {item.claim.failureSummary}
-                    </small>
-                    {item.claim.category === "code_issue_filed" ? (
-                      <p className="failure-analysis-conclusion-ticket">
-                        <b>问题单：</b>
-                        {item.claim.ticketReference &&
-                        /^https?:\/\//iu.test(item.claim.ticketReference) ? (
-                          <a
-                            href={item.claim.ticketReference}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {item.claim.ticketReference}
-                          </a>
-                        ) : (
-                          item.claim.ticketReference || "未记录问题单"
-                        )}
-                      </p>
-                    ) : null}
-                  </div>
-                  <Button
-                    aria-label={`选择并继承 ${item.claim.caseName}`}
-                    onClick={() => onSelect(item)}
-                    size="compact"
-                    type="button"
-                    variant="primary"
-                  >
-                    选择并继承
-                  </Button>
-                </article>
+              {items.map((group) => (
+                <FailureAnalysisConclusionCard
+                  key={`${group.latest.claim.caseDefinitionId}:${group.latest.claim.id}`}
+                  group={group}
+                  projectId={projectId}
+                  batchId={batchId}
+                  onSelect={onSelect}
+                />
               ))}
               {loading ? (
                 <div className="failure-analysis-history-state" role="status">
@@ -190,15 +191,4 @@ export function FailureAnalysisConclusionPicker({
       </section>
     </div>
   );
-}
-
-function conclusionCategoryLabel(
-  category: FailureAnalysisHistoryItemView["claim"]["category"],
-): string {
-  if (!category) return "已完成";
-  return {
-    rerun_passed: "重跑通过",
-    case_fixed: "用例问题已修改",
-    code_issue_filed: "代码问题已提单",
-  }[category];
 }

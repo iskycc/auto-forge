@@ -26,6 +26,9 @@ import {
 import {
   analysisHistoryTaskScopeSql,
   analysisInheritanceScopeSql,
+  recentTaskAnalysisBatchIdsSql,
+  taskConclusionCasesCteSql,
+  taskConclusionSearchSql,
   requireMatchingAnalysisInheritance,
 } from "./failure-analysis-inheritance";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
@@ -713,14 +716,23 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     input: Parameters<FailureAnalysisRepository["listCompletedConclusions"]>[0],
   ) {
     await this.handle.ready;
-    const parameters: unknown[] = [input.projectId, input.batchId, input.caseDefinitionId];
+    const parameters: unknown[] = [input.projectId, input.batchId];
     const where = [
       "claim.project_id=$1",
-      analysisHistoryTaskScopeSql("$2"),
-      "claim.case_definition_id=$3",
+      input.scope === "task_recent_batches"
+        ? `claim.batch_id IN (${recentTaskAnalysisBatchIdsSql("$2")})`
+        : analysisHistoryTaskScopeSql("$2"),
       "claim.status='completed'",
       "claim.completed_at IS NOT NULL",
     ];
+    if (input.scope !== "task_recent_batches") {
+      where.push("claim.case_definition_id=$3");
+      parameters.push(input.caseDefinitionId);
+    }
+    if (input.caseDefinitionFilter) {
+      parameters.push(input.caseDefinitionFilter);
+      where.push(`claim.case_definition_id=$${parameters.length}`);
+    }
     const query = input.query?.trim().slice(0, 200);
     if (query) {
       parameters.push(`%${escapePostgresLike(query)}%`);
@@ -751,6 +763,51 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       parameters,
     );
     return historyPage(result.rows, input.limit);
+  }
+
+  async listTaskConclusionCases(
+    input: Parameters<FailureAnalysisRepository["listTaskConclusionCases"]>[0],
+  ) {
+    await this.handle.ready;
+    const parameters: Array<string | number> = [input.projectId, input.batchId];
+    const query = input.query?.trim().slice(0, 200);
+    let searchMatch = "1=1";
+    if (query) {
+      parameters.push(`%${escapePostgresLike(query)}%`);
+      searchMatch = taskConclusionSearchSql(`$${parameters.length}`, "postgres");
+    }
+    const cursor = decodeRunBatchCursor(input.cursor);
+    let cursorCondition = "1=1";
+    if (cursor) {
+      parameters.push(cursor.createdAt, cursor.id);
+      cursorCondition = `(ranked.completed_at<$${parameters.length - 1} OR
+        (ranked.completed_at=$${parameters.length - 1} AND ranked.id<$${parameters.length}))`;
+    }
+    parameters.push(input.limit + 1);
+    const cte = taskConclusionCasesCteSql({
+      projectId: "$1",
+      batchId: "$2",
+      searchMatch,
+      cursorCondition,
+      limit: `$${parameters.length}`,
+    });
+    const sql = `${cte}
+      ${claimSelectSql('batch.sequence_number AS "batchSequenceNumber",batch.suite_name AS "batchName",latest.conclusion_count AS "conclusionCount"')}
+      JOIN latest_conclusions latest ON latest.id=claim.id
+      JOIN run_batches batch ON batch.id=claim.batch_id
+      ORDER BY claim.completed_at DESC,claim.id DESC`;
+    const result = await this.handle.pool.query<
+      FailureAnalysisHistoryRow & { conclusionCount: string }
+    >(sql, parameters);
+    const rows = result.rows;
+    const page = historyPage(rows, input.limit);
+    return {
+      ...page,
+      items: page.items.map((latest, index) => ({
+        latest,
+        conclusionCount: Number(rows[index]!.conclusionCount),
+      })),
+    };
   }
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
@@ -841,7 +898,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       if (input.inheritedFromAnalysisId) {
         const matches = await client.query(
           `SELECT target_claim.id
-          ${analysisInheritanceScopeSql}
+          ${analysisInheritanceScopeSql(input.inheritanceScope)}
           AND source_claim.id=$1 AND target_claim.project_id=$2 AND target_claim.claimant_id=$3
           AND target_claim.id=ANY($4::text[]) FOR SHARE OF source_claim`,
           [
@@ -851,7 +908,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
             [...input.analysisIds],
           ],
         );
-        requireMatchingAnalysisInheritance(matches.rows.length, input.analysisIds.length);
+        requireMatchingAnalysisInheritance(
+          matches.rows.length,
+          input.analysisIds.length,
+          input.inheritanceScope,
+        );
       }
       const proofAttemptIds = input.analysisIds.map(
         (analysisId) => input.rerunProofs.get(analysisId)?.attemptId ?? null,

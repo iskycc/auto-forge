@@ -9,6 +9,7 @@ import {
   type FailureAnalysisClaimView,
   type FailureAnalysisCompletionOrder,
   type FailureAnalysisHistoryItemView,
+  type FailureAnalysisInheritanceScope,
   type FailureAnalysisRecentSuccess,
   type FailureAnalysisRerunProofLookupResult,
   type FailureAnalysisSort,
@@ -1402,8 +1403,9 @@ function CompleteAnalysisDialog({
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
   const [showConclusionPicker, setShowConclusionPicker] = useState(false);
-  const [inheritanceCandidate, setInheritanceCandidate] =
-    useState<FailureAnalysisHistoryItemView>();
+  const [inheritanceCandidate, setInheritanceCandidate] = useState<
+    FailureAnalysisHistoryItemView & { inheritanceScope: FailureAnalysisInheritanceScope }
+  >();
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState("");
   const imageCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -1425,7 +1427,10 @@ function CompleteAnalysisDialog({
     [claims],
   );
   const historyBatchId = claims[0]!.batchId;
-  const [inheritedFromAnalysisId, setInheritedFromAnalysisId] = useState<string>();
+  const [inheritedConclusion, setInheritedConclusion] = useState<{
+    id: string;
+    scope: FailureAnalysisInheritanceScope;
+  }>();
   const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
   const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
   const closeScreenshotPreview = useCallback(() => {
@@ -1612,7 +1617,12 @@ function CompleteAnalysisDialog({
         ticketReference,
         remark,
         caseIssueConfirmed,
-        ...(inheritedFromAnalysisId ? { inheritedFromAnalysisId } : {}),
+        ...(inheritedConclusion
+          ? {
+              inheritedFromAnalysisId: inheritedConclusion.id,
+              inheritanceScope: inheritedConclusion.scope,
+            }
+          : {}),
       });
       const form = new FormData();
       form.set("input", input);
@@ -1705,10 +1715,14 @@ function CompleteAnalysisDialog({
       !inheritanceCandidate ||
       !initial ||
       readOnly ||
-      inheritanceCandidate.claim.caseDefinitionId !== initial.caseDefinitionId
+      (inheritanceCandidate.inheritanceScope === "same_case" &&
+        inheritanceCandidate.claim.caseDefinitionId !== initial.caseDefinitionId)
     )
       return;
-    setInheritedFromAnalysisId(inheritanceCandidate.claim.id);
+    setInheritedConclusion({
+      id: inheritanceCandidate.claim.id,
+      scope: inheritanceCandidate.inheritanceScope,
+    });
     setCategory(inheritanceCandidate.claim.category);
     setRerunProofLookup(undefined);
     setIssueDescription(inheritanceCandidate.claim.issueDescription ?? "");
@@ -1851,7 +1865,9 @@ function CompleteAnalysisDialog({
               historyLimitPerCase={historyLimitPerCase}
               canInherit={!readOnly && claims.length === 1}
               onBrowse={() => setShowConclusionPicker(true)}
-              onInherit={setInheritanceCandidate}
+              onInherit={(item) =>
+                setInheritanceCandidate({ ...item, inheritanceScope: "same_case" })
+              }
               onPreview={(claim, trigger) => openScreenshotPreview(claim, trigger)}
               selectedCaseCount={claims.length}
             />
@@ -2241,7 +2257,7 @@ function CompleteAnalysisDialog({
           onClose={() => setShowConclusionPicker(false)}
           onSelect={(item) => {
             setShowConclusionPicker(false);
-            setInheritanceCandidate(item);
+            setInheritanceCandidate({ ...item, inheritanceScope: "task_recent_batches" });
           }}
           projectId={projectId}
         />
@@ -2271,6 +2287,13 @@ function CompleteAnalysisDialog({
                     ? "确认问题单尚未闭环"
                     : "确认沿用该分析结论"}
                 </strong>
+                <p>
+                  来源：批次 #{inheritanceCandidate.batchSequenceNumber} ·{" "}
+                  {inheritanceCandidate.claim.caseName}
+                  {inheritanceCandidate.inheritanceScope === "task_recent_batches"
+                    ? "（本任务近 5 次批跑）"
+                    : "（当前用例历史）"}
+                </p>
                 {inheritanceCandidate.claim.category === "code_issue_filed" ? (
                   <p>
                     请确认问题单“{inheritanceCandidate.claim.ticketReference}
@@ -2342,11 +2365,11 @@ function AnalysisHistoryPanel({
           <small>
             {selectedCaseCount > 1
               ? `同一任务 · 按用例展示最近 ${historyLimitPerCase} 条`
-              : `同一任务 · 最近 ${historyLimitPerCase} 条`}
+              : `同一任务 · 当前用例最近 ${historyLimitPerCase} 条`}
           </small>
           {canInherit ? (
             <Button onClick={onBrowse} size="compact" type="button" variant="secondary">
-              <ClipboardPaste size={13} /> 从该用例历史继承
+              <ClipboardPaste size={13} /> 从本任务近 5 次批跑继承
             </Button>
           ) : null}
         </span>

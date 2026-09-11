@@ -31,6 +31,7 @@ import type {
   RetentionPreview,
   ServiceAccount,
   FailureAnalysisExecution,
+  FailureAnalysisInheritanceScope,
   FailureAnalysisRecentSuccess,
 } from "@autoforge/contracts";
 import type {
@@ -1841,10 +1842,22 @@ export interface FailureAnalysisRepository {
     projectId: string;
     batchId: string;
     caseDefinitionId: string;
+    scope?: FailureAnalysisInheritanceScope;
+    caseDefinitionFilter?: string;
     query?: string;
     cursor?: string;
     limit: number;
   }): Promise<FailureAnalysisHistoryPage>;
+  listTaskConclusionCases(input: {
+    projectId: string;
+    batchId: string;
+    query?: string;
+    cursor?: string;
+    limit: number;
+  }): Promise<{
+    items: Array<{ latest: FailureAnalysisHistoryItem; conclusionCount: number }>;
+    nextCursor?: string;
+  }>;
   start(input: {
     analysisId: string;
     projectId: string;
@@ -1874,6 +1887,7 @@ export interface FailureAnalysisRepository {
     analysisIds: readonly string[];
     projectId: string;
     inheritedFromAnalysisId?: string;
+    inheritanceScope?: FailureAnalysisInheritanceScope;
     claimantId: string;
     category: FailureAnalysisCategory;
     issueDescription?: string;

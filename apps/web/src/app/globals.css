@@ -18764,39 +18764,118 @@ button.icon-button:disabled {
   overscroll-behavior: contain;
 }
 
-.failure-analysis-conclusion-results > article {
+.failure-analysis-conclusion-picker,
+.failure-analysis-conclusion-picker-body,
+.failure-analysis-conclusion-results,
+.failure-analysis-conclusion-case,
+.failure-analysis-conclusion-entry-content {
+  min-width: 0;
+}
+
+.failure-analysis-conclusion-picker .runner-update-titlebar > span {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.failure-analysis-conclusion-picker .runner-update-titlebar small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.failure-analysis-conclusion-case {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
-  padding: 9px 10px;
+  padding: var(--space-3);
   background: var(--color-surface-muted);
 }
 
-.failure-analysis-conclusion-results > article > div {
+.failure-analysis-conclusion-case-heading {
   display: grid;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 3px 7px;
+  gap: var(--space-1);
 }
 
-.failure-analysis-conclusion-results strong,
-.failure-analysis-conclusion-results code,
-.failure-analysis-conclusion-results small {
+.failure-analysis-conclusion-case-heading strong,
+.failure-analysis-conclusion-case-heading code {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.failure-analysis-conclusion-results code,
-.failure-analysis-conclusion-results small {
-  grid-column: 2;
+.failure-analysis-conclusion-case-heading code,
+.failure-analysis-conclusion-meta small,
+.failure-analysis-conclusion-history > small,
+.failure-analysis-conclusion-summary {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
+}
+
+.failure-analysis-conclusion-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.failure-analysis-conclusion-entry-content {
+  display: grid;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-control);
+}
+
+.failure-analysis-conclusion-entry-content p {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.failure-analysis-conclusion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.failure-analysis-conclusion-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.failure-analysis-conclusion-toggle {
+  justify-self: start;
+}
+
+.failure-analysis-conclusion-history {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.failure-analysis-conclusion-history .failure-analysis-conclusion-entry {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: var(--space-2);
+  background: var(--color-surface);
+}
+
+.failure-analysis-conclusion-load-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-danger);
 }
 
 .failure-analysis-history-state {
@@ -19320,10 +19399,16 @@ button.icon-button:disabled {
 
 .failure-analysis-confirm-dialog {
   width: min(560px, calc(100vw - 48px));
+  min-width: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
   padding: 22px;
 }
 
 .failure-analysis-confirm-dialog header {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   align-items: flex-start;
   gap: 12px;
   color: var(--color-warning);
@@ -19339,6 +19424,7 @@ button.icon-button:disabled {
 
 .failure-analysis-confirm-dialog header > div {
   display: grid;
+  min-width: 0;
   gap: 7px;
 }
 
@@ -19349,6 +19435,7 @@ button.icon-button:disabled {
 
 .failure-analysis-confirm-dialog header p {
   margin: 0;
+  overflow-wrap: anywhere;
   color: var(--color-text-secondary);
   line-height: 1.6;
 }

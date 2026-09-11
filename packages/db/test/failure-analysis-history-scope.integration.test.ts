@@ -57,6 +57,194 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         }
       });
 
+      it("browses all cases within the previous five standard terminal batches before searching or paging", async () => {
+        const harness = await createHarness(dialect, "task_recent_batches");
+        const { repository, query, ids } = harness;
+        try {
+          const input = { ...query, scope: "task_recent_batches" as const, limit: 1 };
+          const collected: string[] = [];
+          let cursor: string | undefined;
+          do {
+            const page = await repository.listCompletedConclusions({
+              ...input,
+              ...(cursor ? { cursor } : {}),
+            });
+            collected.push(...page.items.map((item) => item.claim.id));
+            cursor = page.nextCursor;
+          } while (cursor);
+          expect(collected.sort()).toEqual(
+            ["fifth", "third", "third-second-case", "newest", "newest-second-case"].map(ids).sort(),
+          );
+          for (const forbidden of [
+            "too-old",
+            "other-task",
+            "other-project",
+            "unbound",
+            "manual-rerun",
+            "running",
+            "future",
+            "pending",
+          ]) {
+            expect(
+              (await repository.listCompletedConclusions({ ...input, query: forbidden })).items,
+            ).toEqual([]);
+          }
+          expect(
+            (
+              await repository.listCompletedConclusions({ ...input, query: "third-second-case" })
+            ).items.map((item) => item.claim.id),
+          ).toEqual([ids("third-second-case")]);
+          for (const override of [
+            { projectId: "missing" },
+            { batchId: "missing" },
+            { batchId: ids("unbound") },
+          ]) {
+            expect(
+              (await repository.listCompletedConclusions({ ...input, ...override })).items,
+            ).toEqual([]);
+          }
+        } finally {
+          await harness.dispose();
+        }
+      });
+
+      it("groups cases before paging and keeps the latest conclusion when an older conclusion matches search", async () => {
+        const harness = await createHarness(dialect, "task_recent_batches");
+        const { repository, query, ids } = harness;
+        try {
+          const first = await repository.listTaskConclusionCases({ ...query, limit: 1 });
+          expect(first.items).toMatchObject([
+            {
+              latest: {
+                claim: { id: ids("newest-second-case"), caseDefinitionId: ids("other-case") },
+              },
+              conclusionCount: 2,
+            },
+          ]);
+          expect(first.nextCursor).toBeTruthy();
+          const second = await repository.listTaskConclusionCases({
+            ...query,
+            limit: 1,
+            cursor: first.nextCursor!,
+          });
+          expect(second.items).toMatchObject([
+            {
+              latest: { claim: { id: ids("newest"), caseDefinitionId: ids("case") } },
+              conclusionCount: 3,
+            },
+          ]);
+          expect(second.nextCursor).toBeUndefined();
+          const searched = await repository.listTaskConclusionCases({
+            ...query,
+            query: "third-second-case",
+          });
+          expect(searched.items).toMatchObject([
+            { latest: { claim: { id: ids("newest-second-case") } }, conclusionCount: 2 },
+          ]);
+          for (const forbidden of [
+            "too-old",
+            "other-task",
+            "other-project",
+            "unbound",
+            "manual-rerun",
+            "running",
+            "future",
+            "pending",
+          ]) {
+            expect(
+              (await repository.listTaskConclusionCases({ ...query, query: forbidden })).items,
+            ).toEqual([]);
+          }
+          for (const override of [
+            { projectId: "missing" },
+            { batchId: "missing" },
+            { batchId: ids("unbound") },
+          ]) {
+            expect(
+              (await repository.listTaskConclusionCases({ ...query, ...override })).items,
+            ).toEqual([]);
+          }
+          const history = await repository.listCompletedConclusions({
+            ...query,
+            scope: "task_recent_batches",
+            caseDefinitionFilter: ids("other-case"),
+            limit: 5,
+          });
+          expect(history.items.map((item) => item.claim.id)).toEqual([
+            ids("newest-second-case"),
+            ids("third-second-case"),
+          ]);
+          expect(
+            (
+              await repository.listCompletedConclusions({
+                ...query,
+                scope: "task_recent_batches",
+                caseDefinitionFilter: "missing",
+              })
+            ).items,
+          ).toEqual([]);
+        } finally {
+          await harness.dispose();
+        }
+      });
+
+      it("requires explicit task inheritance and rechecks the five-batch window atomically", async () => {
+        const harness = await createHarness(dialect, "task_recent_batches");
+        const { repository, ids, completion } = harness;
+        try {
+          await expect(
+            repository.complete({
+              ...completion,
+              inheritedFromAnalysisId: ids("third-second-case"),
+            }),
+          ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_INHERITANCE_SCOPE_INVALID" });
+          for (const source of [
+            "too-old",
+            "other-task",
+            "other-project",
+            "unbound",
+            "manual-rerun",
+            "running",
+            "future",
+            "pending",
+            "target",
+            "missing",
+          ]) {
+            await expect(
+              repository.complete({
+                ...completion,
+                inheritanceScope: "task_recent_batches",
+                inheritedFromAnalysisId: ids(source),
+              }),
+            ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_INHERITANCE_SCOPE_INVALID" });
+            expect((await repository.getClaim(ids("target"), DEFAULT_PROJECT_ID))?.status).toBe(
+              "claimed",
+            );
+          }
+          await expect(
+            repository.complete({
+              ...completion,
+              analysisIds: [ids("target"), ids("other-target")],
+              inheritanceScope: "task_recent_batches",
+              inheritedFromAnalysisId: ids("third-second-case"),
+            }),
+          ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_INHERITANCE_SCOPE_INVALID" });
+          expect((await repository.getClaim(ids("target"), DEFAULT_PROJECT_ID))?.status).toBe(
+            "claimed",
+          );
+          const completed = await repository.complete({
+            ...completion,
+            inheritanceScope: "task_recent_batches",
+            inheritedFromAnalysisId: ids("third-second-case"),
+          });
+          expect(completed).toMatchObject([
+            { id: ids("target"), status: "completed", ticketReference: "BUG-1" },
+          ]);
+        } finally {
+          await harness.dispose();
+        }
+      });
+
       it("rejects cross-task, cross-case, missing and self inheritance without partial writes", async () => {
         const harness = await createHarness(dialect);
         const { repository, ids, completion } = harness;
@@ -104,7 +292,10 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   );
 }
 
-async function createHarness(dialect: "sqlite" | "postgres") {
+async function createHarness(
+  dialect: "sqlite" | "postgres",
+  scenario: "same_case" | "task_recent_batches" = "same_case",
+) {
   const suffix = randomUUID();
   const ids = (name: string) => `${name}-${suffix}`;
   const directory = await mkdtemp(resolve(tmpdir(), "analysis-conclusion-scope-"));
@@ -160,29 +351,108 @@ async function createHarness(dialect: "sqlite" | "postgres") {
       VALUES (?,?,'Runner',FALSE,FALSE,'linux','amd64','1.0.0',1,'[]','[]',1,0,?,?,?)`,
       [ids("runner"), ids("credential"), NOW, NOW, NOW],
     );
-    const rows = [
-      { name: "history-a", suite: "suite", caseId: "case", completed: "2026-09-07T00:00:00.000Z" },
-      { name: "history-b", suite: "suite", caseId: "case", completed: "2026-09-08T00:00:00.000Z" },
-      { name: "other-task", suite: "other-suite", caseId: "case", completed: NOW },
-      { name: "other-case", suite: "suite", caseId: "other-case", completed: NOW },
-      { name: "unbound", suite: null, caseId: "case", completed: NOW },
-      { name: "other-project", suite: "suite", caseId: "case", completed: NOW },
-      { name: "pending", suite: "suite", caseId: "case", completed: null },
-      { name: "target", suite: "suite", caseId: "case", completed: null },
-      { name: "other-target", suite: "suite", caseId: "other-case", completed: null },
-    ];
+    type SeedRow = {
+      name: string;
+      suite: string | null;
+      caseId: string;
+      completed: string | null;
+      batchName?: string;
+      kind?: string;
+      status?: string;
+    };
+    const rows: SeedRow[] =
+      scenario === "task_recent_batches"
+        ? [
+            { name: "too-old", suite: "suite", caseId: "case", completed: NOW },
+            {
+              name: "fifth",
+              suite: "suite",
+              caseId: "case",
+              completed: "2026-09-07T00:00:00.000Z",
+            },
+            { name: "pending", suite: "suite", caseId: "case", completed: null },
+            {
+              name: "third",
+              suite: "suite",
+              caseId: "case",
+              completed: "2026-09-08T00:00:00.000Z",
+            },
+            {
+              name: "third-second-case",
+              batchName: "third",
+              suite: "suite",
+              caseId: "other-case",
+              completed: "2026-09-08T00:00:00.000Z",
+            },
+            { name: "second", suite: "suite", caseId: "case", completed: null },
+            { name: "newest", suite: "suite", caseId: "case", completed: NOW },
+            {
+              name: "newest-second-case",
+              batchName: "newest",
+              suite: "suite",
+              caseId: "other-case",
+              completed: NOW,
+            },
+            { name: "other-task", suite: "other-suite", caseId: "case", completed: NOW },
+            { name: "unbound", suite: null, caseId: "case", completed: NOW },
+            { name: "other-project", suite: "suite", caseId: "case", completed: NOW },
+            {
+              name: "manual-rerun",
+              suite: "suite",
+              caseId: "case",
+              completed: NOW,
+              kind: "case_log_rerun",
+            },
+            { name: "running", suite: "suite", caseId: "case", completed: NOW, status: "running" },
+            { name: "target", suite: "suite", caseId: "case", completed: null },
+            { name: "other-target", suite: "other-suite", caseId: "other-case", completed: null },
+            { name: "future", suite: "suite", caseId: "case", completed: NOW },
+          ]
+        : [
+            {
+              name: "history-a",
+              suite: "suite",
+              caseId: "case",
+              completed: "2026-09-07T00:00:00.000Z",
+            },
+            {
+              name: "history-b",
+              suite: "suite",
+              caseId: "case",
+              completed: "2026-09-08T00:00:00.000Z",
+            },
+            { name: "other-task", suite: "other-suite", caseId: "case", completed: NOW },
+            { name: "other-case", suite: "suite", caseId: "other-case", completed: NOW },
+            { name: "unbound", suite: null, caseId: "case", completed: NOW },
+            { name: "other-project", suite: "suite", caseId: "case", completed: NOW },
+            { name: "pending", suite: "suite", caseId: "case", completed: null },
+            { name: "target", suite: "suite", caseId: "case", completed: null },
+            { name: "other-target", suite: "suite", caseId: "other-case", completed: null },
+          ];
     for (const [sequence, row] of rows.entries()) {
       const projectId = row.name === "other-project" ? ids("project") : DEFAULT_PROJECT_ID;
-      batchIds.push(ids(row.name));
-      await execute(
-        `INSERT INTO run_batches (id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,policy_json,created_at,updated_at)
-        VALUES (?,?,?,'Same display name',1,'failed',0,'[]',1,?,'{}',?,?)`,
-        [ids(row.name), sequence, row.suite ? ids(row.suite) : "", projectId, NOW, NOW],
-      );
+      const batchId = ids(row.batchName ?? row.name);
+      if (!batchIds.includes(batchId)) {
+        batchIds.push(batchId);
+        await execute(
+          `INSERT INTO run_batches (id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,policy_json,created_at,updated_at,batch_kind)
+          VALUES (?,?,?,'Same display name',1,?,0,'[]',1,?,'{}',?,?,?)`,
+          [
+            batchId,
+            sequence,
+            row.suite ? ids(row.suite) : "",
+            row.status ?? "failed",
+            projectId,
+            NOW,
+            NOW,
+            row.kind ?? "standard",
+          ],
+        );
+      }
       await execute(
         `INSERT INTO execution_runs (id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,terminal_outcome,created_at,updated_at)
         VALUES (?,?,?,1,'Same case name','example.SameClass','failed',1,'failed',?,?)`,
-        [ids(`run-${row.name}`), ids(row.name), ids(row.caseId), NOW, NOW],
+        [ids(`run-${row.name}`), batchId, ids(row.caseId), NOW, NOW],
       );
       await execute(
         `INSERT INTO run_attempts (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,created_at,finished_at)
@@ -195,7 +465,7 @@ async function createHarness(dialect: "sqlite" | "postgres") {
         [
           ids(row.name),
           projectId,
-          ids(row.name),
+          batchId,
           ids(`run-${row.name}`),
           ids(row.caseId),
           ids(`attempt-${row.name}`),

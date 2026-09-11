@@ -18,7 +18,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       projectId: input.projectId,
       analysisIds: input.analysisIds,
       ...(input.inheritedFromAnalysisId
-        ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+        ? {
+            inheritedFromAnalysisId: input.inheritedFromAnalysisId,
+            inheritanceScope: input.inheritanceScope ?? "same_case",
+          }
         : {}),
       category: input.category,
       claimant: { id: identity.user.id, username: identity.user.username },
@@ -39,7 +42,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         count: claims.length,
         category: input.category,
         ...(input.inheritedFromAnalysisId
-          ? { inheritedFromAnalysisId: input.inheritedFromAnalysisId }
+          ? {
+              inheritedFromAnalysisId: input.inheritedFromAnalysisId,
+              inheritanceScope: input.inheritanceScope ?? "same_case",
+            }
           : {}),
       },
     });

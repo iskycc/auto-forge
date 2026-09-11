@@ -34,6 +34,36 @@ describe("failure analysis completion upload", () => {
     expect(new TextDecoder().decode(result.remarkImages[1]!.content)).toBe("jpeg");
   });
 
+  it.each(["json", "multipart"])(
+    "preserves the selected inheritance scope in %s and rejects unknown scopes",
+    async (encoding) => {
+      function request(inheritanceScope: string) {
+        const payload = JSON.stringify({
+          ...input,
+          inheritedFromAnalysisId: "history-a",
+          inheritanceScope,
+        });
+        if (encoding === "json")
+          return new Request("http://localhost/api", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: payload,
+          });
+        const form = new FormData();
+        form.set("input", payload);
+        return new Request("http://localhost/api", { method: "POST", body: form });
+      }
+      for (const inheritanceScope of ["same_case", "task_recent_batches"]) {
+        expect(
+          (await readFailureAnalysisCompletion(request(inheritanceScope))).input,
+        ).toMatchObject({ inheritedFromAnalysisId: "history-a", inheritanceScope });
+      }
+      await expect(readFailureAnalysisCompletion(request("all_tasks"))).rejects.toMatchObject({
+        name: "ZodError",
+      });
+    },
+  );
+
   it("rejects invalid form fields and excessive image counts instead of silently discarding them", async () => {
     const form = new FormData();
     form.set("input", JSON.stringify(input));

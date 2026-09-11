@@ -181,26 +181,85 @@ describe("FailureAnalysisService", () => {
     expect(requestedExecutionRunIds[0]).toEqual(["run-a", "run-b"]);
   });
 
-  it("carries the selected conclusion source into the transactional completion check", async () => {
-    const claim = failureAnalysisClaim();
-    const complete = vi.fn(async () => [claim]);
-    const service = createService({ findOwnedClaims: vi.fn(async () => [claim]), complete });
-    await service.complete({
-      analysisIds: [claim.id],
-      projectId: claim.projectId,
-      claimant: { id: claim.claimantId, username: claim.claimantUsername },
-      inheritedFromAnalysisId: "same-task-case-history",
-      category: "code_issue_filed",
-      issueDescription: "Same root cause",
-      ticketReference: "BUG-1",
-      caseIssueConfirmed: false,
-    });
-    expect(complete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        inheritedFromAnalysisId: "same-task-case-history",
+  it.each(["same_case", "task_recent_batches"] as const)(
+    "carries the %s conclusion scope into the transactional completion check",
+    async (inheritanceScope) => {
+      const claim = failureAnalysisClaim();
+      const complete = vi.fn(async () => [claim]);
+      const service = createService({ findOwnedClaims: vi.fn(async () => [claim]), complete });
+      await service.complete({
         analysisIds: [claim.id],
-      }),
-    );
+        projectId: claim.projectId,
+        claimant: { id: claim.claimantId, username: claim.claimantUsername },
+        inheritedFromAnalysisId: "same-task-case-history",
+        inheritanceScope,
+        category: "code_issue_filed",
+        issueDescription: "Same root cause",
+        ticketReference: "BUG-1",
+        caseIssueConfirmed: false,
+      });
+      expect(complete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inheritedFromAnalysisId: "same-task-case-history",
+          inheritanceScope,
+          analysisIds: [claim.id],
+        }),
+      );
+    },
+  );
+
+  it("preserves the explicit task batch scope when searching conclusions", async () => {
+    const listCompletedConclusions = vi.fn(async () => ({ items: [] }));
+    const service = createService({ listCompletedConclusions });
+    await service.listCompletedConclusions({
+      projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-a",
+      scope: "task_recent_batches",
+      query: " BUG-1 ",
+      limit: 500,
+    });
+    expect(listCompletedConclusions).toHaveBeenCalledWith({
+      projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-a",
+      scope: "task_recent_batches",
+      query: "BUG-1",
+      limit: 100,
+    });
+  });
+
+  it("pages unique task cases and only loads the selected case history within the task window", async () => {
+    const listTaskConclusionCases = vi.fn(async () => ({ items: [] }));
+    const listCompletedConclusions = vi.fn(async () => ({ items: [] }));
+    const service = createService({ listTaskConclusionCases, listCompletedConclusions });
+    await service.listTaskConclusionCases({
+      projectId: "project-a",
+      batchId: "batch-a",
+      query: `  ${"query".repeat(100)}  `,
+      limit: 500,
+      cursor: "cursor-a",
+    });
+    expect(listTaskConclusionCases).toHaveBeenCalledWith({
+      projectId: "project-a",
+      batchId: "batch-a",
+      query: "query".repeat(40),
+      limit: 100,
+      cursor: "cursor-a",
+    });
+    await service.listTaskCaseConclusionHistory({
+      projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-b",
+    });
+    expect(listCompletedConclusions).toHaveBeenCalledWith({
+      projectId: "project-a",
+      batchId: "batch-a",
+      caseDefinitionId: "case-b",
+      caseDefinitionFilter: "case-b",
+      scope: "task_recent_batches",
+      limit: 5,
+    });
   });
 
   it("bounds and deduplicates historical analysis queries", async () => {

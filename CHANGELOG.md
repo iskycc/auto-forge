@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.1 - 2026-09-11
+
+### Fixed
+
+- 任务历史结论选择弹窗按用例 ID 合并并分页，默认展示每个用例的最新结论，展开后按需加载近 5 次批跑内其他结论；搜索旧结论不会改变摘要中的最新结论。补充读取失败重试与长用例名称、类路径、问题单的空间约束；继承确认弹窗对超长文本换行，正文独立滚动并保留底部操作按钮。
+- 用例分析保留一级弹窗中同任务、同用例的直接继承；重复的历史搜索入口改为“从本任务近 5 次批跑继承”，可选择此前最近 5 次已结束标准批跑内所有用例的已完成结论。搜索与游标均在固定批次范围内生效，不混入其他任务、当前/后续批次或诊断重跑。
+- 两种继承入口均需确认根因，选择弹窗保留问题单与来源信息；Lite/Full 完成事务按显式继承范围重新校验。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。未指定继承范围的 API 请求保持同任务、同用例校验。
+
+### Validation and known limitations
+
+- 全量 902 项 TypeScript 单元测试、Go 测试和 28 项发布/运维脚本测试通过；相关应用与 SQLite/PostgreSQL 集成测试 40 项通过。
+- 格式、lint、类型检查及 Web 生产构建通过；用例分析 3 项 Playwright 回归通过，覆盖原有直接继承、分组与按需展开、读取失败重试、搜索旧结论和实际继承提交。
+- 已人工查看 1024×768、1536×960 的收起、展开及继承确认截图，长文本无横向溢出，确认按钮保持可见。本地浏览器验证使用 Chromium，完整 Full 与离线发布验收由版本标签流水线执行。
+
 ## 1.17.0 - 2026-09-10
 
 ### Added and changed

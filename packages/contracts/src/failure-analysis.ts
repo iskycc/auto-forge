@@ -191,6 +191,16 @@ export const failureAnalysisHistoryPageSchema = z.object({
   nextCursor: z.string().optional(),
 });
 
+export const failureAnalysisCaseConclusionSchema = z.object({
+  latest: failureAnalysisHistoryItemSchema,
+  conclusionCount: z.number().int().positive(),
+});
+export const failureAnalysisCaseConclusionPageSchema = z.object({
+  items: z.array(failureAnalysisCaseConclusionSchema),
+  nextCursor: z.string().optional(),
+});
+export type FailureAnalysisCaseConclusionView = z.infer<typeof failureAnalysisCaseConclusionSchema>;
+
 export const failureAnalysisExecutionSchema = z.object({
   executionRunId: z.string().min(1),
   batchId: z.string().min(1),
@@ -253,7 +263,11 @@ export const startFailureAnalysisInputSchema = z.object({
   category: failureAnalysisCategorySchema,
 });
 
+export const failureAnalysisInheritanceScopeSchema = z.enum(["same_case", "task_recent_batches"]);
+export type FailureAnalysisInheritanceScope = z.infer<typeof failureAnalysisInheritanceScopeSchema>;
+
 export const completeFailureAnalysisInputSchema = z.object({
+  inheritanceScope: failureAnalysisInheritanceScopeSchema.optional(),
   inheritedFromAnalysisId: z.string().min(1).max(200).optional(),
   projectId: z.string().min(1),
   analysisIds: z.array(z.string().min(1)).min(1).max(100),
