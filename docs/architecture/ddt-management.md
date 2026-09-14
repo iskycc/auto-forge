@@ -6,11 +6,13 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 
 每条 DDT 用例都绑定 `projectId + projectVersionId + testStageId`。`CaseID` 只在这个完整作用域内唯一；列表、详情、历史、模板、回收站、导入任务、导出和 `/api/v1/ddt/**` 全部在服务端重复校验这个层级，不能通过切换前端上下文读取或修改其他版本的数据。
 
-读取使用 `case.read`，编辑、批量操作、模板、导入和回收站操作使用 `case.manage`。浏览器会话沿用同源 CSRF 保护；服务账号通过现有 `af_api_` 令牌和相同的项目权限访问 `/api/v1/ddt/**`。所有写操作进入 AutoForge 审计日志，记录友好的动作名、项目、版本、阶段和有界计数，不保存表格内容或令牌。
+管理接口读取使用 `case.read`，编辑、批量操作、模板、导入和回收站操作使用 `case.manage`。浏览器会话沿用同源 CSRF 保护；服务账号通过现有 `af_api_` 令牌和相同的项目权限访问 `/api/v1/ddt/**`。所有写操作进入 AutoForge 审计日志，记录友好的动作名、项目、版本、阶段和有界计数，不保存表格内容或令牌。
+
+单条用例原始字段另提供 `/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}` 下的匿名只读查询。调用者无需登录或 API Key，只要能访问平台网络并提供完整范围和 CaseID，即可读取该用例字段；范围 ID 用于定位数据，不作为访问凭据。该入口不公开管理元数据、执行类、修改历史、回收站、目录列表或写操作。
 
 ## 已融合能力
 
-| ddt-insight 能力                           | AutoForge 1.1.0 落点                                                                                                           |
+| ddt-insight 能力                           | AutoForge 实现                                                                                                                |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | 动态字段、全局 CaseID、srNum 分组          | “用例管理 → DDT 管理”；动态字段详情、前缀/分组/字段条件筛选；任务树按 SR 展开                                                  |
 | `data` 普通表格、`step1…stepN` 用户旅程    | 共享 DDT 领域模型；身份字段自动同步到每个 Step                                                                                 |
@@ -25,7 +27,7 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 | 回收站恢复与永久清除                       | 软删除快照、CaseID 冲突保护、明确二次确认                                                                                      |
 | 仪表盘                                     | 总量、业务组、来源、用户旅程、当日变化和近七日图表                                                                             |
 | CoTest `classDataFile` 执行                | SR 统一关联同版本、同阶段候选范围内的 TestNG 类；批次为每个 CaseID 固化独立 JSON 数据文件                                      |
-| Open API 与示例                            | 融入已认证、项目隔离的 `/api/v1/ddt/**`，不保留匿名全局接口                                                                    |
+| Open API 与示例                            | “DDT 管理 → 开放 API”；匿名单用例原始 JSON 查询，URL 固定项目、版本和阶段，提供查询验证及 cURL / JavaScript / Groovy 示例           |
 
 ## 用例工作台布局
 
@@ -160,7 +162,7 @@ Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都�
 
 ## API 概览
 
-所有请求都必须带 `projectId`、`projectVersionId`、`testStageId` 查询参数：
+以下管理请求都必须带 `projectId`、`projectVersionId`、`testStageId` 查询参数并通过鉴权：
 
 - `GET /api/v1/ddt/dashboard|groups|cases|templates|recycle|imports`
 - `GET/PATCH/DELETE /api/v1/ddt/cases/{CaseID}`
@@ -184,3 +186,24 @@ Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都�
 - `POST/DELETE /api/v1/case-suites/{suiteId}/ddt-cases`
 
 API 响应继续使用 AutoForge 的稳定错误码、`requestId`、游标分页和显式 DTO；不会返回 ORM 行或对象存储凭据。
+
+### 匿名用例查询
+
+固定范围前缀为 `/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}`，三个 ID 使用平台稳定 ID，项目或版本改名不改变已有地址。前缀下提供两个等价入口：
+
+- `GET /case?caseId={CaseID}`
+- `GET /cases/{CaseID}`
+
+范围只读取路径参数，查询参数或浏览器选中范围不能覆盖它。输入在契约层校验，CaseID 去除首尾空白后长度为 1–512，查询沿用大小写不敏感匹配。中文、空格、`/`、`?`、`#`、`%` 等字符需 URL 编码；包含路径保留字符时优先使用查询参数形式。
+
+成功响应直接返回 `DdtCaseData`，保留字段名、数字、布尔值、null 和用户旅程嵌套，不包裹 `data`、版本或管理信息。例如：
+
+```json
+{"CaseID":"PAY-001","srNum":"PAY","amount":12,"enabled":true,"note":null}
+```
+
+不存在、已回收或不属于路径范围的用例返回 HTTP 404 / `DDT_CASE_NOT_FOUND`，不会回退到其他范围。参数错误返回 400 / `VALIDATION_FAILED`，数据库繁忙沿用 503 / `PLATFORM_BUSY`；错误统一使用 `error.code`、`error.message`、`error.requestId`。两个入口只支持 GET、HEAD、OPTIONS；管理写操作仍在原鉴权入口执行。
+
+响应使用 `Cache-Control: no-store, max-age=0`、`Access-Control-Allow-Origin: *`、`X-Response-Time`，成功和错误都可跨域读取。OPTIONS 无需建立平台服务。查询复用 Lite/Full 的三层范围与 CaseID 联合索引，单次只读一条权威记录，不触发表格解析、列表统计、会话更新或逐请求调用量落库。更新、导入覆盖、回收和恢复后，后续查询立即反映权威状态；已开始执行的批次仍使用自己的不可变快照。
+
+“开放 API”子标签页地址为 `/cases?tab=ddt&ddtView=api`，首次进入不请求 DDT 列表、统计、模板、导入任务或回收站。在线验证显式省略浏览器凭据，15 秒超时，切换子页或范围时取消未完成请求；长响应只渲染前 24,000 个字符，仍可复制完整 JSON。地址与示例随当前范围和 CaseID 生成，已复制地址不会跟随之后的顶栏切换。

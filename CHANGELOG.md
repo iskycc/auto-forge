@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.3 - 2026-09-14
+
+### Added and fixed
+
+- 补齐 DDT 单用例公开查询：`/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}` 下支持 `case?caseId=…` 和 `cases/{CaseID}` 两种 GET 形式，无需登录或 API Key。返回原始字段 JSON，保留数字、布尔值、null 和用户旅程步骤，不混入管理元数据；同名 CaseID 在不同项目、版本或阶段独立查询。
+- DDT 管理新增“开放 API”子标签，展示当前范围、接口地址、响应说明及 cURL / JavaScript / Groovy 示例，支持地址和响应复制、匿名在线查询、前进后退与未保存编辑保护。首次进入不加载 DDT 列表、统计、模板、导入任务或回收站，长地址与代码换行，长响应按有界预览展示。
+- 公开查询从单条权威记录读取，更新、覆盖导入、回收和恢复后即时反映状态；支持跨域只读请求和稳定错误码，不新增逐次调用统计写入。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用查询契约和应用服务，无数据库迁移、持久配置、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。
+- 网络可达的调用者可凭完整范围 ID 和 CaseID 读取该用例字段；范围 ID 用于定位，不作为访问凭据。原有管理、编辑、导入、历史与回收站接口继续鉴权，原管理详情响应结构保持兼容。
+
+### Validation and known limitations
+
+- 22 项相关单元及 SQLite/PostgreSQL 集成测试、3 项 DDT Playwright 场景通过；格式、lint、全仓类型检查和 Web 生产构建通过。cURL 与 Groovy 2.4.21 示例已实际调用本地 HTTP 服务，JavaScript 示例纳入自动化测试。
+- 已人工查看 1024×768、1536×960 的开放 API、调用示例和超长 CaseID 截图，无横向溢出；验证范围隔离、特殊字符、匿名只读、即时更新、回收恢复及草稿保护。本地浏览器验证使用 Chromium，完整 Full 与离线发布验收由标签流水线执行。
+
 ## 1.17.2 - 2026-09-14
 
 ### Changed

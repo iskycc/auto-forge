@@ -32,6 +32,10 @@ export const ddtScopeSchema = z.object({
   testStageId: z.string().min(1).max(128),
 });
 
+export const ddtCaseLookupSchema = ddtScopeSchema.extend({
+  caseId: z.string().trim().min(1).max(512),
+});
+
 export const ddtSearchOperatorSchema = z.enum([
   "eq",
   "ne",

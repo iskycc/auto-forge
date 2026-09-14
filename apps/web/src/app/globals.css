@@ -56,6 +56,8 @@
   --analysis-diff-gutter-width: 44px;
   --font-size-ddt-heading: 20px;
   --ddt-preview-files-max-height: min(320px, 35dvh);
+  --ddt-api-code-max-height: 360px;
+  --ddt-api-language-width: 140px;
 }
 
 * {
@@ -7450,9 +7452,144 @@ button.icon-button:disabled {
 }
 
 .ddt-subtabs {
+  flex-wrap: wrap;
   gap: 3px;
   border-bottom: 1px solid var(--color-border);
   padding-bottom: 8px;
+}
+
+.ddt-api-reference,
+.ddt-api-card {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.ddt-api-card {
+  align-content: start;
+  padding: var(--space-5);
+}
+
+.ddt-api-card :is(h2, h3, p, dl, dd, pre) {
+  margin: 0;
+}
+
+.ddt-api-card h2 {
+  font-size: var(--font-size-ddt-heading);
+}
+
+.ddt-api-card h3 {
+  font-size: var(--font-size-body);
+}
+
+.ddt-api-card p,
+.ddt-api-card dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+}
+
+.ddt-api-heading,
+.ddt-api-endpoint-heading,
+.ddt-api-query {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ddt-api-heading > div,
+.ddt-api-endpoint-heading > :first-child {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.ddt-api-endpoint-heading > .ui-select {
+  flex: 0 1 var(--ddt-api-language-width);
+  width: var(--ddt-api-language-width);
+}
+
+.ddt-api-badge {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  font-size: var(--font-size-caption);
+}
+
+.ddt-api-scope {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.ddt-api-scope dd {
+  overflow-wrap: anywhere;
+  font-weight: 650;
+}
+
+.ddt-api-query {
+  align-items: end;
+}
+
+.ddt-api-query label {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: var(--space-2);
+}
+
+.ddt-api-endpoint,
+.ddt-api-result {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.ddt-api-card pre,
+.ddt-api-endpoint > code {
+  display: block;
+  min-width: 0;
+  max-height: var(--ddt-api-code-max-height);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+}
+
+.ddt-api-endpoint code > span {
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+.ddt-api-guide-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.ddt-api-responses {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ddt-api-responses > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+@media (max-width: 1180px) {
+  .ddt-api-guide-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ddt-subtabs button {

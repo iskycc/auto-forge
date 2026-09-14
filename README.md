@@ -119,6 +119,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `POST`           | `/api/v1/case-suites/{suiteId}/cases/missing`                  | 从候选集合反向筛选尚未加入任务的用例                       |
 | `DELETE`         | `/api/v1/case-suites/{suiteId}/cases/{caseDefinitionId}`       | 删除任务内用例                                             |
 | `GET/POST/...`   | `/api/v1/ddt/**`                                               | 版本/阶段隔离的 DDT 用例、导入、模板、历史与回收站         |
+| `GET`            | `/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}/case?caseId={CaseID}` | DDT 匿名只读原始 JSON 查询；URL 固定三层范围，亦支持末尾 `cases/{CaseID}`，用法见“DDT 管理 → 开放 API” |
 | `GET/PUT`        | `/api/v1/case-suites/{suiteId}/webhooks`                       | 查询或替换任务绑定的完成通知端点                           |
 | `GET/POST`       | `/api/v1/webhooks`                                             | 查询或创建当前项目的 Webhook                               |
 | `PATCH/DELETE`   | `/api/v1/webhooks/{webhookId}`                                 | 按修订号编辑或删除 Webhook                                 |

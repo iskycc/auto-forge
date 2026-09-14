@@ -60,6 +60,22 @@ Cookie；从后台标签页返回时也会检查续期。持续使用平台不�
 用例管理顶部可切换到“DDT 管理”。两个 Tab 在当前工作台内即时切换，访问过的界面不会被卸载；
 从 DDT 返回 TestNG 时，已经加载的目录、搜索条件、勾选状态和打开的详情会原样保留。DDT 用例与
 TestNG 用例共享顶栏项目层级和权限，但自身保存的是动态字段数据，不会把 CaseID 当成 Java class。
+
+“DDT 管理 → 开放 API”提供公开只读查询，无需登录或 API Key。先在顶栏选定项目、版本和阶段，再输入
+CaseID，即可复制当前范围的地址或点击“查询用例”查看真实响应；页面同时提供 cURL、JavaScript 和
+Groovy 调用示例。地址采用平台稳定 ID，格式为：
+
+```text
+/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}/case?caseId={CaseID}
+/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}/cases/{CaseID}
+```
+
+两个 GET 接口直接返回原始 JSON 字段（用户旅程保留各 Step），不需要再取响应的 `data` 属性。
+中文和特殊字符需要 URL 编码，建议使用查询参数形式。同一 CaseID 在不同项目、版本或阶段分别查询；
+已复制地址固定指向原范围，不受浏览器之后切换顶栏影响。修改、覆盖导入或恢复后可立即读取最新数据，
+无此用例或已移入回收站时返回 404；参数错误返回 400，失败详情见 `error.message` 和 `error.requestId`。
+网络可达的调用者可读取指定用例的字段内容，编辑、导入、历史及其他管理接口仍需平台权限。
+
 普通表格使用名为 `data` 的 Sheet，首行必须包含 `CaseID`
 和 `srNum`；用户旅程使用连续的 `step1`、`step2`… Sheet，各 Step 的行数、CaseID 和 srNum 必须
 一致。平台支持 XLSX、XLS、XLSB、CSV、ODS，或把这些文件放在 ZIP 根目录/一层子目录中批量上传。

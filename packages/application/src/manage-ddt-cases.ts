@@ -167,6 +167,10 @@ export class DdtCaseService {
     return item;
   }
 
+  async getData(scope: DdtScope, caseId: string): Promise<DdtCaseData> {
+    return (await this.get(scope, caseId)).data;
+  }
+
   async getSummary(scope: DdtScope, caseId: string) {
     const item = await this.repository.getCaseSummary(scope, caseId.trim());
     if (!item) throw new DomainError("DDT_CASE_NOT_FOUND", "指定的 DDT 用例不存在。");

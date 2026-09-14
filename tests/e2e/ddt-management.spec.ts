@@ -1731,6 +1731,243 @@ const ddtTaskCapabilities = [
   "testng:7.11.0",
 ];
 
+test("DDT public API reads raw cases within URL scope and provides a responsive API tab", async ({
+  page,
+  request,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const otherProject = await createHierarchy(page);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${hierarchy.projectId}/versions`,
+    {
+      method: "POST",
+      body: { name: "API 第二版本" },
+    },
+  );
+  expect(version.status).toBe(201);
+  const scopes = [hierarchy, otherProject];
+  for (const versionId of [hierarchy.versionId, version.body.id]) {
+    const stage = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${hierarchy.projectId}/versions/${versionId}/stages`,
+      {
+        method: "POST",
+        body: { name: "API 第二阶段" },
+      },
+    );
+    expect(stage.status).toBe(201);
+    scopes.push({ ...hierarchy, versionId, stageId: stage.body.id });
+  }
+  const caseId = "API-支付/%2F?#+& 空格";
+  const origin = new URL(page.url()).origin;
+  const publicBase = (scope: typeof hierarchy) =>
+    `${origin}/api/v1/public/ddt/projects/${scope.projectId}/versions/${scope.versionId}/stages/${scope.stageId}`;
+  const publicUrl = (scope: typeof hierarchy) =>
+    `${publicBase(scope)}/case?${new URLSearchParams({ caseId })}`;
+  for (const [index, scope] of scopes.entries()) {
+    await importDdtApiFixture(page, scope, caseId, index);
+    const response = await request.get(publicUrl(scope));
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({
+      CaseID: caseId,
+      srNum: "API-SR",
+      marker: String(index),
+    });
+    expect(response.headers()["cache-control"]).toContain("no-store");
+    expect(response.headers()["access-control-allow-origin"]).toBe("*");
+    const pathResponse = await request.get(
+      `${publicBase(scope)}/cases/${encodeURIComponent(caseId)}`,
+    );
+    expect(pathResponse.status()).toBe(200);
+    expect(await pathResponse.json()).toEqual(await response.json());
+  }
+  const override = await request.get(`${publicUrl(hierarchy)}&projectId=${otherProject.projectId}`);
+  expect(await override.json()).toMatchObject({ marker: "0" });
+  const wrongScope = await request.get(
+    publicUrl({ ...hierarchy, projectId: otherProject.projectId }),
+  );
+  expect(wrongScope.status()).toBe(404);
+  const missing = await request.get(`${publicBase(hierarchy)}/case`);
+  expect(missing.status()).toBe(400);
+  const options = await request.fetch(publicUrl(hierarchy), {
+    method: "OPTIONS",
+    headers: { Origin: "https://caller.invalid", "Access-Control-Request-Method": "GET" },
+  });
+  expect(options.status()).toBe(204);
+  for (const method of ["PATCH", "POST", "DELETE", "PUT"]) {
+    expect((await request.fetch(publicUrl(hierarchy), { method, data: {} })).status()).toBe(405);
+    expect(
+      (
+        await request.fetch(`${publicBase(hierarchy)}/cases/${encodeURIComponent(caseId)}`, {
+          method,
+          data: {},
+        })
+      ).status(),
+    ).toBe(405);
+  }
+  const managementPath = ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}`);
+  expect((await request.get(managementPath)).status()).toBe(401);
+  expect((await request.get(ddtPath(hierarchy, "cases"))).status()).toBe(401);
+  expect((await request.get(ddtPath(hierarchy, "recycle"))).status()).toBe(401);
+  expect(
+    (
+      await request.get(`${managementPath.split("?")[0]}/history?${managementPath.split("?")[1]}`)
+    ).status(),
+  ).toBe(401);
+
+  const current = await browserJson<{ revision: number }>(page, managementPath);
+  const journey = {
+    CaseID: caseId,
+    srNum: "API-SR",
+    用户旅程: {
+      step1: { CaseID: caseId, srNum: "API-SR", amount: 12, enabled: false, note: null },
+      step2: { CaseID: caseId, srNum: "API-SR", Action: "确认支付" },
+    },
+  };
+  const update = await browserJson(page, managementPath, {
+    method: "PATCH",
+    body: { expectedRevision: current.body.revision, data: journey },
+  });
+  expect(update.status).toBe(200);
+  expect(await (await request.get(publicUrl(hierarchy))).json()).toEqual(journey);
+
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const managementReads: string[] = [];
+  const recordManagementRead = (observed: Request) => {
+    if (/\/api\/v1\/ddt\/(cases|dashboard|templates|imports|recycle)(\?|$)/u.test(observed.url()))
+      managementReads.push(observed.url());
+  };
+  page.on("request", recordManagementRead);
+  await page.goto("/cases?tab=ddt&ddtView=api");
+  const api = page.getByRole("region", { name: "DDT 开放 API", exact: true });
+  await expect(api).toBeVisible();
+  await expect(page.getByRole("tab", { name: "开放 API", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(api).toContainText("无需登录或 API Key");
+  expect(managementReads).toEqual([]);
+  page.off("request", recordManagementRead);
+  await api.getByLabel("CaseID", { exact: true }).fill(caseId);
+  await api.getByRole("button", { name: "查询用例", exact: true }).click();
+  await expect(api.getByRole("region", { name: "查询结果" })).toContainText("HTTP 200");
+  await expect(api.getByRole("region", { name: "查询结果" })).toContainText('"step2"');
+  await api.getByRole("button", { name: "复制查询参数形式地址" }).click();
+  await expect(page.locator(".toast-viewport")).toContainText("已复制到剪贴板");
+  await page.getByRole("button", { name: "关闭通知", exact: true }).last().click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-open-api-${width}`);
+    await api.getByRole("button", { name: "示例语言", exact: true }).click();
+    await page.getByRole("option", { name: "Groovy", exact: true }).click();
+    await alignDdtSectionBelowTopbar(api.locator(".ddt-api-guide-grid > article").first());
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-open-api-example-${width}`);
+  }
+  await api.getByLabel("CaseID", { exact: true }).fill(`CASE-${"很长的用例标识".repeat(60)}`);
+  await api.getByRole("button", { name: "查询用例", exact: true }).click();
+  await expect(api.getByRole("region", { name: "查询结果" })).toContainText("HTTP 404");
+  for (const width of [1536, 1024]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await alignDdtSectionBelowTopbar(api.locator("form"));
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-open-api-long-case-id-${width}`);
+  }
+
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
+  await expect(page.locator(".ddt-case-browser")).toBeVisible();
+  const details = page.getByRole("region", { name: "DDT 用例详情", exact: true });
+  await details.getByRole("button", { name: "编辑字段 amount", exact: true }).click();
+  await details.getByLabel("amount 的值").fill("123");
+  await page.goBack();
+  await page
+    .getByRole("dialog", { name: "放弃未保存的修改" })
+    .getByRole("button", { name: "继续编辑" })
+    .click();
+  await expect(details.getByLabel("amount 的值")).toHaveValue("123");
+  await details.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("tab", { name: "开放 API", exact: true }).click();
+  await expect(api).toBeVisible();
+  await page.goBack();
+  await expect(page.locator(".ddt-case-browser")).toBeVisible();
+  await page.goForward();
+  await expect(api).toBeVisible();
+  await page.reload();
+  await expect(api).toBeVisible();
+  await selectProjectContext(
+    page,
+    otherProject.projectId,
+    otherProject.versionId,
+    otherProject.stageId,
+  );
+  await page.goto("/cases?tab=ddt&ddtView=api");
+  await expect(api.locator(".ddt-api-endpoint").first()).toContainText(publicBase(otherProject));
+  // A previously copied address remains independent of the browser's selected scope.
+  expect(await (await request.get(publicUrl(hierarchy))).json()).toEqual(journey);
+
+  const deleted = await browserJson(page, managementPath, { method: "DELETE" });
+  expect(deleted.status).toBe(200);
+  expect((await request.get(publicUrl(hierarchy))).status()).toBe(404);
+  const recycle = await browserJson<{ items: Array<{ id: string }> }>(
+    page,
+    ddtPath(hierarchy, "recycle"),
+  );
+  const restored = await browserJson(
+    page,
+    ddtPath(hierarchy, `recycle/${recycle.body.items[0]!.id}/restore`),
+    { method: "POST", body: {} },
+  );
+  expect(restored.status).toBe(200);
+  expect(await (await request.get(publicUrl(hierarchy))).json()).toEqual(journey);
+});
+
+async function alignDdtSectionBelowTopbar(section: Locator) {
+  await section.evaluate((element) => {
+    element.scrollIntoView({ block: "start" });
+    const topbarBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+    window.scrollBy(0, -topbarBottom);
+  });
+}
+
+async function importDdtApiFixture(
+  page: Page,
+  hierarchy: { projectId: string; versionId: string; stageId: string },
+  caseId: string,
+  marker: number,
+) {
+  const headers = { origin: new URL(page.url()).origin };
+  const preview = await page.request.post(ddtPath(hierarchy, "imports/preview"), {
+    headers,
+    multipart: {
+      files: {
+        name: "public-api.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: buildExportWorkbook([{ CaseID: caseId, srNum: "API-SR", marker }]),
+      },
+    },
+  });
+  expect(preview.status()).toBe(201);
+  const job = (await preview.json()) as { id: string };
+  const confirmation = await page.request.post(ddtPath(hierarchy, `imports/${job.id}/confirm`), {
+    headers,
+    data: { conflictStrategy: "overwrite" },
+  });
+  expect(confirmation.status()).toBe(200);
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(ddtPath(hierarchy, `imports/${job.id}`));
+        return ((await response.json()) as { status: string }).status;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("succeeded");
+}
+
 async function createHierarchy(page: Page) {
   const suffix = uniqueName("ddt");
   const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {

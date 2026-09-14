@@ -15,6 +15,7 @@ import {
 } from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { DdtCaseInspector } from "./ddt-case-inspector";
+import { DdtApiReference, type DdtScopeLabels } from "./ddt-api-reference";
 
 import {
   ArchiveRestore,
@@ -26,6 +27,7 @@ import {
   Download,
   FileSpreadsheet,
   Filter,
+  Globe2,
   Layers3,
   LoaderCircle,
   ListPlus,
@@ -138,7 +140,17 @@ type DeletedCase = {
   sourceName: string;
   deletedAt: string;
 };
-type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle";
+type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle" | "api";
+
+function workspaceTab(value: string | null): WorkspaceTab {
+  return value === "cases" ||
+    value === "imports" ||
+    value === "templates" ||
+    value === "recycle" ||
+    value === "api"
+    ? value
+    : "overview";
+}
 
 const DDT_IMPORT_FILE_ACCEPT = ".xlsx,.xls,.xlsb,.csv,.ods,.zip";
 const DDT_IMPORT_FILE_EXTENSIONS = new Set(["xlsx", "xls", "xlsb", "csv", "ods", "zip"]);
@@ -164,12 +176,14 @@ const emptyDashboard: Dashboard = {
 
 export function DdtManagementWorkspace({
   scope,
+  scopeLabels,
   canManage,
   canManageSuites,
   canRun,
   suites,
 }: {
   scope: Scope;
+  scopeLabels: DdtScopeLabels;
   canManage: boolean;
   canManageSuites: boolean;
   canRun: boolean;
@@ -180,8 +194,16 @@ export function DdtManagementWorkspace({
   const toast = useToast();
   const router = useRouter();
   const searchParameters = useSearchParams();
-  const initialView = searchParameters.get("ddtView");
-  const [tab, setTab] = useState<WorkspaceTab>(initialView === "cases" ? "cases" : "overview");
+  const requestedTab = workspaceTab(searchParameters.get("ddtView"));
+  const [tab, setActiveTab] = useState<WorkspaceTab>(requestedTab);
+  const isApiTab = tab === "api";
+  const setTab = (value: WorkspaceTab) => {
+    setActiveTab(value);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", "ddt");
+    url.searchParams.set("ddtView", value);
+    window.history.pushState(null, "", url.pathname + url.search);
+  };
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string>();
@@ -317,6 +339,7 @@ export function DdtManagementWorkspace({
   ]);
 
   useEffect(() => {
+    if (isApiTab) return;
     let cancelled = false;
     const applyFilter = async () => {
       // Returning to a recently requested filter must restart its cancelled read.
@@ -351,9 +374,10 @@ export function DdtManagementWorkspace({
       window.clearTimeout(timer);
       loadGeneration.current += 1;
     };
-  }, [confirmAction, filterKey, load]);
+  }, [confirmAction, filterKey, isApiTab, load]);
 
   useEffect(() => {
+    if (isApiTab) return;
     if (!imports.some((job) => ["queued", "running", "cancel_requested"].includes(job.status)))
       return;
     const timer = window.setInterval(() => {
@@ -361,7 +385,7 @@ export function DdtManagementWorkspace({
       void load();
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [imports, load]);
+  }, [imports, isApiTab, load]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -424,7 +448,7 @@ export function DdtManagementWorkspace({
     return () => window.clearTimeout(timer);
   }, [tab, busy, refreshing, activeCaseId, cases, openCase]);
 
-  const leaveEditor = async (): Promise<boolean> => {
+  const leaveEditor = useCallback(async (): Promise<boolean> => {
     if (editorStatus.current === "saving") return false;
     if (editorStatus.current === "editing") {
       if (!(await confirmAction(discardDdtEdits))) return false;
@@ -432,7 +456,27 @@ export function DdtManagementWorkspace({
       setEditorEpoch((epoch) => epoch + 1);
     }
     return true;
-  };
+  }, [confirmAction, setEditorEpoch]);
+
+  useEffect(() => {
+    if (requestedTab === tab) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const discard = await leaveEditor();
+      if (cancelled) return;
+      if (discard) {
+        setActiveTab(requestedTab);
+      } else {
+        const url = new URL(window.location.href);
+        url.searchParams.set("ddtView", tab);
+        window.history.replaceState(null, "", url.pathname + url.search);
+      }
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [leaveEditor, requestedTab, tab]);
   const navigateCase = async (caseId: string) => {
     if (!(await leaveEditor())) return;
     setExecutionPreviewCaseId(undefined);
@@ -584,19 +628,21 @@ export function DdtManagementWorkspace({
         >
           <Code2 size={15} /> SR 测试类关联
         </Button>
-        <Button
-          className="button button-secondary"
-          type="button"
-          onClick={async () => {
-            if (!(await leaveEditor())) return;
-            clearBrowserSnapshots();
-            await load();
-            if (activeCaseId) await openCase(activeCaseId);
-          }}
-          disabled={busy || refreshing || savingCase}
-        >
-          <RefreshCw size={15} className={busy || refreshing ? "spin" : ""} /> 刷新
-        </Button>
+        {!isApiTab ? (
+          <Button
+            className="button button-secondary"
+            type="button"
+            onClick={async () => {
+              if (!(await leaveEditor())) return;
+              clearBrowserSnapshots();
+              await load();
+              if (activeCaseId) await openCase(activeCaseId);
+            }}
+            disabled={busy || refreshing || savingCase}
+          >
+            <RefreshCw size={15} className={busy || refreshing ? "spin" : ""} /> 刷新
+          </Button>
+        ) : null}
         {canManage ? (
           <Button
             className="button button-primary"
@@ -618,6 +664,7 @@ export function DdtManagementWorkspace({
             ["imports", Layers3, "导入任务"],
             ["templates", Boxes, "字段模板"],
             ["recycle", ArchiveRestore, "回收站"],
+            ["api", Globe2, "开放 API"],
           ] as const
         ).map(([value, Icon, label]) => (
           <Button
@@ -658,7 +705,9 @@ export function DdtManagementWorkspace({
         />
       ) : null}
 
-      {busy && cases.length === 0 ? <WorkspaceLoading /> : null}
+      {!isApiTab && busy && cases.length === 0 ? <WorkspaceLoading /> : null}
+
+      {isApiTab ? <DdtApiReference scope={scope} labels={scopeLabels} /> : null}
 
       {!busy && tab === "overview" ? (
         <div className="ddt-overview">
