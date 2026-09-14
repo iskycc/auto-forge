@@ -203,6 +203,10 @@ describe("SQLite case suite lifecycle", () => {
     try {
       insertUser(handle);
       await suites.create({ id: "suite-1", name: "Smoke", createdAt: timestamp });
+      expect((await suites.get("suite-1"))?.policy).toMatchObject({
+        retryMode: "round",
+        retryLimit: 0,
+      });
       await suites.addCases({
         suiteId: "suite-1",
         items: [{ id: "item-1", caseDefinitionId: "case-1" }],
@@ -222,6 +226,7 @@ describe("SQLite case suite lifecycle", () => {
         policy: {
           ...defaultCaseSuiteExecutionPolicy,
           concurrency: 8,
+          retryMode: "immediate",
           runnerLabels: ["gpu"],
           artifactPatterns: ["reports/**", "logs/*.txt"],
         },
@@ -236,6 +241,7 @@ describe("SQLite case suite lifecycle", () => {
       });
       expect(updated.policy).toMatchObject({
         concurrency: 8,
+        retryMode: "immediate",
         runnerLabels: ["gpu"],
         artifactPatterns: ["reports/**", "logs/*.txt"],
       });

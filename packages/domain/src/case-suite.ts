@@ -201,7 +201,7 @@ export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   priority: 0,
   concurrency: 4,
   retryLimit: 0,
-  retryMode: "immediate",
+  retryMode: "round",
   queueTimeoutMs: 86_400_000,
   claimTimeoutMs: 300_000,
   uploadTimeoutMs: 600_000,

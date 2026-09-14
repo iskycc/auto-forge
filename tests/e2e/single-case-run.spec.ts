@@ -1,9 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { expectUiIntegrity } from "./support/ui-guard";
 import {
   browserJson,
   ensureAdministrator,
@@ -36,10 +39,7 @@ test("global execution dialog schedules one case through a runner group with Ada
   await page.getByRole("button", { name: "创建机组" }).click();
   const createGroup = page.getByRole("dialog", { name: "新建执行机组" });
   await createGroup.getByLabel("组名称").fill(groupName);
-  await createGroup
-    .locator(".runner-member-picker label", { hasText: "E2E Single Case Runner" })
-    .getByRole("checkbox")
-    .check();
+  await createGroup.locator(`input[name="runnerIds"][value="${runner.runnerId}"]`).check();
   await createGroup.getByRole("button", { name: "创建执行机组" }).click();
   await expect(page.locator(".runner-group-card", { hasText: groupName })).toBeVisible();
 
@@ -64,6 +64,25 @@ test("global execution dialog schedules one case through a runner group with Ada
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Single Case Suite");
   await dialog.getByLabel("单用例 Adapter Test Name").fill("Single Case Test");
   await dialog.getByLabel("单用例执行环境 IP 地址").fill("10.0.0.21");
+  await expect(dialog.locator('select[aria-label="失败重跑方式"]')).toHaveValue("round");
+  await expect(dialog.locator('select[aria-label="失败重跑次数"]')).toHaveValue("0");
+  const retryModeTrigger = dialog.getByRole("button", { name: "失败重跑方式", exact: true });
+  await expect(retryModeTrigger).toHaveText("本轮结束后统一重跑");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await retryModeTrigger.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+    if (screenshotDirectory) {
+      await mkdir(screenshotDirectory, { recursive: true });
+      await page.screenshot({
+        path: resolve(screenshotDirectory, `single-case-default-round-${viewport.width}.png`),
+      });
+    }
+  }
 
   const createResponse = page.waitForResponse(
     (response) =>
@@ -77,9 +96,13 @@ test("global execution dialog schedules one case through a runner group with Ada
     id: string;
     projectId: string;
     selectedRunnerIds: string[];
+    retryMode: "immediate" | "round";
+    retryLimit: number;
   };
   expect(batch.projectId).toBe(project.id);
   expect(batch.selectedRunnerIds).toEqual([runner.runnerId]);
+  expect(batch.retryMode).toBe("round");
+  expect(batch.retryLimit).toBe(0);
   await expect(page).toHaveURL(new RegExp(`/run-batches/${batch.id}$`));
 
   const claim = await page.request.post(

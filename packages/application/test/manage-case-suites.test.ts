@@ -14,7 +14,7 @@ import type {
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("case suite update and copy", () => {
-  it("binds a new suite to its selected project version", async () => {
+  it("creates a version-bound suite with round retries disabled until a retry limit is set", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(
       suites,
@@ -38,7 +38,11 @@ describe("case suite update and copy", () => {
         id: "suite-new",
         projectId: "project-1",
         actorId: "user-1",
-        policy: expect.objectContaining({ projectVersionId: "version-2" }),
+        policy: expect.objectContaining({
+          projectVersionId: "version-2",
+          retryMode: "round",
+          retryLimit: 0,
+        }),
       }),
     );
   });
@@ -67,6 +71,7 @@ describe("case suite update and copy", () => {
         changeReason: "suite.update:policy+disable",
         policy: {
           ...defaultCaseSuiteExecutionPolicy,
+          retryMode: "immediate",
           projectVersionId: "version-1",
           runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
@@ -169,6 +174,7 @@ describe("case suite update and copy", () => {
       description: "smoke suite",
       policy: {
         ...defaultCaseSuiteExecutionPolicy,
+        retryMode: "immediate",
         projectVersionId: "version-1",
         runnerIds: ["runner-1"],
         runnerLabels: ["gpu"],
@@ -459,6 +465,7 @@ function suiteRepositoryFake() {
     enabled: true,
     policy: {
       ...defaultCaseSuiteExecutionPolicy,
+      retryMode: "immediate",
       projectVersionId: "version-1",
       runnerIds: ["runner-1"],
       runnerLabels: ["gpu"],

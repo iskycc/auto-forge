@@ -4,13 +4,14 @@ import { usePlatformNow } from "./platform-time";
 
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
-import type {
-  CaseDefinitionWithMethods,
-  DdtCaseSummary,
-  CaseSuite,
-  RunBatch,
-  Runner,
-  RunnerGroup,
+import {
+  defaultCaseSuiteExecutionPolicy,
+  type CaseDefinitionWithMethods,
+  type DdtCaseSummary,
+  type CaseSuite,
+  type RunBatch,
+  type Runner,
+  type RunnerGroup,
 } from "@autoforge/domain";
 import { Check, Clock3, LoaderCircle, Play, Server, UsersRound, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -114,7 +115,7 @@ export function GlobalRunDialog({
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
   const [runnerGroupId, setRunnerGroupId] = useState("");
   const [retryLimit, setRetryLimit] = useState(0);
-  const [retryMode, setRetryMode] = useState<"immediate" | "round">("immediate");
+  const [retryMode, setRetryMode] = useState(defaultCaseSuiteExecutionPolicy.retryMode);
   const [adapterEnabled, setAdapterEnabled] = useState(true);
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");

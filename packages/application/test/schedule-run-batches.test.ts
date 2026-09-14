@@ -973,6 +973,8 @@ describe("run batch creation with suite policy", () => {
       expect.objectContaining({
         projectId: "project-1",
         suiteId: "single:case-1",
+        retryMode: "round",
+        retryLimit: 0,
         policy: expect.objectContaining({ concurrency: 1 }),
         runs: [
           expect.objectContaining({

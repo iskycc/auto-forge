@@ -460,8 +460,18 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("任务名称").fill(`${suiteName} updated`);
   await page.getByLabel("优先级（-100 到 100）").fill("42");
   await page.getByLabel("并发度（同时在途执行数）").fill("3");
+  await expect(page.getByLabel("失败重跑方式")).toHaveValue("round");
+  await expect(page.getByLabel("重试次数上限")).toHaveValue("0");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByLabel("失败重跑方式").scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureUi(page, `case-suite-default-round-${viewport.width}`);
+  }
   await page.getByLabel("重试次数上限").fill("2");
-  await page.getByLabel("失败重跑方式").selectOption("round");
   await page.getByRole("button", { name: "添加规则" }).click();
   await expect(page.getByText(/命中后从本轮起持续生效/u)).toBeVisible();
   await expect(page.getByText(/每条规则只在指定轮次内判断/u)).toBeVisible();

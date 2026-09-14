@@ -1810,6 +1810,10 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         ],
       });
       await suites.create({ id: suiteId, name: "PG suite", createdAt: now });
+      expect((await suites.get(suiteId))?.policy).toMatchObject({
+        retryMode: "round",
+        retryLimit: 0,
+      });
       await suites.addCases({
         suiteId,
         items: [{ id: randomUUID(), caseDefinitionId }],
@@ -1846,7 +1850,11 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         },
       });
       expect(updated).toMatchObject({ name: "PG nightly", version: 3, revision: 3 });
-      expect(updated.policy).toMatchObject({ concurrency: 2, runnerLabels: ["gpu"] });
+      expect(updated.policy).toMatchObject({
+        concurrency: 2,
+        runnerLabels: ["gpu"],
+        retryMode: "immediate",
+      });
       const snapshots = await handle.pool.query<{
         version: number;
         change_reason: string;

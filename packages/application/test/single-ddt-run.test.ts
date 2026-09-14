@@ -37,6 +37,8 @@ describe("single DDT execution", () => {
         suiteId: `single:${item.id}`,
         suiteName: `单用例 · ${item.caseId}`,
         suiteVersion: item.revision,
+        retryMode: "round",
+        retryLimit: 0,
         policy: expect.objectContaining({
           concurrency: 1,
           projectVersionId: scope.projectVersionId,

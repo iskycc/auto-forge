@@ -4,6 +4,12 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Changed
+
+- 新建任务和单用例执行的默认重跑方式改为整轮重跑，等待本轮结束后统一重试；默认重跑次数仍为 0。已有任务的显式配置、复制任务及历史执行快照保持原模式，Lite/Full 共用默认策略，无需数据库迁移或 Runner 升级。
+
 ## 1.17.1 - 2026-09-11
 
 ### Fixed
