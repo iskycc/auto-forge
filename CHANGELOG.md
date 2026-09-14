@@ -4,11 +4,20 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.17.2 - 2026-09-14
 
 ### Changed
 
-- 新建任务和单用例执行的默认重跑方式改为整轮重跑，等待本轮结束后统一重试；默认重跑次数仍为 0。已有任务的显式配置、复制任务及历史执行快照保持原模式，Lite/Full 共用默认策略，无需数据库迁移或 Runner 升级。
+- 新建任务和普通/DDT 单用例执行的默认重跑方式改为整轮重跑，等待本轮结束后统一重试；默认重跑次数仍为 0，设置大于 0 后才会自动重跑。已有任务的显式配置、复制任务及历史执行快照保持原模式，顶栏、计划任务和 Jenkins 继续使用任务保存的策略。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用默认策略，无数据库迁移、持久配置结构、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。
+
+### Validation and known limitations
+
+- 902 项 TypeScript 单元测试、22 项 SQLite/PostgreSQL 集成测试及 4 项任务生命周期/单用例 Playwright 场景通过；修改文件的格式、lint、全仓类型检查和 Web 生产构建通过。
+- 已人工查看 1024×768、1536×1024 的任务详情及单用例执行弹窗截图，默认整轮选项正确，无横向溢出，弹窗操作按钮可见。本地浏览器验证使用 Chromium，完整 Full 与离线发布验收由标签流水线执行。
 
 ## 1.17.1 - 2026-09-11
 
