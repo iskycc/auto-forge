@@ -10,6 +10,12 @@ const GLOBAL_STYLES = join(SOURCE_ROOT, "app", "globals.css");
 const APP_SHELL = join(SOURCE_ROOT, "components", "app-shell.tsx");
 const PLATFORM_SETTINGS = join(SOURCE_ROOT, "components", "platform-settings.tsx");
 const ACCESS_SETTINGS = join(SOURCE_ROOT, "components", "access-settings.tsx");
+const CREATE_USER_DIALOG = join(SOURCE_ROOT, "components", "create-user-dialog.tsx");
+const USER_ROLE_ASSIGNMENT_DIALOG = join(
+  SOURCE_ROOT,
+  "components",
+  "user-role-assignment-dialog.tsx",
+);
 const MANAGEMENT_PAGE = join(SOURCE_ROOT, "app", "settings", "page.tsx");
 const CASE_SUITE_MANAGER = join(SOURCE_ROOT, "components", "case-suite-manager.tsx");
 const GLOBAL_RUN_DIALOG = join(SOURCE_ROOT, "components", "global-run-dialog.tsx");
@@ -174,6 +180,8 @@ describe("shared UI controls", () => {
       CASE_SUITE_MANAGER,
       CASE_SUITE_EDITOR,
       ACCESS_SETTINGS,
+      CREATE_USER_DIALOG,
+      USER_ROLE_ASSIGNMENT_DIALOG,
       join(SOURCE_ROOT, "components", "project-membership-manager.tsx"),
       join(SOURCE_ROOT, "components", "project-structure-manager.tsx"),
       join(SOURCE_ROOT, "components", "runner-group-manager.tsx"),
@@ -185,7 +193,9 @@ describe("shared UI controls", () => {
     }
     const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
     expect(accessSettings).toContain('title="重置用户密码"');
-    expect(accessSettings).toContain('title="分配用户角色"');
+    expect(accessSettings).toContain("<CreateUserDialog");
+    expect(accessSettings).toContain("<UserRoleAssignmentDialog");
+    expect(readFileSync(USER_ROLE_ASSIGNMENT_DIALOG, "utf8")).toContain('title="分配用户角色"');
   });
 
   it("uses product dialogs instead of browser-native confirmation prompts", () => {

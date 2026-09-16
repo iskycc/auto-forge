@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 const usernameSchema = z
-  .string()
+  .string({ error: "请输入用户名。" })
   .trim()
-  .min(3)
-  .max(64)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "用户名格式无效。");
+  .min(3, "用户名至少需要 3 个字符。")
+  .max(64, "用户名不能超过 64 个字符。")
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
+    "用户名须以字母或数字开头，只能包含字母、数字、点、下划线和短横线。",
+  );
 
 const loginIdentifierSchema = z
   .string()
@@ -15,9 +18,9 @@ const loginIdentifierSchema = z
   .regex(/^[^\u0000-\u001F\u007F]+$/u, "用户名不能包含控制字符。");
 
 const passwordSchema = z
-  .string()
-  .min(12)
-  .max(128)
+  .string({ error: "请输入密码。" })
+  .min(12, "密码至少需要 12 个字符。")
+  .max(128, "密码不能超过 128 个字符。")
   .regex(/[A-Za-z]/, "密码必须包含字母。")
   .regex(/[0-9]/, "密码必须包含数字。")
   .regex(/[^A-Za-z0-9]/, "密码必须包含特殊字符。");
@@ -39,10 +42,17 @@ export const loginInputSchema = z.object({
 
 export const createUserInputSchema = z.object({
   username: usernameSchema,
-  displayName: z.string().trim().min(1).max(120),
-  email: z.email().max(320).optional(),
+  displayName: z
+    .string({ error: "请输入显示名称。" })
+    .trim()
+    .min(1, "请输入显示名称。")
+    .max(120, "显示名称不能超过 120 个字符。"),
+  email: z
+    .email({ error: "请输入有效的邮箱地址，例如 name@example.com。" })
+    .max(320, "邮箱不能超过 320 个字符。")
+    .optional(),
   password: passwordSchema,
-  forcePasswordChange: z.boolean().default(true),
+  forcePasswordChange: z.boolean({ error: "首次登录修改密码选项必须为布尔值。" }).default(true),
 });
 
 export const updateUserStatusInputSchema = z.object({

@@ -14,6 +14,7 @@ import {
   logout,
   uniqueName,
 } from "./support/session";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 const DEFAULT_PROJECT_ID = "00000000-0000-7000-8000-000000000001";
 const PROJECT_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000002";
@@ -42,6 +43,383 @@ test("authenticated landing hand-off is an immediate HTTP redirect", async ({ pa
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
 });
 
+test("user creation keeps validation and server errors inside the dialog", async ({ page }) => {
+  await ensureAdministrator(page);
+  const username = uniqueName("creation-feedback");
+  const password = "Initial!Password123";
+  await createActiveUser(page, username, password);
+  await page.goto("/settings/access?section=users");
+  await page.getByRole("button", { name: "创建用户", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "创建本地用户" });
+  const submit = dialog.getByRole("button", { name: "创建本地用户", exact: true });
+  const usernameInput = dialog.getByLabel("用户名", { exact: true });
+  const displayNameInput = dialog.getByLabel("显示名称", { exact: true });
+  const emailInput = dialog.getByLabel("邮箱（可选）", { exact: true });
+  const passwordInput = dialog.getByLabel("初始密码", { exact: true });
+  const creationRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/users")
+      creationRequests.push(request.url());
+  });
+
+  await usernameInput.fill("中文账号");
+  await displayNameInput.fill("   ");
+  await emailInput.fill("invalid-email");
+  await passwordInput.fill("OnlyLettersHere");
+  await submit.click();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toContainText("用户名须以字母或数字开头");
+  await expect(alert).toContainText("请输入显示名称");
+  await expect(alert).toContainText("请输入有效的邮箱地址");
+  await expect(alert).toContainText("密码必须包含数字");
+  await expect(alert).toContainText("密码必须包含特殊字符");
+  await expect(usernameInput).toBeFocused();
+  await expect(passwordInput).toHaveValue("OnlyLettersHere");
+  expect(creationRequests).toHaveLength(0);
+  await expect(page.locator(".settings-stack > .auth-error")).toHaveCount(0);
+
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    expect(
+      await dialog.evaluate((element) => element.scrollWidth - element.clientWidth),
+    ).toBeLessThanOrEqual(2);
+    await expect(submit).toBeInViewport();
+    await captureUi(page, `create-user-validation-${viewport.width}`);
+  }
+
+  await usernameInput.fill(username);
+  await displayNameInput.fill("创建错误反馈验证");
+  await emailInput.fill("");
+  await passwordInput.fill(password);
+  await submit.click();
+  await expect(alert).toContainText("用户名已存在");
+  await expect(usernameInput).toHaveValue(username);
+  await expect(displayNameInput).toHaveValue("创建错误反馈验证");
+  await expect(passwordInput).toHaveValue(password);
+  await expect(page.locator(".settings-stack > .auth-error")).toHaveCount(0);
+  await captureUi(page, "create-user-duplicate-1536");
+
+  const replacementUsername = uniqueName("created-after-error");
+  await usernameInput.fill(replacementUsername);
+  let rejection: "validation" | "busy" | "network" = "validation";
+  await page.route("**/api/v1/users", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    if (rejection === "network") return route.abort("internetdisconnected");
+    await route.fulfill({
+      status: rejection === "validation" ? 400 : 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error:
+          rejection === "validation"
+            ? {
+                code: "VALIDATION_FAILED",
+                message: "请求数据校验失败。",
+                requestId: "creation-validation",
+                details: [
+                  { path: ["email"], message: "请输入有效的邮箱地址，例如 name@example.com。" },
+                ],
+              }
+            : {
+                code: "PLATFORM_BUSY",
+                message: "平台数据库繁忙，请稍后重试。",
+                requestId: "creation-busy",
+              },
+      }),
+    });
+  });
+  await submit.click();
+  await expect(alert).toContainText("邮箱：请输入有效的邮箱地址");
+  await expect(emailInput).toHaveAttribute("aria-invalid", "true");
+  await expect(emailInput).toBeFocused();
+  rejection = "busy";
+  await submit.click();
+  await expect(alert).toContainText("平台数据库繁忙，请稍后重试");
+  await expect(passwordInput).toHaveValue(password);
+  await expect(page.locator(".settings-stack > .auth-error")).toHaveCount(0);
+  rejection = "network";
+  await submit.click();
+  await expect(alert).toContainText("创建用户请求未完成，请检查网络连接后重试");
+  await expect(passwordInput).toHaveValue(password);
+  await expect(submit).toBeEnabled();
+  await page.unroute("**/api/v1/users");
+
+  await submit.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("本地用户已创建。", { exact: true })).toBeVisible();
+  const created = await browserJson(page, `/api/v1/users?query=${replacementUsername}`);
+  expect(created.status).toBe(200);
+  expect(created.body).toMatchObject({
+    items: [expect.objectContaining({ username: replacementUsername })],
+  });
+  await page.getByRole("button", { name: "创建用户", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(usernameInput).toHaveValue("");
+  await expect(passwordInput).toHaveValue("");
+  await submit.click();
+  await expect(alert).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭创建本地用户" }).click();
+  await page.getByRole("button", { name: "创建用户", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+});
+
+test("user creation API returns actionable validation without revealing passwords", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const rejectedPassword = "OnlyLettersHere";
+  const response = await browserJson(page, "/api/v1/users", {
+    method: "POST",
+    body: {
+      username: "中文账号",
+      displayName: " ",
+      email: "invalid-email",
+      password: rejectedPassword,
+    },
+  });
+  expect(response.status).toBe(400);
+  expect(response.body).toMatchObject({
+    error: {
+      code: "VALIDATION_FAILED",
+      requestId: expect.any(String),
+      message: expect.stringContaining("用户名须以字母或数字开头"),
+      details: expect.arrayContaining([
+        expect.objectContaining({ path: ["displayName"], message: "请输入显示名称。" }),
+        expect.objectContaining({ path: ["password"], message: "密码必须包含数字。" }),
+        expect.objectContaining({ path: ["password"], message: "密码必须包含特殊字符。" }),
+      ]),
+    },
+  });
+  expect(JSON.stringify(response.body)).not.toContain(rejectedPassword);
+});
+
+test("administrator assigns system and project roles directly from the user row", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const username = uniqueName("inline-roles");
+  const password = "InlineRoles!Password123";
+  const displayName = "直接分配角色的用户".repeat(12);
+  const created = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName, password, forcePasswordChange: false },
+  });
+  expect(created.status).toBe(201);
+  const targetId = created.body.id;
+  const targetContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  const targetPage = await targetContext.newPage();
+  try {
+    await login(targetPage, username, password);
+    await page.goto(`/settings/access?section=users&query=${username}`);
+    const row = page.getByRole("row").filter({ hasText: username });
+    const assign = row.getByRole("button", { name: "分配角色", exact: true });
+    await expect(assign).toBeVisible();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await captureUi(page, `user-role-entry-${viewport.width}`);
+    }
+    await assign.click();
+    const dialog = page.getByRole("dialog", { name: "分配用户角色" });
+    await expect(dialog).toContainText(username);
+    await expect(dialog).toContainText(displayName);
+    await expect(dialog.getByLabel("用户", { exact: true })).toHaveCount(0);
+    await dialog.getByLabel("系统角色", { exact: true }).selectOption(AUDITOR_ROLE_ID);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      expect(
+        await dialog.evaluate((element) => element.scrollWidth - element.clientWidth),
+      ).toBeLessThanOrEqual(2);
+      await captureUi(page, `user-role-dialog-${viewport.width}`);
+    }
+    const assignmentPath = `**/api/v1/users/${targetId}/system-roles`;
+    await page.route(assignmentPath, (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台数据库繁忙，请稍后重试。",
+            requestId: "role-assignment-busy",
+          },
+        }),
+      }),
+    );
+    await dialog.getByRole("button", { name: "分配系统角色" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("平台数据库繁忙");
+    await expect(dialog.getByLabel("系统角色", { exact: true })).toHaveValue(AUDITOR_ROLE_ID);
+    await expect(page.locator(".settings-stack > .auth-error")).toHaveCount(0);
+    await page.unroute(assignmentPath);
+    await dialog.getByRole("button", { name: "分配系统角色" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("系统角色已分配，旧会话已撤销。", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`section=users&query=${username}$`));
+    await row.getByText("1 个绑定", { exact: true }).click();
+    await expect(row).toContainText("系统 · 审计员");
+    expect((await targetPage.request.get("/api/v1/auth/session")).status()).toBe(401);
+    await login(targetPage, username, password);
+    expect((await targetPage.request.get("/api/v1/audit-events?limit=1")).status()).toBe(200);
+    await assign.click();
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await dialog.getByLabel("项目", { exact: true }).selectOption(DEFAULT_PROJECT_ID);
+    await dialog.getByLabel("项目角色", { exact: true }).selectOption(VIEWER_ROLE_ID);
+    await dialog.getByRole("button", { name: "分配项目角色" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("项目成员角色已分配。", { exact: true })).toBeVisible();
+    await expect(row.getByText("2 个绑定", { exact: true })).toBeVisible();
+    const members = await browserJson<Array<{ user: { id: string }; roleIds: string[] }>>(
+      page,
+      `/api/v1/projects/${DEFAULT_PROJECT_ID}/members?query=${username}`,
+    );
+    expect(members.status).toBe(200);
+    expect(members.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ id: targetId }),
+          roleIds: expect.arrayContaining([VIEWER_ROLE_ID]),
+        }),
+      ]),
+    );
+    expect((await targetPage.request.get("/api/v1/auth/session")).status()).toBe(401);
+    await login(targetPage, username, password);
+    expect(
+      (
+        await targetPage.request.get(
+          `/api/v1/case-definitions?projectId=${DEFAULT_PROJECT_ID}&limit=1`,
+        )
+      ).status(),
+    ).toBe(200);
+  } finally {
+    await targetContext.close();
+  }
+});
+
+test("user administration does not confer role assignment permission", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const password = "UserOperator!Password123";
+  const username = uniqueName("user-operator");
+  const operator = await createActiveUser(page, username, password);
+  const role = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: uniqueName("user-operator-role"),
+      name: "仅管理用户",
+      scope: "system",
+      permissions: ["user.read", "user.manage", "role.read", "project.read"],
+    },
+  });
+  expect(role.status).toBe(201);
+  expect(
+    await browserStatus(page, `/api/v1/users/${operator.id}/system-roles`, "POST", {
+      roleId: role.body.id,
+    }),
+  ).toBe(204);
+  const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const operatorPage = await context.newPage();
+    await login(operatorPage, username, password);
+    await operatorPage.goto(`/settings/access?section=users&query=${username}`);
+    await expect(operatorPage.getByRole("button", { name: "创建用户", exact: true })).toBeVisible();
+    await expect(operatorPage.getByRole("button", { name: "分配角色", exact: true })).toHaveCount(
+      0,
+    );
+    expect(
+      await browserStatus(operatorPage, `/api/v1/users/${operator.id}/system-roles`, "POST", {
+        roleId: AUDITOR_ROLE_ID,
+      }),
+    ).toBe(403);
+    expect(
+      await browserStatus(operatorPage, `/api/v1/users/${operator.id}/project-roles`, "POST", {
+        roleId: VIEWER_ROLE_ID,
+        projectId: DEFAULT_PROJECT_ID,
+      }),
+    ).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
+
+test("user role assignment offers only projects the operator can manage", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const username = uniqueName("project-role-operator");
+  const password = "ProjectRoles!Password123";
+  const operator = await createActiveUser(page, username, password);
+  const targetUsername = uniqueName("project-role-target");
+  const target = await createActiveUser(page, targetUsername, password);
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: uniqueName("可授权项目"), slug: uniqueName("assignable-project") },
+  });
+  expect(project.status).toBe(201);
+  const readRole = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: uniqueName("user-role-reader"),
+      name: "用户与角色读取",
+      scope: "system",
+      permissions: ["user.read", "role.read", "project.read"],
+    },
+  });
+  expect(readRole.status).toBe(201);
+  expect(
+    await browserStatus(page, `/api/v1/users/${operator.id}/system-roles`, "POST", {
+      roleId: readRole.body.id,
+    }),
+  ).toBe(204);
+  expect(
+    await browserStatus(page, `/api/v1/users/${operator.id}/project-roles`, "POST", {
+      projectId: project.body.id,
+      roleId: PROJECT_ADMIN_ROLE_ID,
+    }),
+  ).toBe(204);
+  const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const operatorPage = await context.newPage();
+    await login(operatorPage, username, password);
+    await operatorPage.goto(`/settings/access?section=users&query=${targetUsername}`);
+    const row = operatorPage.getByRole("row").filter({ hasText: target.id });
+    await row.getByRole("button", { name: "分配角色", exact: true }).click();
+    const dialog = operatorPage.getByRole("dialog", { name: "分配用户角色" });
+    await expect(dialog.getByRole("button", { name: "分配系统角色" })).toHaveCount(0);
+    expect(
+      await dialog
+        .getByLabel("项目", { exact: true })
+        .locator("option")
+        .evaluateAll((options) => options.map((option) => option.getAttribute("value"))),
+    ).toEqual([project.body.id]);
+    await dialog.getByLabel("项目角色", { exact: true }).selectOption(VIEWER_ROLE_ID);
+    await dialog.getByRole("button", { name: "分配项目角色" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(row.getByText("1 个绑定", { exact: true })).toBeVisible();
+    expect(
+      await browserStatus(operatorPage, `/api/v1/users/${target.id}/project-roles`, "POST", {
+        projectId: DEFAULT_PROJECT_ID,
+        roleId: VIEWER_ROLE_ID,
+      }),
+    ).toBe(403);
+  } finally {
+    await context.close();
+  }
+});
+
 test("local user completes forced password change and self-service session lifecycle", async ({
   page,
 }) => {
@@ -64,6 +442,14 @@ test("local user completes forced password change and self-service session lifec
   });
   await roleForm.getByLabel("用户").selectOption(createdUser.id);
   await roleForm.getByLabel("项目角色").selectOption({ label: "只读观察者" });
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, `role-page-assignment-${viewport.width}`);
+  }
   await roleForm.getByRole("button", { name: "分配项目角色" }).click();
   await expect(page.getByText("项目成员角色已分配。")).toBeVisible();
 

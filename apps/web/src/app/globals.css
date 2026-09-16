@@ -16333,6 +16333,31 @@ button.icon-button:disabled {
   margin-top: 0;
 }
 
+.create-user-form {
+  align-items: start;
+}
+
+.create-user-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.create-user-field .field-hint,
+.create-user-error p {
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.create-user-error ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  overflow-wrap: anywhere;
+}
+
 .rerun-failures-dialog {
   width: min(560px, calc(100dvw - 40px));
 }
@@ -16340,6 +16365,43 @@ button.icon-button:disabled {
 /* 堆叠后的子表单字段约 316px，仍比“显示名 · 用户名”短 1px 以上，弹窗略加宽留余量。 */
 .role-assignment-dialog {
   width: min(700px, calc(100dvw - 40px));
+}
+
+.user-role-assignment-content {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.user-role-assignment-subject {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.access-user-actions .ui-button {
+  margin: var(--space-1);
+}
+
+.access-user-actions .access-role-assignment {
+  color: var(--color-info);
+}
+
+.access-users-table td:nth-child(2) {
+  white-space: nowrap;
+}
+
+.user-role-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.role-assignment-dialog .settings-subform {
+  padding-top: var(--space-4);
+}
+
+.role-assignment-dialog .settings-subform > .ui-button {
+  align-self: end;
 }
 
 .member-role-dialog {

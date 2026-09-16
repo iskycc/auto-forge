@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.4 - 2026-09-16
+
+### Added and fixed
+
+- 用户管理列表新增“分配角色”入口，直接为选中的用户分配系统角色或项目角色，无需跳转。用户管理与角色权限页共用分配弹框，项目候选仅包含操作者有管理权限的未归档项目，停用角色不可分配；只有用户管理权限不会获得授权能力。
+- 创建用户补齐用户名、显示名称、邮箱和密码的具体中文校验提示，前后端使用同一输入契约。字段错误、用户名重复、平台繁忙及网络失败均显示在创建弹框内，保留填写内容并定位错误字段，不再只显示主页面的通用校验失败。
+- 角色分配失败保留选择并在弹框内反馈；成功显示右上角通知并刷新角色绑定，保留当前搜索条件。长用户名及提示正确换行，下拉框有明确字段标签，角色分配按钮与禁用操作区分显示。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用页面与原有授权接口，无数据库迁移、持久配置、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。
+- 用户名和密码的原有约束不变，首次登录强制修改密码、角色分配后的旧会话撤销、服务端权限及审计规则继续生效。
+
+### Validation and known limitations
+
+- 全量 933 项 TypeScript 单元测试、Go 测试和 28 项发布/运维脚本测试通过；11 项身份权限 Playwright 回归通过，最终布局调整后，4 项角色分配和首次登录流程再次通过。全仓格式、lint、类型检查、E2E 矩阵检查及 Web 生产构建通过。
+- 已人工查看 1024×768、1536×960 的创建用户、用户列表、直接分配角色及原角色权限页弹框截图，未发现横向溢出或控件重叠。本地浏览器验证使用 Chromium，完整 Full、离线与发布资产验收由版本标签流水线执行。
+
 ## 1.17.3 - 2026-09-14
 
 ### Added and fixed

@@ -2,6 +2,7 @@ import { AccessSettings, type AccessSection } from "@/components/access-settings
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { SectionTabs } from "@/components/section-tabs";
+import { hasPermission } from "@autoforge/domain";
 
 export default async function AccessSettingsPage({
   searchParams,
@@ -31,6 +32,7 @@ export default async function AccessSettingsPage({
     userManage: hasPermissionInAnyScope(identity, "user.manage"),
     roleRead: hasPermissionInAnyScope(identity, "role.read"),
     roleManage: hasPermissionInAnyScope(identity, "role.manage"),
+    systemRoleAssign: hasPermission(identity, "role.manage"),
     projectRead: hasPermissionInAnyScope(identity, "project.read"),
     ldapRead: hasPermissionInAnyScope(identity, "ldap.read"),
     ldapManage: hasPermissionInAnyScope(identity, "ldap.manage"),
@@ -123,6 +125,11 @@ export default async function AccessSettingsPage({
         capabilities={capabilities}
         ldap={ldap}
         projects={projects}
+        assignableProjectIds={projects
+          .filter(
+            (project) => !project.archived && hasPermission(identity, "project.manage", project.id),
+          )
+          .map((project) => project.id)}
         projectMemberships={projectMemberships}
         roles={roles}
         sessions={sessions}
@@ -149,7 +156,7 @@ function accessSectionHeading(section: AccessSection): {
     case "users":
       return {
         title: "用户管理",
-        description: "管理本地账号、账号状态和用户来源。",
+        description: "管理本地账号、账号状态、用户来源和角色分配。",
         tab: "用户管理",
       };
     case "roles":

@@ -1,10 +1,12 @@
 import { createUserInputSchema } from "@autoforge/contracts";
+import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
+import { userCreationValidationErrors } from "@/lib/user-creation-validation";
 
 const listQuerySchema = z.object({
   query: z.string().trim().max(120).optional(),
@@ -39,10 +41,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     requireSameOrigin(request);
     const identity = await authenticateRequest(request);
-    const input = createUserInputSchema.parse(await readJsonBody(request, 16 * 1024));
+    const parsed = createUserInputSchema.safeParse(await readJsonBody(request, 16 * 1024));
+    if (!parsed.success) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        userCreationValidationErrors(parsed.error.issues)
+          .map(({ message }) => message)
+          .join(" ") || "请提交有效的用户信息。",
+        { cause: parsed.error, details: parsed.error.issues },
+      );
+    }
     const user = await (
       await getPlatformServices()
-    ).identityAccess.createUser(identity, input, currentRequestId);
+    ).identityAccess.createUser(identity, parsed.data, currentRequestId);
     return NextResponse.json(user, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);

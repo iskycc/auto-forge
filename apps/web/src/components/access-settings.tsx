@@ -17,6 +17,8 @@ import { readApiErrorMessage } from "@/lib/client-api";
 import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { ActionDialog } from "@/components/action-dialog";
+import { CreateUserDialog } from "@/components/create-user-dialog";
+import { UserRoleAssignmentDialog } from "@/components/user-role-assignment-dialog";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 
 type LdapView = {
@@ -45,6 +47,7 @@ export function AccessSettings({
   users,
   roles,
   projects,
+  assignableProjectIds,
   projectMemberships,
   ldap,
   sessions,
@@ -58,6 +61,7 @@ export function AccessSettings({
   users: User[];
   roles: Role[];
   projects: Project[];
+  assignableProjectIds: string[];
   projectMemberships: Array<{
     projectId: string;
     members: Array<{ user: User; roleIds: string[] }>;
@@ -73,6 +77,7 @@ export function AccessSettings({
     userManage: boolean;
     roleRead: boolean;
     roleManage: boolean;
+    systemRoleAssign: boolean;
     projectRead: boolean;
     ldapRead: boolean;
     ldapManage: boolean;
@@ -93,6 +98,11 @@ export function AccessSettings({
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
   >(null);
+  const [roleAssignmentUser, setRoleAssignmentUser] = useState<User | null>(null);
+  const assignableProjectSet = new Set(assignableProjectIds);
+  const assignableProjects = projects.filter((project) => assignableProjectSet.has(project.id));
+  const canAssignRoles =
+    capabilities.roleRead && (capabilities.systemRoleAssign || assignableProjects.length > 0);
 
   async function request(
     path: string,
@@ -116,22 +126,6 @@ export function AccessSettings({
       setPending(false);
       return false;
     }
-  }
-
-  function submitUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    void request(
-      "/api/v1/users",
-      jsonRequest("POST", {
-        username: form.get("username"),
-        displayName: form.get("displayName"),
-        email: form.get("email") || undefined,
-        password: form.get("password"),
-        forcePasswordChange: true,
-      }),
-      "本地用户已创建。",
-    );
   }
 
   function submitRole(event: FormEvent<HTMLFormElement>) {
@@ -190,26 +184,6 @@ export function AccessSettings({
     );
   }
 
-  function submitSystemRole(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    void request(
-      `/api/v1/users/${String(form.get("userId"))}/system-roles`,
-      jsonRequest("POST", { roleId: form.get("roleId") }),
-      "系统角色已分配，旧会话已撤销。",
-    );
-  }
-
-  function submitProjectRole(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    void request(
-      `/api/v1/users/${String(form.get("userId"))}/project-roles`,
-      jsonRequest("POST", { projectId: form.get("projectId"), roleId: form.get("roleId") }),
-      "项目成员角色已分配。",
-    );
-  }
-
   async function submitLdapForm(formElement: HTMLFormElement, action: "save" | "test") {
     const testOnly = action === "test";
     const form = new FormData(formElement);
@@ -241,6 +215,21 @@ export function AccessSettings({
           {error}
         </div>
       ) : null}
+      {createDialog === "assignment" && canAssignRoles ? (
+        <UserRoleAssignmentDialog
+          canAssignSystemRoles={capabilities.systemRoleAssign}
+          onAssigned={(message) => {
+            setCreateDialog(null);
+            toast.success(message);
+            router.refresh();
+          }}
+          onClose={() => setCreateDialog(null)}
+          projects={assignableProjects}
+          roles={roles}
+          selectedUser={roleAssignmentUser}
+          users={users}
+        />
+      ) : null}
 
       {activeSection === "users" && capabilities.userRead ? (
         <section className="content-card settings-section" id="users">
@@ -262,34 +251,16 @@ export function AccessSettings({
               <UserRound size={22} aria-hidden="true" />
             )}
           </div>
-          <ActionDialog
-            description="创建本地账号后，用户首次登录必须修改初始密码。"
-            onClose={() => !pending && setCreateDialog(null)}
-            open={createDialog === "user"}
-            title="创建本地用户"
-          >
-            <form className="settings-grid-form action-dialog-form" onSubmit={submitUser}>
-              <label>
-                用户名
-                <Input name="username" required />
-              </label>
-              <label>
-                显示名称
-                <Input name="displayName" required />
-              </label>
-              <label>
-                邮箱（可选）
-                <Input name="email" type="email" />
-              </label>
-              <label>
-                初始密码
-                <Input minLength={12} name="password" required type="password" />
-              </label>
-              <Button className="primary-button" disabled={pending} type="submit">
-                <Plus size={16} /> 创建本地用户
-              </Button>
-            </form>
-          </ActionDialog>
+          {createDialog === "user" ? (
+            <CreateUserDialog
+              onClose={() => setCreateDialog(null)}
+              onCreated={() => {
+                setCreateDialog(null);
+                toast.success("本地用户已创建。");
+                router.refresh();
+              }}
+            />
+          ) : null}
           <ActionDialog
             description="重置后会立即撤销目标用户的所有旧会话。"
             onClose={() => !pending && setCreateDialog(null)}
@@ -401,7 +372,20 @@ export function AccessSettings({
                         </div>
                       </details>
                     </td>
-                    <td>
+                    <td className="access-user-actions">
+                      {canAssignRoles ? (
+                        <Button
+                          className="table-action access-role-assignment"
+                          disabled={pending}
+                          onClick={() => {
+                            setRoleAssignmentUser(user);
+                            setCreateDialog("assignment");
+                          }}
+                          type="button"
+                        >
+                          分配角色
+                        </Button>
+                      ) : null}
                       {capabilities.userManage ? (
                         <>
                           <Button
@@ -440,9 +424,9 @@ export function AccessSettings({
                             撤销会话
                           </Button>
                         </>
-                      ) : (
+                      ) : !canAssignRoles ? (
                         "仅查看"
-                      )}
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -467,65 +451,29 @@ export function AccessSettings({
               <p className="eyebrow">Authorization</p>
               <h2>角色与权限分层</h2>
             </div>
-            {capabilities.roleManage ? (
+            {capabilities.roleManage || canAssignRoles ? (
               <div className="button-row">
-                <Button onClick={() => setCreateDialog("assignment")} type="button">
-                  分配角色
-                </Button>
-                <Button onClick={() => setCreateDialog("role")} type="button" variant="primary">
-                  <Plus size={16} /> 创建角色
-                </Button>
+                {canAssignRoles ? (
+                  <Button
+                    onClick={() => {
+                      setRoleAssignmentUser(null);
+                      setCreateDialog("assignment");
+                    }}
+                    type="button"
+                  >
+                    分配角色
+                  </Button>
+                ) : null}
+                {capabilities.roleManage ? (
+                  <Button onClick={() => setCreateDialog("role")} type="button" variant="primary">
+                    <Plus size={16} /> 创建角色
+                  </Button>
+                ) : null}
               </div>
             ) : (
               <Shield size={22} aria-hidden="true" />
             )}
           </div>
-          <ActionDialog
-            className="role-assignment-dialog"
-            description="系统角色对全局生效，项目角色仅对选定项目生效。"
-            onClose={() => !pending && setCreateDialog(null)}
-            open={createDialog === "assignment"}
-            title="分配用户角色"
-          >
-            <div className="settings-paired-forms">
-              <form className="settings-grid-form settings-subform" onSubmit={submitSystemRole}>
-                <label>
-                  用户<Select name="userId">{users.map(userOption)}</Select>
-                </label>
-                <label>
-                  系统角色
-                  <Select name="roleId">
-                    {roles.filter((role) => role.scope === "system" && role.active).map(roleOption)}
-                  </Select>
-                </label>
-                <Button className="secondary-button" disabled={pending} type="submit">
-                  分配系统角色
-                </Button>
-              </form>
-              <form className="settings-grid-form settings-subform" onSubmit={submitProjectRole}>
-                <label>
-                  用户<Select name="userId">{users.map(userOption)}</Select>
-                </label>
-                <label>
-                  项目
-                  <Select name="projectId">
-                    {projects.filter((project) => !project.archived).map(projectOption)}
-                  </Select>
-                </label>
-                <label>
-                  项目角色
-                  <Select name="roleId">
-                    {roles
-                      .filter((role) => role.scope === "project" && role.active)
-                      .map(roleOption)}
-                  </Select>
-                </label>
-                <Button className="secondary-button" disabled={pending} type="submit">
-                  分配项目角色
-                </Button>
-              </form>
-            </div>
-          </ActionDialog>
           <div className="table-scroll">
             <table className="data-table">
               <thead>
@@ -1029,30 +977,6 @@ export function AccessSettings({
 
 function jsonRequest(method: string, body: unknown): RequestInit {
   return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
-}
-
-function userOption(user: User) {
-  return (
-    <option key={user.id} value={user.id}>
-      {user.displayName} · {user.username}
-    </option>
-  );
-}
-
-function roleOption(role: Role) {
-  return (
-    <option key={role.id} value={role.id}>
-      {role.name}
-    </option>
-  );
-}
-
-function projectOption(project: Project) {
-  return (
-    <option key={project.id} value={project.id}>
-      {project.name}
-    </option>
-  );
 }
 
 function roleName(roles: Role[], roleId: string): string {
