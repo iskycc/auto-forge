@@ -186,6 +186,37 @@ describe("case suite update and copy", () => {
     });
   });
 
+  it("copies configuration without reading or copying ordinary or DDT members", async () => {
+    const suites = suiteRepositoryFake();
+    const source = await suites.getSummary("suite-1");
+    suites.getSummary.mockResolvedValue({
+      ...source,
+      caseCount: 2,
+      ddtItems: [{ id: "ddt-member", ddtCase: { id: "ddt-1" } }],
+    });
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "copy-id" },
+    );
+    await service.copy("suite-1", { name: "Configuration only", includeCases: false }, "user-1", [
+      "project-1",
+    ]);
+    expect(suites.get).not.toHaveBeenCalled();
+    expect(suites.getSummary).toHaveBeenLastCalledWith("suite-1", ["project-1"]);
+    expect(suites.copySuite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Configuration only",
+        description: source!.description,
+        policy: source!.policy,
+        items: [],
+      }),
+    );
+    expect(suites.copySuite.mock.calls[0]![0].ddtItems ?? []).toEqual([]);
+  });
+
   it("removes a unique case selection in one repository operation", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(

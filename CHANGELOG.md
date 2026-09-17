@@ -4,6 +4,27 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.7 - 2026-09-18
+
+### Added and fixed
+
+- DDT 高级检索的“查看用例”改为只读弹窗，直接展示完整字段及用户旅程步骤，关闭后保留搜索条件、页码和滚动位置。超长字段按需展开，正文独立滚动。
+- 检索结果新增总数、总页数、页码和上一页/下一页，每页 20 条。后台工作线程分段统计并建立游标索引，翻页只加载当前页；浏览器复用查询缓存，支持取消、继续统计、失败重试及前进后退。统计未完成时明确显示部分结果，不冒充最终总数。
+- 修复 Lite 任务保存、普通/DDT 用例增删、创建及复制在短暂 SQLite 写锁竞争时直接失败的问题：复用有界异步退避，整笔事务回滚后重试，保留修订号冲突保护及版本快照原子性。
+- 任务列表和详情的复制弹窗新增“仅复制配置，不复制用例”，保留已保存的执行与恢复配置，同时不复制普通/DDT 成员；默认仍复制全部用例。复制失败在弹窗内反馈。
+- DDT 检索缓存标识兼容通过普通 HTTP 和 IP 地址访问的部署，不依赖仅安全上下文可用的浏览器 API。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用查询与复制契约，无数据库迁移、持久配置结构、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。复制接口新增可选 `includeCases`，省略时保持原行为；原检索游标请求保持兼容。
+
+### Validation and known limitations
+
+- 全量 954 项 TypeScript 单元测试、Go 测试及 28 项发布/运维脚本测试通过；全仓格式、lint、类型检查、E2E 矩阵检查和 Web 生产构建通过。
+- 已验证真实 SQLite 写锁竞争、退避耗尽后的回滚与恢复、版本冲突以及 PostgreSQL 任务复制和检索回归；10 万用例工作线程测试覆盖统计、取消、过载恢复与并行 HTTP/数据库写入响应。
+- DDT 检索与任务生命周期 Playwright 回归覆盖分页、缓存、弹窗、重试、完整/仅配置复制及删除后保存；已查看 1024px 和 1536px 桌面截图，未发现横向溢出或控件重叠。
+- 任意子串检索仍需分段扫描范围内正文；总数反映本次扫描结果，并发编辑后可重新搜索刷新。持续持有的数据库锁仍会在有界重试耗尽后返回明确的繁忙提示。本地浏览器验证使用 Chromium，完整 Full 与发布资产离线验收由标签流水线执行。
+
 ## 1.17.6 - 2026-09-17
 
 ### Added and fixed

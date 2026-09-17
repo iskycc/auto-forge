@@ -338,6 +338,7 @@ export const updateCaseSuiteInputSchema = z.object({
 
 export const copyCaseSuiteInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
+  includeCases: z.boolean().optional(),
 });
 
 export const caseSourceComparisonEntrySchema = z.object({

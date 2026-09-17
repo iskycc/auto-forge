@@ -597,19 +597,72 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await copyDialog.locator('select[aria-label="来源任务"]').selectOption(suite.body.id);
   await copyDialog.getByLabel("新任务名称").fill(copyName);
   await expect(copyDialog.getByText(/新任务使用独立 ID 和成员记录/u)).toBeVisible();
+  const configurationOnly = copyDialog.getByLabel("仅复制配置，不复制用例", { exact: true });
+  await expect(configurationOnly).not.toBeChecked();
+  await configurationOnly.check();
+  await expect(copyDialog.getByLabel("任务复制范围")).toContainText("不包含普通或 DDT 用例");
+
   for (const viewport of [
     { width: 1536, height: 1024 },
     { width: 1024, height: 768 },
   ]) {
     await page.setViewportSize(viewport);
     await expect(copyDialog).toBeVisible();
+    await expect(configurationOnly).toBeChecked();
+    await expectUiIntegrity(page);
     await captureUi(page, `case-suite-copy-dialog-${viewport.width}`);
   }
   await page.setViewportSize({ width: 1536, height: 1024 });
+  await configurationOnly.uncheck();
   await copyDialog.getByRole("button", { name: "复制并编辑" }).click();
   await expect(page.getByRole("heading", { name: copyName })).toBeVisible();
   await expect(page.getByRole("heading", { name: "2 个用例", exact: true })).toBeVisible();
   const copiedSuiteId = new URL(page.url()).pathname.split("/").at(-1)!;
+  await page.getByRole("button", { name: "复制任务", exact: true }).click();
+  const configurationDialog = page.getByRole("dialog", { name: "复制用例任务", exact: true });
+  await expect(
+    configurationDialog.getByLabel("仅复制配置，不复制用例", { exact: true }),
+  ).not.toBeChecked();
+  await configurationDialog.getByLabel("仅复制配置，不复制用例", { exact: true }).check();
+  const configurationName = `${suiteName} configuration`;
+  await configurationDialog.getByLabel("复制为新任务").fill(configurationName);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, `case-suite-configuration-copy-${viewport.width}`);
+  }
+  const configurationRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" && request.url().endsWith(`/case-suites/${copiedSuiteId}/copy`),
+  );
+  await configurationDialog.getByRole("button", { name: "复制任务", exact: true }).click();
+  expect((await configurationRequest).postDataJSON()).toMatchObject({ includeCases: false });
+  await expect(page.getByRole("heading", { name: configurationName, exact: true })).toBeVisible();
+  await expect(page.getByText("任务中还没有用例", { exact: true })).toBeVisible();
+  const configurationCopyId = new URL(page.url()).pathname.split("/").at(-1)!;
+  const configurationCopy = await browserJson<{
+    caseCount: number;
+    items: unknown[];
+    ddtItems: unknown[];
+    policy: { concurrency: number; roundRecoveryRules: Array<{ apiKeyConfigured: boolean }> };
+  }>(page, `/api/v1/case-suites/${configurationCopyId}`);
+  expect(configurationCopy.body).toMatchObject({
+    caseCount: 0,
+    items: [],
+    ddtItems: [],
+    policy: {
+      concurrency: 3,
+      roundRecoveryRules: [
+        expect.objectContaining({ apiKeyConfigured: true }),
+        expect.objectContaining({ apiKeyConfigured: true }),
+      ],
+    },
+  });
+  await page.goto(`/case-suites/${copiedSuiteId}`);
+
   await page.getByLabel("并发度（同时在途执行数）").fill("5");
   await page.getByLabel("任务说明").fill("independently edited task copy");
   await page.getByRole("button", { name: "保存修改" }).click();

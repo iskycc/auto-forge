@@ -9,6 +9,7 @@ export const DDT_IMPORT_ARCHIVE_ENTRY_LIMIT = 10_000;
 export const DDT_BULK_MUTATION_LIMIT = 5_000;
 export const DDT_IMPORT_COLUMN_RESOLUTION_LIMIT = 5_000;
 export const DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH = 1_024;
+export const DDT_VALUE_SEARCH_PAGE_SIZE = 20;
 
 export const ddtCellValueSchema = z.union([
   z.string().max(1_000_000),
@@ -40,7 +41,19 @@ export const ddtCaseLookupSchema = ddtScopeSchema.extend({
 export const ddtValueSearchInputSchema = ddtScopeSchema.extend({
   keyword: z.string().trim().min(1, "请输入要检索的字段值。").max(512),
   cursor: z.string().min(1).max(1_024).optional(),
-  limit: z.number().int().min(1).max(20).default(20),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(DDT_VALUE_SEARCH_PAGE_SIZE)
+    .default(DDT_VALUE_SEARCH_PAGE_SIZE),
+  // When present, count a slice and return page starts instead of result bodies.
+  indexOffset: z
+    .number()
+    .int()
+    .min(0)
+    .max(DDT_VALUE_SEARCH_PAGE_SIZE - 1)
+    .optional(),
 });
 
 export const ddtValueSearchPageSchema = z.object({
@@ -65,6 +78,12 @@ export const ddtValueSearchPageSchema = z.object({
     .max(20),
   scannedCount: z.number().int().nonnegative(),
   nextCursor: z.string().optional(),
+  index: z
+    .object({
+      matchedCount: z.number().int().nonnegative().max(4_096),
+      pageCursors: z.array(z.string().max(1_024)).max(205),
+    })
+    .optional(),
 });
 
 export type DdtValueSearchInput = z.infer<typeof ddtValueSearchInputSchema>;

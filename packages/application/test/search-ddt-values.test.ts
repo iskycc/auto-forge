@@ -13,6 +13,66 @@ const candidate = (id: string, value: string) => ({
 });
 
 describe("bounded DDT value search", () => {
+  it("counts cases once and indexes page boundaries across interrupted slices", async () => {
+    const candidates = Array.from({ length: 47 }, (_, index) =>
+      candidate(String(index).padStart(3, "0"), index % 2 ? "other" : "match match"),
+    );
+    const repository = {
+      readValueSearchCandidates: vi.fn(async (_scope: unknown, cursor = "") =>
+        candidates.filter((item) => item.cursor > cursor).slice(0, 13),
+      ),
+    };
+    let cursor: string | undefined;
+    let matchedCount = 0;
+    let scannedCount = 0;
+    const pageCursors: string[] = [];
+    do {
+      const page = await searchDdtValues(
+        repository,
+        { ...input, cursor, indexOffset: matchedCount % 20 },
+        async () => "pause",
+      );
+      expect(page.items).toEqual([]);
+      matchedCount += page.index!.matchedCount;
+      scannedCount += page.scannedCount;
+      pageCursors.push(...page.index!.pageCursors);
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(matchedCount).toBe(24);
+    expect(scannedCount).toBe(47);
+    expect(pageCursors).toEqual(["", "039"]);
+    const second = await searchDdtValues(
+      repository,
+      { ...input, limit: 20, cursor: pageCursors[1] },
+      async () => "continue",
+    );
+    expect(second.items.map((item) => item.id)).toEqual(["040", "042", "044", "046"]);
+  });
+
+  it("does not create a phantom page for exact page multiples or empty searches", async () => {
+    const candidates = Array.from({ length: 40 }, (_, index) =>
+      candidate(String(index).padStart(3, "0"), "match"),
+    );
+    const repository = {
+      readValueSearchCandidates: vi.fn(async (_scope: unknown, cursor = "") =>
+        candidates.filter((item) => item.cursor > cursor),
+      ),
+    };
+    const page = await searchDdtValues(
+      repository,
+      { ...input, indexOffset: 0 },
+      async () => "continue",
+    );
+    expect(page.index).toEqual({ matchedCount: 40, pageCursors: ["", "019"] });
+    expect(page.nextCursor).toBeUndefined();
+    const empty = await searchDdtValues(
+      repository,
+      { ...input, keyword: "absent", indexOffset: 0 },
+      async () => "continue",
+    );
+    expect(empty.index).toEqual({ matchedCount: 0, pageCursors: [] });
+  });
+
   it.each<{ label: string; data: DdtCaseData; caseName: string | undefined }>([
     { label: "standard case", data: { CaseName: "余额查询" }, caseName: "余额查询" },
     {

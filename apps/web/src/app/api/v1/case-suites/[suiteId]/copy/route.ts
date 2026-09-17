@@ -23,7 +23,11 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       resourceId: suite.id,
       projectId: suite.projectId,
       requestId: currentRequestId,
-      details: { sourceSuiteId: suiteId, caseCount: suite.caseCount },
+      details: {
+        sourceSuiteId: suiteId,
+        caseCount: suite.caseCount,
+        includeCases: input.includeCases !== false,
+      },
     });
     return NextResponse.json(suite, { status: 201 });
   } catch (error) {

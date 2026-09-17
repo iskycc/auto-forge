@@ -27,7 +27,11 @@ import {
 } from "@autoforge/domain";
 import { and, asc, count, desc, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 
-import type { SqliteDatabaseHandle } from "./database";
+import {
+  retrySqliteLockContention,
+  retrySqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 import {
   batchesOf,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
@@ -112,24 +116,26 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async create(record: CreateCaseSuiteRecord): Promise<CaseSuite> {
-    const row = this.handle.db
-      .insert(caseSuites)
-      .values({
-        id: record.id,
-        projectId: record.projectId ?? DEFAULT_PROJECT_ID,
-        name: record.name,
-        description: record.description ?? null,
-        version: 1,
-        status: "active",
-        enabled: true,
-        revision: 1,
-        policyJson: JSON.stringify(record.policy ?? defaultCaseSuiteExecutionPolicy),
-        ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
-        createdAt: record.createdAt,
-        updatedAt: record.createdAt,
-      })
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(caseSuites)
+        .values({
+          id: record.id,
+          projectId: record.projectId ?? DEFAULT_PROJECT_ID,
+          name: record.name,
+          description: record.description ?? null,
+          version: 1,
+          status: "active",
+          enabled: true,
+          revision: 1,
+          policyJson: JSON.stringify(record.policy ?? defaultCaseSuiteExecutionPolicy),
+          ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
+          createdAt: record.createdAt,
+          updatedAt: record.createdAt,
+        })
+        .returning()
+        .get(),
+    );
     return toSuite(row, 0);
   }
 
@@ -479,37 +485,35 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
-    this.handle.client
-      .transaction(() => {
-        let added = 0;
-        for (const item of input.items) {
-          const result = this.handle.db
-            .insert(caseSuiteItems)
-            .values({
-              id: item.id,
-              suiteId: input.suiteId,
-              caseDefinitionId: item.caseDefinitionId,
-              addedAt: input.updatedAt,
-            })
-            .onConflictDoNothing()
-            .run();
-          added += result.changes;
-        }
-        if (added > 0) {
-          this.handle.db
-            .update(caseSuites)
-            .set({
-              version: sql`${caseSuites.version} + 1`,
-              revision: sql`${caseSuites.revision} + 1`,
-              ...(input.actorId ? { updatedBy: input.actorId } : {}),
-              updatedAt: input.updatedAt,
-            })
-            .where(eq(caseSuites.id, input.suiteId))
-            .run();
-          this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.cases.add", input);
-        }
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      let added = 0;
+      for (const item of input.items) {
+        const result = this.handle.db
+          .insert(caseSuiteItems)
+          .values({
+            id: item.id,
+            suiteId: input.suiteId,
+            caseDefinitionId: item.caseDefinitionId,
+            addedAt: input.updatedAt,
+          })
+          .onConflictDoNothing()
+          .run();
+        added += result.changes;
+      }
+      if (added > 0) {
+        this.handle.db
+          .update(caseSuites)
+          .set({
+            version: sql`${caseSuites.version} + 1`,
+            revision: sql`${caseSuites.revision} + 1`,
+            ...(input.actorId ? { updatedBy: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          })
+          .where(eq(caseSuites.id, input.suiteId))
+          .run();
+        this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.cases.add", input);
+      }
+    });
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
@@ -522,40 +526,38 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
-    this.handle.client
-      .transaction(() => {
-        let removed = 0;
-        for (const ids of batchesOf(input.caseDefinitionIds, RELATIONAL_WRITE_BATCH_SIZE)) {
-          removed += this.handle.db
-            .delete(caseSuiteItems)
-            .where(
-              and(
-                eq(caseSuiteItems.suiteId, input.suiteId),
-                inArray(caseSuiteItems.caseDefinitionId, ids),
-              ),
-            )
-            .run().changes;
-        }
-        if (removed > 0) {
-          this.handle.db
-            .update(caseSuites)
-            .set({
-              version: sql`${caseSuites.version} + 1`,
-              revision: sql`${caseSuites.revision} + 1`,
-              ...(input.actorId ? { updatedBy: input.actorId } : {}),
-              updatedAt: input.updatedAt,
-            })
-            .where(eq(caseSuites.id, input.suiteId))
-            .run();
-          this.insertVersionSnapshot(
-            input.suiteId,
-            input.versionId,
-            "suite.cases.remove-bulk",
-            input,
-          );
-        }
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      let removed = 0;
+      for (const ids of batchesOf(input.caseDefinitionIds, RELATIONAL_WRITE_BATCH_SIZE)) {
+        removed += this.handle.db
+          .delete(caseSuiteItems)
+          .where(
+            and(
+              eq(caseSuiteItems.suiteId, input.suiteId),
+              inArray(caseSuiteItems.caseDefinitionId, ids),
+            ),
+          )
+          .run().changes;
+      }
+      if (removed > 0) {
+        this.handle.db
+          .update(caseSuites)
+          .set({
+            version: sql`${caseSuites.version} + 1`,
+            revision: sql`${caseSuites.revision} + 1`,
+            ...(input.actorId ? { updatedBy: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          })
+          .where(eq(caseSuites.id, input.suiteId))
+          .run();
+        this.insertVersionSnapshot(
+          input.suiteId,
+          input.versionId,
+          "suite.cases.remove-bulk",
+          input,
+        );
+      }
+    });
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
@@ -568,27 +570,25 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
-    this.handle.client
-      .transaction(() => {
-        let added = 0;
-        for (const item of input.items) {
-          added += this.handle.db
-            .insert(caseSuiteDdtItems)
-            .values({
-              id: item.id,
-              suiteId: input.suiteId,
-              ddtCaseId: item.ddtCaseId,
-              addedAt: input.updatedAt,
-            })
-            .onConflictDoNothing()
-            .run().changes;
-        }
-        if (added > 0) {
-          this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
-          this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.ddt-cases.add", input);
-        }
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      let added = 0;
+      for (const item of input.items) {
+        added += this.handle.db
+          .insert(caseSuiteDdtItems)
+          .values({
+            id: item.id,
+            suiteId: input.suiteId,
+            ddtCaseId: item.ddtCaseId,
+            addedAt: input.updatedAt,
+          })
+          .onConflictDoNothing()
+          .run().changes;
+      }
+      if (added > 0) {
+        this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
+        this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.ddt-cases.add", input);
+      }
+    });
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
@@ -601,156 +601,150 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuite> {
-    this.handle.client
-      .transaction(() => {
-        let removed = 0;
-        for (const ids of batchesOf(input.ddtCaseIds, RELATIONAL_WRITE_BATCH_SIZE)) {
-          removed += this.handle.db
-            .delete(caseSuiteDdtItems)
-            .where(
-              and(
-                eq(caseSuiteDdtItems.suiteId, input.suiteId),
-                inArray(caseSuiteDdtItems.ddtCaseId, ids),
-              ),
-            )
-            .run().changes;
-        }
-        if (removed > 0) {
-          this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
-          this.insertVersionSnapshot(
-            input.suiteId,
-            input.versionId,
-            "suite.ddt-cases.remove-bulk",
-            input,
-          );
-        }
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      let removed = 0;
+      for (const ids of batchesOf(input.ddtCaseIds, RELATIONAL_WRITE_BATCH_SIZE)) {
+        removed += this.handle.db
+          .delete(caseSuiteDdtItems)
+          .where(
+            and(
+              eq(caseSuiteDdtItems.suiteId, input.suiteId),
+              inArray(caseSuiteDdtItems.ddtCaseId, ids),
+            ),
+          )
+          .run().changes;
+      }
+      if (removed > 0) {
+        this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
+        this.insertVersionSnapshot(
+          input.suiteId,
+          input.versionId,
+          "suite.ddt-cases.remove-bulk",
+          input,
+        );
+      }
+    });
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
 
   async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite> {
-    this.handle.client
-      .transaction(() => {
-        const patch: Record<string, unknown> = {
-          version: sql`${caseSuites.version} + 1`,
-          revision: sql`${caseSuites.revision} + 1`,
-          updatedAt: input.updatedAt,
-        };
-        if (input.name !== undefined) patch.name = input.name;
-        if (input.description !== undefined) patch.description = input.description;
-        if (input.enabled !== undefined) patch.enabled = input.enabled;
-        if (input.archived !== undefined) patch.status = input.archived ? "archived" : "active";
-        if (input.policy !== undefined) patch.policyJson = JSON.stringify(input.policy);
-        if (input.actorId) patch.updatedBy = input.actorId;
-        const result = this.handle.db
-          .update(caseSuites)
-          .set(patch)
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const patch: Record<string, unknown> = {
+        version: sql`${caseSuites.version} + 1`,
+        revision: sql`${caseSuites.revision} + 1`,
+        updatedAt: input.updatedAt,
+      };
+      if (input.name !== undefined) patch.name = input.name;
+      if (input.description !== undefined) patch.description = input.description;
+      if (input.enabled !== undefined) patch.enabled = input.enabled;
+      if (input.archived !== undefined) patch.status = input.archived ? "archived" : "active";
+      if (input.policy !== undefined) patch.policyJson = JSON.stringify(input.policy);
+      if (input.actorId) patch.updatedBy = input.actorId;
+      const result = this.handle.db
+        .update(caseSuites)
+        .set(patch)
+        .where(
+          and(eq(caseSuites.id, input.suiteId), eq(caseSuites.revision, input.expectedRevision)),
+        )
+        .run();
+      if (result.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
+      for (const [ruleId, apiKeyCiphertext] of Object.entries(
+        input.roundRecoveryCredentialUpserts ?? {},
+      )) {
+        this.handle.db
+          .insert(caseSuiteRoundRecoveryCredentials)
+          .values({
+            suiteId: input.suiteId,
+            ruleId,
+            apiKeyCiphertext,
+            updatedAt: input.updatedAt,
+          })
+          .onConflictDoUpdate({
+            target: [
+              caseSuiteRoundRecoveryCredentials.suiteId,
+              caseSuiteRoundRecoveryCredentials.ruleId,
+            ],
+            set: { apiKeyCiphertext, updatedAt: input.updatedAt },
+          })
+          .run();
+      }
+      if (input.policy) {
+        const activeRuleIds = input.policy.roundRecoveryRules.map((rule) => rule.id);
+        this.handle.db
+          .delete(caseSuiteRoundRecoveryCredentials)
           .where(
-            and(eq(caseSuites.id, input.suiteId), eq(caseSuites.revision, input.expectedRevision)),
+            activeRuleIds.length === 0
+              ? eq(caseSuiteRoundRecoveryCredentials.suiteId, input.suiteId)
+              : and(
+                  eq(caseSuiteRoundRecoveryCredentials.suiteId, input.suiteId),
+                  notInArray(caseSuiteRoundRecoveryCredentials.ruleId, activeRuleIds),
+                ),
           )
           .run();
-        if (result.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
-        for (const [ruleId, apiKeyCiphertext] of Object.entries(
-          input.roundRecoveryCredentialUpserts ?? {},
-        )) {
-          this.handle.db
-            .insert(caseSuiteRoundRecoveryCredentials)
-            .values({
-              suiteId: input.suiteId,
-              ruleId,
-              apiKeyCiphertext,
-              updatedAt: input.updatedAt,
-            })
-            .onConflictDoUpdate({
-              target: [
-                caseSuiteRoundRecoveryCredentials.suiteId,
-                caseSuiteRoundRecoveryCredentials.ruleId,
-              ],
-              set: { apiKeyCiphertext, updatedAt: input.updatedAt },
-            })
-            .run();
-        }
-        if (input.policy) {
-          const activeRuleIds = input.policy.roundRecoveryRules.map((rule) => rule.id);
-          this.handle.db
-            .delete(caseSuiteRoundRecoveryCredentials)
-            .where(
-              activeRuleIds.length === 0
-                ? eq(caseSuiteRoundRecoveryCredentials.suiteId, input.suiteId)
-                : and(
-                    eq(caseSuiteRoundRecoveryCredentials.suiteId, input.suiteId),
-                    notInArray(caseSuiteRoundRecoveryCredentials.ruleId, activeRuleIds),
-                  ),
-            )
-            .run();
-        }
-        this.insertVersionSnapshot(input.suiteId, input.versionId, input.changeReason, input);
-      })
-      .immediate();
+      }
+      this.insertVersionSnapshot(input.suiteId, input.versionId, input.changeReason, input);
+    });
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
 
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
-    this.handle.client
-      .transaction(() => {
+    await retrySqliteWriteTransaction(this.handle, () => {
+      this.handle.db
+        .insert(caseSuites)
+        .values({
+          id: input.id,
+          projectId: input.projectId ?? DEFAULT_PROJECT_ID,
+          name: input.name,
+          description: input.description ?? null,
+          version: 1,
+          status: "active",
+          enabled: true,
+          revision: 1,
+          policyJson: JSON.stringify(input.policy),
+          ...(input.actorId ? { createdBy: input.actorId, updatedBy: input.actorId } : {}),
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        })
+        .run();
+      for (const item of input.items) {
         this.handle.db
-          .insert(caseSuites)
+          .insert(caseSuiteItems)
           .values({
-            id: input.id,
-            projectId: input.projectId ?? DEFAULT_PROJECT_ID,
-            name: input.name,
-            description: input.description ?? null,
-            version: 1,
-            status: "active",
-            enabled: true,
-            revision: 1,
-            policyJson: JSON.stringify(input.policy),
-            ...(input.actorId ? { createdBy: input.actorId, updatedBy: input.actorId } : {}),
-            createdAt: input.createdAt,
-            updatedAt: input.createdAt,
+            id: item.id,
+            suiteId: input.id,
+            caseDefinitionId: item.caseDefinitionId,
+            addedAt: input.createdAt,
           })
           .run();
-        for (const item of input.items) {
-          this.handle.db
-            .insert(caseSuiteItems)
-            .values({
-              id: item.id,
-              suiteId: input.id,
-              caseDefinitionId: item.caseDefinitionId,
-              addedAt: input.createdAt,
-            })
-            .run();
-        }
-        for (const item of input.ddtItems ?? []) {
-          this.handle.db
-            .insert(caseSuiteDdtItems)
-            .values({
-              id: item.id,
-              suiteId: input.id,
-              ddtCaseId: item.ddtCaseId,
-              addedAt: input.createdAt,
-            })
-            .run();
-        }
-        for (const [ruleId, apiKeyCiphertext] of Object.entries(
-          input.roundRecoveryCredentials ?? {},
-        )) {
-          this.handle.db
-            .insert(caseSuiteRoundRecoveryCredentials)
-            .values({ suiteId: input.id, ruleId, apiKeyCiphertext, updatedAt: input.createdAt })
-            .run();
-        }
-        this.insertVersionSnapshot(input.id, input.versionId, "suite.copy", {
-          ...(input.actorId ? { actorId: input.actorId } : {}),
-          updatedAt: input.createdAt,
-        });
-      })
-      .immediate();
+      }
+      for (const item of input.ddtItems ?? []) {
+        this.handle.db
+          .insert(caseSuiteDdtItems)
+          .values({
+            id: item.id,
+            suiteId: input.id,
+            ddtCaseId: item.ddtCaseId,
+            addedAt: input.createdAt,
+          })
+          .run();
+      }
+      for (const [ruleId, apiKeyCiphertext] of Object.entries(
+        input.roundRecoveryCredentials ?? {},
+      )) {
+        this.handle.db
+          .insert(caseSuiteRoundRecoveryCredentials)
+          .values({ suiteId: input.id, ruleId, apiKeyCiphertext, updatedAt: input.createdAt })
+          .run();
+      }
+      this.insertVersionSnapshot(input.id, input.versionId, "suite.copy", {
+        ...(input.actorId ? { actorId: input.actorId } : {}),
+        updatedAt: input.createdAt,
+      });
+    });
     const suite = await this.getSummary(input.id);
     if (!suite) throw new Error(`Case suite ${input.id} does not exist after copy.`);
     return suite;

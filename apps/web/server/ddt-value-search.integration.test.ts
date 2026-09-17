@@ -81,7 +81,7 @@ it("scans 100,000 DDT cases off the Web thread, bounds admission and leaves SQLi
       }
     })();
     const signal = new AbortController().signal;
-    const input = { ...scope, keyword: "unique-needle", limit: 20 };
+    const input = { ...scope, keyword: "ordinary", limit: 20, indexOffset: 0 };
     const first = pool.searchDdtValues(input, signal);
     const second = pool.searchDdtValues({ ...input, keyword: "missing" }, signal);
     const settled = Promise.all([first, second]);
@@ -107,22 +107,33 @@ it("scans 100,000 DDT cases off the Web thread, bounds admission and leaves SQLi
     expect(Math.max(...latencies)).toBeLessThan(1_500);
     let page = ddtValueSearchPageSchema.parse((await settled)[0]);
     let scanned = page.scannedCount;
-    const matches = [...page.items];
+    let matchedCount = page.index!.matchedCount;
+    const pageCursors = [...page.index!.pageCursors];
     for (let slice = 0; page.nextCursor && slice < 100; slice += 1) {
       page = ddtValueSearchPageSchema.parse(
-        await pool.searchDdtValues({ ...input, cursor: page.nextCursor }, signal),
+        await pool.searchDdtValues(
+          { ...input, cursor: page.nextCursor, indexOffset: matchedCount % 20 },
+          signal,
+        ),
       );
       scanned += page.scannedCount;
-      matches.push(...page.items);
+      expect(page.items).toEqual([]);
+      matchedCount += page.index!.matchedCount;
+      pageCursors.push(...page.index!.pageCursors);
     }
     expect(page.nextCursor).toBeUndefined();
     expect(scanned).toBe(100_000);
-    expect(matches.map((item) => item.caseId)).toEqual(["case-099999"]);
+    expect(matchedCount).toBe(99_999);
+    expect(pageCursors).toHaveLength(5_000);
+    expect(pageCursors.at(-1)).toBe("case-099979");
     const cancelled = new AbortController();
     cancelled.abort();
     await expect(pool.searchDdtValues(input, cancelled.signal)).rejects.toThrow();
     const recovery = ddtValueSearchPageSchema.parse(
-      await pool.searchDdtValues({ ...input, cursor: "case-099998" }, signal),
+      await pool.searchDdtValues(
+        { ...scope, keyword: "unique-needle", cursor: "case-099998" },
+        signal,
+      ),
     );
     expect(recovery.items).toHaveLength(1);
   } finally {

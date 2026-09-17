@@ -177,6 +177,32 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           );
           expect(remainder.items.map((row) => row.caseId)).toEqual(["LARGE-3"]);
           expect(remainder.nextCursor).toBeUndefined();
+
+          for (let index = 0; index < 41; index += 1)
+            await insert(`PAGED-${String(index).padStart(3, "0")}`, {
+              field: "page-needle",
+              another: "page-needle",
+            });
+          const countPage = await searchDdtValues(
+            repository,
+            { ...query, keyword: "page-needle", indexOffset: 0 },
+            async () => "continue",
+          );
+          expect(countPage.index?.matchedCount).toBe(41);
+          expect(countPage.index?.pageCursors).toHaveLength(3);
+          expect(countPage.items).toEqual([]);
+          const ids: string[] = [];
+          for (const cursor of countPage.index!.pageCursors) {
+            const resultPage = await searchDdtValues(
+              repository,
+              { ...query, keyword: "page-needle", cursor },
+              async () => "continue",
+            );
+            ids.push(...resultPage.items.map((item) => item.caseId));
+          }
+          expect(ids).toEqual(
+            Array.from({ length: 41 }, (_, index) => `PAGED-${String(index).padStart(3, "0")}`),
+          );
         } finally {
           if (postgres)
             await postgres.pool.query("DELETE FROM project_versions WHERE id = $1", [

@@ -58,6 +58,7 @@
   --ddt-preview-files-max-height: min(320px, 35dvh);
   --ddt-api-code-max-height: 360px;
   --ddt-api-language-width: 140px;
+  --ddt-case-data-dialog-width: 960px;
 }
 
 * {
@@ -7160,12 +7161,26 @@ button.icon-button:disabled {
 }
 
 .suite-copy-form {
-  /* inline-flex would shrink the box (and its separator) to the content;
-     block-level flex keeps the row layout while spanning the padded width. */
-  display: flex;
-  margin-top: 18px;
-  padding: 18px 16px 0;
-  border-top: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.stack-form .suite-copy-scope {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stack-form .suite-copy-scope input {
+  width: var(--space-5);
+  flex: 0 0 var(--space-5);
+  padding: 0;
+}
+
+.suite-copy-form .field-hint {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
 }
 
 @media (max-width: 1180px) {
@@ -7535,9 +7550,18 @@ button.icon-button:disabled {
   min-width: 0;
 }
 
-.ddt-value-search-result header > a {
+.ddt-value-search-preview-trigger {
   flex-shrink: 0;
   gap: var(--space-2);
+}
+
+.ddt-search-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .ddt-value-search-result dl > div {
@@ -7554,6 +7578,59 @@ button.icon-button:disabled {
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.action-dialog.ddt-case-data-dialog {
+  width: min(var(--ddt-case-data-dialog-width), calc(100dvw - 2 * var(--space-5)));
+  max-height: calc(100dvh - 2 * var(--space-5));
+}
+
+.ddt-case-data-dialog .action-dialog-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  overscroll-behavior: contain;
+}
+
+.ddt-case-data-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ddt-case-data-step > span:first-child {
+  flex-shrink: 0;
+}
+
+.ddt-case-data-fields {
+  min-width: 0;
+  margin: 0;
+}
+
+.ddt-case-data-fields > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ddt-case-data-fields :is(dt, dd, pre) {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.ddt-case-data-fields dt {
+  color: var(--color-text-secondary);
+}
+
+.ddt-case-data-fields pre {
+  max-height: var(--ddt-api-code-max-height);
+  overflow: auto;
+  font: inherit;
+  overscroll-behavior: contain;
 }
 
 .ddt-api-card {

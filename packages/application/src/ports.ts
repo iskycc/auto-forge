@@ -1350,7 +1350,7 @@ export type CopyCaseSuiteRecord = {
   projectId?: string;
   name: string;
   description?: string;
-  // 复制继承源任务的完整策略与用例清单；ID 均由应用层生成。
+  // 继承完整策略；仅复制配置时成员清单为空。ID 均由应用层生成。
   policy: CaseSuiteExecutionPolicy;
   items: Array<{ id: string; caseDefinitionId: string }>;
   ddtItems?: Array<{ id: string; ddtCaseId: string }>;

@@ -72,6 +72,7 @@ export function CaseSuiteEditor({
   const [pending, setPending] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
     suite.policy.runnerGroupId ? "group" : "runners",
@@ -189,12 +190,15 @@ export function CaseSuiteEditor({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setCopying(true);
-    setError(null);
+    setCopyError(null);
     try {
       const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/copy`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: form.get("copyName") }),
+        body: JSON.stringify({
+          name: form.get("copyName"),
+          includeCases: form.get("configurationOnly") !== "on",
+        }),
       });
       if (!response.ok) {
         await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
@@ -203,7 +207,7 @@ export function CaseSuiteEditor({
       router.push(`/case-suites/${encodeURIComponent(created.id)}`);
     } catch (caught) {
       if (await showConcurrentModification(caught)) return;
-      setError(caught instanceof Error ? caught.message : "复制用例任务失败。");
+      setCopyError(caught instanceof Error ? caught.message : "复制用例任务失败。");
     } finally {
       setCopying(false);
     }
@@ -837,18 +841,24 @@ export function CaseSuiteEditor({
             </div>
           </form>
           <div className="suite-secondary-actions">
-            <Button onClick={() => setCopyOpen(true)} type="button">
+            <Button
+              onClick={() => {
+                setCopyError(null);
+                setCopyOpen(true);
+              }}
+              type="button"
+            >
               <Copy size={15} /> 复制任务
             </Button>
           </div>
           <ActionDialog
-            description="复制当前任务的用例成员和执行策略，历史执行记录不会复制。"
+            description="复制已保存的任务配置，可选择是否包含用例；历史执行记录不会复制。"
             onClose={() => !copying && setCopyOpen(false)}
             open={copyOpen}
             title="复制用例任务"
           >
             <form
-              className="settings-inline-form suite-copy-form action-dialog-form"
+              className="stack-form suite-copy-form action-dialog-form"
               onSubmit={(event) => void copySuite(event)}
             >
               <label>
@@ -860,6 +870,18 @@ export function CaseSuiteEditor({
                   placeholder={`${suite.name} 副本`}
                 />
               </label>
+              <label className="checkbox-field suite-copy-scope">
+                <Input type="checkbox" name="configurationOnly" disabled={copying} />
+                仅复制配置，不复制用例
+              </label>
+              <p className="field-hint">
+                勾选后保留执行策略、Adapter 和恢复配置，新任务不包含普通或 DDT 用例。
+              </p>
+              {copyError ? (
+                <p className="inline-error" role="alert">
+                  {copyError}
+                </p>
+              ) : null}
               <Button className="button button-secondary" disabled={copying} type="submit">
                 {copying ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}{" "}
                 复制任务

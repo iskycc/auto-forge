@@ -1775,6 +1775,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const runners = new PostgresRunnerRepository(handle);
     const suiteId = randomUUID();
     const copyId = randomUUID();
+    const configurationCopyId = randomUUID();
     const sourceId = randomUUID();
     const caseDefinitionId = randomUUID();
     const runnerId = randomUUID();
@@ -1887,6 +1888,24 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         createdAt: "2026-08-09T00:03:00.000Z",
       });
       expect(copied).toMatchObject({ version: 1, revision: 1, caseCount: 1, status: "active" });
+      const configurationCopy = await suites.copySuite({
+        id: configurationCopyId,
+        name: "Configuration only",
+        policy: updated.policy,
+        items: [],
+        ddtItems: [],
+        versionId: randomUUID(),
+        createdAt: now,
+      });
+      expect(configurationCopy).toMatchObject({ caseCount: 0, version: 1, policy: updated.policy });
+      expect(await suites.get(configurationCopyId)).toMatchObject({ items: [], ddtItems: [] });
+      const emptySnapshot = await handle.pool.query<{ snapshot_json: string }>(
+        "SELECT snapshot_json FROM case_suite_versions WHERE suite_id = $1",
+        [configurationCopyId],
+      );
+      const snapshot = JSON.parse(emptySnapshot.rows[0]!.snapshot_json);
+      expect(snapshot.caseDefinitionIds).toEqual([]);
+      expect(snapshot.ddtCaseIds ?? []).toEqual([]);
 
       await runners.register({
         id: runnerId,
@@ -1937,6 +1956,10 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       });
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
+      await handle.pool.query("DELETE FROM case_suite_versions WHERE suite_id = $1", [
+        configurationCopyId,
+      ]);
+      await handle.pool.query("DELETE FROM case_suites WHERE id = $1", [configurationCopyId]);
       await handle.pool.query("DELETE FROM case_suite_versions WHERE suite_id IN ($1, $2)", [
         suiteId,
         copyId,

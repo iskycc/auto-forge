@@ -57,6 +57,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         keyword: url.searchParams.get("keyword") ?? "",
         cursor: url.searchParams.get("cursor") ?? undefined,
         limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        indexOffset: url.searchParams.has("indexOffset")
+          ? Number(url.searchParams.get("indexOffset"))
+          : undefined,
       });
       const dispatcher = workDispatcher();
       if (!dispatcher?.searchDdtValues)

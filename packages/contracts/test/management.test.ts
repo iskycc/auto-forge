@@ -13,7 +13,21 @@ import {
   caseSuiteExecutionPolicySchema,
   updateCaseSuiteItemsInputSchema,
   createWebhookConfigurationInputSchema,
+  copyCaseSuiteInputSchema,
 } from "../src/management";
+
+describe("case suite copy scope", () => {
+  it("accepts an explicit configuration-only copy and retains legacy requests", () => {
+    expect(copyCaseSuiteInputSchema.parse({ name: "Copy", includeCases: false })).toEqual({
+      name: "Copy",
+      includeCases: false,
+    });
+    expect(copyCaseSuiteInputSchema.parse({ name: "Copy" })).toEqual({ name: "Copy" });
+    expect(
+      copyCaseSuiteInputSchema.safeParse({ name: "Copy", includeCases: "false" }).success,
+    ).toBe(false);
+  });
+});
 
 describe("Runner registration contracts", () => {
   it("accepts the optional startup terminal ticket without changing protocol v1", () => {

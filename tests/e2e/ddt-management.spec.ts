@@ -1939,6 +1939,13 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   request,
 }) => {
   test.setTimeout(150_000);
+  await page.addInitScript(() => {
+    // Plain HTTP deployments do not expose this secure-context-only API.
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      configurable: true,
+      value: undefined,
+    });
+  });
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);
   const longCaseId = "AAA-" + "支付用例".repeat(65);
@@ -1968,6 +1975,17 @@ test("DDT advanced search submits explicitly, searches only values and handles s
             nestedKey: "钱包确认",
             KEY_ONLY: "different",
             [longKey]: "开始".repeat(80) + "钱包支付" + "结束".repeat(100),
+          },
+          step2: {
+            description: "交易已确认",
+            enabled: false,
+            amount: 0,
+            optional: null,
+            longValue: "内容".repeat(5_000) + "正文终点",
+            ...Object.fromEntries(
+              Array.from({ length: 55 }, (_, index) => [`field${index}`, index]),
+            ),
+            tailMarker: "字段末尾",
           },
         },
       },
@@ -2011,6 +2029,17 @@ test("DDT advanced search submits explicitly, searches only values and handles s
     "CaseName · 未填写",
   );
   await expect(page).toHaveURL(/ddtSearch=/);
+  const pagination = panel.getByRole("navigation", { name: "检索结果分页" });
+  await expect(pagination).toContainText("共 23 条 · 共 2 页 · 第 1 页");
+  await expect(pagination.getByRole("button", { name: "上一页" })).toBeDisabled();
+  await expect(pagination.getByRole("button", { name: "第 1 页", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  const indexedRequests = () =>
+    searchRequests.filter((url) => new URL(url).searchParams.has("indexOffset")).length;
+  const initialIndexRequests = indexedRequests();
+
   for (const viewport of [
     { width: 1024, height: 768 },
     { width: 1536, height: 960 },
@@ -2018,13 +2047,11 @@ test("DDT advanced search submits explicitly, searches only values and handles s
     await page.setViewportSize(viewport);
     await expectUiIntegrity(page);
     await captureDdtUi(page, `value-search-${viewport.width}`);
-    await panel
-      .locator("article")
-      .first()
-      .evaluate((element) => {
-        element.scrollIntoView({ block: "start" });
-        window.scrollBy(0, -96);
-      });
+    await pagination.evaluate((element) => {
+      element.scrollIntoView({ block: "start" });
+      const topbarBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+      window.scrollBy(0, -topbarBottom - 16);
+    });
     await expectUiIntegrity(page);
     await captureDdtUi(page, `value-search-results-${viewport.width}`);
     await panel
@@ -2038,18 +2065,82 @@ test("DDT advanced search submits explicitly, searches only values and handles s
     await captureDdtUi(page, `value-search-compact-results-${viewport.width}`);
     await page.evaluate(() => window.scrollTo(0, 0));
   }
-  await panel.getByRole("button", { name: "下一批" }).click();
-  await expect(panel.locator("article")).toHaveCount(3);
-  await expect(panel.getByRole("status")).toContainText("已检索到末尾");
-  await panel.getByRole("button", { name: "上一批" }).click();
+  const searchPattern = "**/api/v1/ddt/value-search?**";
+  await page.route(
+    searchPattern,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "分页读取繁忙，请重试。",
+            requestId: "page-test",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await panel.getByRole("button", { name: "下一页" }).click();
+  await expect(panel.getByRole("alert")).toContainText("分页读取繁忙");
   await expect(panel.locator("article")).toHaveCount(20);
+  await expect(pagination).toContainText("第 1 页");
+  await panel.getByRole("button", { name: "重试检索" }).click();
+  await expect(panel.locator("article")).toHaveCount(3);
+  await expect(panel.getByRole("status")).toContainText("检索完成");
+  await expect(pagination).toContainText("共 23 条 · 共 2 页 · 第 2 页");
+  await expect(pagination.getByRole("button", { name: "下一页" })).toBeDisabled();
+  await expect(page).toHaveURL(/ddtSearchPage=2/);
+  expect(indexedRequests()).toBe(initialIndexRequests);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await pagination.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `value-search-pagination-${viewport.width}`);
+  }
+
+  const lastBatchRequests = searchRequests.length;
+  const lastBatchPreview = panel
+    .locator("article")
+    .first()
+    .getByRole("button", { name: "查看用例" });
+  await lastBatchPreview.click();
+  const dataDialog = page.getByRole("dialog", { name: "DDT 用例数据", exact: true });
+  await expect(dataDialog).toContainText("VALUE-020");
+  await expect(dataDialog).toContainText("钱包支付成功");
+  await expect(dataDialog.getByRole("button", { name: "关闭DDT 用例数据" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dataDialog).toBeHidden();
+  await expect(lastBatchPreview).toBeFocused();
+  await expect(panel.locator("article")).toHaveCount(3);
+  expect(searchRequests).toHaveLength(lastBatchRequests);
+  await panel.getByRole("button", { name: "上一页" }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  expect(searchRequests).toHaveLength(lastBatchRequests);
+  await page.goBack();
+  await expect(panel.locator("article")).toHaveCount(3);
+  await expect(pagination).toContainText("第 2 页");
+  await page.goForward();
+  await expect(panel.locator("article")).toHaveCount(20);
+  await pagination.getByRole("button", { name: "第 2 页", exact: true }).click();
+  await expect(panel.locator("article")).toHaveCount(3);
+  await pagination.getByRole("button", { name: "第 1 页", exact: true }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  expect(searchRequests).toHaveLength(lastBatchRequests);
+
   const beforeTyping = searchRequests.length;
   await keyword.fill("KEY_ONLY");
   await page.waitForTimeout(400);
   expect(searchRequests).toHaveLength(beforeTyping);
   await keyword.press("Enter");
-  await expect(panel.getByRole("status")).toContainText("展示 0 条");
-  await expect(panel.getByRole("status")).toContainText("已检索到末尾");
+  await expect(panel.getByRole("navigation", { name: "检索结果分页" })).toContainText(
+    "共 0 条 · 共 0 页",
+  );
+  await expect(panel.getByRole("status")).toContainText("检索完成");
   await expect(panel.locator("article")).toHaveCount(0);
   await page.goBack();
   await expect(keyword).toHaveValue("钱包");
@@ -2060,7 +2151,6 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   await expect(panel.locator("article")).toHaveCount(20);
   expect(searchRequests).toHaveLength(beforeReturn);
   expect(unrelatedRequests).toHaveLength(0);
-  const searchPattern = "**/api/v1/ddt/value-search?**";
   await page.route(
     searchPattern,
     (route) =>
@@ -2099,14 +2189,132 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   await expect(panel.getByRole("status")).toContainText("检索尚未完成");
   await panel.getByRole("button", { name: "搜索", exact: true }).click();
   await expect(panel.locator("article")).toHaveCount(20);
-  const selectedLink = panel.locator("article").nth(1).getByRole("link", { name: "查看用例" });
-  await selectedLink.click();
-  await expect(page.getByRole("tab", { name: "用例", exact: true })).toHaveAttribute(
+  const selectedPreview = panel.locator("article").nth(1).getByRole("button", { name: "查看用例" });
+  await selectedPreview.scrollIntoViewIfNeeded();
+  await selectedPreview.focus();
+  const progressBeforePreview = {
+    url: page.url(),
+    scrollY: await page.evaluate(() => window.scrollY),
+    searchRequests: searchRequests.length,
+    caseIds: await panel.locator("article h3").allTextContents(),
+  };
+  const previewPattern = "**/api/v1/ddt/cases/VALUE-001?**";
+  await page.route(
+    previewPattern,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "用例数据暂时无法读取，请重试。",
+            requestId: "preview-test",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await selectedPreview.click();
+  await expect(dataDialog.getByRole("alert")).toContainText("用例数据暂时无法读取");
+  await dataDialog.getByRole("button", { name: "重新加载" }).click();
+  await expect(dataDialog).toContainText("查询账户交易明细");
+  await expect(dataDialog).toContainText("钱包支付成功");
+  await expect(dataDialog.getByRole("button", { name: /保存|执行|编辑/ })).toHaveCount(0);
+  await expect(page).toHaveURL(progressBeforePreview.url);
+  await page.keyboard.press("Escape");
+  await expect(dataDialog).toBeHidden();
+  await expect(selectedPreview).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(progressBeforePreview.scrollY);
+  expect(await panel.locator("article h3").allTextContents()).toEqual(
+    progressBeforePreview.caseIds,
+  );
+  expect(searchRequests).toHaveLength(progressBeforePreview.searchRequests);
+
+  let heldPreview: Route | undefined;
+  await page.route(
+    previewPattern,
+    (route) => {
+      heldPreview = route;
+    },
+    { times: 1 },
+  );
+  await selectedPreview.click();
+  await expect(dataDialog.getByRole("status")).toContainText("正在读取用例数据");
+  await expect.poll(() => Boolean(heldPreview)).toBe(true);
+  await page.keyboard.press("Escape");
+  await heldPreview!.abort();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await selectedPreview.click();
+    await expect(dataDialog).toContainText("查询账户交易明细");
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `value-search-data-standard-${viewport.width}`);
+    await dataDialog.getByRole("button", { name: "关闭DDT 用例数据" }).click();
+    await panel.locator("article").first().getByRole("button", { name: "查看用例" }).click();
+    await expect(dataDialog).toContainText(longCaseName);
+    await expect(dataDialog).toContainText(longKey);
+    await expectUiIntegrity(page);
+    expect(await dataDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await captureDdtUi(page, `value-search-data-journey-${viewport.width}`);
+    await dataDialog.getByRole("button", { name: "用户旅程步骤", exact: true }).click();
+    await dataDialog.getByRole("option", { name: "step2", exact: true }).click();
+    await expect(dataDialog).toContainText("交易已确认");
+    await expect(dataDialog.locator("dd")).toContainText(["交易已确认", "false", "0", "空值"]);
+    await expect(dataDialog).not.toContainText("字段末尾");
+    await expect(dataDialog).not.toContainText("正文终点");
+    await dataDialog.getByRole("button", { name: /^显示更多字段/ }).click();
+    await expect(dataDialog).toContainText("字段末尾");
+    await dataDialog.getByRole("button", { name: /^显示更多内容/ }).click();
+    await expect(dataDialog).toContainText("正文终点");
+    await dataDialog.getByRole("button", { name: "关闭DDT 用例数据" }).click();
+  }
+  await expect(page.getByRole("tab", { name: "高级检索", exact: true })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("region", { name: "DDT 用例详情", exact: true })).toContainText(
-    "VALUE-001",
+  await expect(keyword).toHaveValue("钱包");
+  expect(searchRequests).toHaveLength(progressBeforePreview.searchRequests);
+  expect(unrelatedRequests).toHaveLength(0);
+
+  let pausedIndexRequest: Route | undefined;
+  await page.route(
+    searchPattern,
+    (route) => {
+      pausedIndexRequest = route;
+    },
+    { times: 1 },
+  );
+  await page.route(
+    searchPattern,
+    (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [],
+          scannedCount: 7,
+          nextCursor: "value-006",
+          index: { matchedCount: 7, pageCursors: [""] },
+        }),
+      }),
+    { times: 1 },
+  );
+  await panel.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect.poll(() => Boolean(pausedIndexRequest)).toBe(true);
+  await panel.getByRole("button", { name: "取消检索" }).click();
+  await pausedIndexRequest!.abort();
+  await expect(panel.getByRole("status")).toContainText("已匹配 7 条（总数统计中）");
+  await expect(pagination).not.toContainText("共 7 条");
+  await panel.getByRole("button", { name: "继续统计" }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  await expect(pagination).toContainText("共 23 条 · 共 2 页");
+  expect(searchRequests.some((url) => new URL(url).searchParams.get("indexOffset") === "7")).toBe(
+    true,
   );
 });
 

@@ -172,7 +172,9 @@ export class CaseSuiteService {
     actorId?: string,
     projectIds?: readonly string[],
   ) {
-    const source = await this.get(suiteId, projectIds);
+    const members = input.includeCases === false ? undefined : await this.get(suiteId, projectIds);
+    const source = members ?? (await this.getSummary(suiteId, projectIds));
+    const ddtMembers = members?.ddtItems ?? [];
     const projectVersionId = source.policy.projectVersionId;
     if (!projectVersionId) {
       throw new DomainError(
@@ -204,13 +206,13 @@ export class CaseSuiteService {
       policy: mergeCaseSuiteExecutionPolicy(source.policy, {
         roundRecoveryRules: copiedRecovery.rules,
       }),
-      items: source.items.map((item) => ({
+      items: (members?.items ?? []).map((item) => ({
         id: this.ids.next(),
         caseDefinitionId: item.caseDefinition.id,
       })),
-      ...((source.ddtItems?.length ?? 0) > 0
+      ...(ddtMembers.length > 0
         ? {
-            ddtItems: source.ddtItems.map((item) => ({
+            ddtItems: ddtMembers.map((item) => ({
               id: this.ids.next(),
               ddtCaseId: item.ddtCase.id,
             })),

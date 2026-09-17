@@ -40,6 +40,7 @@ export function CaseSuiteManager({
   const [refreshing, startRefresh] = useTransition();
   const [createMode, setCreateMode] = useState<"blank" | "copy">("blank");
   const [sourceSuiteId, setSourceSuiteId] = useState(initialSuites[0]?.id ?? "");
+  const [configurationOnly, setConfigurationOnly] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [adapterEnabled, setAdapterEnabled] = useState(false);
@@ -56,6 +57,7 @@ export function CaseSuiteManager({
   function openCreateDialog(): void {
     setError(null);
     setCreateMode("blank");
+    setConfigurationOnly(false);
     setSourceSuiteId(suites[0]?.id ?? "");
     setCreateOpen(true);
   }
@@ -73,7 +75,7 @@ export function CaseSuiteManager({
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name }),
+            body: JSON.stringify({ name, includeCases: !configurationOnly }),
           },
         );
         if (!response.ok) throw await caseSuiteRequestError(response, "复制用例任务失败。");
@@ -234,9 +236,22 @@ export function CaseSuiteManager({
                   ))}
                 </Select>
               </label>
+              <label className="checkbox-field suite-copy-scope">
+                <Input
+                  type="checkbox"
+                  checked={configurationOnly}
+                  disabled={pending}
+                  onChange={(event) => setConfigurationOnly(event.target.checked)}
+                />
+                仅复制配置，不复制用例
+              </label>
               <div className="form-context-summary suite-copy-summary" aria-label="任务复制范围">
                 <span>独立副本</span>
-                <strong>成员、执行策略与恢复配置</strong>
+                <strong>
+                  {configurationOnly
+                    ? "执行策略与恢复配置，不包含普通或 DDT 用例"
+                    : "成员、执行策略与恢复配置"}
+                </strong>
                 <small>
                   新任务使用独立 ID 和成员记录；修改或删除副本不会影响来源任务。执行历史、计划触发和
                   Webhook 绑定不会复制。

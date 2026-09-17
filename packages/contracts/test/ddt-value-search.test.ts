@@ -16,8 +16,23 @@ describe("DDT value search boundary", () => {
       { ...scope, keyword: "a".repeat(513) },
       { ...scope, keyword: "match", limit: 21 },
       { ...scope, keyword: "match", cursor: "a".repeat(1025) },
+      { ...scope, keyword: "match", indexOffset: -1 },
+      { ...scope, keyword: "match", indexOffset: 20 },
+      { ...scope, keyword: "match", indexOffset: 1.5 },
     ])
       expect(ddtValueSearchInputSchema.safeParse(invalid).success).toBe(false);
+  });
+  it("accepts bounded page index summaries without returning every matching case", () => {
+    const page = {
+      items: [],
+      scannedCount: 256,
+      nextCursor: "last",
+      index: { matchedCount: 23, pageCursors: ["", "case-20"] },
+    };
+    expect(ddtValueSearchPageSchema.parse(page)).toEqual(page);
+    expect(
+      ddtValueSearchInputSchema.parse({ ...scope, keyword: "match", indexOffset: 0 }),
+    ).toHaveProperty("indexOffset", 0);
   });
   it("distinguishes an incomplete empty slice from an exhausted search", () => {
     expect(

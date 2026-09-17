@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "path";
+import Database from "better-sqlite3";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -27,6 +28,138 @@ afterEach(async () => {
 });
 
 describe("SQLite case suite lifecycle", () => {
+  it.each(["create", "add", "remove", "add-ddt", "remove-ddt", "save", "copy"] as const)(
+    "retries the complete %s transaction after a short writer lock without blocking the event loop",
+    async (operation) => {
+      const { handle, suites } = await fixture();
+      handle.client.pragma("busy_timeout = 25");
+      const writer = new Database(handle.client.name);
+      let release: ReturnType<typeof setImmediate> | undefined;
+      try {
+        await suites.create({ id: "locked", name: "Source", createdAt: timestamp });
+        await suites.addCases({
+          suiteId: "locked",
+          items: [{ id: "member", caseDefinitionId: "case-1" }],
+          versionId: "initial",
+          updatedAt: timestamp,
+        });
+        handle.client
+          .prepare(
+            `INSERT INTO ddt_cases (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized, sr_num, sr_num_normalized, case_kind, data_json, created_at, updated_at)
+          VALUES ('ddt-lock', ?, 'project-version-1', 'stage-1', 'DDT', 'ddt', 'SR', 'sr', 'standard', '{}', ?, ?)`,
+          )
+          .run(DEFAULT_PROJECT_ID, timestamp, timestamp);
+        if (operation === "remove-ddt")
+          await suites.addDdtCases({
+            suiteId: "locked",
+            items: [{ id: "ddt-member", ddtCaseId: "ddt-lock" }],
+            versionId: "initial-ddt",
+            updatedAt: timestamp,
+          });
+        const mutations = {
+          create: () => suites.create({ id: "new", name: "Created", createdAt: timestamp }),
+          add: () =>
+            suites.addCases({
+              suiteId: "locked",
+              items: [{ id: "member-2", caseDefinitionId: "case-2" }],
+              versionId: "mutation",
+              updatedAt: timestamp,
+            }),
+          remove: () =>
+            suites.removeCases({
+              suiteId: "locked",
+              caseDefinitionIds: ["case-1"],
+              versionId: "mutation",
+              updatedAt: timestamp,
+            }),
+          "add-ddt": () =>
+            suites.addDdtCases({
+              suiteId: "locked",
+              items: [{ id: "ddt-member", ddtCaseId: "ddt-lock" }],
+              versionId: "mutation",
+              updatedAt: timestamp,
+            }),
+          "remove-ddt": () =>
+            suites.removeDdtCases({
+              suiteId: "locked",
+              ddtCaseIds: ["ddt-lock"],
+              versionId: "mutation",
+              updatedAt: timestamp,
+            }),
+          save: () =>
+            suites.updateSuite({
+              suiteId: "locked",
+              expectedRevision: 2,
+              name: "Saved",
+              versionId: "mutation",
+              changeReason: "suite.update",
+              updatedAt: timestamp,
+            }),
+          copy: () =>
+            suites.copySuite({
+              id: "copied",
+              name: "Copy",
+              policy: defaultCaseSuiteExecutionPolicy,
+              items: [],
+              versionId: "mutation",
+              createdAt: timestamp,
+            }),
+        };
+        writer.exec("BEGIN IMMEDIATE");
+        release = setImmediate(() => writer.exec("COMMIT"));
+        const result = await mutations[operation]();
+        expect(writer.inTransaction).toBe(false);
+        expect(result.caseCount).toBe(
+          { create: 0, add: 2, remove: 0, "add-ddt": 2, "remove-ddt": 1, save: 1, copy: 0 }[
+            operation
+          ],
+        );
+        if (operation !== "create")
+          expect(
+            handle.client
+              .prepare("SELECT count(*) AS count FROM case_suite_versions WHERE id = 'mutation'")
+              .get(),
+          ).toEqual({ count: 1 });
+      } finally {
+        clearImmediate(release);
+        if (writer.inTransaction) writer.exec("ROLLBACK");
+        writer.close();
+        handle.close();
+      }
+    },
+  );
+
+  it("rolls back exhausted lock retries and preserves genuine revision conflicts", async () => {
+    const { handle, suites } = await fixture();
+    handle.client.pragma("busy_timeout = 25");
+    const writer = new Database(handle.client.name);
+    const mutation = {
+      suiteId: "locked",
+      expectedRevision: 1,
+      name: "Saved",
+      versionId: "mutation",
+      changeReason: "suite.update",
+      updatedAt: timestamp,
+    };
+    try {
+      await suites.create({ id: "locked", name: "Original", createdAt: timestamp });
+      writer.exec("BEGIN IMMEDIATE");
+      await expect(suites.updateSuite(mutation)).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+      writer.exec("ROLLBACK");
+      expect(await suites.getSummary("locked")).toMatchObject({ revision: 1, name: "Original" });
+      expect(suiteVersionRows(handle, "locked")).toEqual([]);
+      expect(await suites.updateSuite(mutation)).toMatchObject({ revision: 2, name: "Saved" });
+      await expect(suites.updateSuite({ ...mutation, versionId: "stale" })).rejects.toMatchObject({
+        code: "CASE_SUITE_REVISION_CONFLICT",
+      });
+      expect(suiteVersionRows(handle, "locked")).toHaveLength(1);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      handle.close();
+    }
+  });
+
   it("filters tasks by their bound project version before applying the result limit", async () => {
     const { handle, suites } = await fixture();
     try {
@@ -333,6 +466,22 @@ describe("SQLite case suite lifecycle", () => {
       expect((await suites.get(copied.id))?.items[0]?.caseDefinition.id).toBe("case-1");
       const snapshots = suiteVersionRows(handle, "suite-copy");
       expect(snapshots.map((row) => [row.version, row.change_reason])).toEqual([[1, "suite.copy"]]);
+      const configurationCopy = await suites.copySuite({
+        id: "configuration-copy",
+        name: "Configuration only",
+        policy: copied.policy,
+        items: [],
+        ddtItems: [],
+        versionId: "configuration-copy-v1",
+        createdAt: timestamp,
+      });
+      expect(configurationCopy).toMatchObject({ caseCount: 0, version: 1, policy: copied.policy });
+      expect(await suites.get(configurationCopy.id)).toMatchObject({ items: [], ddtItems: [] });
+      const emptySnapshot = JSON.parse(
+        suiteVersionRows(handle, configurationCopy.id)[0]!.snapshot_json,
+      );
+      expect(emptySnapshot.caseDefinitionIds).toEqual([]);
+      expect(emptySnapshot.ddtCaseIds ?? []).toEqual([]);
     } finally {
       handle.close();
     }
