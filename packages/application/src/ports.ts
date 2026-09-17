@@ -105,6 +105,7 @@ import type {
 import type {
   DdtCaseListPage,
   DdtCaseListQuery,
+  DdtValueSearchCandidate,
   DdtDashboard,
   DdtDeletedCase,
   DdtExportSelection,
@@ -1095,6 +1096,7 @@ export interface DdtRepository {
     expectedRevision: number;
   }): Promise<void>;
   listCases(query: DdtCaseListQuery): Promise<DdtCaseListPage>;
+  readValueSearchCandidates(scope: DdtScope, cursor?: string): Promise<DdtValueSearchCandidate[]>;
   getCaseSummary(scope: DdtScope, caseId: string): Promise<DdtCaseSummary | null>;
   getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null>;
   getCases(scope: DdtScope, caseIds: readonly string[]): Promise<DdtCase[]>;

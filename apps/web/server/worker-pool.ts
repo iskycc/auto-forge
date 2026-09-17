@@ -178,6 +178,21 @@ export class WorkerPool implements WorkDispatcher {
     });
   }
 
+  searchDdtValues(input: unknown, signal: AbortSignal): Promise<unknown> {
+    const lane = this.maintenanceLanes.reduce((least, candidate) =>
+      candidate.pendingCount < least.pendingCount ? candidate : least,
+    );
+    if (lane.pendingCount >= 2) {
+      return Promise.reject(
+        Object.assign(new Error("检索繁忙，请稍后重试。"), {
+          name: "DomainError",
+          code: "PLATFORM_BUSY",
+        }),
+      );
+    }
+    return lane.dispatch({ kind: "search-ddt-values", input }, signal);
+  }
+
   async triggerDueSchedules(): Promise<number> {
     return (await this.nextSchedulingLane().dispatch({ kind: "trigger-schedules" })) as number;
   }
@@ -383,6 +398,7 @@ class WorkerLane {
         finishForeground:
           task.kind === "platform-maintenance" ||
           task.kind === "background-job" ||
+          task.kind === "search-ddt-values" ||
           task.kind === "parse-file"
             ? () => undefined
             : runtimePriority().beginForeground(),

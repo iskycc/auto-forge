@@ -15,6 +15,7 @@ import {
 } from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { DdtCaseInspector } from "./ddt-case-inspector";
+import { DdtValueSearch } from "./ddt-value-search";
 import { DdtApiReference, type DdtScopeLabels } from "./ddt-api-reference";
 
 import {
@@ -140,14 +141,15 @@ type DeletedCase = {
   sourceName: string;
   deletedAt: string;
 };
-type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle" | "api";
+type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle" | "api" | "search";
 
 function workspaceTab(value: string | null): WorkspaceTab {
   return value === "cases" ||
     value === "imports" ||
     value === "templates" ||
     value === "recycle" ||
-    value === "api"
+    value === "api" ||
+    value === "search"
     ? value
     : "overview";
 }
@@ -197,6 +199,7 @@ export function DdtManagementWorkspace({
   const requestedTab = workspaceTab(searchParameters.get("ddtView"));
   const [tab, setActiveTab] = useState<WorkspaceTab>(requestedTab);
   const isApiTab = tab === "api";
+  const isIndependentTab = isApiTab || tab === "search";
   const setTab = (value: WorkspaceTab) => {
     setActiveTab(value);
     const url = new URL(window.location.href);
@@ -339,7 +342,7 @@ export function DdtManagementWorkspace({
   ]);
 
   useEffect(() => {
-    if (isApiTab) return;
+    if (isIndependentTab) return;
     let cancelled = false;
     const applyFilter = async () => {
       // Returning to a recently requested filter must restart its cancelled read.
@@ -374,10 +377,10 @@ export function DdtManagementWorkspace({
       window.clearTimeout(timer);
       loadGeneration.current += 1;
     };
-  }, [confirmAction, filterKey, isApiTab, load]);
+  }, [confirmAction, filterKey, isIndependentTab, load]);
 
   useEffect(() => {
-    if (isApiTab) return;
+    if (isIndependentTab) return;
     if (!imports.some((job) => ["queued", "running", "cancel_requested"].includes(job.status)))
       return;
     const timer = window.setInterval(() => {
@@ -385,9 +388,10 @@ export function DdtManagementWorkspace({
       void load();
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [imports, isApiTab, load]);
+  }, [imports, isIndependentTab, load]);
 
   useEffect(() => {
+    if (isIndependentTab) return;
     const controller = new AbortController();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
@@ -406,7 +410,7 @@ export function DdtManagementWorkspace({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [endpoint]);
+  }, [endpoint, isIndependentTab]);
 
   const openCase = useCallback(
     async (caseId: string) => {
@@ -628,7 +632,7 @@ export function DdtManagementWorkspace({
         >
           <Code2 size={15} /> SR 测试类关联
         </Button>
-        {!isApiTab ? (
+        {!isIndependentTab ? (
           <Button
             className="button button-secondary"
             type="button"
@@ -661,6 +665,7 @@ export function DdtManagementWorkspace({
           [
             ["overview", BarChart3, "概览"],
             ["cases", FileSpreadsheet, "用例"],
+            ["search", Search, "高级检索"],
             ["imports", Layers3, "导入任务"],
             ["templates", Boxes, "字段模板"],
             ["recycle", ArchiveRestore, "回收站"],
@@ -705,9 +710,12 @@ export function DdtManagementWorkspace({
         />
       ) : null}
 
-      {!isApiTab && busy && cases.length === 0 ? <WorkspaceLoading /> : null}
+      {!isIndependentTab && busy && cases.length === 0 ? <WorkspaceLoading /> : null}
 
       {isApiTab ? <DdtApiReference scope={scope} labels={scopeLabels} /> : null}
+      {tab === "search" ? (
+        <DdtValueSearch key={JSON.stringify(scope)} scope={scope} labels={scopeLabels} />
+      ) : null}
 
       {!busy && tab === "overview" ? (
         <div className="ddt-overview">

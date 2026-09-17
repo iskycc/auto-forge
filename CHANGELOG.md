@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.5 - 2026-09-17
+
+### Added and fixed
+
+- DDT 管理新增“高级检索”子标签，按当前项目、版本和阶段检索原始用例字段的 Value，Key 和管理元数据不参与匹配。结果按用例合并，显示命中的字段路径与内容摘要，并支持进入原用例详情；覆盖嵌套字段、用户旅程步骤、数字、布尔值和 null。
+- 搜索由按钮或回车明确提交，输入和首次进入不发起查询；支持取消、重试、分批查看和继续检索。范围及关键词进入 URL，返回或切换标签可恢复浏览器缓存，主动搜索读取最新数据。
+- Lite/Full 检索在后台工作线程中按范围索引、行数和正文预算分段读取，不新增写事务；繁忙时明确反馈并允许重试，避免在 Web 线程扫描大量正文。补充长 CaseID、字段路径和内容的换行处理。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。两种部署模式共用查询契约、应用服务与界面，检索继续校验当前范围的用例读取权限。
+
+### Validation and known limitations
+
+- 全量 941 项 TypeScript 单元测试、Go 测试和 28 项发布/运维脚本测试通过；真实 SQLite/PostgreSQL 检索及 DDT 回归通过。真实工作线程验证 100,000 条用例的完整扫描、取消、过载恢复及并行 HTTP/SQLite 写入探测。
+- 4 项 DDT Playwright 场景通过，覆盖高级检索、原有分栏、导入工作台和公开 API；全仓格式、lint、类型检查、E2E 矩阵检查及 Web 生产构建通过。已人工查看 1024×768、1536×960 的检索页面及长内容截图，未发现横向溢出或控件重叠。
+- 任意子串检索仍需检查范围内正文，采用分段与取消控制开销，展示已扫描数量而不额外计算全量命中总数。本地验证使用 Chromium；完整 Full、离线和发布资产验收由版本标签流水线执行。
+
 ## 1.17.4 - 2026-09-16
 
 ### Added and fixed

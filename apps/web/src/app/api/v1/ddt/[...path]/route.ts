@@ -5,6 +5,8 @@ import {
   bulkUpdateDdtCasesInputSchema,
   confirmDdtImportInputSchema,
   ddtCaseListInputSchema,
+  ddtValueSearchInputSchema,
+  ddtValueSearchPageSchema,
   resolveDdtImportColumnsInputSchema,
   setDdtSrExecutionClassInputSchema,
   setDdtSrCategoryInputSchema,
@@ -27,6 +29,7 @@ import { z } from "zod";
 import { apiErrorResponse, readDdtUploads, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { authorizeDdtScope } from "@/lib/ddt-api";
+import { workDispatcher } from "@/lib/work-runtime";
 
 export const runtime = "nodejs";
 
@@ -47,6 +50,22 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const url = new URL(request.url);
     const { scope, services } = await authorizeDdtScope(identity, "case.read", url);
     const path = await pathSegments(context);
+
+    if (matches(path, "value-search")) {
+      const input = ddtValueSearchInputSchema.parse({
+        ...scope,
+        keyword: url.searchParams.get("keyword") ?? "",
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      });
+      const dispatcher = workDispatcher();
+      if (!dispatcher?.searchDdtValues)
+        throw new DomainError("PLATFORM_BUSY", "检索服务暂时不可用，请稍后重试。");
+      return NextResponse.json(
+        ddtValueSearchPageSchema.parse(await dispatcher.searchDdtValues(input, request.signal)),
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
 
     if (matches(path, "dashboard"))
       return NextResponse.json(

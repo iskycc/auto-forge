@@ -36,6 +36,38 @@ export const ddtCaseLookupSchema = ddtScopeSchema.extend({
   caseId: z.string().trim().min(1).max(512),
 });
 
+export const ddtValueSearchInputSchema = ddtScopeSchema.extend({
+  keyword: z.string().trim().min(1, "请输入要检索的字段值。").max(512),
+  cursor: z.string().min(1).max(1_024).optional(),
+  limit: z.number().int().min(1).max(20).default(20),
+});
+
+export const ddtValueSearchPageSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.string(),
+        caseId: z.string(),
+        srNum: z.string(),
+        matchCount: z.number().int().positive(),
+        matches: z
+          .array(
+            z.object({
+              path: z.array(z.string()),
+              value: z.string(),
+            }),
+          )
+          .max(8),
+      }),
+    )
+    .max(20),
+  scannedCount: z.number().int().nonnegative(),
+  nextCursor: z.string().optional(),
+});
+
+export type DdtValueSearchInput = z.infer<typeof ddtValueSearchInputSchema>;
+export type DdtValueSearchPage = z.infer<typeof ddtValueSearchPageSchema>;
+
 export const ddtSearchOperatorSchema = z.enum([
   "eq",
   "ne",

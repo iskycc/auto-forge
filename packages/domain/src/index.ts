@@ -18,3 +18,4 @@ export * from "./scheduling-events";
 export * from "./webhook";
 export * from "./case-directory-filter";
 export * from "./authorization-denied";
+export * from "./ddt-value-search";

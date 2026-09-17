@@ -297,6 +297,7 @@ run_adapter_tests() {
       apps/web/server/log-stream-relay.integration.test.ts \
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
+      packages/db/test/ddt-value-search.integration.test.ts \
       packages/db/test/postgres-failure-analysis.integration.test.ts \
       packages/db/test/failure-analysis-history-scope.integration.test.ts \
       packages/db/test/failure-analysis-migration.integration.test.ts \

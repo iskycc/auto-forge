@@ -12,7 +12,7 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 
 ## 已融合能力
 
-| ddt-insight 能力                           | AutoForge 实现                                                                                                                |
+| ddt-insight 能力                           | AutoForge 实现                                                                                                                 |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | 动态字段、全局 CaseID、srNum 分组          | “用例管理 → DDT 管理”；动态字段详情、前缀/分组/字段条件筛选；任务树按 SR 展开                                                  |
 | `data` 普通表格、`step1…stepN` 用户旅程    | 共享 DDT 领域模型；身份字段自动同步到每个 Step                                                                                 |
@@ -27,9 +27,28 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 | 回收站恢复与永久清除                       | 软删除快照、CaseID 冲突保护、明确二次确认                                                                                      |
 | 仪表盘                                     | 总量、业务组、来源、用户旅程、当日变化和近七日图表                                                                             |
 | CoTest `classDataFile` 执行                | SR 统一关联同版本、同阶段候选范围内的 TestNG 类；批次为每个 CaseID 固化独立 JSON 数据文件                                      |
-| Open API 与示例                            | “DDT 管理 → 开放 API”；匿名单用例原始 JSON 查询，URL 固定项目、版本和阶段，提供查询验证及 cURL / JavaScript / Groovy 示例           |
+| Open API 与示例                            | “DDT 管理 → 开放 API”；匿名单用例原始 JSON 查询，URL 固定项目、版本和阶段，提供查询验证及 cURL / JavaScript / Groovy 示例      |
 
 ## 用例工作台布局
+
+### 按值高级检索
+
+独立 `ddtView=search` 子标签使用鉴权的 `GET /api/v1/ddt/value-search`，参数包含完整三层范围、非空 `keyword`、
+可选 `cursor` 和 1–20 的 `limit`。原有 CaseID/字段条件筛选不变。新标签不预加载用例列表、统计、导入或回收站，
+只在提交搜索后串行读取分段结果。共享应用/领域实现仅遍历原始 JSON 的叶子值，Key 作为定位路径输出，
+不通过序列化整段 JSON 做模糊匹配；字符串、数字、布尔值、null 和嵌套 Step 在 Lite/Full 语义一致。
+
+SQLite/PostgreSQL 通过现有三层范围 + CaseID 唯一索引推进游标，每窗口最多 256 个候选、目标正文预算 2 MiB；
+首条超过预算时仍完整读取该条，避免大字段永远漏检。只读取当前正文，不读取执行关联、历史或已回收记录。
+每个工作片最多 16 个窗口，在窗口间让出执行权；约 1 秒或前台资源压力触发分段返回。结果最多 20 条，
+每条返回前 8 个匹配字段及有界摘要；不计算全局命中总数，不新增数据库写入、迁移或缓存事实。
+
+新工作类型 `search-ddt-values` 复用资源感知的维护工作线程，单线程最多接纳 2 个请求，取消通过 RPC 传递，
+不会在 Web 线程退回同步扫描。当前台工作繁忙或线程不可用时明确返回可重试错误。客户端每次只有一个在途请求，
+单请求 15 秒超时、一次提交最多 60 个分段且约 30 秒后暂停，始终提供继续检索入口。缓存沿用会话内存的
+容量、过期和身份范围限制，主动提交绕过旧搜索结果；切换标签或范围取消在途检索。
+
+### 用例浏览器
 
 “用例”页按 [ddt-insight `705f552` 的 CaseWorkspace](https://github.com/iskycc/ddt-insight/blob/705f552ab77be489186f47f95088c071fdf954b4/components/workspace-client.tsx)
 采用左右分栏。左侧集中 CaseID 搜索、srNum 分组、高级字段筛选和可勾选的用例导航；右侧常驻
@@ -199,7 +218,7 @@ API 响应继续使用 AutoForge 的稳定错误码、`requestId`、游标分页
 成功响应直接返回 `DdtCaseData`，保留字段名、数字、布尔值、null 和用户旅程嵌套，不包裹 `data`、版本或管理信息。例如：
 
 ```json
-{"CaseID":"PAY-001","srNum":"PAY","amount":12,"enabled":true,"note":null}
+{ "CaseID": "PAY-001", "srNum": "PAY", "amount": 12, "enabled": true, "note": null }
 ```
 
 不存在、已回收或不属于路径范围的用例返回 HTTP 404 / `DDT_CASE_NOT_FOUND`，不会回退到其他范围。参数错误返回 400 / `VALIDATION_FAILED`，数据库繁忙沿用 503 / `PLATFORM_BUSY`；错误统一使用 `error.code`、`error.message`、`error.requestId`。两个入口只支持 GET、HEAD、OPTIONS；管理写操作仍在原鉴权入口执行。

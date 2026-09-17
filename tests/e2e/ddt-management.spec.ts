@@ -671,10 +671,11 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await conflictDialog.getByRole("button", { name: "暂不重新加载" }).click();
   await expect(caseDetail.getByLabel("用例数据 JSON")).toHaveValue(/quality-team/u);
   await caseDetail.getByRole("button", { name: "保存修改" }).click();
-  await page.unroute(ddtCaseMutationUrl);
   await expect(page.getByText(`已保存 LOGIN-${hierarchy.suffix}`)).toBeVisible();
   await expect(caseDetail.getByText("quality-team", { exact: true })).toBeVisible();
   await expect(caseDetail.getByText("人工编辑", { exact: true })).toBeVisible();
+  // Keep interception stable until the save's follow-up reads have completed.
+  await page.unroute(ddtCaseMutationUrl);
   await page.getByRole("button", { name: orderCaseId, exact: true }).click();
   await expect(caseDetail.getByRole("heading", { name: orderCaseId, exact: true })).toBeVisible();
   await caseDetail.getByRole("tab", { name: "step2", exact: true }).click();
@@ -1933,11 +1934,167 @@ async function alignDdtSectionBelowTopbar(section: Locator) {
   });
 }
 
+test("DDT advanced search submits explicitly, searches only values and handles scoped results", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(150_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const longCaseId = "AAA-" + "支付用例".repeat(65);
+  const longKey = "很长的字段名称".repeat(24);
+  const rows = Array.from({ length: 23 }, (_, index) => ({
+    CaseID: index === 0 ? longCaseId : `VALUE-${String(index).padStart(3, "0")}`,
+    srNum: "VALUE-SR",
+    KEY_ONLY: "other",
+    description: "钱包支付成功",
+  }));
+  await importDdtApiFixture(page, hierarchy, longCaseId, 0, rows);
+  const itemUrl = ddtPath(hierarchy, `cases/${encodeURIComponent(longCaseId)}`);
+  const current = await page.request.get(itemUrl);
+  const item = (await current.json()) as { revision: number };
+  const saved = await page.request.patch(itemUrl, {
+    headers: { origin: new URL(page.url()).origin },
+    data: {
+      expectedRevision: item.revision,
+      data: {
+        ...rows[0],
+        [longKey]: "开始".repeat(80) + "钱包支付" + "结束".repeat(100),
+        用户旅程: {
+          step1: {
+            nestedKey: "钱包确认",
+            KEY_ONLY: "different",
+            [longKey]: "开始".repeat(80) + "钱包支付" + "结束".repeat(100),
+          },
+        },
+      },
+    },
+  });
+  expect(saved.status()).toBe(200);
+  const anonymous = await request.get(ddtPath(hierarchy, "value-search") + "&keyword=钱包");
+  expect(anonymous.status()).toBe(401);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const searchRequests: string[] = [];
+  const unrelatedRequests: string[] = [];
+  page.on("request", (observed) => {
+    if (observed.url().includes("/api/v1/ddt/value-search?")) searchRequests.push(observed.url());
+    if (/\/api\/v1\/ddt\/(cases|dashboard|templates|imports|recycle)(\?|$)/u.test(observed.url()))
+      unrelatedRequests.push(observed.url());
+  });
+  await page.goto("/cases?tab=ddt&ddtView=search");
+  const panel = page.getByRole("region", { name: "DDT 高级检索" });
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole("tab", { name: "高级检索" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const keyword = panel.getByLabel("关键词", { exact: true });
+  await keyword.fill("钱包");
+  await page.waitForTimeout(500);
+  expect(searchRequests).toHaveLength(0);
+  expect(unrelatedRequests).toHaveLength(0);
+  await panel.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+  await expect(panel.locator("article")).toHaveCount(20);
+  await expect(panel.locator("article").first()).toContainText("用户旅程 › step1 › nestedKey");
+  await expect(panel.locator("article").first()).toContainText(longKey);
+  await expect(page).toHaveURL(/ddtSearch=/);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `value-search-${viewport.width}`);
+    await panel
+      .locator("article")
+      .first()
+      .evaluate((element) => {
+        element.scrollIntoView({ block: "start" });
+        window.scrollBy(0, -96);
+      });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `value-search-results-${viewport.width}`);
+    await page.evaluate(() => window.scrollTo(0, 0));
+  }
+  await panel.getByRole("button", { name: "下一批" }).click();
+  await expect(panel.locator("article")).toHaveCount(3);
+  await expect(panel.getByRole("status")).toContainText("已检索到末尾");
+  await panel.getByRole("button", { name: "上一批" }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  const beforeTyping = searchRequests.length;
+  await keyword.fill("KEY_ONLY");
+  await page.waitForTimeout(400);
+  expect(searchRequests).toHaveLength(beforeTyping);
+  await keyword.press("Enter");
+  await expect(panel.getByRole("status")).toContainText("展示 0 条");
+  await expect(panel.getByRole("status")).toContainText("已检索到末尾");
+  await expect(panel.locator("article")).toHaveCount(0);
+  await page.goBack();
+  await expect(keyword).toHaveValue("钱包");
+  await expect(panel.locator("article")).toHaveCount(20);
+  const beforeReturn = searchRequests.length;
+  await page.getByRole("tab", { name: "开放 API", exact: true }).click();
+  await page.getByRole("tab", { name: "高级检索", exact: true }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  expect(searchRequests).toHaveLength(beforeReturn);
+  expect(unrelatedRequests).toHaveLength(0);
+  const searchPattern = "**/api/v1/ddt/value-search?**";
+  await page.route(
+    searchPattern,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "检索繁忙，请稍后重试。",
+            requestId: "search-test",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await keyword.fill("钱包");
+  await panel.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(panel.getByRole("alert")).toContainText("检索繁忙");
+  await panel.getByRole("button", { name: "重试检索" }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  await expect(panel.getByRole("alert")).toBeHidden();
+  let heldRequest: Route | undefined;
+  await page.route(
+    searchPattern,
+    (route) => {
+      heldRequest = route;
+    },
+    { times: 1 },
+  );
+  await panel.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect.poll(() => Boolean(heldRequest)).toBe(true);
+  await panel.getByRole("button", { name: "取消检索" }).click();
+  await heldRequest!.abort();
+  await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+  await expect(panel.getByRole("status")).toContainText("检索尚未完成");
+  await panel.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(panel.locator("article")).toHaveCount(20);
+  const selectedLink = panel.locator("article").nth(1).getByRole("link", { name: "查看用例" });
+  await selectedLink.click();
+  await expect(page.getByRole("tab", { name: "用例", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("region", { name: "DDT 用例详情", exact: true })).toContainText(
+    "VALUE-001",
+  );
+});
+
 async function importDdtApiFixture(
   page: Page,
   hierarchy: { projectId: string; versionId: string; stageId: string },
   caseId: string,
   marker: number,
+  rows: Parameters<typeof buildExportWorkbook>[0] = [{ CaseID: caseId, srNum: "API-SR", marker }],
 ) {
   const headers = { origin: new URL(page.url()).origin };
   const preview = await page.request.post(ddtPath(hierarchy, "imports/preview"), {
@@ -1946,7 +2103,7 @@ async function importDdtApiFixture(
       files: {
         name: "public-api.xlsx",
         mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: buildExportWorkbook([{ CaseID: caseId, srNum: "API-SR", marker }]),
+        buffer: buildExportWorkbook(rows),
       },
     },
   });

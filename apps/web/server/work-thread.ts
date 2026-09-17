@@ -7,12 +7,14 @@ import {
   DdtImportService,
   ImportTestNgJarService,
   ReadModelSnapshotService,
+  searchDdtValues,
 } from "@autoforge/application";
 import {
   jobEnvelopeSchema,
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
   ddtScopeSchema,
+  ddtValueSearchInputSchema,
 } from "@autoforge/contracts";
 import { z } from "zod";
 import {
@@ -69,7 +71,7 @@ import {
   PostgresRunnerRepository,
   type PostgresDatabaseHandle,
 } from "@autoforge/db/postgres";
-import { isDomainError } from "@autoforge/domain";
+import { DomainError, isDomainError } from "@autoforge/domain";
 import { uuidV7 } from "@autoforge/ids";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { MinioObjectStore } from "@autoforge/object-store/minio";
@@ -147,6 +149,26 @@ async function processRequest(request: WorkRequest): Promise<void> {
 async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
   signal.throwIfAborted();
   if (task.kind === "parse-file") return parseFile(task);
+  if (task.kind === "search-ddt-values") {
+    if (!backgroundAllowed())
+      throw new DomainError("PLATFORM_BUSY", "平台正在处理高优先级工作，请稍后重试检索。");
+    const startedAt = performance.now();
+    const repository =
+      configuration.mode === "lite"
+        ? new SqliteDdtRepository(sqliteHandle())
+        : new PostgresDdtRepository(postgresHandle());
+    return searchDdtValues(
+      repository,
+      ddtValueSearchInputSchema.parse(task.input),
+      async () => {
+        await delay(0, undefined, { signal });
+        return !backgroundAllowed() || performance.now() - startedAt >= 1_000
+          ? "pause"
+          : "continue";
+      },
+      signal,
+    );
+  }
   clockInitialization ??= initializeClock().catch((error: unknown) => {
     clockInitialization = undefined;
     throw error;

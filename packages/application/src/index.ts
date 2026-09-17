@@ -47,3 +47,4 @@ export { readBatchPage } from "./read-batch-page";
 
 export * from "./read-directory-branch";
 export * from "./runtime-notifications";
+export * from "./search-ddt-values";

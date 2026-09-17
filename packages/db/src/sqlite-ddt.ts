@@ -23,6 +23,7 @@ import {
 } from "@autoforge/domain";
 import type {
   DdtCaseListQuery,
+  DdtValueSearchCandidate,
   DdtDeletedCase,
   DdtImportFile,
   DdtImportJob,
@@ -48,6 +49,39 @@ const executionClassColumns = `${ddtExecutionClassIdSql} AS executionCaseDefinit
 
 export class SqliteDdtRepository implements DdtRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async readValueSearchCandidates(
+    scope: DdtScope,
+    cursor = "",
+  ): Promise<DdtValueSearchCandidate[]> {
+    const rows = this.handle.client
+      .prepare(
+        `
+      WITH candidates AS MATERIALIZED (
+        SELECT id, case_id_normalized, length(CAST(data_json AS BLOB)) AS bytes
+        FROM ddt_cases WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
+          AND case_id_normalized > ? ORDER BY case_id_normalized LIMIT 256
+      ), bounded AS (
+        SELECT id, row_number() OVER (ORDER BY case_id_normalized) AS ordinal,
+          sum(bytes) OVER (ORDER BY case_id_normalized) AS total_bytes FROM candidates
+      )
+      SELECT id, case_id AS caseId, sr_num AS srNum, case_id_normalized AS cursor, data_json AS dataJson
+      FROM ddt_cases WHERE id IN (SELECT id FROM bounded WHERE ordinal = 1 OR total_bytes <= 2097152)
+      ORDER BY case_id_normalized
+    `,
+      )
+      .all(...scopeParameters(scope), cursor) as Array<{
+      id: string;
+      caseId: string;
+      srNum: string;
+      cursor: string;
+      dataJson: string;
+    }>;
+    return rows.map(({ dataJson, ...summary }) => ({
+      ...summary,
+      data: JSON.parse(dataJson) as DdtCaseData,
+    }));
+  }
 
   async listCases(query: DdtCaseListQuery) {
     const where = scopeSql(query);

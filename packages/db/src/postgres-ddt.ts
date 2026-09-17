@@ -10,6 +10,7 @@ import {
 import { ddtExecutionClassIdSql } from "./ddt-execution-sql";
 import type {
   DdtCaseListQuery,
+  DdtValueSearchCandidate,
   DdtDeletedCase,
   DdtImportFile,
   DdtImportJob,
@@ -46,6 +47,39 @@ export class PostgresDdtRepository implements DdtRepository {
 
   private async ready(): Promise<void> {
     await this.handle.ready;
+  }
+
+  async readValueSearchCandidates(
+    scope: DdtScope,
+    cursor = "",
+  ): Promise<DdtValueSearchCandidate[]> {
+    await this.ready();
+    const result = await this.handle.pool.query<{
+      id: string;
+      caseId: string;
+      srNum: string;
+      cursor: string;
+      dataJson: string;
+    }>(
+      `
+      WITH candidates AS MATERIALIZED (
+        SELECT id, case_id_normalized, octet_length(data_json) AS bytes
+        FROM ddt_cases WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3
+          AND case_id_normalized > $4 ORDER BY case_id_normalized LIMIT 256
+      ), bounded AS (
+        SELECT id, row_number() OVER (ORDER BY case_id_normalized) AS ordinal,
+          sum(bytes) OVER (ORDER BY case_id_normalized) AS total_bytes FROM candidates
+      )
+      SELECT id, case_id AS "caseId", sr_num AS "srNum", case_id_normalized AS cursor, data_json AS "dataJson"
+      FROM ddt_cases WHERE id IN (SELECT id FROM bounded WHERE ordinal = 1 OR total_bytes <= 2097152)
+      ORDER BY case_id_normalized
+    `,
+      [...scopeValues(scope), cursor],
+    );
+    return result.rows.map(({ dataJson, ...summary }) => ({
+      ...summary,
+      data: JSON.parse(dataJson) as DdtCaseData,
+    }));
   }
 
   async listCases(query: DdtCaseListQuery) {

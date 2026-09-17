@@ -28,6 +28,14 @@ export type DdtCaseListPage = {
   nextCursor?: string;
 };
 
+export type DdtValueSearchCandidate = {
+  id: string;
+  caseId: string;
+  srNum: string;
+  cursor: string;
+  data: DdtCaseData;
+};
+
 export type DdtGroupSummary = { srNum: string; count: number };
 
 export type DdtDashboard = {
