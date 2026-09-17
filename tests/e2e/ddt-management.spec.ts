@@ -1942,10 +1942,12 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);
   const longCaseId = "AAA-" + "支付用例".repeat(65);
+  const longCaseName = "验证账户余额与交易明细保持一致".repeat(24);
   const longKey = "很长的字段名称".repeat(24);
   const rows = Array.from({ length: 23 }, (_, index) => ({
     CaseID: index === 0 ? longCaseId : `VALUE-${String(index).padStart(3, "0")}`,
     srNum: "VALUE-SR",
+    ...(index === 1 ? { CaseName: "查询账户交易明细" } : {}),
     KEY_ONLY: "other",
     description: "钱包支付成功",
   }));
@@ -1962,6 +1964,7 @@ test("DDT advanced search submits explicitly, searches only values and handles s
         [longKey]: "开始".repeat(80) + "钱包支付" + "结束".repeat(100),
         用户旅程: {
           step1: {
+            CaseName: longCaseName,
             nestedKey: "钱包确认",
             KEY_ONLY: "different",
             [longKey]: "开始".repeat(80) + "钱包支付" + "结束".repeat(100),
@@ -1998,6 +2001,15 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   await expect(panel.locator("article")).toHaveCount(20);
   await expect(panel.locator("article").first()).toContainText("用户旅程 › step1 › nestedKey");
   await expect(panel.locator("article").first()).toContainText(longKey);
+  await expect(panel.locator("article").first().locator("header")).toContainText(
+    `CaseName · ${longCaseName}`,
+  );
+  await expect(panel.locator("article").nth(1).locator("header")).toContainText(
+    "CaseName · 查询账户交易明细",
+  );
+  await expect(panel.locator("article").nth(2).locator("header")).toContainText(
+    "CaseName · 未填写",
+  );
   await expect(page).toHaveURL(/ddtSearch=/);
   for (const viewport of [
     { width: 1024, height: 768 },
@@ -2015,6 +2027,15 @@ test("DDT advanced search submits explicitly, searches only values and handles s
       });
     await expectUiIntegrity(page);
     await captureDdtUi(page, `value-search-results-${viewport.width}`);
+    await panel
+      .locator("article")
+      .nth(1)
+      .evaluate((element) => {
+        element.scrollIntoView({ block: "start" });
+        window.scrollBy(0, -96);
+      });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `value-search-compact-results-${viewport.width}`);
     await page.evaluate(() => window.scrollTo(0, 0));
   }
   await panel.getByRole("button", { name: "下一批" }).click();

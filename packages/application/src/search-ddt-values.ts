@@ -1,5 +1,9 @@
-import type { DdtValueSearchInput, DdtValueSearchPage } from "@autoforge/contracts";
-import { findDdtValueMatches } from "@autoforge/domain";
+import {
+  DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH,
+  type DdtValueSearchInput,
+  type DdtValueSearchPage,
+} from "@autoforge/contracts";
+import { ddtCaseCell, findDdtValueMatches, type DdtCaseData } from "@autoforge/domain";
 import type { DdtRepository } from "./ports";
 
 /** Each slice releases DB reads between bounded windows and never persists search state. */
@@ -25,6 +29,7 @@ export async function searchDdtValues(
         items.push({
           id: candidate.id,
           caseId: candidate.caseId,
+          caseName: caseNamePreview(candidate.data),
           srNum: candidate.srNum,
           ...result,
         });
@@ -34,4 +39,12 @@ export async function searchDdtValues(
     if ((await yieldWindow()) === "pause") break;
   }
   return { items, scannedCount, ...(cursor ? { nextCursor: cursor } : {}) };
+}
+
+function caseNamePreview(data: DdtCaseData): string | undefined {
+  const name = String(ddtCaseCell(data, "CaseName") ?? "").trim();
+  if (!name) return undefined;
+  return name.length > DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH
+    ? `${name.slice(0, DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH - 1)}…`
+    : name;
 }

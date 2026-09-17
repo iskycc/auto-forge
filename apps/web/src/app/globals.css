@@ -7482,6 +7482,15 @@ button.icon-button:disabled {
   background: var(--color-surface);
 }
 
+.ddt-value-search-results,
+.ddt-value-search-result {
+  gap: var(--space-2);
+}
+
+.ddt-value-search-result {
+  padding: var(--space-2) var(--space-3);
+}
+
 .ddt-value-search :is(h2, h3, p, dl, dd) {
   margin: 0;
   overflow-wrap: anywhere;
@@ -7508,6 +7517,10 @@ button.icon-button:disabled {
   gap: var(--space-3);
 }
 
+.ddt-value-search-result dl {
+  gap: var(--space-1);
+}
+
 .ddt-value-search-controls,
 .ddt-value-search-result header {
   display: flex;
@@ -7532,8 +7545,8 @@ button.icon-button:disabled {
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
   align-items: start;
-  gap: var(--space-4);
-  padding-top: var(--space-3);
+  gap: var(--space-3);
+  padding-top: var(--space-1);
   border-top: 1px solid var(--color-border);
 }
 

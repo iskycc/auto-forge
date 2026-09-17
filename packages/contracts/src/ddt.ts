@@ -8,6 +8,7 @@ export const DDT_IMPORT_TOTAL_BYTES = 512 * 1_024 * 1_024;
 export const DDT_IMPORT_ARCHIVE_ENTRY_LIMIT = 10_000;
 export const DDT_BULK_MUTATION_LIMIT = 5_000;
 export const DDT_IMPORT_COLUMN_RESOLUTION_LIMIT = 5_000;
+export const DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH = 1_024;
 
 export const ddtCellValueSchema = z.union([
   z.string().max(1_000_000),
@@ -48,6 +49,7 @@ export const ddtValueSearchPageSchema = z.object({
       z.object({
         id: z.string(),
         caseId: z.string(),
+        caseName: z.string().max(DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH).optional(),
         srNum: z.string(),
         matchCount: z.number().int().positive(),
         matches: z

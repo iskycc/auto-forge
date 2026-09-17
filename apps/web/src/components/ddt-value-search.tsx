@@ -26,7 +26,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
   const urlKeyword = parameters.get("ddtSearch") ?? "";
   const activeWorkspace = parameters.get("tab");
   const scopeQuery = new URLSearchParams(scope).toString();
-  const cacheKey = `ddt-value-search:v1:${scopeQuery}:`;
+  const cacheKey = `ddt-value-search:v2:${scopeQuery}:`;
   const [keyword, setKeyword] = useState(urlKeyword);
   const [result, setResult] = useState<SearchResult | undefined>(
     () => readBrowserSnapshot(cacheKey + urlKeyword) as SearchResult | undefined,
@@ -199,6 +199,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
                 <header>
                   <div>
                     <h3>{item.caseId}</h3>
+                    <p>CaseName · {item.caseName || "未填写"}</p>
                     <span>
                       SR · {item.srNum} · {item.matchCount} 个字段匹配
                     </span>

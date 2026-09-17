@@ -27,4 +27,15 @@ describe("DDT value search boundary", () => {
       "nextCursor",
     );
   });
+  it("preserves CaseName while accepting older results without it", () => {
+    const item = {
+      id: "id",
+      caseId: "CASE-1",
+      srNum: "SR",
+      matchCount: 1,
+      matches: [{ path: ["description"], value: "match" }],
+    };
+    const page = { items: [{ ...item, caseName: "余额查询" }, item], scannedCount: 2 };
+    expect(ddtValueSearchPageSchema.parse(page)).toEqual(page);
+  });
 });

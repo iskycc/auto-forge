@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.6 - 2026-09-17
+
+### Added and fixed
+
+- DDT 高级检索结果在 CaseID 下方显示 CaseName，即使名称未命中关键词也会展示；普通用例读取原始字段，用户旅程读取首个 Step 的字段，空名称显示“未填写”。名称从当前检索已读取的正文提取，不增加逐用例数据库查询；浏览器缓存版本同步更新。
+- 压缩检索结果卡片：上下内边距从 20px 调整为 8px，卡片间距从 16px 调整为 8px，匹配字段间距从 12px 调整为 4px；保留字号、长文本换行及查看用例入口。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用名称映射和界面，无数据库迁移、持久配置、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。查询响应新增可选 `caseName` 字段，兼容旧响应。
+
+### Validation and known limitations
+
+- 16 项相关应用、契约和领域测试通过；高级检索 Playwright 场景在名称展示和最终紧凑布局调整后均通过，覆盖搜索、缓存、分批查看、取消及失败重试。修改文件格式、lint、全仓类型检查和 Web 生产构建通过。
+- 已人工查看 1024×768、1536×960 的普通卡片和超长名称截图，未发现横向溢出或控件重叠。CaseName 最多预览 1,024 字符（含省略号），完整名称可进入用例详情查看。本地浏览器验证使用 Chromium，完整 Full、离线与发布资产验收由版本标签流水线执行。
+
 ## 1.17.5 - 2026-09-17
 
 ### Added and fixed
