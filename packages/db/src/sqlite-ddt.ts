@@ -33,6 +33,7 @@ import type {
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
 import {
   retrySqliteLockContention,
+  retrySqliteWriteTransaction,
   runSqliteWriteTransaction,
   type SqliteDatabaseHandle,
 } from "./database";
@@ -348,7 +349,7 @@ export class SqliteDdtRepository implements DdtRepository {
   async changeExecutionClassRange(
     input: Parameters<DdtRepository["changeExecutionClassRange"]>[0],
   ): Promise<void> {
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       this.handle.client
         .prepare(
           `INSERT INTO ddt_execution_configuration (project_id, project_version_id, test_stage_id)
@@ -436,7 +437,7 @@ export class SqliteDdtRepository implements DdtRepository {
   async setSrExecutionClass(
     input: Parameters<DdtRepository["setSrExecutionClass"]>[0],
   ): Promise<void> {
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       this.handle.client
         .prepare(
           `INSERT INTO ddt_execution_configuration (project_id, project_version_id, test_stage_id)
@@ -546,7 +547,7 @@ export class SqliteDdtRepository implements DdtRepository {
   async saveRequirementCategory(
     input: Parameters<DdtRepository["saveRequirementCategory"]>[0],
   ): Promise<void> {
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       this.handle.client
         .prepare(
           `INSERT INTO ddt_execution_configuration (project_id,project_version_id,test_stage_id) VALUES (?,?,?) ON CONFLICT DO NOTHING`,
@@ -620,7 +621,7 @@ export class SqliteDdtRepository implements DdtRepository {
   async deleteRequirementCategory(
     input: Parameters<DdtRepository["deleteRequirementCategory"]>[0],
   ): Promise<void> {
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       this.handle.client
         .prepare(
           `INSERT INTO ddt_execution_configuration (project_id,project_version_id,test_stage_id) VALUES (?,?,?) ON CONFLICT DO NOTHING`,

@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.14 - 2026-09-18
+
+### Fixed
+
+- 修复 Lite 下给 SR 设置、更换或解除 DDT 分类时，短暂 SQLite 写锁直接导致“数据库繁忙”的问题。需求分类保存/删除及候选测试类范围调整同步接入完整短事务的有界异步重试。
+- 保持 Web 单次锁等待 25ms，在重试间隔让出主线程；每次重新校验修订号、分类存在性和执行类可用性，避免覆盖等待期间的他人修改。持续占锁达到重试上限时明确报错，不留下部分写入。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、新配置、新依赖或协议变化。相对 v1.17.13 只需升级主平台，无需升级 Runner 或 Adapter。
+- Full 保持原有 PostgreSQL 事务与作用域锁规则；分类、SR 关联和执行类继承的业务语义与 Lite 一致。
+
+### Validation and known limitations
+
+- 使用真实双 SQLite 连接复现锁竞争；29 项应用及 SQLite/PostgreSQL 集成测试通过，覆盖短锁恢复、持续占锁、版本冲突、等待期间分类删除和既有业务约束。
+- SR 分类完整 Playwright 场景与生产 Web 构建通过；已实际查看 1024px、1536px 截图，分类选择、编辑和关联列表布局正常。数据库与测试类型检查、变更文件格式/lint 通过。
+- 本次修复短暂锁竞争的恢复缺口，不消除 SQLite 单写者约束；持续长事务或磁盘异常仍需结合生产诊断处理。完整源码矩阵、双架构构建与发布资产离线验收由标签流水线执行。
+
 ## 1.17.13 - 2026-09-18
 
 ### Fixed

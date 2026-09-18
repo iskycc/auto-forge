@@ -14,6 +14,12 @@ Compose 的 Web 与 worker 默认不设置 CPU/内存硬上限；`cpu_shares` �
 
 SQLite 单文件写事务仍需串行；同一批次的权威状态迁移也有必要的并发保护。多线程用于独立 CPU 工作和 I/O，并不会让这些数据库约束消失。是否继续扩大资源应以吞吐、页面延迟、锁等待和 RSS 实测为准；CPU 没有达到 100% 本身不代表浪费。
 
+Lite 的 SR 分类设置/更换/解除、需求分类保存/删除和候选测试类范围调整，使用完整短事务的有界异步重试。
+Web 连接仍保持 25ms 单次锁等待；遇到 `SQLITE_BUSY` / `SQLITE_LOCKED` 时先回滚，最多尝试 6 次，
+在尝试之间异步退避，让出主线程处理其他请求，不通过延长同步等待阻塞页面。每次重试都重新检查版本号、
+分类存在性和执行类可用性；真实编辑冲突、分类仍被引用等业务错误不重试。持续占锁超过重试预算仍明确报错，
+本操作不留下部分写入。Full 保持原有 PostgreSQL 事务与作用域锁规则。
+
 资源检测与部署语义参考 [Node OS API](https://nodejs.org/api/os.html)、[Node process memory API](https://nodejs.org/api/process.html)、[Worker 资源限制](https://nodejs.org/api/worker_threads.html) 和 [Docker 资源约束](https://docs.docker.com/engine/containers/resource_constraints/)。
 
 ## 日志读取与上传

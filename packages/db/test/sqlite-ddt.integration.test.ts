@@ -7,6 +7,7 @@ import { ddtLiteralSearchFields, expectDdtCaseSearch } from "./ddt-search-contra
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import Database from "better-sqlite3";
 
 import type { JobEnvelope } from "@autoforge/contracts";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
@@ -28,6 +29,178 @@ afterEach(async () => {
 });
 
 describe("SQLite DDT repository", () => {
+  it.each(["assign", "change", "unlink", "create", "edit", "delete", "range"] as const)(
+    "recovers %s after a short writer lock while yielding to other requests",
+    async (operation) => {
+      const { handle, repository, scope, category, assignment, candidate } =
+        await categoryFixture();
+      const writer = new Database(handle.client.name);
+      let release: ReturnType<typeof setImmediate> | undefined;
+      try {
+        const mutations = {
+          assign: () => repository.setSrExecutionClass({ ...assignment, srNum: "SECOND" }),
+          change: () =>
+            repository.setSrExecutionClass({
+              ...assignment,
+              categoryId: "payments",
+              expectedRevision: 1,
+            }),
+          unlink: () =>
+            repository.setSrExecutionClass({
+              ...assignment,
+              categoryId: null,
+              expectedRevision: 1,
+            }),
+          create: () =>
+            repository.saveRequirementCategory({ ...category, id: "new", name: "New category" }),
+          edit: () =>
+            repository.saveRequirementCategory({
+              ...category,
+              name: "Updated wallet",
+              expectedRevision: 1,
+            }),
+          delete: () =>
+            repository.deleteRequirementCategory({ scope, id: "payments", expectedRevision: 1 }),
+          range: () => repository.changeExecutionClassRange({ ...candidate, expectedRevision: 1 }),
+        };
+        writer.exec("BEGIN IMMEDIATE");
+        // The same event loop must be able to release the other connection's lock.
+        release = setImmediate(() => writer.exec("COMMIT"));
+        await mutations[operation]();
+        expect(writer.inTransaction).toBe(false);
+        expect(handle.client.pragma("busy_timeout", { simple: true })).toBe(25);
+        const mappings = await repository.listSrExecutionMappings(scope, { query: "", limit: 10 });
+        const order = mappings.items.find((item) => item.srNum === "ORDER");
+        expect(order).toMatchObject({
+          revision: operation === "change" || operation === "unlink" ? 2 : 1,
+        });
+        if (operation === "unlink") {
+          expect(order?.category).toBeUndefined();
+          expect(order?.executionClass).toBeUndefined();
+        } else {
+          expect(order?.category?.id).toBe(operation === "change" ? "payments" : "wallet");
+        }
+        expect(mappings.items.find((item) => item.srNum === "SECOND")).toMatchObject({
+          revision: operation === "assign" ? 1 : 0,
+          ...(operation === "assign" ? { category: { id: "wallet" } } : {}),
+        });
+        const categories = await repository.listRequirementCategories(scope, {
+          query: "",
+          limit: 10,
+        });
+        expect(categories.items).toHaveLength(
+          operation === "create" ? 3 : operation === "delete" ? 1 : 2,
+        );
+        expect(categories.items.find((item) => item.id === "wallet")).toMatchObject({
+          name: operation === "edit" ? "Updated wallet" : "Wallet",
+          revision: operation === "edit" ? 2 : 1,
+        });
+        expect(
+          await repository.listExecutionClassRange(scope, { query: "", limit: 10 }),
+        ).toMatchObject({
+          revision: operation === "range" ? 2 : 1,
+        });
+      } finally {
+        clearImmediate(release);
+        if (writer.inTransaction) writer.exec("ROLLBACK");
+        writer.close();
+        handle.close();
+      }
+    },
+  );
+
+  it("bounds persistent contention, leaves the SR unchanged, and accepts a later save", async () => {
+    const { handle, repository, scope, assignment } = await categoryFixture();
+    const writer = new Database(handle.client.name);
+    const change = { ...assignment, categoryId: "payments", expectedRevision: 1 };
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      await expect(repository.setSrExecutionClass(change)).rejects.toMatchObject({
+        code: "SQLITE_BUSY",
+      });
+      expect(handle.client.inTransaction).toBe(false);
+      expect(
+        await repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 1 }),
+      ).toMatchObject({
+        items: [{ revision: 1, category: { id: "wallet" } }],
+      });
+      writer.exec("ROLLBACK");
+      await repository.setSrExecutionClass(change);
+      await expect(repository.setSrExecutionClass(change)).rejects.toMatchObject({
+        code: "DDT_EXECUTION_MAPPING_REVISION_CONFLICT",
+      });
+      expect(
+        await repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 1 }),
+      ).toMatchObject({
+        items: [{ revision: 2, category: { id: "payments" } }],
+      });
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      handle.close();
+    }
+  });
+
+  it("rechecks SR revisions after contention instead of overwriting another user's change", async () => {
+    const { handle, repository, scope, assignment } = await categoryFixture();
+    const writer = new Database(handle.client.name);
+    let release: ReturnType<typeof setImmediate> | undefined;
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      writer
+        .prepare(
+          "UPDATE ddt_sr_execution_mappings SET category_id = 'payments', revision = 2 WHERE sr_num_normalized = 'order'",
+        )
+        .run();
+      release = setImmediate(() => writer.exec("COMMIT"));
+      await expect(
+        repository.setSrExecutionClass({ ...assignment, categoryId: null, expectedRevision: 1 }),
+      ).rejects.toMatchObject({
+        code: "DDT_EXECUTION_MAPPING_REVISION_CONFLICT",
+      });
+      expect(
+        await repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 1 }),
+      ).toMatchObject({
+        items: [{ revision: 2, category: { id: "payments" } }],
+      });
+    } finally {
+      clearImmediate(release);
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      handle.close();
+    }
+  });
+
+  it("rechecks category availability after another writer deletes the selected category", async () => {
+    const { handle, repository, scope, assignment } = await categoryFixture();
+    const writer = new Database(handle.client.name);
+    let release: ReturnType<typeof setImmediate> | undefined;
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      writer.prepare("DELETE FROM ddt_requirement_categories WHERE id = 'payments'").run();
+      release = setImmediate(() => writer.exec("COMMIT"));
+      await expect(
+        repository.setSrExecutionClass({
+          ...assignment,
+          categoryId: "payments",
+          expectedRevision: 1,
+        }),
+      ).rejects.toMatchObject({
+        code: "DDT_CATEGORY_NOT_FOUND",
+      });
+      expect(
+        await repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 1 }),
+      ).toMatchObject({
+        items: [{ revision: 1, category: { id: "wallet" } }],
+      });
+    } finally {
+      clearImmediate(release);
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      handle.close();
+    }
+  });
+
   it("keeps import, history, templates and recycle lifecycle inside one project hierarchy", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ddt-"));
     temporaryDirectories.push(directory);
@@ -333,6 +506,92 @@ describe("SQLite DDT repository", () => {
     }
   });
 });
+
+async function categoryFixture() {
+  const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ddt-categories-"));
+  temporaryDirectories.push(directory);
+  const handle = createSqliteDatabase({
+    databasePath: resolve(directory, "autoforge.db"),
+    migrationsFolder: resolve("packages/db/drizzle/sqlite"),
+    busyTimeoutMs: 25,
+  });
+  try {
+    const structures = new SqliteProjectStructureRepository(handle);
+    const scope = {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: "ddt-version",
+      testStageId: "ddt-stage",
+    };
+    await structures.createVersion({
+      id: scope.projectVersionId,
+      projectId: scope.projectId,
+      name: "DDT version",
+      normalizedName: "ddt version",
+      recordedAt: now,
+    });
+    await structures.createStage({
+      id: scope.testStageId,
+      projectId: scope.projectId,
+      projectVersionId: scope.projectVersionId,
+      name: "DDT stage",
+      normalizedName: "ddt stage",
+      description: "",
+      recordedAt: now,
+    });
+    insertExecutionClass(handle, scope);
+    const repository = new SqliteDdtRepository(handle);
+    const candidate = {
+      scope,
+      executionCaseDefinitionId: "ddt-execution-definition",
+      included: true,
+      expectedRevision: 0,
+      updatedAt: now,
+    };
+    await repository.changeExecutionClassRange(candidate);
+    const category = {
+      scope,
+      id: "wallet",
+      name: "Wallet",
+      executionCaseDefinitionId: candidate.executionCaseDefinitionId,
+      expectedRevision: 0,
+      updatedAt: now,
+    };
+    await repository.saveRequirementCategory(category);
+    await repository.saveRequirementCategory({ ...category, id: "payments", name: "Payments" });
+    for (const srNum of ["ORDER", "SECOND"]) {
+      handle.client
+        .prepare(
+          `INSERT INTO ddt_cases (id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,'standard','{}',?,?)`,
+        )
+        .run(
+          srNum,
+          scope.projectId,
+          scope.projectVersionId,
+          scope.testStageId,
+          srNum,
+          srNum.toLowerCase(),
+          srNum,
+          srNum.toLowerCase(),
+          now,
+          now,
+        );
+    }
+    const assignment = {
+      scope,
+      srNum: "ORDER",
+      executionCaseDefinitionId: null,
+      categoryId: "wallet",
+      expectedRevision: 0,
+      updatedAt: now,
+    };
+    await repository.setSrExecutionClass(assignment);
+    return { handle, repository, scope, category, assignment, candidate };
+  } catch (error) {
+    handle.close();
+    throw error;
+  }
+}
 
 function insertExecutionClass(
   handle: ReturnType<typeof createSqliteDatabase>,
