@@ -32,7 +32,7 @@ export async function searchDdtValues(
     for (const candidate of candidates) {
       signal?.throwIfAborted();
       scannedCount += 1;
-      const result = findDdtValueMatches(candidate.data, input.keyword);
+      const result = findDdtValueMatches(candidate.data, input.keywords ?? input.keyword ?? "");
       if (result.matchCount) {
         if (index) {
           if (((input.indexOffset ?? 0) + index.matchedCount) % DDT_VALUE_SEARCH_PAGE_SIZE === 0)

@@ -2430,6 +2430,153 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   );
 });
 
+test("DDT advanced search unions added conditions and preserves pagination and cached history", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const rows = Array.from({ length: 25 }, (_, index) => ({
+    CaseID: `UNION-${String(index).padStart(3, "0")}`,
+    srNum: "UNION-SR",
+    CaseName:
+      index === 0 ? "验证多条件搜索结果不会重复并能保持分页进度".repeat(25) : `检索用例 ${index}`,
+    KEY_ONLY: "different",
+    description:
+      index < 10
+        ? "钱包"
+        : index < 20
+          ? "支付"
+          : index < 23
+            ? "钱包支付"
+            : index === 23
+              ? "unmatched"
+              : "a,b",
+  }));
+  await importDdtApiFixture(page, hierarchy, rows[0]!.CaseID, 0, rows);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const searches: URL[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/ddt/value-search?")) searches.push(new URL(request.url()));
+  });
+  await page.goto("/cases?tab=ddt&ddtView=search");
+  const panel = page.getByRole("region", { name: "DDT 高级检索" });
+  const firstKeyword = panel.getByLabel("关键词", { exact: true });
+  const add = panel.getByRole("button", { name: "添加搜索条件" });
+  const submit = panel.getByRole("button", { name: "搜索", exact: true });
+  const pagination = panel.getByRole("navigation", { name: "检索结果分页" });
+  await firstKeyword.fill("钱包");
+  for (const [index, keyword] of ["支付", "KEY_ONLY", "钱包", ""].entries()) {
+    await add.click();
+    const input = panel.getByLabel(`关键词 ${index + 2}`, { exact: true });
+    await expect(input).toBeFocused();
+    await input.fill(keyword);
+  }
+  await page.waitForTimeout(300);
+  expect(searches).toHaveLength(0);
+  await page.route(
+    "**/api/v1/ddt/value-search?**",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "多条件检索繁忙，请重试。",
+            requestId: "union-search",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await submit.click();
+  await expect(panel.getByRole("alert")).toContainText("多条件检索繁忙");
+  await panel.getByLabel("关键词 3", { exact: true }).fill("尚未提交的新条件");
+  await panel.getByRole("button", { name: "重试检索" }).click();
+  await expect(pagination).toContainText("共 23 条 · 共 2 页 · 第 1 页");
+  await expect(panel.locator("article")).toHaveCount(20);
+  expect(
+    searches.every(
+      (url) =>
+        JSON.stringify(url.searchParams.getAll("keyword")) ===
+        JSON.stringify(["钱包", "支付", "KEY_ONLY"]),
+    ),
+  ).toBe(true);
+  expect(new URL(page.url()).searchParams.getAll("ddtSearch")).toEqual([
+    "钱包",
+    "支付",
+    "KEY_ONLY",
+  ]);
+  const requestsBeforeRemoval = searches.length;
+  await panel.getByLabel("关键词 3", { exact: true }).fill("KEY_ONLY");
+  await panel.getByRole("button", { name: "移除搜索条件 5" }).click();
+  await panel.getByRole("button", { name: "移除搜索条件 4" }).click();
+  await page.waitForTimeout(300);
+  expect(searches).toHaveLength(requestsBeforeRemoval);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const inputEdges = await panel
+      .locator(".ddt-value-search-condition input")
+      .evaluateAll((inputs) => inputs.map((input) => input.getBoundingClientRect().left));
+    expect(new Set(inputEdges).size).toBe(1);
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `value-search-union-${viewport.width}`);
+  }
+  await panel.getByRole("button", { name: "下一页" }).click();
+  await expect(pagination).toContainText("共 23 条 · 共 2 页 · 第 2 页");
+  await expect(panel.locator("article")).toHaveCount(3);
+  await expect(panel.locator("article h3")).toHaveText(["UNION-020", "UNION-021", "UNION-022"]);
+  for (const item of await panel.locator("article").all())
+    await expect(item).toContainText("1 个字段匹配");
+  const requestsBeforeHistory = searches.length;
+  await page.goBack();
+  await expect(pagination).toContainText("第 1 页");
+  await page.goForward();
+  await expect(pagination).toContainText("第 2 页");
+  expect(searches).toHaveLength(requestsBeforeHistory);
+  await panel.locator("article").first().getByRole("button", { name: "查看用例" }).click();
+  const dialog = page.getByRole("dialog", { name: "DDT 用例数据", exact: true });
+  await expect(dialog).toContainText("钱包支付");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(pagination).toContainText("第 2 页");
+  await panel.getByRole("button", { name: "移除搜索条件 3" }).click();
+  await panel.getByRole("button", { name: "移除搜索条件 2" }).click();
+  await submit.click();
+  await expect(pagination).toContainText("共 13 条 · 共 1 页 · 第 1 页");
+  const requestsBeforeBack = searches.length;
+  await page.goBack();
+  await expect(pagination).toContainText("共 23 条 · 共 2 页 · 第 2 页");
+  await expect(panel.getByLabel("关键词 2", { exact: true })).toHaveValue("支付");
+  await expect(panel.getByLabel("关键词 3", { exact: true })).toHaveValue("KEY_ONLY");
+  expect(searches).toHaveLength(requestsBeforeBack);
+  await panel.getByRole("button", { name: "移除搜索条件 3" }).click();
+  await panel.getByRole("button", { name: "移除搜索条件 2" }).click();
+  await firstKeyword.fill("a,b");
+  await firstKeyword.press("Enter");
+  await expect(pagination).toContainText("共 1 条 · 共 1 页 · 第 1 页");
+  await expect(panel.locator("article h3")).toHaveText(["UNION-024"]);
+  for (let index = 1; index < 12; index += 1) await add.click();
+  await expect(add).toBeDisabled();
+  await firstKeyword.fill("a".repeat(300));
+  await panel.getByLabel("关键词 2", { exact: true }).fill("b".repeat(300));
+  const requestsBeforeInvalid = searches.length;
+  await submit.click();
+  await expect(panel.getByRole("alert")).toContainText("合计不能超过 512 个字符");
+  expect(searches).toHaveLength(requestsBeforeInvalid);
+  const invalidQuery = new URLSearchParams();
+  for (let index = 0; index < 13; index += 1) invalidQuery.append("keyword", String(index));
+  const invalidResponse = await page.request.get(
+    `${ddtPath(hierarchy, "value-search")}&${invalidQuery}`,
+  );
+  expect(invalidResponse.status()).toBe(400);
+});
+
 async function importDdtApiFixture(
   page: Page,
   hierarchy: { projectId: string; versionId: string; stageId: string },

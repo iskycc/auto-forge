@@ -10,6 +10,8 @@ export const DDT_BULK_MUTATION_LIMIT = 5_000;
 export const DDT_IMPORT_COLUMN_RESOLUTION_LIMIT = 5_000;
 export const DDT_VALUE_SEARCH_CASE_NAME_MAX_LENGTH = 1_024;
 export const DDT_VALUE_SEARCH_PAGE_SIZE = 20;
+export const DDT_VALUE_SEARCH_MAX_KEYWORDS = 12;
+export const DDT_VALUE_SEARCH_MAX_TEXT_LENGTH = 512;
 
 export const ddtCellValueSchema = z.union([
   z.string().max(1_000_000),
@@ -38,23 +40,56 @@ export const ddtCaseLookupSchema = ddtScopeSchema.extend({
   caseId: z.string().trim().min(1).max(512),
 });
 
-export const ddtValueSearchInputSchema = ddtScopeSchema.extend({
-  keyword: z.string().trim().min(1, "请输入要检索的字段值。").max(512),
-  cursor: z.string().min(1).max(1_024).optional(),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(DDT_VALUE_SEARCH_PAGE_SIZE)
-    .default(DDT_VALUE_SEARCH_PAGE_SIZE),
-  // When present, count a slice and return page starts instead of result bodies.
-  indexOffset: z
-    .number()
-    .int()
-    .min(0)
-    .max(DDT_VALUE_SEARCH_PAGE_SIZE - 1)
-    .optional(),
-});
+const ddtValueSearchKeywordSchema = z
+  .string()
+  .trim()
+  .min(1, "请输入要检索的字段值。")
+  .max(DDT_VALUE_SEARCH_MAX_TEXT_LENGTH);
+
+export const ddtValueSearchKeywordsSchema = z
+  .array(ddtValueSearchKeywordSchema)
+  .min(1, "请至少填写一个搜索条件。")
+  .max(DDT_VALUE_SEARCH_MAX_KEYWORDS, "最多添加 12 个搜索条件。")
+  .refine(
+    (keywords) =>
+      keywords.reduce((length, keyword) => length + keyword.length, 0) <=
+      DDT_VALUE_SEARCH_MAX_TEXT_LENGTH,
+    "所有搜索条件合计不能超过 512 个字符。",
+  )
+  .transform((keywords) => {
+    const seen = new Set<string>();
+    return keywords.filter((keyword) => {
+      const normalized = keyword.toLocaleLowerCase("en-US");
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+  });
+
+export const ddtValueSearchInputSchema = ddtScopeSchema
+  .extend({
+    // Keep the original single-keyword input compatible with existing clients.
+    keyword: ddtValueSearchKeywordSchema.optional(),
+    keywords: ddtValueSearchKeywordsSchema.optional(),
+    cursor: z.string().min(1).max(1_024).optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(DDT_VALUE_SEARCH_PAGE_SIZE)
+      .default(DDT_VALUE_SEARCH_PAGE_SIZE),
+    // When present, count a slice and return page starts instead of result bodies.
+    indexOffset: z
+      .number()
+      .int()
+      .min(0)
+      .max(DDT_VALUE_SEARCH_PAGE_SIZE - 1)
+      .optional(),
+  })
+  .refine(
+    (input) => (input.keyword !== undefined) !== (input.keywords !== undefined),
+    "请提供关键词或关键词列表，不能同时提供两者。",
+  );
 
 export const ddtValueSearchPageSchema = z.object({
   items: z

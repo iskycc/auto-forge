@@ -11,7 +11,7 @@ import { SqliteProjectStructureRepository } from "../../../packages/db/src/sqlit
 import { WorkerPool } from "./worker-pool";
 import { webResourcePlan } from "../src/lib/worker-sizing";
 
-it("scans 100,000 DDT cases off the Web thread, bounds admission and leaves SQLite writes available", async () => {
+it("unions 12 conditions over 100,000 DDT cases off the Web thread, bounds admission and leaves SQLite writes available", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "ddt-search-worker-"));
   const databasePath = resolve(directory, "platform.sqlite");
   const migrationsFolder = resolve("packages/db/drizzle/sqlite");
@@ -81,9 +81,18 @@ it("scans 100,000 DDT cases off the Web thread, bounds admission and leaves SQLi
       }
     })();
     const signal = new AbortController().signal;
-    const input = { ...scope, keyword: "ordinary", limit: 20, indexOffset: 0 };
+    const input = {
+      ...scope,
+      keywords: [
+        "ordinary",
+        "unique-needle",
+        ...Array.from({ length: 10 }, (_, index) => `missing-${index}`),
+      ],
+      limit: 20,
+      indexOffset: 0,
+    };
     const first = pool.searchDdtValues(input, signal);
-    const second = pool.searchDdtValues({ ...input, keyword: "missing" }, signal);
+    const second = pool.searchDdtValues({ ...input, keywords: ["missing"] }, signal);
     const settled = Promise.all([first, second]);
     await expect(pool.searchDdtValues(input, signal)).rejects.toMatchObject({
       code: "PLATFORM_BUSY",
@@ -123,7 +132,7 @@ it("scans 100,000 DDT cases off the Web thread, bounds admission and leaves SQLi
     }
     expect(page.nextCursor).toBeUndefined();
     expect(scanned).toBe(100_000);
-    expect(matchedCount).toBe(99_999);
+    expect(matchedCount).toBe(100_000);
     expect(pageCursors).toHaveLength(5_000);
     expect(pageCursors.at(-1)).toBe("case-099979");
     const cancelled = new AbortController();

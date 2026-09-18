@@ -7489,11 +7489,33 @@ button.icon-button:disabled {
 }
 
 .ddt-value-search-controls,
+.ddt-value-search-actions,
 .ddt-value-search-result header {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
+}
+
+.ddt-value-search-conditions,
+.ddt-value-search-condition {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.ddt-value-search-conditions {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.ddt-value-search-condition {
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.ddt-value-search-actions {
+  flex-wrap: wrap;
 }
 
 .ddt-value-search-controls > :first-child,

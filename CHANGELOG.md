@@ -4,6 +4,26 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.11 - 2026-09-18
+
+### Added and fixed
+
+- DDT 高级检索支持通过“＋ 添加条件”增加关键词并移除条件，点击搜索或按回车统一提交；多个条件取并集，同一用例和同一匹配字段不重复显示或计数。仍只搜索原始字段 Value，字段名只用于定位展示。
+- 忽略空白条件及不区分英文大小写的重复条件；每个输入框作为完整关键词，逗号等字符按原文匹配。支持最多 12 个条件、合计 512 个字符，前后端一致校验。
+- 多条件共享一次分段扫描，保留维护工作线程资源准入、取消、继续统计、失败重试和分页；输入或增删条件不发起查询。完整条件列表写入 URL 并隔离浏览器缓存，翻页、前进后退和用例数据弹窗保留检索进度。
+- 多行条件输入框对齐，保留长用例名称、字段名与正文换行，兼容最小桌面和大屏视口。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用检索语义，无数据库迁移、持久配置结构、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。
+- 高级检索 API 使用重复 `keyword` 参数表达并集，兼容原有单关键词地址；浏览器查询缓存版本更新，不复用旧格式缓存。
+
+### Validation and known limitations
+
+- 24 项契约、领域、应用和真实 SQLite/PostgreSQL 测试通过；12 个条件扫描 100,000 条用例的工作线程测试通过，覆盖计数、游标、并行 HTTP/数据库写入、准入、取消和恢复。
+- 两项 Playwright 回归通过，覆盖手动提交、并集去重、分页、缓存、历史返回、取消/重试、只读弹窗和条件上限；工作区类型检查、变更文件格式/lint、E2E 覆盖矩阵与生产 Web 构建通过。
+- 已实际查看 1024×768、1536×960 截图，输入框对齐，长内容无横向溢出。任意子串查询仍需按窗口扫描正文；并发编辑后的总数和页边界可通过重新搜索刷新。完整源码矩阵、双架构与发布资产离线验收由标签流水线执行。
+
 ## 1.17.10 - 2026-09-18
 
 ### Fixed

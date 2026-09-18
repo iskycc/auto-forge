@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { findDdtValueMatches } from "../src/ddt-value-search";
 
 describe("DDT value-only search", () => {
+  it("unions keyword matches without duplicating fields or searching keys", () => {
+    const data = {
+      KEY_ONLY: "different",
+      description: "钱包 Payment",
+      用户旅程: { step1: { result: "payment approved" } },
+      literal: "a,b",
+    };
+    expect(findDdtValueMatches(data, [" 钱包 ", "PAYMENT", "payment", "KEY_ONLY", "a,b"])).toEqual({
+      matchCount: 3,
+      matches: [
+        { path: ["description"], value: "钱包 Payment" },
+        { path: ["用户旅程", "step1", "result"], value: "payment approved" },
+        { path: ["literal"], value: "a,b" },
+      ],
+    });
+    expect(findDdtValueMatches(data, ["", " "]).matchCount).toBe(0);
+  });
   it("excludes keys and containers while returning literal paths for nested values", () => {
     const data = {
       KEY_ONLY: "different",

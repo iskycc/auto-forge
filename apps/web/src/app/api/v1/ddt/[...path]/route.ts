@@ -52,9 +52,10 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const path = await pathSegments(context);
 
     if (matches(path, "value-search")) {
+      const keywords = url.searchParams.getAll("keyword");
       const input = ddtValueSearchInputSchema.parse({
         ...scope,
-        keyword: url.searchParams.get("keyword") ?? "",
+        ...(keywords.length > 1 ? { keywords } : { keyword: keywords[0] ?? "" }),
         cursor: url.searchParams.get("cursor") ?? undefined,
         limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
         indexOffset: url.searchParams.has("indexOffset")

@@ -13,6 +13,51 @@ const candidate = (id: string, value: string) => ({
 });
 
 describe("bounded DDT value search", () => {
+  it("scans each window once for the union and resumes pages without duplicate cases", async () => {
+    const candidates = Array.from({ length: 43 }, (_, index) =>
+      candidate(
+        String(index).padStart(3, "0"),
+        ["wallet", "payment", "wallet payment", "absent"][index % 4]!,
+      ),
+    );
+    const repository = {
+      readValueSearchCandidates: vi.fn(async (_scope: unknown, cursor = "") =>
+        candidates.filter((item) => item.cursor > cursor).slice(0, 11),
+      ),
+    };
+    const query = { ...scope, keywords: ["wallet", "PAYMENT", "wallet"], limit: 20 };
+    let cursor: string | undefined;
+    let matchedCount = 0;
+    let scannedCount = 0;
+    const pageCursors: string[] = [];
+    do {
+      const slice = await searchDdtValues(
+        repository,
+        { ...query, cursor, indexOffset: matchedCount % 20 },
+        async () => "pause",
+      );
+      matchedCount += slice.index!.matchedCount;
+      scannedCount += slice.scannedCount;
+      pageCursors.push(...slice.index!.pageCursors);
+      cursor = slice.nextCursor;
+    } while (cursor);
+    expect(scannedCount).toBe(43);
+    expect(matchedCount).toBe(33);
+    expect(repository.readValueSearchCandidates).toHaveBeenCalledTimes(5);
+    const items = [];
+    for (const start of pageCursors) {
+      const page = await searchDdtValues(
+        repository,
+        { ...query, cursor: start },
+        async () => "continue",
+      );
+      items.push(...page.items);
+    }
+    expect(items.map((item) => item.id)).toEqual(
+      candidates.filter((_, index) => index % 4 !== 3).map((item) => item.id),
+    );
+    expect(items.every((item) => item.matchCount === 1)).toBe(true);
+  });
   it("counts cases once and indexes page boundaries across interrupted slices", async () => {
     const candidates = Array.from({ length: 47 }, (_, index) =>
       candidate(String(index).padStart(3, "0"), index % 2 ? "other" : "match match"),

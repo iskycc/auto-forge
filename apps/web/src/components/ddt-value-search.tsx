@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, Eye, LoaderCircle } from "lucide-react";
+import { Search, Eye, LoaderCircle, Plus, X } from "lucide-react";
 import {
+  DDT_VALUE_SEARCH_MAX_KEYWORDS,
+  DDT_VALUE_SEARCH_MAX_TEXT_LENGTH,
   DDT_VALUE_SEARCH_PAGE_SIZE,
+  ddtValueSearchKeywordsSchema,
   ddtValueSearchPageSchema,
   type DdtValueSearchPage,
 } from "@autoforge/contracts";
@@ -24,7 +27,7 @@ import {
 type SearchResult = {
   generation: string;
   complete: boolean;
-  keyword: string;
+  keywords: string[];
   scannedCount: number;
   totalCount: number;
   pageCursors: string[];
@@ -33,30 +36,43 @@ type SearchResult = {
   items: DdtValueSearchPage["items"];
 };
 
-function cachedResult(cacheKey: string, keyword: string, page: number): SearchResult | undefined {
-  const latest = readBrowserSnapshot(cacheKey + keyword) as SearchResult | undefined;
+function cachedResult(
+  cacheKey: string,
+  keywords: string[],
+  page: number,
+): SearchResult | undefined {
+  const latest = readBrowserSnapshot(`${cacheKey}query:${JSON.stringify(keywords)}`) as
+    SearchResult | undefined;
   if (!latest || latest.page === page) return latest;
-  return readBrowserSnapshot(`${cacheKey}${latest.generation}:${page}`) as SearchResult | undefined;
+  return readBrowserSnapshot(`${cacheKey}page:${latest.generation}:${page}`) as
+    SearchResult | undefined;
+}
+
+function searchConditions(keywords: string[]) {
+  return (keywords.length ? keywords : [""]).map((keyword, id) => ({ id, keyword }));
 }
 
 export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: DdtScopeLabels }) {
   const parameters = useSearchParams();
-  const urlKeyword = parameters.get("ddtSearch") ?? "";
+  const urlKeywords = useMemo(() => parameters.getAll("ddtSearch"), [parameters]);
   const requestedPage = Number(parameters.get("ddtSearchPage") ?? 1);
   const urlPage = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const activeWorkspace = parameters.get("tab");
   const scopeQuery = new URLSearchParams(scope).toString();
-  const cacheKey = `ddt-value-search:v3:${scopeQuery}:`;
-  const [keyword, setKeyword] = useState(urlKeyword);
+  const cacheKey = `ddt-value-search:v4:${scopeQuery}:`;
+  const [conditions, setConditions] = useState(() => searchConditions(urlKeywords));
+  const nextConditionId = useRef(Math.max(urlKeywords.length, DDT_VALUE_SEARCH_MAX_KEYWORDS));
+  const conditionInputs = useRef(new Map<number, HTMLInputElement>());
+  const [formError, setFormError] = useState("");
   const [result, setResult] = useState<SearchResult | undefined>(() =>
-    cachedResult(cacheKey, urlKeyword, urlPage),
+    cachedResult(cacheKey, urlKeywords, urlPage),
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [failedPage, setFailedPage] = useState<number>();
   const [previewCaseId, setPreviewCaseId] = useState<string>();
   const controller = useRef<AbortController | null>(null);
-  const committedLocation = useRef(`${urlKeyword}:${urlPage}`);
+  const committedLocation = useRef(JSON.stringify([urlKeywords, urlPage]));
 
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
@@ -66,25 +82,27 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     return () => window.clearTimeout(timer);
   }, [activeWorkspace]);
   useEffect(() => {
-    const location = `${urlKeyword}:${urlPage}`;
+    const location = JSON.stringify([urlKeywords, urlPage]);
     if (committedLocation.current === location) return;
     committedLocation.current = location;
     controller.current?.abort();
     const timer = window.setTimeout(() => {
-      setKeyword(urlKeyword);
-      setResult(cachedResult(cacheKey, urlKeyword, urlPage));
+      setConditions(searchConditions(urlKeywords));
+      nextConditionId.current = Math.max(nextConditionId.current, urlKeywords.length);
+      setFormError("");
+      setResult(cachedResult(cacheKey, urlKeywords, urlPage));
       setPending(false);
       setError("");
       setFailedPage(undefined);
       setPreviewCaseId(undefined);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [urlKeyword, urlPage, cacheKey]);
+  }, [urlKeywords, urlPage, cacheKey]);
 
   function saveResult(next: SearchResult, epoch: number) {
     setResult(next);
-    writeBrowserSnapshot(cacheKey + next.keyword, next, epoch);
-    writeBrowserSnapshot(`${cacheKey}${next.generation}:${next.page}`, next, epoch);
+    writeBrowserSnapshot(`${cacheKey}query:${JSON.stringify(next.keywords)}`, next, epoch);
+    writeBrowserSnapshot(`${cacheKey}page:${next.generation}:${next.page}`, next, epoch);
   }
 
   async function readSlice(query: URLSearchParams, request: AbortController) {
@@ -111,7 +129,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     // A page starts immediately before its first match, but may span sparse windows.
     for (let slice = 0; slice < 60; slice += 1) {
       const query = new URLSearchParams(scopeQuery);
-      query.set("keyword", index.keyword);
+      for (const keyword of index.keywords) query.append("keyword", keyword);
       query.set("limit", String(pageSize - items.length));
       if (cursor) query.set("cursor", cursor);
       const response = await readSlice(query, request);
@@ -124,7 +142,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     throw new Error("本页读取时间较长，请重试；若用例已发生变化，请重新搜索。");
   }
 
-  async function search(searchKeyword: string, resume?: SearchResult) {
+  async function search(searchKeywords: string[], resume?: SearchResult) {
     if (controller.current && !controller.current.signal.aborted) return;
     const request = new AbortController();
     controller.current = request;
@@ -136,7 +154,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     let next: SearchResult = resume ?? {
       generation: createClientIdempotencyKey(),
       complete: false,
-      keyword: searchKeyword,
+      keywords: searchKeywords,
       items: [],
       scannedCount: 0,
       totalCount: 0,
@@ -149,7 +167,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     try {
       for (let slice = 0; !next.complete && slice < 60; slice += 1) {
         const query = new URLSearchParams(scopeQuery);
-        query.set("keyword", searchKeyword);
+        for (const keyword of searchKeywords) query.append("keyword", keyword);
         query.set("indexOffset", String(next.totalCount % DDT_VALUE_SEARCH_PAGE_SIZE));
         if (next.nextCursor) query.set("cursor", next.nextCursor);
         const response = await readSlice(query, request);
@@ -179,10 +197,11 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     }
   }
 
-  function setLocation(searchKeyword: string, page: number) {
-    committedLocation.current = `${searchKeyword}:${page}`;
+  function setLocation(searchKeywords: string[], page: number) {
+    committedLocation.current = JSON.stringify([searchKeywords, page]);
     const url = new URL(window.location.href);
-    url.searchParams.set("ddtSearch", searchKeyword);
+    url.searchParams.delete("ddtSearch");
+    for (const keyword of searchKeywords) url.searchParams.append("ddtSearch", keyword);
     url.searchParams.set("ddtSearchPage", String(page));
     window.history.pushState(null, "", url);
   }
@@ -197,12 +216,12 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     setFailedPage(undefined);
     setPreviewCaseId(undefined);
     try {
-      const cached = readBrowserSnapshot(`${cacheKey}${result.generation}:${page}`) as
+      const cached = readBrowserSnapshot(`${cacheKey}page:${result.generation}:${page}`) as
         SearchResult | undefined;
       const next = cached && result.complete ? cached : await readPage(result, page, request);
       request.signal.throwIfAborted();
       saveResult(next, epoch);
-      setLocation(result.keyword, page);
+      setLocation(result.keywords, page);
     } catch (failure) {
       if (!request.signal.aborted) {
         setFailedPage(page);
@@ -218,10 +237,34 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = keyword.trim();
-    if (!trimmed || pending) return;
-    setLocation(trimmed, 1);
-    void search(trimmed);
+    if (pending) return;
+    const parsed = ddtValueSearchKeywordsSchema.safeParse(
+      conditions.map((condition) => condition.keyword.trim()).filter(Boolean),
+    );
+    if (!parsed.success) {
+      setFormError(parsed.error.issues[0]?.message ?? "请检查搜索条件。");
+      return;
+    }
+    setFormError("");
+    setLocation(parsed.data, 1);
+    void search(parsed.data);
+  }
+
+  function addCondition() {
+    if (conditions.length >= DDT_VALUE_SEARCH_MAX_KEYWORDS) return;
+    const id = nextConditionId.current++;
+    setConditions([...conditions, { id, keyword: "" }]);
+    setFormError("");
+    requestAnimationFrame(() => conditionInputs.current.get(id)?.focus());
+  }
+
+  function removeCondition(id: number) {
+    if (conditions.length === 1) return;
+    const index = conditions.findIndex((condition) => condition.id === id);
+    const remaining = conditions.filter((condition) => condition.id !== id);
+    setConditions(remaining);
+    setFormError("");
+    conditionInputs.current.get(remaining[Math.min(index, remaining.length - 1)]!.id)?.focus();
   }
 
   return (
@@ -235,16 +278,60 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
           <p>匹配任意字段值，包括用户旅程各 Step；不匹配字段名，不区分英文大小写。</p>
         </div>
         <form onSubmit={submit}>
-          <label htmlFor="ddt-value-keyword">关键词</label>
-          <div className="ddt-value-search-controls">
-            <Input
-              id="ddt-value-keyword"
-              value={keyword}
-              maxLength={512}
-              placeholder="输入字段值，例如：钱包、支付成功、订单号"
-              onChange={(event) => setKeyword(event.target.value)}
-            />
-            <Button type="submit" variant="primary" disabled={pending || !keyword.trim()}>
+          <div className="ddt-value-search-conditions">
+            {conditions.map((condition, index) => (
+              <div className="ddt-value-search-condition" key={condition.id}>
+                <label htmlFor={`ddt-value-keyword-${condition.id}`}>
+                  {index === 0 ? "关键词" : `关键词 ${index + 1}`}
+                </label>
+                <div className="ddt-value-search-controls">
+                  <Input
+                    id={`ddt-value-keyword-${condition.id}`}
+                    ref={(element) => {
+                      if (element) conditionInputs.current.set(condition.id, element);
+                      else conditionInputs.current.delete(condition.id);
+                    }}
+                    value={condition.keyword}
+                    maxLength={DDT_VALUE_SEARCH_MAX_TEXT_LENGTH}
+                    placeholder="输入字段值，例如：钱包、支付成功、订单号"
+                    onChange={(event) => {
+                      setFormError("");
+                      setConditions(
+                        conditions.map((current) =>
+                          current.id === condition.id
+                            ? { ...current, keyword: event.target.value }
+                            : current,
+                        ),
+                      );
+                    }}
+                  />
+                  {conditions.length > 1 ? (
+                    <Button
+                      type="button"
+                      aria-label={`移除搜索条件 ${index + 1}`}
+                      onClick={() => removeCondition(condition.id)}
+                    >
+                      <X size={16} />
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="ddt-value-search-actions">
+            <Button
+              type="button"
+              onClick={addCondition}
+              disabled={conditions.length >= DDT_VALUE_SEARCH_MAX_KEYWORDS}
+              aria-label="添加搜索条件"
+            >
+              <Plus size={16} /> 添加条件
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={pending || !conditions.some((condition) => condition.keyword.trim())}
+            >
               {pending ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />} 搜索
             </Button>
             {pending ? (
@@ -253,7 +340,18 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               </Button>
             ) : null}
           </div>
-          <p>点击“搜索”或按回车开始检索，输入时不会发送查询。</p>
+          <p>
+            满足任一条件即匹配（并集），用例不重复显示。点击“搜索”或按回车开始，输入或增删条件时不会查询。
+          </p>
+          <p>
+            最多 {DDT_VALUE_SEARCH_MAX_KEYWORDS} 个条件，合计 {DDT_VALUE_SEARCH_MAX_TEXT_LENGTH}{" "}
+            个字符；空白条件自动忽略。
+          </p>
+          {formError ? (
+            <p className="inline-notice error" role="alert">
+              {formError}
+            </p>
+          ) : null}
         </form>
       </div>
       {error ? (
@@ -263,7 +361,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
             disabled={pending}
             onClick={() => {
               if (failedPage) void changePage(failedPage);
-              else if (result) void search(result.keyword, result);
+              else if (result) void search(result.keywords, result);
             }}
           >
             重试检索
@@ -275,7 +373,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
       ) : (
         <>
           <p className="ddt-value-search-status" role="status">
-            “{result.keyword}” ·{" "}
+            {result.keywords.map((keyword) => `“${keyword}”`).join(" 或 ")} ·{" "}
             {pending ? "正在检索…" : result.complete ? "检索完成" : "检索尚未完成"}
             {!result.complete
               ? ` · 已检索 ${result.scannedCount} 条用例，已匹配 ${result.totalCount} 条（总数统计中）`
@@ -327,14 +425,14 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
             ))}
           </div>
           {!pending && !error && !result.complete ? (
-            <Button onClick={() => void search(result.keyword, result)}>继续统计</Button>
+            <Button onClick={() => void search(result.keywords, result)}>继续统计</Button>
           ) : null}
           {!pending &&
           !error &&
           result.complete &&
           result.totalCount > 0 &&
           !result.items.length ? (
-            <Button onClick={() => void search(result.keyword, result)}>加载当前页</Button>
+            <Button onClick={() => void search(result.keywords, result)}>加载当前页</Button>
           ) : null}
         </>
       )}

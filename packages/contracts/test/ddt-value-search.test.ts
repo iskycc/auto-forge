@@ -4,6 +4,26 @@ import { ddtValueSearchInputSchema, ddtValueSearchPageSchema } from "../src/ddt"
 const scope = { projectId: "project", projectVersionId: "version", testStageId: "stage" };
 
 describe("DDT value search boundary", () => {
+  it("accepts multiple literal keywords and bounds their combined query size", () => {
+    expect(
+      ddtValueSearchInputSchema.parse({ ...scope, keywords: [" 钱包 ", "PAYMENT", "钱包"] }),
+    ).toMatchObject({
+      keywords: ["钱包", "PAYMENT"],
+      limit: 20,
+    });
+    for (const query of [
+      {},
+      { keywords: [] },
+      { keywords: ["钱包", " "] },
+      { keywords: Array.from({ length: 13 }, (_, index) => String(index)) },
+      { keywords: ["a".repeat(300), "b".repeat(300)] },
+      { keyword: "钱包", keywords: ["支付"] },
+    ])
+      expect(ddtValueSearchInputSchema.safeParse({ ...scope, ...query }).success).toBe(false);
+    expect(
+      ddtValueSearchInputSchema.parse({ ...scope, keywords: ["Payment", "payment", "a,b"] }),
+    ).toHaveProperty("keywords", ["Payment", "a,b"]);
+  });
   it("requires a scoped nonempty keyword and a bounded result window", () => {
     expect(ddtValueSearchInputSchema.parse({ ...scope, keyword: " 钱包 " })).toEqual({
       ...scope,

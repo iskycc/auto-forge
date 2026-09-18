@@ -107,6 +107,32 @@ for (const dialect of ["sqlite", "postgres"] as const) {
               matches: [{ path: ["value"] }, { path: ["用户旅程", "step1", "literal.key[0]"] }],
             },
           ]);
+          const unionQuery = { ...scope, keywords: ["other", "payment", "钱包"], limit: 20 };
+          const unionIndex = await searchDdtValues(
+            repository,
+            { ...unionQuery, indexOffset: 0 },
+            async () => "continue",
+          );
+          expect(unionIndex.scannedCount).toBe(301);
+          expect(unionIndex.index?.matchedCount).toBe(301);
+          expect(unionIndex.index?.pageCursors).toHaveLength(16);
+          const lastPage = await searchDdtValues(
+            repository,
+            { ...unionQuery, cursor: unionIndex.index!.pageCursors.at(-1) },
+            async () => "continue",
+          );
+          expect(lastPage.items).toEqual(result.items);
+          for (const field of ["projectId", "projectVersionId", "testStageId"] as const) {
+            expect(
+              (
+                await searchDdtValues(
+                  repository,
+                  { ...unionQuery, [field]: "outside" },
+                  async () => "continue",
+                )
+              ).items,
+            ).toEqual([]);
+          }
           for (const keyword of ["KEY_ONLY", "step1", "METADATA_ONLY", "CASE-0300"]) {
             expect(
               (await searchDdtValues(repository, { ...query, keyword }, async () => "continue"))
