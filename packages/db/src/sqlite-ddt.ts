@@ -196,7 +196,7 @@ export class SqliteDdtRepository implements DdtRepository {
   ): Promise<DdtExecutionClass[]> {
     const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
     const pattern = `%${escapeLike(normalizedQuery)}%`;
-    return this.handle.client
+    const rows = this.handle.client
       .prepare(
         `SELECT definition.id AS caseDefinitionId, definition.class_name AS className,
                 definition.display_name AS displayName, definition.source_id AS sourceId,
@@ -205,7 +205,7 @@ export class SqliteDdtRepository implements DdtRepository {
          FROM case_definitions definition
          JOIN case_sources source ON source.id = definition.source_id
          WHERE definition.project_id = ? AND definition.project_version_id = ?
-           AND definition.test_stage_id = ? AND source.authoritative = 1
+           AND definition.test_stage_id = ? AND source.project_id = definition.project_id
            AND source.status = 'ready' AND source.lifecycle_status = 'active'
            AND (? = '' OR lower(definition.class_name) LIKE ? ESCAPE '\\'
                         OR lower(definition.display_name) LIKE ? ESCAPE '\\')
@@ -217,14 +217,14 @@ export class SqliteDdtRepository implements DdtRepository {
         pattern,
         pattern,
         Math.min(Math.max(limit, 1), 100),
-      ) as DdtExecutionClass[];
+      ) as DdtExecutionClassRow[];
+    return rows.map(mapDdtExecutionClass);
   }
 
   async findExecutionClass(scope: DdtScope, className: string): Promise<DdtExecutionClass | null> {
-    return (
-      (this.handle.client
-        .prepare(
-          `SELECT definition.id AS caseDefinitionId, definition.class_name AS className,
+    const row = this.handle.client
+      .prepare(
+        `SELECT definition.id AS caseDefinitionId, definition.class_name AS className,
                   definition.display_name AS displayName, definition.source_id AS sourceId,
                   definition.current_version AS currentVersion, definition.enabled,
                   definition.archived
@@ -232,11 +232,11 @@ export class SqliteDdtRepository implements DdtRepository {
            JOIN case_sources source ON source.id = definition.source_id
            WHERE definition.project_id = ? AND definition.project_version_id = ?
              AND definition.test_stage_id = ? AND definition.class_name = ?
-             AND source.authoritative = 1 AND source.status = 'ready'
+             AND source.project_id = definition.project_id AND source.status = 'ready'
              AND source.lifecycle_status = 'active' LIMIT 1`,
-        )
-        .get(...scopeParameters(scope), className.trim()) as DdtExecutionClass | undefined) ?? null
-    );
+      )
+      .get(...scopeParameters(scope), className.trim()) as DdtExecutionClassRow | undefined;
+    return row ? mapDdtExecutionClass(row) : null;
   }
 
   async listExecutionClassRange(
@@ -368,7 +368,7 @@ export class SqliteDdtRepository implements DdtRepository {
 
          WHERE definition.project_id = ? AND definition.project_version_id = ? AND definition.test_stage_id = ?
  AND definition.id = ? AND definition.enabled = 1 AND definition.archived = 0
- AND source.authoritative = 1 AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
+ AND source.project_id = definition.project_id AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
           )
           .get(...scopeParameters(input.scope), input.executionCaseDefinitionId) as
           { id: string } | undefined;
@@ -509,7 +509,7 @@ export class SqliteDdtRepository implements DdtRepository {
 
          WHERE definition.project_id = ? AND definition.project_version_id = ? AND definition.test_stage_id = ?
  AND definition.id = ? AND definition.enabled = 1 AND definition.archived = 0
- AND source.authoritative = 1 AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
+ AND source.project_id = definition.project_id AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
           )
           .get(...scopeParameters(input.scope), executionCaseDefinitionId) as
           { id: string } | undefined;
@@ -573,7 +573,7 @@ export class SqliteDdtRepository implements DdtRepository {
  JOIN case_sources source ON source.id = definition.source_id
  WHERE candidate.project_id = ? AND candidate.project_version_id = ? AND candidate.test_stage_id = ?
  AND definition.project_id = candidate.project_id AND definition.project_version_id = candidate.project_version_id AND definition.test_stage_id = candidate.test_stage_id
- AND candidate.execution_case_definition_id = ? AND definition.enabled = 1 AND definition.archived = 0 AND source.authoritative = 1 AND source.status = 'ready' AND source.lifecycle_status = 'active'`,
+ AND candidate.execution_case_definition_id = ? AND definition.enabled = 1 AND definition.archived = 0 AND source.project_id = definition.project_id AND source.status = 'ready' AND source.lifecycle_status = 'active'`,
         )
         .get(...scopeParameters(input.scope), input.executionCaseDefinitionId) as
         { id: string } | undefined;

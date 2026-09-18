@@ -81,7 +81,7 @@ describe("SR execution class mapping", () => {
       updatedAt: timestamp,
     });
   });
-  it("rejects classes outside the scope or an available authoritative source", async () => {
+  it("rejects classes outside the scope or without an available managed JAR source", async () => {
     const { service, repository } = fixture(null);
     await expect(
       service.setSrExecutionClass(scope, {

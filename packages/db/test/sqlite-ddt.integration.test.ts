@@ -1,5 +1,8 @@
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
-import { expectDdtSrExecutionContract } from "./ddt-sr-execution-contract";
+import {
+  expectDdtSrExecutionContract,
+  expectDdtUnavailableSourceContract,
+} from "./ddt-sr-execution-contract";
 import { ddtLiteralSearchFields, expectDdtLiteralFieldSearch } from "./ddt-search-contract";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -211,6 +214,19 @@ describe("SQLite DDT repository", () => {
         "ddt-execution-definition",
         now,
       );
+      await expectDdtUnavailableSourceContract(
+        repository,
+        scope,
+        "ddt-execution-definition",
+        now,
+        async (source) => {
+          handle.client
+            .prepare(
+              "UPDATE case_sources SET project_id = ?, status = ?, lifecycle_status = ? WHERE id = ?",
+            )
+            .run(source.projectId, source.status, source.lifecycleStatus, "ddt-execution-source");
+        },
+      );
       insertDdtSuiteMembership(handle, "ddt-case-1");
       await expect(new SqliteCaseSuiteRepository(handle).get("ddt-suite")).resolves.toMatchObject({
         ddtItems: [
@@ -328,7 +344,7 @@ function insertExecutionClass(
        (id, project_id, project_version_id, test_stage_id, display_name, original_file_name,
         object_key, sha256, size_bytes, class_count, method_count, status, warnings_json,
         inspection_json, authoritative, lifecycle_status, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 128, 1, 1, 'ready', '[]', '{}', 1, 'active', 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 128, 1, 1, 'ready', '[]', '{}', 0, 'active', 1, ?, ?)`,
     )
     .run(
       "ddt-execution-source",

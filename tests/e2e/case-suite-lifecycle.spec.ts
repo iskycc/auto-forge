@@ -661,7 +661,24 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
       ],
     },
   });
+  // Hold the directory in its legitimate unsynchronized state while editing
+  // configuration, so this regression does not depend on worker timing.
+  const copiedDirectoryRequests = "**/api/v1/read-models/*/directory?**";
+  let deferCopiedDirectory = true;
+  let deferredDirectoryReads = 0;
+  await page.route(copiedDirectoryRequests, async (route) => {
+    const response = await route.fetch();
+    if (!deferCopiedDirectory || !response.ok()) {
+      await route.fulfill({ response });
+      return;
+    }
+    deferredDirectoryReads += 1;
+    const projection = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...projection, synchronized: false } });
+  });
   await page.goto(`/case-suites/${copiedSuiteId}`);
+  await expect.poll(() => deferredDirectoryReads).toBeGreaterThan(0);
+  await expect(page.getByText("正在准备目录，任务配置可直接编辑。", { exact: true })).toBeVisible();
 
   await page.getByLabel("并发度（同时在途执行数）").fill("5");
   await page.getByLabel("任务说明").fill("independently edited task copy");
@@ -685,8 +702,12 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     description: "lifecycle E2E suite",
     policy: { concurrency: 3 },
   });
+  deferCopiedDirectory = false;
+  await page.unroute(copiedDirectoryRequests);
   const caseTree = page.getByRole("tree", { name: "任务用例树" });
-  await expect(caseTree).toBeVisible();
+  // Saving configuration commits before the copied task's background directory
+  // snapshot is ready. Use the same bounded wait as the other snapshot checks.
+  await expect(caseTree).toBeVisible({ timeout: 30_000 });
   // Large tasks keep package contents out of the DOM until the user expands one package. This is a
   // performance contract: rendering every small package eagerly can create tens of thousands of
   // rows and make the native details arrow block the browser main thread.

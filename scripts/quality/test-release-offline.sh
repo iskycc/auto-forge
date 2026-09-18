@@ -51,6 +51,13 @@ agent_proxy_url=""
 cleanup() {
   local exit_status="$?"
   set +e
+  if [[ "${exit_status}" -ne 0 ]]; then
+    node "${repository_root}/scripts/quality/collect-release-diagnostics.mjs" \
+      "${acceptance_directory}" "${repository_root}/test-results/release-services/${phase_identity}" \
+      "${exit_status}" "${current_container}" "${previous_container}" "${restored_container}" \
+      "${rollback_container}" "${upgraded_container}" || \
+      printf 'Release service evidence collection failed; preserving original exit status %s.\n' "${exit_status}" >&2
+  fi
   stop_agent_loopback_proxy
   docker rm --force \
     "${current_container}" "${previous_container}" "${restored_container}" \
@@ -452,8 +459,9 @@ stop_platform() {
 
 wait_ready() {
   local base_url="${1:?base URL is required}"
-  for _ in $(seq 1 180); do
-    if curl --fail --silent "${base_url}/api/v1/health/ready" >/dev/null; then return; fi
+  local readiness_deadline=$((SECONDS + 90))
+  while ((SECONDS < readiness_deadline)); do
+    if curl --fail --silent --connect-timeout 1 --max-time 2 "${base_url}/api/v1/health/ready" >/dev/null; then return; fi
     sleep 0.5
   done
   echo "Release platform did not become ready at ${base_url}." >&2

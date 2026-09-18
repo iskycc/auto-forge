@@ -1211,6 +1211,23 @@ test("SR associations restrict candidates and automatically cover imported and m
   await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
   const className = `com.example.SrExecution${Date.now()}Test`;
   const definition = await importExecutionClass(page, hierarchy, className);
+  await page.goto("/cases/ddt-associations");
+  await page.getByRole("button", { name: "配置测试类范围" }).click();
+  const searchDialog = page.getByRole("dialog", { name: "测试类候选范围", exact: true });
+  await searchDialog.getByLabel("搜索测试类").fill("missing-class");
+  await searchDialog.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(searchDialog).toContainText("没有匹配的测试类");
+  await searchDialog.getByLabel("搜索测试类").fill("example.srexecution");
+  await searchDialog.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(
+    searchDialog.getByRole("button", { name: `加入 ${className}`, exact: true }),
+  ).toBeEnabled();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-class-keyword-search-${width}`);
+  }
+  await searchDialog.getByRole("button", { name: "完成", exact: true }).click();
   const caseIds = [`SR-A-${hierarchy.suffix}`, `SR-B-${hierarchy.suffix}`];
   const importRows = async (ids: string[]) => {
     await page.goto("/cases?tab=ddt");
@@ -1242,6 +1259,20 @@ test("SR associations restrict candidates and automatically cover imported and m
   );
   expect(oldEndpoint.body.error.code).toBe("DDT_SR_MAPPING_REQUIRED");
   await associateDdtSr(page, "PAYMENTS", className);
+  // A replacement JAR keeps the definition and its associations, but is not automatically promoted.
+  const replacement = await importExecutionClass(
+    page,
+    hierarchy,
+    className,
+    "executeUpdatedDdtCase",
+  );
+  expect(replacement.id).toBe(definition.id);
+  const searchAfterImport = await browserJson<{
+    items: Array<{ caseDefinitionId: string; currentVersion: number }>;
+  }>(page, `${ddtPath(hierarchy, "execution-classes")}&query=srexecution`);
+  expect(searchAfterImport.body.items).toMatchObject([
+    { caseDefinitionId: definition.id, currentVersion: 2 },
+  ]);
   await page.goto("/cases?tab=ddt&ddtView=cases");
   await page.getByRole("button", { name: `快速预览 ${caseIds[0]}`, exact: true }).click();
   const inspector = page.locator(".ddt-execution-inspector");
@@ -1390,6 +1421,9 @@ test("SR associations restrict candidates and automatically cover imported and m
   await expect(categoryDialog.getByRole("alert")).toContainText("仍使用此分类");
   await categoryDialog.getByRole("button", { name: "编辑分类 PAYMENTS 分类", exact: true }).click();
   await categoryDialog.getByLabel("分类名称", { exact: true }).fill("钱包与支付");
+  await categoryDialog.getByLabel("搜索分类执行类").fill("srexecution");
+  await categoryDialog.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(categoryDialog.getByRole("radio", { name: className, exact: true })).toBeChecked();
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 960 });
     await expectUiIntegrity(page);
@@ -2458,13 +2492,14 @@ async function importExecutionClass(
   page: Page,
   hierarchy: { projectId: string; versionId: string; stageId: string; suffix: string },
   className: string,
+  methodName = "executeDdtCase",
 ): Promise<{ id: string }> {
   const jar = zipSync({
     [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
       className,
       methods: [
         {
-          name: "executeDdtCase",
+          name: methodName,
           annotations: [{ type: "Test", values: { groups: ["ddt"] } }],
         },
       ],
@@ -2490,7 +2525,7 @@ async function importExecutionClass(
     timeout: 60_000,
   });
   const sources = await browserJson<{
-    items: Array<{ id: string; originalFileName: string }>;
+    items: Array<{ id: string; originalFileName: string; authoritative: boolean }>;
   }>(
     page,
     `/api/v1/case-sources?${new URLSearchParams({
@@ -2502,12 +2537,7 @@ async function importExecutionClass(
   );
   const source = sources.body.items.find((item) => item.originalFileName === fileName);
   expect(source).toBeTruthy();
-  const authoritative = await browserJson(
-    page,
-    `/api/v1/case-sources/${encodeURIComponent(source!.id)}/authoritative`,
-    { method: "PUT", body: { authoritative: true } },
-  );
-  expect(authoritative.status).toBe(200);
+  expect(source!.authoritative).toBe(false);
   const definitions = await browserJson<{
     items: Array<{ id: string; className: string }>;
   }>(

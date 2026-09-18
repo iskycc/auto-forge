@@ -3,7 +3,7 @@ import type {
   FailureAnalysisClaimView,
   FailureAnalysisExecutionHistory,
 } from "@autoforge/contracts";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -205,28 +205,42 @@ test("quality insight comparison preserves scroll, can rerun, and compares both 
   await expect(candidateOption).toBeVisible({ timeout: 10_000 });
   await candidateOption.click();
   await comparisonCard.scrollIntoViewIfNeeded();
-  const initialScrollTop = await page.evaluate(() => window.scrollY);
-  expect(initialScrollTop).toBeGreaterThan(0);
 
   const startComparison = comparisonCard.getByRole("button", { name: "开始对比" });
-  await startComparison.click();
+  const initialScrollTop = await submitComparisonAndReadScrollPosition(page, startComparison);
+  expect(initialScrollTop).toBeGreaterThan(0);
   await expect
     .poll(() => new URL(page.url()).searchParams.get("leftBatchId"))
     .toBe(fixture.historyBatchIds[0]);
   await expect
     .poll(() => new URL(page.url()).searchParams.get("rightBatchId"))
     .toBe(fixture.batchId);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(initialScrollTop);
   await expect(comparisonCard.getByRole("button", { name: "查看明细" })).toBeVisible({
     timeout: 30_000,
   });
   await expect(startComparison).toBeEnabled();
+  // A visible result can precede paint and native scroll anchoring. Check the
+  // completed chart, not the intermediate route with its old empty state.
+  await expectPaintedScrollTop(page, initialScrollTop);
 
-  const repeatedScrollTop = await page.evaluate(() => window.scrollY);
-  await startComparison.click();
+  // A snapshot can move the button during Playwright's actionability check.
+  // Reproduce that race: its retry may legitimately scroll before submitting.
+  await startComparison.evaluate((button) => {
+    button.animate([{ transform: "translateY(0px)" }, { transform: "translateY(8px)" }], {
+      duration: 200,
+    });
+  });
+  const repeatedResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/insights" && response.request().headers().rsc === "1",
+    { timeout: 30_000 },
+  );
+  const repeatedScrollTop = await submitComparisonAndReadScrollPosition(page, startComparison);
+  const repeatedResult = await repeatedResponse;
+  expect(repeatedResult.ok()).toBe(true);
   await expect(startComparison).toBeEnabled({ timeout: 15_000 });
   await expect(startComparison).toHaveText("开始对比");
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(repeatedScrollTop);
+  await expectPaintedScrollTop(page, repeatedScrollTop);
   await expectUiIntegrity(page);
   await screenshot(page, "quality-comparison-1536");
 
@@ -270,7 +284,64 @@ test("quality insight comparison preserves scroll, can rerun, and compares both 
   await expect(logComparison).toHaveCount(0);
   await expect(details).toBeVisible();
   await expect(compareLogs).toBeFocused();
+  await details.getByRole("button", { name: "关闭批次对比明细" }).click();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await comparisonCard.scrollIntoViewIfNeeded();
+  const desktopResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/insights" && response.request().headers().rsc === "1",
+    { timeout: 30_000 },
+  );
+  const desktopScrollTop = await submitComparisonAndReadScrollPosition(page, startComparison);
+  const desktopResult = await desktopResponse;
+  expect(desktopResult.ok()).toBe(true);
+  await expect(startComparison).toBeEnabled();
+  await expectPaintedScrollTop(page, desktopScrollTop);
+  await screenshot(page, "quality-comparison-1024");
+  // Inspect the full page from its top: at this scroll offset the sticky
+  // toolbar intentionally covers the preceding card's controls.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expectUiIntegrity(page);
 });
+
+type ComparisonScrollWindow = Window & { __autoforgeComparisonSubmitScrollY?: number };
+
+async function submitComparisonAndReadScrollPosition(page: Page, button: Locator): Promise<number> {
+  await page.locator(".batch-comparison-form").evaluate((form) => {
+    const observedWindow = window as ComparisonScrollWindow;
+    delete observedWindow.__autoforgeComparisonSubmitScrollY;
+    form.addEventListener(
+      "submit",
+      () => {
+        observedWindow.__autoforgeComparisonSubmitScrollY = window.scrollY;
+      },
+      { capture: true, once: true },
+    );
+  });
+  await button.click();
+  // Record before React handles submit, after all browser/test-driver scrolling.
+  // Read from the window because the URL update can remount the form itself.
+  const submittedScrollTop = await page.evaluate(() => {
+    const observedWindow = window as ComparisonScrollWindow;
+    const position = observedWindow.__autoforgeComparisonSubmitScrollY;
+    delete observedWindow.__autoforgeComparisonSubmitScrollY;
+    return position;
+  });
+  if (submittedScrollTop === undefined) throw new Error("The comparison form did not submit.");
+  return submittedScrollTop;
+}
+
+async function expectPaintedScrollTop(page: Page, expected: number): Promise<void> {
+  const positions = await page.evaluate(async () => {
+    const frames: number[] = [];
+    for (let frame = 0; frame < 3; frame += 1) {
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+      frames.push(window.scrollY);
+    }
+    return frames;
+  });
+  expect(positions).toEqual([expected, expected, expected]);
+}
 
 async function prepareAnalysis(page: Page) {
   await ensureAdministrator(page);

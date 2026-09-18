@@ -1,4 +1,7 @@
-import { expectDdtSrExecutionContract } from "./ddt-sr-execution-contract";
+import {
+  expectDdtSrExecutionContract,
+  expectDdtUnavailableSourceContract,
+} from "./ddt-sr-execution-contract";
 import { ddtLiteralSearchFields, expectDdtLiteralFieldSearch } from "./ddt-search-contract";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
@@ -174,6 +177,23 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
         executionDefinitionId,
         now,
       );
+      await expectDdtUnavailableSourceContract(
+        repository,
+        scope,
+        executionDefinitionId,
+        now,
+        async (source) => {
+          await handle.pool.query(
+            "UPDATE case_sources SET project_id = $1, status = $2, lifecycle_status = $3 WHERE id = $4",
+            [
+              source.projectId,
+              source.status,
+              source.lifecycleStatus,
+              `ddt-execution-source-${suffix}`,
+            ],
+          );
+        },
+      );
       await insertDdtSuiteMembership(handle, suffix, `case-second-${suffix}`);
       await expect(
         new PostgresCaseSuiteRepository(handle).get(`ddt-suite-${suffix}`),
@@ -298,7 +318,7 @@ async function insertExecutionClass(
       object_key, sha256, size_bytes, class_count, method_count, status, warnings_json,
       inspection_json, authoritative, lifecycle_status, revision, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 128, 1, 1, 'ready', '[]', '{}',
-             TRUE, 'active', 1, $9, $9)`,
+             FALSE, 'active', 1, $9, $9)`,
     [
       sourceId,
       scope.projectId,

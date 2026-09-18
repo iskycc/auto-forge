@@ -152,7 +152,7 @@ export class DdtCaseService {
     if (!executionClass) {
       throw new DomainError(
         "DDT_EXECUTION_CLASS_NOT_FOUND",
-        "执行类不存在，或不属于当前项目版本和测试阶段的有效权威来源。",
+        "执行类不存在、不属于当前项目版本和测试阶段，或其 JAR 来源尚未就绪、已归档。",
       );
     }
     if (!executionClass.enabled || executionClass.archived) {

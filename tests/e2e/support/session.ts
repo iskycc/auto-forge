@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { readSetupStatus } from "./setup-status";
 
 export const E2E_ADMIN_USERNAME = "e2e-admin";
 export const E2E_ADMIN_PASSWORD = "E2e!Administrator123";
@@ -27,9 +28,7 @@ export async function ensureAdministrator(page: Page): Promise<void> {
   // while setup is required, /login answers 200 and only redirects to /setup
   // client-side, which aborts in-flight navigations (ERR_ABORTED) and swaps
   // the login form for the setup form in the middle of fills.
-  const response = await page.request.get("/api/v1/auth/setup-status");
-  const status = (await response.json()) as { setupRequired?: unknown };
-  if (status.setupRequired === true) {
+  if (await readSetupStatus(page.request)) {
     await page.goto("/setup");
     await page
       .getByLabel("一次性管理员引导令牌")
@@ -58,9 +57,7 @@ export async function ensureAdministrator(page: Page): Promise<void> {
       .poll(
         async () => {
           if (new URL(page.url()).pathname !== "/setup") return "navigated";
-          const current = await page.request.get("/api/v1/auth/setup-status");
-          const currentStatus = (await current.json()) as { setupRequired?: unknown };
-          return currentStatus.setupRequired === false ? "completed-by-peer" : "pending";
+          return (await readSetupStatus(page.request)) ? "pending" : "completed-by-peer";
         },
         { timeout: 20_000, intervals: [100, 250, 500] },
       )

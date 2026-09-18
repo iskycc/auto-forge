@@ -4,6 +4,26 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.10 - 2026-09-18
+
+### Fixed
+
+- 修复 DDT 搜索和关联测试类时错误要求 JAR 被标记为“权威来源”：正常导入及重新导入的当前测试类均可搜索、加入候选范围、保存分类和关联 SR，无需额外设置来源标记。保持项目、版本、阶段隔离及来源状态、用例启停、归档和修订号校验；Lite 查询明确返回布尔状态，与 Full 一致。
+- 补充类名、包路径、用例名称的搜索说明和无结果提示；分类编辑仍只搜索已加入的候选类，DDT 高级检索仍只匹配数据 Value。
+- 修复浏览器验收中点击自动滚动、后台目录尚未就绪和复用 HTTP 连接被关闭引起的偶发失败。通过按钮位移、目录延迟和真实连接重置注入覆盖竞态；仅初始化只读探针对连接重置允许一次恢复，整个浏览器场景仍为零自动重试。
+- 发布资产离线验收失败时，在容器清理前保存脱敏日志、退出状态、OOM 和健康信息；就绪探测使用有界连接和请求超时，保留原失败退出码。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用关联规则，无数据库迁移、持久配置结构、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。已有 SR、需求分类与执行快照保持兼容。
+- “权威来源”标记仍可用于 JAR 目录对比和同步；DDT 关联以当前定义引用的受管 JAR 为准，不从历史 JAR 补充执行类。
+
+### Validation and known limitations
+
+- 23 项相关应用和真实 SQLite/PostgreSQL 回归、3 项 DDT Playwright 场景通过，覆盖正常导入、重导后稳定 ID/版本及分类编辑、混合和纯 DDT 执行、未绑定拒绝、权限与范围隔离和 Value 检索。
+- 两类浏览器竞态各重复验证 5 次共 10 次通过；41 项发布/质量脚本测试及 v1.17.9 离线镜像中的 17 项身份、管理与运维回归通过。工作区类型、改动文件格式/lint 和生产 Web 构建通过。
+- 已查看 1024px、1536px 的测试类候选、分类编辑和批次对比真实截图，未发现横向溢出或布局错位。托管平台基础设施故障无法由本地测试排除；正式双架构构建、完整源码矩阵及发布资产验收由新标签流水线执行。
+
 ## 1.17.9 - 2026-09-18
 
 ### Added and fixed

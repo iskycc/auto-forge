@@ -396,7 +396,7 @@ function DdtExecutionClassesDialog({
             aria-label="搜索测试类"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="搜索当前阶段的 TestNG 测试类"
+            placeholder="搜索当前阶段的类名、包路径或用例名称"
             disabled={saving}
           />
           <Button className="button button-secondary" type="submit" disabled={loading || saving}>
@@ -475,7 +475,7 @@ function DdtExecutionClassesDialog({
             </div>
             {!loading && !candidates.length ? (
               <p className="ddt-association-hint">
-                没有可用测试类，请确认已导入并设置当前阶段的权威 JAR 来源。
+                没有匹配的测试类，请核对关键词及当前项目、版本和阶段，并确认 JAR 已导入且未归档。
               </p>
             ) : null}
             {candidates.length === 50 ? (

@@ -2,6 +2,73 @@ import type { DdtRepository } from "@autoforge/application";
 import type { DdtScope } from "@autoforge/domain";
 import { expect } from "vitest";
 
+type ExecutionSourceState = {
+  projectId: string;
+  status: "ready" | "failed";
+  lifecycleStatus: "active" | "archived" | "deleting";
+};
+
+export async function expectDdtUnavailableSourceContract(
+  repository: DdtRepository,
+  scope: DdtScope,
+  executionCaseDefinitionId: string,
+  updatedAt: string,
+  setSourceState: (state: ExecutionSourceState) => Promise<void>,
+): Promise<void> {
+  const available: ExecutionSourceState = {
+    projectId: scope.projectId,
+    status: "ready",
+    lifecycleStatus: "active",
+  };
+  const range = await repository.listExecutionClassRange(scope, { query: "", limit: 10 });
+  const mapping = (await repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 1 }))
+    .items[0]!;
+  for (const unavailable of [
+    { ...available, lifecycleStatus: "archived" as const },
+    { ...available, lifecycleStatus: "deleting" as const },
+    { ...available, status: "failed" as const },
+    { ...available, projectId: "unrelated-project" },
+  ]) {
+    await setSourceState(unavailable);
+    try {
+      await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([]);
+      await expect(
+        repository.findExecutionClass(scope, "com.example.OrderDdtTest"),
+      ).resolves.toBeNull();
+      await expect(
+        repository.changeExecutionClassRange({
+          scope,
+          executionCaseDefinitionId,
+          included: true,
+          expectedRevision: range.revision,
+          updatedAt,
+        }),
+      ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_UNAVAILABLE" });
+      await expect(
+        repository.setSrExecutionClass({
+          scope,
+          srNum: mapping.srNum,
+          executionCaseDefinitionId,
+          expectedRevision: mapping.revision,
+          updatedAt,
+        }),
+      ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_UNAVAILABLE" });
+      await expect(
+        repository.saveRequirementCategory({
+          scope,
+          id: `unavailable-${executionCaseDefinitionId}`,
+          name: "不可用来源分类",
+          executionCaseDefinitionId,
+          expectedRevision: 0,
+          updatedAt,
+        }),
+      ).rejects.toMatchObject({ code: "DDT_EXECUTION_CLASS_OUT_OF_RANGE" });
+    } finally {
+      await setSourceState(available);
+    }
+  }
+}
+
 /** Both database adapters must enforce the same range, inheritance and concurrency rules. */
 export async function expectDdtSrExecutionContract(
   repository: DdtRepository,
@@ -10,6 +77,36 @@ export async function expectDdtSrExecutionContract(
   executionCaseDefinitionId: string,
   updatedAt: string,
 ) {
+  // Imported sources are not promoted to the catalog's authoritative source automatically.
+  // Search and association must use the current managed class, just like normal execution.
+  for (const keyword of ["order", "ORDERDDT", "example.Order", "订单", "DDT 执行"]) {
+    await expect(repository.listExecutionClasses(scope, keyword, 10)).resolves.toContainEqual(
+      expect.objectContaining({
+        caseDefinitionId: executionCaseDefinitionId,
+        enabled: true,
+        archived: false,
+      }),
+    );
+  }
+  await expect(repository.listExecutionClasses(scope, "%", 10)).resolves.toEqual([]);
+  await expect(repository.listExecutionClasses(scope, "_", 10)).resolves.toEqual([]);
+  await expect(
+    repository.findExecutionClass(scope, "com.example.OrderDdtTest"),
+  ).resolves.toMatchObject({
+    caseDefinitionId: executionCaseDefinitionId,
+    enabled: true,
+    archived: false,
+  });
+  for (const differentScope of [
+    { ...scope, projectId: "other-project" },
+    { ...scope, projectVersionId: "other-version" },
+    { ...scope, testStageId: "other-stage" },
+  ]) {
+    await expect(repository.listExecutionClasses(differentScope, "Order", 10)).resolves.toEqual([]);
+    await expect(
+      repository.findExecutionClass(differentScope, "com.example.OrderDdtTest"),
+    ).resolves.toBeNull();
+  }
   const assignment = {
     scope,
     srNum: "ORDER",

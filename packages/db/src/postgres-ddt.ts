@@ -155,7 +155,7 @@ export class PostgresDdtRepository implements DdtRepository {
        FROM case_definitions definition
        JOIN case_sources source ON source.id = definition.source_id
        WHERE definition.project_id = $1 AND definition.project_version_id = $2
-         AND definition.test_stage_id = $3 AND source.authoritative = TRUE
+         AND definition.test_stage_id = $3 AND source.project_id = definition.project_id
          AND source.status = 'ready' AND source.lifecycle_status = 'active'
          AND ($4 = '' OR lower(definition.class_name) LIKE $5 ESCAPE '\\'
                       OR lower(definition.display_name) LIKE $5 ESCAPE '\\')
@@ -175,7 +175,7 @@ export class PostgresDdtRepository implements DdtRepository {
        JOIN case_sources source ON source.id = definition.source_id
        WHERE definition.project_id = $1 AND definition.project_version_id = $2
          AND definition.test_stage_id = $3 AND definition.class_name = $4
-         AND source.authoritative = TRUE AND source.status = 'ready'
+         AND source.project_id = definition.project_id AND source.status = 'ready'
          AND source.lifecycle_status = 'active' LIMIT 1`,
       [...scopeValues(scope), className.trim()],
     );
@@ -309,7 +309,7 @@ export class PostgresDdtRepository implements DdtRepository {
 
          WHERE definition.project_id = $1 AND definition.project_version_id = $2 AND definition.test_stage_id = $3
  AND definition.id = $4 AND definition.enabled = TRUE AND definition.archived = FALSE
- AND source.authoritative = TRUE AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
+ AND source.project_id = definition.project_id AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
             [...scopeValues(input.scope), input.executionCaseDefinitionId],
           )
         ).rows[0];
@@ -447,7 +447,7 @@ export class PostgresDdtRepository implements DdtRepository {
 
          WHERE definition.project_id = $1 AND definition.project_version_id = $2 AND definition.test_stage_id = $3
  AND definition.id = $4 AND definition.enabled = TRUE AND definition.archived = FALSE
- AND source.authoritative = TRUE AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
+ AND source.project_id = definition.project_id AND source.status = 'ready' AND source.lifecycle_status = 'active' `,
             [...scopeValues(input.scope), executionCaseDefinitionId],
           )
         ).rows[0];
@@ -510,7 +510,7 @@ export class PostgresDdtRepository implements DdtRepository {
  JOIN case_sources source ON source.id = definition.source_id
  WHERE candidate.project_id = $1 AND candidate.project_version_id = $2 AND candidate.test_stage_id = $3
  AND definition.project_id = candidate.project_id AND definition.project_version_id = candidate.project_version_id AND definition.test_stage_id = candidate.test_stage_id
- AND candidate.execution_case_definition_id = $4 AND definition.enabled = TRUE AND definition.archived = FALSE AND source.authoritative = TRUE AND source.status = 'ready' AND source.lifecycle_status = 'active'`,
+ AND candidate.execution_case_definition_id = $4 AND definition.enabled = TRUE AND definition.archived = FALSE AND source.project_id = definition.project_id AND source.status = 'ready' AND source.lifecycle_status = 'active'`,
           [...scopeValues(input.scope), input.executionCaseDefinitionId],
         )
       ).rows[0];
