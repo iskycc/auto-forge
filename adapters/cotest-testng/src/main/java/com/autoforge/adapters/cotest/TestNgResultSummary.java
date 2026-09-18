@@ -1,6 +1,6 @@
 package com.autoforge.adapters.cotest;
 
-/** 监听器统计的执行结果概要；是否失败以失败数与配置失败数为准，跳过不计入失败。 */
+/** 监听器统计的执行结果概要；失败、跳过与配置失败均代表本次执行不通过。 */
 final class TestNgResultSummary {
   private final int passedCount;
   private final int failedCount;

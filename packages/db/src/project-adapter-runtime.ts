@@ -1,5 +1,6 @@
 import {
   COTEST_ADAPTER_CAPABILITY,
+  DDT_CASE_ID_CAPABILITY,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   PROJECT_RUNTIME_ASSETS_CAPABILITY,
   REQUIRED_EXECUTION_CAPABILITIES,
@@ -15,6 +16,7 @@ const sha256Pattern = /^[a-f0-9]{64}$/u;
 export type RuntimeAssetSnapshot = RunBatchRuntimeAssetSnapshot;
 
 export type ProjectAdapterRuntime = {
+  requiresDdtCaseId?: boolean;
   suiteName: string;
   testName: string;
   // 完整环境池必须随批次快照持久化；只保存 run -> address 会在用例数少于
@@ -40,6 +42,7 @@ export function parseProjectAdapterRuntime(
         ? boundedString(record.environmentAddress ?? "", 2_048)
         : boundedString(record.fallbackEnvironmentAddress, 2_048);
     return {
+      ...(record.requiresDdtCaseId === true ? { requiresDdtCaseId: true } : {}),
       suiteName: boundedString(record.suiteName, 512),
       testName: boundedString(record.testName, 512),
       environmentAddresses:
@@ -92,9 +95,11 @@ export function projectAdapterRequiredCapabilities(
   runtime: ProjectAdapterRuntime | undefined,
 ): string[] {
   if (!runtime) return [...REQUIRED_EXECUTION_CAPABILITIES];
-  return runtime.jdk && runtime.jarBundle
-    ? [COTEST_ADAPTER_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
-    : [COTEST_ADAPTER_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
+  const capabilities =
+    runtime.jdk && runtime.jarBundle
+      ? [COTEST_ADAPTER_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
+      : [COTEST_ADAPTER_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
+  return runtime.requiresDdtCaseId ? [...capabilities, DDT_CASE_ID_CAPABILITY] : capabilities;
 }
 
 export function supportsProjectAdapterRuntime(

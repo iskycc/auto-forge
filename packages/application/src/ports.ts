@@ -1604,11 +1604,6 @@ export type CreateRunBatchRecord = {
     caseType?: "testng" | "ddt";
     executionCaseDefinitionId?: string;
     ddtSrNum?: string;
-    classData?: {
-      json: string;
-      sizeBytes: number;
-      sha256: string;
-    };
   }>;
   adapter?: CaseSuiteExecutionPolicy["adapter"];
   adapterRuntimeSnapshot?: RunBatchAdapterRuntimeSnapshot;

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/executor"
@@ -34,7 +35,7 @@ func cotestAdapterExecutorSpec(
 		return executor.Spec{}, nil, errors.New("CoTest execution requires 1-128 inputs")
 	}
 	inputs := append([]ExecutionInput(nil), specification.Inputs...)
-	var testJAR, jdkArchive, jarBundle, classData *ExecutionInput
+	var testJAR, jdkArchive, jarBundle *ExecutionInput
 	for index := range inputs {
 		input := &inputs[index]
 		switch input.Kind {
@@ -55,10 +56,7 @@ func cotestAdapterExecutorSpec(
 			jarBundle = input
 		case "dependency-jar":
 		case "class-data":
-			if classData != nil {
-				return executor.Spec{}, nil, errors.New("CoTest execution contains multiple class data files")
-			}
-			classData = input
+			return executor.Spec{}, nil, errors.New("legacy DDT file input is unsupported; recreate the execution on the updated platform to pass CaseID")
 		default:
 			return executor.Spec{}, nil, fmt.Errorf("unsupported CoTest input kind %q", input.Kind)
 		}
@@ -92,8 +90,11 @@ func cotestAdapterExecutorSpec(
 			specification.Adapter.EnvironmentAddress,
 		)
 	}
-	if classData != nil {
-		arguments = append(arguments, "--class-data", filepath.Clean(classData.TargetPath))
+	if specification.Adapter.CaseID != "" {
+		if !utf8.ValidString(specification.Adapter.CaseID) || utf8.RuneCountInString(specification.Adapter.CaseID) > 512 || strings.ContainsRune(specification.Adapter.CaseID, 0) {
+			return executor.Spec{}, nil, errors.New("DDT CaseID is invalid or exceeds 512 characters")
+		}
+		arguments = append(arguments, "--case-id", specification.Adapter.CaseID)
 	}
 	if specification.Adapter.CaseTimeoutSeconds < 0 || specification.Adapter.CaseTimeoutSeconds > 86_400 {
 		return executor.Spec{}, nil, errors.New("adapter case timeout seconds is outside the supported range")

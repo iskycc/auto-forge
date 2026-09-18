@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DdtCaseService } from "../src/manage-ddt-cases";
 import type { DdtRepository } from "../src/ports";
 import type { DdtCase } from "@autoforge/domain";
+import { ddtCaseListInputSchema } from "@autoforge/contracts";
 
 const scope = { projectId: "project-1", projectVersionId: "version-1", testStageId: "stage-1" };
 const timestamp = "2026-08-28T00:00:00.000Z";
@@ -14,6 +15,34 @@ const executionClass = {
   enabled: true,
   archived: false,
 };
+
+describe("DDT CaseID list selection", () => {
+  it.each([{ caseIds: [] }, { caseIds: ["CASE-1"] }])(
+    "forwards exact IDs including an empty selection with its scope",
+    async ({ caseIds }) => {
+      const listCases = vi.fn().mockResolvedValue({ items: [] });
+      const service = new DdtCaseService(
+        { listCases } as unknown as DdtRepository,
+        { now: () => new Date(timestamp) },
+        { next: () => "unused" },
+      );
+      await service.list(ddtCaseListInputSchema.parse({ ...scope, caseIds, limit: 200 }));
+      expect(listCases).toHaveBeenCalledExactlyOnceWith({
+        ...scope,
+        caseIds,
+        limit: 200,
+        filters: [],
+      });
+    },
+  );
+
+  it("bounds each lookup without limiting the complete imported list", () => {
+    expect(
+      ddtCaseListInputSchema.safeParse({ ...scope, caseIds: Array(201).fill("CASE-1") }).success,
+    ).toBe(false);
+    expect(ddtCaseListInputSchema.safeParse({ ...scope, caseIds: [""] }).success).toBe(false);
+  });
+});
 
 describe("public DDT case data", () => {
   it.each([

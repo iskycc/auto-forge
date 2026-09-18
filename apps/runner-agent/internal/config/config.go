@@ -55,7 +55,7 @@ func (configuration Config) Capabilities() []string {
 		result = append(result, "executor:testng-v1")
 	}
 	if configuration.Adapter.Enabled() {
-		result = append(result, "adapter:cotest-testng-v1", "runtime:project-assets-v1")
+		result = append(result, "adapter:cotest-testng-v1", "adapter:ddt-case-id-v1", "runtime:project-assets-v1")
 	}
 	if configuration.Container.Enabled() {
 		result = append(result, "executor:testng-container-v1")

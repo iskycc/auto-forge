@@ -23,6 +23,12 @@ describe("classifyAttemptResult", () => {
     );
   });
 
+  it("counts skipped TestNG runs as failures rather than infrastructure blocks", () => {
+    expect(classifyAttemptResult({ outcome: "failed", resultCode: "TESTNG_SKIPPED" })).toBe(
+      "failed",
+    );
+  });
+
   it("treats the legacy PASSED code as normal success", () => {
     expect(classifyAttemptResult({ outcome: "succeeded", resultCode: "PASSED" })).toBe("succeeded");
   });

@@ -71,6 +71,7 @@ compile_java_cases() {
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesDdtFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesFailureFixture.java" \
+    "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesSkippedFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentAlphaFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentBetaFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentGammaFixture.java"

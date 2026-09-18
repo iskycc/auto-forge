@@ -143,6 +143,7 @@ export const ddtSearchFilterSchema = z.object({
 });
 
 export const ddtCaseListInputSchema = ddtScopeSchema.extend({
+  caseIds: z.array(z.string().trim().min(1).max(512)).max(200).optional(),
   query: z.string().trim().max(512).optional(),
   srNum: z.string().trim().max(512).optional(),
   sourceName: z.string().trim().max(512).optional(),

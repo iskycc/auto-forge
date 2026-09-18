@@ -84,8 +84,13 @@ export class SqliteDdtRepository implements DdtRepository {
   }
 
   async listCases(query: DdtCaseListQuery) {
+    if (query.caseIds?.length === 0) return { items: [] };
     const where = scopeSql(query);
     const parameters: SqlValue[] = scopeParameters(query);
+    if (query.caseIds) {
+      where.push(`case_id_normalized IN (${query.caseIds.map(() => "?").join(",")})`);
+      parameters.push(...query.caseIds.map(normalize));
+    }
     if (query.cursor) {
       where.push("case_id_normalized > ?");
       parameters.push(query.cursor);

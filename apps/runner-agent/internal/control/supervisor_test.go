@@ -649,3 +649,18 @@ func TestMapTestNGReportKeepsAdapterTimeoutAuthoritative(t *testing.T) {
 		t.Fatal("mapTestNGReport() must keep the parsed report summary")
 	}
 }
+
+func TestMapTestNGReportRejectsAnySkippedTests(t *testing.T) {
+	for _, passed := range []int{0, 1} {
+		for _, exitCode := range []int{0, 1, 2} {
+			result := executor.Result{Termination: "completed", ExitCode: exitCode}
+			mapped := mapExecutionResult(result)
+			mapTestNGReport(&mapped, result, executor.TestNGReportSummary{
+				TestNGResultCounts: executor.TestNGResultCounts{Total: passed + 1, Passed: passed, Skipped: 1},
+			})
+			if mapped.Status != "failed" || mapped.ResultCode != "TESTNG_SKIPPED" {
+				t.Fatalf("passed=%d skipped=1 exit=%d mapped=%+v", passed, exitCode, mapped)
+			}
+		}
+	}
+}

@@ -615,6 +615,7 @@ describe("SQLite case suite lifecycle", () => {
         capabilities: [
           "executor:testng-v1",
           "adapter:cotest-testng-v1",
+          "adapter:ddt-case-id-v1",
           "runtime:project-assets-v1",
           "isolation:cgroup-v2",
           "java:21.0.8",
@@ -630,6 +631,7 @@ describe("SQLite case suite lifecycle", () => {
         capabilities: [
           "executor:testng-v1",
           "adapter:cotest-testng-v1",
+          "adapter:ddt-case-id-v1",
           "runtime:project-assets-v1",
           "isolation:cgroup-v2",
           "java:21.0.8",
@@ -674,6 +676,26 @@ describe("SQLite case suite lifecycle", () => {
         }),
       ]);
       await associateSr(handle, "SR-ORDER");
+      const runnerCapabilities = handle.client
+        .prepare("SELECT id, capabilities_json FROM runners LIMIT 1")
+        .get() as { id: string; capabilities_json: string };
+      handle.client
+        .prepare("UPDATE runners SET capabilities_json = ? WHERE id = ?")
+        .run(
+          JSON.stringify(
+            (JSON.parse(runnerCapabilities.capabilities_json) as string[]).filter(
+              (capability) => capability !== "adapter:ddt-case-id-v1",
+            ),
+          ),
+          runnerCapabilities.id,
+        );
+      const legacyRunnerPreflight = await scheduler.preflight({ suiteId: "suite-1" });
+      expect(legacyRunnerPreflight.blockers).toContainEqual(
+        expect.objectContaining({ code: "RUNNER_DDT_CASE_ID_CAPABILITY_MISSING" }),
+      );
+      handle.client
+        .prepare("UPDATE runners SET capabilities_json = ? WHERE id = ?")
+        .run(runnerCapabilities.capabilities_json, runnerCapabilities.id);
       const preflight = await scheduler.preflight({ suiteId: "suite-1" });
       expect(preflight.blockers).toEqual([]);
       const batch = await scheduler.create({ suiteId: "suite-1" });
@@ -705,6 +727,7 @@ describe("SQLite case suite lifecycle", () => {
           testName: string;
           environmentAddress: string;
           caseTimeoutSeconds: number;
+          caseId?: string;
         };
         inputs: Array<{
           inputId: string;
@@ -735,15 +758,10 @@ describe("SQLite case suite lifecycle", () => {
         "10.0.0.10",
         "10.0.0.11",
       ]);
-      const ddtSpec = specs.find((candidate) =>
-        candidate.inputs.some((input) => input.kind === "class-data"),
-      );
+      const ddtSpec = specs.find((candidate) => candidate.adapter.caseId === "ORDER-1");
       expect(ddtSpec).toBeDefined();
-      expect(ddtSpec?.inputs.find((input) => input.kind === "class-data")).toMatchObject({
-        inputId: expect.stringMatching(/^class-data-/),
-        targetPath: expect.stringMatching(/^inputs\/class-data\/.+\.json$/),
-        mediaType: "application/json",
-      });
+      expect(ddtSpec?.adapter?.caseId).toBe("ORDER-1");
+      expect(ddtSpec?.inputs.some((input) => input.kind === "class-data")).toBe(false);
       const storedDdtRun = handle.client
         .prepare(
           `SELECT case_type, ddt_sr_num, class_data_json, class_data_size_bytes,
@@ -753,9 +771,9 @@ describe("SQLite case suite lifecycle", () => {
         .get() as {
         case_type: string;
         ddt_sr_num: string;
-        class_data_json: string;
-        class_data_size_bytes: number;
-        class_data_sha256: string;
+        class_data_json: string | null;
+        class_data_size_bytes: number | null;
+        class_data_sha256: string | null;
         execution_case_definition_id: string;
       };
       expect(storedDdtRun).toMatchObject({
@@ -763,17 +781,13 @@ describe("SQLite case suite lifecycle", () => {
         ddt_sr_num: "SR-ORDER",
         execution_case_definition_id: "case-1",
       });
-      expect(JSON.parse(storedDdtRun.class_data_json)).toEqual({
-        CaseID: "ORDER-1",
-        srNum: "SR-ORDER",
-        amount: 100,
-      });
-      expect(Buffer.byteLength(storedDdtRun.class_data_json)).toBe(
-        storedDdtRun.class_data_size_bytes,
-      );
+      expect(storedDdtRun.class_data_json).toBeNull();
+      expect(storedDdtRun.class_data_size_bytes).toBeNull();
+      expect(storedDdtRun.class_data_sha256).toBeNull();
       expect(spec.requiredCapabilities).toEqual(
         expect.arrayContaining(["adapter:cotest-testng-v1", "runtime:project-assets-v1"]),
       );
+      expect(ddtSpec?.requiredCapabilities).toContain("adapter:ddt-case-id-v1");
       expect(spec.inputs.map((input) => input.kind)).toEqual([
         "test-jar",
         "jdk-archive",

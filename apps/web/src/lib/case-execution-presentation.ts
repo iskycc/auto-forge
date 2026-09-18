@@ -23,6 +23,7 @@ export function caseExecutionResultLabel(code: string | undefined): string {
       cancelled: "已取消",
       TESTNG_SUCCEEDED: "TestNG 通过",
       TESTNG_SUCCEEDED_WITH_SKIPS: "TestNG 通过（含跳过）",
+      TESTNG_SKIPPED: "TestNG 存在跳过，执行不通过",
       TESTNG_ASSERTIONS_FAILED: "TestNG 断言失败",
       TESTNG_CONFIGURATION_FAILED: "TestNG 配置失败",
       TESTNG_EXIT_NONZERO: "TestNG 异常退出",

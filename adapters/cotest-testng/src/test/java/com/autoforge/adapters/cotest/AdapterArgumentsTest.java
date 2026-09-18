@@ -15,7 +15,7 @@ class AdapterArgumentsTest {
               "--jars", "/opt/cotest/jars",
               "--class", "example.AdapterCase",
               "--environment-address", "10.0.0.8",
-              "--class-data", "/opt/cotest/data.json",
+              "--case-id", "CASE/0001 中文?x=1",
               "--suite-name", "Regression",
               "--test-name", "Adapter cases",
               "--output", "/tmp/testng-output"
@@ -24,7 +24,7 @@ class AdapterArgumentsTest {
     assertEquals(Paths.get("/opt/cotest/jars"), arguments.jarDirectory());
     assertEquals("example.AdapterCase", arguments.className());
     assertEquals("10.0.0.8", arguments.environmentAddress());
-    assertEquals(Paths.get("/opt/cotest/data.json"), arguments.classDataFile());
+    assertEquals("CASE/0001 中文?x=1", arguments.caseId());
     assertEquals("Regression", arguments.suiteName());
     assertEquals("Adapter cases", arguments.testName());
     assertEquals(Paths.get("/tmp/testng-output"), arguments.outputDirectory());

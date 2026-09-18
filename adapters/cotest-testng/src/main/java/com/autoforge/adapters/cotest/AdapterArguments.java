@@ -12,13 +12,13 @@ final class AdapterArguments {
   static final String USAGE =
       "Usage: java -jar cotest-testng-adapter.jar "
           + "--jars DIR --class CLASS [--environment-address VALUE] "
-          + "[--class-data FILE] [--config FILE] [--suite-name NAME] "
+          + "[--case-id CASE_ID] [--config FILE] [--suite-name NAME] "
           + "[--test-name NAME] [--output DIR] [--case-timeout-seconds SECONDS]";
 
   private final Path jarDirectory;
   private final String className;
   private final String environmentAddress;
-  private final Path classDataFile;
+  private final String caseId;
   private final Path configurationFile;
   private final String suiteName;
   private final String testName;
@@ -29,7 +29,10 @@ final class AdapterArguments {
     jarDirectory = Paths.get(required(options, "--jars"));
     className = required(options, "--class");
     environmentAddress = options.getOrDefault("--environment-address", "");
-    classDataFile = optionalPath(options, "--class-data");
+    caseId = options.get("--case-id");
+    if (caseId != null && caseId.length() > 512) {
+      throw new IllegalArgumentException("--case-id must not exceed 512 characters.");
+    }
     configurationFile = optionalPath(options, "--config");
     suiteName = options.get("--suite-name");
     testName = options.get("--test-name");
@@ -70,8 +73,8 @@ final class AdapterArguments {
     return environmentAddress;
   }
 
-  Path classDataFile() {
-    return classDataFile;
+  String caseId() {
+    return caseId;
   }
 
   Path configurationFile() {
@@ -133,7 +136,7 @@ final class AdapterArguments {
       case "--jars":
       case "--class":
       case "--environment-address":
-      case "--class-data":
+      case "--case-id":
       case "--config":
       case "--suite-name":
       case "--test-name":

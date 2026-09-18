@@ -11,6 +11,7 @@ import {
 import {
   assessRunnerCompatibility,
   COTEST_ADAPTER_CAPABILITY,
+  DDT_CASE_ID_CAPABILITY,
   DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   defaultCaseSuiteExecutionPolicy,
@@ -32,7 +33,6 @@ import {
   type SchedulingPlan,
   type SchedulingThresholds,
 } from "@autoforge/domain";
-import { createHash } from "node:crypto";
 
 import type {
   CaseSuiteRepository,
@@ -54,7 +54,6 @@ import { CoalescedOperation } from "./coalesced-operation";
 const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
-const MAXIMUM_CLASS_DATA_BYTES = 128 * 1_024 * 1_024;
 
 type DerivedRuntimeAssetSource = "current_project_version" | "source_snapshot";
 
@@ -192,6 +191,7 @@ export class RunBatchSchedulingService {
     const projectId = suite.projectId;
     await this.ensureRunnersExist(runnerIds, [
       ...(usesTaskAdapter(suitePolicy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+      ...(enabledDdtCases.length ? [DDT_CASE_ID_CAPABILITY] : []),
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
@@ -298,7 +298,7 @@ export class RunBatchSchedulingService {
     if (!validated.adapter.enabled) {
       throw new DomainError(
         "DDT_ADAPTER_REQUIRED",
-        "DDT 用例执行必须启用 CoTest Adapter，以传递当前用例数据。",
+        "DDT 用例执行必须启用 CoTest Adapter，以传递当前 CaseID。",
       );
     }
     return this.createSingleExecution(
@@ -387,6 +387,7 @@ export class RunBatchSchedulingService {
     }
     await this.ensureRunnersExist(runnerIds, [
       ...(usesTaskAdapter(validated.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+      ...(ddtCase ? [DDT_CASE_ID_CAPABILITY] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
     const scheduledFor = delayedStart(createdAt, validated.delaySeconds);
@@ -1147,17 +1148,6 @@ export class RunBatchSchedulingService {
             ),
           );
         }
-        const bytes = Buffer.byteLength(JSON.stringify(item.ddtCase.data), "utf8");
-        if (bytes > MAXIMUM_CLASS_DATA_BYTES) {
-          blockers.push(
-            blocker(
-              "DDT_CLASS_DATA_TOO_LARGE",
-              "input",
-              `DDT 用例 ${item.ddtCase.caseId} 的 classDataFile 超过 128 MiB。`,
-              { caseDefinitionId: item.ddtCase.id },
-            ),
-          );
-        }
       }
       if (ddtCases.length > 0 && !usesTaskAdapter(suite.policy.adapter)) {
         blockers.push(
@@ -1199,7 +1189,10 @@ export class RunBatchSchedulingService {
       blockers,
       suite?.policy.runnerLabels ?? [],
       suite?.policy.executor ?? "testng",
-      suite ? usesTaskAdapter(suite.policy.adapter) : false,
+      [
+        ...(suite && usesTaskAdapter(suite.policy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+        ...(suite?.ddtItems?.length ? [DDT_CASE_ID_CAPABILITY] : []),
+      ],
     );
     return { ready: blockers.length === 0, blockers };
   }
@@ -1314,7 +1307,7 @@ export class RunBatchSchedulingService {
     blockers: RunBatchPreflightBlocker[],
     policyLabels: readonly string[] = [],
     executor: "testng" | "testng-container" = "testng",
-    requiresAdapter = false,
+    requiredCapabilities: readonly string[] = [],
   ): Promise<void> {
     const offlineCutoff = offlineBefore(this.clock.now());
     const stored = await this.runners.listByIds(runnerIds, offlineCutoff);
@@ -1359,12 +1352,17 @@ export class RunBatchSchedulingService {
           ),
         );
       }
-      if (requiresAdapter && !runner.capabilities.includes(COTEST_ADAPTER_CAPABILITY)) {
+      for (const capability of requiredCapabilities) {
+        if (runner.capabilities.includes(capability)) continue;
         blockers.push(
           blocker(
-            "RUNNER_ADAPTER_CAPABILITY_MISSING",
+            capability === DDT_CASE_ID_CAPABILITY
+              ? "RUNNER_DDT_CASE_ID_CAPABILITY_MISSING"
+              : "RUNNER_ADAPTER_CAPABILITY_MISSING",
             "toolchain",
-            "执行机未安装任务所需的 CoTest Adapter；请重新下发 Runner。",
+            capability === DDT_CASE_ID_CAPABILITY
+              ? "执行机不支持直接传递 DDT CaseID，请升级 Runner（包含受管 Adapter）后重试。"
+              : "执行机未安装任务所需的 CoTest Adapter；请重新下发 Runner。",
             { runnerId },
           ),
         );
@@ -1564,14 +1562,6 @@ function ddtExecutionRun(
       `DDT 用例 ${ddtCase.caseId} 所属 SR ${ddtCase.srNum} 尚未关联测试类，请在 SR 测试类关联页面配置。`,
     );
   }
-  const json = `${JSON.stringify(ddtCase.data)}\n`;
-  const sizeBytes = Buffer.byteLength(json, "utf8");
-  if (sizeBytes > MAXIMUM_CLASS_DATA_BYTES) {
-    throw new DomainError(
-      "DDT_CLASS_DATA_TOO_LARGE",
-      `DDT 用例 ${ddtCase.caseId} 的 classDataFile 超过 128 MiB。`,
-    );
-  }
   return {
     id,
     caseDefinitionId: ddtCase.id,
@@ -1582,11 +1572,6 @@ function ddtExecutionRun(
     caseType: "ddt",
     ddtSrNum: ddtCase.srNum,
     parameters: {},
-    classData: {
-      json,
-      sizeBytes,
-      sha256: createHash("sha256").update(json).digest("hex"),
-    },
   };
 }
 

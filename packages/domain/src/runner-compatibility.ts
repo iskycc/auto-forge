@@ -4,6 +4,7 @@ export const CURRENT_RUNNER_PROTOCOL_VERSION = 1;
 export const MINIMUM_JAVA_MAJOR_VERSION = 11;
 export const SUPPORTED_TESTNG_VERSION = "7.11.0";
 export const COTEST_ADAPTER_CAPABILITY = "adapter:cotest-testng-v1";
+export const DDT_CASE_ID_CAPABILITY = "adapter:ddt-case-id-v1";
 export const PROJECT_RUNTIME_ASSETS_CAPABILITY = "runtime:project-assets-v1";
 export const REQUIRED_EXECUTION_CAPABILITIES = [
   "executor:testng-v1",

@@ -4,6 +4,28 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.12 - 2026-09-18
+
+### Added and fixed
+
+- DDT 用例页面新增“按清单选择”：通过 Excel、CSV、TSV、TXT 或粘贴文本按 CaseID 匹配当前项目、版本、阶段中的已有用例，支持未加载列表项，确认后加入已有或新建任务。保留前导零及特殊字符；提供匹配/未匹配预览、取消和失败重试，不导入或覆盖用例数据。
+- 修复 TestNG 跳过被判为通过：Failed 或 Skipped 任一非零均为执行失败，包括 Passed:0、Failed:0、Skipped:1。Adapter、Runner 与平台完成上报统一判定，旧 Runner 的错误成功上报也会在入库前纠正，失败纳入原有重跑与统计逻辑。
+- DDT 执行直接传递原始 CaseID，不再生成、下载或转换 JSON 数据文件；由测试类自行调用对应项目、版本、阶段的 DDT 公开 API 获取数据。混合任务、纯 DDT 任务及单用例立即执行共用该路径。
+- Java 8 发布冒烟验收同步检查跳过场景返回失败，覆盖全部跳过和部分通过、部分跳过，避免沿用旧成功断言导致发布失败。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用业务规则，无数据库迁移、新生产依赖或离线资产种类变化。新增可选查询字段 `caseIds` 和执行规格字段 `adapter.caseId`，保持 Runner Protocol v1。
+- **本版本需同步升级主平台和 Runner，配套 Adapter 随 Runner 自动更新。** DDT 任务要求 `adapter:ddt-case-id-v1` 能力，旧 Runner 会被预检和调度拦截；升级前已分配的旧 `class-data` 文件协议任务需结束或停止后重新发起。
+- DDT CaseID、SR、执行类及类版本仍保存在执行快照中；动态字段以测试类调用公开 API 时的数据为准。旧 JSON 数据列仅为历史读取保留，新批次不再写入正文。历史已结束结果不自动回填。
+
+### Validation and known limitations
+
+- 发布前全量 994 项 TypeScript 单元测试、Go 测试和 44 项发布/运维脚本测试通过；Java 8 上分别验证 TestNG 7.5.1、6.14.3，并确认打包后的全部跳过、部分跳过均返回失败。
+- DDT 清单选择经过真实 SQLite/PostgreSQL、解析器和应用测试，覆盖顺序分批、作用域隔离、大小写、前导零、文件格式与取消；Playwright 验证 205 条用例中仅加载 60 条时仍可完整匹配并加入任务。
+- 执行修复的 166 项 TypeScript/双数据库回归、Runner 全套 Go 测试、Adapter 21 项测试和 3 项 Playwright 场景通过；真实 Runner / Java Adapter 验证 DDT 公开 API 取数及全跳过终态为失败、通过 0/失败 1。
+- 已查看 1024px、1536px 桌面真实截图，清单弹窗、DDT 执行配置及失败详情无页面级横向溢出，宽表保留容器内滚动。工作区类型检查与生产 Web 构建通过；完整源码矩阵、双架构构建和发布资产离线验收由标签流水线执行。
+
 ## 1.17.11 - 2026-09-18
 
 ### Added and fixed

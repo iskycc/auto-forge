@@ -269,6 +269,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       if (matches(path, "cases", "search")) {
         const body = z
           .object({
+            caseIds: ddtCaseListInputSchema.shape.caseIds,
             query: z.string().trim().max(512).optional(),
             srNum: z.string().trim().max(512).optional(),
             sourceName: z.string().trim().max(512).optional(),
@@ -276,7 +277,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
             limit: z.number().int().min(1).max(200).default(60),
             filters: ddtCaseListInputSchema.shape.filters,
           })
-          .parse(await readJsonBody(request, 128 * 1_024));
+          .parse(await readJsonBody(request, 512 * 1_024));
         return NextResponse.json(
           await services.ddtCases.list(ddtCaseListInputSchema.parse({ ...scope, ...body })),
         );

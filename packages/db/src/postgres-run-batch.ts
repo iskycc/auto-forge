@@ -277,9 +277,9 @@ export class PostgresRunBatchRepository
               display_name: run.displayName,
               class_name: run.className,
               case_type: run.caseType ?? "testng",
-              class_data_json: run.classData?.json ?? null,
-              class_data_size_bytes: run.classData?.sizeBytes ?? null,
-              class_data_sha256: run.classData?.sha256 ?? null,
+              class_data_json: null,
+              class_data_size_bytes: null,
+              class_data_sha256: null,
               ddt_sr_num: run.ddtSrNum ?? null,
               parameters_json: JSON.stringify(run.parameters ?? {}),
             })),
@@ -590,15 +590,6 @@ export class PostgresRunBatchRepository
         className: run.className,
         caseType: run.caseType,
         ...(run.ddtSrNum ? { ddtSrNum: run.ddtSrNum } : {}),
-        ...(run.classDataJson && run.classDataSizeBytes && run.classDataSha256
-          ? {
-              classData: {
-                json: run.classDataJson,
-                sizeBytes: run.classDataSizeBytes,
-                sha256: run.classDataSha256,
-              },
-            }
-          : {}),
         parameters: stringRecord(run.parametersJson),
       })),
     };
@@ -1026,6 +1017,9 @@ export class PostgresRunBatchRepository
       .where(eq(pgRunBatches.id, batchId))
       .limit(1);
     const adapterRuntime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    if (adapterRuntime && queuedRows.some((run) => run.caseType === "ddt")) {
+      adapterRuntime.requiresDdtCaseId = true;
+    }
     const [retryConcurrencyStateRow] = await this.handle.db
       .select()
       .from(pgRunBatchRetryConcurrencyStates)
@@ -1396,8 +1390,8 @@ export class PostgresRunBatchRepository
           case_version: number;
           class_name: string;
           parameters_json: string;
-          class_data_size_bytes: number | null;
-          class_data_sha256: string | null;
+          case_type: "testng" | "ddt";
+          display_name: string;
         }>(sql`
           UPDATE execution_runs run
           SET status = 'assigned',
@@ -1421,7 +1415,7 @@ export class PostgresRunBatchRepository
           RETURNING run.id, run.attempt_count, run.execution_round,
                     run.case_definition_id, run.case_version,
                     run.execution_case_definition_id, run.class_name, run.parameters_json,
-                    run.class_data_size_bytes, run.class_data_sha256`);
+                    run.case_type, run.display_name`);
         const updatedRunById = new Map(updatedRuns.rows.map((row) => [row.id, row]));
         const reservedDecisions = acceptedDecisions.filter((decision) =>
           updatedRunById.has(decision.executionRunId),
@@ -1501,14 +1495,7 @@ export class PostgresRunBatchRepository
                   className: run.class_name,
                   parameters: stringRecord(run.parameters_json),
                   source,
-                  ...(run.class_data_size_bytes && run.class_data_sha256
-                    ? {
-                        classData: {
-                          sizeBytes: Number(run.class_data_size_bytes),
-                          sha256: run.class_data_sha256,
-                        },
-                      }
-                    : {}),
+                  ...(run.case_type === "ddt" ? { caseId: run.display_name } : {}),
                   ...(adapterRuntime ? { adapterRuntime } : {}),
                   environment: environmentVariables(lockedBatch.environmentJson),
                   secretBindings: secretBindings(lockedBatch.secretBindingsJson),
@@ -2287,7 +2274,7 @@ function executionSpec(input: {
   className: string;
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
-  classData?: { sizeBytes: number; sha256: string };
+  caseId?: string;
   adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
@@ -2309,18 +2296,6 @@ function executionSpec(input: {
       sha256: input.source.sha256,
     },
     ...runtimeInputs,
-    ...(input.classData
-      ? [
-          {
-            inputId: `class-data-${input.executionRunId}`,
-            kind: "class-data" as const,
-            targetPath: `inputs/class-data/${input.executionRunId}.json`,
-            mediaType: "application/json" as const,
-            sizeBytes: input.classData.sizeBytes,
-            sha256: input.classData.sha256,
-          },
-        ]
-      : []),
   ];
   return {
     schemaVersion: 1,
@@ -2342,6 +2317,7 @@ function executionSpec(input: {
               input.attemptNumber,
             ),
             caseTimeoutSeconds: input.caseTimeoutSeconds,
+            ...(input.caseId !== undefined ? { caseId: input.caseId } : {}),
           },
         }
       : {}),
@@ -2356,7 +2332,14 @@ function executionSpec(input: {
     },
     requiredLabels: [...REQUIRED_EXECUTION_LABELS, ...(input.policy?.runnerLabels ?? [])],
     requiredCapabilities: [
-      ...projectAdapterRequiredCapabilities(input.adapterRuntime),
+      ...projectAdapterRequiredCapabilities(
+        input.adapterRuntime
+          ? {
+              ...input.adapterRuntime,
+              requiresDdtCaseId: input.caseId !== undefined,
+            }
+          : undefined,
+      ),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ],
     artifactRules: artifactPatterns.map((pattern) => ({
@@ -2442,6 +2425,7 @@ async function postgresProjectAdapterRuntime(
   }
   return {
     suiteName: adapter?.suiteName ?? "",
+    requiresDdtCaseId: runs.some((run) => run.caseType === "ddt"),
     testName: adapter?.testName ?? "",
     environmentAddresses: [...(adapter?.environmentAddresses ?? [])],
     environmentAddressByRunId: assignEnvironmentAddresses(
@@ -2464,6 +2448,7 @@ function runtimeSnapshotForRuns(
 ): ProjectAdapterRuntime {
   return {
     suiteName: snapshot.suiteName,
+    requiresDdtCaseId: runs.some((run) => run.caseType === "ddt"),
     testName: snapshot.testName,
     environmentAddresses: [...snapshot.environmentAddresses],
     environmentAddressByRunId: assignEnvironmentAddresses(snapshot.environmentAddresses, runs),

@@ -30,7 +30,7 @@ Adapter，Runner 不需要按 JDK 版本选择不同 JAR。
 - 测试所需的全部业务依赖；
 - 管理员选择的 TestNG 及其完整依赖；
 - 配置环境地址时，提供 `com.huawei.cotest.util.ProjectFileUtil` 的 JAR；
-- 使用类数据文件时，提供 `cotest.auto.dataproviders.MM2DataProvider` 的 JAR。
+- 执行 DDT 用例时，提供 `cotest.auto.dataproviders.MM2DataProvider` 的 JAR。
 
 Adapter 不会访问网络或自动补装缺失依赖。
 
@@ -44,7 +44,7 @@ Adapter 不会访问网络或自动补装缺失依赖。
   --jars /opt/cotest/test-jars \
   --class com.example.AdapterCase \
   --environment-address 10.0.0.8 \
-  --class-data /opt/cotest/data/class-data.json \
+  --case-id ORDER-001 \
   --output /var/lib/autoforge/attempt/reports/testng
 ```
 
@@ -53,11 +53,12 @@ Adapter 不会访问网络或自动补装缺失依赖。
 - `--config FILE`：读取前两个非空、非注释行作为 suite name 和 test name；
 - `--suite-name NAME`、`--test-name NAME`：显式值优先于配置文件；
 - `--environment-address VALUE`：配置时才加载并调用 CoTest `ProjectFileUtil`；
-- `--class-data FILE`：不提供时不会加载 `MM2DataProvider`；平台执行 DDT 用例时会自动传入当前
-  CaseID 的不可变 JSON 快照，普通用例不会传入；
+- `--case-id CASE_ID`：DDT 执行时将原始 CaseID 注入 `MM2DataProvider.setClassDataProvider(className, caseId)`；
+  普通用例不传入，也不会加载该数据提供器。测试类自行通过 DDT 公开 API 获取数据；
 - `--output DIR`：默认是当前目录下的 `reports/testng`。
 
-退出码 `0` 表示 TestNG 成功，`1` 表示用例或执行失败，`2` 表示 Adapter 参数无效。
+退出码 `0` 要求至少一个测试通过，且 Failed、Skipped、配置失败均为 0；任一失败或跳过都返回 `1`，
+包括 Passed:0、Failed:0、Skipped:1。`2` 表示 Adapter 参数无效。
 
 失败摘要会额外输出为 ASCII 单行的 `TestCase Run Failed Stack Base64` 标记；载荷是完整的 UTF-8
 `Throwable.toString()`。因此，多行异常消息、中文内容和跨日志分块的长摘要都不会被截断或受
@@ -85,7 +86,7 @@ Runner 不把历史导入的用例 JAR 或单独声明的旧依赖复制到 `tes
 Runner 重建没有当前布局标记的旧共享运行时，清除旧版混合类路径；完成后继续复用，避免反复解压。
 正在运行的批次继续使用已经固化的依赖包；新任务和公开日志的单用例重跑选择当前项目版本的包。
 
-DDT 用例在平台侧绑定一个同项目版本、同测试阶段的普通 TestNG 类。创建批次后，Runner 通过租约
-保护的控制面输入接口下载该 CaseID 的 JSON 快照到独立执行路径，校验大小和 SHA-256 后再传给
-`--class-data`。Adapter 的反射注入方式和普通用例执行方式没有改变；平台也不会让 Runner 直接
-读取数据库或对象存储长期凭据。
+DDT 用例绑定同项目版本、同测试阶段的 TestNG 类。Runner 和 Adapter 仅传递 CaseID，
+不生成、下载或转换 JSON 数据文件。测试类负责公开 API 的作用域 URL 和取数；数据以 API 请求时
+为准。DDT 任务要求 `adapter:ddt-case-id-v1` 能力，旧 Runner 升级时会自动更新 Adapter。
+旧 `--class-data` 参数已移除；升级前已分配的旧文件协议任务需结束或停止后重新发起。

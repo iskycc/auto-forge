@@ -84,7 +84,10 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async listCases(query: DdtCaseListQuery) {
     await this.ready();
+    if (query.caseIds?.length === 0) return { items: [] };
     const builder = new PgWhereBuilder(query);
+    if (query.caseIds)
+      builder.add("case_id_normalized = ANY", query.caseIds.map(normalize), "($n::text[])");
     if (query.cursor) builder.add("case_id_normalized >", query.cursor);
     if (query.query)
       builder.add("case_id_normalized LIKE", `${escapeLike(normalize(query.query))}%`);

@@ -39,14 +39,34 @@ mvn --batch-mode --no-transfer-progress --file "${adapter_pom}" \
   -DincludeScope=test \
   -DoutputDirectory="${smoke_jars}"
 jar cf "${smoke_jars}/autoforge-case.jar" \
-  -C "${adapter_directory}/target/test-classes" fixture/AdapterSkippedCase.class
-java -jar "${adapter_jar}" \
-  --jars "${smoke_jars}" \
-  --class fixture.AdapterSkippedCase \
-  --output "${smoke_directory}/reports" \
-  --case-timeout-seconds 60
-if [[ ! -f "${smoke_directory}/reports/testng-results.xml" ]]; then
-  echo "The Java 8 Adapter smoke run did not produce testng-results.xml." >&2
-  exit 1
-fi
-printf 'Executed the packaged CoTest Adapter with the Java 8 runtime.\n'
+  -C "${adapter_directory}/target/test-classes" fixture/AdapterSkippedCase.class \
+  -C "${adapter_directory}/target/test-classes" fixture/AdapterAllSkippedCase.class
+
+verify_skipped_case() {
+  local fixture_class="$1"
+  local expected_passed="$2"
+  local report_directory="${smoke_directory}/${fixture_class}"
+  local exit_status=0
+  mkdir -p "${report_directory}"
+  java -jar "${adapter_jar}" \
+    --jars "${smoke_jars}" \
+    --class "${fixture_class}" \
+    --output "${report_directory}" \
+    --case-timeout-seconds 60 > "${report_directory}/console.log" 2>&1 || exit_status=$?
+  cat "${report_directory}/console.log"
+  if [[ "${exit_status}" -ne 1 ]]; then
+    echo "${fixture_class}: expected failure exit code 1 for skipped tests, got ${exit_status}." >&2
+    return 1
+  fi
+  if [[ ! -s "${report_directory}/testng-results.xml" ]] \
+    || ! grep -Fq "Passed: ${expected_passed}" "${report_directory}/console.log" \
+    || ! grep -Fq 'Failed: 0' "${report_directory}/console.log" \
+    || ! grep -Fq 'Skipped: 1' "${report_directory}/console.log"; then
+    echo "${fixture_class}: expected TestNG XML and passed/failed/skipped counts were not produced." >&2
+    return 1
+  fi
+}
+
+verify_skipped_case fixture.AdapterSkippedCase 1
+verify_skipped_case fixture.AdapterAllSkippedCase 0
+printf 'Verified mixed and all-skipped failures with the packaged Java 8 Adapter.\n'

@@ -9,11 +9,35 @@ export const ddtLiteralSearchFields = {
   "slash\\field": "literal %_\\suffix",
 };
 
-export async function expectDdtLiteralFieldSearch(
+export async function expectDdtCaseSearch(
   repository: Pick<DdtRepository, "listCases">,
   scope: DdtScope,
   caseId: string,
 ): Promise<void> {
+  const exact = await repository.listCases({
+    ...scope,
+    caseIds: [
+      caseId.toLowerCase(),
+      caseId,
+      "missing",
+      caseId.slice(0, -1),
+      ...Array.from({ length: 196 }, (_, index) => `missing-${index}`),
+    ],
+    limit: 200,
+    filters: [],
+  });
+  expect(exact.items.map((item) => item.caseId)).toEqual([caseId]);
+  expect(exact.items[0]).not.toHaveProperty("data");
+  for (const selection of [
+    { ...scope, caseIds: [] },
+    { ...scope, caseIds: [caseId], projectId: "other-project" },
+    { ...scope, caseIds: [caseId], projectVersionId: "other-version" },
+    { ...scope, caseIds: [caseId], testStageId: "other-stage" },
+  ]) {
+    expect(await repository.listCases({ ...selection, limit: 200, filters: [] })).toEqual({
+      items: [],
+    });
+  }
   for (const [field, value] of Object.entries(ddtLiteralSearchFields)) {
     const result = await repository.listCases({
       ...scope,

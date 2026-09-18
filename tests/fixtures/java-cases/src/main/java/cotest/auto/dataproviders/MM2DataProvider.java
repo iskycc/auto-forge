@@ -9,8 +9,8 @@ public final class MM2DataProvider {
 
   private MM2DataProvider() {}
 
-  public static void setClassDataProvider(String className, String file) {
-    CLASS_DATA_FILES.put(className, file);
+  public static void setClassDataProvider(String className, String caseId) {
+    CLASS_DATA_FILES.put(className, caseId);
   }
 
   public static String getClassDataProvider(String className) {

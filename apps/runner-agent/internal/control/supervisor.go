@@ -1345,20 +1345,16 @@ func mapTestNGReport(mapped *completionResult, result executor.Result, summary e
 		mapped.Status = "failed"
 		mapped.ResultCode = "TESTNG_ASSERTIONS_FAILED"
 		mapped.Summary = fmt.Sprintf("TestNG reported %d failed test method(s).", summary.Failed)
+	case summary.Skipped > 0:
+		mapped.Status = "failed"
+		mapped.ResultCode = "TESTNG_SKIPPED"
+		mapped.Summary = fmt.Sprintf("TestNG passed %d and skipped %d test method(s); skipped tests are not successful.", summary.Passed, summary.Skipped)
 	case result.ExitCode != 0:
 		// A non-zero process exit remains authoritative when the XML contains no failure.
 	case summary.Total == 0:
 		mapped.Status = "failed"
 		mapped.ResultCode = "TESTNG_NO_TESTS"
 		mapped.Summary = "TestNG completed without reporting any test methods."
-	case summary.Passed == 0 && summary.Skipped > 0:
-		mapped.Status = "succeeded"
-		mapped.ResultCode = "TESTNG_ALL_SKIPPED"
-		mapped.Summary = fmt.Sprintf("TestNG skipped all %d test method(s).", summary.Skipped)
-	case summary.Skipped > 0:
-		mapped.Status = "succeeded"
-		mapped.ResultCode = "TESTNG_SUCCEEDED_WITH_SKIPS"
-		mapped.Summary = fmt.Sprintf("TestNG passed %d and skipped %d test method(s).", summary.Passed, summary.Skipped)
 	default:
 		mapped.Status = "succeeded"
 		mapped.ResultCode = "TESTNG_SUCCEEDED"

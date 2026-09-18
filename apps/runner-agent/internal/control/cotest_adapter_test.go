@@ -82,26 +82,42 @@ func TestCotestAdapterExecutorPassesCaseTimeoutWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestCotestAdapterExecutorPassesClassDataFile(t *testing.T) {
+func TestCotestAdapterExecutorPassesCaseIDWithoutFileConversion(t *testing.T) {
 	specification := testExecutionSpec()
-	specification.Adapter = &AdapterSettings{SuiteName: "suite"}
-	specification.Inputs = append(specification.Inputs, ExecutionInput{
-		InputID: "class-data-run-1", Kind: "class-data",
-		TargetPath: "inputs/class-data/run-1.json", MediaType: "application/json",
-		SizeBytes: 32, SHA256: strings.Repeat("b", 64),
-	})
-
-	mapped, _, err := cotestAdapterExecutorSpec(
-		specification,
+	const caseID = "支付/0001?x=1&y=2"
+	specification.Adapter = &AdapterSettings{SuiteName: "suite", CaseID: caseID}
+	mapped, inputs, err := cotestAdapterExecutorSpec(specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
-	)
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	arguments := strings.Join(mapped.Command.Args, " ")
-	if !strings.Contains(arguments, "--class-data inputs/class-data/run-1.json") {
-		t.Fatalf("arguments %q do not contain class data file", arguments)
+	found := false
+	for index, argument := range mapped.Command.Args {
+		if argument == "--case-id" {
+			found = mapped.Command.Args[index+1] == caseID
+		}
+		if argument == "--class-data" {
+			t.Fatal("DDT must not receive a file path")
+		}
+	}
+	if !found {
+		t.Fatalf("CaseID was not passed verbatim: %q", mapped.Command.Args)
+	}
+	if len(inputs) != len(specification.Inputs) {
+		t.Fatal("DDT must not add file inputs")
+	}
+}
+
+func TestCotestAdapterRejectsLegacyDDTFileInput(t *testing.T) {
+	specification := testExecutionSpec()
+	specification.Adapter = &AdapterSettings{SuiteName: "suite"}
+	specification.Inputs = append(specification.Inputs, ExecutionInput{Kind: "class-data"})
+	_, _, err := cotestAdapterExecutorSpec(specification,
+		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"})
+	if err == nil || !strings.Contains(err.Error(), "recreate the execution") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

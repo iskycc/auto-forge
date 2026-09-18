@@ -30,6 +30,7 @@ class CotestTestNgExecutorTest {
           "cotest/auto/dataproviders/MM2DataProvider.class",
           "fixture/AdapterCase.class",
           "fixture/AdapterFailingCase.class",
+          "fixture/AdapterAllSkippedCase.class",
           "fixture/AdapterSkippedCase.class");
 
   @TempDir Path temporaryDirectory;
@@ -38,8 +39,6 @@ class CotestTestNgExecutorTest {
   void executesATestNgCaseWithAllRuntimeTypesLoadedFromTheIsolatedClasspath()
       throws IOException {
     Path fixtureJar = createFixtureJar();
-    Path classDataFile = temporaryDirectory.resolve("class-data.json");
-    Utf8TestIO.write(classDataFile, "{}\n");
     Path reports = temporaryDirectory.resolve("reports");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
@@ -51,7 +50,7 @@ class CotestTestNgExecutorTest {
             "fixture.AdapterCase",
             new SuiteConfiguration("Adapter suite", "Adapter test"),
             "10.0.0.8",
-            classDataFile,
+            "CASE/0001 中文?x=1",
             reports);
     int exitCode;
     try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
@@ -66,10 +65,17 @@ class CotestTestNgExecutorTest {
   }
 
   @Test
-  void skippedTestsDoNotTurnTheProcessExitCodeIntoAFailure() throws IOException {
+  void anySkippedTestMakesTheProcessFail() throws IOException {
+    assertSkippedExecutionFails("fixture.AdapterSkippedCase", 1);
+  }
+
+  @Test
+  void zeroPassedZeroFailedOneSkippedMakesTheProcessFail() throws IOException {
+    assertSkippedExecutionFails("fixture.AdapterAllSkippedCase", 0);
+  }
+
+  private void assertSkippedExecutionFails(String className, int passed) throws IOException {
     Path fixtureJar = createFixtureJar();
-    Path classDataFile = temporaryDirectory.resolve("class-data.json");
-    Utf8TestIO.write(classDataFile, "{}\n");
     Path reports = temporaryDirectory.resolve("reports-skipped");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
@@ -77,10 +83,10 @@ class CotestTestNgExecutorTest {
     AdapterExecutionRequest request =
         new AdapterExecutionRequest(
             runtimeUrls(fixtureJar),
-            "fixture.AdapterSkippedCase",
+            className,
             new SuiteConfiguration("Adapter suite", "Adapter test"),
             "10.0.0.8",
-            classDataFile,
+            "CASE/0001 中文?x=1",
             reports);
     int exitCode;
     try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
@@ -89,18 +95,17 @@ class CotestTestNgExecutorTest {
     }
 
     String stdout = Utf8TestIO.decode(standardOutput);
-    assertTrue(stdout.contains("Passed: 1"), stdout);
+    assertTrue(stdout.contains("Passed: " + passed), stdout);
+    assertTrue(stdout.contains("Failed: 0"), stdout);
     assertTrue(stdout.contains("Skipped: 1"), stdout);
-    // TestNG 状态位图包含跳过位（status=2），但退出码必须为 0，由控制面按 XML 判定结果。
+    // 跳过也代表执行不通过，即使同时存在通过的方法。
     assertTrue(stdout.contains("TestNG exit status: 2"), stdout);
-    assertEquals(0, exitCode, Utf8TestIO.decode(errorOutput));
+    assertEquals(1, exitCode, Utf8TestIO.decode(errorOutput));
   }
 
   @Test
   void emitsTheCompleteFailureMarkerBeforeThePotentiallyLongStackTrace() throws IOException {
     Path fixtureJar = createFixtureJar();
-    Path classDataFile = temporaryDirectory.resolve("class-data-failure.json");
-    Utf8TestIO.write(classDataFile, "{}\n");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
     AdapterExecutionRequest request =
@@ -109,7 +114,7 @@ class CotestTestNgExecutorTest {
             "fixture.AdapterFailingCase",
             new SuiteConfiguration("Adapter suite", "Adapter test"),
             "10.0.0.8",
-            classDataFile,
+            "CASE/0001 中文?x=1",
             temporaryDirectory.resolve("reports-failure"));
 
     int exitCode;

@@ -53,7 +53,7 @@ public final class AdapterMain {
               parsed.className(),
               suiteConfiguration,
               parsed.environmentAddress(),
-              parsed.classDataFile(),
+              parsed.caseId(),
               parsed.outputDirectory());
       return executeWithCaseTimeout(request, parsed.caseTimeoutSeconds(), output, errorOutput);
     } catch (IllegalArgumentException error) {

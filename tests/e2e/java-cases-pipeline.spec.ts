@@ -46,7 +46,7 @@ async function captureDetailsPage(page: Page, name: string): Promise<void> {
 const runnerName = "Java Cases Agent";
 const successSuiteName = "java-cases 成功链路验收";
 const failureSuiteName = "java-cases 失败重试验收";
-const ddtSuiteName = "java-cases DDT classData 验收";
+const ddtSuiteName = "java-cases DDT CaseID 公开 API 验收";
 const environmentAddress = "10.20.30.40";
 const backupEnvironmentAddress = "10.20.30.41";
 
@@ -166,6 +166,48 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
       "ERROR deliberate assertion failure to exercise the retry chain",
     );
     await captureExecutionLog(page, "real-failure-stdout-dark");
+
+    const skippedSuiteName = "java-cases 全部跳过不得通过";
+    await createExecutableSuite(page, skippedSuiteName, "JavaCasesSkippedFixture", 0);
+    const skippedBatchId = await scheduleExecution(page, skippedSuiteName);
+    const skipped = await waitForTerminalBatch(
+      page,
+      skippedBatchId,
+      agent,
+      "succeeded",
+      "TESTNG_SKIPPED",
+      1,
+    );
+    expect(skipped.attempts[0]?.testNg).toMatchObject({
+      total: 1,
+      passed: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    const skippedDetails = await browserJson<{
+      runs: Array<{ terminalOutcome: string }>;
+      succeededRuns: number;
+      failedRuns: number;
+    }>(page, `/api/v1/run-batches/${skippedBatchId}`);
+    expect(skippedDetails.body).toMatchObject({ succeededRuns: 0, failedRuns: 1 });
+    expect(skippedDetails.body.runs[0]).toMatchObject({ terminalOutcome: "failed" });
+    await page.goto(`/run-batches/${skippedBatchId}`);
+    await page
+      .getByRole("row", { name: "JavaCasesSkippedFixture" })
+      .getByRole("button", { name: "详情" })
+      .click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.evaluate(() => {
+        // Clicking the rightmost action scrolls wide tables; review their initial layout.
+        document.querySelectorAll(".table-scroll").forEach((table) => {
+          table.scrollLeft = 0;
+        });
+        window.scrollTo({ top: 0, behavior: "instant" });
+      });
+      await expectUiIntegrity(page);
+      await captureDetailsPage(page, `real-details-skipped-${width}`);
+    }
   } finally {
     await attachAgentDiagnostics(testInfo, agent);
     await stopAgent(agent);
@@ -467,6 +509,7 @@ async function createConfiguredSuite(
   testName: string,
   retryLimit: number,
   artifactPatterns: string[] = [],
+  adapterAddresses = [environmentAddress, backupEnvironmentAddress],
 ): Promise<string> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByRole("button", { name: "创建任务" }).click();
@@ -479,7 +522,7 @@ async function createConfiguredSuite(
   if (requiresEnvironmentAddress(testName)) {
     await createSuiteDialog
       .getByLabel("环境 IP / 地址（每行一个）")
-      .fill(`${environmentAddress}\n${backupEnvironmentAddress}`);
+      .fill(adapterAddresses.join("\n"));
   }
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
@@ -521,6 +564,10 @@ function requiresEnvironmentAddress(testName: string): boolean {
   ].includes(testName);
 }
 
+function ddtPublicApiBase(page: Page, hierarchy: ProjectHierarchy): string {
+  return `${new URL(page.url()).origin}/api/v1/public/ddt/projects/${hierarchy.projectId}/versions/${hierarchy.projectVersionId}/stages/${hierarchy.testStageId}`;
+}
+
 async function exerciseDdtExecution(
   page: Page,
   agent: AgentProcess,
@@ -528,7 +575,14 @@ async function exerciseDdtExecution(
 ): Promise<void> {
   const caseId = uniqueName("JAVA-CASES-DDT").toUpperCase();
   await importDdtCase(page, hierarchy, caseId);
-  const suiteId = await createConfiguredSuite(page, ddtSuiteName, "JavaCasesDdtFixture", 0);
+  const suiteId = await createConfiguredSuite(
+    page,
+    ddtSuiteName,
+    "JavaCasesDdtFixture",
+    0,
+    [],
+    [ddtPublicApiBase(page, hierarchy)],
+  );
   await addDdtCaseToSuite(page, hierarchy, suiteId, caseId);
 
   const batchId = await scheduleExecution(page, ddtSuiteName);
@@ -548,7 +602,7 @@ async function exerciseDdtExecution(
     configurationFailures: 0,
   });
   expect(await readAttemptLogs(page, details.attempts[0]!.id, "stdout")).toContain(
-    "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
+    "JAVA_CASES_DDT_API_OK:CASE_ID_FETCHED_FROM_PUBLIC_API",
   );
 
   await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
@@ -558,7 +612,7 @@ async function exerciseDdtExecution(
   await ddtRun.getByRole("button", { name: "详情" }).click();
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText(
-    "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
+    "JAVA_CASES_DDT_API_OK:CASE_ID_FETCHED_FROM_PUBLIC_API",
   );
   const snapshotUrl = `/api/v1/run-batches/${encodeURIComponent(batchId)}`;
   const before = await browserJson<{
@@ -622,7 +676,7 @@ async function exerciseDdtQuickExecution(
   await captureDdtExecutionViews(page, "ddt-execution-selection");
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Adapter · DDT quick execution");
   await dialog.getByLabel("单用例 Adapter Test Name").fill("JavaCasesDdtFixture");
-  await dialog.getByLabel("单用例执行环境 IP 地址").fill(environmentAddress);
+  await dialog.getByLabel("单用例执行环境 IP 地址").fill(ddtPublicApiBase(page, hierarchy));
   await captureDdtExecutionViews(page, "ddt-execution-dialog");
   const submitted = page.waitForResponse(
     (response) => response.request().method() === "POST" && response.url().includes("/execute?"),
@@ -641,7 +695,7 @@ async function exerciseDdtQuickExecution(
     1,
   );
   expect(await readAttemptLogs(page, terminal.attempts[0]!.id, "stdout")).toContain(
-    "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
+    "JAVA_CASES_DDT_API_OK:CASE_ID_FETCHED_FROM_PUBLIC_API",
   );
 
   const endpoint = `/api/v1/ddt/cases/${encodeURIComponent(caseId)}`;
@@ -717,7 +771,7 @@ async function importDdtCase(
     {
       CaseID: caseId,
       srNum: "EXECUTION",
-      verificationMarker: "CLASS_DATA_REACHED_ADAPTER",
+      verificationMarker: "CASE_ID_FETCHED_FROM_PUBLIC_API",
     },
   ]);
   await dialog.locator('input[type="file"]').setInputFiles({

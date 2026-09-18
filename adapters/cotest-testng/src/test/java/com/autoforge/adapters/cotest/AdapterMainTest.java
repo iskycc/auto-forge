@@ -71,8 +71,6 @@ class AdapterMainTest {
             "com/huawei/cotest/util/ProjectFileUtil.class",
             "cotest/auto/dataproviders/MM2DataProvider.class",
             "fixture/AdapterCase.class");
-    Path classDataFile = temporaryDirectory.resolve("class-data.json");
-    Utf8TestIO.write(classDataFile, "{}\n");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
 
@@ -85,7 +83,7 @@ class AdapterMainTest {
                 "--jars", jarDirectory.toString(),
                 "--class", "fixture.AdapterCase",
                 "--environment-address", "10.0.0.8",
-                "--class-data", classDataFile.toString(),
+                "--case-id", "CASE/0001 中文?x=1",
                 "--output", temporaryDirectory.resolve("reports-ok").toString(),
                 "--case-timeout-seconds", "600"
               },

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { CaseSuiteDetails, DdtCase } from "@autoforge/domain";
 import type {
@@ -23,14 +22,13 @@ const input = {
 };
 
 describe("single DDT execution", () => {
-  it("snapshots one DDT identity, current data and associated class through normal scheduling", async () => {
+  it("snapshots the DDT CaseID and associated class without creating a JSON data file", async () => {
     const { service, getCase, create, item } = fixture();
     await service.createSingleDdtCase(scope, item.caseId, {
       ...input,
       projectId: "untrusted-project",
     });
     expect(getCase).toHaveBeenCalledWith(scope, item.caseId);
-    const json = `${JSON.stringify(item.data)}\n`;
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: scope.projectId,
@@ -52,15 +50,11 @@ describe("single DDT execution", () => {
             caseVersion: 3,
             ddtSrNum: "SR-1",
             parameters: {},
-            classData: {
-              json,
-              sizeBytes: Buffer.byteLength(json),
-              sha256: createHash("sha256").update(json).digest("hex"),
-            },
           }),
         ],
       }),
     );
+    expect(create.mock.calls[0]![0].runs[0]).not.toHaveProperty("classData");
   });
 
   it.each([
@@ -91,7 +85,7 @@ describe("single DDT execution", () => {
 
 describe("DDT task execution", () => {
   it.each(["mixed", "ddt-only"] as const)(
-    "creates one %s batch with independent identities and data for DDT cases sharing a class",
+    "creates one %s batch with independent CaseIDs for DDT cases sharing a class",
     async (kind) => {
       const { service, create, suite, item, getSuite } = fixture();
       if (kind === "ddt-only") suite.items = [];
@@ -115,19 +109,20 @@ describe("DDT task execution", () => {
       expect(batch.runs.map((run: { caseDefinitionId: string }) => run.caseDefinitionId)).toEqual(
         kind === "mixed" ? ["class", "ddt-case", "ddt-second"] : ["ddt-case", "ddt-second"],
       );
+      for (const run of batch.runs) expect(run).not.toHaveProperty("classData");
       expect(new Set(batch.runs.map((run: { id: string }) => run.id)).size).toBe(batch.runs.length);
       expect(batch.runs.filter((run: { caseType: string }) => run.caseType === "ddt")).toEqual([
         expect.objectContaining({
           executionCaseDefinitionId: "class",
           className: "example.Test",
           ddtSrNum: "SR-1",
-          classData: expect.objectContaining({ json: `${JSON.stringify(item.data)}\n` }),
+          displayName: item.caseId,
         }),
         expect.objectContaining({
           executionCaseDefinitionId: "class",
           className: "example.Test",
           ddtSrNum: "SR-1",
-          classData: expect.objectContaining({ json: `${JSON.stringify(second.data)}\n` }),
+          displayName: second.caseId,
         }),
       ]);
     },
@@ -260,6 +255,7 @@ function fixture() {
         capabilities: [
           "executor:testng-v1",
           "adapter:cotest-testng-v1",
+          "adapter:ddt-case-id-v1",
           "isolation:cgroup-v2",
           "java:21.0.8",
           "testng:7.11.0",

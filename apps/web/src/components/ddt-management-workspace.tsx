@@ -15,6 +15,7 @@ import {
 } from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { DdtCaseInspector } from "./ddt-case-inspector";
+import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
 import { DdtValueSearch } from "./ddt-value-search";
 import { DdtApiReference, type DdtScopeLabels } from "./ddt-api-reference";
 
@@ -251,6 +252,7 @@ export function DdtManagementWorkspace({
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [showAddToSuite, setShowAddToSuite] = useState(false);
+  const [showCaseSelection, setShowCaseSelection] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{
     completed: number;
     total: number;
@@ -622,6 +624,15 @@ export function DdtManagementWorkspace({
           <strong>DDT 工作台</strong>
           <span>CaseID 在当前项目版本与测试阶段内唯一</span>
         </div>
+        {tab === "cases" ? (
+          <Button
+            type="button"
+            disabled={busy || savingCase}
+            onClick={() => setShowCaseSelection(true)}
+          >
+            <ListPlus size={16} /> 按清单选择
+          </Button>
+        ) : null}
         <Button
           className="button button-secondary"
           type="button"
@@ -813,7 +824,14 @@ export function DdtManagementWorkspace({
           }}
           onSelectAll={async (checked) => {
             if (await leaveEditor())
-              setSelected(checked ? new Set(cases.map((item) => item.caseId)) : new Set());
+              setSelected((current) => {
+                const next = new Set(current);
+                for (const item of cases) {
+                  if (checked) next.add(item.caseId);
+                  else next.delete(item.caseId);
+                }
+                return next;
+              });
           }}
           filters={
             <>
@@ -1104,6 +1122,19 @@ export function DdtManagementWorkspace({
         />
       ) : null}
 
+      {showCaseSelection ? (
+        <DdtCaseSelectionDialog
+          key={`${scope.projectId}:${scope.projectVersionId}:${scope.testStageId}`}
+          scope={scope}
+          onClose={() => setShowCaseSelection(false)}
+          onSelect={async (caseIds) => {
+            if (!(await leaveEditor())) return false;
+            setSelected((current) => new Set([...current, ...caseIds]));
+            toast.success(`已勾选 ${caseIds.length} 条匹配的 DDT 用例，原有选择已保留。`);
+            return true;
+          }}
+        />
+      ) : null}
       {showImport ? (
         <ImportDialog
           endpoint={endpoint}

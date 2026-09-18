@@ -29,6 +29,7 @@ import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
 import { buildAttemptCompletionEvents } from "./completion-scheduling-events";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
+import { normalizeTestNgCompletion } from "./normalize-testng-completion";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
@@ -199,7 +200,10 @@ export class ExecutionControlService {
     input: CompleteAttemptInput,
   ) {
     await this.authenticateRunner(runnerId, credential);
-    const result = await this.enrichSummaryFromFailureLog(attemptId, input.result);
+    const result = await this.enrichSummaryFromFailureLog(
+      attemptId,
+      normalizeTestNgCompletion(input.result),
+    );
     // 事件工厂在完成事务内执行：仅在状态机接受上报时写入，事件体携带富化后的
     // result（含日志尾部提取的失败原因），避免完成热路径追加两次数据库往返。
     const response = await this.executions.completeAttempt(

@@ -3,7 +3,7 @@ package fixture;
 import org.testng.SkipException;
 import org.testng.annotations.Test;
 
-/** 一个通过一个跳过：TestNG 的 getStatus() 位图会带上跳过位，但执行不应被视为失败。 */
+/** 一个通过一个跳过：即使有成功方法，整个执行仍应失败。 */
 public final class AdapterSkippedCase {
   @Test
   public void passes() {}

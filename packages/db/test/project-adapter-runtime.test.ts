@@ -7,9 +7,27 @@ import {
   adapterEnvironmentAddressFromExecutionSpec,
   executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
+  projectAdapterRequiredCapabilities,
+  supportsProjectAdapterRuntime,
 } from "../src/project-adapter-runtime";
 
 describe("Adapter execution resource limits", () => {
+  it("requires CaseID support only for DDT batches and preserves it across runtime serialization", () => {
+    const ordinary = parseProjectAdapterRuntime(
+      JSON.stringify({ suiteName: "suite", testName: "test" }),
+    )!;
+    const ddt = parseProjectAdapterRuntime(
+      JSON.stringify({ ...ordinary, requiresDdtCaseId: true }),
+    )!;
+    const legacyCapabilities = projectAdapterRequiredCapabilities(ordinary);
+    expect(legacyCapabilities).not.toContain("adapter:ddt-case-id-v1");
+    expect(supportsProjectAdapterRuntime(legacyCapabilities, ordinary)).toBe(true);
+    expect(supportsProjectAdapterRuntime(legacyCapabilities, ddt)).toBe(false);
+    expect(
+      supportsProjectAdapterRuntime([...legacyCapabilities, "adapter:ddt-case-id-v1"], ddt),
+    ).toBe(true);
+  });
+
   it("retains the dependency publication time and reads legacy snapshots without inventing a timestamp", () => {
     const snapshot = {
       suiteName: "suite",

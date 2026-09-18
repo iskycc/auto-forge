@@ -12593,6 +12593,52 @@ button.icon-button:disabled {
   background: var(--color-surface-muted);
 }
 
+.ddt-case-selection-dialog .action-dialog-body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ddt-case-selection-dialog .case-import-source,
+.ddt-case-selection-preview > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.ddt-case-selection-dialog .case-import-source[hidden] {
+  display: none;
+}
+
+.ddt-case-selection-source,
+.ddt-case-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ddt-case-selection-source [aria-pressed="true"] {
+  color: var(--color-accent);
+  background: var(--color-surface-muted);
+  border-color: var(--color-accent);
+}
+
+.ddt-case-selection-actions {
+  justify-content: flex-end;
+}
+
+.ddt-case-selection-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.ddt-case-selection-dialog p,
+.ddt-case-selection-dialog small {
+  overflow-wrap: anywhere;
+}
+
 .case-import-unmatched {
   display: grid;
   min-width: 0;

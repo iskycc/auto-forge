@@ -1619,6 +1619,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
             batchId: string;
             executionSpec: {
               className: string;
+              adapter?: { caseId?: string };
               inputs: Array<{ inputId: string; kind: string }>;
             };
           };
@@ -1653,19 +1654,14 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
           )
           .toBe(true);
         expect(claim!.assignment.executionSpec.className).toBe(className);
-        const classData = claim!.assignment.executionSpec.inputs.find(
-          (input) => input.kind === "class-data",
-        );
-        if (classData) {
+        expect(
+          claim!.assignment.executionSpec.inputs.some((input) => input.kind === "class-data"),
+        ).toBe(false);
+        const caseId = claim!.assignment.executionSpec.adapter?.caseId;
+        if (caseId) {
+          // The test fetches its own data; Runner receives only the CaseID.
           const response = await page.request.get(
-            `/api/v1/run-attempts/${claim!.assignment.attemptId}/inputs/${classData.inputId}`,
-            {
-              headers: {
-                authorization: `Bearer ${runner.credential}`,
-                "x-autoforge-runner-id": runner.runnerId,
-                "x-autoforge-lease-token": claim!.lease.token,
-              },
-            },
+            `/api/v1/public/ddt/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/stages/${hierarchy.stageId}/case?${new URLSearchParams({ caseId })}`,
           );
           expect(response.status()).toBe(200);
           const content = (await response.json()) as { CaseID: string; value: string };
@@ -1760,6 +1756,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
 const ddtTaskCapabilities = [
   "executor:testng-v1",
   "adapter:cotest-testng-v1",
+  "adapter:ddt-case-id-v1",
   "runtime:project-assets-v1",
   "isolation:cgroup-v2",
   "java:21.0.8",
@@ -2575,6 +2572,161 @@ test("DDT advanced search unions added conditions and preserves pagination and c
     `${ddtPath(hierarchy, "value-search")}&${invalidQuery}`,
   );
   expect(invalidResponse.status()).toBe(400);
+});
+
+test("DDT selects existing cases from Excel or text across unloaded pages and adds them to a task", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const otherScope = await createHierarchy(page);
+  const rows = Array.from({ length: 205 }, (_, index) => ({
+    CaseID: `LIST-${String(index).padStart(3, "0")}`,
+    srNum: "LIST-SR",
+    CaseName: `清单选择用例 ${index}`,
+  }));
+  await importDdtApiFixture(page, hierarchy, rows[0]!.CaseID, 0, rows);
+  await importDdtApiFixture(page, otherScope, "OTHER-SCOPE-ONLY", 0);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const navigation = page.getByRole("region", { name: "DDT 用例导航" });
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(60);
+  await page.getByLabel("选择 LIST-000", { exact: true }).check();
+  await page.getByRole("button", { name: "按清单选择", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "按清单选择 DDT 用例" });
+  const search = dialog.getByRole("button", { name: "解析并预览" });
+  const apply = dialog.getByRole("button", { name: "勾选匹配用例" });
+  await dialog.getByRole("button", { name: "上传表格", exact: true }).click();
+  const longMissing = `MISSING-${"超长用例编号".repeat(65)}`;
+  await dialog.getByLabel("选择 DDT 用例清单文件").setInputFiles({
+    name: `${"选择已有用例清单".repeat(10)}.xlsx`,
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: buildExportWorkbook(
+      ["LIST-203", "list-204", "LIST-204", "OTHER-SCOPE-ONLY", longMissing].map((CaseID) => ({
+        CaseID,
+        srNum: "ignored-column",
+      })),
+    ),
+  });
+  const searchRoute = "**/api/v1/ddt/cases/search?*";
+  await page.route(
+    searchRoute,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "匹配暂时繁忙，请重试。",
+            requestId: "selection-retry",
+          },
+        },
+      }),
+    { times: 1 },
+  );
+  await search.click();
+  await expect(dialog.getByRole("alert")).toContainText("匹配暂时繁忙，请重试。");
+  await expect(apply).toBeDisabled();
+  await search.click();
+  await expect(dialog.getByRole("status")).toHaveText("匹配 2 个 · 未匹配 2 个");
+  await expect(dialog.getByRole("alert")).toBeHidden();
+  await expect(dialog.getByText("LIST-204", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "粘贴文本", exact: true }).click();
+  await expect(apply).toBeDisabled();
+  await dialog.getByRole("button", { name: "上传表格", exact: true }).click();
+  await expect(dialog.locator(".ui-file-name")).toContainText("选择已有用例清单");
+  await search.click();
+  await expect(dialog.getByRole("status")).toHaveText("匹配 2 个 · 未匹配 2 个");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await captureDdtUi(page, `ddt-case-list-preview-${width}`);
+  }
+  await apply.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("heading", { name: "已选择 3 条用例" })).toBeVisible();
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(60);
+  await page.getByLabel("选择已加载的全部 DDT 用例").check();
+  await expect(page.getByRole("heading", { name: "已选择 62 条用例" })).toBeVisible();
+  await page.getByLabel("选择已加载的全部 DDT 用例").uncheck();
+  await expect(page.getByRole("heading", { name: "已选择 2 条用例" })).toBeVisible();
+  await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
+  const add = page.getByRole("dialog", { name: "将 2 条 DDT 用例加入任务", exact: true });
+  await add.locator("select").selectOption("new");
+  await add.getByLabel("新任务名称").fill(`清单任务 ${hierarchy.suffix}`);
+  const membershipResponse = page.waitForResponse(
+    (response) => response.url().includes("/ddt-cases") && response.request().method() === "POST",
+  );
+  await add.getByRole("button", { name: "加入任务", exact: true }).click();
+  const membership = await membershipResponse;
+  expect(membership.status()).toBe(200);
+  expect(membership.request().postDataJSON().caseIds).toEqual(["LIST-203", "LIST-204"]);
+  const createdSuite = (await membership.json()) as { id: string };
+  const savedMembers = await browserJson<{ ddtItems: Array<{ ddtCase: { caseId: string } }> }>(
+    page,
+    `/api/v1/case-suites/${createdSuite.id}`,
+  );
+  expect(savedMembers.status).toBe(200);
+  expect(savedMembers.body.ddtItems.map((item) => item.ddtCase.caseId).sort()).toEqual([
+    "LIST-203",
+    "LIST-204",
+  ]);
+  await expect(add).toBeHidden();
+  await expect(
+    page.getByRole("status").filter({ hasText: "已将 2 条 DDT 用例加入任务" }),
+  ).toBeVisible();
+
+  const requests: string[][] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/ddt/cases/search?")) requests.push(request.postDataJSON().caseIds);
+  });
+  await page.getByRole("button", { name: "按清单选择", exact: true }).click();
+  await dialog
+    .getByLabel("粘贴 DDT CaseID")
+    .fill(`CaseID\n${rows.map((item) => item.CaseID).join("\n")}\nlist-204\nOTHER-SCOPE-ONLY`);
+  expect(requests).toHaveLength(0);
+  await search.click();
+  await expect(dialog.getByRole("status")).toHaveText("匹配 205 个 · 未匹配 1 个");
+  expect(requests.map((batch) => batch.length)).toEqual([200, 6]);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-list-text-${width}`);
+  }
+  await apply.click();
+  await expect(page.getByRole("heading", { name: "已选择 205 条用例" })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-list-selected-${width}`);
+  }
+  await page.getByRole("button", { name: "按清单选择", exact: true }).click();
+  await dialog.getByLabel("粘贴 DDT CaseID").fill("CaseID\nMISSING");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    searchRoute,
+    async (route) => {
+      await held;
+      await route.fulfill({ json: { items: [] } });
+    },
+    { times: 1 },
+  );
+  try {
+    await search.click();
+    await expect(dialog.getByLabel("粘贴 DDT CaseID")).toBeDisabled();
+    await dialog.getByRole("button", { name: "取消匹配", exact: true }).click();
+    await expect(dialog).toBeHidden();
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("heading", { name: "已选择 205 条用例" })).toBeVisible();
 });
 
 async function importDdtApiFixture(

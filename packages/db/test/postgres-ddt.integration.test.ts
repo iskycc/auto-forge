@@ -2,7 +2,7 @@ import {
   expectDdtSrExecutionContract,
   expectDdtUnavailableSourceContract,
 } from "./ddt-sr-execution-contract";
-import { ddtLiteralSearchFields, expectDdtLiteralFieldSearch } from "./ddt-search-contract";
+import { ddtLiteralSearchFields, expectDdtCaseSearch } from "./ddt-search-contract";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
@@ -156,7 +156,7 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           historyIds: [`history-import-${suffix}`, `history-import-second-${suffix}`],
         }),
       ).resolves.toMatchObject({ insertedCount: 2 });
-      await expectDdtLiteralFieldSearch(repository, scope, secondCaseId);
+      await expectDdtCaseSearch(repository, scope, secondCaseId);
       const executionDefinitionId = `ddt-execution-definition-${suffix}`;
       await insertExecutionClass(handle, scope, suffix, executionDefinitionId);
       await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([

@@ -12,9 +12,9 @@ public final class AdapterCase {
     if (!EXPECTED_ENVIRONMENT_ADDRESS.equals(ProjectFileUtil.getEnvIP())) {
       throw new AssertionError("The environment address was not injected.");
     }
-    String classDataFile = MM2DataProvider.getClassDataProvider(getClass().getName());
-    if (classDataFile == null || !classDataFile.endsWith("class-data.json")) {
-      throw new AssertionError("The class data file was not injected.");
+    String caseId = MM2DataProvider.getClassDataProvider(getClass().getName());
+    if (!"CASE/0001 中文?x=1".equals(caseId)) {
+      throw new AssertionError("The exact CaseID was not injected.");
     }
   }
 }

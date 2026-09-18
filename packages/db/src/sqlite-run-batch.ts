@@ -281,9 +281,9 @@ export class SqliteRunBatchRepository
                 displayName: run.displayName,
                 className: run.className,
                 caseType: run.caseType ?? "testng",
-                classDataJson: run.classData?.json ?? null,
-                classDataSizeBytes: run.classData?.sizeBytes ?? null,
-                classDataSha256: run.classData?.sha256 ?? null,
+                classDataJson: null,
+                classDataSizeBytes: null,
+                classDataSha256: null,
                 ddtSrNum: run.ddtSrNum ?? null,
                 parametersJson: JSON.stringify(run.parameters ?? {}),
                 batchId: record.id,
@@ -614,15 +614,6 @@ export class SqliteRunBatchRepository
         className: run.className,
         caseType: run.caseType,
         ...(run.ddtSrNum ? { ddtSrNum: run.ddtSrNum } : {}),
-        ...(run.classDataJson && run.classDataSizeBytes && run.classDataSha256
-          ? {
-              classData: {
-                json: run.classDataJson,
-                sizeBytes: run.classDataSizeBytes,
-                sha256: run.classDataSha256,
-              },
-            }
-          : {}),
         parameters: stringRecord(run.parametersJson),
       })),
     };
@@ -1017,6 +1008,9 @@ export class SqliteRunBatchRepository
       .where(eq(runBatches.id, batchId))
       .get();
     const adapterRuntime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    if (adapterRuntime && queuedRows.some((run) => run.caseType === "ddt")) {
+      adapterRuntime.requiresDdtCaseId = true;
+    }
     const retryConcurrencyStateRow = this.handle.db
       .select()
       .from(runBatchRetryConcurrencyStates)
@@ -1265,8 +1259,8 @@ export class SqliteRunBatchRepository
               caseVersion: executionRuns.caseVersion,
               className: executionRuns.className,
               parametersJson: executionRuns.parametersJson,
-              classDataSizeBytes: executionRuns.classDataSizeBytes,
-              classDataSha256: executionRuns.classDataSha256,
+              caseType: executionRuns.caseType,
+              displayName: executionRuns.displayName,
               sourceId: caseSources.id,
               sourceSha256: caseSources.sha256,
               sourceSizeBytes: caseSources.sizeBytes,
@@ -1396,13 +1390,8 @@ export class SqliteRunBatchRepository
                       sha256: executionInput.sourceSha256,
                       sizeBytes: executionInput.sourceSizeBytes,
                     },
-                    ...(executionInput.classDataSizeBytes && executionInput.classDataSha256
-                      ? {
-                          classData: {
-                            sizeBytes: executionInput.classDataSizeBytes,
-                            sha256: executionInput.classDataSha256,
-                          },
-                        }
+                    ...(executionInput.caseType === "ddt"
+                      ? { caseId: executionInput.displayName }
                       : {}),
                     ...(adapterRuntime ? { adapterRuntime } : {}),
                     environment,
@@ -2090,7 +2079,7 @@ function executionSpec(input: {
   className: string;
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
-  classData?: { sizeBytes: number; sha256: string };
+  caseId?: string;
   adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
@@ -2113,18 +2102,6 @@ function executionSpec(input: {
       sha256: input.source.sha256,
     },
     ...runtimeInputs,
-    ...(input.classData
-      ? [
-          {
-            inputId: `class-data-${input.executionRunId}`,
-            kind: "class-data" as const,
-            targetPath: `inputs/class-data/${input.executionRunId}.json`,
-            mediaType: "application/json" as const,
-            sizeBytes: input.classData.sizeBytes,
-            sha256: input.classData.sha256,
-          },
-        ]
-      : []),
   ];
   return {
     schemaVersion: 1,
@@ -2146,6 +2123,7 @@ function executionSpec(input: {
               input.attemptNumber,
             ),
             caseTimeoutSeconds: input.caseTimeoutSeconds,
+            ...(input.caseId !== undefined ? { caseId: input.caseId } : {}),
           },
         }
       : {}),
@@ -2160,7 +2138,14 @@ function executionSpec(input: {
     },
     requiredLabels: [...REQUIRED_EXECUTION_LABELS, ...(input.policy?.runnerLabels ?? [])],
     requiredCapabilities: [
-      ...projectAdapterRequiredCapabilities(input.adapterRuntime),
+      ...projectAdapterRequiredCapabilities(
+        input.adapterRuntime
+          ? {
+              ...input.adapterRuntime,
+              requiresDdtCaseId: input.caseId !== undefined,
+            }
+          : undefined,
+      ),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ],
     artifactRules: artifactPatterns.map((pattern) => ({
@@ -2254,6 +2239,7 @@ function projectAdapterRuntime(
   }
   return {
     suiteName: adapter?.suiteName ?? "",
+    requiresDdtCaseId: runs.some((run) => run.caseType === "ddt"),
     testName: adapter?.testName ?? "",
     environmentAddresses: [...(adapter?.environmentAddresses ?? [])],
     environmentAddressByRunId: assignEnvironmentAddresses(
@@ -2276,6 +2262,7 @@ function runtimeSnapshotForRuns(
 ): ProjectAdapterRuntime {
   return {
     suiteName: snapshot.suiteName,
+    requiresDdtCaseId: runs.some((run) => run.caseType === "ddt"),
     testName: snapshot.testName,
     environmentAddresses: [...snapshot.environmentAddresses],
     environmentAddressByRunId: assignEnvironmentAddresses(snapshot.environmentAddresses, runs),

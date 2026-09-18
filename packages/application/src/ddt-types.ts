@@ -15,6 +15,7 @@ import type {
 } from "@autoforge/domain";
 
 export type DdtCaseListQuery = DdtScope & {
+  caseIds?: string[];
   query?: string;
   srNum?: string;
   sourceName?: string;

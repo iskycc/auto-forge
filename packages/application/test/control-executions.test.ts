@@ -866,6 +866,36 @@ describe("failure summary log fallback", () => {
     );
   });
 
+  it("corrects an old Runner success before persistence and completion events", async () => {
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: -1, truncated: false },
+    });
+    await service.complete("runner-1", "credential", "attempt-1", {
+      ...completionInput,
+      result: {
+        ...completionInput.result,
+        status: "succeeded",
+        resultCode: "TESTNG_ALL_SKIPPED",
+        testNg: {
+          total: 1,
+          passed: 0,
+          failed: 0,
+          skipped: 1,
+          configurationFailures: 0,
+          detailsTruncated: false,
+          suites: [],
+        },
+      },
+    });
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ status: "failed", resultCode: "TESTNG_SKIPPED" }),
+        resultDigest: expect.stringContaining('"status":"failed"'),
+      }),
+      expect.any(Function),
+    );
+  });
+
   it("keeps the original summary when the log tail has no failure line", async () => {
     const { service, executions } = buildService({
       probe: { items: [], acknowledgedSequence: 2, truncated: false },

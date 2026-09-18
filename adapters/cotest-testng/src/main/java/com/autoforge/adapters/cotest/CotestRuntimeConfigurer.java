@@ -2,7 +2,6 @@ package com.autoforge.adapters.cotest;
 
 import java.io.PrintStream;
 import java.lang.reflect.Method;
-import java.nio.file.Path;
 
 final class CotestRuntimeConfigurer {
   private static final String PROJECT_FILE_UTILITY = "com.huawei.cotest.util.ProjectFileUtil";
@@ -15,7 +14,7 @@ final class CotestRuntimeConfigurer {
   }
 
   void configure(
-      ClassLoader loader, Class<?> testClass, String environmentAddress, Path classDataFile)
+      ClassLoader loader, Class<?> testClass, String environmentAddress, String caseId)
       throws ReflectiveOperationException {
     if (!TextValues.isBlank(environmentAddress)) {
       Class<?> projectFileUtility = Class.forName(PROJECT_FILE_UTILITY, true, loader);
@@ -24,18 +23,13 @@ final class CotestRuntimeConfigurer {
       output.println("Configured CoTest environment address: " + environmentAddress);
     }
 
-    if (classDataFile == null) {
+    if (caseId == null) {
       return;
     }
     Class<?> dataProvider = Class.forName(DATA_PROVIDER, true, loader);
     Method setClassDataProvider =
         dataProvider.getMethod("setClassDataProvider", String.class, String.class);
-    ReflectionSupport.invoke(
-        setClassDataProvider, null, testClass.getName(), classDataFile.toString());
-    output.println(
-        "Configured class data provider for "
-            + testClass.getName()
-            + ": "
-            + classDataFile);
+    ReflectionSupport.invoke(setClassDataProvider, null, testClass.getName(), caseId);
+    output.println("Configured DDT CaseID for " + testClass.getName() + ": " + caseId);
   }
 }

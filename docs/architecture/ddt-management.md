@@ -26,7 +26,7 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 | 永久历史与恢复                             | 修改前后快照和字段差异；恢复会生成新的历史记录，不覆盖旧记录                                                                   |
 | 回收站恢复与永久清除                       | 软删除快照、CaseID 冲突保护、明确二次确认                                                                                      |
 | 仪表盘                                     | 总量、业务组、来源、用户旅程、当日变化和近七日图表                                                                             |
-| CoTest `classDataFile` 执行                | SR 统一关联同版本、同阶段候选范围内的 TestNG 类；批次为每个 CaseID 固化独立 JSON 数据文件                                      |
+| CoTest CaseID 执行                         | SR 统一关联同版本、同阶段候选范围内的 TestNG 类；批次保存 CaseID 和执行类，测试类自行调用公开 API 取数                         |
 | Open API 与示例                            | “DDT 管理 → 开放 API”；匿名单用例原始 JSON 查询，URL 固定项目、版本和阶段，提供查询验证及 cURL / JavaScript / Groovy 示例      |
 
 ## 用例工作台布局
@@ -146,8 +146,8 @@ ObjectStore 中的原始文件并原子替换同一个预检任务的逐文件�
 DDT 单用例快捷执行使用 `POST /api/v1/ddt/cases/:caseId/execute`，URL 显式携带项目、版本和阶段，
 请求体复用普通单用例执行配置。入口要求 `run.create`，服务端重新读取当前 DDT 数据、SR 关联及可用
 测试类，并沿用普通用例的来源、Runner 与 Adapter 预检。创建的 `single:<DDT id>` 批次保留 DDT 身份、
-数据修订和独立 `class-data` 快照，不会转成一次裸 TestNG 类执行。Lite/Full 都通过调度工作线程完成
-数据读取、JSON 序列化、摘要和批次持久化；Runner 与断线恢复继续使用已有执行协议，无新迁移或依赖。
+数据修订、CaseID 和执行类版本，不会转成一次裸 TestNG 类执行。Lite/Full 都通过调度工作线程完成
+预检和批次持久化，不序列化或下发动态字段 JSON；Runner 与断线恢复继续使用已有执行协议。
 
 列表眼睛和字段详情的“查看执行详情”打开共享用例详情组件。`/summary` 只读取元数据和关联类；
 `/workspace`、`/executions`、`/failure-analyses` 都按当前 DDT 作用域鉴权，以 DDT 稳定 ID 查询有界
@@ -193,16 +193,17 @@ DDL 和转换在同一事务中；失败回滚后修复并重试。降级须恢�
 `DDT_CASE_IN_USE` 拒绝仍在任务中的 CaseID；用户必须通过任务成员接口移除，使任务版本快照记录
 这次范围变化后才能删除资产，不能依赖外键级联静默改写任务。
 
-创建批次时，控制面把每条 DDT 用例的动态字段固化为独立 UTF-8 JSON 快照，并保存字节数和
-SHA-256。`ExecutionRun.caseDefinitionId` 继续标识 DDT 资产，`executionCaseDefinitionId` 与
-`caseVersion` 标识真正加载的 TestNG 类版本。assignment 只携带受租约保护的 `class-data` 输入
-描述；Runner 从控制面下载到本次执行工作目录，经大小和摘要复核后调用现有 Adapter 的
-`--class-data`。不同 CaseID 使用包含 `executionRunId` 的目标路径，不会共享或串用数据文件。
-派生的单用例诊断重跑和最后失败重跑继续继承原批次中的不可变 JSON、类版本与 Adapter 快照。
+创建批次时，`ExecutionRun.caseDefinitionId` 标识 DDT 资产，`displayName` 保存原始 CaseID，
+`executionCaseDefinitionId` 与 `caseVersion` 标识执行的 TestNG 类及版本。assignment 通过
+`adapter.caseId` 下发 CaseID，Runner 使用独立参数 `--case-id` 交给 Adapter，后者调用
+`MM2DataProvider.setClassDataProvider(className, caseId)`，不进行文件转换或数据下载。
+测试类负责配置项目、版本、阶段对应的公开 API URL，自行编码 CaseID 并获取数据；动态字段以 API
+请求时的当前值为准，不再是批次创建时的数据快照。诊断重跑仍沿用 CaseID 和执行类身份。
 
-Lite 将映射、任务成员与执行快照持久化在 SQLite，JSON 由已认证的控制面输入接口直接读取；
-Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都不要求 Runner 访问数据库、MinIO
-或本地数据目录，也没有新增运行时公网依赖。
+DDT 批次要求 Runner 声明 `adapter:ddt-case-id-v1` 能力，预检和调度都会检查，普通用例不受影响。
+升级 Runner 自动更新受管 Adapter；升级前已分配的 `class-data` 文件协议任务在新 Runner 上明确
+拒绝，需结束或停止后重新发起。历史数据库列和输入读取契约保留以支持旧记录，新批次不写 JSON 正文。
+Lite/Full 分别持久化于 SQLite/PostgreSQL，共享业务与协议语义，无新迁移、外部服务或公网依赖。
 
 ## API 概览
 
@@ -230,6 +231,12 @@ Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都�
 - `POST/DELETE /api/v1/case-suites/{suiteId}/ddt-cases`
 
 API 响应继续使用 AutoForge 的稳定错误码、`requestId`、游标分页和显式 DTO；不会返回 ORM 行或对象存储凭据。
+
+“按清单选择”使用 `POST /api/v1/ddt/cases/search` 的可选 `caseIds` 数组，每次最多 200 个、每个最多
+512 字符，空数组返回空结果。该查询只要求 `case.read`，沿用同源与范围授权；请求体上限 512 KiB。
+Lite/Full 均按范围及规范化 CaseID 索引精确查找，仅返回摘要，不加载用例正文。客户端顺序处理各批次，
+完成后才应用选择，取消或失败不会应用部分结果，也不会因只读匹配清空浏览器缓存。输入文件复用普通用例
+的首列读取器（32 MiB、首个工作表最多 100,001 行），但编号不使用 Java 类路径的斜杠规范化规则。
 
 ### 匿名用例查询
 

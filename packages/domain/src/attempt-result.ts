@@ -10,6 +10,7 @@ export type ClassifiableAttemptResult = {
   resultCode?: string | null;
 };
 
+// 保留历史已入库成功结果的分类；新完成上报在应用层将旧 skip 结果码纠正为失败。
 // adapter 正常结束并产出有效测试结果的结果码（含历史数据使用的旧码 PASSED）。
 export const ADAPTER_SUCCESS_RESULT_CODES: readonly string[] = [
   "TESTNG_SUCCEEDED",
@@ -18,11 +19,12 @@ export const ADAPTER_SUCCESS_RESULT_CODES: readonly string[] = [
   "PASSED",
 ];
 
-// adapter 正常结束、由 TestNG 报告真实失败的结果码（断言失败与配置失败）；
+// adapter 正常结束、由 TestNG 报告真实失败的结果码（断言失败、配置失败与跳过）；
 // TEST_ASSERTION_FAILED 为历史数据与既有验收链路使用的旧断言失败码。
 export const ADAPTER_FAILURE_RESULT_CODES: readonly string[] = [
   "TESTNG_ASSERTIONS_FAILED",
   "TESTNG_CONFIGURATION_FAILED",
+  "TESTNG_SKIPPED",
   "TEST_ASSERTION_FAILED",
 ];
 

@@ -1,7 +1,6 @@
 package com.autoforge.adapters.cotest;
 
 import java.net.URL;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,7 +11,7 @@ final class AdapterExecutionRequest {
   private final String className;
   private final SuiteConfiguration suiteConfiguration;
   private final String environmentAddress;
-  private final Path classDataFile;
+  private final String caseId;
   private final Path outputDirectory;
 
   AdapterExecutionRequest(
@@ -20,13 +19,13 @@ final class AdapterExecutionRequest {
       String className,
       SuiteConfiguration suiteConfiguration,
       String environmentAddress,
-      Path classDataFile,
+      String caseId,
       Path outputDirectory) {
     this.jarUrls = Collections.unmodifiableList(new ArrayList<URL>(jarUrls));
     this.className = className;
     this.suiteConfiguration = suiteConfiguration;
     this.environmentAddress = environmentAddress;
-    this.classDataFile = normalizeClassDataFile(classDataFile);
+    this.caseId = caseId;
     this.outputDirectory = outputDirectory.toAbsolutePath().normalize();
   }
 
@@ -46,22 +45,11 @@ final class AdapterExecutionRequest {
     return environmentAddress;
   }
 
-  Path classDataFile() {
-    return classDataFile;
+  String caseId() {
+    return caseId;
   }
 
   Path outputDirectory() {
     return outputDirectory;
-  }
-
-  private static Path normalizeClassDataFile(Path classDataFile) {
-    if (classDataFile == null) {
-      return null;
-    }
-    Path normalized = classDataFile.toAbsolutePath().normalize();
-    if (!Files.isRegularFile(normalized)) {
-      throw new IllegalArgumentException("Class data file does not exist: " + normalized);
-    }
-    return normalized;
   }
 }

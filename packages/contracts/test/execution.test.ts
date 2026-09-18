@@ -103,7 +103,20 @@ describe("Runner Protocol v1 contracts", () => {
     ).toThrow();
   });
 
-  it("accepts one adapter-bound DDT class data input and rejects it without Adapter", () => {
+  it("preserves a DDT CaseID verbatim without adding file inputs", () => {
+    const specification = validExecutionSpec();
+    const parsed = executionSpecSchema.parse({
+      ...specification,
+      adapter: { caseId: "支付/0001?x=1&y=2" },
+    });
+    expect(parsed.adapter?.caseId).toBe("支付/0001?x=1&y=2");
+    expect(parsed.inputs).toEqual(specification.inputs);
+    expect(
+      executionSpecSchema.safeParse({ ...specification, adapter: { caseId: "" } }).success,
+    ).toBe(false);
+  });
+
+  it("reads historical adapter-bound DDT file specifications", () => {
     const specification = validExecutionSpec();
     const classData = {
       inputId: "class-data-run-1",

@@ -53,18 +53,17 @@ final class ReflectiveTestNgRunner {
         testNgClass.getMethod("addListener", listenerInterface), testNg, listener);
 
     new CotestRuntimeConfigurer(output)
-        .configure(loader, testClass, request.environmentAddress(), request.classDataFile());
+        .configure(loader, testClass, request.environmentAddress(), request.caseId());
     ReflectionSupport.invoke(testNgClass.getMethod("run"), testNg);
 
     TestNgResultSummary summary = new TestNgResultReporter(output).report(loader, listener);
     Method getStatus = testNgClass.getMethod("getStatus");
     int testNgStatus = (Integer) ReflectionSupport.invoke(getStatus, testNg);
     output.println(System.lineSeparator() + "TestNG exit status: " + testNgStatus);
-    // TestNG 的 getStatus() 是位图（含跳过位）：有用例被跳过时即使全部通过也非零。
-    // 进程退出码只表达是否存在真实失败，跳过-only 的执行由控制面根据 testng-results.xml
-    // 映射为成功（全部跳过 / 通过含跳过）。
-    boolean hasFailures = summary.failedCount() + summary.configurationFailureCount() > 0;
-    return new TestNgExecutionOutcome(hasFailures ? 1 : 0);
+    // TestNG 状态包含跳过位；任何失败、跳过、配置失败或未执行测试都不能报告成功。
+    boolean unsuccessful = summary.failedCount() > 0 || summary.skippedCount() > 0
+        || summary.configurationFailureCount() > 0 || summary.passedCount() == 0;
+    return new TestNgExecutionOutcome(unsuccessful ? 1 : 0);
   }
 
   private static Object createListener(ClassLoader loader) throws ReflectiveOperationException {

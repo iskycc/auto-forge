@@ -24,6 +24,7 @@ import {
 import { PostgresExecutionControlRepository } from "@autoforge/db/postgres";
 import { createAttemptLogStore, SqliteExecutionControlRepository } from "@autoforge/db/sqlite";
 import { describe, expect, it } from "vitest";
+import { normalizeTestNgCompletion } from "../../application/src/normalize-testng-completion";
 
 // 即时补槽回归契约：running 批次必须继续参与调度（空闲并发槽立即领取下一个用例），
 // 且完成上报要回传 batchId/batchClosed 供路由层触发补调度与 Agent 清理批次目录。
@@ -113,6 +114,184 @@ async function insertQueuedRun(harness: RefillHarness, batchId: string): Promise
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("records skipped tests as failed runs and failed batch counters", async () => {
+    const harness = await createHarness();
+    try {
+      for (const [attemptId, leaseTokenHash] of [
+        [harness.completion.attempt1Id, harness.completion.lease1TokenHash],
+        [harness.completion.attempt2Id, harness.completion.lease2TokenHash],
+      ]) {
+        const completion = await harness.executions.completeAttempt({
+          runnerId: harness.runnerId,
+          attemptId: attemptId!,
+          leaseTokenHash: leaseTokenHash!,
+          completionId: randomUUID(),
+          resultDigest: randomUUID(),
+          eventId: randomUUID(),
+          acceptedAt: "2026-08-10T00:05:00.000Z",
+          result: normalizeTestNgCompletion({
+            status: "succeeded",
+            resultCode: "TESTNG_ALL_SKIPPED",
+            summary: "old Runner",
+            durationMs: 1,
+            artifacts: [],
+            testNg: {
+              total: 1,
+              passed: 0,
+              failed: 0,
+              skipped: 1,
+              configurationFailures: 0,
+              detailsTruncated: false,
+              suites: [],
+            },
+          }),
+        });
+        expect(completion.disposition).toBe("accepted");
+      }
+      const batch = await harness.batches.get(harness.completion.batchId);
+      expect(batch).toMatchObject({ succeededRuns: 0, failedRuns: 2 });
+      expect(batch?.runs.every((run) => run.terminalOutcome === "failed")).toBe(true);
+      expect(batch?.attempts.every((attempt) => attempt.resultCode === "TESTNG_SKIPPED")).toBe(
+        true,
+      );
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("dispatches only the raw DDT CaseID to capable Runners, without a JSON input", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-10T00:00:00.000Z";
+    const batchId = randomUUID();
+    const sourceId = randomUUID();
+    const caseDefinitionId = randomUUID();
+    const runId = randomUUID();
+    const caseId = "支付/0001?x=1 中文";
+    const capabilities = [
+      "executor:testng-v1",
+      "isolation:cgroup-v2",
+      "java:21.0.8",
+      "testng:7.11.0",
+      "adapter:cotest-testng-v1",
+    ];
+    const thresholds = {
+      maximumCpuUtilizationPercent: 80,
+      maximumMemoryUtilizationPercent: 85,
+      maximumLoadPerCpu: 1,
+    };
+    try {
+      await harness.rawQuery(
+        `INSERT INTO case_sources
+        (id, project_id, display_name, original_file_name, object_key, sha256, size_bytes, class_count, method_count, status, warnings_json, inspection_json, created_at, updated_at)
+        VALUES (?, ?, 'DDT', 'ddt.jar', ?, ?, 100, 1, 1, 'ready', '[]', '{}', ?, ?)`,
+        [sourceId, harness.projectId, sourceId, "a".repeat(64), now, now],
+      );
+      await harness.rawQuery(
+        `INSERT INTO case_definitions
+        (id, project_id, source_id, class_name, package_name, display_name, enabled, groups_json, current_version, created_at, updated_at)
+        VALUES (?, ?, ?, 'example.DdtTest', 'example', 'DdtTest', TRUE, '[]', 1, ?, ?)`,
+        [caseDefinitionId, harness.projectId, sourceId, now, now],
+      );
+      await harness.rawQuery(
+        `INSERT INTO case_versions
+        (id, case_definition_id, source_id, version, snapshot_json, created_at) VALUES (?, ?, ?, 1, '{}', ?)`,
+        [randomUUID(), caseDefinitionId, sourceId, now],
+      );
+      await harness.rawQuery(
+        `UPDATE runners SET capabilities_json = ?, labels_json = '["linux","java","testng"]', max_concurrency = 8,
+        cpu_utilization_percent = 0, memory_utilization_percent = 0, load_average_1m = 0, logical_cpu_count = 4, metrics_observed_at = ? WHERE id = ?`,
+        [JSON.stringify(capabilities), now, harness.runnerId],
+      );
+      await harness.batches.create({
+        id: batchId,
+        projectId: harness.projectId,
+        suiteId: randomUUID(),
+        suiteName: "DDT CaseID",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: [harness.runnerId],
+        adapterRuntimeSnapshot: { suiteName: "DDT", testName: "DDT", environmentAddresses: [] },
+        runs: [
+          {
+            id: runId,
+            caseDefinitionId: randomUUID(),
+            caseType: "ddt",
+            executionCaseDefinitionId: caseDefinitionId,
+            caseVersion: 1,
+            displayName: caseId,
+            className: "example.DdtTest",
+            ddtSrNum: "SR",
+          },
+        ],
+        createdAt: now,
+      });
+      const reservation = {
+        batchId,
+        decisions: [
+          {
+            executionRunId: runId,
+            runnerId: harness.runnerId,
+            score: 1,
+            attemptId: randomUUID(),
+            assignmentId: randomUUID(),
+          },
+        ],
+        thresholds,
+        offlineBefore: now,
+        metricsFreshAfter: now,
+        scheduledAt: now,
+      };
+      expect((await harness.batches.getSchedulingSnapshot(batchId, now))?.candidates).toEqual([]);
+      expect((await harness.batches.reserveAssignments(reservation)).reserved).toBe(0);
+      const rerun = await harness.batches.getRerunSnapshot(batchId, { executionRunId: runId });
+      expect(rerun?.runs[0]).toMatchObject({
+        displayName: caseId,
+        caseType: "ddt",
+        executionCaseDefinitionId: caseDefinitionId,
+      });
+      expect(rerun?.runs[0]).not.toHaveProperty("classData");
+      capabilities.push("adapter:ddt-case-id-v1");
+      await harness.rawQuery("UPDATE runners SET capabilities_json = ? WHERE id = ?", [
+        JSON.stringify(capabilities),
+        harness.runnerId,
+      ]);
+      expect((await harness.batches.reserveAssignments(reservation)).reserved).toBe(1);
+      const claimed = await harness.executions.claim({
+        runnerId: harness.runnerId,
+        requestId: randomUUID(),
+        availableSlots: 1,
+        labels: ["linux", "java", "testng"],
+        capabilities,
+        now,
+        leaseExpiresAt: "2026-08-10T00:01:00.000Z",
+        leaseSeeds: [
+          {
+            id: randomUUID(),
+            eventId: randomUUID(),
+            tokenHash: "ddt-token",
+            tokenEncrypted: "ddt-token",
+          },
+        ],
+      });
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0]?.assignment.executionSpec.adapter?.caseId).toBe(caseId);
+      expect(claimed[0]?.assignment.executionSpec.requiredCapabilities).toContain(
+        "adapter:ddt-case-id-v1",
+      );
+      expect(claimed[0]?.assignment.executionSpec.inputs.map((input) => input.kind)).toEqual([
+        "test-jar",
+      ]);
+    } finally {
+      await harness.rawQuery("DELETE FROM run_batches WHERE id = ?", [batchId]);
+      await harness.rawQuery("DELETE FROM case_definitions WHERE id = ?", [caseDefinitionId]);
+      await harness.rawQuery("DELETE FROM case_sources WHERE id = ?", [sourceId]);
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("resolves the current project-version dependency for a diagnostic rerun", async () => {
     const harness = await createHarness();
     const projectVersionId = randomUUID();

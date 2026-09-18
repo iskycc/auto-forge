@@ -34,6 +34,7 @@ export class DdtCaseService {
       projectId: input.projectId,
       projectVersionId: input.projectVersionId,
       testStageId: input.testStageId,
+      ...(input.caseIds !== undefined ? { caseIds: input.caseIds } : {}),
       ...(input.query ? { query: input.query } : {}),
       ...(input.srNum ? { srNum: input.srNum } : {}),
       ...(input.sourceName ? { sourceName: input.sourceName } : {}),

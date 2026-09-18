@@ -2,8 +2,32 @@ import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
 import { parseCasePathFile } from "./case-path-file";
+import { readCaseListFileColumn, MAX_CASE_LIST_FILE_BYTES } from "./case-list-file";
+import { parseDdtCaseIdCells } from "./ddt-case-selection";
 
 describe("case path table files", () => {
+  it("shares XLSX decoding with DDT without rewriting identifiers as Java paths", async () => {
+    const bytes = minimalXlsx([
+      ["CaseID", "CaseName"],
+      ["0001", "ignored"],
+      ["/支付//001/", "ignored"],
+    ]);
+    const cells = await readCaseListFileColumn(importFile("ddt.xlsx", bytes));
+    expect(parseDdtCaseIdCells(cells)).toEqual(["0001", "/支付//001/"]);
+  });
+
+  it("rejects oversized lists before reading their contents", async () => {
+    await expect(
+      readCaseListFileColumn({
+        name: "huge.xlsx",
+        type: "",
+        size: MAX_CASE_LIST_FILE_BYTES + 1,
+        arrayBuffer: async () => {
+          throw new Error("must not read");
+        },
+      }),
+    ).rejects.toThrow("32 MiB");
+  });
   it("reads the first column of the first XLSX worksheet without corrupting Chinese", async () => {
     const bytes = minimalXlsx([
       ["用例路径", "备注"],

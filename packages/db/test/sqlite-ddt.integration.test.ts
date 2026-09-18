@@ -3,7 +3,7 @@ import {
   expectDdtSrExecutionContract,
   expectDdtUnavailableSourceContract,
 } from "./ddt-sr-execution-contract";
-import { ddtLiteralSearchFields, expectDdtLiteralFieldSearch } from "./ddt-search-contract";
+import { ddtLiteralSearchFields, expectDdtCaseSearch } from "./ddt-search-contract";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -193,7 +193,7 @@ describe("SQLite DDT repository", () => {
         historyIds: ["history-import-1", "history-import-2"],
       });
       expect(imported).toMatchObject({ insertedCount: 2, updatedCount: 0 });
-      await expectDdtLiteralFieldSearch(repository, scope, "ORDER-2");
+      await expectDdtCaseSearch(repository, scope, "ORDER-2");
       insertExecutionClass(handle, scope);
       await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([
         expect.objectContaining({

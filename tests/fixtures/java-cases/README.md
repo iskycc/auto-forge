@@ -12,10 +12,12 @@
   `JAVA_CASES_STDOUT_完成:` 标记与 `artifacts/java-cases.txt` 产物。
 - `src/main/java/com/autoforge/javacases/JavaCasesFailureFixture.java`：失败用例，
   用于验证失败上报与重试链路。
-- `src/main/java/com/autoforge/javacases/JavaCasesDdtFixture.java`：DDT 用例，验证平台生成的
-  `classDataFile` 经真实 Runner 下载后由 Adapter 注入，并校验 CaseID、SR 与动态字段内容。
+- `src/main/java/com/autoforge/javacases/JavaCasesSkippedFixture.java`：全部跳过用例，验证
+  Passed:0、Failed:0、Skipped:1 必须计为失败，且详情页通过数为 0、失败数为 1。
+- `src/main/java/com/autoforge/javacases/JavaCasesDdtFixture.java`：DDT 用例，验证原始 CaseID 经真实 Runner 和 Adapter 注入后，
+  测试类自行调用本地平台公开 API，并校验 CaseID、SR 与动态字段内容。
 - `src/main/java/cotest/auto/dataproviders/MM2DataProvider.java`：只用于验收包的最小 CoTest
-  兼容桩，记录 Adapter 为各执行类注入的 `classDataFile` 路径。
+  兼容桩，记录 Adapter 为各执行类注入的 CaseID 字符串。
 - `src/main/java/com/autoforge/javacases/JavaCasesConstants.java`：共享常量；
   环境地址 `10.20.30.40` 只是 mock 值，不参与真实网络访问。
 

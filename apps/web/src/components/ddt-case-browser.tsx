@@ -265,6 +265,9 @@ export function DdtCaseBrowser({
               <div>
                 <h2>已选择 {selected.size} 条用例</h2>
                 <p>在左侧继续选择，在这里统一管理所选用例。</p>
+                {selected.size > cases.filter((item) => selected.has(item.caseId)).length ? (
+                  <p>包含当前列表尚未显示的用例，加入任务时会包含全部已选用例。</p>
+                ) : null}
               </div>
             </header>
             {selectionActions}
