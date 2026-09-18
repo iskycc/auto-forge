@@ -116,6 +116,10 @@ interface ParsedSheet {
   rows: CaseStepData[];
 }
 
+function normalizedColumnName(column: string): string {
+  return column.trim().toLocaleLowerCase("en-US");
+}
+
 function duplicateColumnConflicts(
   sheetName: string,
   originalColumns: readonly string[],
@@ -125,7 +129,7 @@ function duplicateColumnConflicts(
   const indexesByName = new Map<string, number[]>();
   columns.forEach((column, columnIndex) => {
     if (column === undefined) return;
-    const normalized = column.toLocaleLowerCase("en-US");
+    const normalized = normalizedColumnName(column);
     indexesByName.set(normalized, [...(indexesByName.get(normalized) ?? []), columnIndex]);
   });
   const duplicateIndexes = new Set(
@@ -137,7 +141,7 @@ function duplicateColumnConflicts(
         (column, columnIndex): column is string =>
           column !== undefined && !duplicateIndexes.has(columnIndex),
       )
-      .map((column) => column.toLocaleLowerCase("en-US")),
+      .map(normalizedColumnName),
   );
 
   return [...indexesByName.entries()]
@@ -180,7 +184,7 @@ function suggestedConflictColumnNames(
   orderedIndexes.forEach((columnIndex, suggestionIndex) => {
     const baseName = suggestionIndex === 0 && requiredName ? requiredName : columns[columnIndex]!;
     const suggestedName = availableColumnName(baseName, suggestionIndex + 1, usedNames);
-    usedNames.add(suggestedName.toLocaleLowerCase("en-US"));
+    usedNames.add(normalizedColumnName(suggestedName));
     suggestedNames.set(columnIndex, suggestedName);
   });
   return suggestedNames;
@@ -224,7 +228,7 @@ export function assertResolvableColumnConflictLimit(
 function availableColumnName(baseName: string, occurrence: number, usedNames: Set<string>): string {
   let suffix = occurrence;
   let candidate = occurrence === 1 ? baseName : columnNameWithSuffix(baseName, occurrence);
-  while (usedNames.has(candidate.toLocaleLowerCase("en-US"))) {
+  while (usedNames.has(normalizedColumnName(candidate))) {
     suffix += 1;
     candidate = columnNameWithSuffix(baseName, suffix);
   }
@@ -358,7 +362,7 @@ function fullyRemovedDuplicateColumnName(
 ): string | undefined {
   const indexesByName = new Map<string, number[]>();
   originalColumns.forEach((column, columnIndex) => {
-    const normalized = column.toLocaleLowerCase("en-US");
+    const normalized = normalizedColumnName(column);
     indexesByName.set(normalized, [...(indexesByName.get(normalized) ?? []), columnIndex]);
   });
   const removed = [...indexesByName.values()].find(
@@ -547,17 +551,73 @@ export function parseSpreadsheet(
   };
 }
 
+type ExportColumnGroup = {
+  name: string;
+  fields: Set<string>;
+  hasConflictingValues: boolean;
+};
+
+function exportSheetColumns(rows: readonly CaseStepData[]) {
+  const groups = new Map<string, ExportColumnGroup>();
+  for (const name of ["CaseID", "srNum"]) {
+    groups.set(normalizedColumnName(name), {
+      name,
+      fields: new Set(),
+      hasConflictingValues: false,
+    });
+  }
+  for (const row of rows) {
+    const valuesByColumn = new Map<string, CellValue>();
+    for (const [field, value] of Object.entries(row)) {
+      const normalizedName = normalizedColumnName(field);
+      let group = groups.get(normalizedName);
+      if (!group) {
+        group = { name: field.trim(), fields: new Set(), hasConflictingValues: false };
+        groups.set(normalizedName, group);
+      }
+      group.fields.add(field);
+      if (valuesByColumn.has(normalizedName) && valuesByColumn.get(normalizedName) !== value) {
+        group.hasConflictingValues = true;
+      }
+      valuesByColumn.set(normalizedName, value);
+    }
+  }
+
+  const columns = [...groups.values()].map((group) => group.name);
+  // Reserve every original column before allocating suffixes, including fields discovered later.
+  const usedNames = new Set(groups.keys());
+  const headerByField = new Map<string, string>();
+  for (const group of groups.values()) {
+    const primaryField = group.fields.has(group.name)
+      ? group.name
+      : group.fields.values().next().value;
+    for (const field of group.fields) {
+      if (!group.hasConflictingValues || field === primaryField) {
+        headerByField.set(field, group.name);
+        continue;
+      }
+      // Same-row aliases with different values must remain separate throughout the sheet.
+      const header = availableColumnName(field.trim(), 2, usedNames);
+      usedNames.add(normalizedColumnName(header));
+      columns.push(header);
+      headerByField.set(field, header);
+    }
+  }
+  return { columns, headerByField };
+}
+
 export function buildExportWorkbook(rows: CaseData[]) {
   if (!rows.length) throw new Error("没有符合条件的用例可导出");
 
   const workbook = XLSX.utils.book_new();
   const appendSheet = (sheetRows: CaseStepData[], sheetName: string) => {
-    const columnSet = new Set<string>(["CaseID", "srNum"]);
-    for (const row of sheetRows) {
-      for (const column of Object.keys(row)) columnSet.add(column);
-    }
-    const columns = [...columnSet];
-    const sheet = XLSX.utils.json_to_sheet(sheetRows, { header: columns });
+    const { columns, headerByField } = exportSheetColumns(sheetRows);
+    const normalizedRows = sheetRows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).map(([field, value]) => [headerByField.get(field)!, value]),
+      ),
+    );
+    const sheet = XLSX.utils.json_to_sheet(normalizedRows, { header: columns });
     sheet["!autofilter"] = { ref: sheet["!ref"] ?? "A1" };
     sheet["!cols"] = columns.map((column) => ({
       wch: Math.min(Math.max(column.length + 2, 14), 42),

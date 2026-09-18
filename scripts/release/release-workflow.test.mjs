@@ -29,6 +29,8 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, jenkins-plugins\]/);
   assert.match(workflow, /  publish:\n[\s\S]*?    timeout-minutes: 45/);
   assert.match(workflow, /build-release-metadata-bundle\.sh/);
+  assert.match(workflow, /bash scripts\/release\/upload-assets\.sh "\$\{RELEASE_TAG\}" release/);
+  assert.match(workflow, /upload-assets\.sh[^\n]*\n\s+if \[\[.*isDraft[\s\S]*?--draft=false/);
   assert.doesNotMatch(
     workflow,
     /cp CHANGELOG\.md LICENSE NOTICE THIRD_PARTY_LICENSES\.json release/,

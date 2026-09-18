@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.8 - 2026-09-18
+
+### Fixed
+
+- 修复 DDT 全范围及勾选导出 Excel 时的重复列：每个普通用例或用户旅程 Sheet 使用与导入一致的列名规则，合并仅大小写或首尾空白不同的字段，`CaseID`、`srNum` 保持规范名称。
+- 同一用例的同名字段包含不同值时，在整个 Sheet 内使用稳定且唯一的列名分别保留；自动后缀避让已有字段，避免覆盖内容。导出不修改平台保存的原始字段和数据，生成的工作簿可再次通过导入预检。
+- 发布附件改为逐个上传，单次超时 180 秒、最多三次尝试，并记录具体文件和尝试次数。全部附件上传成功后才公开新 Release，避免 GitHub 接口异常时批量上传长时间停滞。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用导出实现，无数据库迁移、持久配置结构、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。已有普通用例、用户旅程和缺失 Step 的导出行为继续保留。
+
+### Validation and known limitations
+
+- 13 项表格兼容回归、SQLite/PostgreSQL DDT 生命周期及应用/领域回归通过；Playwright 实际下载全范围工作簿、检查字段与内容、勾选范围 API 导出及再次导入预检通过，包含 Web 生产构建。修改文件的格式、lint、全仓类型检查与 E2E 矩阵检查通过。
+- 发布上传测试覆盖临时故障恢复、连续失败、超时次数、空目录及含空格文件名；上传持续失败仍会终止流程并保留新 Release 草稿。本地浏览器使用 Chromium，完整 Full 和已发布包离线验收由标签流水线执行。
+
 ## 1.17.7 - 2026-09-18
 
 ### Added and fixed

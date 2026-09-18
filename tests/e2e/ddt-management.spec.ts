@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution } from "./support/task-execution";
 import { associateDdtSr } from "./support/ddt-associations";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { zipSync } from "fflate";
 
-import { buildExportWorkbook } from "../../packages/ddt-import/src";
+import { buildExportWorkbook, parseSpreadsheet } from "../../packages/ddt-import/src";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
 import {
@@ -1933,6 +1933,84 @@ async function alignDdtSectionBelowTopbar(section: Locator) {
     window.scrollBy(0, -topbarBottom);
   });
 }
+
+test("DDT full-scope export merges column aliases and can be imported again", async ({ page }) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await importDdtApiFixture(page, hierarchy, "EXPORT-A", 0, [
+    { CaseID: "EXPORT-A", srNum: "EXPORT", CaseName: "First", owner: "Alice" },
+    {
+      CaseID: "EXPORT-C",
+      srNum: "EXPORT",
+      用户旅程: {
+        step1: { CaseID: "EXPORT-C", srNum: "EXPORT", action: "create" },
+      },
+    },
+  ]);
+  await importDdtApiFixture(page, hierarchy, "EXPORT-B", 0, [
+    { CaseID: "EXPORT-B", srNum: "EXPORT", casename: "Second", Owner: "Bob" },
+    {
+      CaseID: "EXPORT-D",
+      srNum: "EXPORT",
+      用户旅程: {
+        step1: { CaseID: "EXPORT-D", srNum: "EXPORT", Action: "cancel" },
+      },
+    },
+  ]);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出当前范围", exact: true }).click();
+  const download = await downloadPromise;
+  expect(await download.failure()).toBeNull();
+  const content = await readFile((await download.path())!);
+  const exported = parseSpreadsheet(content, download.suggestedFilename());
+  expect(exported.columns).toEqual([
+    "CaseID",
+    "srNum",
+    "CaseName",
+    "owner",
+    "step1.CaseID",
+    "step1.srNum",
+    "step1.action",
+  ]);
+  expect(exported.rows).toEqual([
+    { CaseID: "EXPORT-A", srNum: "EXPORT", CaseName: "First", owner: "Alice" },
+    { CaseID: "EXPORT-B", srNum: "EXPORT", CaseName: "Second", owner: "Bob" },
+    {
+      CaseID: "EXPORT-C",
+      srNum: "EXPORT",
+      用户旅程: {
+        step1: { CaseID: "EXPORT-C", srNum: "EXPORT", action: "create" },
+      },
+    },
+    {
+      CaseID: "EXPORT-D",
+      srNum: "EXPORT",
+      用户旅程: {
+        step1: { CaseID: "EXPORT-D", srNum: "EXPORT", action: "cancel" },
+      },
+    },
+  ]);
+
+  const selected = await page.request.get(`${ddtPath(hierarchy, "export")}&caseId=EXPORT-B`);
+  expect(selected.status()).toBe(200);
+  expect(parseSpreadsheet(await selected.body(), "selected.xlsx").rows).toEqual([
+    { CaseID: "EXPORT-B", srNum: "EXPORT", casename: "Second", Owner: "Bob" },
+  ]);
+  const preview = await page.request.post(ddtPath(hierarchy, "imports/preview"), {
+    headers: { origin: new URL(page.url()).origin },
+    multipart: {
+      files: {
+        name: "exported.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: content,
+      },
+    },
+  });
+  expect(preview.status()).toBe(201);
+  expect(await preview.json()).toMatchObject({ validFiles: 1, totalRows: 4 });
+});
 
 test("DDT advanced search submits explicitly, searches only values and handles scoped results", async ({
   page,

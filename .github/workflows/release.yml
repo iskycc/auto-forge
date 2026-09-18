@@ -341,7 +341,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release upload "${RELEASE_TAG}" release/* --clobber
+          bash scripts/release/upload-assets.sh "${RELEASE_TAG}" release
           if [[ "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" == "true" ]]; then
             gh release edit "${RELEASE_TAG}" --draft=false
           fi
