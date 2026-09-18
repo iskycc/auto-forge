@@ -335,7 +335,46 @@ export const globalSearchResultSchema = z.object({
   ),
 });
 
+const diagnosticDependencySchema = z.object({
+  ready: z.boolean(),
+  detail: z.string(),
+  provider: z.string().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+});
+
 export const systemDiagnosticSchema = z.object({
+  build: z
+    .object({
+      kind: z.enum(["release", "development"]),
+      revision: z.string().optional(),
+      createdAt: z.string().datetime().optional(),
+    })
+    .optional(),
+  runtime: z
+    .object({
+      nodeId: z.string(),
+      hostname: z.string(),
+      distributed: z.boolean(),
+      nodeVersion: z.string(),
+      platform: z.string(),
+      architecture: z.string(),
+      uptimeSeconds: z.number().int().nonnegative(),
+      cpuCapacity: z.number().positive(),
+      memoryCapacityBytes: z.number().int().positive(),
+      availableMemoryBytes: z.number().int().nonnegative(),
+      processRssBytes: z.number().int().nonnegative(),
+      heapUsedBytes: z.number().int().nonnegative(),
+      heapLimitBytes: z.number().int().positive(),
+      backgroundAllowed: z.boolean(),
+    })
+    .optional(),
+  queueDepth: z
+    .object({
+      available: z.number().int().nonnegative(),
+      leased: z.number().int().nonnegative(),
+      deadLetter: z.number().int().nonnegative(),
+    })
+    .optional(),
   clock: z
     .object({
       source: z.enum(["local", "postgres"]),
@@ -349,9 +388,9 @@ export const systemDiagnosticSchema = z.object({
   mode: z.enum(["lite", "full"]),
   version: z.string().min(1),
   configurationRevision: z.number().int().positive(),
-  database: z.object({ ready: z.boolean(), detail: z.string() }),
-  objectStore: z.object({ ready: z.boolean(), detail: z.string() }),
-  queue: z.object({ ready: z.boolean(), detail: z.string() }),
+  database: diagnosticDependencySchema,
+  objectStore: diagnosticDependencySchema,
+  queue: diagnosticDependencySchema,
   deadLetters: z.array(
     z.object({
       messageId: z.string().min(1).max(128),
@@ -363,13 +402,15 @@ export const systemDiagnosticSchema = z.object({
       failedAt: z.string().datetime(),
     }),
   ),
-  cache: z.object({ ready: z.boolean(), detail: z.string() }),
-  dataDisk: z.object({
-    capacityBytes: z.number().int().positive(),
-    availableBytes: z.number().int().nonnegative(),
-    usedPercent: z.number().min(0).max(100),
-    status: z.enum(["ok", "warning", "critical"]),
-  }),
+  cache: diagnosticDependencySchema,
+  dataDisk: z
+    .object({
+      capacityBytes: z.number().int().positive(),
+      availableBytes: z.number().int().nonnegative(),
+      usedPercent: z.number().min(0).max(100),
+      status: z.enum(["ok", "warning", "critical"]),
+    })
+    .optional(),
   recentErrors: z.array(
     z.object({ timestamp: z.string().datetime(), code: z.string(), summary: z.string() }),
   ),

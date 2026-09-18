@@ -6837,50 +6837,6 @@ button.icon-button:disabled {
   font-size: 12px;
 }
 
-.diagnostic-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.diagnostic-summary span {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 5px 9px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-muted);
-  font-size: 12px;
-}
-
-.diagnostic-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.diagnostic-grid > div {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  padding: 12px;
-}
-
-.diagnostic-grid span,
-.diagnostic-grid small {
-  color: var(--color-text-secondary);
-}
-
-.diagnostic-errors {
-  margin: 14px 0 0;
-  border-radius: var(--radius-control);
-  padding: 12px 12px 12px 30px;
-  color: var(--color-danger);
-  background: var(--color-danger-soft);
-  font-size: 13px;
-}
-
 @media (max-width: 1180px) {
   .suite-list {
     grid-template-columns: 1fr;
@@ -6893,10 +6849,6 @@ button.icon-button:disabled {
   .execution-detail-actions {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .diagnostic-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

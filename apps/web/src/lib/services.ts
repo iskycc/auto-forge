@@ -4,6 +4,8 @@ import {
 } from "@autoforge/contracts/runtime-diagnostics";
 import { prioritizedExecutionControlRepository } from "./work-dispatch";
 import { runtimePriority } from "./runtime-priority";
+import { SystemDiagnosticReader } from "./system-diagnostics";
+import { readDiagnosticRuntime } from "./diagnostic-runtime";
 import { mkdir } from "node:fs/promises";
 import { isolatedAttemptLogs } from "./isolated-attempt-logs";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
@@ -163,12 +165,23 @@ async function createPlatformServices() {
   let closeDatabase: () => Promise<void>;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let infrastructure: RuntimeInfrastructure | undefined;
+  let databaseReady: () => Promise<void>;
+  let diagnosticProviders: Record<"database" | "objectStore" | "queue" | "cache", string>;
   if (config.mode === "lite") {
     const database = createSqliteDatabase({
       databasePath: config.databasePath,
       migrationsFolder: config.migrationsFolder,
       busyTimeoutMs: 25,
     });
+    databaseReady = async () => {
+      database.client.prepare("SELECT 1").get();
+    };
+    diagnosticProviders = {
+      database: "SQLite · WAL",
+      objectStore: "本地文件系统",
+      queue: "SQLite 持久队列",
+      cache: "进程内缓存",
+    };
     const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
@@ -254,6 +267,15 @@ async function createPlatformServices() {
       migrationsFolder: config.migrationsFolder,
       poolMax: config.databasePoolMax,
     });
+    databaseReady = async () => {
+      await database.pool.query("SELECT 1");
+    };
+    diagnosticProviders = {
+      database: "PostgreSQL",
+      objectStore: "MinIO / S3",
+      queue: "NATS JetStream",
+      cache: "Redis",
+    };
     // A completion may wait for log disk I/O. Reserve the Web pool for pages,
     // authentication and metadata instead of allowing those transactions to occupy it.
     const executionDatabase = createPostgresDatabase({
@@ -804,7 +826,34 @@ async function createPlatformServices() {
   });
 
   registerPlatformClock(clock);
+  const diagnosticResources = detectRuntimeResources();
+  const diagnostics = new SystemDiagnosticReader({
+    mode: config.mode,
+    clock,
+    dataDirectory: config.dataDirectory,
+    configurationRevision: () => configurationStore.read().revision,
+    dependencies: {
+      database: { provider: diagnosticProviders.database, check: databaseReady },
+      objectStore: { provider: diagnosticProviders.objectStore, check: () => objectStore.ready() },
+      queue: { provider: diagnosticProviders.queue, check: () => jobQueue.ready() },
+      cache: {
+        provider: diagnosticProviders.cache,
+        check: () => cache.get("diagnostics", "system", 1, "readiness"),
+      },
+    },
+    queue: jobQueue,
+    runtime: () =>
+      readDiagnosticRuntime(
+        diagnosticResources,
+        config.mode === "full"
+          ? { ...(config.nodeId ? { nodeId: config.nodeId } : {}), distributed: config.distributed }
+          : { distributed: false },
+        runtimePriority().backgroundAllowed(),
+      ),
+  });
   return {
+    diagnostics,
+    databaseReady,
     clock,
     config,
     configurationStore,

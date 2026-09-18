@@ -4,6 +4,26 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.9 - 2026-09-18
+
+### Added and fixed
+
+- 修复系统诊断始终显示工作区包版本 `0.2.2`：正式镜像在编译前写入实际发布版本、完整 Git 提交和构建时间；源码运行明确显示“开发构建”，版本读取不依赖联网或 Runner 安装资源。
+- 系统诊断按健康概览、基础依赖、节点与构建、资源与容量、队列快照和平台时间基准重新布局，新增实际适配器、检查耗时、当前节点、容器 CPU/内存额度、Web RSS/主线程堆、运行时长及后台退让状态。1024px 桌面自动调整卡片列数，长错误默认显示摘要并支持展开。
+- 数据库健康探测改为轻量查询；诊断复用浏览器会话缓存和 15 秒服务端快照，合并并发读取，每项检查最多等待 3 秒，未结束探针不会重复堆积。刷新失败保留上次结果，单项依赖、磁盘或统一时钟不可用时仍展示其他诊断信息。
+- 保留脱敏诊断包下载和死信重新投递，明确列表最多展示 20 条、每次最多重新投递 100 条，避免“全部”文案误导。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共用诊断契约和界面，无数据库迁移、持久配置结构、新依赖、离线资产种类或 Runner Protocol 变更，无需升级 Runner。诊断响应新增可选构建、节点资源、队列计数和依赖耗时字段；磁盘读取失败时不返回伪造容量。
+- CPU/内存及进程数据属于当前响应节点；数据卷表示所在文件系统容量，不表示 AutoForge 文件占用或远端 MinIO 容量。本地后端镜像构建默认记录当前 Git 提交，显式指定 revision 时需使用完整 40 位 SHA。
+
+### Validation and known limitations
+
+- 全量 968 项 TypeScript 单元测试、Go 测试和 36 项发布/运维脚本测试通过，包含诊断、版本、资源、磁盘及构建元数据回归；全仓格式、lint、类型检查、E2E 覆盖矩阵检查及 Web/Worker 生产构建通过。
+- Lite 运维 Playwright 两项场景及真实 Full 双节点两项场景通过，覆盖缓存、异常降级、恢复、诊断下载、死信重投和正负十分钟宿主机偏差。已实际查看 1024×768、1536×1024 的 Lite/Full 正常与异常截图，未发现横向溢出或布局错位。
+- 诊断是按需生成的短期快照，不是持续性能监控；驱动不支持取消时，超时请求会复用尚未结束的探针。正式双架构镜像及发布资产离线验收由标签流水线执行。
+
 ## 1.17.8 - 2026-09-18
 
 ### Fixed

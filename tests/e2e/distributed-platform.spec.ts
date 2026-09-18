@@ -43,7 +43,19 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
     expect(response.status()).toBe(200);
     const diagnostic = (await response.json()) as {
       clock: { source: string; state: string; hostOffsetMs: number };
+      version: string;
+      runtime: { nodeId: string; distributed: boolean; cpuCapacity: number };
+      database: { ready: boolean; provider: string };
+      cache: { ready: boolean; provider: string };
+      queue: { ready: boolean; provider: string };
     };
+    expect(diagnostic.version).not.toBe("0.2.2");
+    expect(diagnostic.runtime.nodeId).toBe(ids[index]);
+    expect(diagnostic.runtime.distributed).toBe(true);
+    expect(diagnostic.runtime.cpuCapacity).toBeGreaterThan(0);
+    expect(diagnostic.database).toMatchObject({ ready: true, provider: "PostgreSQL" });
+    expect(diagnostic.cache).toMatchObject({ ready: true, provider: "Redis" });
+    expect(diagnostic.queue).toMatchObject({ ready: true, provider: "NATS JetStream" });
     expect(diagnostic.clock.source).toBe("postgres");
     expect(diagnostic.clock.state).toBe("synchronized");
     expect(
@@ -55,6 +67,26 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
     items: PlatformNode[];
   };
   expect(nodes.enabled).toBe(true);
+  await page.goto("/settings/platform?section=diagnostics");
+  await expect(page.getByRole("region", { name: "平台诊断报告", exact: true })).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(page.locator(".diagnostic-summary")).toContainText("FULL");
+  await expect(page.getByRole("region", { name: "基础依赖健康", exact: true })).toContainText(
+    "PostgreSQL",
+  );
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`diagnostics-full-${viewport.width}.png`),
+      fullPage: true,
+    });
+  }
   await page.goto("/settings/platform?section=nodes");
   for (const [index, id] of ids.entries()) {
     const node = nodes.items.find((candidate) => candidate.id === id)!;

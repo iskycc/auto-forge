@@ -23,6 +23,11 @@ Release 附件逐个上传，每次最多等待 180 秒，超时后最多再留 
 
 Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。发布构建先将自定义 Server 与迁移入口打成生产 bundle，再合并 Next.js 生成的依赖追踪清单；运行时镜像只复制追踪到的生产模块、数据库迁移、静态资源和双架构 Agent。`.next/cache`、源码映射、本地数据、测试产物与开发依赖不会进入镜像。该方案保留常规 Next.js 生产运行时而不启用不兼容自定义 Server 的 `standalone` 模式；镜像验证会实际启动 Web、执行 SQLite 迁移并检查 Agent，防止瘦身遗漏运行时依赖。
 
+系统诊断的 AutoForge 版本来自镜像构建参数 `VERSION`，并同时记录 `REVISION` 和 `CREATED`；构建器
+在编译 Next.js 之前生成版本元数据，浏览器、离线镜像和镜像标签使用同一份发布标识，不再使用工作区
+`package.json` 的包版本。未经过发布构建的源码运行显示“开发构建”。版本读取不依赖运行时联网、Git
+目录或 Runner 安装资源；本地镜像构建默认使用当前 Git 提交，显式提供提交号时需使用完整 40 位 SHA。
+
 ## 资产矩阵
 
 每个版本包含以下两个 CPU variant：
@@ -106,7 +111,7 @@ Full 部署还需提前导入部署包说明中列出的 PostgreSQL、NATS、Min
 `readelf` 的 binutils；构建脚本会先生成两个内置 Agent 资源并验证其没有 libc 运行时依赖：
 
 ```bash
-SOURCE_DATE_EPOCH=0 AUTOFORGE_RELEASE_REVISION=local \
+SOURCE_DATE_EPOCH=0 AUTOFORGE_RELEASE_REVISION="$(git rev-parse HEAD)" \
   bash scripts/release/build-backend-image.sh 0.2.2 amd64 dist/release
 
 SOURCE_DATE_EPOCH=0 \

@@ -29,6 +29,11 @@ FROM dependencies AS builder
 
 COPY . .
 
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=1970-01-01T00:00:00Z
+RUN --network=none node scripts/release/write-platform-build-info.mjs "${VERSION}" "${REVISION}" "${CREATED}"
+
 RUN --network=none pnpm install --offline --frozen-lockfile
 RUN --network=none pnpm rebuild better-sqlite3
 RUN --network=none pnpm --filter @autoforge/web build

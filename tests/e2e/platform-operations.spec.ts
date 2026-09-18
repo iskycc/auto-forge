@@ -9,6 +9,7 @@ import {
   expandAdministrationGroup,
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { systemDiagnosticSchema } from "@autoforge/contracts";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
 const SQLITE_FIXTURE_BATCH_ID = "e2e-storage-batch";
@@ -21,6 +22,93 @@ const STORAGE_DEPENDENCY_ASSET_ID = "e2e-storage-dependency-delete";
 const STORAGE_DEPENDENCY_FILE_NAME = "e2e-removable-dependencies.tar.gz";
 const STORAGE_DEPENDENCY_ASSET_ID_SECOND = "e2e-storage-dependency-delete-second";
 const STORAGE_DEPENDENCY_FILE_NAME_SECOND = "e2e-removable-dependencies-second.tar.gz";
+
+test("system diagnostics shows build provenance, bounded snapshots and resilient desktop layouts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=diagnostics");
+  const report = page.getByRole("region", { name: "平台诊断报告", exact: true });
+  await expect(report).toHaveAttribute("aria-busy", "false");
+  const response = await page.request.get("/api/v1/settings/diagnostics");
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("private, no-store");
+  const diagnostic = systemDiagnosticSchema.parse(await response.json());
+  expect(diagnostic.version).not.toBe("0.2.2");
+  expect(diagnostic.build?.kind).toMatch(/release|development/);
+  expect(diagnostic.runtime?.cpuCapacity).toBeGreaterThan(0);
+  expect(diagnostic.runtime?.memoryCapacityBytes).toBeGreaterThan(0);
+  expect(diagnostic.queueDepth).toBeDefined();
+  expect(diagnostic.database.ready).toBe(true);
+  await expect(page.getByRole("region", { name: "节点与构建", exact: true })).toContainText(
+    diagnostic.runtime!.hostname,
+  );
+  const cached = await page.request.get("/api/v1/settings/diagnostics");
+  expect((await cached.json()).generatedAt).toBe(diagnostic.generatedAt);
+  for (const viewport of [
+    { width: 1536, height: 1024 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await captureDiagnosticUi(page, `diagnostics-normal-${viewport.width}`);
+    await page.getByRole("region", { name: "平台时间基准", exact: true }).scrollIntoViewIfNeeded();
+    // The fixed application header intentionally overlays scrolled content. Inspect its
+    // painted result in the viewport capture; the top-of-page guard already checks controls.
+    await captureDiagnosticUi(page, `diagnostics-details-${viewport.width}`, false);
+  }
+
+  const matchesDiagnostics = (url: URL) => url.pathname === "/api/v1/settings/diagnostics";
+  await page.route(matchesDiagnostics, (route) =>
+    route.fulfill({ status: 503, json: { error: { message: "模拟诊断请求暂时失败" } } }),
+  );
+  await page.getByRole("button", { name: "刷新诊断" }).click();
+  await expect(report.getByRole("alert")).toContainText("当前保留上次诊断结果");
+  await expect(page.getByRole("heading", { name: "资源与容量", exact: true })).toBeVisible();
+  await page.unroute(matchesDiagnostics);
+
+  const longError = "连接失败_" + "node-with-a-very-long-diagnostic-message_".repeat(18);
+  await page.route(matchesDiagnostics, (route) =>
+    route.fulfill({
+      json: {
+        ...diagnostic,
+        version: "1.17.999",
+        build: { kind: "release", revision: "a".repeat(40), createdAt: "2026-09-18T00:00:00.000Z" },
+        database: { ready: false, detail: longError, provider: "PostgreSQL", durationMs: 3000 },
+        dataDisk: undefined,
+        recentErrors: [
+          { timestamp: diagnostic.generatedAt, code: "DATABASE_UNAVAILABLE", summary: longError },
+        ],
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "刷新诊断" }).click();
+  await expect(report).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByRole("heading", { name: "部分检查不可用" })).toBeVisible();
+  await expect(page.locator(".diagnostic-summary")).toContainText("1.17.999");
+  await expect(page.getByText("平台数据卷容量读取失败。", { exact: true })).toBeVisible();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await captureDiagnosticUi(page, `diagnostics-degraded-${viewport.width}`);
+  }
+  await page.unroute(matchesDiagnostics);
+  await page.getByRole("button", { name: "刷新诊断" }).click();
+  await expect(report).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByText(longError, { exact: true })).toHaveCount(0);
+});
+
+async function captureDiagnosticUi(page: Page, name: string, fullPage = true): Promise<void> {
+  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!directory) return;
+  mkdirSync(directory, { recursive: true });
+  await page.screenshot({ path: resolve(directory, `${name}.png`), fullPage });
+}
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -159,7 +247,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     await expect(deadLetterPanel).toContainText("对象清理");
     await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
     await expect(deadLetterPanel).toContainText("模拟可恢复死信");
-    await deadLetterPanel.getByRole("button", { name: "重新投递全部" }).click();
+    await deadLetterPanel.getByRole("button", { name: "重新投递（最多 100 条）" }).click();
     await acceptSystemDialog(page, "重新投递死信任务", "重新投递");
     await expect(page.locator(".toast-card", { hasText: "已重新投递 1 个死信任务" })).toBeVisible();
     await expect(deadLetterPanel).toHaveCount(0);

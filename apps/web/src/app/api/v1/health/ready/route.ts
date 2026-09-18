@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function GET(): Promise<NextResponse> {
   try {
     const services = await getPlatformServices();
-    await services.catalog.getDashboardSummary();
+    await services.databaseReady();
     await services.objectStore.ready();
     await services.infrastructure.ready();
     return NextResponse.json({ status: "ready", mode: services.config.mode });
