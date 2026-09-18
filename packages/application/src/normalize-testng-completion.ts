@@ -1,16 +1,17 @@
 import type { CompletionResult } from "@autoforge/contracts";
-import { ADAPTER_FAILURE_RESULT_CODES, ADAPTER_SUCCESS_RESULT_CODES } from "@autoforge/domain";
+import { ADAPTER_SUCCESS_RESULT_CODES } from "@autoforge/domain";
 
 const LEGACY_SKIP_RESULTS = new Set(["TESTNG_ALL_SKIPPED", "TESTNG_SUCCEEDED_WITH_SKIPS"]);
 
 /** Older Runners may report skips as success; normalize before persistence and retry decisions. */
 export function normalizeTestNgCompletion(result: CompletionResult): CompletionResult {
   if (result.status === "cancelled" || result.status === "timed_out") return result;
+  // Correct failure reports retain their original classification and diagnostics,
+  // including legacy assertion codes and failures with only a partial TestNG report.
   if (
     result.status === "failed" &&
     result.resultCode !== "TESTNG_EXIT_NONZERO" &&
-    !ADAPTER_SUCCESS_RESULT_CODES.includes(result.resultCode ?? "") &&
-    !ADAPTER_FAILURE_RESULT_CODES.includes(result.resultCode ?? "")
+    !ADAPTER_SUCCESS_RESULT_CODES.includes(result.resultCode ?? "")
   )
     return result;
 

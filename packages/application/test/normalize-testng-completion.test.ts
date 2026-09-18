@@ -63,4 +63,26 @@ describe("authoritative TestNG completion", () => {
     };
     expect(normalizeTestNgCompletion(interrupted)).toBe(interrupted);
   });
+  it.each([
+    "TEST_ASSERTION_FAILED",
+    "TESTNG_ASSERTIONS_FAILED",
+    "TESTNG_CONFIGURATION_FAILED",
+    "TESTNG_SKIPPED",
+  ])("preserves a correctly failed Runner result (%s) and its diagnostic summary", (resultCode) => {
+    const reportedFailure: CompletionResult = {
+      ...result(1, 1, 1),
+      status: "failed",
+      resultCode,
+      summary: "Runner diagnostic with the original exception",
+    };
+    expect(normalizeTestNgCompletion(reportedFailure)).toBe(reportedFailure);
+  });
+  it.each(["TESTNG_EXIT_NONZERO", "TESTNG_SUCCEEDED_WITH_SKIPS"])(
+    "classifies failed %s from the structured report",
+    (resultCode) => {
+      expect(
+        normalizeTestNgCompletion({ ...result(0, 0, 1), status: "failed", resultCode }),
+      ).toMatchObject({ status: "failed", resultCode: "TESTNG_SKIPPED" });
+    },
+  );
 });

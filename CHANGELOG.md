@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.13 - 2026-09-18
+
+### Fixed
+
+- 修复 v1.17.12 完成结果校验对既有失败上报的兼容性回归：保留 Runner 已正确上报的失败码和诊断摘要，包括旧断言失败码 `TEST_ASSERTION_FAILED`，避免调度日志、失败分类和对接方看到被无故改写的原因。
+- 保留 Failed 或 Skipped 非零必须失败的规则；错误成功上报、旧跳过成功码与通用 TestNG 非零退出仍根据报告纠正，不影响 DDT CaseID 直传与按清单选择。
+
+### Database, deployment and compatibility
+
+- Lite/Full 共享修复，无数据库迁移、新配置、新依赖或协议变更。相对 v1.17.12 只需升级主平台；从 v1.17.11 及更早版本升级仍需同步升级 Runner，Adapter 随 Runner 更新。
+- v1.17.12 的已发布标签和附件保持不变，本版本以新标签交付修正。
+
+### Validation and known limitations
+
+- 新增回归测试先复现失败码与摘要被改写，再验证修复；49 项结果规范化、完成上报和结果分类测试通过。原浏览器验收继续严格检查旧断言失败码，未放宽断言或增加自动重试。
+- 原失败的完整 JAR 导入与执行页面 Playwright 场景通过，覆盖调度日志、失败后重跑及分析展示，并重新完成生产 Web 构建。
+- 标签源码、双架构构建与发布资产离线验收由 GitHub Actions 执行；历史终态记录不自动回填。
+
 ## 1.17.12 - 2026-09-18
 
 ### Added and fixed
