@@ -4,6 +4,25 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.15 - 2026-09-20
+
+### Changed and fixed
+
+- DDT 概览将“近 7 日新增”替换为当前项目、版本和阶段的“近 7 日执行”，展示每日执行次数、通过、不通过（含超时）、已终止、未完成及统计更新时间。按 UTC 执行创建日期统计，同一执行的重试不重复计数，排除普通用例和公开日志诊断重跑。
+- 执行统计沿用 Lite/Full 后台持久化快照和浏览器缓存，取消 DDT 概览定时轮询；进入页面或手动刷新读取已生成结果，不在 Web 请求内聚合执行明细。零执行日期补齐，回收记录去重，十万级数字保持可读。
+- 项目管理的成员搜索与分页控件移到“成员与角色”子 Tab 下方，切换“执行配置”或提交筛选时，Tab 栏位置保持固定。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、新配置、新依赖或 Runner Protocol 变更。从 v1.17.14 升级只需更新主平台；Full 同步升级所有平台节点及独立后台工作器，无需升级 Runner 或 Adapter。
+- DDT 概览新增 `execution` 统计字段，保留原 `timeline` 响应字段用于兼容。新版查询使用独立快照与浏览器缓存键，避免升级后复用旧创建统计。
+
+### Validation and known limitations
+
+- 26 项应用及真实 SQLite/PostgreSQL 测试通过，覆盖统计范围、日期边界、重试及回收去重、空数据、快照复用与后台更新；数据库、Web/server/worker 和测试类型检查、变更文件格式/lint 通过。
+- 两项 Playwright 回归及生产 Web 构建通过，验证页面不定时请求统计、子页签保持快照、手动刷新、成员筛选和 Tab 坐标稳定；已实际查看 1024×960、1536×960 的真实截图，无横向溢出。
+- 统计按后台快照展示，资源紧张时允许延迟；彻底清理回收站或执行记录后，对应数据不再参与后续统计。完整源码、双架构发布与离线验收由标签流水线执行。
+
 ## 1.17.14 - 2026-09-18
 
 ### Fixed

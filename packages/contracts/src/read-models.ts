@@ -94,7 +94,11 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
     tree: z.literal(true).optional(),
     filter: caseDirectoryFilterSchema.optional(),
   }),
-  scope.extend({ kind: z.literal("ddt_dashboard"), testStageId: identifier }),
+  scope.extend({
+    kind: z.literal("ddt_dashboard"),
+    testStageId: identifier,
+    statisticsVersion: z.literal(2).optional(),
+  }),
   page.extend({
     kind: z.literal("analysis_batches"),
     view: z.enum(["started", "available"]).default("started"),
@@ -190,6 +194,23 @@ export const caseDirectorySelectionPartSchema = z.object({
   outcomes: caseDirectoryPartSchema.shape.outcomes,
 });
 
+export const ddtExecutionStatisticsSchema = z.object({
+  generatedAt: z.iso.datetime(),
+  timeline: z
+    .array(
+      z.object({
+        date: z.iso.date(),
+        total: z.number().int().nonnegative(),
+        passed: z.number().int().nonnegative(),
+        failed: z.number().int().nonnegative(),
+        cancelled: z.number().int().nonnegative(),
+        pending: z.number().int().nonnegative(),
+      }),
+    )
+    .length(7),
+});
+export type DdtExecutionStatistics = z.infer<typeof ddtExecutionStatisticsSchema>;
+
 export const ddtDashboardSnapshotSchema = z.object({
   caseCount: z.number().int().nonnegative(),
   groupCount: z.number().int().nonnegative(),
@@ -199,6 +220,7 @@ export const ddtDashboardSnapshotSchema = z.object({
   updatedToday: z.number().int().nonnegative(),
   groups: z.array(z.object({ srNum: z.string(), count: z.number().int().nonnegative() })),
   timeline: z.array(z.object({ date: z.string(), count: z.number().int().nonnegative() })),
+  execution: ddtExecutionStatisticsSchema,
 });
 
 export const batchComparisonPartSchema = analyticsBatchComparisonSchema.shape.cases.max(250);

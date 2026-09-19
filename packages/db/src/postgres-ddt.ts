@@ -1,4 +1,10 @@
 import {
+  ddtExecutionStatistics,
+  ddtExecutionTimelineSql,
+  ddtExecutionWindow,
+  type DdtExecutionDayRow,
+} from "./ddt-dashboard";
+import {
   mapDdtExecutionClass,
   mapDdtRequirementCategory,
   type DdtRequirementCategoryRow,
@@ -626,11 +632,11 @@ export class PostgresDdtRepository implements DdtRepository {
     return result.rows.map((row) => ({ srNum: row.sr_num, count: Number(row.count) }));
   }
 
-  async dashboard(scope: DdtScope) {
+  async dashboard(scope: DdtScope, generatedAt = new Date().toISOString()) {
     await this.ready();
-    const today = new Date().toISOString();
-    const since = new Date(Date.now() - 6 * 86_400_000).toISOString();
-    const [counts, sourceCount, groups, timeline] = await Promise.all([
+    const today = generatedAt;
+    const since = `${ddtExecutionWindow(generatedAt)[0]}T00:00:00.000Z`;
+    const [counts, sourceCount, groups, timeline, executionRows] = await Promise.all([
       this.handle.pool.query<DashboardCountRow>(
         `SELECT COUNT(*)::text AS case_count,
                 COUNT(DISTINCT sr_num_normalized)::text AS group_count,
@@ -657,9 +663,14 @@ export class PostgresDdtRepository implements DdtRepository {
          GROUP BY LEFT(created_at, 10) ORDER BY date`,
         [...scopeValues(scope), since],
       ),
+      this.handle.pool.query<DdtExecutionDayRow>(
+        ddtExecutionTimelineSql((index) => `$${index}`),
+        [...scopeValues(scope), ...scopeValues(scope), scope.projectId, since, generatedAt],
+      ),
     ]);
     const row = counts.rows[0] ?? emptyDashboardCounts;
     return {
+      execution: ddtExecutionStatistics(generatedAt, executionRows.rows),
       caseCount: Number(row.case_count),
       groupCount: Number(row.group_count),
       sourceCount: Number(sourceCount.rows[0]?.value ?? 0),

@@ -19,6 +19,104 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+import type { DdtExecutionStatistics } from "@autoforge/contracts";
+
+test("DDT overview shows seven-day execution snapshots without periodic dashboard requests", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt");
+  const chart = page.getByRole("article", { name: "DDT 近 7 日执行统计" });
+  await expect(chart).toContainText("近 7 日暂无 DDT 执行记录", { timeout: 20_000 });
+  await expect(chart.locator(".ddt-execution-day")).toHaveCount(7);
+  await expect(chart.locator(".ddt-execution-updated time")).toHaveAttribute("datetime", /T/);
+  await expect(page.getByText("近 7 日新增", { exact: true })).toHaveCount(0);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-execution-empty-${width}`);
+  }
+
+  // Control result density for visual review; the real empty endpoint above and
+  // dual-database integration tests cover query generation and scope isolation.
+  const generatedAt = "2026-09-18T12:00:00.000Z";
+  const execution: DdtExecutionStatistics = {
+    generatedAt,
+    timeline: Array.from({ length: 7 }, (_, index) => ({
+      date: `2026-09-${12 + index}`,
+      total: 0,
+      passed: 0,
+      failed: 0,
+      cancelled: 0,
+      pending: 0,
+    })),
+  };
+  execution.timeline[0] = {
+    date: "2026-09-12",
+    total: 100000,
+    passed: 85000,
+    failed: 10000,
+    cancelled: 4000,
+    pending: 1000,
+  };
+  execution.timeline[3] = {
+    date: "2026-09-15",
+    total: 65000,
+    passed: 40000,
+    failed: 24000,
+    cancelled: 0,
+    pending: 1000,
+  };
+  execution.timeline[6] = {
+    date: "2026-09-18",
+    total: 20000,
+    passed: 0,
+    failed: 0,
+    cancelled: 0,
+    pending: 20000,
+  };
+  let dashboardRequests = 0;
+  await page.route("**/api/v1/ddt/dashboard?**", async (route) => {
+    dashboardRequests++;
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), execution } });
+  });
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(chart.locator(".ddt-execution-total")).toContainText("185,000");
+  await expect(chart.getByLabel("执行结果汇总")).toContainText("通过 125,000");
+  await expect(chart.getByLabel("执行结果汇总")).toContainText("不通过 34,000");
+  await expect(chart.locator(".ddt-execution-updated time")).toHaveAttribute(
+    "datetime",
+    generatedAt,
+  );
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-execution-populated-${width}`);
+  }
+  const requestsBeforeWaiting = dashboardRequests;
+  await page.clock.install();
+  await page.clock.fastForward(125_000);
+  await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+  expect(dashboardRequests).toBe(requestsBeforeWaiting);
+  await expect(chart.locator(".ddt-execution-updated time")).toHaveAttribute(
+    "datetime",
+    generatedAt,
+  );
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
+  await page.getByRole("tab", { name: "概览", exact: true }).click();
+  expect(dashboardRequests).toBe(requestsBeforeWaiting);
+  await page.clock.resume();
+  execution.generatedAt = "2026-09-18T12:02:00.000Z";
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(chart.locator(".ddt-execution-updated time")).toHaveAttribute(
+    "datetime",
+    execution.generatedAt,
+  );
+  expect(dashboardRequests).toBe(requestsBeforeWaiting + 1);
+});
 
 test("DDT import resolves duplicate column names before background import", async ({ page }) => {
   test.setTimeout(120_000);

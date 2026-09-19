@@ -16,6 +16,8 @@ import {
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
+import type { DdtExecutionStatistics } from "@autoforge/contracts";
+import { DdtExecutionChart } from "./ddt-execution-chart";
 import { DdtValueSearch } from "./ddt-value-search";
 import { DdtApiReference, type DdtScopeLabels } from "./ddt-api-reference";
 
@@ -63,6 +65,7 @@ type Dashboard = {
   updatedToday: number;
   groups: Array<{ srNum: string; count: number }>;
   timeline: Array<{ date: string; count: number }>;
+  execution?: DdtExecutionStatistics;
 };
 type ImportFile = {
   id: string;
@@ -267,6 +270,7 @@ export function DdtManagementWorkspace({
   const endpoint = useCallback(
     (path: string, extra?: URLSearchParams) => {
       const parameters = new URLSearchParams({ projectId, projectVersionId, testStageId });
+      if (path === "dashboard") parameters.set("statisticsVersion", "2");
       extra?.forEach((value, key) => parameters.append(key, value));
       return `/api/v1/ddt/${path}?${parameters.toString()}`;
     },
@@ -391,28 +395,6 @@ export function DdtManagementWorkspace({
     }, 2_000);
     return () => window.clearInterval(timer);
   }, [imports, isIndependentTab, load]);
-
-  useEffect(() => {
-    if (isIndependentTab) return;
-    const controller = new AbortController();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void requestJson<Dashboard>(endpoint("dashboard"), {
-        cache: "reload",
-        signal: controller.signal,
-      })
-        .then((next) => {
-          if (!controller.signal.aborted) setDashboard(next);
-        })
-        .catch((error: unknown) => {
-          if (!controller.signal.aborted) setError(messageOf(error));
-        });
-    }, 60_000);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
-    };
-  }, [endpoint, isIndependentTab]);
 
   const openCase = useCallback(
     async (caseId: string) => {
@@ -615,7 +597,6 @@ export function DdtManagementWorkspace({
   const activeCaseIndex = cases.findIndex((item) => item.caseId === activeCaseId);
   const previousCase = cases[activeCaseIndex - 1];
   const nextCase = activeCaseIndex >= 0 ? cases[activeCaseIndex + 1] : undefined;
-  const maximumTimeline = Math.max(...dashboard.timeline.map((point) => point.count), 1);
 
   return (
     <section className="ddt-workspace" aria-label="DDT 管理工作台">
@@ -745,29 +726,7 @@ export function DdtManagementWorkspace({
             <Metric label="今日更新" value={dashboard.updatedToday} hint="含导入覆盖与人工编辑" />
           </div>
           <div className="ddt-chart-grid">
-            <article className="card ddt-chart-card">
-              <header>
-                <div>
-                  <strong>近 7 日新增</strong>
-                  <span>按用例创建日期</span>
-                </div>
-              </header>
-              <div className="ddt-bars" aria-label="近 7 日新增用例柱形图">
-                {dashboard.timeline.length ? (
-                  dashboard.timeline.map((point) => (
-                    <div key={point.date}>
-                      <span
-                        style={{ height: `${Math.max((point.count / maximumTimeline) * 100, 7)}%` }}
-                        title={`${point.date}: ${point.count}`}
-                      />
-                      <small>{point.date.slice(5)}</small>
-                    </div>
-                  ))
-                ) : (
-                  <p className="ddt-chart-empty">还没有导入数据</p>
-                )}
-              </div>
-            </article>
+            <DdtExecutionChart execution={dashboard.execution} />
             <article className="card ddt-chart-card">
               <header>
                 <div>

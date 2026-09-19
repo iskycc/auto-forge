@@ -49,7 +49,7 @@ export class DdtCaseService {
   }
 
   dashboard(scope: DdtScope) {
-    return this.repository.dashboard(scope);
+    return this.repository.dashboard(scope, this.clock.now().toISOString());
   }
 
   executionClasses(scope: DdtScope, query?: string, limit = 50) {

@@ -70,24 +70,6 @@ export default async function ProjectMembershipsPage({
           </p>
         </div>
       </header>
-      {activeSection === "members" ? (
-        <form action="/settings/projects" className="settings-user-filter" method="get">
-          <input name="section" type="hidden" value="members" />
-          <label>
-            搜索项目成员
-            <Input name="query" defaultValue={parameters.query ?? ""} maxLength={120} />
-          </label>
-          <Button type="submit">筛选</Button>
-          {memberPage.nextCursor ? (
-            <Link
-              className="button button-secondary"
-              href={`/settings/projects?${new URLSearchParams({ section: "members", query: parameters.query ?? "", cursor: memberPage.nextCursor })}`}
-            >
-              下一页成员
-            </Link>
-          ) : null}
-        </form>
-      ) : null}
       <SectionTabs
         label="项目管理模块"
         tabs={[
@@ -107,6 +89,24 @@ export default async function ProjectMembershipsPage({
           },
         ]}
       />
+      {activeSection === "members" ? (
+        <form action="/settings/projects" className="settings-user-filter" method="get">
+          <input name="section" type="hidden" value="members" />
+          <label>
+            搜索项目成员
+            <Input name="query" defaultValue={parameters.query ?? ""} maxLength={120} />
+          </label>
+          <Button type="submit">筛选</Button>
+          {memberPage.nextCursor ? (
+            <Link
+              className="button button-secondary"
+              href={`/settings/projects?${new URLSearchParams({ section: "members", query: parameters.query ?? "", cursor: memberPage.nextCursor })}`}
+            >
+              下一页成员
+            </Link>
+          ) : null}
+        </form>
+      ) : null}
       {activeSection === "members" ? (
         <ProjectMembershipManager
           canManage={canManage}

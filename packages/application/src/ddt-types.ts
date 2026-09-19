@@ -3,6 +3,7 @@ import type {
   DdtImportColumnConflict,
   DdtImportJobStatus,
   DdtSearchFilter,
+  DdtExecutionStatistics,
 } from "@autoforge/contracts";
 import type {
   DdtCase,
@@ -48,6 +49,7 @@ export type DdtDashboard = {
   updatedToday: number;
   groups: DdtGroupSummary[];
   timeline: Array<{ date: string; count: number }>;
+  execution: DdtExecutionStatistics;
 };
 
 export type DdtDeletedCase = DdtScope & {

@@ -75,7 +75,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       return NextResponse.json(
         await readReadyModel(
           services.readModels,
-          { kind: "ddt_dashboard", ...scope },
+          { kind: "ddt_dashboard", ...scope, statisticsVersion: 2 },
           request.signal,
         ),
       );

@@ -80,6 +80,63 @@ test("administration entries are exposed as four-character first-level navigatio
   await expect(page.getByRole("heading", { name: "用例任务", exact: true })).toBeVisible();
 });
 
+test("project member filters stay below stable section tabs", async ({ page }) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const memberName = uniqueName("tab-member");
+  const member = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: {
+      username: memberName,
+      displayName: memberName,
+      password: "UiMember!12345",
+      forcePasswordChange: false,
+    },
+  });
+  expect(member.status).toBe(201);
+  const assigned = await browserJson(page, `/api/v1/users/${member.body.id}/project-roles`, {
+    method: "POST",
+    body: { projectId: scope.projectId, roleId: "00000000-0000-7000-8100-000000000005" },
+  });
+  expect(assigned.status).toBe(204);
+  const tabs = page.getByRole("navigation", { name: "项目管理模块" });
+  const memberSearch = page.getByLabel("搜索项目成员");
+
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.goto("/settings/projects?section=members");
+    await expect(memberSearch).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: memberName })).toBeVisible();
+    await expectUiIntegrity(page);
+    await captureUi(page, "project-members-search", width);
+    const initialTabs = (await tabs.boundingBox())!;
+    const searchBox = (await memberSearch.boundingBox())!;
+    expect(searchBox.y).toBeGreaterThanOrEqual(initialTabs.y + initialTabs.height);
+
+    await tabs.getByRole("link", { name: "执行配置", exact: true }).click();
+    await expect(tabs.getByRole("link", { name: "执行配置", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(memberSearch).toHaveCount(0);
+    await expectUiIntegrity(page);
+    const executionTabs = (await tabs.boundingBox())!;
+    expect(Math.abs(executionTabs.y - initialTabs.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(executionTabs.x - initialTabs.x)).toBeLessThanOrEqual(1);
+    await captureUi(page, "project-execution-tabs", width);
+
+    await tabs.getByRole("link", { name: "成员与角色", exact: true }).click();
+    await expect(memberSearch).toBeVisible();
+    expect(Math.abs((await tabs.boundingBox())!.y - initialTabs.y)).toBeLessThanOrEqual(1);
+    await memberSearch.fill("no-matching-project-member");
+    await page.getByRole("button", { name: "筛选", exact: true }).click();
+    await expect(page).toHaveURL(/section=members&query=no-matching-project-member/);
+    await expect(page.getByRole("row").filter({ hasText: memberName })).toHaveCount(0);
+    await expect(memberSearch).toHaveValue("no-matching-project-member");
+    expect(Math.abs((await tabs.boundingBox())!.y - initialTabs.y)).toBeLessThanOrEqual(1);
+  }
+});
+
 test("audit findings use bounded, localized, and unambiguous controls", async ({ page }) => {
   await ensureAdministrator(page);
 

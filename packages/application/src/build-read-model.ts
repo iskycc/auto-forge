@@ -196,7 +196,9 @@ export function createReadModelBuilder(dependencies: {
           }),
         );
       case "ddt_dashboard":
-        return ddtDashboardSnapshotSchema.parse(await dependencies.ddt.dashboard(query));
+        return ddtDashboardSnapshotSchema.parse(
+          await dependencies.ddt.dashboard(query, dependencies.clock.now().toISOString()),
+        );
       case "case_directory":
         return buildCaseDirectorySnapshot(
           dependencies.catalog,

@@ -1,4 +1,10 @@
 import {
+  ddtExecutionStatistics,
+  ddtExecutionTimelineSql,
+  ddtExecutionWindow,
+  type DdtExecutionDayRow,
+} from "./ddt-dashboard";
+import {
   mapDdtExecutionClass,
   mapDdtRequirementCategory,
   type DdtRequirementCategoryRow,
@@ -699,7 +705,7 @@ export class SqliteDdtRepository implements DdtRepository {
     }>;
   }
 
-  async dashboard(scope: DdtScope) {
+  async dashboard(scope: DdtScope, generatedAt = new Date().toISOString()) {
     const parameters = scopeParameters(scope);
     const counts = this.handle.client
       .prepare(
@@ -712,7 +718,7 @@ export class SqliteDdtRepository implements DdtRepository {
          FROM ddt_cases
          WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
       )
-      .get(new Date().toISOString(), new Date().toISOString(), ...parameters) as {
+      .get(generatedAt, generatedAt, ...parameters) as {
       caseCount: number;
       groupCount: number;
       journeyCount: number | null;
@@ -738,11 +744,21 @@ export class SqliteDdtRepository implements DdtRepository {
            AND created_at >= ?
          GROUP BY substr(created_at, 1, 10) ORDER BY date`,
       )
-      .all(...parameters, new Date(Date.now() - 6 * 86_400_000).toISOString()) as Array<{
+      .all(...parameters, `${ddtExecutionWindow(generatedAt)[0]}T00:00:00.000Z`) as Array<{
       date: string;
       count: number;
     }>;
+    const executionRows = this.handle.client
+      .prepare(ddtExecutionTimelineSql(() => "?"))
+      .all(
+        ...parameters,
+        ...parameters,
+        scope.projectId,
+        `${ddtExecutionWindow(generatedAt)[0]}T00:00:00.000Z`,
+        generatedAt,
+      ) as DdtExecutionDayRow[];
     return {
+      execution: ddtExecutionStatistics(generatedAt, executionRows),
       caseCount: counts.caseCount,
       groupCount: counts.groupCount,
       sourceCount,
