@@ -1,10 +1,15 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
+
 import type {
   RunnerInstallationProfileRecord,
   RunnerInstallationProfileRepository,
 } from "@autoforge/application";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
-import type { SqliteDatabaseHandle } from "./database";
 import { runnerInstallationProfiles } from "./schema";
 
 export class SqliteRunnerInstallationProfileRepository implements RunnerInstallationProfileRepository {
@@ -57,24 +62,26 @@ export class SqliteRunnerInstallationProfileRepository implements RunnerInstalla
   }
 
   async upsert(record: RunnerInstallationProfileRecord): Promise<RunnerInstallationProfileRecord> {
-    const row = this.handle.db
-      .insert(runnerInstallationProfiles)
-      .values(record)
-      .onConflictDoUpdate({
-        target: runnerInstallationProfiles.id,
-        set: {
-          runnerId: record.runnerId ?? null,
-          runnerName: record.runnerName,
-          connectionEncrypted: record.connectionEncrypted,
-          expectedHostKeySha256: record.expectedHostKeySha256,
-          installationMode: record.installationMode,
-          runAsRoot: record.runAsRoot,
-          dataDirectory: record.dataDirectory ?? null,
-          updatedAt: record.updatedAt,
-        },
-      })
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(runnerInstallationProfiles)
+        .values(record)
+        .onConflictDoUpdate({
+          target: runnerInstallationProfiles.id,
+          set: {
+            runnerId: record.runnerId ?? null,
+            runnerName: record.runnerName,
+            connectionEncrypted: record.connectionEncrypted,
+            expectedHostKeySha256: record.expectedHostKeySha256,
+            installationMode: record.installationMode,
+            runAsRoot: record.runAsRoot,
+            dataDirectory: record.dataDirectory ?? null,
+            updatedAt: record.updatedAt,
+          },
+        })
+        .returning()
+        .get(),
+    );
     return mapProfile(row);
   }
 
@@ -83,28 +90,26 @@ export class SqliteRunnerInstallationProfileRepository implements RunnerInstalla
     runnerId: string;
     updatedAt: string;
   }): Promise<void> {
-    this.handle.client
-      .transaction(() => {
-        const pending = this.handle.db
-          .select({ id: runnerInstallationProfiles.id })
-          .from(runnerInstallationProfiles)
-          .where(
-            and(
-              eq(runnerInstallationProfiles.runnerName, input.runnerName),
-              isNull(runnerInstallationProfiles.runnerId),
-            ),
-          )
-          .orderBy(desc(runnerInstallationProfiles.updatedAt))
-          .limit(1)
-          .get();
-        if (!pending) return;
-        this.handle.db
-          .update(runnerInstallationProfiles)
-          .set({ runnerId: input.runnerId, updatedAt: input.updatedAt })
-          .where(eq(runnerInstallationProfiles.id, pending.id))
-          .run();
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const pending = this.handle.db
+        .select({ id: runnerInstallationProfiles.id })
+        .from(runnerInstallationProfiles)
+        .where(
+          and(
+            eq(runnerInstallationProfiles.runnerName, input.runnerName),
+            isNull(runnerInstallationProfiles.runnerId),
+          ),
+        )
+        .orderBy(desc(runnerInstallationProfiles.updatedAt))
+        .limit(1)
+        .get();
+      if (!pending) return;
+      this.handle.db
+        .update(runnerInstallationProfiles)
+        .set({ runnerId: input.runnerId, updatedAt: input.updatedAt })
+        .where(eq(runnerInstallationProfiles.id, pending.id))
+        .run();
+    });
   }
 }
 

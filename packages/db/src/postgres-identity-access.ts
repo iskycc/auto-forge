@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type {
   AuditListPage,
   CompleteLdapLoginRecord,
@@ -405,10 +406,12 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     recordedAt: string,
   ): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      `UPDATE users SET failed_login_attempts = $1, locked_until = $2,
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE users SET failed_login_attempts = $1, locked_until = $2,
        updated_at = $3, version = version + 1 WHERE id = $4`,
-      [failedAttempts, lockedUntil ?? null, recordedAt, userId],
+        [failedAttempts, lockedUntil ?? null, recordedAt, userId],
+      ),
     );
   }
 
@@ -496,40 +499,48 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async renewSession(input: Parameters<IdentityAccessRepository["renewSession"]>[0]) {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `UPDATE user_sessions SET last_seen_at=$1,expires_at=$2
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE user_sessions SET last_seen_at=$1,expires_at=$2
        WHERE id=$3 AND revoked_at IS NULL AND expires_at>$1`,
-      [input.refreshedAt, input.expiresAt, input.sessionId],
+        [input.refreshedAt, input.expiresAt, input.sessionId],
+      ),
     );
     return result.rowCount === 1;
   }
 
   async revokeSession(sessionId: string, revokedAt: string): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      "UPDATE user_sessions SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL",
-      [revokedAt, sessionId],
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        "UPDATE user_sessions SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL",
+        [revokedAt, sessionId],
+      ),
     );
   }
 
   async revokeUserSessions(userId: string, revokedAt: string): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      "UPDATE user_sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL",
-      [revokedAt, userId],
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        "UPDATE user_sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL",
+        [revokedAt, userId],
+      ),
     );
   }
 
   async revokeUserSessionsForRole(roleId: string, revokedAt: string): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      `UPDATE user_sessions SET revoked_at = $1
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE user_sessions SET revoked_at = $1
        WHERE revoked_at IS NULL AND user_id IN (
          SELECT user_id FROM user_system_roles WHERE role_id = $2
          UNION
          SELECT user_id FROM project_role_bindings WHERE role_id = $2
        )`,
-      [revokedAt, roleId],
+        [revokedAt, roleId],
+      ),
     );
   }
 
@@ -662,12 +673,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     updatedAt: string,
   ): Promise<User> {
     await this.ready();
-    const result = await this.handle.pool.query<UserDatabaseRow>(
-      `UPDATE users SET password_hash = $1, password_updated_at = $2,
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<UserDatabaseRow>(
+        `UPDATE users SET password_hash = $1, password_updated_at = $2,
        force_password_change = $3, failed_login_attempts = 0, locked_until = NULL,
        updated_at = $2, version = version + 1
        WHERE id = $4 AND source = 'local' RETURNING *`,
-      [passwordHash, updatedAt, forcePasswordChange, userId],
+        [passwordHash, updatedAt, forcePasswordChange, userId],
+      ),
     );
     if (!result.rows[0]) throw new DomainError("USER_NOT_FOUND", "指定本地用户不存在。");
     return mapUserRow(result.rows[0]);
@@ -700,19 +713,21 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     createdAt: string;
   }): Promise<Role> {
     await this.ready();
-    const result = await this.handle.pool.query<RoleDatabaseRow>(
-      `INSERT INTO roles
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<RoleDatabaseRow>(
+        `INSERT INTO roles
        (id, role_key, name, description, scope, built_in, permissions_json, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, $7) RETURNING *`,
-      [
-        input.id,
-        input.key,
-        input.name,
-        input.description,
-        input.scope,
-        JSON.stringify(input.permissions),
-        input.createdAt,
-      ],
+        [
+          input.id,
+          input.key,
+          input.name,
+          input.description,
+          input.scope,
+          JSON.stringify(input.permissions),
+          input.createdAt,
+        ],
+      ),
     );
     return mapRoleRow(requiredRow(result.rows[0], "PostgreSQL did not return role."));
   }
@@ -730,31 +745,35 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     const current = await this.findRole(input.id);
     if (!current || current.builtIn)
       throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
-    const result = await this.handle.pool.query<RoleDatabaseRow>(
-      `UPDATE roles SET name = $1, description = $2, scope = $3,
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<RoleDatabaseRow>(
+        `UPDATE roles SET name = $1, description = $2, scope = $3,
        permissions_json = $4, active = $5, updated_at = $6
        WHERE id = $7 AND built_in = FALSE RETURNING *`,
-      [
-        input.name ?? current.name,
-        input.description ?? current.description,
-        input.scope ?? current.scope,
-        JSON.stringify(input.permissions ?? current.permissions),
-        input.active ?? current.active,
-        input.updatedAt,
-        input.id,
-      ],
+        [
+          input.name ?? current.name,
+          input.description ?? current.description,
+          input.scope ?? current.scope,
+          JSON.stringify(input.permissions ?? current.permissions),
+          input.active ?? current.active,
+          input.updatedAt,
+          input.id,
+        ],
+      ),
     );
     return mapRoleRow(requiredRow(result.rows[0], "PostgreSQL did not return role."));
   }
 
   async deleteRole(roleId: string): Promise<boolean> {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `DELETE FROM roles r WHERE r.id = $1 AND r.built_in = FALSE
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `DELETE FROM roles r WHERE r.id = $1 AND r.built_in = FALSE
        AND NOT EXISTS (SELECT 1 FROM user_system_roles b WHERE b.role_id = r.id)
        AND NOT EXISTS (SELECT 1 FROM project_role_bindings b WHERE b.role_id = r.id)
        RETURNING id`,
-      [roleId],
+        [roleId],
+      ),
     );
     return Boolean(result.rowCount);
   }
@@ -766,12 +785,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     assignedAt: string,
   ): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      `INSERT INTO user_system_roles (user_id, role_id, source, assigned_at, assigned_by)
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO user_system_roles (user_id, role_id, source, assigned_at, assigned_by)
        VALUES ($1, $2, 'manual', $3, $4)
        ON CONFLICT (user_id, role_id) DO UPDATE SET
          source = 'manual', assigned_at = EXCLUDED.assigned_at, assigned_by = EXCLUDED.assigned_by`,
-      [userId, roleId, assignedAt, actorId],
+        [userId, roleId, assignedAt, actorId],
+      ),
     );
   }
 
@@ -783,13 +804,15 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     assignedAt: string;
   }): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      `INSERT INTO project_role_bindings
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO project_role_bindings
        (user_id, project_id, role_id, source, assigned_at, assigned_by)
        VALUES ($1, $2, $3, 'manual', $4, $5)
        ON CONFLICT (user_id, project_id, role_id) DO UPDATE SET
          source = 'manual', assigned_at = EXCLUDED.assigned_at, assigned_by = EXCLUDED.assigned_by`,
-      [input.userId, input.projectId, input.roleId, input.assignedAt, input.actorId],
+        [input.userId, input.projectId, input.roleId, input.assignedAt, input.actorId],
+      ),
     );
   }
 
@@ -807,9 +830,11 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async removeProjectRole(userId: string, projectId: string, roleId: string): Promise<boolean> {
     await this.ready();
-    const result = await this.handle.pool.query(
-      "DELETE FROM project_role_bindings WHERE user_id = $1 AND project_id = $2 AND role_id = $3",
-      [userId, projectId, roleId],
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        "DELETE FROM project_role_bindings WHERE user_id = $1 AND project_id = $2 AND role_id = $3",
+        [userId, projectId, roleId],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -865,19 +890,23 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     createdAt: string;
   }): Promise<Project> {
     await this.ready();
-    const result = await this.handle.pool.query<ProjectDatabaseRow>(
-      `INSERT INTO projects (id, name, slug, is_default, archived, owner_user_id, created_at, updated_at)
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<ProjectDatabaseRow>(
+        `INSERT INTO projects (id, name, slug, is_default, archived, owner_user_id, created_at, updated_at)
        VALUES ($1, $2, $3, FALSE, FALSE, $4, $5, $5) RETURNING *`,
-      [input.id, input.name, input.slug, input.ownerUserId ?? null, input.createdAt],
+        [input.id, input.name, input.slug, input.ownerUserId ?? null, input.createdAt],
+      ),
     );
     return mapProjectRow(requiredRow(result.rows[0], "PostgreSQL did not return project."));
   }
 
   async archiveProject(projectId: string, archivedAt: string): Promise<Project> {
     await this.ready();
-    const result = await this.handle.pool.query<ProjectDatabaseRow>(
-      `UPDATE projects SET archived = TRUE, updated_at = $1 WHERE id = $2 RETURNING *`,
-      [archivedAt, projectId],
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<ProjectDatabaseRow>(
+        `UPDATE projects SET archived = TRUE, updated_at = $1 WHERE id = $2 RETURNING *`,
+        [archivedAt, projectId],
+      ),
     );
     if (!result.rows[0]) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
     return mapProjectRow(result.rows[0]);
@@ -889,9 +918,11 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     updatedAt: string;
   }): Promise<Project> {
     await this.ready();
-    const result = await this.handle.pool.query<ProjectDatabaseRow>(
-      `UPDATE projects SET owner_user_id = $1, updated_at = $2 WHERE id = $3 RETURNING *`,
-      [input.ownerUserId, input.updatedAt, input.projectId],
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<ProjectDatabaseRow>(
+        `UPDATE projects SET owner_user_id = $1, updated_at = $2 WHERE id = $3 RETURNING *`,
+        [input.ownerUserId, input.updatedAt, input.projectId],
+      ),
     );
     if (!result.rows[0]) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
     return mapProjectRow(result.rows[0]);
@@ -978,8 +1009,9 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   ): Promise<StoredLdapConfiguration> {
     await this.ready();
     const transportMode = ldapTransportMode(input.url);
-    const result = await this.handle.pool.query<LdapDatabaseRow>(
-      `INSERT INTO ldap_configurations (
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<LdapDatabaseRow>(
+        `INSERT INTO ldap_configurations (
          id, enabled, urls_json, tls_mode, ca_pem, verify_tls_certificate,
          connect_timeout_ms, operation_timeout_ms,
          page_size, maximum_users, synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
@@ -1013,35 +1045,36 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
          updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by,
          version = ldap_configurations.version + 1
        RETURNING *`,
-      [
-        input.enabled,
-        JSON.stringify(input.url ? [input.url] : []),
-        transportMode === "ldaps" ? "ldaps" : "starttls",
-        null,
-        input.tlsRejectUnauthorized,
-        input.connectTimeoutMs,
-        input.connectTimeoutMs,
-        500,
-        5_000,
-        0,
-        input.bindDn,
-        input.bindPasswordEncrypted ?? null,
-        input.userBaseDn,
-        input.userFilter,
-        "uid",
-        "uid",
-        input.displayNameAttribute,
-        input.mailAttribute,
-        input.groupSearchBase || null,
-        input.groupSearchFilter || null,
-        input.groupAttribute || "memberOf",
-        input.groupAttribute,
-        input.groupNameAttribute,
-        input.defaultRole,
-        transportMode,
-        input.updatedAt,
-        input.updatedBy,
-      ],
+        [
+          input.enabled,
+          JSON.stringify(input.url ? [input.url] : []),
+          transportMode === "ldaps" ? "ldaps" : "starttls",
+          null,
+          input.tlsRejectUnauthorized,
+          input.connectTimeoutMs,
+          input.connectTimeoutMs,
+          500,
+          5_000,
+          0,
+          input.bindDn,
+          input.bindPasswordEncrypted ?? null,
+          input.userBaseDn,
+          input.userFilter,
+          "uid",
+          "uid",
+          input.displayNameAttribute,
+          input.mailAttribute,
+          input.groupSearchBase || null,
+          input.groupSearchFilter || null,
+          input.groupAttribute || "memberOf",
+          input.groupAttribute,
+          input.groupNameAttribute,
+          input.defaultRole,
+          transportMode,
+          input.updatedAt,
+          input.updatedBy,
+        ],
+      ),
     );
     return mapLdapRow(requiredRow(result.rows[0], "PostgreSQL did not return LDAP config."));
   }
@@ -1074,7 +1107,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async appendAudit(event: AuditEvent): Promise<void> {
     await this.ready();
-    await this.insertAudit(this.handle.pool, event);
+    await retryPostgresWrite(() => this.insertAudit(this.handle.pool, event));
   }
 
   private async insertAudit(client: Pick<PoolClient, "query">, event: AuditEvent): Promise<void> {
@@ -1178,18 +1211,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   }
 
   private async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await work(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    return runPostgresTransaction(this.handle, work);
   }
 }
 

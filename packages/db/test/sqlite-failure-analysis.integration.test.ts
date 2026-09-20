@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { createSqliteDatabase } from "../src/database";
 import { SqliteFailureAnalysisRepository } from "../src/sqlite-failure-analysis";
 import { failureAnalysisContract, type FailureAnalysisHarness } from "./failure-analysis.contract";
+import { SqliteWriterContention } from "./sqlite-writer-contention";
 
 const PROJECT_ID = "00000000-0000-7000-8000-000000000001";
 const PROJECT_VERSION_ID = "analysis-version";
@@ -156,8 +157,9 @@ failureAnalysisContract("SQLite failure analysis", async (): Promise<FailureAnal
                'failed','TESTNG_RESULT','Assertion active',?,?)`,
     )
     .run(RECORDED_AT, RECORDED_AT);
+  const contention = new SqliteWriterContention(handle);
   return {
-    repository: new SqliteFailureAnalysisRepository(handle),
+    repository: contention.wrap(new SqliteFailureAnalysisRepository(handle)),
     projectId: PROJECT_ID,
     projectVersionId: PROJECT_VERSION_ID,
     batchId,
@@ -207,6 +209,7 @@ failureAnalysisContract("SQLite failure analysis", async (): Promise<FailureAnal
       return rerunAttemptId;
     },
     async dispose() {
+      await contention.close();
       handle.close();
       await rm(directory, { recursive: true, force: true });
     },

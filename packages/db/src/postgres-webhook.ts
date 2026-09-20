@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { WebhookRepository } from "@autoforge/application";
 import {
   DomainError,
@@ -83,24 +84,26 @@ export class PostgresWebhookRepository implements WebhookRepository {
   async createConfiguration(input: Parameters<WebhookRepository["createConfiguration"]>[0]) {
     await this.handle.ready;
     try {
-      await this.handle.pool.query(
-        `INSERT INTO webhook_configurations
+      await retryPostgresWrite(() =>
+        this.handle.pool.query(
+          `INSERT INTO webhook_configurations
           (id, project_id, name, normalized_name, description, target_url, method,
            body_template, enabled, enabled_at, revision, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $11)`,
-        [
-          input.id,
-          input.projectId,
-          input.name,
-          input.normalizedName,
-          input.description,
-          input.targetUrl,
-          input.method,
-          input.bodyTemplate ?? null,
-          input.enabled,
-          input.enabled ? input.recordedAt : null,
-          input.recordedAt,
-        ],
+          [
+            input.id,
+            input.projectId,
+            input.name,
+            input.normalizedName,
+            input.description,
+            input.targetUrl,
+            input.method,
+            input.bodyTemplate ?? null,
+            input.enabled,
+            input.enabled ? input.recordedAt : null,
+            input.recordedAt,
+          ],
+        ),
       );
     } catch (error) {
       throw mapConfigurationWriteError(error);
@@ -112,12 +115,9 @@ export class PostgresWebhookRepository implements WebhookRepository {
 
   async updateConfiguration(input: Parameters<WebhookRepository["updateConfiguration"]>[0]) {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       const current = await findConfiguration(client, input.webhookId, input.projectIds, true);
       if (!current || current.revision !== input.expectedRevision) {
-        await client.query("ROLLBACK");
         return null;
       }
       const enabled = input.enabled ?? current.enabled;
@@ -147,24 +147,16 @@ export class PostgresWebhookRepository implements WebhookRepository {
         throw mapConfigurationWriteError(error);
       }
       const row = await findConfiguration(client, input.webhookId);
-      await client.query("COMMIT");
+
       return row ? mapConfiguration(row) : null;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async deleteConfiguration(input: Parameters<WebhookRepository["deleteConfiguration"]>[0]) {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       const current = await findConfiguration(client, input.webhookId, input.projectIds, true);
       if (!current) {
-        await client.query("ROLLBACK");
         return false;
       }
       await client.query("DELETE FROM case_suite_webhook_bindings WHERE webhook_id = $1", [
@@ -177,14 +169,9 @@ export class PostgresWebhookRepository implements WebhookRepository {
          WHERE id = $2 AND deleted_at IS NULL`,
         [input.deletedAt, input.webhookId],
       );
-      await client.query("COMMIT");
+
       return (result.rowCount ?? 0) > 0;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listSuiteBindings(suiteId: string, projectIds?: readonly string[]): Promise<string[]> {
@@ -210,9 +197,7 @@ export class PostgresWebhookRepository implements WebhookRepository {
     await this.handle.ready;
     if (input.projectIds?.length === 0)
       throw new DomainError("CASE_SUITE_NOT_FOUND", "任务不存在。");
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       const parameters: unknown[] = [input.suiteId];
       const projectClause = input.projectIds
         ? ` AND project_id = ANY($${parameters.push(input.projectIds)}::text[])`
@@ -253,14 +238,9 @@ export class PostgresWebhookRepository implements WebhookRepository {
           );
         }
       }
-      await client.query("COMMIT");
+
       return webhookIds;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listDeliveries(projectId: string, limit: number): Promise<WebhookDelivery[]> {
@@ -280,8 +260,9 @@ export class PostgresWebhookRepository implements WebhookRepository {
 
   async materializeDeliveries(input: Parameters<WebhookRepository["materializeDeliveries"]>[0]) {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `INSERT INTO webhook_deliveries
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO webhook_deliveries
         (id, webhook_id, batch_id, webhook_name, request_url, request_method,
          request_body_template, status, attempts, available_at, created_at, updated_at)
        SELECT 'webhook-delivery-' || w.id || '-' || b.id, w.id, b.id, w.name, w.target_url,
@@ -301,16 +282,15 @@ export class PostgresWebhookRepository implements WebhookRepository {
          AND w.enabled_at IS NOT NULL AND w.enabled_at <= e.recorded_at
        ORDER BY e.recorded_at, e.id, w.id LIMIT $2
        ON CONFLICT (webhook_id, batch_id) DO NOTHING`,
-      [input.now, input.limit],
+        [input.now, input.limit],
+      ),
     );
     return result.rowCount ?? 0;
   }
 
   async claimDueDeliveries(input: Parameters<WebhookRepository["claimDueDeliveries"]>[0]) {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       const result = await client.query<{ id: string }>(
         `WITH candidates AS (
            SELECT id FROM webhook_deliveries
@@ -331,43 +311,42 @@ export class PostgresWebhookRepository implements WebhookRepository {
         if (!claim) throw new Error(`Webhook delivery ${row.id} could not be loaded after claim.`);
         claims.push(mapClaim(claim, input.owner));
       }
-      await client.query("COMMIT");
+
       return claims;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async completeDelivery(input: Parameters<WebhookRepository["completeDelivery"]>[0]) {
     await this.handle.ready;
-    await this.handle.pool.query(
-      `UPDATE webhook_deliveries
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE webhook_deliveries
        SET status = 'succeeded', response_status = $1, error_message = NULL,
            lease_owner = NULL, lease_expires_at = NULL, delivered_at = $2, updated_at = $2
        WHERE id = $3 AND status = 'delivering' AND lease_owner = $4`,
-      [input.responseStatus, input.completedAt, input.deliveryId, input.owner],
+        [input.responseStatus, input.completedAt, input.deliveryId, input.owner],
+      ),
     );
   }
 
   async failDelivery(input: Parameters<WebhookRepository["failDelivery"]>[0]) {
     await this.handle.ready;
-    await this.handle.pool.query(
-      `UPDATE webhook_deliveries
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE webhook_deliveries
        SET status = $1, available_at = $2, response_status = $3, error_message = $4,
            lease_owner = NULL, lease_expires_at = NULL, updated_at = $5
        WHERE id = $6 AND status = 'delivering' AND lease_owner = $7`,
-      [
-        input.retryAt ? "pending" : "failed",
-        input.retryAt ?? input.failedAt,
-        input.responseStatus ?? null,
-        input.errorMessage,
-        input.failedAt,
-        input.deliveryId,
-        input.owner,
-      ],
+        [
+          input.retryAt ? "pending" : "failed",
+          input.retryAt ?? input.failedAt,
+          input.responseStatus ?? null,
+          input.errorMessage,
+          input.failedAt,
+          input.deliveryId,
+          input.owner,
+        ],
+      ),
     );
   }
 }

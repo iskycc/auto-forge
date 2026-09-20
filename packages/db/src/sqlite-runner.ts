@@ -1,12 +1,12 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
 import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/application";
 import type { Runner } from "@autoforge/domain";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
-import {
-  retrySqliteLockContention,
-  runSqliteWriteTransaction,
-  type SqliteDatabaseHandle,
-} from "./database";
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
 import { mapStoredRunner } from "./runner-mapper";
 import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
@@ -15,7 +15,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async register(record: RegisterRunnerRecord): Promise<Runner | null> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const use = this.handle.db
         .insert(runnerBootstrapUses)
         .values({ tokenHash: record.bootstrapTokenHash, usedAt: record.recordedAt })
@@ -185,16 +185,18 @@ export class SqliteRunnerRepository implements RunnerRepository {
     state: "active" | "draining" | "disabled";
     updatedAt: string;
   }): Promise<Runner> {
-    const row = this.handle.db
-      .update(runners)
-      .set({
-        disabled: input.state === "disabled",
-        draining: input.state === "draining",
-        updatedAt: input.updatedAt,
-      })
-      .where(eq(runners.id, input.runnerId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(runners)
+        .set({
+          disabled: input.state === "disabled",
+          draining: input.state === "draining",
+          updatedAt: input.updatedAt,
+        })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
@@ -205,19 +207,21 @@ export class SqliteRunnerRepository implements RunnerRepository {
     previousCredentialValidUntil: string;
     rotatedAt: string;
   }): Promise<Runner> {
-    const row = this.handle.db
-      .update(runners)
-      .set({
-        previousCredentialHash: sql`${runners.credentialHash}`,
-        previousCredentialValidUntil: input.previousCredentialValidUntil,
-        credentialHash: input.credentialHash,
-        credentialVersion: sql`${runners.credentialVersion} + 1`,
-        credentialRotationRequestedAt: null,
-        updatedAt: input.rotatedAt,
-      })
-      .where(eq(runners.id, input.runnerId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(runners)
+        .set({
+          previousCredentialHash: sql`${runners.credentialHash}`,
+          previousCredentialValidUntil: input.previousCredentialValidUntil,
+          credentialHash: input.credentialHash,
+          credentialVersion: sql`${runners.credentialVersion} + 1`,
+          credentialRotationRequestedAt: null,
+          updatedAt: input.rotatedAt,
+        })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
@@ -226,35 +230,39 @@ export class SqliteRunnerRepository implements RunnerRepository {
     runnerId: string;
     requestedAt: string;
   }): Promise<Runner> {
-    const row = this.handle.db
-      .update(runners)
-      .set({ credentialRotationRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
-      .where(eq(runners.id, input.runnerId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(runners)
+        .set({ credentialRotationRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
 
   async revokeCredential(input: { runnerId: string; revokedAt: string }): Promise<Runner> {
-    const row = this.handle.db
-      .update(runners)
-      .set({
-        credentialRevokedAt: input.revokedAt,
-        credentialRotationRequestedAt: null,
-        previousCredentialHash: null,
-        previousCredentialValidUntil: null,
-        updatedAt: input.revokedAt,
-      })
-      .where(eq(runners.id, input.runnerId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(runners)
+        .set({
+          credentialRevokedAt: input.revokedAt,
+          credentialRotationRequestedAt: null,
+          previousCredentialHash: null,
+          previousCredentialValidUntil: null,
+          updatedAt: input.revokedAt,
+        })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
 
   async deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const row = this.handle.db
         .update(runners)
         .set({
@@ -284,23 +292,25 @@ export class SqliteRunnerRepository implements RunnerRepository {
   }
 
   async purge(input: { runnerId: string; purgedAt: string }): Promise<Runner> {
-    const row = this.handle.db
-      .update(runners)
-      .set({
-        purgedAt: input.purgedAt,
-        // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
-        // 保证任何真实凭据哈希都无法再匹配该记录。
-        credentialHash: `purged:${input.runnerId}`,
-        previousCredentialHash: null,
-        previousCredentialValidUntil: null,
-        credentialRotationRequestedAt: null,
-        labelsJson: "[]",
-        capabilitiesJson: "[]",
-        updatedAt: input.purgedAt,
-      })
-      .where(eq(runners.id, input.runnerId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(runners)
+        .set({
+          purgedAt: input.purgedAt,
+          // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
+          // 保证任何真实凭据哈希都无法再匹配该记录。
+          credentialHash: `purged:${input.runnerId}`,
+          previousCredentialHash: null,
+          previousCredentialValidUntil: null,
+          credentialRotationRequestedAt: null,
+          labelsJson: "[]",
+          capabilitiesJson: "[]",
+          updatedAt: input.purgedAt,
+        })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }

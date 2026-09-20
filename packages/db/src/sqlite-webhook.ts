@@ -1,3 +1,9 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
+
 import type { WebhookRepository } from "@autoforge/application";
 import {
   DomainError,
@@ -5,8 +11,6 @@ import {
   type WebhookDelivery,
   type WebhookDispatchClaim,
 } from "@autoforge/domain";
-
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 
 type ConfigurationRow = {
   id: string;
@@ -83,27 +87,29 @@ export class SqliteWebhookRepository implements WebhookRepository {
 
   async createConfiguration(input: Parameters<WebhookRepository["createConfiguration"]>[0]) {
     try {
-      this.handle.client
-        .prepare(
-          `INSERT INTO webhook_configurations
+      await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(
+            `INSERT INTO webhook_configurations
             (id, project_id, name, normalized_name, description, target_url, method,
              body_template, enabled, enabled_at, revision, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-        )
-        .run(
-          input.id,
-          input.projectId,
-          input.name,
-          input.normalizedName,
-          input.description,
-          input.targetUrl,
-          input.method,
-          input.bodyTemplate ?? null,
-          input.enabled ? 1 : 0,
-          input.enabled ? input.recordedAt : null,
-          input.recordedAt,
-          input.recordedAt,
-        );
+          )
+          .run(
+            input.id,
+            input.projectId,
+            input.name,
+            input.normalizedName,
+            input.description,
+            input.targetUrl,
+            input.method,
+            input.bodyTemplate ?? null,
+            input.enabled ? 1 : 0,
+            input.enabled ? input.recordedAt : null,
+            input.recordedAt,
+            input.recordedAt,
+          ),
+      );
     } catch (error) {
       throw mapConfigurationWriteError(error);
     }
@@ -111,7 +117,7 @@ export class SqliteWebhookRepository implements WebhookRepository {
   }
 
   async updateConfiguration(input: Parameters<WebhookRepository["updateConfiguration"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const current = this.findConfigurationRow(input.webhookId, input.projectIds);
       if (!current || current.revision !== input.expectedRevision) return null;
       const enabled = input.enabled ?? current.enabled === 1;
@@ -151,7 +157,7 @@ export class SqliteWebhookRepository implements WebhookRepository {
   }
 
   async deleteConfiguration(input: Parameters<WebhookRepository["deleteConfiguration"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       if (!this.findConfigurationRow(input.webhookId, input.projectIds)) return false;
       this.handle.client
         .prepare("DELETE FROM case_suite_webhook_bindings WHERE webhook_id = ?")
@@ -185,7 +191,7 @@ export class SqliteWebhookRepository implements WebhookRepository {
   }
 
   async replaceSuiteBindings(input: Parameters<WebhookRepository["replaceSuiteBindings"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const projectClause = sqliteProjectClause(input.projectIds, "project_id");
       if (projectClause.denied) throw new DomainError("CASE_SUITE_NOT_FOUND", "任务不存在。");
       const suite = this.handle.client
@@ -267,13 +273,17 @@ export class SqliteWebhookRepository implements WebhookRepository {
         .get(input.now, input.limit)
     )
       return 0;
-    return this.handle.client
-      .prepare(
-        `INSERT OR IGNORE INTO webhook_deliveries
+    return (
+      await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO webhook_deliveries
       (id, webhook_id, batch_id, webhook_name, request_url, request_method,
            request_body_template, status, attempts, available_at, created_at, updated_at) ${candidateSql}`,
+          )
+          .run(input.now, input.limit),
       )
-      .run(input.now, input.limit).changes;
+    ).changes;
   }
 
   async claimDueDeliveries(input: Parameters<WebhookRepository["claimDueDeliveries"]>[0]) {
@@ -283,7 +293,7 @@ export class SqliteWebhookRepository implements WebhookRepository {
               OR (status = 'delivering' AND lease_expires_at <= ?)
            ORDER BY available_at, created_at, id LIMIT ?`;
     if (!this.handle.client.prepare(candidateSql).get(input.now, input.now, 1)) return [];
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const candidates = this.handle.client
         .prepare(candidateSql)
         .all(input.now, input.now, input.limit) as Array<{ id: string }>;
@@ -316,39 +326,43 @@ export class SqliteWebhookRepository implements WebhookRepository {
   }
 
   async completeDelivery(input: Parameters<WebhookRepository["completeDelivery"]>[0]) {
-    this.handle.client
-      .prepare(
-        `UPDATE webhook_deliveries
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE webhook_deliveries
          SET status = 'succeeded', response_status = ?, error_message = NULL,
              lease_owner = NULL, lease_expires_at = NULL, delivered_at = ?, updated_at = ?
          WHERE id = ? AND status = 'delivering' AND lease_owner = ?`,
-      )
-      .run(
-        input.responseStatus,
-        input.completedAt,
-        input.completedAt,
-        input.deliveryId,
-        input.owner,
-      );
+        )
+        .run(
+          input.responseStatus,
+          input.completedAt,
+          input.completedAt,
+          input.deliveryId,
+          input.owner,
+        ),
+    );
   }
 
   async failDelivery(input: Parameters<WebhookRepository["failDelivery"]>[0]) {
-    this.handle.client
-      .prepare(
-        `UPDATE webhook_deliveries
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE webhook_deliveries
          SET status = ?, available_at = ?, response_status = ?, error_message = ?,
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND status = 'delivering' AND lease_owner = ?`,
-      )
-      .run(
-        input.retryAt ? "pending" : "failed",
-        input.retryAt ?? input.failedAt,
-        input.responseStatus ?? null,
-        input.errorMessage,
-        input.failedAt,
-        input.deliveryId,
-        input.owner,
-      );
+        )
+        .run(
+          input.retryAt ? "pending" : "failed",
+          input.retryAt ?? input.failedAt,
+          input.responseStatus ?? null,
+          input.errorMessage,
+          input.failedAt,
+          input.deliveryId,
+          input.owner,
+        ),
+    );
   }
 
   private findConfigurationRow(webhookId: string, projectIds?: readonly string[]) {

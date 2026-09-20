@@ -1,3 +1,4 @@
+import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type {
   RunnerInstallationProfileRecord,
   RunnerInstallationProfileRepository,
@@ -65,23 +66,25 @@ export class PostgresRunnerInstallationProfileRepository implements RunnerInstal
 
   async upsert(record: RunnerInstallationProfileRecord): Promise<RunnerInstallationProfileRecord> {
     await this.ready();
-    const [row] = await this.handle.db
-      .insert(pgRunnerInstallationProfiles)
-      .values(record)
-      .onConflictDoUpdate({
-        target: pgRunnerInstallationProfiles.id,
-        set: {
-          runnerId: record.runnerId ?? null,
-          runnerName: record.runnerName,
-          connectionEncrypted: record.connectionEncrypted,
-          expectedHostKeySha256: record.expectedHostKeySha256,
-          installationMode: record.installationMode,
-          runAsRoot: record.runAsRoot,
-          dataDirectory: record.dataDirectory ?? null,
-          updatedAt: record.updatedAt,
-        },
-      })
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .insert(pgRunnerInstallationProfiles)
+        .values(record)
+        .onConflictDoUpdate({
+          target: pgRunnerInstallationProfiles.id,
+          set: {
+            runnerId: record.runnerId ?? null,
+            runnerName: record.runnerName,
+            connectionEncrypted: record.connectionEncrypted,
+            expectedHostKeySha256: record.expectedHostKeySha256,
+            installationMode: record.installationMode,
+            runAsRoot: record.runAsRoot,
+            dataDirectory: record.dataDirectory ?? null,
+            updatedAt: record.updatedAt,
+          },
+        })
+        .returning(),
+    );
     if (!row) throw new Error("PostgreSQL did not return the Runner installation profile.");
     return mapProfile(row);
   }
@@ -92,7 +95,7 @@ export class PostgresRunnerInstallationProfileRepository implements RunnerInstal
     updatedAt: string;
   }): Promise<void> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [pending] = await transaction
         .select({ id: pgRunnerInstallationProfiles.id })
         .from(pgRunnerInstallationProfiles)

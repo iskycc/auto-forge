@@ -32,10 +32,9 @@ export function createPostgresDatabase(options: {
     // 预热连接在突发到来前保持可用：空闲 2 分钟内不回收，覆盖执行批次
     // “导入-创建-领取-完成”各阶段之间的短暂间歇。
     idleTimeoutMillis: 120_000,
-    ...(options.statementTimeoutMs !== undefined
-      ? { statement_timeout: options.statementTimeoutMs }
-      : {}),
-    ...(options.lockTimeoutMs !== undefined ? { lock_timeout: options.lockTimeoutMs } : {}),
+    // A stalled writer must not occupy all request connections indefinitely.
+    statement_timeout: options.statementTimeoutMs ?? 30_000,
+    lock_timeout: options.lockTimeoutMs ?? 1_000,
   });
   // Time samples must not wait behind business transactions, even with poolMax=1.
   // This pool connects lazily and is used only by the platform clock adapter.
@@ -93,6 +92,8 @@ async function runPostgresMigrations(pool: Pool, migrationsFolder: string): Prom
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Schema upgrades run before readiness and may rebuild large indexes; request budgets do not apply.
+    await client.query("SET LOCAL statement_timeout = 0; SET LOCAL lock_timeout = 0");
     await client.query("SELECT pg_advisory_xact_lock(hashtext('autoforge_migrations'))");
     await client.query(`
       CREATE TABLE IF NOT EXISTS _autoforge_migrations (

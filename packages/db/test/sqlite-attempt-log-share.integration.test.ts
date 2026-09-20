@@ -1,3 +1,4 @@
+import { SqliteWriterContention } from "./sqlite-writer-contention";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -83,10 +84,12 @@ async function createHandle() {
 
 function sqliteHarness(): Promise<AttemptLogShareHarness> {
   return createHandle().then((handle): AttemptLogShareHarness => {
+    const contention = new SqliteWriterContention(handle);
     return {
-      repository: new SqliteAttemptLogShareRepository(handle),
+      repository: contention.wrap(new SqliteAttemptLogShareRepository(handle)),
       fixture: { batchId: "batch-1", attemptIds: ["attempt-1", "attempt-2"] },
       async dispose() {
+        await contention.close();
         handle.close();
       },
     };

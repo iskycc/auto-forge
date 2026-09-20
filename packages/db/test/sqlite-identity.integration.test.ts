@@ -1,3 +1,4 @@
+import { SqliteWriterContention } from "./sqlite-writer-contention";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -178,7 +179,8 @@ describe("SQLite identity access", () => {
       databasePath: resolve(directory, "identity.db"),
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
     });
-    const repository = new SqliteIdentityAccessRepository(handle);
+    const contention = new SqliteWriterContention(handle);
+    const repository = contention.wrap(new SqliteIdentityAccessRepository(handle));
     const clock = new MutableClock("2026-08-09T00:00:00.000Z");
     const ids = new SequentialIds();
     const tokens = new TestTokens();
@@ -501,6 +503,7 @@ describe("SQLite identity access", () => {
         code: "AUTH_REQUIRED",
       });
     } finally {
+      await contention.close();
       handle.close();
     }
   });
@@ -512,7 +515,8 @@ describe("SQLite identity access", () => {
       databasePath: resolve(directory, "identity.db"),
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
     });
-    const repository = new SqliteIdentityAccessRepository(handle);
+    const contention = new SqliteWriterContention(handle);
+    const repository = contention.wrap(new SqliteIdentityAccessRepository(handle));
     const clock = new MutableClock("2026-08-09T00:00:00.000Z");
     const service = new IdentityAccessService(
       repository,
@@ -650,6 +654,7 @@ describe("SQLite identity access", () => {
         ),
       ).rejects.toMatchObject({ code: "PROJECT_OWNER_ROLE_REQUIRED" });
     } finally {
+      await contention.close();
       handle.close();
     }
   });

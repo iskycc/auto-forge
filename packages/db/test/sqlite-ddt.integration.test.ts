@@ -1,3 +1,4 @@
+import { SqliteWriterContention } from "./sqlite-writer-contention";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import {
   expectDdtSrExecutionContract,
@@ -208,8 +209,9 @@ describe("SQLite DDT repository", () => {
       databasePath: resolve(directory, "autoforge.db"),
       migrationsFolder: resolve("packages/db/drizzle/sqlite"),
     });
-    const structures = new SqliteProjectStructureRepository(handle);
-    const repository = new SqliteDdtRepository(handle);
+    const contention = new SqliteWriterContention(handle);
+    const structures = contention.wrap(new SqliteProjectStructureRepository(handle));
+    const repository = contention.wrap(new SqliteDdtRepository(handle));
     try {
       await structures.createVersion({
         id: "ddt-version",
@@ -502,6 +504,7 @@ describe("SQLite DDT repository", () => {
         { caseId: "ORDER-2", outcome: "inserted" },
       ]);
     } finally {
+      await contention.close();
       handle.close();
     }
   });

@@ -1,7 +1,12 @@
+import {
+  retrySqliteLockContention,
+  retrySqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
+
 import type { RoundRecoveryClaim, RoundRecoveryRepository } from "@autoforge/application";
 import type { RunBatchStatus } from "@autoforge/domain";
 
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import { queueDeadlineAfter } from "./execution-queue-timing";
 
 type RecoveryRow = {
@@ -28,7 +33,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
   ): Promise<RoundRecoveryClaim[]> {
     // 空闲轮询只读，避免每 5 秒用无效 BEGIN IMMEDIATE 与 Lite 工作器争抢单写者。
     if (input.limit <= 0 || this.dueRows(input.now, 1).length === 0) return [];
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const rows = this.dueRows(input.now, input.limit);
       const claims: RoundRecoveryClaim[] = [];
       for (const row of rows) {
@@ -74,9 +79,10 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
   async markPolling(
     input: Parameters<RoundRecoveryRepository["markPolling"]>[0],
   ): Promise<boolean> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE run_batch_round_recoveries
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
          SET status = 'polling', source_build_number = ?,
              rebuild_number = COALESCE(?, rebuild_number),
              rebuild_url = COALESCE(?, rebuild_url),
@@ -85,52 +91,55 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ?
            AND status IN ('pending','polling')`,
-      )
-      .run(
-        input.sourceBuildNumber,
-        input.rebuildNumber ?? null,
-        input.rebuildUrl ?? null,
-        input.startedAt ?? null,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      );
+        )
+        .run(
+          input.sourceBuildNumber,
+          input.rebuildNumber ?? null,
+          input.rebuildUrl ?? null,
+          input.startedAt ?? null,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ),
+    );
     return result.changes === 1;
   }
 
   async markWaiting(
     input: Parameters<RoundRecoveryRepository["markWaiting"]>[0],
   ): Promise<boolean> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE run_batch_round_recoveries
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
          SET status = 'waiting', rebuild_number = ?, rebuild_url = ?,
              started_at = COALESCE(?, started_at), finished_at = ?, build_result = ?,
              available_at = ?, poll_failure_count = 0, error_message = NULL,
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'polling'`,
-      )
-      .run(
-        input.rebuildNumber,
-        input.rebuildUrl,
-        input.startedAt ?? null,
-        input.finishedAt ?? null,
-        input.buildResult,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      );
+        )
+        .run(
+          input.rebuildNumber,
+          input.rebuildUrl,
+          input.startedAt ?? null,
+          input.finishedAt ?? null,
+          input.buildResult,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ),
+    );
     return result.changes === 1;
   }
 
   async completeWaitingStep(
     input: Parameters<RoundRecoveryRepository["completeWaitingStep"]>[0],
   ): ReturnType<RoundRecoveryRepository["completeWaitingStep"]> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const updated = this.handle.client
         .prepare(
           `UPDATE run_batch_round_recoveries
@@ -191,61 +200,67 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
   async completeRoundRelease(
     input: Parameters<RoundRecoveryRepository["completeRoundRelease"]>[0],
   ): Promise<boolean> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE run_batch_round_recoveries
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
          SET status = 'succeeded', error_message = NULL, lease_owner = NULL,
              lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'releasing'`,
-      )
-      .run(input.updatedAt, input.batchId, input.ruleId, input.workerId);
+        )
+        .run(input.updatedAt, input.batchId, input.ruleId, input.workerId),
+    );
     return result.changes === 1;
   }
 
   async retryRoundRelease(
     input: Parameters<RoundRecoveryRepository["retryRoundRelease"]>[0],
   ): Promise<boolean> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE run_batch_round_recoveries
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
          SET error_message = ?, available_at = ?, lease_owner = NULL,
              lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'releasing'`,
-      )
-      .run(
-        input.errorMessage,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      );
+        )
+        .run(
+          input.errorMessage,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ),
+    );
     return result.changes === 1;
   }
 
   async deferPollingFailure(
     input: Parameters<RoundRecoveryRepository["deferPollingFailure"]>[0],
   ): Promise<boolean> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE run_batch_round_recoveries
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
          SET poll_failure_count = poll_failure_count + 1, error_message = ?, available_at = ?,
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'polling'`,
-      )
-      .run(
-        input.errorMessage,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      );
+        )
+        .run(
+          input.errorMessage,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ),
+    );
     return result.changes === 1;
   }
 
   async fail(input: Parameters<RoundRecoveryRepository["fail"]>[0]): Promise<boolean> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const recovery = this.handle.client
         .prepare(
           `UPDATE run_batch_round_recoveries

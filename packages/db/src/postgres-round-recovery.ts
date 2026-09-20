@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { RoundRecoveryClaim, RoundRecoveryRepository } from "@autoforge/application";
 import type { RunBatchStatus } from "@autoforge/domain";
 import type { PoolClient } from "pg";
@@ -62,8 +63,9 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     input: Parameters<RoundRecoveryRepository["markPolling"]>[0],
   ): Promise<boolean> {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `UPDATE run_batch_round_recoveries
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE run_batch_round_recoveries
        SET status = 'polling', source_build_number = $1,
            rebuild_number = COALESCE($2, rebuild_number),
            rebuild_url = COALESCE($3, rebuild_url),
@@ -72,17 +74,18 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
            lease_owner = NULL, lease_expires_at = NULL, updated_at = $6
        WHERE batch_id = $7 AND rule_id = $8 AND lease_owner = $9
          AND status IN ('pending','polling')`,
-      [
-        input.sourceBuildNumber,
-        input.rebuildNumber ?? null,
-        input.rebuildUrl ?? null,
-        input.startedAt ?? null,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      ],
+        [
+          input.sourceBuildNumber,
+          input.rebuildNumber ?? null,
+          input.rebuildUrl ?? null,
+          input.startedAt ?? null,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -91,25 +94,27 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     input: Parameters<RoundRecoveryRepository["markWaiting"]>[0],
   ): Promise<boolean> {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `UPDATE run_batch_round_recoveries
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE run_batch_round_recoveries
        SET status = 'waiting', rebuild_number = $1, rebuild_url = $2,
            started_at = COALESCE($3, started_at), finished_at = $4, build_result = $5,
            available_at = $6, poll_failure_count = 0, error_message = NULL,
            lease_owner = NULL, lease_expires_at = NULL, updated_at = $7
        WHERE batch_id = $8 AND rule_id = $9 AND lease_owner = $10 AND status = 'polling'`,
-      [
-        input.rebuildNumber,
-        input.rebuildUrl,
-        input.startedAt ?? null,
-        input.finishedAt ?? null,
-        input.buildResult,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      ],
+        [
+          input.rebuildNumber,
+          input.rebuildUrl,
+          input.startedAt ?? null,
+          input.finishedAt ?? null,
+          input.buildResult,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -178,12 +183,14 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     input: Parameters<RoundRecoveryRepository["completeRoundRelease"]>[0],
   ): Promise<boolean> {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `UPDATE run_batch_round_recoveries
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE run_batch_round_recoveries
        SET status = 'succeeded', error_message = NULL, lease_owner = NULL,
            lease_expires_at = NULL, updated_at = $1
        WHERE batch_id = $2 AND rule_id = $3 AND lease_owner = $4 AND status = 'releasing'`,
-      [input.updatedAt, input.batchId, input.ruleId, input.workerId],
+        [input.updatedAt, input.batchId, input.ruleId, input.workerId],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -192,19 +199,21 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     input: Parameters<RoundRecoveryRepository["retryRoundRelease"]>[0],
   ): Promise<boolean> {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `UPDATE run_batch_round_recoveries
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE run_batch_round_recoveries
        SET error_message = $1, available_at = $2, lease_owner = NULL,
            lease_expires_at = NULL, updated_at = $3
        WHERE batch_id = $4 AND rule_id = $5 AND lease_owner = $6 AND status = 'releasing'`,
-      [
-        input.errorMessage,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      ],
+        [
+          input.errorMessage,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -213,19 +222,21 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     input: Parameters<RoundRecoveryRepository["deferPollingFailure"]>[0],
   ): Promise<boolean> {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `UPDATE run_batch_round_recoveries
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE run_batch_round_recoveries
        SET poll_failure_count = poll_failure_count + 1, error_message = $1, available_at = $2,
            lease_owner = NULL, lease_expires_at = NULL, updated_at = $3
        WHERE batch_id = $4 AND rule_id = $5 AND lease_owner = $6 AND status = 'polling'`,
-      [
-        input.errorMessage,
-        input.availableAt,
-        input.updatedAt,
-        input.batchId,
-        input.ruleId,
-        input.workerId,
-      ],
+        [
+          input.errorMessage,
+          input.availableAt,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -298,18 +309,7 @@ async function withTransaction<T>(
   handle: PostgresDatabaseHandle,
   operation: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await handle.pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await operation(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return runPostgresTransaction(handle, operation);
 }
 
 function toClaim(row: RecoveryRow): RoundRecoveryClaim {

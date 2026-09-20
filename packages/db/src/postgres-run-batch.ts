@@ -1,3 +1,4 @@
+import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
@@ -182,7 +183,7 @@ export class PostgresRunBatchRepository
           record.policy?.projectVersionId,
         );
     let createdRow: typeof pgRunBatches.$inferSelect | undefined;
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       // 展示编号在同一插入语句内取序列（nextval 不参与回滚，空洞不影响展示），
       // RETURNING 直接带回完整批次行，创建完成后无需再往返读取摘要。
       const insertedRows = await transaction
@@ -1063,7 +1064,7 @@ export class PostgresRunBatchRepository
     input: Parameters<RunBatchRepository["activateRetryConcurrency"]>[0],
   ): Promise<RetryConcurrencyState | null> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [batch] = await transaction
         .select({ currentRound: pgRunBatches.currentRound, policyJson: pgRunBatches.policyJson })
         .from(pgRunBatches)
@@ -1099,7 +1100,7 @@ export class PostgresRunBatchRepository
     input: Parameters<RunBatchRepository["recordRoundConcurrency"]>[0],
   ): Promise<"created" | "existing"> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [existing] = await transaction
         .select({
           batchId: pgRunBatchRoundConcurrencies.batchId,
@@ -1234,7 +1235,7 @@ export class PostgresRunBatchRepository
     input: ReserveSchedulingAssignmentsInput,
   ): Promise<ReserveAssignmentsOutcome> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [lockedBatch] = await transaction
         .select({
           projectId: pgRunBatches.projectId,
@@ -1606,7 +1607,7 @@ export class PostgresRunBatchRepository
   ): Promise<void> {
     if (events.length === 0) return;
     await this.ready();
-    await insertSchedulingEventDrafts(this.handle.pool, events);
+    await retryPostgresWrite(() => insertSchedulingEventDrafts(this.handle.pool, events));
   }
 
   async listSchedulingEvents(

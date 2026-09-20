@@ -1,8 +1,13 @@
+import {
+  retrySqliteLockContention,
+  retrySqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
+
 import type { RunnerGroupRepository } from "@autoforge/application";
 import type { RunnerGroup } from "@autoforge/domain";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
-import type { SqliteDatabaseHandle } from "./database";
 import { runnerGroupMembers, runnerGroups, runners } from "./schema";
 
 export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
@@ -34,25 +39,23 @@ export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
     runnerIds: string[];
     recordedAt: string;
   }): Promise<RunnerGroup> {
-    return this.handle.client
-      .transaction(() => {
-        const row = this.handle.db
-          .insert(runnerGroups)
-          .values({
-            id: input.id,
-            name: input.name,
-            normalizedName: input.normalizedName,
-            description: input.description,
-            revision: 1,
-            createdAt: input.recordedAt,
-            updatedAt: input.recordedAt,
-          })
-          .returning()
-          .get();
-        this.replaceMembers(input.id, input.runnerIds, input.recordedAt);
-        return this.mapGroup(row);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const row = this.handle.db
+        .insert(runnerGroups)
+        .values({
+          id: input.id,
+          name: input.name,
+          normalizedName: input.normalizedName,
+          description: input.description,
+          revision: 1,
+          createdAt: input.recordedAt,
+          updatedAt: input.recordedAt,
+        })
+        .returning()
+        .get();
+      this.replaceMembers(input.id, input.runnerIds, input.recordedAt);
+      return this.mapGroup(row);
+    });
   }
 
   async update(input: {
@@ -64,35 +67,37 @@ export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
     runnerIds?: string[];
     updatedAt: string;
   }): Promise<RunnerGroup | null> {
-    return this.handle.client
-      .transaction(() => {
-        const row = this.handle.db
-          .update(runnerGroups)
-          .set({
-            ...(input.name !== undefined ? { name: input.name } : {}),
-            ...(input.normalizedName !== undefined ? { normalizedName: input.normalizedName } : {}),
-            ...(input.description !== undefined ? { description: input.description } : {}),
-            revision: sql`${runnerGroups.revision} + 1`,
-            updatedAt: input.updatedAt,
-          })
-          .where(
-            and(
-              eq(runnerGroups.id, input.groupId),
-              eq(runnerGroups.revision, input.expectedRevision),
-            ),
-          )
-          .returning()
-          .get();
-        if (!row) return null;
-        if (input.runnerIds) this.replaceMembers(input.groupId, input.runnerIds, input.updatedAt);
-        return this.mapGroup(row);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const row = this.handle.db
+        .update(runnerGroups)
+        .set({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.normalizedName !== undefined ? { normalizedName: input.normalizedName } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          revision: sql`${runnerGroups.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(runnerGroups.id, input.groupId),
+            eq(runnerGroups.revision, input.expectedRevision),
+          ),
+        )
+        .returning()
+        .get();
+      if (!row) return null;
+      if (input.runnerIds) this.replaceMembers(input.groupId, input.runnerIds, input.updatedAt);
+      return this.mapGroup(row);
+    });
   }
 
   async delete(groupId: string): Promise<boolean> {
     return (
-      this.handle.db.delete(runnerGroups).where(eq(runnerGroups.id, groupId)).run().changes > 0
+      (
+        await retrySqliteLockContention(() =>
+          this.handle.db.delete(runnerGroups).where(eq(runnerGroups.id, groupId)).run(),
+        )
+      ).changes > 0
     );
   }
 

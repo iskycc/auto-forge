@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type {
   CreateProjectRuntimeAssetRecord,
   CreateProjectVersionRecord,
@@ -152,11 +153,13 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
   async createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion> {
     await this.handle.ready;
     try {
-      const result = await this.handle.pool.query<VersionRow>(
-        `INSERT INTO project_versions
+      const result = await retryPostgresWrite(() =>
+        this.handle.pool.query<VersionRow>(
+          `INSERT INTO project_versions
          (id, project_id, name, normalized_name, status, revision, created_at, updated_at)
          VALUES ($1, $2, $3, $4, 'active', 1, $5, $5) RETURNING *`,
-        [record.id, record.projectId, record.name, record.normalizedName, record.recordedAt],
+          [record.id, record.projectId, record.name, record.normalizedName, record.recordedAt],
+        ),
       );
       return mapVersion(required(result.rows[0], "Created project version could not be read."));
     } catch (error) {
@@ -203,25 +206,27 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
   async createRuntimeAsset(record: CreateProjectRuntimeAssetRecord): Promise<ProjectRuntimeAsset> {
     await this.handle.ready;
     try {
-      const result = await this.handle.pool.query<AssetRow>(
-        `INSERT INTO project_runtime_assets
+      const result = await retryPostgresWrite(() =>
+        this.handle.pool.query<AssetRow>(
+          `INSERT INTO project_runtime_assets
          (id, project_id, kind, source_type, file_name, url, object_key, sha256, size_bytes,
           archive_format, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-        [
-          record.id,
-          record.projectId,
-          record.kind,
-          record.sourceType,
-          record.fileName,
-          record.url ?? null,
-          record.objectKey ?? null,
-          record.sha256,
-          record.sizeBytes,
-          record.archiveFormat,
-          record.createdBy ?? null,
-          record.createdAt,
-        ],
+          [
+            record.id,
+            record.projectId,
+            record.kind,
+            record.sourceType,
+            record.fileName,
+            record.url ?? null,
+            record.objectKey ?? null,
+            record.sha256,
+            record.sizeBytes,
+            record.archiveFormat,
+            record.createdBy ?? null,
+            record.createdAt,
+          ],
+        ),
       );
       return mapAsset(required(result.rows[0], "Created runtime asset could not be read."));
     } catch (error) {
@@ -542,18 +547,7 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
   }
 
   private async transaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await operation(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    return runPostgresTransaction(this.handle, operation);
   }
 }
 

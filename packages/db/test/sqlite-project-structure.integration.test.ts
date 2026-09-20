@@ -1,3 +1,4 @@
+import { SqliteWriterContention } from "./sqlite-writer-contention";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -26,7 +27,8 @@ describe("SQLite project version structure", () => {
       databasePath: resolve(directory, "autoforge.db"),
       migrationsFolder: resolve("packages/db/drizzle/sqlite"),
     });
-    const repository = new SqliteProjectStructureRepository(handle);
+    const contention = new SqliteWriterContention(handle);
+    const repository = contention.wrap(new SqliteProjectStructureRepository(handle));
     const now = "2026-08-14T00:00:00.000Z";
     try {
       const version = await repository.createVersion({
@@ -227,6 +229,7 @@ describe("SQLite project version structure", () => {
         repository.getAdapterConfiguration(DEFAULT_PROJECT_ID, inheritedVersion.id),
       ).resolves.toMatchObject({ jarBundleAsset: { id: "bundle-2" } });
     } finally {
+      await contention.close();
       handle.close();
     }
   });

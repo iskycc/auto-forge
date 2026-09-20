@@ -3,10 +3,11 @@ export function isSqliteLockContentionError(error: unknown): boolean {
 }
 
 export function isDatabaseLockContentionError(error: unknown): boolean {
-  return (
-    isSqliteLockContentionError(error) ||
-    hasErrorCode(error, (code) => ["55P03", "40P01", "40001"].includes(code))
-  );
+  return isSqliteLockContentionError(error) || isPostgresLockContentionError(error);
+}
+
+export function isPostgresLockContentionError(error: unknown): boolean {
+  return hasErrorCode(error, (code) => ["55P03", "40P01", "40001"].includes(code));
 }
 
 function hasErrorCode(error: unknown, matches: (code: string) => boolean): boolean {

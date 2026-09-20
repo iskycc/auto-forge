@@ -1,3 +1,9 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
+
 import type { FailureAnalysisRepository } from "@autoforge/application";
 import type {
   FailureAnalysisBatchPage,
@@ -6,7 +12,6 @@ import type {
   FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
 
-import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import {
   decodeFailureAnalysisCandidateCursor,
   decodeFailureAnalysisClaimCursor,
@@ -102,12 +107,14 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     const batch = await this.readBatch(input, "eligible");
     if (!batch || batch.failedRuns === 0) return null;
     // A terminal execution is immutable. The unique batch key makes concurrent starts idempotent.
-    const inserted = this.handle.client
-      .prepare(
-        `INSERT INTO failure_analysis_batches (batch_id,project_id,started_by,started_at)
+    const inserted = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `INSERT INTO failure_analysis_batches (batch_id,project_id,started_by,started_at)
        VALUES (?,?,?,?) ON CONFLICT (batch_id) DO NOTHING`,
-      )
-      .run(input.batchId, input.projectId, input.startedBy, input.startedAt);
+        )
+        .run(input.batchId, input.projectId, input.startedBy, input.startedAt),
+    );
     return { batch, created: inserted.changes > 0 };
   }
 
@@ -399,7 +406,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async claim(input: Parameters<FailureAnalysisRepository["claim"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const requestedIds = [...input.executionRunIds];
       const placeholders = requestedIds.map(() => "?").join(",");
       const eligibleRows = this.handle.client
@@ -484,7 +491,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async release(input: Parameters<FailureAnalysisRepository["release"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const row = this.handle.client
         .prepare(
           `${claimSelectSql()} WHERE claim.id=? AND claim.project_id=? AND claim.claimant_id=?
@@ -816,20 +823,22 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
-    this.handle.client
-      .prepare(
-        `UPDATE failure_analysis_claims
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE failure_analysis_claims
          SET status='analyzing',category=?,analysis_started_at=COALESCE(analysis_started_at,?),updated_at=?
          WHERE id=? AND project_id=? AND claimant_id=?`,
-      )
-      .run(
-        input.category,
-        input.startedAt,
-        input.startedAt,
-        input.analysisId,
-        input.projectId,
-        input.claimantId,
-      );
+        )
+        .run(
+          input.category,
+          input.startedAt,
+          input.startedAt,
+          input.analysisId,
+          input.projectId,
+          input.claimantId,
+        ),
+    );
     const row = this.handle.client
       .prepare(
         `${claimSelectSql()} WHERE claim.id=? AND claim.project_id=? AND claim.claimant_id=?`,
@@ -891,7 +900,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async attachScreenshot(input: Parameters<FailureAnalysisRepository["attachScreenshot"]>[0]) {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const placeholders = input.analysisIds.map(() => "?").join(",");
       this.handle.client
         .prepare(
@@ -917,7 +926,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
     const remarkImagesJson = serializeRemarkImages(input.remarkImages);
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       if (input.inheritedFromAnalysisId) {
         const placeholders = input.analysisIds.map(() => "?").join(",");
         const matches = this.handle.client

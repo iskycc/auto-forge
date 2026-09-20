@@ -379,13 +379,6 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               ? ` · 已检索 ${result.scannedCount} 条用例，已匹配 ${result.totalCount} 条（总数统计中）`
               : ""}
           </p>
-          <DdtSearchPagination
-            totalCount={result.totalCount}
-            complete={result.complete}
-            page={result.page}
-            disabled={pending || !result.complete}
-            onPageChange={(page) => void changePage(page)}
-          />
           {!pending && !error && result.complete && !result.totalCount ? (
             <p className="empty-state">没有匹配的字段值，请尝试其他关键词。</p>
           ) : null}
@@ -434,6 +427,13 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
           !result.items.length ? (
             <Button onClick={() => void search(result.keywords, result)}>加载当前页</Button>
           ) : null}
+          <DdtSearchPagination
+            totalCount={result.totalCount}
+            complete={result.complete}
+            page={result.page}
+            disabled={pending || !result.complete}
+            onPageChange={(page) => void changePage(page)}
+          />
         </>
       )}
       {previewCaseId && activeWorkspace === "ddt" ? (

@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { FailureAnalysisRepository } from "@autoforge/application";
 import type {
   FailureAnalysisBatchPage,
@@ -97,10 +98,12 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     const batch = await this.readBatch(input, "eligible");
     if (!batch || batch.failedRuns === 0) return null;
     // A terminal execution is immutable. The unique batch key makes concurrent starts idempotent.
-    const inserted = await this.handle.pool.query(
-      `INSERT INTO failure_analysis_batches (batch_id,project_id,started_by,started_at)
+    const inserted = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO failure_analysis_batches (batch_id,project_id,started_by,started_at)
        VALUES ($1,$2,$3,$4) ON CONFLICT (batch_id) DO NOTHING`,
-      [input.batchId, input.projectId, input.startedBy, input.startedAt],
+        [input.batchId, input.projectId, input.startedBy, input.startedAt],
+      ),
     );
     return { batch, created: (inserted.rowCount ?? 0) > 0 };
   }
@@ -399,9 +402,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async claim(input: Parameters<FailureAnalysisRepository["claim"]>[0]) {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       await client.query(
         `WITH requested(id,execution_run_id) AS (
            SELECT * FROM UNNEST($4::text[],$5::text[])
@@ -431,6 +432,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
              AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)
            AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)
            AND COALESCE(attempt.outcome,attempt.status)='failed'
+         ORDER BY run.id
          ON CONFLICT (execution_run_id) DO NOTHING`,
         [
           input.projectId,
@@ -451,7 +453,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
            AND claim.execution_run_id=ANY($4::text[])`,
         [input.projectId, input.batchId, input.projectVersionId, [...input.executionRunIds]],
       );
-      await client.query("COMMIT");
+
       const claims = result.rows.map(toFailureAnalysisClaim);
       const availableToActor = new Set(
         claims
@@ -462,19 +464,12 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
         claims,
         unavailableExecutionRunIds: input.executionRunIds.filter((id) => !availableToActor.has(id)),
       };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async release(input: Parameters<FailureAnalysisRepository["release"]>[0]) {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       const selected = await client.query<FailureAnalysisRow>(
         `${claimSelectSql()} WHERE claim.id=$1 AND claim.project_id=$2 AND claim.claimant_id=$3
          AND claim.status IN ('claimed','analyzing') FOR UPDATE`,
@@ -482,7 +477,6 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       );
       const row = selected.rows[0];
       if (!row) {
-        await client.query("COMMIT");
         return null;
       }
       const claim = toFailureAnalysisClaim(row);
@@ -493,7 +487,6 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
         [input.analysisId, input.projectId, input.claimantId],
       );
       if (removed.rowCount !== 1) {
-        await client.query("ROLLBACK");
         return null;
       }
       await client.query(
@@ -516,7 +509,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
           input.releasedAt,
         ],
       );
-      await client.query("COMMIT");
+
       return {
         id: input.id,
         analysisId: claim.id,
@@ -531,12 +524,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
         claimedAt: claim.claimedAt,
         releasedAt: input.releasedAt,
       };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
@@ -812,11 +800,13 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
     await this.handle.ready;
-    const updated = await this.handle.pool.query(
-      `UPDATE failure_analysis_claims
+    const updated = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE failure_analysis_claims
        SET status='analyzing',category=$1,analysis_started_at=COALESCE(analysis_started_at,$2),updated_at=$2
        WHERE id=$3 AND project_id=$4 AND claimant_id=$5 RETURNING id`,
-      [input.category, input.startedAt, input.analysisId, input.projectId, input.claimantId],
+        [input.category, input.startedAt, input.analysisId, input.projectId, input.claimantId],
+      ),
     );
     if (updated.rowCount === 0) return null;
     const result = await this.handle.pool.query<FailureAnalysisRow>(
@@ -869,22 +859,24 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async attachScreenshot(input: Parameters<FailureAnalysisRepository["attachScreenshot"]>[0]) {
     await this.handle.ready;
-    await this.handle.pool.query(
-      `UPDATE failure_analysis_claims
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE failure_analysis_claims
        SET screenshot_object_key=$1,screenshot_file_name=$2,screenshot_media_type=$3,
            screenshot_size_bytes=$4,screenshot_sha256=$5,updated_at=$6
        WHERE project_id=$7 AND claimant_id=$8 AND id=ANY($9::text[])`,
-      [
-        input.screenshot.objectKey,
-        input.screenshot.fileName,
-        input.screenshot.mediaType,
-        input.screenshot.sizeBytes,
-        input.screenshot.sha256,
-        input.updatedAt,
-        input.projectId,
-        input.claimantId,
-        [...input.analysisIds],
-      ],
+        [
+          input.screenshot.objectKey,
+          input.screenshot.fileName,
+          input.screenshot.mediaType,
+          input.screenshot.sizeBytes,
+          input.screenshot.sha256,
+          input.updatedAt,
+          input.projectId,
+          input.claimantId,
+          [...input.analysisIds],
+        ],
+      ),
     );
     return this.findOwnedClaims(input);
   }
@@ -892,9 +884,15 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
     const remarkImagesJson = serializeRemarkImages(input.remarkImages);
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
+      const lockedIds = [
+        ...input.analysisIds,
+        ...(input.inheritedFromAnalysisId ? [input.inheritedFromAnalysisId] : []),
+      ];
+      await client.query(
+        "SELECT id FROM failure_analysis_claims WHERE project_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE",
+        [input.projectId, lockedIds],
+      );
       if (input.inheritedFromAnalysisId) {
         const matches = await client.query(
           `SELECT target_claim.id
@@ -956,14 +954,9 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
          AND claim.id=ANY($3::text[])`,
         [input.projectId, input.claimantId, [...input.analysisIds]],
       );
-      await client.query("COMMIT");
+
       return result.rows.map(toFailureAnalysisClaim);
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   private async batchExists(

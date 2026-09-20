@@ -4,6 +4,27 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.16 - 2026-09-20
+
+### Changed and fixed
+
+- 补齐 Lite 分析、用例与 DDT、用户权限、项目配置、执行机、Webhook、计划任务、通知和清理等写入口的短暂锁竞争恢复。多语句操作重试完整事务，每次重新检查版本与业务状态；保持 Web 单次锁等待 25ms，在有限退避期间让出事件循环。
+- API Key 鉴权继续逐次读取权限、撤销和有效期，将非关键的最近使用时间合并为最多每 5 分钟写入一次；Lite 遇短暂写锁延后记录，Full 跳过已锁定的令牌行，减少高频查询产生的数据库写入。
+- Full 为原子写入和通用事务增加有界锁超时、死锁及序列化失败恢复，统一 DDT 导入/编辑与分析批量操作的加锁顺序。默认锁等待 1 秒、单条语句 30 秒，启动迁移与显式配置的后台连接保留各自期限。
+- 锁竞争耗尽恢复预算后返回明确的数据库繁忙错误；服务账号写入仅将唯一性冲突映射为重名，保留其他数据库错误及原因。
+- DDT 高级检索的总数、总页数和翻页控件移至结果列表底部，保留搜索、缓存、用例弹窗及浏览器前进后退行为。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、新配置、新依赖或 Runner Protocol 变更。从 v1.17.15 升级只需更新主平台；Full 同步升级所有平台节点及独立后台工作器，无需升级 Runner 或 Adapter。
+- API Key 最近使用时间允许延迟，不影响实时权限检查。外部 I/O 不随事务重放；执行完成回执、租约、日志确认水位和既有后台退让规则保持有效。
+
+### Validation and known limitations
+
+- 数据库全量回归 60 个文件、374 项通过，覆盖真实 SQLite/PostgreSQL、迁移、十万级任务与并发执行；最终 Full 单条写入调整后，受影响的 21 个文件、140 项再次通过。另有队列、资源优先级、工作线程、异常映射及通知等 47 项回归通过。
+- 8 条管理与执行分析 Playwright 闭环，以及独立的 DDT 高级检索回归通过，均未重试；实际查看 1024px、1536px 桌面截图，分页位置正常，长名称和详情弹窗无横向溢出。类型、变更文件格式/lint、Web 与 Worker 生产构建通过。
+- SQLite 仍为单写者，持续长事务、磁盘故障和超出容量的负载可能耗尽恢复预算；本次不承诺任意负载下零锁等待。双架构发布、完整源码矩阵与发布资产离线验收由标签流水线执行。排查范围及恢复边界见 `docs/architecture/database-contention-audit.md`。
+
 ## 1.17.15 - 2026-09-20
 
 ### Changed and fixed

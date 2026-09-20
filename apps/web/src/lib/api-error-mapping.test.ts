@@ -15,15 +15,20 @@ describe("API error mapping", () => {
       body: { error: { code } },
     });
   });
-  it.each(["SQLITE_BUSY", "SQLITE_BUSY_SNAPSHOT", "SQLITE_LOCKED", "55P03", "57014"])(
-    "maps wrapped database contention %s without exposing diagnostics",
-    (code) => {
-      const cause = Object.assign(new Error("private SQL and credentials"), { code });
-      const result = mapApiError(new Error("wrapped query", { cause }), "contention");
-      expect(result).toMatchObject({ status: 503, body: { error: { code: "PLATFORM_BUSY" } } });
-      expect(JSON.stringify(result)).not.toContain("private SQL");
-    },
-  );
+  it.each([
+    "SQLITE_BUSY",
+    "SQLITE_BUSY_SNAPSHOT",
+    "SQLITE_LOCKED",
+    "55P03",
+    "40P01",
+    "40001",
+    "57014",
+  ])("maps wrapped database contention %s without exposing diagnostics", (code) => {
+    const cause = Object.assign(new Error("private SQL and credentials"), { code });
+    const result = mapApiError(new Error("wrapped query", { cause }), "contention");
+    expect(result).toMatchObject({ status: 503, body: { error: { code: "PLATFORM_BUSY" } } });
+    expect(JSON.stringify(result)).not.toContain("private SQL");
+  });
   it.each(["READ_MODEL_PENDING", "READ_MODEL_NODE_UNAVAILABLE"])(
     "keeps %s retryable without presenting it as an invalid request",
     (code) => {

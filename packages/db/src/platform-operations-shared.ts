@@ -8,6 +8,7 @@ import type {
   ServiceAccount,
 } from "@autoforge/contracts";
 import {
+  DomainError,
   classifyAttemptResult,
   isRetryableRunnerFailure,
   isPermission,
@@ -17,6 +18,41 @@ import {
 
 // v4 保留失败摘要原始大小写；旧版强制小写的签名会由 Lite/Full 工作器自动重建。
 export const ANALYTICS_FACT_SCHEMA_VERSION = 4;
+
+export function serviceAccountWriteError(error: unknown): unknown {
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    ["23505", "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_CONSTRAINT_PRIMARYKEY"].includes(
+      String(error.code),
+    )
+  ) {
+    return new DomainError("SERVICE_ACCOUNT_NAME_CONFLICT", "服务账号名称已存在。", {
+      cause: error,
+    });
+  }
+  return error;
+}
+
+export function apiTokenActivityCutoff(usedAt: string): string {
+  return new Date(Date.parse(usedAt) - 5 * 60_000).toISOString();
+}
+
+export function mapApiTokenAuthentication(row: ApiTokenRow, accountRow: ServiceAccountRow) {
+  const serviceAccount = mapServiceAccount(accountRow);
+  const token = mapApiToken(row);
+  const allowed = new Set<Permission>(
+    [
+      ...serviceAccount.systemPermissions,
+      ...Object.values(serviceAccount.projectPermissions).flat(),
+    ].filter(isPermission),
+  );
+  return {
+    serviceAccount,
+    token,
+    effectiveScopes: token.scopes.filter(isPermission).filter((scope) => allowed.has(scope)),
+  };
+}
 
 export type ServiceAccountRow = {
   id: string;

@@ -1,3 +1,8 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
 import { getTableColumns } from "drizzle-orm";
 import type {
   CaseCatalogRepository,
@@ -48,7 +53,6 @@ import {
   type SQL,
 } from "drizzle-orm";
 
-import { retrySqliteLockContention, type SqliteDatabaseHandle } from "./database";
 import {
   decodeCaseExecutionHistoryCursor,
   encodeCaseExecutionHistoryCursor,
@@ -465,53 +469,51 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     const scope = input.projectIds
       ? inArray(caseImportJobs.projectId, [...input.projectIds])
       : undefined;
-    const updated = this.handle.client
-      .transaction(() => {
-        const row = this.handle.db
-          .update(caseImportJobs)
-          .set({
-            status: "queued",
-            progressPercent: 0,
-            errorCode: null,
-            errorSummary: null,
-            resultJson: null,
-            startedAt: null,
-            finishedAt: null,
-            updatedAt: input.updatedAt,
-          })
-          .where(
-            and(
-              eq(caseImportJobs.id, input.jobId),
-              inArray(caseImportJobs.status, ["failed", "cancelled"]),
-              scope,
-            ),
-          )
-          .returning()
-          .get();
-        if (!row) return undefined;
-        this.handle.client
-          .prepare(
-            `INSERT INTO queue_jobs
+    const updated = await retrySqliteWriteTransaction(this.handle, () => {
+      const row = this.handle.db
+        .update(caseImportJobs)
+        .set({
+          status: "queued",
+          progressPercent: 0,
+          errorCode: null,
+          errorSummary: null,
+          resultJson: null,
+          startedAt: null,
+          finishedAt: null,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(caseImportJobs.id, input.jobId),
+            inArray(caseImportJobs.status, ["failed", "cancelled"]),
+            scope,
+          ),
+        )
+        .returning()
+        .get();
+      if (!row) return undefined;
+      this.handle.client
+        .prepare(
+          `INSERT INTO queue_jobs
            (message_id, run_id, attempt, schema_version, kind, payload_json, priority,
             deduplication_key, status, available_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
-          )
-          .run(
-            input.dispatchJob.messageId,
-            input.dispatchJob.runId,
-            input.dispatchJob.attempt,
-            input.dispatchJob.schemaVersion,
-            input.dispatchJob.kind,
-            JSON.stringify(input.dispatchJob.payload),
-            input.dispatchJob.priority,
-            input.dispatchJob.deduplicationKey,
-            input.dispatchJob.createdAt,
-            input.dispatchJob.createdAt,
-            input.dispatchJob.createdAt,
-          );
-        return row;
-      })
-      .immediate();
+        )
+        .run(
+          input.dispatchJob.messageId,
+          input.dispatchJob.runId,
+          input.dispatchJob.attempt,
+          input.dispatchJob.schemaVersion,
+          input.dispatchJob.kind,
+          JSON.stringify(input.dispatchJob.payload),
+          input.dispatchJob.priority,
+          input.dispatchJob.deduplicationKey,
+          input.dispatchJob.createdAt,
+          input.dispatchJob.createdAt,
+          input.dispatchJob.createdAt,
+        );
+      return row;
+    });
     if (!updated) {
       const current = await this.getJarImportJob(input.jobId, input.projectIds);
       if (current && ["queued", "running", "succeeded"].includes(current.status)) return current;
@@ -1126,26 +1128,28 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     actorId: string;
     updatedAt: string;
   }): Promise<CaseDefinitionWithMethods> {
-    const updated = this.handle.db
-      .update(caseDefinitions)
-      .set({
-        ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.tags !== undefined ? { tagsJson: JSON.stringify(input.tags) } : {}),
-        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-        ...(input.archived !== undefined ? { archived: input.archived } : {}),
-        revision: sql`${caseDefinitions.revision} + 1`,
-        updatedBy: input.actorId,
-        updatedAt: input.updatedAt,
-      })
-      .where(
-        and(
-          eq(caseDefinitions.id, input.caseDefinitionId),
-          eq(caseDefinitions.revision, input.expectedRevision),
-        ),
-      )
-      .returning()
-      .get();
+    const updated = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(caseDefinitions)
+        .set({
+          ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.tags !== undefined ? { tagsJson: JSON.stringify(input.tags) } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+          ...(input.archived !== undefined ? { archived: input.archived } : {}),
+          revision: sql`${caseDefinitions.revision} + 1`,
+          updatedBy: input.actorId,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(caseDefinitions.id, input.caseDefinitionId),
+            eq(caseDefinitions.revision, input.expectedRevision),
+          ),
+        )
+        .returning()
+        .get(),
+    );
     if (!updated) this.throwCaseDefinitionConflict(input.caseDefinitionId);
     const definition = await this.getCaseDefinition(input.caseDefinitionId);
     if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
@@ -1192,66 +1196,65 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       const byId = new Map(definitions.map((definition) => [definition.id, definition]));
       return uniqueIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
     });
-    return deleteInScope.immediate();
+    return retrySqliteLockContention(() => deleteInScope.immediate());
   }
 
   async inheritCaseDefinitions(
     input: Parameters<CaseCatalogRepository["inheritCaseDefinitions"]>[0],
   ): Promise<{ inheritedCount: number; skippedCount: number }> {
     if (input.records.length === 0) return { inheritedCount: 0, skippedCount: 0 };
-    return this.handle.client
-      .transaction(() => {
-        const targetStage = this.handle.client
-          .prepare(
-            `SELECT 1 FROM test_stages
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const targetStage = this.handle.client
+        .prepare(
+          `SELECT 1 FROM test_stages
            WHERE id = ? AND project_id = ? AND project_version_id = ?`,
+        )
+        .get(input.targetTestStageId, input.projectId, input.targetProjectVersionId);
+      if (!targetStage) {
+        throw new DomainError(
+          "TARGET_TEST_STAGE_NOT_FOUND",
+          "目标测试阶段不存在或不属于目标项目版本。",
+        );
+      }
+      let inheritedCount = 0;
+      let skippedCount = 0;
+      for (const record of input.records) {
+        const source = this.handle.client
+          .prepare(
+            `SELECT class_name FROM case_definitions
+             WHERE id = ? AND project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
           )
-          .get(input.targetTestStageId, input.projectId, input.targetProjectVersionId);
-        if (!targetStage) {
+          .get(
+            record.sourceCaseDefinitionId,
+            input.projectId,
+            input.sourceProjectVersionId,
+            input.sourceTestStageId,
+          ) as { class_name: string } | undefined;
+        if (!source) {
           throw new DomainError(
-            "TARGET_TEST_STAGE_NOT_FOUND",
-            "目标测试阶段不存在或不属于目标项目版本。",
+            "SOURCE_CASE_DEFINITION_NOT_FOUND",
+            "继承来源用例不存在或不属于所选项目版本与测试阶段。",
           );
         }
-        let inheritedCount = 0;
-        let skippedCount = 0;
-        for (const record of input.records) {
-          const source = this.handle.client
-            .prepare(
-              `SELECT class_name FROM case_definitions
-             WHERE id = ? AND project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
-            )
-            .get(
-              record.sourceCaseDefinitionId,
-              input.projectId,
-              input.sourceProjectVersionId,
-              input.sourceTestStageId,
-            ) as { class_name: string } | undefined;
-          if (!source) {
-            throw new DomainError(
-              "SOURCE_CASE_DEFINITION_NOT_FOUND",
-              "继承来源用例不存在或不属于所选项目版本与测试阶段。",
-            );
-          }
-          const existing = this.handle.client
-            .prepare(
-              `SELECT 1 FROM case_definitions
+        const existing = this.handle.client
+          .prepare(
+            `SELECT 1 FROM case_definitions
              WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
                AND class_name = ? LIMIT 1`,
-            )
-            .get(
-              input.projectId,
-              input.targetProjectVersionId,
-              input.targetTestStageId,
-              source.class_name,
-            );
-          if (existing) {
-            skippedCount += 1;
-            continue;
-          }
-          const definition = this.handle.client
-            .prepare(
-              `INSERT INTO case_definitions
+          )
+          .get(
+            input.projectId,
+            input.targetProjectVersionId,
+            input.targetTestStageId,
+            source.class_name,
+          );
+        if (existing) {
+          skippedCount += 1;
+          continue;
+        }
+        const definition = this.handle.client
+          .prepare(
+            `INSERT INTO case_definitions
              (id, project_id, project_version_id, test_stage_id, directory_path, source_id,
               class_name, package_name, display_name, description, tags_json, parameters_json,
               enabled, archived, revision, updated_by, groups_json, current_version,
@@ -1260,47 +1263,44 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
                     display_name, description, tags_json, parameters_json, enabled, archived, 1, ?,
                     groups_json, 1, ?, ?
              FROM case_definitions WHERE id = ?`,
-            )
-            .run(
-              record.targetCaseDefinitionId,
-              input.targetProjectVersionId,
-              input.targetTestStageId,
-              input.actorId,
-              input.inheritedAt,
-              input.inheritedAt,
-              record.sourceCaseDefinitionId,
-            );
-          if (definition.changes !== 1) {
-            throw new DomainError("SOURCE_CASE_DEFINITION_NOT_FOUND", "继承来源用例不存在。");
-          }
-          const version = this.handle.client
-            .prepare(
-              `INSERT INTO case_versions
+          )
+          .run(
+            record.targetCaseDefinitionId,
+            input.targetProjectVersionId,
+            input.targetTestStageId,
+            input.actorId,
+            input.inheritedAt,
+            input.inheritedAt,
+            record.sourceCaseDefinitionId,
+          );
+        if (definition.changes !== 1) {
+          throw new DomainError("SOURCE_CASE_DEFINITION_NOT_FOUND", "继承来源用例不存在。");
+        }
+        const version = this.handle.client
+          .prepare(
+            `INSERT INTO case_versions
              (id, case_definition_id, source_id, version, snapshot_json, created_by,
               change_reason, created_at)
              SELECT ?, ?, source_id, 1, snapshot_json, ?, 'version.inherit', ?
              FROM case_versions
              WHERE case_definition_id = ?
                AND version = (SELECT current_version FROM case_definitions WHERE id = ?)`,
-            )
-            .run(
-              record.targetCaseVersionId,
-              record.targetCaseDefinitionId,
-              input.actorId,
-              input.inheritedAt,
-              record.sourceCaseDefinitionId,
-              record.sourceCaseDefinitionId,
-            );
-          if (version.changes !== 1) {
-            throw new DomainError(
-              "SOURCE_CASE_VERSION_NOT_FOUND",
-              "继承来源用例的当前版本不存在。",
-            );
-          }
-          for (const method of record.methods) {
-            const insertedMethod = this.handle.client
-              .prepare(
-                `INSERT INTO test_methods
+          )
+          .run(
+            record.targetCaseVersionId,
+            record.targetCaseDefinitionId,
+            input.actorId,
+            input.inheritedAt,
+            record.sourceCaseDefinitionId,
+            record.sourceCaseDefinitionId,
+          );
+        if (version.changes !== 1) {
+          throw new DomainError("SOURCE_CASE_VERSION_NOT_FOUND", "继承来源用例的当前版本不存在。");
+        }
+        for (const method of record.methods) {
+          const insertedMethod = this.handle.client
+            .prepare(
+              `INSERT INTO test_methods
                (id, case_definition_id, method_name, descriptor, enabled, annotation_source,
                 groups_json, description, data_provider, depends_on_methods_json,
                 depends_on_groups_json, priority, created_at)
@@ -1308,23 +1308,22 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
                       description, data_provider, depends_on_methods_json, depends_on_groups_json,
                       priority, ?
                FROM test_methods WHERE id = ? AND case_definition_id = ?`,
-              )
-              .run(
-                method.targetMethodId,
-                record.targetCaseDefinitionId,
-                input.inheritedAt,
-                method.sourceMethodId,
-                record.sourceCaseDefinitionId,
-              );
-            if (insertedMethod.changes !== 1) {
-              throw new DomainError("SOURCE_TEST_METHOD_NOT_FOUND", "继承来源测试方法不存在。");
-            }
+            )
+            .run(
+              method.targetMethodId,
+              record.targetCaseDefinitionId,
+              input.inheritedAt,
+              method.sourceMethodId,
+              record.sourceCaseDefinitionId,
+            );
+          if (insertedMethod.changes !== 1) {
+            throw new DomainError("SOURCE_TEST_METHOD_NOT_FOUND", "继承来源测试方法不存在。");
           }
-          inheritedCount += 1;
         }
-        return { inheritedCount, skippedCount };
-      })
-      .immediate();
+        inheritedCount += 1;
+      }
+      return { inheritedCount, skippedCount };
+    });
   }
 
   async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
@@ -1364,77 +1363,75 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     if (input.methodIds.length !== input.snapshot.methods.length) {
       throw new Error("Restore method identifiers must match the snapshot method count.");
     }
-    return this.handle.client
-      .transaction(() => {
-        const updated = this.handle.db
-          .update(caseDefinitions)
-          .set({
-            groupsJson: JSON.stringify(input.snapshot.groups),
-            parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
-            enabled: input.snapshot.enabled,
-            sourceId: input.sourceId,
-            currentVersion: input.version,
-            revision: sql`${caseDefinitions.revision} + 1`,
-            updatedBy: input.actorId,
-            updatedAt: input.restoredAt,
-          })
-          .where(
-            and(
-              eq(caseDefinitions.id, input.caseDefinitionId),
-              eq(caseDefinitions.revision, input.expectedRevision),
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const updated = this.handle.db
+        .update(caseDefinitions)
+        .set({
+          groupsJson: JSON.stringify(input.snapshot.groups),
+          parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
+          enabled: input.snapshot.enabled,
+          sourceId: input.sourceId,
+          currentVersion: input.version,
+          revision: sql`${caseDefinitions.revision} + 1`,
+          updatedBy: input.actorId,
+          updatedAt: input.restoredAt,
+        })
+        .where(
+          and(
+            eq(caseDefinitions.id, input.caseDefinitionId),
+            eq(caseDefinitions.revision, input.expectedRevision),
+          ),
+        )
+        .returning()
+        .get();
+      if (!updated) this.throwCaseDefinitionConflict(input.caseDefinitionId);
+      this.handle.db
+        .delete(testMethods)
+        .where(eq(testMethods.caseDefinitionId, input.caseDefinitionId))
+        .run();
+      if (input.snapshot.methods.length > 0) {
+        this.handle.db
+          .insert(testMethods)
+          .values(
+            input.snapshot.methods.map((method, index) =>
+              testMethodInsertValues({
+                id: input.methodIds[index]!,
+                caseDefinitionId: input.caseDefinitionId,
+                method,
+                createdAt: input.restoredAt,
+              }),
             ),
           )
-          .returning()
-          .get();
-        if (!updated) this.throwCaseDefinitionConflict(input.caseDefinitionId);
-        this.handle.db
-          .delete(testMethods)
-          .where(eq(testMethods.caseDefinitionId, input.caseDefinitionId))
           .run();
-        if (input.snapshot.methods.length > 0) {
-          this.handle.db
-            .insert(testMethods)
-            .values(
-              input.snapshot.methods.map((method, index) =>
-                testMethodInsertValues({
-                  id: input.methodIds[index]!,
-                  caseDefinitionId: input.caseDefinitionId,
-                  method,
-                  createdAt: input.restoredAt,
-                }),
-              ),
-            )
-            .run();
-        }
-        this.handle.db
-          .insert(caseVersions)
-          .values({
-            id: input.versionId,
-            caseDefinitionId: input.caseDefinitionId,
-            sourceId: input.sourceId,
-            version: input.version,
-            snapshotJson: JSON.stringify(input.snapshot),
-            createdBy: input.actorId,
-            changeReason: input.changeReason,
-            createdAt: input.restoredAt,
-          })
-          .run();
-        const row = this.handle.db
-          .select()
-          .from(caseDefinitions)
-          .where(eq(caseDefinitions.id, input.caseDefinitionId))
-          .get();
-        if (!row) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
-        const methods = this.handle.db
-          .select()
-          .from(testMethods)
-          .where(eq(testMethods.caseDefinitionId, row.id))
-          .all()
-          .map(toTestMethod)
-          .sort((left, right) => left.methodName.localeCompare(right.methodName));
-        return { ...toCaseDefinition(row), methods };
-      })
-      .immediate();
+      }
+      this.handle.db
+        .insert(caseVersions)
+        .values({
+          id: input.versionId,
+          caseDefinitionId: input.caseDefinitionId,
+          sourceId: input.sourceId,
+          version: input.version,
+          snapshotJson: JSON.stringify(input.snapshot),
+          createdBy: input.actorId,
+          changeReason: input.changeReason,
+          createdAt: input.restoredAt,
+        })
+        .run();
+      const row = this.handle.db
+        .select()
+        .from(caseDefinitions)
+        .where(eq(caseDefinitions.id, input.caseDefinitionId))
+        .get();
+      if (!row) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+      const methods = this.handle.db
+        .select()
+        .from(testMethods)
+        .where(eq(testMethods.caseDefinitionId, row.id))
+        .all()
+        .map(toTestMethod)
+        .sort((left, right) => left.methodName.localeCompare(right.methodName));
+      return { ...toCaseDefinition(row), methods };
+    });
   }
 
   private throwCaseDefinitionConflict(caseDefinitionId: string): never {
@@ -1579,35 +1576,33 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
   }
 
   async setAuthoritativeSource(sourceId: string, projectId?: string): Promise<CaseSource> {
-    return this.handle.client
-      .transaction(() => {
-        const source = this.handle.db
-          .select()
-          .from(caseSources)
-          .where(eq(caseSources.id, sourceId))
-          .get();
-        if (!source || (projectId && source.projectId !== projectId)) {
-          throw new Error(`Case source ${sourceId} does not exist.`);
-        }
-        this.handle.db
-          .update(caseSources)
-          .set({ authoritative: false })
-          .where(eq(caseSources.projectId, source.projectId))
-          .run();
-        const updated = this.handle.db
-          .update(caseSources)
-          .set({
-            authoritative: true,
-            revision: source.revision + 1,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(caseSources.id, sourceId))
-          .returning()
-          .get();
-        if (!updated) throw new Error(`Case source ${sourceId} does not exist.`);
-        return toCaseSource(updated);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const source = this.handle.db
+        .select()
+        .from(caseSources)
+        .where(eq(caseSources.id, sourceId))
+        .get();
+      if (!source || (projectId && source.projectId !== projectId)) {
+        throw new Error(`Case source ${sourceId} does not exist.`);
+      }
+      this.handle.db
+        .update(caseSources)
+        .set({ authoritative: false })
+        .where(eq(caseSources.projectId, source.projectId))
+        .run();
+      const updated = this.handle.db
+        .update(caseSources)
+        .set({
+          authoritative: true,
+          revision: source.revision + 1,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(caseSources.id, sourceId))
+        .returning()
+        .get();
+      if (!updated) throw new Error(`Case source ${sourceId} does not exist.`);
+      return toCaseSource(updated);
+    });
   }
 
   async getAuthoritativeSource(projectId: string): Promise<CaseSource | null> {
@@ -1647,22 +1642,24 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
   async createSourceComparison(
     record: CreateSourceComparisonRecord,
   ): Promise<CaseSourceComparison> {
-    this.handle.db
-      .insert(caseSourceComparisons)
-      .values({
-        id: record.id,
-        projectId: record.projectId,
-        currentSourceId: record.currentSourceId ?? null,
-        candidateSourceId: record.candidateSourceId,
-        addedJson: JSON.stringify(record.added),
-        changedJson: JSON.stringify(record.changed),
-        removedJson: JSON.stringify(record.removed),
-        conflictsJson: JSON.stringify(record.conflicts),
-        truncated: record.truncated,
-        ...(record.createdBy ? { createdBy: record.createdBy } : {}),
-        createdAt: record.createdAt,
-      })
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(caseSourceComparisons)
+        .values({
+          id: record.id,
+          projectId: record.projectId,
+          currentSourceId: record.currentSourceId ?? null,
+          candidateSourceId: record.candidateSourceId,
+          addedJson: JSON.stringify(record.added),
+          changedJson: JSON.stringify(record.changed),
+          removedJson: JSON.stringify(record.removed),
+          conflictsJson: JSON.stringify(record.conflicts),
+          truncated: record.truncated,
+          ...(record.createdBy ? { createdBy: record.createdBy } : {}),
+          createdAt: record.createdAt,
+        })
+        .run(),
+    );
     const comparison = await this.getSourceComparison(record.id);
     if (!comparison) throw new Error(`Case source comparison ${record.id} was not persisted.`);
     return comparison;
@@ -1684,63 +1681,58 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     actorId?: string;
     versionMerges?: CaseSourceVersionMerge[];
   }): Promise<CaseSource> {
-    return this.handle.client
-      .transaction(() => {
-        const target = this.handle.db
-          .select()
-          .from(caseSources)
-          .where(eq(caseSources.id, input.sourceId))
-          .get();
-        if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
-        if (target.revision !== input.expectedRevision) {
-          throwCaseSourceConflict(this.handle, input.sourceId);
-        }
-        const current = this.handle.db
-          .select({ id: caseSources.id })
-          .from(caseSources)
-          .where(
-            and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
-          )
-          .get();
-        for (const merge of input.versionMerges ?? []) {
-          this.mergeSourceVersion({
-            merge,
-            candidateSourceId: target.id,
-            ...(current ? { currentSourceId: current.id } : {}),
-            ...(input.actorId ? { actorId: input.actorId } : {}),
-            updatedAt: input.updatedAt,
-          });
-        }
-        this.handle.db
-          .update(caseSources)
-          .set({
-            authoritative: false,
-            revision: sql`${caseSources.revision} + 1`,
-            updatedAt: input.updatedAt,
-          })
-          .where(
-            and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
-          )
-          .run();
-        const updated = this.handle.db
-          .update(caseSources)
-          .set({
-            authoritative: true,
-            revision: sql`${caseSources.revision} + 1`,
-            updatedAt: input.updatedAt,
-          })
-          .where(
-            and(
-              eq(caseSources.id, input.sourceId),
-              eq(caseSources.revision, input.expectedRevision),
-            ),
-          )
-          .returning()
-          .get();
-        if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
-        return toCaseSource(updated);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const target = this.handle.db
+        .select()
+        .from(caseSources)
+        .where(eq(caseSources.id, input.sourceId))
+        .get();
+      if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+      if (target.revision !== input.expectedRevision) {
+        throwCaseSourceConflict(this.handle, input.sourceId);
+      }
+      const current = this.handle.db
+        .select({ id: caseSources.id })
+        .from(caseSources)
+        .where(
+          and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
+        )
+        .get();
+      for (const merge of input.versionMerges ?? []) {
+        this.mergeSourceVersion({
+          merge,
+          candidateSourceId: target.id,
+          ...(current ? { currentSourceId: current.id } : {}),
+          ...(input.actorId ? { actorId: input.actorId } : {}),
+          updatedAt: input.updatedAt,
+        });
+      }
+      this.handle.db
+        .update(caseSources)
+        .set({
+          authoritative: false,
+          revision: sql`${caseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
+        )
+        .run();
+      const updated = this.handle.db
+        .update(caseSources)
+        .set({
+          authoritative: true,
+          revision: sql`${caseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(eq(caseSources.id, input.sourceId), eq(caseSources.revision, input.expectedRevision)),
+        )
+        .returning()
+        .get();
+      if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
+      return toCaseSource(updated);
+    });
   }
 
   private mergeSourceVersion(input: {
@@ -1864,18 +1856,20 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     lifecycleStatus: "active" | "archived" | "deleting";
     updatedAt: string;
   }): Promise<CaseSource> {
-    const updated = this.handle.db
-      .update(caseSources)
-      .set({
-        lifecycleStatus: input.lifecycleStatus,
-        revision: sql`${caseSources.revision} + 1`,
-        updatedAt: input.updatedAt,
-      })
-      .where(
-        and(eq(caseSources.id, input.sourceId), eq(caseSources.revision, input.expectedRevision)),
-      )
-      .returning()
-      .get();
+    const updated = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(caseSources)
+        .set({
+          lifecycleStatus: input.lifecycleStatus,
+          revision: sql`${caseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(eq(caseSources.id, input.sourceId), eq(caseSources.revision, input.expectedRevision)),
+        )
+        .returning()
+        .get(),
+    );
     if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
     return toCaseSource(updated);
   }
@@ -1929,7 +1923,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           .get()?.value ?? 0
       );
     });
-    return detachAndCount.immediate();
+    return retrySqliteLockContention(() => detachAndCount.immediate());
   }
 
   async enqueueSourceDeletion(input: {
@@ -1940,44 +1934,42 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     availableAt: string;
     updatedAt: string;
   }): Promise<CaseSource> {
-    return this.handle.client
-      .transaction(() => {
-        const updated = this.handle.db
-          .update(caseSources)
-          .set({
-            lifecycleStatus: "deleting",
-            revision: sql`${caseSources.revision} + 1`,
-            updatedAt: input.updatedAt,
-          })
-          .where(
-            and(
-              eq(caseSources.id, input.sourceId),
-              eq(caseSources.revision, input.expectedRevision),
-              eq(caseSources.authoritative, false),
-            ),
-          )
-          .returning()
-          .get();
-        if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
-        this.handle.db
-          .insert(cleanupJobs)
-          .values({
-            id: input.cleanupJobId,
-            category: "case-source",
-            resourceType: "case-source",
-            resourceId: input.sourceId,
-            objectKey: input.objectKey,
-            status: "pending",
-            attemptCount: 0,
-            availableAt: input.availableAt,
-            createdAt: input.updatedAt,
-            updatedAt: input.updatedAt,
-          })
-          .onConflictDoNothing()
-          .run();
-        return toCaseSource(updated);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const updated = this.handle.db
+        .update(caseSources)
+        .set({
+          lifecycleStatus: "deleting",
+          revision: sql`${caseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(caseSources.id, input.sourceId),
+            eq(caseSources.revision, input.expectedRevision),
+            eq(caseSources.authoritative, false),
+          ),
+        )
+        .returning()
+        .get();
+      if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
+      this.handle.db
+        .insert(cleanupJobs)
+        .values({
+          id: input.cleanupJobId,
+          category: "case-source",
+          resourceType: "case-source",
+          resourceId: input.sourceId,
+          objectKey: input.objectKey,
+          status: "pending",
+          attemptCount: 0,
+          availableAt: input.availableAt,
+          createdAt: input.updatedAt,
+          updatedAt: input.updatedAt,
+        })
+        .onConflictDoNothing()
+        .run();
+      return toCaseSource(updated);
+    });
   }
 
   async getCleanupJob(cleanupJobId: string): Promise<CleanupJob | null> {
@@ -1996,20 +1988,18 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     errorSummary?: string;
     finishedAt: string;
   }): Promise<void> {
-    this.handle.client
-      .transaction(() => {
-        this.handle.db
-          .update(cleanupJobs)
-          .set({
-            status: input.status,
-            attemptCount: input.attemptCount,
-            errorSummary: input.errorSummary ?? null,
-            updatedAt: input.finishedAt,
-          })
-          .where(eq(cleanupJobs.id, input.id))
-          .run();
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      this.handle.db
+        .update(cleanupJobs)
+        .set({
+          status: input.status,
+          attemptCount: input.attemptCount,
+          errorSummary: input.errorSummary ?? null,
+          updatedAt: input.finishedAt,
+        })
+        .where(eq(cleanupJobs.id, input.id))
+        .run();
+    });
   }
 
   async getDashboardSummary(projectIds?: readonly string[]): Promise<DashboardSummary> {

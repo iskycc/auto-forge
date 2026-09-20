@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { RunnerGroupRepository } from "@autoforge/application";
 import type { RunnerGroup } from "@autoforge/domain";
 import type { PoolClient } from "pg";
@@ -50,9 +51,7 @@ export class PostgresRunnerGroupRepository implements RunnerGroupRepository {
     recordedAt: string;
   }): Promise<RunnerGroup> {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       await client.query(
         `INSERT INTO runner_groups
           (id, name, normalized_name, description, revision, created_at, updated_at)
@@ -61,15 +60,10 @@ export class PostgresRunnerGroupRepository implements RunnerGroupRepository {
       );
       await replaceMembers(client, input.id, input.runnerIds, input.recordedAt);
       const group = await getRunnerGroup(client, input.id);
-      await client.query("COMMIT");
+
       if (!group) throw new Error(`Runner group ${input.id} was not created.`);
       return group;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async update(input: {
@@ -82,9 +76,7 @@ export class PostgresRunnerGroupRepository implements RunnerGroupRepository {
     updatedAt: string;
   }): Promise<RunnerGroup | null> {
     await this.handle.ready;
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       const result = await client.query<{ id: string }>(
         `UPDATE runner_groups SET
            name = COALESCE($1, name),
@@ -104,28 +96,22 @@ export class PostgresRunnerGroupRepository implements RunnerGroupRepository {
         ],
       );
       if (result.rowCount === 0) {
-        await client.query("ROLLBACK");
         return null;
       }
       if (input.runnerIds) {
         await replaceMembers(client, input.groupId, input.runnerIds, input.updatedAt);
       }
       const group = await getRunnerGroup(client, input.groupId);
-      await client.query("COMMIT");
+
       return group;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async delete(groupId: string): Promise<boolean> {
     await this.handle.ready;
-    const result = await this.handle.pool.query("DELETE FROM runner_groups WHERE id = $1", [
-      groupId,
-    ]);
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query("DELETE FROM runner_groups WHERE id = $1", [groupId]),
+    );
     return (result.rowCount ?? 0) > 0;
   }
 }

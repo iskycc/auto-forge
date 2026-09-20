@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import { NodeAttemptLogStore } from "./node-attempt-log-store";
 import type {
   AttemptRecoveryReason,
@@ -641,10 +642,12 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     if (this.recordedAttemptLogPaths.has(batchId)) return;
     // 此字段保留相对路径；分布式归属另存节点表，正文始终在所属节点的 SQLite 文件中。
     const path = this.attemptLogs.relativeStorePath(batchId);
-    await this.handle.pool.query(
-      `UPDATE run_batches SET attempt_logs_path = $1
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE run_batches SET attempt_logs_path = $1
        WHERE id = $2 AND (attempt_logs_path IS NULL OR attempt_logs_path <> $1)`,
-      [path, batchId],
+        [path, batchId],
+      ),
     );
     rememberBounded(this.recordedAttemptLogPaths, batchId);
   }
@@ -862,10 +865,12 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     input: Parameters<ExecutionControlRepository["markArtifactUploaded"]>[0],
   ): Promise<void> {
     await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `UPDATE attempt_artifacts SET object_key = $1, status = 'uploaded', updated_at = $2
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE attempt_artifacts SET object_key = $1, status = 'uploaded', updated_at = $2
        WHERE id = $3 AND attempt_id = $4 AND status IN ('declared', 'uploaded')`,
-      [input.objectKey, input.uploadedAt, input.artifactId, input.attemptId],
+        [input.objectKey, input.uploadedAt, input.artifactId, input.attemptId],
+      ),
     );
     if (result.rowCount !== 1)
       throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
@@ -1107,18 +1112,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   }
 
   private async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await work(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    return runPostgresTransaction(this.handle, work);
   }
 }
 

@@ -289,6 +289,113 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
       await handle.close();
     }
   });
+  it("serializes opposite-order imports and keeps concurrent edits atomic", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    await handle.ready;
+    const suffix = randomUUID();
+    const scope = {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: `concurrent-${suffix}`,
+      testStageId: `stage-${suffix}`,
+    };
+    const jobId = `job-${suffix}`;
+    const repository = new PostgresDdtRepository(handle);
+    const files = [0, 1].map((index) => ({
+      id: `file-${index}-${suffix}`,
+      uploadId: `upload-${index}`,
+      fileName: `${index}.xlsx`,
+      rowCount: 20,
+      insertedCount: 20,
+      updatedCount: 0,
+      unchangedCount: 0,
+    }));
+    const caseIds = Array.from(
+      { length: 20 },
+      (_, index) => `CASE-${String(index).padStart(2, "0")}`,
+    );
+    try {
+      await createHierarchy(handle, scope.projectVersionId, scope.testStageId);
+      await repository.createImportPreview({
+        job: {
+          ...scope,
+          id: jobId,
+          status: "previewed",
+          uploads: [],
+          progressPercent: 0,
+          totalFiles: 2,
+          validFiles: 2,
+          totalRows: 40,
+          insertedCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          skippedCount: 0,
+          failedFiles: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+        files,
+      });
+      const imports = await Promise.all(
+        files.map((file, index) =>
+          repository.importFile({
+            scope,
+            jobId,
+            fileId: file.id,
+            sourceName: file.fileName,
+            importedAt: now,
+            conflictStrategy: "overwrite",
+            rows: (index === 0 ? caseIds : [...caseIds].reverse()).map((caseId) => ({
+              id: `case-${index}-${caseId}-${suffix}`,
+              caseId,
+              srNum: "SR",
+              data: { CaseID: caseId, srNum: "SR", value: "original" },
+            })),
+            historyIds: caseIds.map((caseId) => `import-${index}-${caseId}-${suffix}`),
+          }),
+        ),
+      );
+      expect(imports.reduce((sum, result) => sum + result.insertedCount, 0)).toBe(20);
+      expect(imports.reduce((sum, result) => sum + result.unchangedCount, 0)).toBe(20);
+      expect(imports[0]!.caseIds.map((item) => item.caseId)).toEqual(caseIds);
+      expect(imports[1]!.caseIds.map((item) => item.caseId)).toEqual([...caseIds].reverse());
+      const edits = await Promise.allSettled(
+        [0, 1].map((index) =>
+          repository.updateCases(
+            (index === 0 ? caseIds : [...caseIds].reverse()).map((caseId) => ({
+              scope,
+              caseId,
+              expectedRevision: 1,
+              nextData: { CaseID: caseId, srNum: "SR", value: `editor-${index}` },
+              historyId: `edit-${index}-${caseId}-${suffix}`,
+              historyType: "edit",
+              sourceName: "DDT edit",
+              updatedAt: now,
+            })),
+          ),
+        ),
+      );
+      expect(edits.filter((edit) => edit.status === "fulfilled")).toHaveLength(1);
+      expect(edits.find((edit) => edit.status === "rejected")).toMatchObject({
+        status: "rejected",
+        reason: { code: "DDT_CASE_REVISION_CONFLICT" },
+      });
+      const cases = await repository.getCases(scope, caseIds);
+      expect(cases).toHaveLength(20);
+      expect(cases.every((item) => item.revision === 2)).toBe(true);
+      expect(new Set(cases.map((item) => item.data.value)).size).toBe(1);
+      const history = await handle.pool.query<{ count: string }>(
+        "SELECT count(*) FROM ddt_case_history WHERE ddt_case_id IN (SELECT id FROM ddt_cases WHERE project_version_id=$1)",
+        [scope.projectVersionId],
+      );
+      expect(Number(history.rows[0]!.count)).toBe(20);
+    } finally {
+      await handle.pool.query("DELETE FROM project_versions WHERE id=$1", [scope.projectVersionId]);
+      await handle.close();
+    }
+  });
 });
 
 async function createHierarchy(handle: PostgresDatabaseHandle, versionId: string, stageId: string) {

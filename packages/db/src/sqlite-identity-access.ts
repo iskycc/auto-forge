@@ -1,3 +1,9 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  runSqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 import type {
   AuditListPage,
   CompleteLdapLoginRecord,
@@ -38,11 +44,6 @@ import {
   type SQL,
 } from "drizzle-orm";
 
-import {
-  retrySqliteLockContention,
-  runSqliteWriteTransaction,
-  type SqliteDatabaseHandle,
-} from "./database";
 import { mapAuditEvent, mapProject, mapRole, mapUser, parsePermissions } from "./identity-mapper";
 import {
   auditEvents,
@@ -66,39 +67,37 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     definitions: BuiltInRoleDefinition[],
     recordedAt: string,
   ): Promise<void> {
-    this.handle.client
-      .transaction(() => {
-        for (const definition of definitions) {
-          this.handle.db
-            .insert(roles)
-            .values({
-              id: definition.id,
-              key: definition.key,
+    await retrySqliteWriteTransaction(this.handle, () => {
+      for (const definition of definitions) {
+        this.handle.db
+          .insert(roles)
+          .values({
+            id: definition.id,
+            key: definition.key,
+            name: definition.name,
+            description: definition.description,
+            scope: definition.scope,
+            builtIn: true,
+            active: true,
+            permissionsJson: JSON.stringify(definition.permissions),
+            createdAt: recordedAt,
+            updatedAt: recordedAt,
+          })
+          .onConflictDoUpdate({
+            target: roles.id,
+            set: {
               name: definition.name,
               description: definition.description,
               scope: definition.scope,
               builtIn: true,
               active: true,
               permissionsJson: JSON.stringify(definition.permissions),
-              createdAt: recordedAt,
               updatedAt: recordedAt,
-            })
-            .onConflictDoUpdate({
-              target: roles.id,
-              set: {
-                name: definition.name,
-                description: definition.description,
-                scope: definition.scope,
-                builtIn: true,
-                active: true,
-                permissionsJson: JSON.stringify(definition.permissions),
-                updatedAt: recordedAt,
-              },
-            })
-            .run();
-        }
-      })
-      .immediate();
+            },
+          })
+          .run();
+      }
+    });
   }
 
   async hasUsers(): Promise<boolean> {
@@ -114,41 +113,39 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     projectRoleId: string;
     recordedAt: string;
   }): Promise<User | null> {
-    return this.handle.client
-      .transaction(() => {
-        const existing = this.handle.db.select({ value: count() }).from(users).get()?.value ?? 0;
-        if (existing > 0) return null;
-        const use = this.handle.db
-          .insert(authBootstrapUses)
-          .values({ tokenHash: input.tokenHash, usedAt: input.recordedAt })
-          .onConflictDoNothing()
-          .run();
-        if (use.changes === 0) return null;
-        const user = this.insertLocalUser(input.user);
-        this.handle.db
-          .insert(userSystemRoles)
-          .values({
-            userId: user.id,
-            roleId: input.systemRoleId,
-            source: "manual",
-            assignedAt: input.recordedAt,
-            assignedBy: user.id,
-          })
-          .run();
-        this.handle.db
-          .insert(projectRoleBindings)
-          .values({
-            userId: user.id,
-            projectId: input.projectId,
-            roleId: input.projectRoleId,
-            source: "manual",
-            assignedAt: input.recordedAt,
-            assignedBy: user.id,
-          })
-          .run();
-        return mapUser(user);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const existing = this.handle.db.select({ value: count() }).from(users).get()?.value ?? 0;
+      if (existing > 0) return null;
+      const use = this.handle.db
+        .insert(authBootstrapUses)
+        .values({ tokenHash: input.tokenHash, usedAt: input.recordedAt })
+        .onConflictDoNothing()
+        .run();
+      if (use.changes === 0) return null;
+      const user = this.insertLocalUser(input.user);
+      this.handle.db
+        .insert(userSystemRoles)
+        .values({
+          userId: user.id,
+          roleId: input.systemRoleId,
+          source: "manual",
+          assignedAt: input.recordedAt,
+          assignedBy: user.id,
+        })
+        .run();
+      this.handle.db
+        .insert(projectRoleBindings)
+        .values({
+          userId: user.id,
+          projectId: input.projectId,
+          roleId: input.projectRoleId,
+          source: "manual",
+          assignedAt: input.recordedAt,
+          assignedBy: user.id,
+        })
+        .run();
+      return mapUser(user);
+    });
   }
 
   async findUserByUsername(normalizedUsername: string): Promise<StoredUserCredential | null> {
@@ -194,7 +191,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async upsertLdapUser(input: CreateLdapUserRecord): Promise<User> {
-    return runSqliteWriteTransaction(
+    return await retrySqliteWriteTransaction(
       this.handle,
       () => this.upsertLdapUserInTransaction(input).user,
     );
@@ -390,16 +387,18 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     lockedUntil: string | undefined,
     recordedAt: string,
   ): Promise<void> {
-    this.handle.db
-      .update(users)
-      .set({
-        failedLoginAttempts: failedAttempts,
-        lockedUntil: lockedUntil ?? null,
-        updatedAt: recordedAt,
-        version: sql`${users.version} + 1`,
-      })
-      .where(eq(users.id, userId))
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(users)
+        .set({
+          failedLoginAttempts: failedAttempts,
+          lockedUntil: lockedUntil ?? null,
+          updatedAt: recordedAt,
+          version: sql`${users.version} + 1`,
+        })
+        .where(eq(users.id, userId))
+        .run(),
+    );
   }
 
   async createSessionAfterLogin(input: {
@@ -409,7 +408,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     createdAt: string;
     expiresAt: string;
   }): Promise<User> {
-    return runSqliteWriteTransaction(this.handle, () =>
+    return await retrySqliteWriteTransaction(this.handle, () =>
       this.createSessionAfterLoginInTransaction(input),
     );
   }
@@ -497,34 +496,40 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async renewSession(input: Parameters<IdentityAccessRepository["renewSession"]>[0]) {
-    const renewed = this.handle.db
-      .update(userSessions)
-      .set({ lastSeenAt: input.refreshedAt, expiresAt: input.expiresAt })
-      .where(
-        and(
-          eq(userSessions.id, input.sessionId),
-          isNull(userSessions.revokedAt),
-          gt(userSessions.expiresAt, input.refreshedAt),
-        ),
-      )
-      .run();
+    const renewed = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(userSessions)
+        .set({ lastSeenAt: input.refreshedAt, expiresAt: input.expiresAt })
+        .where(
+          and(
+            eq(userSessions.id, input.sessionId),
+            isNull(userSessions.revokedAt),
+            gt(userSessions.expiresAt, input.refreshedAt),
+          ),
+        )
+        .run(),
+    );
     return renewed.changes === 1;
   }
 
   async revokeSession(sessionId: string, revokedAt: string): Promise<void> {
-    this.handle.db
-      .update(userSessions)
-      .set({ revokedAt })
-      .where(and(eq(userSessions.id, sessionId), isNull(userSessions.revokedAt)))
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(userSessions)
+        .set({ revokedAt })
+        .where(and(eq(userSessions.id, sessionId), isNull(userSessions.revokedAt)))
+        .run(),
+    );
   }
 
   async revokeUserSessions(userId: string, revokedAt: string): Promise<void> {
-    this.handle.db
-      .update(userSessions)
-      .set({ revokedAt })
-      .where(and(eq(userSessions.userId, userId), isNull(userSessions.revokedAt)))
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(userSessions)
+        .set({ revokedAt })
+        .where(and(eq(userSessions.userId, userId), isNull(userSessions.revokedAt)))
+        .run(),
+    );
   }
 
   async revokeUserSessionsForRole(roleId: string, revokedAt: string): Promise<void> {
@@ -542,11 +547,13 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .map((row) => row.userId);
     const userIds = [...new Set([...systemUserIds, ...projectUserIds])];
     if (userIds.length === 0) return;
-    this.handle.db
-      .update(userSessions)
-      .set({ revokedAt })
-      .where(and(inArray(userSessions.userId, userIds), isNull(userSessions.revokedAt)))
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(userSessions)
+        .set({ revokedAt })
+        .where(and(inArray(userSessions.userId, userIds), isNull(userSessions.revokedAt)))
+        .run(),
+    );
   }
 
   async listUserSessions(userId: string, now: string): Promise<UserSession[]> {
@@ -622,30 +629,34 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async createLocalUser(record: CreateLocalUserRecord): Promise<User> {
-    const existing = await this.findUserByUsername(record.normalizedUsername);
-    if (existing) throw new DomainError("USER_CONFLICT", "用户名已存在。");
-    return mapUser(this.insertLocalUser(record));
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const existing = this.handle.db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.normalizedUsername, record.normalizedUsername))
+        .get();
+      if (existing) throw new DomainError("USER_CONFLICT", "用户名已存在。");
+      return mapUser(this.insertLocalUser(record));
+    });
   }
 
   async updateUserStatus(userId: string, status: UserStatus, updatedAt: string): Promise<User> {
-    return this.handle.client
-      .transaction(() => {
-        if (status === "disabled") this.ensureNotLastAdministrator(userId);
-        const row = this.handle.db
-          .update(users)
-          .set({
-            status,
-            ...(status === "active" ? { failedLoginAttempts: 0, lockedUntil: null } : {}),
-            updatedAt,
-            version: sql`${users.version} + 1`,
-          })
-          .where(eq(users.id, userId))
-          .returning()
-          .get();
-        if (!row) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
-        return mapUser(row);
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      if (status === "disabled") this.ensureNotLastAdministrator(userId);
+      const row = this.handle.db
+        .update(users)
+        .set({
+          status,
+          ...(status === "active" ? { failedLoginAttempts: 0, lockedUntil: null } : {}),
+          updatedAt,
+          version: sql`${users.version} + 1`,
+        })
+        .where(eq(users.id, userId))
+        .returning()
+        .get();
+      if (!row) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
+      return mapUser(row);
+    });
   }
 
   async resetPassword(
@@ -654,20 +665,22 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     forcePasswordChange: boolean,
     updatedAt: string,
   ): Promise<User> {
-    const row = this.handle.db
-      .update(users)
-      .set({
-        passwordHash,
-        passwordUpdatedAt: updatedAt,
-        forcePasswordChange,
-        failedLoginAttempts: 0,
-        lockedUntil: null,
-        updatedAt,
-        version: sql`${users.version} + 1`,
-      })
-      .where(and(eq(users.id, userId), eq(users.source, "local")))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(users)
+        .set({
+          passwordHash,
+          passwordUpdatedAt: updatedAt,
+          forcePasswordChange,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          updatedAt,
+          version: sql`${users.version} + 1`,
+        })
+        .where(and(eq(users.id, userId), eq(users.source, "local")))
+        .returning()
+        .get(),
+    );
     if (!row) throw new DomainError("USER_NOT_FOUND", "指定本地用户不存在。");
     return mapUser(row);
   }
@@ -696,22 +709,24 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .where(eq(roles.key, input.key))
       .get();
     if (conflict) throw new DomainError("ROLE_CONFLICT", "角色标识已存在。");
-    const row = this.handle.db
-      .insert(roles)
-      .values({
-        id: input.id,
-        key: input.key,
-        name: input.name,
-        description: input.description,
-        scope: input.scope,
-        builtIn: false,
-        active: true,
-        permissionsJson: JSON.stringify(input.permissions),
-        createdAt: input.createdAt,
-        updatedAt: input.createdAt,
-      })
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(roles)
+        .values({
+          id: input.id,
+          key: input.key,
+          name: input.name,
+          description: input.description,
+          scope: input.scope,
+          builtIn: false,
+          active: true,
+          permissionsJson: JSON.stringify(input.permissions),
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        })
+        .returning()
+        .get(),
+    );
     return mapRole(row);
   }
 
@@ -724,19 +739,21 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     active?: boolean;
     updatedAt: string;
   }): Promise<Role> {
-    const row = this.handle.db
-      .update(roles)
-      .set({
-        ...(input.name ? { name: input.name } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.scope ? { scope: input.scope } : {}),
-        ...(input.permissions ? { permissionsJson: JSON.stringify(input.permissions) } : {}),
-        ...(input.active !== undefined ? { active: input.active } : {}),
-        updatedAt: input.updatedAt,
-      })
-      .where(and(eq(roles.id, input.id), eq(roles.builtIn, false)))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(roles)
+        .set({
+          ...(input.name ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.scope ? { scope: input.scope } : {}),
+          ...(input.permissions ? { permissionsJson: JSON.stringify(input.permissions) } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+          updatedAt: input.updatedAt,
+        })
+        .where(and(eq(roles.id, input.id), eq(roles.builtIn, false)))
+        .returning()
+        .get(),
+    );
     if (!row) throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
     return mapRole(row);
   }
@@ -755,10 +772,14 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         .get()?.value ?? 0);
     if (referenced > 0) throw new DomainError("ROLE_IN_USE", "仍被分配的角色不能删除。");
     return (
-      this.handle.db
-        .delete(roles)
-        .where(and(eq(roles.id, roleId), eq(roles.builtIn, false)))
-        .run().changes > 0
+      (
+        await retrySqliteLockContention(() =>
+          this.handle.db
+            .delete(roles)
+            .where(and(eq(roles.id, roleId), eq(roles.builtIn, false)))
+            .run(),
+        )
+      ).changes > 0
     );
   }
 
@@ -768,14 +789,16 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     actorId: string,
     assignedAt: string,
   ): Promise<void> {
-    this.handle.db
-      .insert(userSystemRoles)
-      .values({ userId, roleId, source: "manual", assignedAt, assignedBy: actorId })
-      .onConflictDoUpdate({
-        target: [userSystemRoles.userId, userSystemRoles.roleId],
-        set: { source: "manual", assignedAt, assignedBy: actorId },
-      })
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(userSystemRoles)
+        .values({ userId, roleId, source: "manual", assignedAt, assignedBy: actorId })
+        .onConflictDoUpdate({
+          target: [userSystemRoles.userId, userSystemRoles.roleId],
+          set: { source: "manual", assignedAt, assignedBy: actorId },
+        })
+        .run(),
+    );
   }
 
   async assignProjectRole(input: {
@@ -785,53 +808,57 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     actorId: string;
     assignedAt: string;
   }): Promise<void> {
-    this.handle.db
-      .insert(projectRoleBindings)
-      .values({
-        userId: input.userId,
-        projectId: input.projectId,
-        roleId: input.roleId,
-        source: "manual",
-        assignedAt: input.assignedAt,
-        assignedBy: input.actorId,
-      })
-      .onConflictDoUpdate({
-        target: [
-          projectRoleBindings.userId,
-          projectRoleBindings.projectId,
-          projectRoleBindings.roleId,
-        ],
-        set: { source: "manual", assignedAt: input.assignedAt, assignedBy: input.actorId },
-      })
-      .run();
+    await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(projectRoleBindings)
+        .values({
+          userId: input.userId,
+          projectId: input.projectId,
+          roleId: input.roleId,
+          source: "manual",
+          assignedAt: input.assignedAt,
+          assignedBy: input.actorId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            projectRoleBindings.userId,
+            projectRoleBindings.projectId,
+            projectRoleBindings.roleId,
+          ],
+          set: { source: "manual", assignedAt: input.assignedAt, assignedBy: input.actorId },
+        })
+        .run(),
+    );
   }
 
   async removeSystemRole(userId: string, roleId: string): Promise<boolean> {
-    return this.handle.client
-      .transaction(() => {
-        if (roleId === SYSTEM_ADMIN_ROLE_ID) this.ensureNotLastAdministrator(userId);
-        return (
-          this.handle.db
-            .delete(userSystemRoles)
-            .where(and(eq(userSystemRoles.userId, userId), eq(userSystemRoles.roleId, roleId)))
-            .run().changes > 0
-        );
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      if (roleId === SYSTEM_ADMIN_ROLE_ID) this.ensureNotLastAdministrator(userId);
+      return (
+        this.handle.db
+          .delete(userSystemRoles)
+          .where(and(eq(userSystemRoles.userId, userId), eq(userSystemRoles.roleId, roleId)))
+          .run().changes > 0
+      );
+    });
   }
 
   async removeProjectRole(userId: string, projectId: string, roleId: string): Promise<boolean> {
     return (
-      this.handle.db
-        .delete(projectRoleBindings)
-        .where(
-          and(
-            eq(projectRoleBindings.userId, userId),
-            eq(projectRoleBindings.projectId, projectId),
-            eq(projectRoleBindings.roleId, roleId),
-          ),
+      (
+        await retrySqliteLockContention(() =>
+          this.handle.db
+            .delete(projectRoleBindings)
+            .where(
+              and(
+                eq(projectRoleBindings.userId, userId),
+                eq(projectRoleBindings.projectId, projectId),
+                eq(projectRoleBindings.roleId, roleId),
+              ),
+            )
+            .run(),
         )
-        .run().changes > 0
+      ).changes > 0
     );
   }
 
@@ -897,30 +924,34 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     ownerUserId?: string;
     createdAt: string;
   }): Promise<Project> {
-    const row = this.handle.db
-      .insert(projects)
-      .values({
-        id: input.id,
-        name: input.name,
-        slug: input.slug,
-        isDefault: false,
-        archived: false,
-        ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
-        createdAt: input.createdAt,
-        updatedAt: input.createdAt,
-      })
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(projects)
+        .values({
+          id: input.id,
+          name: input.name,
+          slug: input.slug,
+          isDefault: false,
+          archived: false,
+          ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        })
+        .returning()
+        .get(),
+    );
     return mapProject(row);
   }
 
   async archiveProject(projectId: string, archivedAt: string): Promise<Project> {
-    const row = this.handle.db
-      .update(projects)
-      .set({ archived: true, updatedAt: archivedAt })
-      .where(eq(projects.id, projectId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(projects)
+        .set({ archived: true, updatedAt: archivedAt })
+        .where(eq(projects.id, projectId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
     return mapProject(row);
   }
@@ -930,12 +961,14 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     ownerUserId: string;
     updatedAt: string;
   }): Promise<Project> {
-    const row = this.handle.db
-      .update(projects)
-      .set({ ownerUserId: input.ownerUserId, updatedAt: input.updatedAt })
-      .where(eq(projects.id, input.projectId))
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(projects)
+        .set({ ownerUserId: input.ownerUserId, updatedAt: input.updatedAt })
+        .where(eq(projects.id, input.projectId))
+        .returning()
+        .get(),
+    );
     if (!row) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
     return mapProject(row);
   }
@@ -1024,18 +1057,20 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       updatedAt: string;
     },
   ): Promise<StoredLdapConfiguration> {
-    const row = this.handle.db
-      .insert(ldapConfigurations)
-      .values(ldapConfigurationValues(input, input.updatedAt))
-      .onConflictDoUpdate({
-        target: ldapConfigurations.id,
-        set: {
-          ...ldapConfigurationValues(input, input.updatedAt),
-          version: sql`${ldapConfigurations.version} + 1`,
-        },
-      })
-      .returning()
-      .get();
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .insert(ldapConfigurations)
+        .values(ldapConfigurationValues(input, input.updatedAt))
+        .onConflictDoUpdate({
+          target: ldapConfigurations.id,
+          set: {
+            ...ldapConfigurationValues(input, input.updatedAt),
+            version: sql`${ldapConfigurations.version} + 1`,
+          },
+        })
+        .returning()
+        .get(),
+    );
     return mapLdapConfiguration(row);
   }
 

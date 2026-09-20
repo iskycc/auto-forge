@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import {
   ddtExecutionStatistics,
   ddtExecutionTimelineSql,
@@ -699,6 +700,18 @@ export class PostgresDdtRepository implements DdtRepository {
     if (records.length === 0) return [];
     await this.ready();
     await transaction(this.handle, async (client) => {
+      // Acquire every existing row before editing, while preserving caller order and rename semantics.
+      const scopedCases = new Map<string, { scope: DdtScope; caseIds: string[] }>();
+      for (const record of records) {
+        const key = JSON.stringify(scopeValues(record.scope));
+        const group = scopedCases.get(key) ?? { scope: record.scope, caseIds: [] };
+        group.caseIds.push(record.caseId);
+        scopedCases.set(key, group);
+      }
+      for (const key of [...scopedCases.keys()].sort()) {
+        const group = scopedCases.get(key)!;
+        await lockCasesForWrite(client, group.scope, group.caseIds);
+      }
       for (const record of records) {
         const currentResult = await client.query<{
           id: string;
@@ -875,10 +888,12 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async purgeDeletedCase(scope: DdtScope, recycleId: string): Promise<boolean> {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `DELETE FROM ddt_deleted_cases WHERE id = $1 AND project_id = $2
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `DELETE FROM ddt_deleted_cases WHERE id = $1 AND project_id = $2
        AND project_version_id = $3 AND test_stage_id = $4`,
-      [recycleId, ...scopeValues(scope)],
+        [recycleId, ...scopeValues(scope)],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -935,24 +950,26 @@ export class PostgresDdtRepository implements DdtRepository {
   async writeTemplate(record: Parameters<DdtRepository["writeTemplate"]>[0]) {
     await this.ready();
     if (record.expectedRevision !== undefined) {
-      const result = await this.handle.pool.query(
-        `UPDATE ddt_case_templates SET sr_num = $1, sr_num_normalized = $2, name = $3,
+      const result = await retryPostgresWrite(() =>
+        this.handle.pool.query(
+          `UPDATE ddt_case_templates SET sr_num = $1, sr_num_normalized = $2, name = $3,
            description = $4, rules_json = $5, revision = revision + 1,
            updated_by = $6, updated_at = $7
          WHERE id = $8 AND project_id = $9 AND project_version_id = $10
            AND test_stage_id = $11 AND revision = $12`,
-        [
-          record.srNum,
-          normalize(record.srNum),
-          record.name,
-          record.description,
-          JSON.stringify(record.rules),
-          record.actorId ?? null,
-          record.now,
-          record.id,
-          ...scopeValues(record),
-          record.expectedRevision,
-        ],
+          [
+            record.srNum,
+            normalize(record.srNum),
+            record.name,
+            record.description,
+            JSON.stringify(record.rules),
+            record.actorId ?? null,
+            record.now,
+            record.id,
+            ...scopeValues(record),
+            record.expectedRevision,
+          ],
+        ),
       );
       if (result.rowCount !== 1)
         throw new DomainError(
@@ -960,22 +977,24 @@ export class PostgresDdtRepository implements DdtRepository {
           "字段模板已被他人修改，请刷新后重试。",
         );
     } else {
-      await this.handle.pool.query(
-        `INSERT INTO ddt_case_templates
+      await retryPostgresWrite(() =>
+        this.handle.pool.query(
+          `INSERT INTO ddt_case_templates
          (id, project_id, project_version_id, test_stage_id, sr_num, sr_num_normalized,
           name, description, rules_json, revision, created_by, updated_by, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$10,$11,$11)`,
-        [
-          record.id,
-          ...scopeValues(record),
-          record.srNum,
-          normalize(record.srNum),
-          record.name,
-          record.description,
-          JSON.stringify(record.rules),
-          record.actorId ?? null,
-          record.now,
-        ],
+          [
+            record.id,
+            ...scopeValues(record),
+            record.srNum,
+            normalize(record.srNum),
+            record.name,
+            record.description,
+            JSON.stringify(record.rules),
+            record.actorId ?? null,
+            record.now,
+          ],
+        ),
       );
     }
     const item = (await this.listTemplates(record)).find((template) => template.id === record.id);
@@ -985,10 +1004,12 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async deleteTemplate(scope: DdtScope, templateId: string, expectedRevision: number) {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `DELETE FROM ddt_case_templates WHERE id = $1 AND project_id = $2
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `DELETE FROM ddt_case_templates WHERE id = $1 AND project_id = $2
        AND project_version_id = $3 AND test_stage_id = $4 AND revision = $5`,
-      [templateId, ...scopeValues(scope), expectedRevision],
+        [templateId, ...scopeValues(scope), expectedRevision],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -1188,11 +1209,13 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async claimImportJob(jobId: string, startedAt: string) {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `UPDATE ddt_import_jobs SET status = 'running', progress_percent = 1,
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE ddt_import_jobs SET status = 'running', progress_percent = 1,
        started_at = COALESCE(started_at, $1), updated_at = $1
        WHERE id = $2 AND status IN ('queued', 'running')`,
-      [startedAt, jobId],
+        [startedAt, jobId],
+      ),
     );
     return result.rowCount === 1 ? this.getImportJob(jobId) : null;
   }
@@ -1208,15 +1231,17 @@ export class PostgresDdtRepository implements DdtRepository {
     const scope = projectIds
       ? `AND project_id = ANY($${values.push([...projectIds])}::text[])`
       : "";
-    const result = await this.handle.pool.query(
-      `UPDATE ddt_import_jobs
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE ddt_import_jobs
        SET status = CASE WHEN status IN ('previewed','queued') THEN 'cancelled'
                          ELSE 'cancel_requested' END,
            progress_percent = CASE WHEN status IN ('previewed','queued') THEN 100 ELSE progress_percent END,
            finished_at = CASE WHEN status IN ('previewed','queued') THEN $1 ELSE finished_at END,
            updated_at = $1
        WHERE id = $2 AND status IN ('previewed','queued','running') ${scope}`,
-      values,
+        values,
+      ),
     );
     if (result.rowCount !== 1)
       throw new DomainError("DDT_IMPORT_STATE_CONFLICT", "导入任务无法取消。");
@@ -1228,24 +1253,26 @@ export class PostgresDdtRepository implements DdtRepository {
   async updateImportJob(input: Parameters<DdtRepository["updateImportJob"]>[0]) {
     const current = await this.getImportJob(input.jobId);
     if (!current) throw new Error(`DDT import job ${input.jobId} does not exist.`);
-    await this.handle.pool.query(
-      `UPDATE ddt_import_jobs SET status = $1, progress_percent = $2, inserted_count = $3,
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE ddt_import_jobs SET status = $1, progress_percent = $2, inserted_count = $3,
        updated_count = $4, unchanged_count = $5, skipped_count = $6, failed_files = $7,
        error_code = $8, error_summary = $9, updated_at = $10, finished_at = $11 WHERE id = $12`,
-      [
-        input.status,
-        input.progressPercent,
-        input.insertedCount ?? current.insertedCount,
-        input.updatedCount ?? current.updatedCount,
-        input.unchangedCount ?? current.unchangedCount,
-        input.skippedCount ?? current.skippedCount,
-        input.failedFiles ?? current.failedFiles,
-        input.errorCode ?? current.errorCode ?? null,
-        input.errorSummary ?? current.errorSummary ?? null,
-        input.updatedAt,
-        input.finishedAt ?? current.finishedAt ?? null,
-        input.jobId,
-      ],
+        [
+          input.status,
+          input.progressPercent,
+          input.insertedCount ?? current.insertedCount,
+          input.updatedCount ?? current.updatedCount,
+          input.unchangedCount ?? current.unchangedCount,
+          input.skippedCount ?? current.skippedCount,
+          input.failedFiles ?? current.failedFiles,
+          input.errorCode ?? current.errorCode ?? null,
+          input.errorSummary ?? current.errorSummary ?? null,
+          input.updatedAt,
+          input.finishedAt ?? current.finishedAt ?? null,
+          input.jobId,
+        ],
+      ),
     );
     const job = await this.getImportJob(input.jobId);
     if (!job) throw new Error("Updated DDT import job was not found.");
@@ -1254,21 +1281,23 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async updateImportFile(input: Parameters<DdtRepository["updateImportFile"]>[0]) {
     await this.ready();
-    await this.handle.pool.query(
-      `UPDATE ddt_import_files SET status = $1,
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE ddt_import_files SET status = $1,
        inserted_count = COALESCE($2, inserted_count), updated_count = COALESCE($3, updated_count),
        unchanged_count = COALESCE($4, unchanged_count), skipped_count = COALESCE($5, skipped_count),
        error_summary = $6, updated_at = $7 WHERE id = $8`,
-      [
-        input.status,
-        input.result?.insertedCount ?? null,
-        input.result?.updatedCount ?? null,
-        input.result?.unchangedCount ?? null,
-        input.result?.skippedCount ?? null,
-        input.errorSummary ?? null,
-        input.updatedAt,
-        input.fileId,
-      ],
+        [
+          input.status,
+          input.result?.insertedCount ?? null,
+          input.result?.updatedCount ?? null,
+          input.result?.unchangedCount ?? null,
+          input.result?.skippedCount ?? null,
+          input.errorSummary ?? null,
+          input.updatedAt,
+          input.fileId,
+        ],
+      ),
     );
   }
 
@@ -1285,6 +1314,15 @@ export class PostgresDdtRepository implements DdtRepository {
           outcome: "inserted" | "updated" | "unchanged" | "skipped";
         }>,
       };
+      // Concurrent imports in one scope must also serialize absent-key inserts.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `ddt-import:${JSON.stringify(scopeValues(input.scope))}`,
+      ]);
+      await lockCasesForWrite(
+        client,
+        input.scope,
+        input.rows.map((row) => row.caseId),
+      );
       for (const [index, row] of input.rows.entries()) {
         const normalizedCaseId = normalize(row.caseId);
         const existingResult = await client.query<{ id: string; data_json: string }>(
@@ -1612,6 +1650,23 @@ async function getCaseWith(executor: PgExecutor, scope: DdtScope, caseId: string
   return result.rows[0] ? mapCase(result.rows[0]) : null;
 }
 
+async function lockCasesForWrite(
+  client: PoolClient,
+  scope: DdtScope,
+  caseIds: readonly string[],
+): Promise<void> {
+  for (const ids of batchesOf(
+    [...new Set(caseIds.map(normalize))].sort(),
+    RELATIONAL_ID_QUERY_BATCH_SIZE,
+  )) {
+    await client.query(
+      `SELECT id FROM ddt_cases WHERE project_id=$1 AND project_version_id=$2 AND test_stage_id=$3
+       AND case_id_normalized=ANY($4::text[]) ORDER BY case_id_normalized FOR UPDATE`,
+      [...scopeValues(scope), ids],
+    );
+  }
+}
+
 async function getCasesWith(
   executor: PgExecutor,
   scope: DdtScope,
@@ -1620,10 +1675,13 @@ async function getCasesWith(
 ): Promise<DdtCase[]> {
   if (caseIds.length === 0) return [];
   const byId = new Map<string, DdtCase>();
-  for (const ids of batchesOf(caseIds.map(normalize), RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+  for (const ids of batchesOf(
+    [...new Set(caseIds.map(normalize))].sort(),
+    RELATIONAL_ID_QUERY_BATCH_SIZE,
+  )) {
     const result = await executor.query<DdtCaseRow>(
       `${caseSelect} WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3
-       AND case_id_normalized = ANY($4::text[]) ${lock ? "FOR UPDATE" : ""}`,
+       AND case_id_normalized = ANY($4::text[]) ORDER BY case_id_normalized ${lock ? "FOR UPDATE" : ""}`,
       [...scopeValues(scope), ids],
     );
     result.rows.map(mapCase).forEach((item) => byId.set(normalize(item.caseId), item));
@@ -1851,18 +1909,7 @@ async function transaction<Result>(
   handle: PostgresDatabaseHandle,
   operation: (client: PoolClient) => Promise<Result>,
 ): Promise<Result> {
-  const client = await handle.pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await operation(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return runPostgresTransaction(handle, operation);
 }
 
 class PgWhereBuilder {

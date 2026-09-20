@@ -1,3 +1,4 @@
+import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { AttemptLogShareRecord, AttemptLogShareRepository } from "@autoforge/application";
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 
@@ -9,13 +10,13 @@ export class PostgresAttemptLogShareRepository implements AttemptLogShareReposit
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
   async create(record: AttemptLogShareRecord): Promise<void> {
-    await this.handle.db.insert(pgAttemptLogShares).values(record);
+    await retryPostgresWrite(() => this.handle.db.insert(pgAttemptLogShares).values(record));
   }
 
   async createMany(records: readonly AttemptLogShareRecord[]): Promise<void> {
     if (records.length === 0) return;
     // 单个事务批量写入，与 SQLite 适配保持同一原子性语义。
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       for (const chunk of splitIntoChunks(records, QUERY_IN_CHUNK_SIZE)) {
         await transaction.insert(pgAttemptLogShares).values(chunk);
       }

@@ -184,7 +184,7 @@ function isDatabaseContention(error: unknown): boolean {
       "code" in candidate &&
       typeof candidate.code === "string" &&
       (/^SQLITE_(BUSY|LOCKED)(_|$)/.test(candidate.code) ||
-        ["55P03", "57014"].includes(candidate.code))
+        ["55P03", "40P01", "40001", "57014"].includes(candidate.code))
     )
       return true;
     candidate = "cause" in candidate ? candidate.cause : undefined;

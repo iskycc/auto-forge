@@ -1,7 +1,12 @@
+import {
+  retrySqliteWriteTransaction,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
+
 import type { AttemptLogShareRecord, AttemptLogShareRepository } from "@autoforge/application";
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 
-import type { SqliteDatabaseHandle } from "./database";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 import { attemptLogShares } from "./schema";
 
@@ -12,19 +17,19 @@ export class SqliteAttemptLogShareRepository implements AttemptLogShareRepositor
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async create(record: AttemptLogShareRecord): Promise<void> {
-    this.handle.db.insert(attemptLogShares).values(record).run();
+    await retrySqliteLockContention(() =>
+      this.handle.db.insert(attemptLogShares).values(record).run(),
+    );
   }
 
   async createMany(records: readonly AttemptLogShareRecord[]): Promise<void> {
     if (records.length === 0) return;
     // 分批插入只为绕开绑定变量上限，整体仍在一个事务内：要么全部可见，要么整体回滚。
-    this.handle.client
-      .transaction(() => {
-        for (const chunk of splitIntoChunks(records, INSERT_ROWS_PER_STATEMENT)) {
-          this.handle.db.insert(attemptLogShares).values(chunk).run();
-        }
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      for (const chunk of splitIntoChunks(records, INSERT_ROWS_PER_STATEMENT)) {
+        this.handle.db.insert(attemptLogShares).values(chunk).run();
+      }
+    });
   }
 
   async findActiveByAttemptId(

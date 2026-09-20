@@ -1,4 +1,9 @@
 import {
+  runPostgresTransaction,
+  runPostgresDrizzleTransaction,
+  retryPostgresWrite,
+} from "./postgres-transaction";
+import {
   ddtRequirementCategoryIdSql,
   ddtExecutionClassIdSql,
   freezeDdtSrExecutionClasses,
@@ -324,7 +329,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async createJarImportJob(record: Parameters<CaseCatalogRepository["createJarImportJob"]>[0]) {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const inserted = await transaction
         .insert(pgCaseImportJobs)
         .values({
@@ -398,39 +403,43 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async claimJarImportJob(input: Parameters<CaseCatalogRepository["claimJarImportJob"]>[0]) {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgCaseImportJobs)
-      .set({
-        status: "running",
-        progressPercent: 5,
-        startedAt: input.startedAt,
-        updatedAt: input.startedAt,
-      })
-      .where(
-        and(
-          eq(pgCaseImportJobs.id, input.jobId),
-          inArray(pgCaseImportJobs.status, ["queued", "failed"]),
-        ),
-      )
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgCaseImportJobs)
+        .set({
+          status: "running",
+          progressPercent: 5,
+          startedAt: input.startedAt,
+          updatedAt: input.startedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseImportJobs.id, input.jobId),
+            inArray(pgCaseImportJobs.status, ["queued", "failed"]),
+          ),
+        )
+        .returning(),
+    );
     return row ? { job: toJarImportJob(row), objectKey: row.objectKey } : null;
   }
 
   async updateJarImportJob(input: Parameters<CaseCatalogRepository["updateJarImportJob"]>[0]) {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgCaseImportJobs)
-      .set({
-        status: input.status,
-        progressPercent: input.progressPercent,
-        resultJson: input.result ? JSON.stringify(input.result) : null,
-        errorCode: input.errorCode ?? null,
-        errorSummary: input.errorSummary ?? null,
-        updatedAt: input.updatedAt,
-        finishedAt: input.finishedAt ?? null,
-      })
-      .where(eq(pgCaseImportJobs.id, input.jobId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgCaseImportJobs)
+        .set({
+          status: input.status,
+          progressPercent: input.progressPercent,
+          resultJson: input.result ? JSON.stringify(input.result) : null,
+          errorCode: input.errorCode ?? null,
+          errorSummary: input.errorSummary ?? null,
+          updatedAt: input.updatedAt,
+          finishedAt: input.finishedAt ?? null,
+        })
+        .where(eq(pgCaseImportJobs.id, input.jobId))
+        .returning(),
+    );
     if (!row) throw new DomainError("JAR_IMPORT_JOB_NOT_FOUND", "指定的 JAR 导入任务不存在。");
     return toJarImportJob(row);
   }
@@ -442,23 +451,27 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     const scope = input.projectIds
       ? inArray(pgCaseImportJobs.projectId, [...input.projectIds])
       : undefined;
-    await this.handle.db
-      .update(pgCaseImportJobs)
-      .set({
-        status: "cancelled",
-        progressPercent: 100,
-        updatedAt: input.updatedAt,
-        finishedAt: input.updatedAt,
-      })
-      .where(
-        and(eq(pgCaseImportJobs.id, input.jobId), eq(pgCaseImportJobs.status, "queued"), scope),
-      );
-    await this.handle.db
-      .update(pgCaseImportJobs)
-      .set({ status: "cancel_requested", updatedAt: input.updatedAt })
-      .where(
-        and(eq(pgCaseImportJobs.id, input.jobId), eq(pgCaseImportJobs.status, "running"), scope),
-      );
+    await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgCaseImportJobs)
+        .set({
+          status: "cancelled",
+          progressPercent: 100,
+          updatedAt: input.updatedAt,
+          finishedAt: input.updatedAt,
+        })
+        .where(
+          and(eq(pgCaseImportJobs.id, input.jobId), eq(pgCaseImportJobs.status, "queued"), scope),
+        ),
+    );
+    await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgCaseImportJobs)
+        .set({ status: "cancel_requested", updatedAt: input.updatedAt })
+        .where(
+          and(eq(pgCaseImportJobs.id, input.jobId), eq(pgCaseImportJobs.status, "running"), scope),
+        ),
+    );
     const job = await this.getJarImportJob(input.jobId, input.projectIds);
     if (!job) throw new DomainError("JAR_IMPORT_JOB_NOT_FOUND", "指定的 JAR 导入任务不存在。");
     return job;
@@ -466,7 +479,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async retryJarImportJob(input: Parameters<CaseCatalogRepository["retryJarImportJob"]>[0]) {
     await this.ready();
-    const updated = await this.handle.db.transaction(async (transaction) => {
+    const updated = await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const scope = input.projectIds
         ? inArray(pgCaseImportJobs.projectId, [...input.projectIds])
         : undefined;
@@ -545,7 +558,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
   async importCatalog(record: ImportCatalogRecord): Promise<void> {
     await this.ready();
     const projectId = record.projectId ?? DEFAULT_PROJECT_ID;
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const scopeLockKey =
         record.projectVersionId && record.testStageId
           ? `case-import:${projectId}:${record.projectVersionId}:${record.testStageId}`
@@ -1089,25 +1102,27 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     updatedAt: string;
   }): Promise<CaseDefinitionWithMethods> {
     await this.ready();
-    const [updated] = await this.handle.db
-      .update(pgCaseDefinitions)
-      .set({
-        ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.tags !== undefined ? { tagsJson: JSON.stringify(input.tags) } : {}),
-        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-        ...(input.archived !== undefined ? { archived: input.archived } : {}),
-        revision: sql`${pgCaseDefinitions.revision} + 1`,
-        updatedBy: input.actorId,
-        updatedAt: input.updatedAt,
-      })
-      .where(
-        and(
-          eq(pgCaseDefinitions.id, input.caseDefinitionId),
-          eq(pgCaseDefinitions.revision, input.expectedRevision),
-        ),
-      )
-      .returning();
+    const [updated] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgCaseDefinitions)
+        .set({
+          ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.tags !== undefined ? { tagsJson: JSON.stringify(input.tags) } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+          ...(input.archived !== undefined ? { archived: input.archived } : {}),
+          revision: sql`${pgCaseDefinitions.revision} + 1`,
+          updatedBy: input.actorId,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseDefinitions.id, input.caseDefinitionId),
+            eq(pgCaseDefinitions.revision, input.expectedRevision),
+          ),
+        )
+        .returning(),
+    );
     if (!updated) await this.throwCaseDefinitionConflict(input.caseDefinitionId);
     const definition = await this.getCaseDefinition(input.caseDefinitionId);
     if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
@@ -1121,7 +1136,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     await this.ready();
     const uniqueIds = [...new Set(caseDefinitionIds)];
     if (uniqueIds.length === 0) return [];
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const definitions: Array<{ id: string; projectId: string; displayName: string }> = [];
       if (projectIds?.length !== 0) {
         for (const batch of batchesOf(uniqueIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
@@ -1162,9 +1177,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
   ): Promise<{ inheritedCount: number; skippedCount: number }> {
     await this.ready();
     if (input.records.length === 0) return { inheritedCount: 0, skippedCount: 0 };
-    const client = await this.handle.pool.connect();
-    try {
-      await client.query("BEGIN");
+    return runPostgresTransaction(this.handle, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         `case-import:${input.projectId}:${input.targetProjectVersionId}:${input.targetTestStageId}`,
       ]);
@@ -1274,14 +1287,9 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         }
         inheritedCount += 1;
       }
-      await client.query("COMMIT");
+
       return { inheritedCount, skippedCount };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
@@ -1327,7 +1335,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     if (input.methodIds.length !== input.snapshot.methods.length) {
       throw new Error("Restore method identifiers must match the snapshot method count.");
     }
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [updated] = await transaction
         .update(pgCaseDefinitions)
         .set({
@@ -1539,7 +1547,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async setAuthoritativeSource(sourceId: string, projectId?: string): Promise<CaseSource> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [source] = await transaction
         .select()
         .from(pgCaseSources)
@@ -1605,19 +1613,21 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     record: CreateSourceComparisonRecord,
   ): Promise<CaseSourceComparison> {
     await this.ready();
-    await this.handle.db.insert(pgCaseSourceComparisons).values({
-      id: record.id,
-      projectId: record.projectId,
-      currentSourceId: record.currentSourceId ?? null,
-      candidateSourceId: record.candidateSourceId,
-      addedJson: JSON.stringify(record.added),
-      changedJson: JSON.stringify(record.changed),
-      removedJson: JSON.stringify(record.removed),
-      conflictsJson: JSON.stringify(record.conflicts),
-      truncated: record.truncated,
-      ...(record.createdBy ? { createdBy: record.createdBy } : {}),
-      createdAt: record.createdAt,
-    });
+    await retryPostgresWrite(() =>
+      this.handle.db.insert(pgCaseSourceComparisons).values({
+        id: record.id,
+        projectId: record.projectId,
+        currentSourceId: record.currentSourceId ?? null,
+        candidateSourceId: record.candidateSourceId,
+        addedJson: JSON.stringify(record.added),
+        changedJson: JSON.stringify(record.changed),
+        removedJson: JSON.stringify(record.removed),
+        conflictsJson: JSON.stringify(record.conflicts),
+        truncated: record.truncated,
+        ...(record.createdBy ? { createdBy: record.createdBy } : {}),
+        createdAt: record.createdAt,
+      }),
+    );
     const comparison = await this.getSourceComparison(record.id);
     if (!comparison) throw new Error(`Case source comparison ${record.id} was not persisted.`);
     return comparison;
@@ -1641,7 +1651,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     versionMerges?: CaseSourceVersionMerge[];
   }): Promise<CaseSource> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [target] = await transaction
         .select()
         .from(pgCaseSources)
@@ -1793,20 +1803,22 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     updatedAt: string;
   }): Promise<CaseSource> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgCaseSources)
-      .set({
-        lifecycleStatus: input.lifecycleStatus,
-        revision: sql`${pgCaseSources.revision} + 1`,
-        updatedAt: input.updatedAt,
-      })
-      .where(
-        and(
-          eq(pgCaseSources.id, input.sourceId),
-          eq(pgCaseSources.revision, input.expectedRevision),
-        ),
-      )
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgCaseSources)
+        .set({
+          lifecycleStatus: input.lifecycleStatus,
+          revision: sql`${pgCaseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseSources.id, input.sourceId),
+            eq(pgCaseSources.revision, input.expectedRevision),
+          ),
+        )
+        .returning(),
+    );
     if (!row) return throwPostgresSourceConflict(this.handle.db, input.sourceId);
     return toSource(row);
   }
@@ -1845,7 +1857,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async detachSourceForCleanup(sourceId: string, objectKey: string): Promise<number> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       await transaction.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${"case-source-cleanup:" + objectKey}))`,
       );
@@ -1869,7 +1881,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     updatedAt: string;
   }): Promise<CaseSource> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [updated] = await transaction
         .update(pgCaseSources)
         .set({
@@ -1923,7 +1935,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     finishedAt: string;
   }): Promise<void> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       await transaction
         .update(pgCleanupJobs)
         .set({
@@ -1977,23 +1989,25 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
 
   async create(record: CreateCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
-    const [row] = await this.handle.db
-      .insert(pgCaseSuites)
-      .values({
-        id: record.id,
-        projectId: record.projectId ?? DEFAULT_PROJECT_ID,
-        name: record.name,
-        description: record.description ?? null,
-        version: 1,
-        status: "active",
-        enabled: true,
-        revision: 1,
-        policyJson: JSON.stringify(record.policy ?? defaultCaseSuiteExecutionPolicy),
-        ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
-        createdAt: record.createdAt,
-        updatedAt: record.createdAt,
-      })
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .insert(pgCaseSuites)
+        .values({
+          id: record.id,
+          projectId: record.projectId ?? DEFAULT_PROJECT_ID,
+          name: record.name,
+          description: record.description ?? null,
+          version: 1,
+          status: "active",
+          enabled: true,
+          revision: 1,
+          policyJson: JSON.stringify(record.policy ?? defaultCaseSuiteExecutionPolicy),
+          ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
+          createdAt: record.createdAt,
+          updatedAt: record.createdAt,
+        })
+        .returning(),
+    );
     if (!row) throw new Error("PostgreSQL did not return the created case suite.");
     return toSuite(row, 0);
   }
@@ -2371,7 +2385,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       if (!input.items.length) return;
       let added = 0;
       for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
@@ -2421,7 +2435,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       let removed = 0;
       for (const ids of batchesOf(input.caseDefinitionIds, POSTGRES_WRITE_BATCH_SIZE)) {
         removed += (
@@ -2468,7 +2482,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       let added = 0;
       for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
         const inserted = await transaction
@@ -2509,7 +2523,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       let removed = 0;
       for (const ids of batchesOf(input.ddtCaseIds, POSTGRES_WRITE_BATCH_SIZE)) {
         removed += (
@@ -2542,7 +2556,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
 
   async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const patch: Record<string, unknown> = {
         version: sql`${pgCaseSuites.version} + 1`,
         revision: sql`${pgCaseSuites.revision} + 1`,
@@ -2570,7 +2584,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       )) {
         await transaction
           .insert(pgCaseSuiteRoundRecoveryCredentials)
-          .values({ suiteId: input.suiteId, ruleId, apiKeyCiphertext, updatedAt: input.updatedAt })
+          .values({
+            suiteId: input.suiteId,
+            ruleId,
+            apiKeyCiphertext,
+            updatedAt: input.updatedAt,
+          })
           .onConflictDoUpdate({
             target: [
               pgCaseSuiteRoundRecoveryCredentials.suiteId,
@@ -2607,7 +2626,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
 
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
-    await this.handle.db.transaction(async (transaction) => {
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       await transaction.insert(pgCaseSuites).values({
         id: input.id,
         projectId: input.projectId ?? DEFAULT_PROJECT_ID,
@@ -2832,7 +2851,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
 
   async register(record: RegisterRunnerRecord): Promise<Runner | null> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const used = await transaction
         .insert(pgRunnerBootstrapUses)
         .values({ tokenHash: record.bootstrapTokenHash, usedAt: record.recordedAt })
@@ -2937,29 +2956,31 @@ export class PostgresRunnerRepository implements RunnerRepository {
     recordedAt: string;
   }): Promise<Runner> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgRunners)
-      .set({
-        labelsJson: JSON.stringify(input.labels),
-        capabilitiesJson: JSON.stringify(input.capabilities),
-        maxConcurrency: input.maxConcurrency,
-        busySlots: input.busySlots,
-        agentVersion: input.agentVersion,
-        terminalEnabled: input.terminalEnabled,
-        ...(input.resourceSnapshot
-          ? {
-              cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
-              memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
-              loadAverage1m: input.resourceSnapshot.loadAverage1m,
-              logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
-              metricsObservedAt: input.resourceSnapshot.observedAt,
-            }
-          : {}),
-        lastSeenAt: input.recordedAt,
-        updatedAt: input.recordedAt,
-      })
-      .where(eq(pgRunners.id, input.runnerId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgRunners)
+        .set({
+          labelsJson: JSON.stringify(input.labels),
+          capabilitiesJson: JSON.stringify(input.capabilities),
+          maxConcurrency: input.maxConcurrency,
+          busySlots: input.busySlots,
+          agentVersion: input.agentVersion,
+          terminalEnabled: input.terminalEnabled,
+          ...(input.resourceSnapshot
+            ? {
+                cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
+                memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
+                loadAverage1m: input.resourceSnapshot.loadAverage1m,
+                logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
+                metricsObservedAt: input.resourceSnapshot.observedAt,
+              }
+            : {}),
+          lastSeenAt: input.recordedAt,
+          updatedAt: input.recordedAt,
+        })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
@@ -3007,15 +3028,17 @@ export class PostgresRunnerRepository implements RunnerRepository {
     updatedAt: string;
   }): Promise<Runner> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgRunners)
-      .set({
-        disabled: input.state === "disabled",
-        draining: input.state === "draining",
-        updatedAt: input.updatedAt,
-      })
-      .where(eq(pgRunners.id, input.runnerId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgRunners)
+        .set({
+          disabled: input.state === "disabled",
+          draining: input.state === "draining",
+          updatedAt: input.updatedAt,
+        })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
@@ -3027,18 +3050,20 @@ export class PostgresRunnerRepository implements RunnerRepository {
     rotatedAt: string;
   }): Promise<Runner> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgRunners)
-      .set({
-        previousCredentialHash: sql`${pgRunners.credentialHash}`,
-        previousCredentialValidUntil: input.previousCredentialValidUntil,
-        credentialHash: input.credentialHash,
-        credentialVersion: sql`${pgRunners.credentialVersion} + 1`,
-        credentialRotationRequestedAt: null,
-        updatedAt: input.rotatedAt,
-      })
-      .where(eq(pgRunners.id, input.runnerId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgRunners)
+        .set({
+          previousCredentialHash: sql`${pgRunners.credentialHash}`,
+          previousCredentialValidUntil: input.previousCredentialValidUntil,
+          credentialHash: input.credentialHash,
+          credentialVersion: sql`${pgRunners.credentialVersion} + 1`,
+          credentialRotationRequestedAt: null,
+          updatedAt: input.rotatedAt,
+        })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
@@ -3048,35 +3073,39 @@ export class PostgresRunnerRepository implements RunnerRepository {
     requestedAt: string;
   }): Promise<Runner> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgRunners)
-      .set({ credentialRotationRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
-      .where(eq(pgRunners.id, input.runnerId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgRunners)
+        .set({ credentialRotationRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
 
   async revokeCredential(input: { runnerId: string; revokedAt: string }): Promise<Runner> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgRunners)
-      .set({
-        credentialRevokedAt: input.revokedAt,
-        credentialRotationRequestedAt: null,
-        previousCredentialHash: null,
-        previousCredentialValidUntil: null,
-        updatedAt: input.revokedAt,
-      })
-      .where(eq(pgRunners.id, input.runnerId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgRunners)
+        .set({
+          credentialRevokedAt: input.revokedAt,
+          credentialRotationRequestedAt: null,
+          previousCredentialHash: null,
+          previousCredentialValidUntil: null,
+          updatedAt: input.revokedAt,
+        })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }
 
   async deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner> {
     await this.ready();
-    return this.handle.db.transaction(async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const [row] = await transaction
         .update(pgRunners)
         .set({
@@ -3105,22 +3134,24 @@ export class PostgresRunnerRepository implements RunnerRepository {
 
   async purge(input: { runnerId: string; purgedAt: string }): Promise<Runner> {
     await this.ready();
-    const [row] = await this.handle.db
-      .update(pgRunners)
-      .set({
-        purgedAt: input.purgedAt,
-        // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
-        // 保证任何真实凭据哈希都无法再匹配该记录。
-        credentialHash: `purged:${input.runnerId}`,
-        previousCredentialHash: null,
-        previousCredentialValidUntil: null,
-        credentialRotationRequestedAt: null,
-        labelsJson: "[]",
-        capabilitiesJson: "[]",
-        updatedAt: input.purgedAt,
-      })
-      .where(eq(pgRunners.id, input.runnerId))
-      .returning();
+    const [row] = await retryPostgresWrite(() =>
+      this.handle.db
+        .update(pgRunners)
+        .set({
+          purgedAt: input.purgedAt,
+          // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
+          // 保证任何真实凭据哈希都无法再匹配该记录。
+          credentialHash: `purged:${input.runnerId}`,
+          previousCredentialHash: null,
+          previousCredentialValidUntil: null,
+          credentialRotationRequestedAt: null,
+          labelsJson: "[]",
+          capabilitiesJson: "[]",
+          updatedAt: input.purgedAt,
+        })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning(),
+    );
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
   }

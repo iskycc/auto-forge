@@ -18,7 +18,14 @@ Lite 的 SR 分类设置/更换/解除、需求分类保存/删除和候选测�
 Web 连接仍保持 25ms 单次锁等待；遇到 `SQLITE_BUSY` / `SQLITE_LOCKED` 时先回滚，最多尝试 6 次，
 在尝试之间异步退避，让出主线程处理其他请求，不通过延长同步等待阻塞页面。每次重试都重新检查版本号、
 分类存在性和执行类可用性；真实编辑冲突、分类仍被引用等业务错误不重试。持续占锁超过重试预算仍明确报错，
-本操作不留下部分写入。Full 保持原有 PostgreSQL 事务与作用域锁规则。
+本操作不留下部分写入。相同策略已补齐到分析认领/提交、用例编辑、身份权限、项目配置、执行机管理、
+Webhook 与后台维护等仓储写入口。API Key 活动时间改为最多每 5 分钟记录一次，遇锁延后记录，
+鉴权仍逐次检查停用、撤销、过期和权限。
+
+Full 的原子单语句写入与通用数据库事务在死锁、序列化失败或锁超时后在原子边界回滚，释放连接后有限重试；
+DDT 批量编辑/导入与分析批量操作统一加锁顺序。普通连接默认单次锁等待 1 秒、单条语句 30 秒，
+专用后台连接保留更短的配置；启动迁移不受请求期限影响。
+详细范围、特殊执行完成路径和验证方法见[数据库写入竞争排查](./database-contention-audit.md)。
 
 资源检测与部署语义参考 [Node OS API](https://nodejs.org/api/os.html)、[Node process memory API](https://nodejs.org/api/process.html)、[Worker 资源限制](https://nodejs.org/api/worker_threads.html) 和 [Docker 资源约束](https://docs.docker.com/engine/containers/resource_constraints/)。
 

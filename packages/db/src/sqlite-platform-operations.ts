@@ -1,3 +1,9 @@
+import {
+  retrySqliteWriteTransaction,
+  isSqliteLockContentionError,
+  retrySqliteLockContention,
+  type SqliteDatabaseHandle,
+} from "./database";
 import type {
   AnalyticsFilter,
   AnalyticsSummary,
@@ -15,15 +21,16 @@ import {
   ADAPTER_FAILURE_RESULT_CODES,
   ADAPTER_SUCCESS_RESULT_CODES,
   DomainError,
-  isPermission,
   RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
-  type Permission,
 } from "@autoforge/domain";
 
 import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
-import { retrySqliteLockContention, type SqliteDatabaseHandle } from "./database";
+
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
+  apiTokenActivityCutoff,
+  mapApiTokenAuthentication,
+  serviceAccountWriteError,
   analyticsDateBucket,
   analyticsExportProjectIds,
   analyticsOverviewFactLimit,
@@ -117,7 +124,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
           ),
       );
     } catch (error) {
-      throw databaseConflict(error, "SERVICE_ACCOUNT_NAME_CONFLICT", "服务账号名称已存在。");
+      throw serviceAccountWriteError(error);
     }
     return record;
   }
@@ -165,7 +172,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       if (result.changes !== 1) versionConflict();
     } catch (error) {
       if (error instanceof DomainError) throw error;
-      throw databaseConflict(error, "SERVICE_ACCOUNT_NAME_CONFLICT", "服务账号名称已存在。");
+      throw serviceAccountWriteError(error);
     }
     return mapServiceAccount(this.requiredServiceAccountRow(input.accountId));
   }
@@ -180,29 +187,33 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async createApiToken(record: ApiToken & { tokenHash: string }): Promise<ApiToken> {
     const account = this.serviceAccountRow(record.serviceAccountId);
     if (!account) throw new DomainError("SERVICE_ACCOUNT_NOT_FOUND", "服务账号不存在。");
-    this.handle.client
-      .prepare(
-        `INSERT INTO api_tokens
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `INSERT INTO api_tokens
          (id, service_account_id, name, token_prefix, token_hash, scopes_json, expires_at, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.id,
-        record.serviceAccountId,
-        record.name,
-        record.prefix,
-        record.tokenHash,
-        JSON.stringify(record.scopes),
-        record.expiresAt,
-        record.createdAt,
-      );
+        )
+        .run(
+          record.id,
+          record.serviceAccountId,
+          record.name,
+          record.prefix,
+          record.tokenHash,
+          JSON.stringify(record.scopes),
+          record.expiresAt,
+          record.createdAt,
+        ),
+    );
     return record;
   }
 
   async revokeApiToken(input: { tokenId: string; revokedAt: string }): Promise<ApiToken> {
-    const result = this.handle.client
-      .prepare("UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
-      .run(input.revokedAt, input.tokenId);
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare("UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+        .run(input.revokedAt, input.tokenId),
+    );
     if (result.changes !== 1) throw new DomainError("API_TOKEN_NOT_FOUND", "API 令牌不存在。");
     return mapApiToken(this.requiredApiTokenRow(input.tokenId));
   }
@@ -210,35 +221,40 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async authenticateApiToken(
     input: Parameters<PlatformOperationsRepository["authenticateApiToken"]>[0],
   ) {
-    return this.handle.client
-      .transaction(() => {
-        const row = this.handle.client
+    const row = this.handle.client
+      .prepare(
+        `SELECT t.* FROM api_tokens t JOIN service_accounts a ON a.id=t.service_account_id
+         WHERE t.token_hash=? AND t.revoked_at IS NULL AND t.expires_at>?
+           AND a.status='active'`,
+      )
+      .get(input.tokenHash, input.usedAt) as ApiTokenRow | undefined;
+    if (!row) return null;
+    const account = this.requiredServiceAccountRow(row.service_account_id);
+    return mapApiTokenAuthentication(
+      this.recordTokenActivityIfAvailable(row, input.usedAt),
+      account,
+    );
+  }
+
+  private recordTokenActivityIfAvailable(row: ApiTokenRow, usedAt: string): ApiTokenRow {
+    const cutoff = apiTokenActivityCutoff(usedAt);
+    if (row.last_used_at && row.last_used_at > cutoff) return row;
+    try {
+      return (
+        (this.handle.client
           .prepare(
-            `SELECT t.* FROM api_tokens t
-           JOIN service_accounts a ON a.id = t.service_account_id
-           WHERE t.token_hash = ? AND t.revoked_at IS NULL AND t.expires_at > ?
-             AND a.status = 'active'`,
+            `UPDATE api_tokens SET last_used_at=?
+          WHERE id=? AND revoked_at IS NULL AND expires_at>?
+            AND (last_used_at IS NULL OR last_used_at<=?) RETURNING *`,
           )
-          .get(input.tokenHash, input.usedAt) as ApiTokenRow | undefined;
-        if (!row) return null;
-        this.handle.client
-          .prepare("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
-          .run(input.usedAt, row.id);
-        const account = mapServiceAccount(this.requiredServiceAccountRow(row.service_account_id));
-        const token = mapApiToken({ ...row, last_used_at: input.usedAt });
-        const allowed = new Set<Permission>(
-          [
-            ...account.systemPermissions,
-            ...Object.values(account.projectPermissions).flat(),
-          ].filter(isPermission),
-        );
-        return {
-          serviceAccount: account,
-          token,
-          effectiveScopes: token.scopes.filter(isPermission).filter((scope) => allowed.has(scope)),
-        };
-      })
-      .immediate();
+          .get(usedAt, row.id, usedAt, cutoff) as ApiTokenRow | undefined) ?? row
+      );
+    } catch (error) {
+      if (!isSqliteLockContentionError(error)) throw error;
+      // Activity is advisory, never an authorization condition. A writer may defer it
+      // until the next valid request; report the stored timestamp, never invent a new one.
+      return row;
+    }
   }
 
   async listSchedules(projectIds?: readonly string[]): Promise<CaseSuiteSchedule[]> {
@@ -264,55 +280,61 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       .get(record.suiteId) as ScheduleRow | undefined;
     if (!current) {
       if (expectedRevision !== undefined) versionConflict();
-      this.handle.client
-        .prepare(
-          `INSERT INTO case_suite_schedules
+      await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(
+            `INSERT INTO case_suite_schedules
            (id, suite_id, project_id, cron_expression, time_zone, missed_run_policy, enabled,
             next_trigger_at, last_trigger_at, revision, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-        )
-        .run(
-          record.id,
-          record.suiteId,
-          record.projectId,
-          record.cronExpression,
-          record.timeZone,
-          record.missedRunPolicy,
-          record.enabled ? 1 : 0,
-          record.nextTriggerAt,
-          record.lastTriggerAt ?? null,
-          record.createdAt,
-          record.updatedAt,
-        );
+          )
+          .run(
+            record.id,
+            record.suiteId,
+            record.projectId,
+            record.cronExpression,
+            record.timeZone,
+            record.missedRunPolicy,
+            record.enabled ? 1 : 0,
+            record.nextTriggerAt,
+            record.lastTriggerAt ?? null,
+            record.createdAt,
+            record.updatedAt,
+          ),
+      );
     } else {
       if (expectedRevision === undefined || expectedRevision !== current.revision)
         versionConflict();
-      const result = this.handle.client
-        .prepare(
-          `UPDATE case_suite_schedules
+      const result = await retrySqliteLockContention(() =>
+        this.handle.client
+          .prepare(
+            `UPDATE case_suite_schedules
            SET cron_expression = ?, time_zone = ?, missed_run_policy = ?, enabled = ?,
                next_trigger_at = ?, revision = revision + 1, updated_at = ?
            WHERE id = ? AND revision = ?`,
-        )
-        .run(
-          record.cronExpression,
-          record.timeZone,
-          record.missedRunPolicy,
-          record.enabled ? 1 : 0,
-          record.nextTriggerAt,
-          record.updatedAt,
-          current.id,
-          expectedRevision,
-        );
+          )
+          .run(
+            record.cronExpression,
+            record.timeZone,
+            record.missedRunPolicy,
+            record.enabled ? 1 : 0,
+            record.nextTriggerAt,
+            record.updatedAt,
+            current.id,
+            expectedRevision,
+          ),
+      );
       if (result.changes !== 1) versionConflict();
     }
     return (await this.findScheduleBySuite(record.suiteId)) as CaseSuiteSchedule;
   }
 
   async deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void> {
-    const result = this.handle.client
-      .prepare("DELETE FROM case_suite_schedules WHERE id = ? AND revision = ?")
-      .run(scheduleId, expectedRevision);
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare("DELETE FROM case_suite_schedules WHERE id = ? AND revision = ?")
+        .run(scheduleId, expectedRevision),
+    );
     if (result.changes !== 1) versionConflict();
   }
 
@@ -330,64 +352,64 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async claimScheduleTrigger(
     input: Parameters<PlatformOperationsRepository["claimScheduleTrigger"]>[0],
   ): Promise<boolean> {
-    const result = this.handle.client
-      .prepare(
-        `INSERT INTO schedule_trigger_claims
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `INSERT INTO schedule_trigger_claims
          (schedule_id,scheduled_for,claim_id,lease_expires_at,claimed_at) VALUES (?,?,?,?,?)
          ON CONFLICT(schedule_id,scheduled_for) DO UPDATE SET
            claim_id=excluded.claim_id, lease_expires_at=excluded.lease_expires_at,
            claimed_at=excluded.claimed_at
          WHERE schedule_trigger_claims.lease_expires_at <= excluded.claimed_at`,
-      )
-      .run(
-        input.scheduleId,
-        input.scheduledFor,
-        input.claimId,
-        input.leaseExpiresAt,
-        input.claimedAt,
-      );
+        )
+        .run(
+          input.scheduleId,
+          input.scheduledFor,
+          input.claimId,
+          input.leaseExpiresAt,
+          input.claimedAt,
+        ),
+    );
     return result.changes === 1;
   }
 
   async completeScheduleTrigger(
     input: Parameters<PlatformOperationsRepository["completeScheduleTrigger"]>[0],
   ): Promise<boolean> {
-    return this.handle.client
-      .transaction(() => {
-        const claim = this.handle.client
-          .prepare(
-            "SELECT claim_id FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=?",
-          )
-          .get(input.scheduleId, input.scheduledFor) as { claim_id: string } | undefined;
-        if (claim?.claim_id !== input.claimId) return false;
-        const inserted = this.handle.client
-          .prepare(
-            `INSERT OR IGNORE INTO scheduled_trigger_receipts
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const claim = this.handle.client
+        .prepare(
+          "SELECT claim_id FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=?",
+        )
+        .get(input.scheduleId, input.scheduledFor) as { claim_id: string } | undefined;
+      if (claim?.claim_id !== input.claimId) return false;
+      const inserted = this.handle.client
+        .prepare(
+          `INSERT OR IGNORE INTO scheduled_trigger_receipts
            (schedule_id, scheduled_for, batch_id, status, created_at) VALUES (?, ?, ?, ?, ?)`,
-          )
-          .run(
-            input.scheduleId,
-            input.scheduledFor,
-            input.batchId ?? null,
-            input.status,
-            input.recordedAt,
-          );
-        if (inserted.changes !== 1) return false;
-        this.handle.client
-          .prepare(
-            `UPDATE case_suite_schedules
+        )
+        .run(
+          input.scheduleId,
+          input.scheduledFor,
+          input.batchId ?? null,
+          input.status,
+          input.recordedAt,
+        );
+      if (inserted.changes !== 1) return false;
+      this.handle.client
+        .prepare(
+          `UPDATE case_suite_schedules
            SET last_trigger_at = ?, next_trigger_at = ?, revision = revision + 1, updated_at = ?
            WHERE id = ?`,
-          )
-          .run(input.scheduledFor, input.nextTriggerAt, input.recordedAt, input.scheduleId);
-        this.handle.client
-          .prepare(
-            "DELETE FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=? AND claim_id=?",
-          )
-          .run(input.scheduleId, input.scheduledFor, input.claimId);
-        return true;
-      })
-      .immediate();
+        )
+        .run(input.scheduledFor, input.nextTriggerAt, input.recordedAt, input.scheduleId);
+      this.handle.client
+        .prepare(
+          "DELETE FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=? AND claim_id=?",
+        )
+        .run(input.scheduleId, input.scheduledFor, input.claimId);
+      return true;
+    });
   }
 
   async listNotifications(input: Parameters<PlatformOperationsRepository["listNotifications"]>[0]) {
@@ -441,25 +463,27 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async createNotification(record: Notification): Promise<Notification> {
-    this.handle.client
-      .prepare(
-        `INSERT INTO notifications
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `INSERT INTO notifications
          (id, user_id, project_id, kind, severity, title, message, resource_type, resource_id,
           read_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
-      )
-      .run(
-        record.id,
-        record.userId,
-        record.projectId ?? null,
-        record.kind,
-        record.severity,
-        record.title,
-        record.message,
-        record.resourceType ?? null,
-        record.resourceId ?? null,
-        record.readAt ?? null,
-        record.createdAt,
-      );
+        )
+        .run(
+          record.id,
+          record.userId,
+          record.projectId ?? null,
+          record.kind,
+          record.severity,
+          record.title,
+          record.message,
+          record.resourceType ?? null,
+          record.resourceId ?? null,
+          record.readAt ?? null,
+          record.createdAt,
+        ),
+    );
     return record;
   }
 
@@ -521,25 +545,25 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
         .get(...candidate.parameters),
     );
     if (pending.length === 0) return 0;
-    return this.handle.client
-      .transaction(() => {
-        let inserted = 0;
-        for (const candidate of pending) {
-          inserted += this.handle.client
-            .prepare(`INSERT OR IGNORE INTO notifications ${candidate.columns} ${candidate.select}`)
-            .run(...candidate.parameters).changes;
-        }
-        return inserted;
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      let inserted = 0;
+      for (const candidate of pending) {
+        inserted += this.handle.client
+          .prepare(`INSERT OR IGNORE INTO notifications ${candidate.columns} ${candidate.select}`)
+          .run(...candidate.parameters).changes;
+      }
+      return inserted;
+    });
   }
 
   async markNotificationRead(input: { notificationId: string; userId: string; readAt: string }) {
-    const result = this.handle.client
-      .prepare(
-        "UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ? AND user_id = ?",
-      )
-      .run(input.readAt, input.notificationId, input.userId);
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          "UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ? AND user_id = ?",
+        )
+        .run(input.readAt, input.notificationId, input.userId),
+    );
     if (result.changes !== 1) {
       throw new DomainError("NOTIFICATION_NOT_FOUND", "通知不存在或不属于当前用户。");
     }
@@ -551,21 +575,19 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
        (category, retention_days, minimum_days, maximum_days, updated_by, updated_at, revision)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
-    this.handle.client
-      .transaction(() => {
-        for (const record of records) {
-          insert.run(
-            record.category,
-            record.retentionDays,
-            record.minimumDays,
-            record.maximumDays,
-            record.updatedBy ?? null,
-            record.updatedAt,
-            record.revision,
-          );
-        }
-      })
-      .immediate();
+    await retrySqliteWriteTransaction(this.handle, () => {
+      for (const record of records) {
+        insert.run(
+          record.category,
+          record.retentionDays,
+          record.minimumDays,
+          record.maximumDays,
+          record.updatedBy ?? null,
+          record.updatedAt,
+          record.revision,
+        );
+      }
+    });
   }
 
   async listRetentionPolicies(): Promise<RetentionPolicy[]> {
@@ -594,20 +616,22 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async updateRetentionPolicy(
     input: Parameters<PlatformOperationsRepository["updateRetentionPolicy"]>[0],
   ): Promise<RetentionPolicy> {
-    const result = this.handle.client
-      .prepare(
-        `UPDATE retention_policies SET retention_days = ?, updated_by = ?, updated_at = ?,
+    const result = await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE retention_policies SET retention_days = ?, updated_by = ?, updated_at = ?,
          revision = revision + 1 WHERE category = ? AND revision = ?
          AND ? BETWEEN minimum_days AND maximum_days`,
-      )
-      .run(
-        input.retentionDays,
-        input.actorId,
-        input.updatedAt,
-        input.category,
-        input.expectedRevision,
-        input.retentionDays,
-      );
+        )
+        .run(
+          input.retentionDays,
+          input.actorId,
+          input.updatedAt,
+          input.category,
+          input.expectedRevision,
+          input.retentionDays,
+        ),
+    );
     if (result.changes !== 1) versionConflict();
     return (await this.listRetentionPolicies()).find(
       (policy) => policy.category === input.category,
@@ -639,9 +663,9 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     const result =
       input.category === "log"
         ? executeSqliteRetention(this.handle, input)
-        : this.handle.client
-            .transaction(() => executeSqliteRetention(this.handle, input))
-            .immediate();
+        : await retrySqliteWriteTransaction(this.handle, () =>
+            executeSqliteRetention(this.handle, input),
+          );
     // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
     for (const batchId of result.removedBatchStoreIds) {
       await this.attemptLogs?.removeBatchStore(batchId);
@@ -658,69 +682,63 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
              AND (status IN ('pending','failed') OR (status='leased' AND lease_expires_at <= ?))
            ORDER BY available_at,id LIMIT ?`;
     if (!this.handle.client.prepare(candidateSql).get(input.now, input.now, 1)) return [];
-    return this.handle.client
-      .transaction(() => {
-        const rows = this.handle.client
-          .prepare(candidateSql)
-          .all(input.now, input.now, input.limit) as Array<{ id: string }>;
-        const claimed: Awaited<
-          ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]>
-        > = [];
-        const update = this.handle.client.prepare(
-          `UPDATE cleanup_jobs SET status='leased', lease_owner=?, lease_expires_at=?,
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      const rows = this.handle.client
+        .prepare(candidateSql)
+        .all(input.now, input.now, input.limit) as Array<{ id: string }>;
+      const claimed: Awaited<
+        ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]>
+      > = [];
+      const update = this.handle.client.prepare(
+        `UPDATE cleanup_jobs SET status='leased', lease_owner=?, lease_expires_at=?,
           attempt_count=attempt_count+1, updated_at=? WHERE id=?
           AND (status IN ('pending','failed') OR (status='leased' AND lease_expires_at <= ?))
           RETURNING id,category,resource_type,resource_id,object_key,attempt_count`,
-        );
-        for (const row of rows) {
-          const job = update.get(
-            input.owner,
-            input.leaseExpiresAt,
-            input.now,
-            row.id,
-            input.now,
-          ) as
-            | {
-                id: string;
-                category: string;
-                resource_type: string;
-                resource_id: string;
-                object_key: string;
-                attempt_count: number;
-              }
-            | undefined;
-          if (job) {
-            claimed.push({
-              id: job.id,
-              category: job.category,
-              resourceType: job.resource_type,
-              resourceId: job.resource_id,
-              objectKey: job.object_key,
-              attemptCount: job.attempt_count,
-            });
-          }
+      );
+      for (const row of rows) {
+        const job = update.get(input.owner, input.leaseExpiresAt, input.now, row.id, input.now) as
+          | {
+              id: string;
+              category: string;
+              resource_type: string;
+              resource_id: string;
+              object_key: string;
+              attempt_count: number;
+            }
+          | undefined;
+        if (job) {
+          claimed.push({
+            id: job.id,
+            category: job.category,
+            resourceType: job.resource_type,
+            resourceId: job.resource_id,
+            objectKey: job.object_key,
+            attemptCount: job.attempt_count,
+          });
         }
-        return claimed;
-      })
-      .immediate();
+      }
+      return claimed;
+    });
   }
 
   async completeRetentionCleanupJob(
     input: Parameters<PlatformOperationsRepository["completeRetentionCleanupJob"]>[0],
   ): Promise<void> {
-    this.handle.client
-      .prepare(
-        `UPDATE cleanup_jobs SET status=?, error_summary=?, available_at=?, lease_owner=NULL,
+    await retrySqliteLockContention(() =>
+      this.handle.client
+        .prepare(
+          `UPDATE cleanup_jobs SET status=?, error_summary=?, available_at=?, lease_owner=NULL,
           lease_expires_at=NULL, updated_at=? WHERE id=? AND status='leased' AND lease_owner=?`,
-      )
-      .run(
-        input.status,
-        input.errorSummary ?? null,
-        input.availableAt,
-        input.updatedAt,
-        input.id,
-        input.owner,
-      );
+        )
+        .run(
+          input.status,
+          input.errorSummary ?? null,
+          input.availableAt,
+          input.updatedAt,
+          input.id,
+          input.owner,
+        ),
+    );
   }
 
   async rebuildAnalyticsFacts(limit: number): Promise<number> {
@@ -783,35 +801,33 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
          schema_version=excluded.schema_version
        WHERE analytics_facts.schema_version < excluded.schema_version`,
     );
-    return this.handle.client
-      .transaction(() => {
-        let inserted = 0;
-        for (const row of rows) {
-          const counts = resultCounts(row.testng_result_json);
-          inserted += writeFact.run(
-            row.attempt_id,
-            row.project_id,
-            row.batch_id,
-            row.run_id,
-            row.suite_id,
-            row.case_definition_id,
-            row.case_version,
-            row.runner_id,
-            row.environment_version_id,
-            row.outcome,
-            row.result_code,
-            failureSignature(row.outcome, row.result_code, row.result_summary),
-            row.duration_ms,
-            counts.passed,
-            counts.failed,
-            counts.skipped,
-            row.finished_at,
-            ANALYTICS_FACT_SCHEMA_VERSION,
-          ).changes;
-        }
-        return inserted;
-      })
-      .immediate();
+    return await retrySqliteWriteTransaction(this.handle, () => {
+      let inserted = 0;
+      for (const row of rows) {
+        const counts = resultCounts(row.testng_result_json);
+        inserted += writeFact.run(
+          row.attempt_id,
+          row.project_id,
+          row.batch_id,
+          row.run_id,
+          row.suite_id,
+          row.case_definition_id,
+          row.case_version,
+          row.runner_id,
+          row.environment_version_id,
+          row.outcome,
+          row.result_code,
+          failureSignature(row.outcome, row.result_code, row.result_summary),
+          row.duration_ms,
+          counts.passed,
+          counts.failed,
+          counts.skipped,
+          row.finished_at,
+          ANALYTICS_FACT_SCHEMA_VERSION,
+        ).changes;
+      }
+      return inserted;
+    });
   }
 
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
@@ -1532,10 +1548,6 @@ function searchItems(
 
 function normalizeName(value: string): string {
   return value.trim().toLocaleLowerCase("en-US");
-}
-
-function databaseConflict(error: unknown, code: string, message: string): DomainError {
-  return new DomainError(code, message, { cause: error instanceof Error ? error : undefined });
 }
 
 function versionConflict(): never {

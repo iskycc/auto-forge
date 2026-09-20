@@ -792,7 +792,7 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async updateCases(records: Parameters<DdtRepository["updateCases"]>[0]): Promise<DdtCase[]> {
     if (records.length === 0) return [];
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       for (const record of records) {
         const current = this.handle.client
           .prepare(
@@ -880,7 +880,7 @@ export class SqliteDdtRepository implements DdtRepository {
   }
 
   async trashCases(input: Parameters<DdtRepository["trashCases"]>[0]): Promise<number> {
-    return runSqliteWriteTransaction(this.handle, () => {
+    return await retrySqliteWriteTransaction(this.handle, () => {
       const cases = this.getCasesSync(input.scope, input.caseIds);
       if (cases.length !== input.caseIds.length) {
         throw new DomainError("DDT_CASE_NOT_FOUND", "删除选择中包含不存在的 DDT 用例。");
@@ -937,7 +937,7 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async restoreDeletedCase(input: Parameters<DdtRepository["restoreDeletedCase"]>[0]) {
     let caseId = "";
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       const row = this.handle.client
         .prepare(
           `SELECT * FROM ddt_deleted_cases
@@ -991,12 +991,16 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async purgeDeletedCase(scope: DdtScope, recycleId: string): Promise<boolean> {
     return (
-      this.handle.client
-        .prepare(
-          `DELETE FROM ddt_deleted_cases
+      (
+        await retrySqliteLockContention(() =>
+          this.handle.client
+            .prepare(
+              `DELETE FROM ddt_deleted_cases
            WHERE id = ? AND project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
+            )
+            .run(recycleId, ...scopeParameters(scope)),
         )
-        .run(recycleId, ...scopeParameters(scope)).changes > 0
+      ).changes > 0
     );
   }
 
@@ -1063,7 +1067,7 @@ export class SqliteDdtRepository implements DdtRepository {
   }
 
   async writeTemplate(record: Parameters<DdtRepository["writeTemplate"]>[0]) {
-    runSqliteWriteTransaction(this.handle, () => {
+    await retrySqliteWriteTransaction(this.handle, () => {
       if (record.expectedRevision !== undefined) {
         const result = this.handle.client
           .prepare(
@@ -1121,13 +1125,17 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async deleteTemplate(scope: DdtScope, templateId: string, expectedRevision: number) {
     return (
-      this.handle.client
-        .prepare(
-          `DELETE FROM ddt_case_templates
+      (
+        await retrySqliteLockContention(() =>
+          this.handle.client
+            .prepare(
+              `DELETE FROM ddt_case_templates
            WHERE id = ? AND project_id = ? AND project_version_id = ? AND test_stage_id = ?
              AND revision = ?`,
+            )
+            .run(templateId, ...scopeParameters(scope), expectedRevision),
         )
-        .run(templateId, ...scopeParameters(scope), expectedRevision).changes > 0
+      ).changes > 0
     );
   }
 

@@ -1,3 +1,4 @@
+import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { NodeAttemptLogStore } from "./node-attempt-log-store";
 import type {
   AnalyticsFilter,
@@ -16,9 +17,7 @@ import {
   ADAPTER_FAILURE_RESULT_CODES,
   ADAPTER_SUCCESS_RESULT_CODES,
   DomainError,
-  isPermission,
   RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
-  type Permission,
 } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
@@ -26,6 +25,9 @@ import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store"
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
+  apiTokenActivityCutoff,
+  mapApiTokenAuthentication,
+  serviceAccountWriteError,
   analyticsExportProjectIds,
   analyticsOverviewFactLimit,
   failureSignature,
@@ -96,27 +98,29 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   async createServiceAccount(record: ServiceAccount): Promise<ServiceAccount> {
     await this.ready();
     try {
-      await this.handle.pool.query(
-        `INSERT INTO service_accounts
+      await retryPostgresWrite(() =>
+        this.handle.pool.query(
+          `INSERT INTO service_accounts
          (id, name, normalized_name, description, status, system_permissions_json,
           project_permissions_json, created_by, created_at, updated_at, revision)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [
-          record.id,
-          record.name,
-          normalizeName(record.name),
-          record.description,
-          record.status,
-          JSON.stringify(record.systemPermissions),
-          JSON.stringify(record.projectPermissions),
-          record.createdBy,
-          record.createdAt,
-          record.updatedAt,
-          record.revision,
-        ],
+          [
+            record.id,
+            record.name,
+            normalizeName(record.name),
+            record.description,
+            record.status,
+            JSON.stringify(record.systemPermissions),
+            JSON.stringify(record.projectPermissions),
+            record.createdBy,
+            record.createdAt,
+            record.updatedAt,
+            record.revision,
+          ],
+        ),
       );
     } catch (error) {
-      throw databaseConflict(error, "SERVICE_ACCOUNT_NAME_CONFLICT", "服务账号名称已存在。");
+      throw serviceAccountWriteError(error);
     }
     return record;
   }
@@ -127,30 +131,32 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     await this.ready();
     const current = await this.requiredServiceAccountRow(input.accountId);
     try {
-      const result = await this.handle.pool.query(
-        `UPDATE service_accounts SET name=$1, normalized_name=$2, description=$3, status=$4,
+      const result = await retryPostgresWrite(() =>
+        this.handle.pool.query(
+          `UPDATE service_accounts SET name=$1, normalized_name=$2, description=$3, status=$4,
          system_permissions_json=$5, project_permissions_json=$6, updated_at=$7,
          revision=revision+1 WHERE id=$8 AND revision=$9`,
-        [
-          input.name ?? current.name,
-          normalizeName(input.name ?? current.name),
-          input.description ?? current.description,
-          input.status ?? current.status,
-          input.systemPermissions === undefined
-            ? current.system_permissions_json
-            : JSON.stringify(input.systemPermissions),
-          input.projectPermissions === undefined
-            ? current.project_permissions_json
-            : JSON.stringify(input.projectPermissions),
-          input.updatedAt,
-          input.accountId,
-          input.expectedRevision,
-        ],
+          [
+            input.name ?? current.name,
+            normalizeName(input.name ?? current.name),
+            input.description ?? current.description,
+            input.status ?? current.status,
+            input.systemPermissions === undefined
+              ? current.system_permissions_json
+              : JSON.stringify(input.systemPermissions),
+            input.projectPermissions === undefined
+              ? current.project_permissions_json
+              : JSON.stringify(input.projectPermissions),
+            input.updatedAt,
+            input.accountId,
+            input.expectedRevision,
+          ],
+        ),
       );
       if (result.rowCount !== 1) versionConflict();
     } catch (error) {
       if (error instanceof DomainError) throw error;
-      throw databaseConflict(error, "SERVICE_ACCOUNT_NAME_CONFLICT", "服务账号名称已存在。");
+      throw serviceAccountWriteError(error);
     }
     return mapServiceAccount(await this.requiredServiceAccountRow(input.accountId));
   }
@@ -167,29 +173,33 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   async createApiToken(record: ApiToken & { tokenHash: string }): Promise<ApiToken> {
     await this.ready();
     await this.requiredServiceAccountRow(record.serviceAccountId);
-    await this.handle.pool.query(
-      `INSERT INTO api_tokens
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO api_tokens
        (id,service_account_id,name,token_prefix,token_hash,scopes_json,expires_at,created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [
-        record.id,
-        record.serviceAccountId,
-        record.name,
-        record.prefix,
-        record.tokenHash,
-        JSON.stringify(record.scopes),
-        record.expiresAt,
-        record.createdAt,
-      ],
+        [
+          record.id,
+          record.serviceAccountId,
+          record.name,
+          record.prefix,
+          record.tokenHash,
+          JSON.stringify(record.scopes),
+          record.expiresAt,
+          record.createdAt,
+        ],
+      ),
     );
     return record;
   }
 
   async revokeApiToken(input: { tokenId: string; revokedAt: string }): Promise<ApiToken> {
     await this.ready();
-    const result = await this.handle.pool.query<ApiTokenRow>(
-      `UPDATE api_tokens SET revoked_at=COALESCE(revoked_at,$1) WHERE id=$2 RETURNING *`,
-      [input.revokedAt, input.tokenId],
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<ApiTokenRow>(
+        `UPDATE api_tokens SET revoked_at=COALESCE(revoked_at,$1) WHERE id=$2 RETURNING *`,
+        [input.revokedAt, input.tokenId],
+      ),
     );
     if (!result.rows[0]) throw new DomainError("API_TOKEN_NOT_FOUND", "API 令牌不存在。");
     return mapApiToken(result.rows[0]);
@@ -199,34 +209,28 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["authenticateApiToken"]>[0],
   ) {
     await this.ready();
-    return withTransaction(this.handle, async (client) => {
-      const tokenResult = await client.query<ApiTokenRow>(
-        `SELECT t.* FROM api_tokens t JOIN service_accounts a ON a.id=t.service_account_id
-         WHERE t.token_hash=$1 AND t.revoked_at IS NULL AND t.expires_at>$2
-           AND a.status='active' FOR UPDATE OF t`,
-        [input.tokenHash, input.usedAt],
-      );
-      const row = tokenResult.rows[0];
-      if (!row) return null;
-      await client.query("UPDATE api_tokens SET last_used_at=$1 WHERE id=$2", [
-        input.usedAt,
-        row.id,
-      ]);
-      const account = mapServiceAccount(
-        await requiredServiceAccountRow(client, row.service_account_id),
-      );
-      const token = mapApiToken({ ...row, last_used_at: input.usedAt });
-      const allowed = new Set<Permission>(
-        [...account.systemPermissions, ...Object.values(account.projectPermissions).flat()].filter(
-          isPermission,
-        ),
-      );
-      return {
-        serviceAccount: account,
-        token,
-        effectiveScopes: token.scopes.filter(isPermission).filter((scope) => allowed.has(scope)),
-      };
-    });
+    const result = await this.handle.pool.query<ApiTokenRow>(
+      `SELECT t.* FROM api_tokens t JOIN service_accounts a ON a.id=t.service_account_id
+       WHERE t.token_hash=$1 AND t.revoked_at IS NULL AND t.expires_at>$2
+         AND a.status='active'`,
+      [input.tokenHash, input.usedAt],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const account = await requiredServiceAccountRow(this.handle.pool, row.service_account_id);
+    const cutoff = apiTokenActivityCutoff(input.usedAt);
+    if (row.last_used_at && row.last_used_at > cutoff)
+      return mapApiTokenAuthentication(row, account);
+    // Do not queue authentication behind a token writer just to update activity metadata.
+    const activity = await this.handle.pool.query<ApiTokenRow>(
+      `UPDATE api_tokens SET last_used_at=$1 WHERE id IN (
+         SELECT id FROM api_tokens WHERE id=$2 AND revoked_at IS NULL AND expires_at>$1
+           AND (last_used_at IS NULL OR last_used_at<=$3)
+         FOR NO KEY UPDATE SKIP LOCKED
+       ) RETURNING *`,
+      [input.usedAt, row.id, cutoff],
+    );
+    return mapApiTokenAuthentication(activity.rows[0] ?? row, account);
   }
 
   async listSchedules(projectIds?: readonly string[]): Promise<CaseSuiteSchedule[]> {
@@ -309,9 +313,11 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void> {
     await this.ready();
-    const result = await this.handle.pool.query(
-      "DELETE FROM case_suite_schedules WHERE id=$1 AND revision=$2",
-      [scheduleId, expectedRevision],
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query("DELETE FROM case_suite_schedules WHERE id=$1 AND revision=$2", [
+        scheduleId,
+        expectedRevision,
+      ]),
     );
     if (result.rowCount !== 1) versionConflict();
   }
@@ -330,14 +336,22 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["claimScheduleTrigger"]>[0],
   ): Promise<boolean> {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `INSERT INTO schedule_trigger_claims
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO schedule_trigger_claims
        (schedule_id,scheduled_for,claim_id,lease_expires_at,claimed_at) VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (schedule_id,scheduled_for) DO UPDATE SET
          claim_id=EXCLUDED.claim_id,lease_expires_at=EXCLUDED.lease_expires_at,
          claimed_at=EXCLUDED.claimed_at
        WHERE schedule_trigger_claims.lease_expires_at<=EXCLUDED.claimed_at`,
-      [input.scheduleId, input.scheduledFor, input.claimId, input.leaseExpiresAt, input.claimedAt],
+        [
+          input.scheduleId,
+          input.scheduledFor,
+          input.claimId,
+          input.leaseExpiresAt,
+          input.claimedAt,
+        ],
+      ),
     );
     return result.rowCount === 1;
   }
@@ -430,23 +444,25 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async createNotification(record: Notification): Promise<Notification> {
     await this.ready();
-    await this.handle.pool.query(
-      `INSERT INTO notifications
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `INSERT INTO notifications
        (id,user_id,project_id,kind,severity,title,message,resource_type,resource_id,read_at,created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO NOTHING`,
-      [
-        record.id,
-        record.userId,
-        record.projectId ?? null,
-        record.kind,
-        record.severity,
-        record.title,
-        record.message,
-        record.resourceType ?? null,
-        record.resourceId ?? null,
-        record.readAt ?? null,
-        record.createdAt,
-      ],
+        [
+          record.id,
+          record.userId,
+          record.projectId ?? null,
+          record.kind,
+          record.severity,
+          record.title,
+          record.message,
+          record.resourceType ?? null,
+          record.resourceId ?? null,
+          record.readAt ?? null,
+          record.createdAt,
+        ],
+      ),
     );
     return record;
   }
@@ -514,9 +530,11 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async markNotificationRead(input: { notificationId: string; userId: string; readAt: string }) {
     await this.ready();
-    const result = await this.handle.pool.query(
-      "UPDATE notifications SET read_at=COALESCE(read_at,$1) WHERE id=$2 AND user_id=$3",
-      [input.readAt, input.notificationId, input.userId],
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        "UPDATE notifications SET read_at=COALESCE(read_at,$1) WHERE id=$2 AND user_id=$3",
+        [input.readAt, input.notificationId, input.userId],
+      ),
     );
     if (result.rowCount !== 1) {
       throw new DomainError("NOTIFICATION_NOT_FOUND", "通知不存在或不属于当前用户。");
@@ -571,11 +589,19 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["updateRetentionPolicy"]>[0],
   ): Promise<RetentionPolicy> {
     await this.ready();
-    const result = await this.handle.pool.query(
-      `UPDATE retention_policies SET retention_days=$1,updated_by=$2,updated_at=$3,
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE retention_policies SET retention_days=$1,updated_by=$2,updated_at=$3,
        revision=revision+1 WHERE category=$4 AND revision=$5
        AND $1 BETWEEN minimum_days AND maximum_days`,
-      [input.retentionDays, input.actorId, input.updatedAt, input.category, input.expectedRevision],
+        [
+          input.retentionDays,
+          input.actorId,
+          input.updatedAt,
+          input.category,
+          input.expectedRevision,
+        ],
+      ),
     );
     if (result.rowCount !== 1) versionConflict();
     return (await this.listRetentionPolicies()).find(
@@ -655,17 +681,19 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["completeRetentionCleanupJob"]>[0],
   ): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
-      `UPDATE cleanup_jobs SET status=$1,error_summary=$2,available_at=$3,lease_owner=NULL,
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE cleanup_jobs SET status=$1,error_summary=$2,available_at=$3,lease_owner=NULL,
        lease_expires_at=NULL,updated_at=$4 WHERE id=$5 AND status='leased' AND lease_owner=$6`,
-      [
-        input.status,
-        input.errorSummary ?? null,
-        input.availableAt,
-        input.updatedAt,
-        input.id,
-        input.owner,
-      ],
+        [
+          input.status,
+          input.errorSummary ?? null,
+          input.availableAt,
+          input.updatedAt,
+          input.id,
+          input.owner,
+        ],
+      ),
     );
   }
 
@@ -1036,11 +1064,13 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["claimAnalyticsExportJob"]>[0],
   ) {
     await this.ready();
-    const result = await this.handle.pool.query<AnalyticsExportJobRow>(
-      `UPDATE analytics_export_jobs
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<AnalyticsExportJobRow>(
+        `UPDATE analytics_export_jobs
        SET status='running',progress_percent=10,started_at=COALESCE(started_at,$1),updated_at=$1
        WHERE id=$2 AND status IN ('queued','failed') RETURNING *`,
-      [input.startedAt, input.jobId],
+        [input.startedAt, input.jobId],
+      ),
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -1052,25 +1082,27 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["updateAnalyticsExportJob"]>[0],
   ) {
     await this.ready();
-    const result = await this.handle.pool.query<AnalyticsExportJobRow>(
-      `UPDATE analytics_export_jobs SET
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<AnalyticsExportJobRow>(
+        `UPDATE analytics_export_jobs SET
          status=$1,progress_percent=$2,row_count=$3,size_bytes=$4,sha256=$5,object_key=$6,
          file_name=$7,error_code=$8,error_summary=$9,updated_at=$10,finished_at=$11
        WHERE id=$12 RETURNING *`,
-      [
-        input.status,
-        input.progressPercent,
-        input.rowCount ?? null,
-        input.sizeBytes ?? null,
-        input.sha256 ?? null,
-        input.objectKey ?? null,
-        input.fileName ?? null,
-        input.errorCode ?? null,
-        input.errorSummary ?? null,
-        input.updatedAt,
-        input.finishedAt ?? null,
-        input.jobId,
-      ],
+        [
+          input.status,
+          input.progressPercent,
+          input.rowCount ?? null,
+          input.sizeBytes ?? null,
+          input.sha256 ?? null,
+          input.objectKey ?? null,
+          input.fileName ?? null,
+          input.errorCode ?? null,
+          input.errorSummary ?? null,
+          input.updatedAt,
+          input.finishedAt ?? null,
+          input.jobId,
+        ],
+      ),
     );
     const row = result.rows[0];
     if (!row) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
@@ -1081,14 +1113,16 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["requestAnalyticsExportCancellation"]>[0],
   ) {
     await this.ready();
-    await this.handle.pool.query(
-      `UPDATE analytics_export_jobs SET
+    await retryPostgresWrite(() =>
+      this.handle.pool.query(
+        `UPDATE analytics_export_jobs SET
          status=CASE status WHEN 'queued' THEN 'cancelled' WHEN 'running' THEN 'cancel_requested' ELSE status END,
          progress_percent=CASE status WHEN 'queued' THEN 100 ELSE progress_percent END,
          finished_at=CASE status WHEN 'queued' THEN $1 ELSE finished_at END,
          updated_at=$1
        WHERE id=$2 AND requested_by=$3 AND status IN ('queued','running')`,
-      [input.updatedAt, input.jobId, input.requestedBy],
+        [input.updatedAt, input.jobId, input.requestedBy],
+      ),
     );
     const job = await this.getAnalyticsExportJob(input.jobId, input.requestedBy);
     if (!job) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
@@ -1432,18 +1466,7 @@ async function withTransaction<T>(
   handle: PostgresDatabaseHandle,
   operation: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await handle.pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await operation(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return runPostgresTransaction(handle, operation);
 }
 
 async function requiredServiceAccountRow(
@@ -1475,10 +1498,6 @@ function searchItems(
 
 function normalizeName(value: string): string {
   return value.trim().toLocaleLowerCase("en-US");
-}
-
-function databaseConflict(error: unknown, code: string, message: string): DomainError {
-  return new DomainError(code, message, { cause: error instanceof Error ? error : undefined });
 }
 
 function versionConflict(): never {

@@ -2252,15 +2252,10 @@ test("DDT advanced search submits explicitly, searches only values and handles s
     { width: 1536, height: 960 },
   ]) {
     await page.setViewportSize(viewport);
+    await expectBelow(panel.locator(".ddt-value-search-results"), pagination);
     await expectUiIntegrity(page);
     await captureDdtUi(page, `value-search-${viewport.width}`);
-    await pagination.evaluate((element) => {
-      element.scrollIntoView({ block: "start" });
-      const topbarBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
-      window.scrollBy(0, -topbarBottom - 16);
-    });
-    await expectUiIntegrity(page);
-    await captureDdtUi(page, `value-search-results-${viewport.width}`);
+    await captureDdtUi(page, `value-search-results-${viewport.width}`, { fullPage: true });
     await panel
       .locator("article")
       .nth(1)
@@ -2306,6 +2301,8 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   ]) {
     await page.setViewportSize(viewport);
     await pagination.scrollIntoViewIfNeeded();
+    await expect(pagination).toBeInViewport({ ratio: 1 });
+    await expectBelow(panel.locator(".ddt-value-search-results"), pagination);
     await expectUiIntegrity(page);
     await captureDdtUi(page, `value-search-pagination-${viewport.width}`);
   }
@@ -2988,14 +2985,18 @@ function ddtPath(
   return `/api/v1/ddt/${path}?${query.toString()}`;
 }
 
-async function captureDdtUi(page: Page, name: string): Promise<void> {
+async function captureDdtUi(
+  page: Page,
+  name: string,
+  options: { fullPage?: boolean } = {},
+): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!screenshotDirectory) return;
   const directory = resolve(screenshotDirectory);
   await mkdir(directory, { recursive: true });
   await page.screenshot({
     path: resolve(directory, `${name}.png`),
-    fullPage: false,
+    fullPage: options.fullPage ?? false,
     animations: "disabled",
   });
 }

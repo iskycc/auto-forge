@@ -1,3 +1,4 @@
+import { SqliteWriterContention } from "./sqlite-writer-contention";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -37,8 +38,9 @@ async function createHarness(): Promise<RunnerGroupHarness> {
       )
       .run(runnerId, `credential-${runnerId}`, runnerId, CREATED_AT, CREATED_AT, CREATED_AT);
   }
+  const contention = new SqliteWriterContention(handle);
   return {
-    repository: new SqliteRunnerGroupRepository(handle),
+    repository: contention.wrap(new SqliteRunnerGroupRepository(handle)),
     runnerIds,
     async purgeRunner(runnerId) {
       handle.client
@@ -46,6 +48,7 @@ async function createHarness(): Promise<RunnerGroupHarness> {
         .run(CREATED_AT, runnerId);
     },
     async dispose() {
+      await contention.close();
       handle.close();
     },
   };
