@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.17 - 2026-09-20
+
+### Fixed
+
+- 修复 v1.17.16 在 Full 高并发验收中发现的 DDT 导入锁粒度问题：同一项目/版本/阶段下，用例不同的两个导入也被整范围锁串行化，长导入可能让后一文件耗尽锁恢复预算而失败。
+- 改为按规范化 CaseID 顺序处理唯一键竞争，不再为导入持有整范围锁；相同 CaseID 仍保持一致性，原始返回顺序、重复键覆盖顺序、历史记录及冲突时整文件回滚语义不变。
+
+### Database, deployment and compatibility
+
+- 包含 v1.17.16 的数据库竞争恢复和 DDT 底部分页改进。无数据库迁移、新配置、新依赖或协议变化；Full 同步更新所有平台节点与独立后台工作器，无需升级 Runner 或 Adapter。
+- 保留已经发布的 v1.17.16 标签和附件，以本补丁交付修复。
+
+### Validation and known limitations
+
+- 真实 PostgreSQL 持锁回归在修复前稳定失败，修复后通过；6 个文件、33 项应用及 Lite/Full 数据库回归通过，覆盖并发反序导入/编辑、大小写重复 CaseID、历史 ID 对应和冲突回滚。数据库及测试类型检查、变更格式/lint 通过。
+- 同一 CaseID 的并发修改仍需数据库排序和锁保护；不使用提高 Web 锁等待、无限重试或降低并发验收要求来规避问题。修复后的完整源码、双架构发布与 500 槽位后台负载验收由新标签流水线执行。
+
 ## 1.17.16 - 2026-09-20
 
 ### Changed and fixed

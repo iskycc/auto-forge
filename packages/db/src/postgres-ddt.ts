@@ -1314,49 +1314,61 @@ export class PostgresDdtRepository implements DdtRepository {
           outcome: "inserted" | "updated" | "unchanged" | "skipped";
         }>,
       };
-      // Concurrent imports in one scope must also serialize absent-key inserts.
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-        `ddt-import:${JSON.stringify(scopeValues(input.scope))}`,
-      ]);
-      await lockCasesForWrite(
-        client,
-        input.scope,
-        input.rows.map((row) => row.caseId),
-      );
-      for (const [index, row] of input.rows.entries()) {
-        const normalizedCaseId = normalize(row.caseId);
-        const existingResult = await client.query<{ id: string; data_json: string }>(
-          `SELECT id, data_json FROM ddt_cases WHERE project_id = $1 AND project_version_id = $2
-           AND test_stage_id = $3 AND case_id_normalized = $4 FOR UPDATE`,
-          [...scopeValues(input.scope), normalizedCaseId],
+      // Acquire keys in stable order, including rows that do not exist yet. Distinct CaseIDs
+      // can import concurrently; the unique key arbitrates competing inserts of the same case.
+      const orderedRows = input.rows
+        .map((row, index) => ({
+          row,
+          index,
+          normalizedCaseId: normalize(row.caseId),
+        }))
+        .sort((left, right) =>
+          left.normalizedCaseId < right.normalizedCaseId
+            ? -1
+            : left.normalizedCaseId > right.normalizedCaseId
+              ? 1
+              : left.index - right.index,
         );
-        const existing = existingResult.rows[0];
-        let outcome: "inserted" | "updated" | "unchanged" | "skipped";
-        if (!existing) {
-          await client.query(
-            `INSERT INTO ddt_cases
+      for (const { row, index, normalizedCaseId } of orderedRows) {
+        const inserted = await client.query(
+          `INSERT INTO ddt_cases
              (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
               sr_num, sr_num_normalized, case_kind, data_json, source_file_id, source_name,
               revision, created_by, updated_by, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,$13,$14,$14)`,
-            [
-              row.id,
-              ...scopeValues(input.scope),
-              row.caseId,
-              normalizedCaseId,
-              row.srNum,
-              normalize(row.srNum),
-              isDdtJourney(row.data) ? "journey" : "standard",
-              JSON.stringify(row.data),
-              input.fileId,
-              input.sourceName,
-              input.actorId ?? null,
-              input.importedAt,
-            ],
-          );
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,$13,$14,$14)
+             ON CONFLICT (project_id, project_version_id, test_stage_id, case_id_normalized)
+             DO NOTHING RETURNING id`,
+          [
+            row.id,
+            ...scopeValues(input.scope),
+            row.caseId,
+            normalizedCaseId,
+            row.srNum,
+            normalize(row.srNum),
+            isDdtJourney(row.data) ? "journey" : "standard",
+            JSON.stringify(row.data),
+            input.fileId,
+            input.sourceName,
+            input.actorId ?? null,
+            input.importedAt,
+          ],
+        );
+        let outcome: "inserted" | "updated" | "unchanged" | "skipped";
+        if (inserted.rowCount === 1) {
           result.insertedCount += 1;
           outcome = "inserted";
         } else {
+          const existingResult = await client.query<{ id: string; data_json: string }>(
+            `SELECT id, data_json FROM ddt_cases WHERE project_id = $1 AND project_version_id = $2
+             AND test_stage_id = $3 AND case_id_normalized = $4 FOR UPDATE`,
+            [...scopeValues(input.scope), normalizedCaseId],
+          );
+          const existing = existingResult.rows[0];
+          if (!existing)
+            throw new DomainError(
+              "DDT_CASE_REVISION_CONFLICT",
+              "用例在导入期间被删除，请重新预览后导入。",
+            );
           const before = parseCaseData(existing.data_json);
           if (JSON.stringify(before) === JSON.stringify(row.data)) {
             result.unchangedCount += 1;
@@ -1405,7 +1417,8 @@ export class PostgresDdtRepository implements DdtRepository {
             outcome = "updated";
           }
         }
-        result.caseIds.push({ caseId: row.caseId, outcome });
+        // Duplicate input keys retain their original overwrite order and response positions.
+        result.caseIds[index] = { caseId: row.caseId, outcome };
         await client.query(
           `INSERT INTO ddt_import_case_ids(job_id, case_id, case_id_normalized, outcome, created_at)
            VALUES ($1,$2,$3,$4,$5)

@@ -289,6 +289,100 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
       await handle.close();
     }
   });
+  it("imports unrelated cases in the same scope while another file transaction is held", async () => {
+    const options = {
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    };
+    const handle = createPostgresDatabase({ ...options, lockTimeoutMs: 10_000 });
+    const concurrentHandle = createPostgresDatabase({ ...options, lockTimeoutMs: 10 });
+    await Promise.all([handle.ready, concurrentHandle.ready]);
+    const suffix = randomUUID();
+    const scope = {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: `independent-${suffix}`,
+      testStageId: `stage-${suffix}`,
+    };
+    const repository = new PostgresDdtRepository(handle);
+    const jobId = `job-${suffix}`;
+    const files = [0, 1].map((index) => ({
+      id: `file-${index}-${suffix}`,
+      uploadId: `upload-${index}`,
+      fileName: `${index}.csv`,
+      rowCount: 1,
+      insertedCount: 1,
+      updatedCount: 0,
+      unchangedCount: 0,
+    }));
+    const blocker = await handle.pool.connect();
+    let firstImport: Promise<PromiseSettledResult<unknown>[]> | undefined;
+    try {
+      await createHierarchy(handle, scope.projectVersionId, scope.testStageId);
+      await repository.createImportPreview({
+        job: {
+          ...scope,
+          id: jobId,
+          status: "previewed",
+          uploads: [],
+          progressPercent: 0,
+          totalFiles: 2,
+          validFiles: 2,
+          totalRows: 2,
+          insertedCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          skippedCount: 0,
+          failedFiles: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+        files,
+      });
+      const importInput = (index: number) => ({
+        scope,
+        jobId,
+        fileId: files[index]!.id,
+        sourceName: files[index]!.fileName,
+        importedAt: now,
+        conflictStrategy: "overwrite" as const,
+        rows: [
+          {
+            id: `case-${index}-${suffix}`,
+            caseId: `CASE-${index}`,
+            srNum: "SR",
+            data: { CaseID: `CASE-${index}`, srNum: "SR" },
+          },
+        ],
+        historyIds: [`history-${index}-${suffix}`],
+      });
+      await blocker.query("BEGIN");
+      const locked = await blocker.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid FROM ddt_import_files WHERE id=$1 FOR UPDATE",
+        [files[0]!.id],
+      );
+      firstImport = Promise.allSettled([repository.importFile(importInput(0))]);
+      await expect
+        .poll(async () => {
+          const result = await handle.pool.query<{ waiting: boolean }>(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS waiting",
+            [locked.rows[0]!.pid],
+          );
+          return result.rows[0]!.waiting;
+        })
+        .toBe(true);
+      await expect(
+        new PostgresDdtRepository(concurrentHandle).importFile(importInput(1)),
+      ).resolves.toMatchObject({ insertedCount: 1 });
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      const results = await firstImport;
+      await handle.pool.query("DELETE FROM project_versions WHERE id=$1", [scope.projectVersionId]);
+      await Promise.all([handle.close(), concurrentHandle.close()]);
+      if (results) expect(results[0]).toMatchObject({ status: "fulfilled" });
+    }
+  });
+
   it("serializes opposite-order imports and keeps concurrent edits atomic", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,
@@ -391,6 +485,53 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
         [scope.projectVersionId],
       );
       expect(Number(history.rows[0]!.count)).toBe(20);
+      // Grouping lock acquisition must not change duplicate-key overwrite order or history IDs.
+      const duplicateKeys = [caseIds[1]!, caseIds[0]!, caseIds[1]!.toLowerCase()];
+      const repeated = await repository.importFile({
+        scope,
+        jobId,
+        fileId: files[0]!.id,
+        sourceName: files[0]!.fileName,
+        importedAt: now,
+        conflictStrategy: "overwrite",
+        rows: duplicateKeys.map((caseId, index) => ({
+          id: `duplicate-${index}-${suffix}`,
+          caseId,
+          srNum: "SR",
+          data: { CaseID: caseId, srNum: "SR", value: `duplicate-${index}` },
+        })),
+        historyIds: duplicateKeys.map((_, index) => `duplicate-history-${index}-${suffix}`),
+      });
+      expect(repeated.updatedCount).toBe(3);
+      expect(repeated.caseIds.map((item) => item.caseId)).toEqual(duplicateKeys);
+      expect((await repository.getCases(scope, [caseIds[1]!]))[0]?.data.value).toBe("duplicate-2");
+      const duplicateHistory = await handle.pool.query<{ id: string; after_json: string }>(
+        "SELECT id,after_json FROM ddt_case_history WHERE id=ANY($1::text[]) ORDER BY id",
+        [duplicateKeys.map((_, index) => `duplicate-history-${index}-${suffix}`)],
+      );
+      expect(duplicateHistory.rows.map((row) => JSON.parse(row.after_json).value)).toEqual([
+        "duplicate-0",
+        "duplicate-1",
+        "duplicate-2",
+      ]);
+      await expect(
+        repository.importFile({
+          scope,
+          jobId,
+          fileId: files[0]!.id,
+          sourceName: files[0]!.fileName,
+          importedAt: now,
+          conflictStrategy: "error",
+          rows: ["AAA-new", caseIds[0]!].map((caseId, index) => ({
+            id: `rollback-${index}-${suffix}`,
+            caseId,
+            srNum: "SR",
+            data: { CaseID: caseId, srNum: "SR", value: "must roll back" },
+          })),
+          historyIds: [0, 1].map((index) => `rollback-history-${index}-${suffix}`),
+        }),
+      ).rejects.toMatchObject({ code: "DDT_IMPORT_CONFLICT" });
+      expect(await repository.getCases(scope, ["AAA-new"])).toEqual([]);
     } finally {
       await handle.pool.query("DELETE FROM project_versions WHERE id=$1", [scope.projectVersionId]);
       await handle.close();
