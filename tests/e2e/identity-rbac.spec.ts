@@ -211,7 +211,7 @@ test("administrator assigns system and project roles directly from the user row"
   expect(created.status).toBe(201);
   const targetId = created.body.id;
   const targetContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
-  const targetPage = await targetContext.newPage();
+  let targetPage = await targetContext.newPage();
   try {
     await login(targetPage, username, password);
     await page.goto(`/settings/access?section=users&query=${username}`);
@@ -231,7 +231,7 @@ test("administrator assigns system and project roles directly from the user row"
     await expect(dialog).toContainText(username);
     await expect(dialog).toContainText(displayName);
     await expect(dialog.getByLabel("用户", { exact: true })).toHaveCount(0);
-    await dialog.getByLabel("系统角色", { exact: true }).selectOption(AUDITOR_ROLE_ID);
+    await dialog.locator(`input[name="roleId"][value="${AUDITOR_ROLE_ID}"]`).check();
     for (const viewport of [
       { width: 1024, height: 768 },
       { width: 1536, height: 960 },
@@ -243,7 +243,7 @@ test("administrator assigns system and project roles directly from the user row"
       ).toBeLessThanOrEqual(2);
       await captureUi(page, `user-role-dialog-${viewport.width}`);
     }
-    const assignmentPath = `**/api/v1/users/${targetId}/system-roles`;
+    const assignmentPath = "**/api/v1/role-assignments";
     await page.route(assignmentPath, (route) =>
       route.fulfill({
         status: 503,
@@ -259,25 +259,33 @@ test("administrator assigns system and project roles directly from the user row"
     );
     await dialog.getByRole("button", { name: "分配系统角色" }).click();
     await expect(dialog.getByRole("alert")).toContainText("平台数据库繁忙");
-    await expect(dialog.getByLabel("系统角色", { exact: true })).toHaveValue(AUDITOR_ROLE_ID);
+    await expect(dialog.locator(`input[name="roleId"][value="${AUDITOR_ROLE_ID}"]`)).toBeChecked();
     await expect(page.locator(".settings-stack > .auth-error")).toHaveCount(0);
     await page.unroute(assignmentPath);
     await dialog.getByRole("button", { name: "分配系统角色" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByText("系统角色已分配，旧会话已撤销。", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("已分配 1 个系统角色，旧会话已撤销。", { exact: true }),
+    ).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`section=users&query=${username}$`));
     await row.getByText("1 个绑定", { exact: true }).click();
     await expect(row).toContainText("系统 · 审计员");
     expect((await targetPage.request.get("/api/v1/auth/session")).status()).toBe(401);
+    // Revoked pages can redirect themselves while a new login starts. Open a fresh tab
+    // in the same browser context so the test does not race that background navigation.
+    await targetPage.close();
+    targetPage = await targetContext.newPage();
     await login(targetPage, username, password);
     expect((await targetPage.request.get("/api/v1/audit-events?limit=1")).status()).toBe(200);
     await assign.click();
     await expect(dialog.getByRole("alert")).toHaveCount(0);
     await dialog.getByLabel("项目", { exact: true }).selectOption(DEFAULT_PROJECT_ID);
-    await dialog.getByLabel("项目角色", { exact: true }).selectOption(VIEWER_ROLE_ID);
+    await dialog.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
     await dialog.getByRole("button", { name: "分配项目角色" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByText("项目成员角色已分配。", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("已分配 1 个项目角色，旧会话已撤销。", { exact: true }),
+    ).toBeVisible();
     await expect(row.getByText("2 个绑定", { exact: true })).toBeVisible();
     const members = await browserJson<Array<{ user: { id: string }; roleIds: string[] }>>(
       page,
@@ -293,6 +301,10 @@ test("administrator assigns system and project roles directly from the user row"
       ]),
     );
     expect((await targetPage.request.get("/api/v1/auth/session")).status()).toBe(401);
+    // Revoked pages can redirect themselves while a new login starts. Open a fresh tab
+    // in the same browser context so the test does not race that background navigation.
+    await targetPage.close();
+    targetPage = await targetContext.newPage();
     await login(targetPage, username, password);
     expect(
       (
@@ -395,7 +407,7 @@ test("user role assignment offers only projects the operator can manage", async 
     const operatorPage = await context.newPage();
     await login(operatorPage, username, password);
     await operatorPage.goto(`/settings/access?section=users&query=${targetUsername}`);
-    const row = operatorPage.getByRole("row").filter({ hasText: target.id });
+    const row = operatorPage.getByRole("row").filter({ hasText: targetUsername });
     await row.getByRole("button", { name: "分配角色", exact: true }).click();
     const dialog = operatorPage.getByRole("dialog", { name: "分配用户角色" });
     await expect(dialog.getByRole("button", { name: "分配系统角色" })).toHaveCount(0);
@@ -405,7 +417,7 @@ test("user role assignment offers only projects the operator can manage", async 
         .locator("option")
         .evaluateAll((options) => options.map((option) => option.getAttribute("value"))),
     ).toEqual([project.body.id]);
-    await dialog.getByLabel("项目角色", { exact: true }).selectOption(VIEWER_ROLE_ID);
+    await dialog.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
     await dialog.getByRole("button", { name: "分配项目角色" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(row.getByText("1 个绑定", { exact: true })).toBeVisible();
@@ -428,20 +440,17 @@ test("local user completes forced password change and self-service session lifec
   const initialPassword = "Initial!Password123";
   const replacementPassword = "Replacement!Password456";
 
-  const createdUser = await createUserThroughAccessPage(
-    page,
-    username,
-    `Forced ${username}`,
-    initialPassword,
-  );
+  await createUserThroughAccessPage(page, username, `Forced ${username}`, initialPassword);
 
   await page.goto("/settings/access?section=roles");
   await page.getByRole("button", { name: "分配角色" }).click();
   const roleForm = page.locator("form", {
     has: page.getByRole("button", { name: "分配项目角色" }),
   });
-  await roleForm.getByLabel("用户").selectOption(createdUser.id);
-  await roleForm.getByLabel("项目角色").selectOption({ label: "只读观察者" });
+  await roleForm.getByLabel("查找用户").fill(username);
+  await roleForm.getByRole("button", { name: "查询用户" }).click();
+  await roleForm.getByRole("radio", { name: new RegExp(username) }).check();
+  await roleForm.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
   for (const viewport of [
     { width: 1024, height: 768 },
     { width: 1536, height: 960 },
@@ -451,7 +460,7 @@ test("local user completes forced password change and self-service session lifec
     await captureUi(page, `role-page-assignment-${viewport.width}`);
   }
   await roleForm.getByRole("button", { name: "分配项目角色" }).click();
-  await expect(page.getByText("项目成员角色已分配。")).toBeVisible();
+  await expect(page.getByText("已分配 1 个项目角色，旧会话已撤销。")).toBeVisible();
 
   await logout(page);
   await expect(page.getByRole("group", { name: "登录来源" })).toHaveCount(0);
@@ -496,23 +505,21 @@ test("administrator can reset a user password and the last administrator binding
   const initialPassword = "Initial!Password123";
   const resetPassword = "AdminReset!Password789";
 
-  const createdUser = await createUserThroughAccessPage(
-    page,
-    username,
-    `Reset ${username}`,
-    initialPassword,
-  );
+  await createUserThroughAccessPage(page, username, `Reset ${username}`, initialPassword);
 
   await page.getByRole("button", { name: "重置密码" }).click();
   const resetForm = page.locator("form", {
     has: page.getByRole("button", { name: "重置密码并撤销会话" }),
   });
-  await resetForm.getByLabel("本地用户").selectOption(createdUser.id);
+  await resetForm.getByLabel("查找用户").fill(username);
+  await resetForm.getByRole("button", { name: "查询用户" }).click();
+  await resetForm.getByRole("radio", { name: new RegExp(username) }).check();
   await resetForm.getByLabel("新密码").fill(resetPassword);
   await resetForm.getByRole("button", { name: "重置密码并撤销会话" }).click();
   await expect(page.getByText("密码已重置，目标用户的已有会话已撤销。")).toBeVisible();
 
   await page.goto("/settings/access?section=roles");
+  await page.getByText("用户系统角色绑定", { exact: true }).click();
   const administratorRow = page.getByRole("row", { name: /E2E Administrator.*系统管理员/ });
   await administratorRow.getByRole("button", { name: "撤销系统角色" }).click();
   await acceptSystemDialog(page, "撤销系统角色", "确认撤销");
@@ -551,6 +558,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
   await page.goto(`/settings/access?section=users&query=${encodeURIComponent(username)}`);
   let userRow = page.getByRole("row", { name: new RegExp(username) });
   await expect(userRow).toContainText("锁定至");
+  await userRow.getByText("更多操作", { exact: true }).click();
   await userRow.getByRole("button", { name: "启用/解锁" }).click();
   await expect(page.getByText("用户已启用并解除登录锁定。")).toBeVisible();
 
@@ -558,7 +566,9 @@ test("administrator unlocks and disables a locked user and manages a custom role
   expect((await userPage.request.get("/api/v1/auth/session")).status()).toBe(200);
   await page.goto(`/settings/access?section=users&query=${encodeURIComponent(username)}`);
   userRow = page.getByRole("row", { name: new RegExp(username) });
+  await userRow.getByText("更多操作", { exact: true }).click();
   await userRow.getByRole("button", { name: "禁用", exact: true }).click();
+  await acceptSystemDialog(page, "禁用用户", "确认变更");
   await expect(page.getByText("用户已禁用。")).toBeVisible();
   await expect
     .poll(async () => (await userPage.request.get("/api/v1/auth/session")).status())

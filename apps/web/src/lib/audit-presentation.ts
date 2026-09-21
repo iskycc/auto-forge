@@ -239,7 +239,18 @@ export function presentAuditEvent(
       event.result === "succeeded" ? "成功" : event.result === "rejected" ? "已拒绝" : "失败",
     actor,
     actorId: event.actorId ?? "",
-    resource: auditResourceLabel(event.resourceType),
+    resource: [
+      auditResourceLabel(event.resourceType),
+      [
+        event.details.resourceName,
+        event.details.displayName,
+        event.details.name,
+        event.details.fileName,
+        event.details.username,
+      ].find((value) => typeof value === "string" && value.length > 0),
+    ]
+      .filter(Boolean)
+      .join(" · "),
     resourceId: event.resourceId ?? "",
     project: event.projectId
       ? (names.projects?.get(event.projectId) ?? `项目 · ${event.projectId.slice(0, 8)}`)

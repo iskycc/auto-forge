@@ -46,6 +46,7 @@ export const nodeLogWatermarksSchema = z.object({
   agent: z.number().int().min(-1),
 });
 export const nodeLogRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("ping") }),
   z.object({
     operation: z.literal("append"),
     batchId,

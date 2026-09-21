@@ -1451,6 +1451,7 @@
 
 .settings-grid-form label {
   display: grid;
+  align-content: start;
   gap: 6px;
   color: var(--color-text-secondary);
   font-size: 12px;
@@ -1508,6 +1509,8 @@
 }
 
 .ui-checkbox-option {
+  min-width: 0;
+  overflow-wrap: anywhere;
   display: grid !important;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
@@ -2087,12 +2090,14 @@
 
 .role-grid {
   display: grid;
+  align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
 }
 
 .role-card {
   display: grid;
+  align-content: start;
   min-width: 0;
   gap: 10px;
   padding: 16px;
@@ -16643,11 +16648,13 @@ button.icon-button:disabled {
 
 .user-role-field {
   display: grid;
+  align-content: start;
   min-width: 0;
   gap: var(--space-2);
 }
 
 .role-assignment-dialog .settings-subform {
+  grid-template-columns: minmax(0, 1fr);
   padding-top: var(--space-4);
 }
 
@@ -20962,4 +20969,306 @@ button.icon-button:disabled {
 .ddt-category-editor .ddt-association-footer > span {
   overflow-wrap: anywhere;
   min-width: 0;
+}
+
+/* Administration: compact lists and explicit local selection scopes. */
+.choice-toolbar,
+.management-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2, 8px);
+}
+.choice-toolbar {
+  margin-bottom: 8px;
+  align-items: center;
+}
+.choice-toolbar > .ui-input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.choice-toolbar > span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.choice-groups {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+.choice-section + .choice-section {
+  border-top: 1px solid var(--color-border);
+}
+.choice-group-heading {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+  padding: 10px 12px;
+  background: var(--color-surface-muted);
+}
+.choice-group-heading > input {
+  width: 16px !important;
+  height: 16px !important;
+}
+.choice-group-heading > small {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+.choice-groups .ui-checkbox-group-options {
+  border: 0;
+  max-height: none;
+  overflow: visible;
+}
+.project-permission-group .ui-checkbox-group-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: none;
+}
+.management-toolbar {
+  margin-bottom: 16px;
+}
+.management-toolbar > label {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 200px;
+}
+.management-toolbar > span {
+  color: var(--color-text-secondary);
+  padding: 10px 0;
+}
+.account-permission-summary {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.account-permission-summary > summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.service-account-list > article {
+  min-width: 0;
+}
+.service-account-list .button-row {
+  justify-content: flex-end;
+}
+.settings-section > .section-heading > div:first-child {
+  display: grid;
+  gap: 4px;
+  align-items: start;
+}
+.settings-section > .section-heading > div:first-child > p {
+  margin: 0;
+}
+.settings-section > .section-heading h2 {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.settings-section > .section-heading {
+  margin-bottom: 16px;
+}
+.settings-page-header + .section-tabs {
+  margin-bottom: 0;
+}
+
+/* Management surfaces share density, scope and action placement. */
+.management-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  padding: var(--space-4, 16px) 0;
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-4, 16px);
+  color: var(--color-text-secondary);
+}
+.management-pagination > div {
+  display: flex;
+  gap: var(--space-2, 8px);
+}
+.management-disclosure {
+  min-width: 0;
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+}
+.management-disclosure > summary,
+.row-more-actions > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.management-disclosure[open] > summary {
+  margin-bottom: var(--space-3, 12px);
+}
+.management-toolbar {
+  margin-block: var(--space-3, 12px);
+}
+.management-toolbar > .ui-input,
+.management-toolbar > .ui-select {
+  flex: 1;
+  min-width: 160px;
+  max-width: 420px;
+}
+.management-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+}
+.management-section-nav a {
+  padding: var(--space-2, 8px);
+}
+.settings-section[id] {
+  scroll-margin-top: var(--space-6, 24px);
+}
+.management-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+.management-sticky-actions > span {
+  margin-right: auto;
+}
+.user-picker {
+  min-width: 0;
+}
+.user-picker-results {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2, 8px);
+  max-height: 300px;
+  overflow: auto;
+}
+.user-picker .permission-chip {
+  display: inline-flex;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  gap: var(--space-2, 8px);
+  align-items: center;
+  margin: var(--space-1, 4px);
+}
+.assigned-role-list {
+  display: grid;
+  gap: var(--space-2, 8px);
+}
+.assigned-role-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  overflow-wrap: anywhere;
+}
+.row-more-actions {
+  margin-top: var(--space-2, 8px);
+  font-size: 12px;
+}
+.row-more-actions > div {
+  display: grid;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+}
+.access-users-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+}
+.access-users-table td,
+.access-users-table th {
+  padding: var(--space-3, 12px) var(--space-2, 8px);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.access-users-table th:first-child {
+  width: 26%;
+}
+.access-users-table th:nth-child(2) {
+  width: 8%;
+}
+.access-users-table th:nth-child(3) {
+  width: 9%;
+}
+.access-users-table th:nth-child(4) {
+  width: 19%;
+}
+.access-users-table th:nth-child(5) {
+  width: 18%;
+}
+.access-users-table th:last-child {
+  width: 20%;
+}
+.access-users-table .table-secondary {
+  font-size: var(--font-size-caption);
+}
+.access-users-table .access-user-actions {
+  min-width: 0;
+}
+.access-users-table .access-user-actions .button {
+  max-width: 100%;
+}
+.security-audit-table td {
+  padding-inline: var(--space-3, 12px);
+  overflow-wrap: anywhere;
+}
+.security-audit-table time {
+  white-space: normal;
+  display: block;
+  line-height: 1.6;
+}
+.draft-discard-prompt {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: var(--space-4, 16px);
+  margin-bottom: var(--space-4, 16px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+.draft-discard-prompt .button + .button {
+  margin-left: var(--space-2, 8px);
+}
+.webhook-template-preview {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--space-3, 12px);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-medium);
+}
+.storage-category-grid {
+  gap: var(--space-2, 8px);
+}
+.storage-category-card {
+  padding: var(--space-3, 12px);
+}
+.settings-form-fieldset[hidden] {
+  display: none;
+}
+@media (max-width: 1200px) {
+  .user-picker-results,
+  .project-permission-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.storage-inventory [role="status"]:empty {
+  display: none;
+}
+.management-table-card > .management-toolbar,
+.management-table-card > .management-pagination {
+  margin-inline: var(--space-4);
+}
+.management-table-card > .table-empty {
+  min-height: 240px;
 }

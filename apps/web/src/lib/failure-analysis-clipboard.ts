@@ -9,22 +9,24 @@ export type FailureAnalysisCopyDraft = {
   remark?: string;
 };
 
+export type FailureAnalysisClipboardCase = Pick<
+  FailureAnalysisClaimView,
+  "caseName" | "className" | "attemptNumber" | "resultCode" | "failureSummary"
+> & { logUrl: string };
+
+type ClipboardField = { label: string; value: string; href?: string };
+
 export function formatFailureAnalysisClipboard(
-  claims: readonly FailureAnalysisClaimView[],
+  claims: readonly FailureAnalysisClipboardCase[],
   draft: FailureAnalysisCopyDraft,
 ): { text: string; html: string } {
   const conclusion = conclusionFields(draft);
-  const textSections = claims.map((claim, index) =>
-    [
-      `${index + 1}. ${claim.caseName}`,
-      `类路径：${claim.className}`,
-      `用例 ID：${claim.caseDefinitionId}`,
-      `执行记录：${claim.executionRunId}`,
-      `执行尝试：${claim.attemptId}（第 ${claim.attemptNumber} 次）`,
-      `执行结果：${claim.resultCode ?? "失败"}`,
-      `失败概要：${claim.failureSummary || "—"}`,
-      ...conclusion.map(([label, value]) => `${label}：${value}`),
-    ].join("\n"),
+  const cases = claims.map((claim) => ({
+    name: claim.caseName,
+    fields: caseFields(claim, conclusion),
+  }));
+  const textSections = cases.map(({ name, fields }, index) =>
+    [`${index + 1}. ${name}`, ...fields.map(({ label, value }) => `${label}：${value}`)].join("\n"),
   );
   const text = [
     `AutoForge 用例分析（${claims.length} 个）`,
@@ -34,14 +36,9 @@ export function formatFailureAnalysisClipboard(
   const html = [
     `<section><h2>AutoForge 用例分析（${claims.length} 个）</h2>`,
     "<ol>",
-    ...claims.map(
-      (claim) =>
-        `<li><h3>${escapeHtml(claim.caseName)}</h3><dl>${caseFields(claim, conclusion)
-          .map(
-            ([label, value]) =>
-              `<dt><strong>${escapeHtml(label)}</strong></dt><dd>${escapeHtml(value)}</dd>`,
-          )
-          .join("")}</dl></li>`,
+    ...cases.map(
+      ({ name, fields }) =>
+        `<li><h3>${escapeHtml(name)}</h3><dl>${fields.map(formatHtmlField).join("")}</dl></li>`,
     ),
     "</ol></section>",
   ].join("");
@@ -49,18 +46,26 @@ export function formatFailureAnalysisClipboard(
 }
 
 function caseFields(
-  claim: FailureAnalysisClaimView,
+  claim: FailureAnalysisClipboardCase,
   conclusion: Array<[string, string]>,
-): Array<[string, string]> {
+): ClipboardField[] {
+  const logUrl = new URL(claim.logUrl);
+  if (!["http:", "https:"].includes(logUrl.protocol)) throw new Error("日志链接无效，请重试。");
   return [
-    ["类路径", claim.className],
-    ["用例 ID", claim.caseDefinitionId],
-    ["执行记录", claim.executionRunId],
-    ["执行尝试", `${claim.attemptId}（第 ${claim.attemptNumber} 次）`],
-    ["执行结果", claim.resultCode ?? "失败"],
-    ["失败概要", claim.failureSummary || "—"],
-    ...conclusion,
+    { label: "类路径", value: claim.className },
+    { label: "执行尝试", value: `第 ${claim.attemptNumber} 次` },
+    { label: "执行结果", value: claim.resultCode ?? "失败" },
+    { label: "失败概要", value: claim.failureSummary || "—" },
+    { label: "日志链接", value: logUrl.href, href: logUrl.href },
+    ...conclusion.map(([label, value]) => ({ label, value })),
   ];
+}
+
+function formatHtmlField({ label, value, href }: ClipboardField): string {
+  const content = href
+    ? `<a href="${escapeHtml(href)}">${escapeHtml(value)}</a>`
+    : escapeHtml(value);
+  return `<dt><strong>${escapeHtml(label)}</strong></dt><dd>${content}</dd>`;
 }
 
 function conclusionFields(draft: FailureAnalysisCopyDraft): Array<[string, string]> {

@@ -367,18 +367,21 @@ export function StorageInventory({
                 value={`${summary.externalReferenceCount.toLocaleString()} 项 · ${formatBytes(summary.externalReferenceBytes)}`}
               />
             </div>
-            <div className="storage-roots">
-              <span>
-                <HardDrive size={15} /> 数据目录 <code>{summary.dataDirectory}</code>
-              </span>
-              <span>
-                <Database size={15} /> 对象空间 <code>{summary.objectStoreRoot}</code>
-              </span>
-              <small>
-                统计生成于 {formatDate(summary.generatedAt, timeZone)}；MinIO 占用为对象内容大小，
-                不包含存储集群副本或纠删码开销。
-              </small>
-            </div>
+            <details className="management-disclosure">
+              <summary>存储路径与统计口径 · {formatDate(summary.generatedAt, timeZone)}</summary>
+              <div className="storage-roots">
+                <span>
+                  <HardDrive size={15} /> 数据目录 <code>{summary.dataDirectory}</code>
+                </span>
+                <span>
+                  <Database size={15} /> 对象空间 <code>{summary.objectStoreRoot}</code>
+                </span>
+                <small>
+                  统计生成于 {formatDate(summary.generatedAt, timeZone)}；MinIO 占用为对象内容大小，
+                  不包含存储集群副本或纠删码开销。
+                </small>
+              </div>
+            </details>
             <div className="storage-category-grid" aria-label="文件分类占用">
               {summary.categories.map((item) => (
                 <div className="storage-category-card" key={item.category}>

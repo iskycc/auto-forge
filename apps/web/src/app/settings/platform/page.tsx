@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CursorPagination } from "@/components/cursor-pagination";
 import { PlatformNodes } from "@/components/platform-nodes";
 import { hasPermission } from "@autoforge/domain";
 
@@ -24,6 +25,8 @@ export default async function PlatformSettingsPage({
     query?: string;
     focus?: string;
     nodeCursor?: string;
+    cursor?: string;
+    status?: string;
   }>;
 }) {
   const identity = await requirePagePermission("settings.read", undefined);
@@ -59,8 +62,14 @@ export default async function PlatformSettingsPage({
       ? services.platformOperations.listRetentionPolicies(identity)
       : Promise.resolve([]),
     activeSection === "accounts" && hasPermission(identity, "api_token.manage")
-      ? services.platformOperations.listServiceAccounts(identity)
-      : Promise.resolve([]),
+      ? services.platformOperations.listServiceAccountsPage(identity, {
+          ...(parameters.cursor ? { cursor: parameters.cursor.slice(0, 128) } : {}),
+          ...(parameters.query ? { query: parameters.query.trim().slice(0, 120) } : {}),
+          ...(["active", "disabled"].includes(parameters.status ?? "")
+            ? { status: parameters.status! }
+            : {}),
+        })
+      : Promise.resolve({ items: [], nextCursor: undefined }),
     activeSection === "accounts" && hasPermission(identity, "project.read")
       ? services.identityAccess.listProjects(identity)
       : Promise.resolve([]),
@@ -73,6 +82,7 @@ export default async function PlatformSettingsPage({
           <p className="eyebrow">System Settings</p>
           <h1>{heading.title}</h1>
           <p>{heading.description}</p>
+          <span className="permission-chip">范围：全平台</span>
         </div>
       </header>
       <SectionTabs
@@ -118,6 +128,7 @@ export default async function PlatformSettingsPage({
         <>
           <PlatformNodes
             nodes={nodePage.items}
+            currentNodeId={configuration.nodeId}
             canManage={hasPermission(identity, "settings.manage")}
           />
           {nodePage.nextCursor ? (
@@ -137,14 +148,25 @@ export default async function PlatformSettingsPage({
         />
       ) : null}
       {activeSection === "accounts" || activeSection === "retention" ? (
-        <OperationsSettings
-          canManageSettings={hasPermission(identity, "settings.manage")}
-          canManageTokens={hasPermission(identity, "api_token.manage")}
-          initialAccounts={serviceAccounts}
-          initialPolicies={retentionPolicies}
-          projects={projects.map((project) => ({ id: project.id, name: project.name }))}
-          visibleSection={activeSection}
-        />
+        <>
+          <OperationsSettings
+            key={`${activeSection}:${parameters.cursor ?? ""}:${parameters.query ?? ""}:${parameters.status ?? ""}`}
+            canManageSettings={hasPermission(identity, "settings.manage")}
+            canManageTokens={hasPermission(identity, "api_token.manage")}
+            initialAccounts={serviceAccounts.items}
+            accountFilter={{ query: parameters.query ?? "", status: parameters.status ?? "" }}
+            initialPolicies={retentionPolicies}
+            projects={projects.map((project) => ({ id: project.id, name: project.name }))}
+            visibleSection={activeSection}
+          />
+          {activeSection === "accounts" ? (
+            <CursorPagination
+              nextCursor={serviceAccounts.nextCursor}
+              count={serviceAccounts.items.length}
+              label="服务账号分页"
+            />
+          ) : null}
+        </>
       ) : null}
       {activeSection === "diagnostics" ? (
         <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
@@ -177,7 +199,7 @@ function platformSectionHeading(section: PlatformSection): { title: string; desc
     case "accounts":
       return { title: "服务账号", description: "管理服务账号、项目权限和 API 令牌。" };
     case "retention":
-      return { title: "数据保留", description: "管理平台数据保留期限和可恢复清理策略。" };
+      return { title: "数据保留", description: "管理保留期限、影响预览与不可恢复的数据清理。" };
     case "diagnostics":
       return { title: "系统诊断", description: "检查平台配置、存储和运行时健康状态。" };
     case "storage":

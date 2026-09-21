@@ -65,6 +65,27 @@ test("long case names keep single, bulk and completed analysis dialogs within th
   const single = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[0]}` });
   await expectLongAnalysisDialog(page, single, "single");
   await installClipboardCapture(page);
+  const shareRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/log-share"))
+      shareRequests.push(request.url());
+  });
+  const shareRoute = "**/api/v1/run-attempts/*/log-share";
+  await page.route(shareRoute, (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "PLATFORM_BUSY", message: "日志链接暂时无法生成，请重试。" },
+      }),
+    }),
+  );
+  await single.getByRole("button", { name: "复制用例信息" }).click();
+  await expect(single.locator(".form-error")).toHaveText("日志链接暂时无法生成，请重试。");
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__autoforgeCopiedFailureAnalysis")),
+  ).toBeUndefined();
+  await page.unroute(shareRoute);
   await single.getByRole("button", { name: "复制用例信息" }).click();
   await expect
     .poll(() =>
@@ -75,6 +96,12 @@ test("long case names keep single, bulk and completed analysis dialogs within th
       ),
     )
     .toContain(fixture.failedNames[0]);
+  await expect(single.locator(".form-error")).toHaveCount(0);
+  const singleLinks = await expectCopiedAnalysisLogs(page, [fixture.failedNames[0]!]);
+  const requestCount = shareRequests.length;
+  await single.getByRole("button", { name: "复制用例信息" }).click();
+  await expect(single.getByRole("button", { name: "复制用例信息" })).toBeEnabled();
+  expect(shareRequests).toHaveLength(requestCount);
   await single.getByLabel("代码问题已提单", { exact: false }).check();
   await single.getByLabel("问题说明 *").fill("长名称不影响正常提交分析");
   await single.getByLabel("问题单链接或问题单号 *").fill("BUG-LONG-NAME");
@@ -84,6 +111,9 @@ test("long case names keep single, bulk and completed analysis dialogs within th
   await first.getByRole("button", { name: "查看分析详情" }).click();
   await expect(single.getByLabel("问题说明 *")).toHaveValue("长名称不影响正常提交分析");
   await expectLongAnalysisDialog(page, single, "completed");
+  await installClipboardCapture(page);
+  await single.getByRole("button", { name: "复制用例信息" }).click();
+  const completedLinks = await expectCopiedAnalysisLogs(page, [fixture.failedNames[0]!]);
   await single.getByRole("button", { name: "关闭分析弹窗" }).click();
   for (const name of fixture.failedNames.slice(1, 3))
     await analysisCard(page, name).getByRole("checkbox").check();
@@ -91,8 +121,123 @@ test("long case names keep single, bulk and completed analysis dialogs within th
   const bulk = page.getByRole("dialog", { name: "批量分析 2 个用例" });
   await expect(bulk.getByRole("button", { name: "弹窗日志", exact: true })).toHaveCount(2);
   await expectLongAnalysisDialog(page, bulk, "bulk");
-  await bulk.getByRole("button", { name: "关闭分析弹窗" }).click();
+  await installClipboardCapture(page);
+  await bulk.getByRole("button", { name: "复制用例信息" }).click();
+  const bulkLinks = await expectCopiedAnalysisLogs(page, fixture.failedNames.slice(1, 3));
+  expect(new Set(bulkLinks).size).toBe(2);
+  await expect(bulk.getByRole("button", { name: "继承此代码问题结论", exact: true })).toHaveCount(
+    0,
+  );
+  await expect(bulk.getByRole("button", { name: "从本任务近 5 次批跑继承" })).toBeVisible();
+  await bulk.getByRole("button", { name: "从本任务近 5 次批跑继承" }).click();
+  const picker = page.getByRole("dialog", { name: "本任务近 5 次批跑结论" });
+  await expect(picker.getByText("问题单：BUG-1023", { exact: true })).toBeVisible();
+  await picker.getByRole("button", { name: `选择并继承 ${fixture.failedNames[2]}` }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "确认继承未闭环代码问题" });
+  await expect(confirmation).toContainText("全部 2 个用例");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectDialogFitsViewport(page, confirmation);
+    await captureUi(page, `analysis-bulk-inheritance-confirm-${viewport.width}`);
+  }
+  await confirmation.getByRole("button", { name: "问题仍存在，继承结论" }).click();
+  await expect(bulk.getByLabel("代码问题已提单", { exact: false })).toBeChecked();
+  await expect(bulk.getByLabel("问题说明 *")).toHaveValue("历史状态字段转换错误");
+  await expect(bulk.getByLabel("问题单链接或问题单号 *")).toHaveValue("BUG-1023");
+  await expect(bulk.getByLabel("备注说明 选填")).toHaveValue("等待修复");
+  const completionResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/v1/failure-analysis/claims/complete",
+  );
+  await bulk.getByRole("button", { name: "提交分析" }).click();
+  const completed = await completionResponse;
+  expect(completed.request().postDataJSON()).toMatchObject({
+    inheritanceScope: "task_recent_batches",
+    inheritedFromAnalysisId: `history-analysis-${suffix}`,
+    analysisIds: expect.arrayContaining([expect.any(String), expect.any(String)]),
+  });
+  expect(completed.status()).toBe(200);
+  const completedClaims = (await completed.json()).items as Array<{
+    caseName: string;
+    status: string;
+    ticketReference: string;
+  }>;
+  expect(completedClaims.map((claim) => claim.caseName).sort()).toEqual(
+    fixture.failedNames.slice(1, 3).sort(),
+  );
+  expect(
+    completedClaims.every(
+      (claim) => claim.status === "completed" && claim.ticketReference === "BUG-1023",
+    ),
+  ).toBe(true);
+  await expect(bulk).toBeHidden();
+  await page.reload();
+  for (const name of fixture.failedNames.slice(1, 3))
+    await expect(analysisCard(page, name)).toContainText("已完成");
+  const anonymous = await page.context().browser()!.newContext();
+  try {
+    const logPage = await anonymous.newPage();
+    const copies = [
+      { urls: singleLinks, names: [fixture.failedNames[0]!] },
+      { urls: completedLinks, names: [fixture.failedNames[0]!] },
+      { urls: bulkLinks, names: fixture.failedNames.slice(1, 3) },
+    ];
+    for (const copy of copies) {
+      for (const [index, url] of copy.urls.entries()) {
+        const response = await logPage.goto(url);
+        expect(response?.status()).toBe(200);
+        await expect(logPage).toHaveURL(url);
+        await expect(
+          logPage.getByRole("heading", { name: copy.names[index]!, exact: true }),
+        ).toBeVisible();
+      }
+    }
+  } finally {
+    await anonymous.close();
+  }
 });
+
+async function expectCopiedAnalysisLogs(
+  page: import("@playwright/test").Page,
+  names: readonly string[],
+): Promise<string[]> {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const content = Reflect.get(window, "__autoforgeCopiedFailureAnalysis") as
+          { text: string } | undefined;
+        return content?.text.match(/^日志链接：.+$/gmu)?.length ?? 0;
+      }),
+    )
+    .toBe(names.length);
+  const content = await page.evaluate(
+    () => Reflect.get(window, "__autoforgeCopiedFailureAnalysis") as { text: string; html: string },
+  );
+  for (const name of names) expect(content.text).toContain(name);
+  for (const output of [content.text, content.html]) {
+    expect(output).not.toContain("用例 ID");
+    expect(output).not.toContain("执行记录");
+    expect(output).not.toContain("run-failed-");
+    expect(output).not.toContain("attempt-failed-");
+  }
+  const links = [...content.text.matchAll(/^日志链接：(.+)$/gmu)].map((match) => match[1]!);
+  for (const link of links) {
+    const url = new URL(link);
+    expect(url.origin).toBe(new URL(page.url()).origin);
+    expect(url.pathname).toMatch(/^\/share\/attempt-log\/[^/]+$/u);
+  }
+  const anchors = await page.evaluate(
+    (html) =>
+      Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")).map(
+        (anchor) => anchor.href,
+      ),
+    content.html,
+  );
+  expect(anchors).toEqual(links);
+  return links;
+}
 
 async function expectLongAnalysisDialog(
   page: import("@playwright/test").Page,
@@ -519,7 +664,7 @@ test("terminal task failures support durable single and batch analysis with evid
       html: expect.stringContaining("<h2>AutoForge 用例分析（2 个）</h2>"),
       text: expect.stringContaining("分析结论：用例问题已修改"),
     });
-  await expect(batchDialog.getByRole("button", { name: /继承/ })).toHaveCount(0);
+  await expect(batchDialog.getByRole("button", { name: "从本任务近 5 次批跑继承" })).toBeVisible();
   await captureUi(page, "failure-analysis-case-fixed-dialog-1024", false);
   await batchDialog.getByRole("button", { name: "提交分析" }).click();
   const confirmation = page.getByRole("alertdialog", { name: "确认用例问题" });
@@ -954,7 +1099,10 @@ test("terminal task failures support durable single and batch analysis with evid
   await page.goto("/case-analysis");
   await taskCard.getByRole("link", { name: "分析统计" }).click();
   await expect(page.getByRole("heading", { name: "分析统计" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "分析总览" })).toContainText("已完成分析4");
+  // Statistics are prepared by the background snapshot worker after first navigation.
+  await expect(page.getByRole("region", { name: "分析总览" })).toContainText("已完成分析4", {
+    timeout: 30_000,
+  });
   await expect(page.getByText("历史分析员", { exact: true })).toHaveCount(0);
   for (const viewport of [
     { width: 1536, height: 1024 },
@@ -1270,6 +1418,7 @@ async function pastePng(
 
 async function installClipboardCapture(page: import("@playwright/test").Page): Promise<void> {
   await page.evaluate(() => {
+    Reflect.deleteProperty(window, "__autoforgeCopiedFailureAnalysis");
     Object.defineProperty(window.navigator, "clipboard", {
       configurable: true,
       value: {

@@ -1407,6 +1407,7 @@ function CompleteAnalysisDialog({
     FailureAnalysisHistoryItemView & { inheritanceScope: FailureAnalysisInheritanceScope }
   >();
   const [copying, setCopying] = useState(false);
+  const publicLogUrls = useRef(new Map<string, string>());
   const [error, setError] = useState("");
   const imageCloseButtonRef = useRef<HTMLButtonElement>(null);
   const imagePreviewTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1503,17 +1504,25 @@ function CompleteAnalysisDialog({
     setPreviewImage(image);
   }
 
+  async function publicLogUrl(claim: FailureAnalysisClaimView): Promise<string> {
+    const cached = publicLogUrls.current.get(claim.attemptId);
+    if (cached) return cached;
+    const response = await fetch(
+      `/api/v1/run-attempts/${encodeURIComponent(claim.attemptId)}/log-share`,
+      { method: "POST", signal: AbortSignal.timeout(15_000) },
+    );
+    if (!response.ok) throw new Error((await readApiErrorMessage(response, "创建公开日志失败。"))!);
+    const { shareUrl } = (await response.json()) as { shareUrl: string };
+    const url = new URL(shareUrl, window.location.origin).href;
+    publicLogUrls.current.set(claim.attemptId, url);
+    return url;
+  }
+
   async function openPublicLog(claim: FailureAnalysisClaimView): Promise<void> {
     const openedWindow = window.open("", "_blank");
     setError("");
     try {
-      const response = await fetch(
-        `/api/v1/run-attempts/${encodeURIComponent(claim.attemptId)}/log-share`,
-        { method: "POST" },
-      );
-      if (!response.ok)
-        throw new Error((await readApiErrorMessage(response, "创建公开日志失败。"))!);
-      const { shareUrl } = (await response.json()) as { shareUrl: string };
+      const shareUrl = await publicLogUrl(claim);
       if (openedWindow) {
         openedWindow.opener = null;
         openedWindow.location.href = shareUrl;
@@ -1713,10 +1722,9 @@ function CompleteAnalysisDialog({
   function inheritConclusion(): void {
     if (
       !inheritanceCandidate ||
-      !initial ||
       readOnly ||
       (inheritanceCandidate.inheritanceScope === "same_case" &&
-        inheritanceCandidate.claim.caseDefinitionId !== initial.caseDefinitionId)
+        (!initial || inheritanceCandidate.claim.caseDefinitionId !== initial.caseDefinitionId))
     )
       return;
     setInheritedConclusion({
@@ -1730,14 +1738,26 @@ function CompleteAnalysisDialog({
     setTicketReference(inheritanceCandidate.claim.ticketReference ?? "");
     setRemark(inheritanceCandidate.claim.remark ?? "");
     setInheritanceCandidate(undefined);
+    setError("");
+    toast.success(
+      claims.length > 1
+        ? `已将历史结论填入所选的 ${claims.length} 个用例，提交分析后保存。`
+        : "已填入历史分析结论，提交分析后保存。",
+    );
   }
 
   async function copyCaseInformation(): Promise<void> {
     if (copying) return;
     setCopying(true);
+    setError("");
     try {
+      const casesWithLogs = [];
+      // Share creation writes audit metadata. Keep batch copies sequential and reuse signed links.
+      for (const claim of claims) {
+        casesWithLogs.push({ ...claim, logUrl: await publicLogUrl(claim) });
+      }
       await copyRichTextToClipboard(
-        formatFailureAnalysisClipboard(claims, {
+        formatFailureAnalysisClipboard(casesWithLogs, {
           ...(category ? { category } : {}),
           ...(issueDescription ? { issueDescription } : {}),
           ...(caseFixEvidence ? { caseFixEvidence } : {}),
@@ -1745,7 +1765,7 @@ function CompleteAnalysisDialog({
           ...(remark ? { remark } : {}),
         }),
       );
-      toast.success(`已复制 ${claims.length} 个用例的信息和当前分析结论。`);
+      toast.success(`已复制 ${claims.length} 个用例的信息、日志链接和当前分析结论。`);
     } catch (copyError) {
       setError(copyError instanceof Error ? copyError.message : "复制用例信息失败。");
     } finally {
@@ -1863,7 +1883,8 @@ function CompleteAnalysisDialog({
               historyItems={historyItems}
               historyLoading={historyLoading}
               historyLimitPerCase={historyLimitPerCase}
-              canInherit={!readOnly && claims.length === 1}
+              canInheritSameCase={!readOnly && claims.length === 1}
+              canBrowseTaskConclusions={!readOnly}
               onBrowse={() => setShowConclusionPicker(true)}
               onInherit={(item) =>
                 setInheritanceCandidate({ ...item, inheritanceScope: "same_case" })
@@ -2249,10 +2270,10 @@ function CompleteAnalysisDialog({
           </section>
         </div>
       ) : null}
-      {showConclusionPicker && initial ? (
+      {showConclusionPicker && !readOnly ? (
         <FailureAnalysisConclusionPicker
-          batchId={initial.batchId}
-          caseDefinitionId={initial.caseDefinitionId}
+          batchId={historyBatchId}
+          caseDefinitionId={claims[0]!.caseDefinitionId}
           excludedAnalysisIds={currentAnalysisIds}
           onClose={() => setShowConclusionPicker(false)}
           onSelect={(item) => {
@@ -2294,6 +2315,12 @@ function CompleteAnalysisDialog({
                     ? "（本任务近 5 次批跑）"
                     : "（当前用例历史）"}
                 </p>
+                {claims.length > 1 ? (
+                  <p>
+                    该结论将填入所选的全部 {claims.length}{" "}
+                    个用例，请确认这些用例失败根因一致；点击“提交分析”后保存。
+                  </p>
+                ) : null}
                 {inheritanceCandidate.claim.category === "code_issue_filed" ? (
                   <p>
                     请确认问题单“{inheritanceCandidate.claim.ticketReference}
@@ -2338,7 +2365,8 @@ function AnalysisHistoryPanel({
   historyLoading,
   historyError,
   historyLimitPerCase,
-  canInherit,
+  canInheritSameCase,
+  canBrowseTaskConclusions,
   selectedCaseCount,
   onInherit,
   onBrowse,
@@ -2348,7 +2376,8 @@ function AnalysisHistoryPanel({
   historyLoading: boolean;
   historyError: string;
   historyLimitPerCase: number;
-  canInherit: boolean;
+  canInheritSameCase: boolean;
+  canBrowseTaskConclusions: boolean;
   selectedCaseCount: number;
   onInherit: (item: FailureAnalysisHistoryItemView) => void;
   onBrowse: () => void;
@@ -2367,7 +2396,7 @@ function AnalysisHistoryPanel({
               ? `同一任务 · 按用例展示最近 ${historyLimitPerCase} 条`
               : `同一任务 · 当前用例最近 ${historyLimitPerCase} 条`}
           </small>
-          {canInherit ? (
+          {canBrowseTaskConclusions ? (
             <Button onClick={onBrowse} size="compact" type="button" variant="secondary">
               <ClipboardPaste size={13} /> 从本任务近 5 次批跑继承
             </Button>
@@ -2448,7 +2477,7 @@ function AnalysisHistoryPanel({
                     <Maximize2 size={13} /> 查看证明截图
                   </Button>
                 ) : null}
-                {canInherit ? (
+                {canInheritSameCase ? (
                   <Button
                     onClick={() => onInherit(item)}
                     size="compact"

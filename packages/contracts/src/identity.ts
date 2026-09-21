@@ -250,3 +250,14 @@ export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export type TransferProjectOwnerInput = z.infer<typeof transferProjectOwnerInputSchema>;
 export type LdapConfigurationInput = z.infer<typeof ldapConfigurationInputSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>;
+
+export const assignRoleSelectionInputSchema = z
+  .object({
+    userIds: z.array(z.string().min(1).max(128)).min(1).max(50),
+    roleIds: z.array(z.string().min(1).max(128)).min(1).max(50),
+    projectId: z.string().min(1).max(128).optional(),
+  })
+  .refine(
+    (input) => input.userIds.length * input.roleIds.length <= 50,
+    "每次最多分配 50 个角色绑定。",
+  );

@@ -10,6 +10,8 @@ import { useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { readApiError } from "@/lib/client-api";
 
+import { useUnsavedForm } from "./use-unsaved-form";
+
 const COMMON_TIME_ZONES = [
   "Asia/Shanghai",
   "Asia/Hong_Kong",
@@ -32,6 +34,7 @@ export function PlatformSettings({
   initialFocus?: string;
 }) {
   const router = useRouter();
+  const draft = useUnsavedForm();
   const toast = useToast();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [revision, setRevision] = useState(initial.revision);
@@ -123,6 +126,7 @@ export function PlatformSettings({
         .join(" ");
       if (restart.length > 0) toast.warning(message, { title: "配置已保存，等待重启" });
       else toast.success(message, { title: "平台配置已生效" });
+      draft.markSaved();
       router.refresh();
     } catch (cause) {
       if (await showConcurrentModification(cause)) return;
@@ -133,7 +137,7 @@ export function PlatformSettings({
   }
 
   return (
-    <form className="settings-stack" onSubmit={submit} ref={formRef}>
+    <form className="settings-stack" onSubmit={submit} onChange={draft.markDirty} ref={formRef}>
       {error ? (
         <div className="auth-error" role="alert">
           {error}
@@ -152,11 +156,16 @@ export function PlatformSettings({
           和端口可在“平台节点”中单独更新。
         </div>
       ) : null}
+      <nav className="management-section-nav" aria-label="配置分区">
+        <a href="#platform-runtime">运行与访问</a>
+        {initial.mode === "full" ? <a href="#platform-infrastructure">基础设施</a> : null}
+        <a href="#platform-limits">容量、会话与调度</a>
+      </nav>
       <fieldset
         className="settings-form-fieldset"
         disabled={!canManage || initial.configurationManaged}
       >
-        <section className="content-card settings-section">
+        <section id="platform-runtime" className="content-card settings-section">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Runtime</p>
@@ -246,61 +255,74 @@ export function PlatformSettings({
         </section>
 
         {initial.mode === "full" ? (
-          <section className="content-card settings-section">
+          <section id="platform-infrastructure" className="content-card settings-section">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Full Infrastructure</p>
                 <h2>Full 基础设施</h2>
               </div>
             </div>
-            <p className="settings-note">
-              {initial.fullConfigured
-                ? "凭据已配置；敏感字段留空会保留原值，页面永不回显。"
-                : "首次启用 Full 模式必须完整填写以下连接信息。"}
-            </p>
-            <div className="settings-grid-form">
-              <SecretInput
-                label="PostgreSQL URL"
-                name="databaseUrl"
-                configured={initial.fullConfigured}
-              />
-              <label>
-                NATS 地址（逗号或换行分隔）
-                <Textarea name="natsServers" placeholder="nats://nats:4222" />
-              </label>
-              <SecretInput
-                label="NATS Token（可选）"
-                name="natsToken"
-                configured={initial.fullConfigured}
-              />
-              <SecretInput label="Redis URL" name="redisUrl" configured={initial.fullConfigured} />
-              <label>
-                MinIO 地址
-                <Input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
-              </label>
-              <SecretInput
-                label="MinIO Access Key"
-                name="minioAccessKey"
-                configured={initial.fullConfigured}
-              />
-              <SecretInput
-                label="MinIO Secret Key"
-                name="minioSecretKey"
-                configured={initial.fullConfigured}
-              />
-              <label>
-                MinIO Bucket
-                <Input name="minioBucket" placeholder="autoforge-objects" />
-              </label>
-              <label>
-                MinIO Region
-                <Input name="minioRegion" placeholder="us-east-1" />
-              </label>
-            </div>
+            {!initial.configurationManaged ? (
+              <p className="settings-note">
+                {initial.fullConfigured
+                  ? "凭据已配置；敏感字段留空会保留原值，页面永不回显。"
+                  : "首次启用 Full 模式必须完整填写以下连接信息。"}
+              </p>
+            ) : null}
+            {initial.configurationManaged ? (
+              <p className="settings-note">
+                PostgreSQL、NATS、Redis
+                和对象存储连接由部署文件管理。凭据不回显；运行状态请查看系统诊断。
+              </p>
+            ) : (
+              <div className="settings-grid-form">
+                <SecretInput
+                  label="PostgreSQL URL"
+                  name="databaseUrl"
+                  configured={initial.fullConfigured}
+                />
+                <label>
+                  NATS 地址（逗号或换行分隔）
+                  <Textarea name="natsServers" placeholder="nats://nats:4222" />
+                </label>
+                <SecretInput
+                  label="NATS Token（可选）"
+                  name="natsToken"
+                  configured={initial.fullConfigured}
+                />
+                <SecretInput
+                  label="Redis URL"
+                  name="redisUrl"
+                  configured={initial.fullConfigured}
+                />
+                <label>
+                  MinIO 地址
+                  <Input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
+                </label>
+                <SecretInput
+                  label="MinIO Access Key"
+                  name="minioAccessKey"
+                  configured={initial.fullConfigured}
+                />
+                <SecretInput
+                  label="MinIO Secret Key"
+                  name="minioSecretKey"
+                  configured={initial.fullConfigured}
+                />
+                <label>
+                  MinIO Bucket
+                  <Input name="minioBucket" placeholder="autoforge-objects" />
+                </label>
+                <label>
+                  MinIO Region
+                  <Input name="minioRegion" placeholder="us-east-1" />
+                </label>
+              </div>
+            )}
           </section>
         ) : null}
 
-        <section className="content-card settings-section">
+        <section id="platform-limits" className="content-card settings-section">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Limits</p>
@@ -424,13 +446,16 @@ export function PlatformSettings({
               启用后台 worker 指标端点
             </label>
           </div>
-          <div className="settings-form-actions">
-            <Button className="primary-button" disabled={pending} type="submit">
-              <Save size={16} aria-hidden="true" /> {pending ? "正在保存…" : "保存平台配置"}
-            </Button>
-          </div>
         </section>
       </fieldset>
+      {canManage && !initial.configurationManaged ? (
+        <div className="settings-form-actions management-sticky-actions">
+          <span role="status">{draft.dirty ? "有未保存的修改" : "配置已保存"}</span>
+          <Button className="primary-button" disabled={pending} type="submit">
+            <Save size={16} aria-hidden="true" /> {pending ? "正在保存…" : "保存平台配置"}
+          </Button>
+        </div>
+      ) : null}
     </form>
   );
 }

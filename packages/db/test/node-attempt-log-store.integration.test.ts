@@ -16,6 +16,26 @@ const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const now = "2026-09-05T00:00:00.000Z";
 
 describe.skipIf(!connectionString)("node-owned logs across isolated Full nodes", () => {
+  it("checks a saved peer address without creating or reading batch log files", async () => {
+    const fixture = await createFixture();
+    try {
+      const { nodes, handle } = fixture;
+      await expect(nodes[0].checkConnectivity(nodes[1].nodeId)).resolves.toEqual({
+        schemaVersion: 1,
+        nodeId: nodes[1].nodeId,
+      });
+      const ownership = await handle.pool.query(
+        "SELECT 1 FROM run_batch_log_locations WHERE batch_id=$1",
+        [fixture.batchId],
+      );
+      expect(ownership.rowCount).toBe(0);
+      await expect(nodes[0].checkConnectivity(randomUUID())).rejects.toMatchObject({
+        code: "PLATFORM_LOG_NODE_UNAVAILABLE",
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
   it("reads an initializing owner's log from either node and recovers after the first remote upload", async () => {
     const fixture = await createFixture();
     const { nodes, directories, batchId, attemptIds, handle } = fixture;

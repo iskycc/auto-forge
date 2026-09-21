@@ -4,10 +4,10 @@ import type { Runner, RunnerGroup } from "@autoforge/domain";
 import { LoaderCircle, Pencil, Plus, Server, Trash2, UsersRound, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
-import { Button, Input, Textarea } from "./ui";
+import { Button, CheckboxGroup, Input, Textarea } from "./ui";
 import { ActionDialog } from "./action-dialog";
 import { useConcurrentModificationFeedback } from "./concurrent-modification-feedback";
-import { useConfirm } from "./ui-feedback";
+import { useConfirm, useToast } from "./ui-feedback";
 import { throwApiErrorResponse } from "@/lib/client-api";
 
 export function RunnerGroupManager({
@@ -20,6 +20,7 @@ export function RunnerGroupManager({
   canManage: boolean;
 }) {
   const confirmAction = useConfirm();
+  const toast = useToast();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [groups, setGroups] = useState(initialGroups);
   const [editingGroupId, setEditingGroupId] = useState<string>();
@@ -31,6 +32,10 @@ export function RunnerGroupManager({
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    if (form.getAll("runnerIds").length > 64) {
+      setError("每个执行机组最多选择 64 台执行机。");
+      return;
+    }
     setPending(true);
     setError("");
     try {
@@ -45,6 +50,7 @@ export function RunnerGroupManager({
       setGroups((current) => [...current, group].sort(compareGroups));
       formElement.reset();
       setCreateOpen(false);
+      toast.success("执行机组已创建。");
     } catch (problem) {
       if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "创建执行机组失败。");
@@ -56,6 +62,10 @@ export function RunnerGroupManager({
   async function update(group: RunnerGroup, event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    if (form.getAll("runnerIds").length > 64) {
+      setError("每个执行机组最多选择 64 台执行机。");
+      return;
+    }
     setPending(true);
     setError("");
     try {
@@ -77,6 +87,7 @@ export function RunnerGroupManager({
           .sort(compareGroups),
       );
       setEditingGroupId(undefined);
+      toast.success("执行机组已更新。");
     } catch (problem) {
       if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "更新执行机组失败。");
@@ -102,6 +113,7 @@ export function RunnerGroupManager({
         method: "DELETE",
       });
       setGroups((current) => current.filter((candidate) => candidate.id !== group.id));
+      toast.success("执行机组已删除。");
     } catch (problem) {
       if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "删除执行机组失败。");
@@ -115,12 +127,20 @@ export function RunnerGroupManager({
       {canManage ? (
         <div className="runner-group-toolbar">
           <span>按机房、网络区域或能力维护可复用资源池。</span>
-          <Button onClick={() => setCreateOpen(true)} type="button" variant="primary">
+          <Button
+            onClick={() => {
+              setError("");
+              setCreateOpen(true);
+            }}
+            type="button"
+            variant="primary"
+          >
             <Plus size={16} /> 创建机组
           </Button>
         </div>
       ) : null}
       <ActionDialog
+        protectUnsavedChanges
         description="按机房、网络区域或能力维护可复用资源池。"
         onClose={() => !pending && setCreateOpen(false)}
         open={createOpen}
@@ -137,6 +157,11 @@ export function RunnerGroupManager({
               <Textarea maxLength={500} name="description" rows={2} />
             </label>
           </div>
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
           <RunnerMemberPicker runners={runners} selectedRunnerIds={[]} />
           <Button disabled={pending} type="submit" variant="primary">
             {pending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
@@ -145,7 +170,7 @@ export function RunnerGroupManager({
         </form>
       </ActionDialog>
 
-      {error ? (
+      {error && !createOpen && !editingGroupId ? (
         <p className="form-error" role="alert">
           {error}
         </p>
@@ -171,36 +196,52 @@ export function RunnerGroupManager({
           <div className="runner-group-grid">
             {groups.map((group) =>
               editingGroupId === group.id ? (
-                <form
-                  className="runner-group-card runner-group-card-editing"
+                <ActionDialog
                   key={group.id}
-                  onSubmit={(event) => void update(group, event)}
+                  open
+                  protectUnsavedChanges
+                  title={`编辑执行机组：${group.name}`}
+                  onClose={() => !pending && setEditingGroupId(undefined)}
                 >
-                  <div className="runner-group-fields">
-                    <label className="field-stack">
-                      <span>组名称</span>
-                      <Input defaultValue={group.name} maxLength={120} name="name" required />
-                    </label>
-                    <label className="field-stack runner-group-description">
-                      <span>说明</span>
-                      <Textarea
-                        defaultValue={group.description}
-                        maxLength={500}
-                        name="description"
-                        rows={2}
-                      />
-                    </label>
-                  </div>
-                  <RunnerMemberPicker runners={runners} selectedRunnerIds={group.runnerIds} />
-                  <div className="runner-group-actions">
-                    <Button disabled={pending} type="submit" variant="primary">
-                      保存修改
-                    </Button>
-                    <Button onClick={() => setEditingGroupId(undefined)} type="button">
-                      <X size={15} /> 取消
-                    </Button>
-                  </div>
-                </form>
+                  <form
+                    className="action-dialog-form"
+                    onSubmit={(event) => void update(group, event)}
+                  >
+                    <div className="runner-group-fields">
+                      <label className="field-stack">
+                        <span>组名称</span>
+                        <Input defaultValue={group.name} maxLength={120} name="name" required />
+                      </label>
+                      <label className="field-stack runner-group-description">
+                        <span>说明</span>
+                        <Textarea
+                          defaultValue={group.description}
+                          maxLength={500}
+                          name="description"
+                          rows={2}
+                        />
+                      </label>
+                    </div>
+                    {error ? (
+                      <p className="form-error" role="alert">
+                        {error}
+                      </p>
+                    ) : null}
+                    <RunnerMemberPicker runners={runners} selectedRunnerIds={group.runnerIds} />
+                    <div className="runner-group-actions">
+                      <Button disabled={pending} type="submit" variant="primary">
+                        保存修改
+                      </Button>
+                      <Button
+                        data-dialog-dismiss
+                        onClick={() => setEditingGroupId(undefined)}
+                        type="button"
+                      >
+                        <X size={15} /> 取消
+                      </Button>
+                    </div>
+                  </form>
+                </ActionDialog>
               ) : (
                 <article className="runner-group-card" key={group.id}>
                   <header>
@@ -232,7 +273,13 @@ export function RunnerGroupManager({
                   </div>
                   {canManage ? (
                     <footer className="runner-group-actions">
-                      <Button onClick={() => setEditingGroupId(group.id)} type="button">
+                      <Button
+                        onClick={() => {
+                          setError("");
+                          setEditingGroupId(group.id);
+                        }}
+                        type="button"
+                      >
                         <Pencil size={15} /> 编辑
                       </Button>
                       <Button
@@ -262,32 +309,37 @@ function RunnerMemberPicker({
   runners: Runner[];
   selectedRunnerIds: readonly string[];
 }) {
+  const states: Record<string, string> = {
+    online: "在线",
+    offline: "离线",
+    draining: "排空中",
+    disabled: "已禁用",
+  };
+  const availableIds = new Set(runners.map((runner) => runner.id));
+  const memberOptions = [
+    ...runners.map((runner) => ({
+      value: runner.id,
+      label: runner.name,
+      description: `${states[runner.state] ?? "不可用"} · ${runner.busySlots}/${runner.maxConcurrency} 槽位 · ${runner.labels.join("、")}`,
+    })),
+    ...selectedRunnerIds
+      .filter((id) => !availableIds.has(id))
+      .map((id) => ({
+        value: id,
+        label: `已有成员 · ${id}`,
+        description: "当前候选中不可用；保留原绑定，取消勾选后才会移除。",
+      })),
+  ];
   return (
-    <fieldset className="runner-member-picker">
-      <legend>组成员（可为空）</legend>
-      {runners.length === 0 ? (
-        <p className="inline-empty">暂无可加入的执行机。</p>
-      ) : (
-        <div>
-          {runners.map((runner) => (
-            <label key={runner.id}>
-              <Input
-                defaultChecked={selectedRunnerIds.includes(runner.id)}
-                name="runnerIds"
-                type="checkbox"
-                value={runner.id}
-              />
-              <span>
-                <strong>{runner.name}</strong>
-                <small>
-                  {runner.state} · {runner.busySlots}/{runner.maxConcurrency} 槽位
-                </small>
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-    </fieldset>
+    <div>
+      <CheckboxGroup
+        label="组成员（可为空）"
+        name="runnerIds"
+        defaultValue={selectedRunnerIds}
+        options={memberOptions}
+      />
+      <p className="settings-note">每组最多 64 台。搜索仅筛选候选，已选成员会保留。</p>
+    </div>
   );
 }
 

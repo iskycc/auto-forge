@@ -1551,8 +1551,39 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       .map(toCaseSource);
   }
 
-  async listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
-    return this.listRecentSources(limit, projectIds);
+  async listSources(
+    limit: number,
+    projectIds?: readonly string[],
+    filter: Parameters<CaseCatalogRepository["listSources"]>[2] = {},
+  ): Promise<CaseSource[]> {
+    if (projectIds?.length === 0) return [];
+    const columns = { ...getTableColumns(caseSources), inspectionJson: sql<string>`'{}'` };
+    const query = filter.query
+      ?.trim()
+      .toLowerCase()
+      .replace(/[\\%_]/g, (character) => `\\${character}`);
+    const rows = await this.handle.db
+      .select(columns)
+      .from(caseSources)
+      .where(
+        and(
+          ...(projectIds ? [inArray(caseSources.projectId, [...projectIds])] : []),
+          ...(filter.cursor ? [sql`${caseSources.id} < ${filter.cursor}`] : []),
+          ...(query
+            ? [
+                sql`(lower(${caseSources.originalFileName}) LIKE ${`%${query}%`} ESCAPE '\\' OR lower(${caseSources.displayName}) LIKE ${`%${query}%`} ESCAPE '\\')`,
+              ]
+            : []),
+          ...(filter.projectVersionId
+            ? [eq(caseSources.projectVersionId, filter.projectVersionId)]
+            : []),
+          ...(filter.testStageId ? [eq(caseSources.testStageId, filter.testStageId)] : []),
+        ),
+      )
+      .orderBy(desc(caseSources.id))
+      .limit(Math.max(1, Math.min(201, limit)))
+      .all();
+    return rows.map(toCaseSource);
   }
 
   async getSource(sourceId: string, projectIds?: readonly string[]) {

@@ -53,16 +53,19 @@ export function WebhookSettings({
   initialConfigurations,
   initialDeliveries,
   canManage,
+  deliveryFilter,
 }: {
   projectId: string;
   initialConfigurations: WebhookConfiguration[];
   initialDeliveries: WebhookDelivery[];
   canManage: boolean;
+  deliveryFilter?: { status: string; webhookId: string };
 }) {
   const toast = useToast();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [configurations, setConfigurations] = useState(initialConfigurations);
   const [deliveries] = useState(initialDeliveries);
+  const [templatePreview, setTemplatePreview] = useState("");
   const [editor, setEditor] = useState<EditorState>();
   const [deleting, setDeleting] = useState<WebhookConfiguration>();
   const [pending, setPending] = useState(false);
@@ -277,8 +280,30 @@ export function WebhookSettings({
             <h2>最近投递</h2>
             <p>保留响应码、尝试次数和最后错误，便于快速定位接收端问题。</p>
           </div>
-          <span className="table-count">最近 {deliveries.length} 条</span>
+          <span className="table-count">本页 {deliveries.length} 条</span>
         </div>
+        <form className="management-toolbar" method="get">
+          <Select
+            name="webhookId"
+            aria-label="投递端点"
+            defaultValue={deliveryFilter?.webhookId ?? ""}
+          >
+            <option value="">全部端点</option>
+            {configurations.map((item) => (
+              <option value={item.id} key={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </Select>
+          <Select name="status" aria-label="投递状态" defaultValue={deliveryFilter?.status ?? ""}>
+            <option value="">全部状态</option>
+            <option value="pending">等待投递</option>
+            <option value="delivering">投递中</option>
+            <option value="succeeded">成功</option>
+            <option value="failed">失败</option>
+          </Select>
+          <Button type="submit">筛选投递</Button>
+        </form>
         {deliveries.length === 0 ? (
           <div className="empty-state table-empty">
             <span className="empty-icon">
@@ -310,6 +335,7 @@ export function WebhookSettings({
       </section>
 
       <ActionDialog
+        protectUnsavedChanges
         className="webhook-editor-dialog"
         description="通知失败不影响任务执行结果；系统会自动进行有限重试。"
         onClose={() => !pending && setEditor(undefined)}
@@ -373,26 +399,72 @@ export function WebhookSettings({
                   </span>
                   <small>点击变量插入到光标位置</small>
                 </div>
-                <div className="webhook-variable-list">
-                  {WEBHOOK_BODY_VARIABLES.map((variable) => (
-                    <Button
-                      className="webhook-variable-token"
-                      key={variable}
-                      onClick={() => insertVariable(variable)}
-                      size="compact"
-                      type="button"
-                      variant="ghost"
-                    >{`{{${variable}}}`}</Button>
-                  ))}
-                </div>
+                <details>
+                  <summary>插入模板变量</summary>
+                  <div className="webhook-variable-list">
+                    {WEBHOOK_BODY_VARIABLES.map((variable) => (
+                      <Button
+                        className="webhook-variable-token"
+                        key={variable}
+                        onClick={() => insertVariable(variable)}
+                        size="compact"
+                        type="button"
+                        variant="ghost"
+                      >{`{{${variable}}}`}</Button>
+                    ))}
+                  </div>
+                </details>
                 <Textarea
                   ref={bodyRef}
                   aria-label="JSON 请求体模板"
-                  onChange={(event) => setEditor({ ...editor, bodyTemplate: event.target.value })}
+                  onChange={(event) => {
+                    setTemplatePreview("");
+                    setEditor({ ...editor, bodyTemplate: event.target.value });
+                  }}
                   rows={12}
                   spellCheck={false}
                   value={editor.bodyTemplate}
                 />
+                <Button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      setTemplatePreview(
+                        JSON.stringify(
+                          JSON.parse(
+                            editor.bodyTemplate.replace(
+                              /\{\{([^{}]+)\}\}/gu,
+                              (_, variable: string) => {
+                                if (
+                                  !(WEBHOOK_BODY_VARIABLES as readonly string[]).includes(variable)
+                                )
+                                  throw new Error(`不支持的变量：${variable}`);
+                                return variable === "batch.suiteName"
+                                  ? "示例回归任务"
+                                  : variable === "batch.status"
+                                    ? "succeeded"
+                                    : variable.startsWith("summary.")
+                                      ? "1"
+                                      : `示例 ${variable}`;
+                              },
+                            ),
+                          ),
+                          null,
+                          2,
+                        ),
+                      );
+                    } catch (cause) {
+                      setTemplatePreview(
+                        `模板格式错误：${cause instanceof Error ? cause.message : "请检查 JSON"}`,
+                      );
+                    }
+                  }}
+                >
+                  预览模板（不发送）
+                </Button>
+                {templatePreview ? (
+                  <pre className="webhook-template-preview">{templatePreview}</pre>
+                ) : null}
               </div>
             ) : (
               <div className="webhook-get-preview">
@@ -416,8 +488,13 @@ export function WebhookSettings({
                 {error}
               </p>
             ) : null}
-            <div className="webhook-editor-actions">
-              <Button disabled={pending} onClick={() => setEditor(undefined)} type="button">
+            <div className="webhook-editor-actions management-sticky-actions">
+              <Button
+                data-dialog-dismiss
+                disabled={pending}
+                onClick={() => setEditor(undefined)}
+                type="button"
+              >
                 取消
               </Button>
               <Button disabled={pending} type="submit" variant="primary">
@@ -430,6 +507,7 @@ export function WebhookSettings({
       </ActionDialog>
 
       <ActionDialog
+        protectUnsavedChanges
         description="端点会从所有任务解绑，历史投递记录仍保留。"
         onClose={() => !pending && setDeleting(undefined)}
         open={Boolean(deleting)}
@@ -437,7 +515,7 @@ export function WebhookSettings({
       >
         <div className="action-dialog-form">
           <p>确定删除「{deleting?.name}」？此操作不可恢复。</p>
-          <div className="webhook-editor-actions">
+          <div className="webhook-editor-actions management-sticky-actions">
             <Button disabled={pending} onClick={() => setDeleting(undefined)} type="button">
               取消
             </Button>

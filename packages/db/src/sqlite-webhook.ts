@@ -233,18 +233,33 @@ export class SqliteWebhookRepository implements WebhookRepository {
     });
   }
 
-  async listDeliveries(projectId: string, limit: number): Promise<WebhookDelivery[]> {
+  async listDeliveries(
+    projectId: string,
+    limit: number,
+    filter: Parameters<WebhookRepository["listDeliveries"]>[2] = {},
+  ): Promise<WebhookDelivery[]> {
+    const where = ["b.project_id = ?"];
+    const values: Array<string | number> = [projectId];
+    if (filter.webhookId) {
+      where.push("d.webhook_id = ?");
+      values.push(filter.webhookId);
+    }
+    if (filter.status) {
+      where.push("d.status = ?");
+      values.push(filter.status);
+    }
+    if (filter.cursor) {
+      where.push("(d.created_at < ? OR (d.created_at = ? AND d.id < ?))");
+      values.push(filter.cursor.createdAt, filter.cursor.createdAt, filter.cursor.id);
+    }
     return this.handle.client
       .prepare(
         `SELECT d.id, d.webhook_id, d.webhook_name, d.batch_id, b.suite_name, d.status,
-                d.attempts, d.response_status, d.error_message, d.created_at,
-                d.delivered_at, d.updated_at
-         FROM webhook_deliveries d
-         JOIN run_batches b ON b.id = d.batch_id
-         WHERE b.project_id = ?
-         ORDER BY d.created_at DESC, d.id DESC LIMIT ?`,
+      d.attempts, d.response_status, d.error_message, d.created_at, d.delivered_at, d.updated_at
+      FROM webhook_deliveries d JOIN run_batches b ON b.id=d.batch_id
+      WHERE ${where.join(" AND ")} ORDER BY d.created_at DESC,d.id DESC LIMIT ?`,
       )
-      .all(projectId, limit)
+      .all(...values, Math.max(1, Math.min(101, limit)))
       .map((row) => mapDelivery(row as DeliveryRow));
   }
 

@@ -87,10 +87,28 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return metrics;
   }
 
-  async listServiceAccounts(): Promise<ServiceAccount[]> {
+  async listServiceAccounts(
+    filter?: Parameters<PlatformOperationsRepository["listServiceAccounts"]>[0],
+  ): Promise<ServiceAccount[]> {
     await this.ready();
+    const where: string[] = [];
+    const values: Array<string | number> = [];
+    const bind = (value: string | number) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (filter?.cursor) where.push(`id < ${bind(filter.cursor)}`);
+    if (filter?.id) where.push(`id = ${bind(filter.id)}`);
+    if (filter?.query)
+      where.push(
+        `strpos(lower(name || ' ' || description), ${bind(filter.query.toLowerCase())}) > 0`,
+      );
+    if (filter?.status) where.push(`status = ${bind(filter.status)}`);
+    const limit =
+      filter?.limit === undefined ? "" : ` LIMIT ${bind(Math.min(201, Math.max(1, filter.limit)))}`;
     const result = await this.handle.pool.query<ServiceAccountRow>(
-      "SELECT * FROM service_accounts ORDER BY normalized_name, id",
+      `SELECT * FROM service_accounts ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${filter ? "id DESC" : "normalized_name,id"}${limit}`,
+      values,
     );
     return result.rows.map(mapServiceAccount);
   }
@@ -624,8 +642,15 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     await this.ready();
     if (input.category === "log" && this.attemptLogs) {
       // 日志保存在每批次独立 SQLite 文件中；按批次文件整体回收，主库无日志行可删。
-      const batchIds = await this.terminalBatchIdsBefore(input.cutoffAt);
-      const limited = batchIds.slice(0, input.limit);
+      // Freeze an accepted preview under a short policy row lock; filesystem work stays outside it.
+      const limited = await withTransaction(this.handle, async (client) => {
+        await assertPostgresRetentionRevision(client, input);
+        const result = await client.query<{ id: string }>(
+          "SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at < $1 ORDER BY updated_at,id LIMIT $2",
+          [input.cutoffAt, input.limit],
+        );
+        return result.rows.map((row) => row.id);
+      });
       for (const batchId of limited) {
         await this.attemptLogs.removeBatchStore(batchId);
       }
@@ -1386,6 +1411,7 @@ async function executePostgresRetention(
   client: PoolClient,
   input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
 ): Promise<{ deletedRecords: number; objectKeys: string[]; removedBatchStoreIds: string[] }> {
+  await assertPostgresRetentionRevision(client, input);
   if (input.category === "artifact") {
     const candidates = await client.query<{ id: string; object_key: string | null }>(
       `SELECT f.id,f.object_key FROM attempt_artifacts f JOIN run_attempts a ON a.id=f.attempt_id
@@ -1527,4 +1553,17 @@ function decodeCursor(cursor: string): { createdAt: string; id: string } {
     // Stable domain error below avoids leaking parser details.
   }
   throw new DomainError("CURSOR_INVALID", "分页游标无效。");
+}
+
+async function assertPostgresRetentionRevision(
+  client: PoolClient,
+  input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
+): Promise<void> {
+  if (input.expectedRevision === undefined) return;
+  const result = await client.query<{ revision: number }>(
+    "SELECT revision FROM retention_policies WHERE category=$1 FOR SHARE",
+    [input.category],
+  );
+  if (Number(result.rows[0]?.revision) !== input.expectedRevision)
+    throw new DomainError("VERSION_CONFLICT", "保留策略已修改，请重新生成影响预览。");
 }

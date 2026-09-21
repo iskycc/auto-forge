@@ -6,7 +6,7 @@ import {
   platformDateTimeInputValue,
 } from "@/lib/platform-date-time";
 
-import { Button, CheckboxGroup, DatetimeInput, Input } from "@/components/ui";
+import { Button, CheckboxGroup, DatetimeInput, Input, Select } from "@/components/ui";
 
 import type {
   ApiToken,
@@ -19,9 +19,14 @@ import { permissionCatalog } from "@autoforge/domain";
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { ActionDialog } from "@/components/action-dialog";
-import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
+import {
+  permissionDescription,
+  permissionLabel,
+  permissionGroup,
+} from "@/lib/permission-presentation";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
+import { copyTextToClipboard } from "@/lib/client-clipboard";
 import { throwApiErrorResponse } from "@/lib/client-api";
 
 export function OperationsSettings({
@@ -31,8 +36,10 @@ export function OperationsSettings({
   canManageSettings,
   canManageTokens,
   visibleSection,
+  accountFilter,
 }: {
   initialAccounts: ServiceAccount[];
+  accountFilter?: { query: string; status: string };
   initialPolicies: RetentionPolicy[];
   canManageSettings: boolean;
   canManageTokens: boolean;
@@ -46,9 +53,16 @@ export function OperationsSettings({
   const [policies, setPolicies] = useState(initialPolicies);
   const [tokens, setTokens] = useState<Record<string, ApiToken[]>>({});
   const [issuedToken, setIssuedToken] = useState("");
+  const [dirtyPolicies, setDirtyPolicies] = useState<Record<string, boolean>>({});
   const [previews, setPreviews] = useState<Record<string, RetentionPreview>>({});
   const [pending, setPending] = useState(false);
   const [createAccountOpen, setCreateAccountOpen] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string>();
+  const [issuingAccountId, setIssuingAccountId] = useState<string>();
+  const [accountQuery, setAccountQuery] = useState(accountFilter?.query ?? "");
+  const [accountStatus, setAccountStatus] = useState(accountFilter?.status ?? "");
+  const [formError, setFormError] = useState("");
+  const visibleAccounts = accounts;
 
   async function createAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -87,6 +101,7 @@ export function OperationsSettings({
         },
       );
       setIssuedToken(issued.token);
+      setIssuingAccountId(undefined);
       setTokens((current) => ({
         ...current,
         [account.id]: [{ ...issued, token: undefined }, ...(current[account.id] ?? [])],
@@ -148,6 +163,7 @@ export function OperationsSettings({
         },
       );
       setAccounts((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setEditingAccountId(undefined);
       return "服务账号已更新，权限缩减对后续令牌鉴权立即生效。";
     });
   }
@@ -197,7 +213,13 @@ export function OperationsSettings({
       setPolicies((current) =>
         current.map((item) => (item.category === updated.category ? updated : item)),
       );
-      return "保留策略已更新。";
+      setPreviews((current) => {
+        const next = { ...current };
+        delete next[policy.category];
+        return next;
+      });
+      setDirtyPolicies((current) => ({ ...current, [policy.category]: false }));
+      return "保留策略已更新，请重新预览后清理。";
     });
   }
 
@@ -229,7 +251,12 @@ export function OperationsSettings({
         `/api/v1/settings/retention/${policy.category}/execute`,
         {
           method: "POST",
-          body: JSON.stringify({ confirmation: policy.category, limit: 1_000 }),
+          body: JSON.stringify({
+            confirmation: policy.category,
+            limit: 1_000,
+            expectedRevision: preview.policyRevision,
+            previewCutoffAt: preview.cutoffAt,
+          }),
         },
       );
       const refreshed = await requestJson<RetentionPreview>(
@@ -242,11 +269,14 @@ export function OperationsSettings({
 
   async function mutate(operation: () => Promise<string>) {
     setPending(true);
+    setFormError("");
     try {
       toast.success(await operation());
     } catch (problem) {
       if (await showConcurrentModification(problem)) return;
-      toast.error(problem instanceof Error ? problem.message : "操作失败。");
+      const message = problem instanceof Error ? problem.message : "操作失败。";
+      if (createAccountOpen || editingAccountId || issuingAccountId) setFormError(message);
+      else toast.error(message);
     } finally {
       setPending(false);
     }
@@ -262,7 +292,14 @@ export function OperationsSettings({
               <h2>服务账号与 API 令牌</h2>
             </div>
             {canManageTokens ? (
-              <Button onClick={() => setCreateAccountOpen(true)} type="button" variant="primary">
+              <Button
+                onClick={() => {
+                  setFormError("");
+                  setCreateAccountOpen(true);
+                }}
+                type="button"
+                variant="primary"
+              >
                 <Plus size={16} /> 创建账号
               </Button>
             ) : (
@@ -280,7 +317,12 @@ export function OperationsSettings({
               </span>
               <Button
                 className="button button-secondary"
-                onClick={() => void navigator.clipboard.writeText(issuedToken)}
+                onClick={() =>
+                  void copyTextToClipboard(issuedToken).then(
+                    () => toast.success("令牌已复制。"),
+                    () => toast.error("复制失败，请手动选择并复制下方令牌。"),
+                  )
+                }
                 type="button"
               >
                 复制
@@ -288,12 +330,18 @@ export function OperationsSettings({
             </div>
           ) : null}
           <ActionDialog
+            protectUnsavedChanges
             description="服务账号用于 Jenkins 等自动化系统，权限应按最小范围分配。"
             onClose={() => !pending && setCreateAccountOpen(false)}
             open={createAccountOpen}
             title="创建服务账号"
           >
             <form className="settings-grid-form action-dialog-form" onSubmit={createAccount}>
+              {formError ? (
+                <p className="form-error settings-wide-field" role="alert">
+                  {formError}
+                </p>
+              ) : null}
               <label>
                 账号名称
                 <Input name="name" required />
@@ -302,7 +350,7 @@ export function OperationsSettings({
                 用途说明
                 <Input name="description" />
               </label>
-              <PermissionCheckboxGroup label="系统权限" name="permissions" required />
+              <PermissionCheckboxGroup label="系统权限" name="permissions" />
               <ProjectPermissionFields projects={projects} />
               <Button className="button button-primary" disabled={pending} type="submit">
                 <Plus size={16} /> 创建服务账号
@@ -312,11 +360,37 @@ export function OperationsSettings({
           {!canManageTokens ? (
             <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
           ) : null}
+          <form className="management-toolbar" method="get">
+            <input type="hidden" name="section" value="accounts" />
+            <label>
+              搜索账号
+              <Input
+                name="query"
+                onChange={(event) => setAccountQuery(event.target.value)}
+                type="search"
+                value={accountQuery}
+              />
+            </label>
+            <label>
+              账号状态
+              <Select
+                name="status"
+                onChange={(event) => setAccountStatus(event.target.value)}
+                value={accountStatus}
+              >
+                <option value="">全部状态</option>
+                <option value="active">启用</option>
+                <option value="disabled">禁用</option>
+              </Select>
+            </label>
+            <span>本页 {accounts.length} 个账号</span>
+            <Button type="submit">搜索</Button>
+          </form>
           <div className="service-account-list">
-            {accounts.length === 0 ? (
-              <div className="inline-empty">尚未创建服务账号。</div>
+            {visibleAccounts.length === 0 ? (
+              <div className="inline-empty">没有匹配的服务账号。可调整筛选或创建账号。</div>
             ) : (
-              accounts.map((account) => (
+              visibleAccounts.map((account) => (
                 <article key={account.id}>
                   <div className="service-account-heading">
                     <span>
@@ -335,24 +409,68 @@ export function OperationsSettings({
                       <RefreshCw size={14} /> 令牌
                     </Button>
                   </div>
-                  <div className="permission-chip-row">
-                    {account.systemPermissions.map((permission) => (
-                      <span
-                        className="permission-chip"
-                        key={permission}
-                        title={permissionDescription(permission)}
-                      >
-                        {permissionLabel(permission)}
-                      </span>
-                    ))}
-                  </div>
+                  <p className="settings-note">
+                    系统权限 {account.systemPermissions.length} 项 · 项目授权{" "}
+                    {Object.keys(account.projectPermissions).length} 个：
+                    {Object.keys(account.projectPermissions)
+                      .map((id) => projects.find((project) => project.id === id)?.name ?? id)
+                      .join("、") || "无"}
+                  </p>
+                  <details className="account-permission-summary">
+                    <summary>查看权限摘要</summary>
+                    <div className="permission-chip-row">
+                      {account.systemPermissions.map((permission) => (
+                        <span
+                          className="permission-chip"
+                          key={permission}
+                          title={permissionDescription(permission)}
+                        >
+                          {permissionLabel(permission)}
+                        </span>
+                      ))}
+                    </div>
+                  </details>
                   {canManageTokens ? (
-                    <details className="service-account-editor">
-                      <summary>编辑账号与权限</summary>
+                    <div className="button-row">
+                      <Button
+                        onClick={() => {
+                          setFormError("");
+                          setEditingAccountId(account.id);
+                        }}
+                        type="button"
+                      >
+                        编辑账号与权限
+                      </Button>
+                      {account.status === "active" ? (
+                        <Button
+                          onClick={() => {
+                            setFormError("");
+                            setIssuingAccountId(account.id);
+                          }}
+                          type="button"
+                          variant="secondary"
+                        >
+                          签发令牌
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {canManageTokens && editingAccountId === account.id ? (
+                    <ActionDialog
+                      protectUnsavedChanges
+                      title={`编辑服务账号：${account.name}`}
+                      open
+                      onClose={() => !pending && setEditingAccountId(undefined)}
+                    >
                       <form
                         className="settings-grid-form settings-subform"
                         onSubmit={(event) => void updateAccount(event, account)}
                       >
+                        {formError ? (
+                          <p className="form-error settings-wide-field" role="alert">
+                            {formError}
+                          </p>
+                        ) : null}
                         <label>
                           账号名称
                           <Input defaultValue={account.name} name="name" required />
@@ -395,44 +513,57 @@ export function OperationsSettings({
                           </Button>
                         </span>
                       </form>
-                    </details>
+                    </ActionDialog>
                   ) : null}
-                  {canManageTokens && account.status === "active" ? (
-                    <form
-                      className="token-issue-form"
-                      onSubmit={(event) => void issueToken(event, account)}
+                  {canManageTokens && issuingAccountId === account.id ? (
+                    <ActionDialog
+                      protectUnsavedChanges
+                      title={`签发令牌：${account.name}`}
+                      open
+                      onClose={() => !pending && setIssuingAccountId(undefined)}
                     >
-                      <label>
-                        令牌名称
-                        <Input name="name" required />
-                      </label>
-                      <label>
-                        过期时间
-                        <DatetimeInput
-                          min={platformDateTimeInputValue(new Date())}
-                          name="expiresAt"
+                      <form
+                        className="settings-grid-form action-dialog-form"
+                        onSubmit={(event) => void issueToken(event, account)}
+                      >
+                        {formError ? (
+                          <p className="form-error settings-wide-field" role="alert">
+                            {formError}
+                          </p>
+                        ) : null}
+                        <label>
+                          令牌名称
+                          <Input name="name" required />
+                        </label>
+                        <label>
+                          过期时间
+                          <DatetimeInput
+                            min={platformDateTimeInputValue(new Date())}
+                            name="expiresAt"
+                            required
+                          />
+                        </label>
+                        <CheckboxGroup
+                          label="作用域"
+                          name="scopes"
+                          options={[
+                            ...new Set([
+                              ...account.systemPermissions,
+                              ...Object.values(account.projectPermissions).flat(),
+                            ]),
+                          ].map((scope) => ({
+                            value: scope,
+                            label: permissionLabel(scope),
+                            group: permissionGroup(scope),
+                            description: permissionDescription(scope),
+                          }))}
                           required
                         />
-                      </label>
-                      <CheckboxGroup
-                        label="作用域"
-                        name="scopes"
-                        options={[
-                          ...new Set([
-                            ...account.systemPermissions,
-                            ...Object.values(account.projectPermissions).flat(),
-                          ]),
-                        ].map((scope) => ({
-                          value: scope,
-                          label: permissionLabel(scope),
-                          description: permissionDescription(scope),
-                        }))}
-                        required
-                      />
-                      <Button className="button button-primary" disabled={pending} type="submit">
-                        签发
-                      </Button>
-                    </form>
+                        <Button className="button button-primary" disabled={pending} type="submit">
+                          签发
+                        </Button>
+                      </form>
+                    </ActionDialog>
                   ) : null}
                   {(tokens[account.id] ?? []).map((token) => (
                     <div className="token-row" key={token.id}>
@@ -447,9 +578,11 @@ export function OperationsSettings({
                           ? "已撤销"
                           : account.status === "disabled"
                             ? "已随账号禁用失效"
-                            : token.lastUsedAt
-                              ? `最近使用 ${formatDate(token.lastUsedAt)}`
-                              : "从未使用"}
+                            : Date.parse(token.expiresAt) <= Date.now()
+                              ? "已过期"
+                              : token.lastUsedAt
+                                ? `最近使用 ${formatDate(token.lastUsedAt)}`
+                                : "从未使用"}
                       </span>
                       {!token.revokedAt && canManageTokens && account.status === "active" ? (
                         <Button
@@ -491,6 +624,14 @@ export function OperationsSettings({
                 <label>
                   保留天数
                   <Input
+                    onChange={() => {
+                      setDirtyPolicies((current) => ({ ...current, [policy.category]: true }));
+                      setPreviews((current) => {
+                        const next = { ...current };
+                        delete next[policy.category];
+                        return next;
+                      });
+                    }}
                     defaultValue={policy.retentionDays}
                     disabled={!canManageSettings}
                     max={policy.maximumDays}
@@ -499,16 +640,23 @@ export function OperationsSettings({
                     type="number"
                   />
                 </label>
+                {dirtyPolicies[policy.category] ? (
+                  <p className="settings-note">有未保存的修改，请先保存再预览。</p>
+                ) : null}
                 {previews[policy.category] ? (
                   <p>
                     当前将影响 {previews[policy.category]?.eligibleRecords} 条 /{" "}
                     {formatBytes(previews[policy.category]?.eligibleBytes ?? 0)}
+                    <small>
+                      策略版本 {previews[policy.category]?.policyRevision} · 预览于{" "}
+                      {formatPlatformDateTime(previews[policy.category]?.generatedAt ?? "")}
+                    </small>
                   </p>
                 ) : null}
                 <span>
                   <Button
                     className="button button-secondary compact-button"
-                    disabled={pending}
+                    disabled={pending || dirtyPolicies[policy.category]}
                     onClick={() => void previewRetention(policy)}
                     type="button"
                   >
@@ -550,21 +698,55 @@ function ProjectPermissionFields({
   projects: Array<{ id: string; name: string }>;
   initialPermissions?: ServiceAccount["projectPermissions"];
 }) {
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    Object.keys(initialPermissions)[0] ?? projects[0]?.id ?? "",
+  );
+  const [permissions, setPermissions] = useState(initialPermissions);
   if (projects.length === 0) return null;
+  const selectedProject = projects.find((project) => project.id === selectedProjectId);
   return (
     <fieldset className="settings-wide-field settings-fieldset">
       <legend>项目作用域权限</legend>
-      <div className="settings-paired-forms">
-        {projects.map((project) => (
-          <PermissionCheckboxGroup
-            className="project-permission-group"
-            defaultValue={initialPermissions[project.id] ?? []}
-            key={project.id}
-            label={project.name}
-            name={`projectPermissions:${project.id}`}
-          />
-        ))}
-      </div>
+      <label>
+        配置授权项目
+        <Select
+          value={selectedProjectId}
+          onChange={(event) => setSelectedProjectId(event.target.value)}
+        >
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name} · 已选 {permissions[project.id]?.length ?? 0} 项
+            </option>
+          ))}
+        </Select>
+      </label>
+      <p className="settings-note">
+        仅影响选定项目；切换项目会保留其他项目的已选权限。全选只作用于当前权限组。
+      </p>
+      {Object.entries(permissions)
+        .filter(([id]) => id !== selectedProjectId)
+        .flatMap(([id, values]) =>
+          values.map((value) => (
+            <input
+              key={`${id}:${value}`}
+              name={`projectPermissions:${id}`}
+              type="hidden"
+              value={value}
+            />
+          )),
+        )}
+      {selectedProject ? (
+        <PermissionCheckboxGroup
+          key={selectedProjectId}
+          className="project-permission-group"
+          label={selectedProject.name}
+          name={`projectPermissions:${selectedProjectId}`}
+          defaultValue={permissions[selectedProjectId] ?? []}
+          onSelectionChange={(values) =>
+            setPermissions((current) => ({ ...current, [selectedProjectId]: values }))
+          }
+        />
+      ) : null}
     </fieldset>
   );
 }
@@ -575,22 +757,26 @@ function PermissionCheckboxGroup({
   label,
   name,
   required,
+  onSelectionChange,
 }: {
   className?: string;
   defaultValue?: readonly string[];
   label: string;
   name: string;
   required?: boolean;
+  onSelectionChange?: (values: string[]) => void;
 }) {
   return (
     <CheckboxGroup
       className={`settings-wide-field${className ? ` ${className}` : ""}`}
       {...(defaultValue ? { defaultValue } : {})}
+      {...(onSelectionChange ? { onSelectionChange } : {})}
       label={label}
       name={name}
       options={permissionCatalog.map((permission) => ({
         value: permission,
         label: permissionLabel(permission),
+        group: permissionGroup(permission),
         description: permissionDescription(permission),
       }))}
       {...(required !== undefined ? { required } : {})}

@@ -1,5 +1,5 @@
 import { Button, Input } from "@/components/ui";
-import Link from "next/link";
+import { CursorPagination } from "@/components/cursor-pagination";
 import { ProjectMembershipManager } from "@/components/project-membership-manager";
 import { ProjectStructureManager } from "@/components/project-structure-manager";
 import { SectionTabs } from "@/components/section-tabs";
@@ -32,6 +32,7 @@ export default async function ProjectMembershipsPage({
           <div>
             <p className="eyebrow">Projects</p>
             <h1>项目与成员</h1>
+            <span className="permission-chip">范围：当前项目</span>
             <p>当前账号没有可访问的项目。</p>
           </div>
         </header>
@@ -97,24 +98,23 @@ export default async function ProjectMembershipsPage({
             <Input name="query" defaultValue={parameters.query ?? ""} maxLength={120} />
           </label>
           <Button type="submit">筛选</Button>
-          {memberPage.nextCursor ? (
-            <Link
-              className="button button-secondary"
-              href={`/settings/projects?${new URLSearchParams({ section: "members", query: parameters.query ?? "", cursor: memberPage.nextCursor })}`}
-            >
-              下一页成员
-            </Link>
-          ) : null}
         </form>
       ) : null}
       {activeSection === "members" ? (
-        <ProjectMembershipManager
-          canManage={canManage}
-          canCreateProject={identity.systemPermissions.includes("project.manage")}
-          members={memberPage.items}
-          project={selectedProject}
-          roles={roles}
-        />
+        <>
+          <ProjectMembershipManager
+            canManage={canManage}
+            canCreateProject={identity.systemPermissions.includes("project.manage")}
+            members={memberPage.items}
+            project={selectedProject}
+            roles={roles}
+          />
+          <CursorPagination
+            nextCursor={memberPage.nextCursor}
+            count={memberPage.items.length}
+            label="项目成员分页"
+          />
+        </>
       ) : structure ? (
         <ProjectStructureManager
           canManage={canManage}

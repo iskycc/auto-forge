@@ -312,7 +312,7 @@ export function ProjectStructureManager({
   };
   return (
     <div className="settings-stack project-structure-manager">
-      {error ? (
+      {error && !createDialog ? (
         <div className="auth-error" role="alert">
           {error}
         </div>
@@ -328,13 +328,16 @@ export function ProjectStructureManager({
           <div className="button-row">
             {canManage ? (
               <>
-                <Button onClick={() => setCreateDialog("version")} type="button">
+                <Button onClick={() => (setError(""), setCreateDialog("version"))} type="button">
                   <Plus size={15} /> 创建版本
                 </Button>
-                <Button onClick={() => setCreateDialog("stage")} type="button">
+                <Button onClick={() => (setError(""), setCreateDialog("stage"))} type="button">
                   <Plus size={15} /> 创建阶段
                 </Button>
-                <Button onClick={() => setCreateDialog("inherit-cases")} type="button">
+                <Button
+                  onClick={() => (setError(""), setCreateDialog("inherit-cases"))}
+                  type="button"
+                >
                   <Link2 size={15} /> 继承用例
                 </Button>
               </>
@@ -344,11 +347,17 @@ export function ProjectStructureManager({
           </div>
         </div>
         <ActionDialog
+          protectUnsavedChanges
           onClose={() => !pending && setCreateDialog(null)}
           open={createDialog === "version"}
           title="创建项目版本"
         >
           <form className="settings-grid-form action-dialog-form" onSubmit={createVersion}>
+            {error ? (
+              <p className="auth-error settings-wide-field" role="alert">
+                {error}
+              </p>
+            ) : null}
             <label>
               版本名称
               <Input name="name" placeholder="例如 2.4.0" required disabled={!canManage} />
@@ -359,11 +368,17 @@ export function ProjectStructureManager({
           </form>
         </ActionDialog>
         <ActionDialog
+          protectUnsavedChanges
           onClose={() => !pending && setCreateDialog(null)}
           open={createDialog === "inherit-cases"}
           title="从其他版本继承用例"
         >
           <form className="settings-grid-form action-dialog-form" onSubmit={inheritCases}>
+            {error ? (
+              <p className="auth-error settings-wide-field" role="alert">
+                {error}
+              </p>
+            ) : null}
             <label>
               来源版本 / 测试阶段
               <Select name="sourceTestStageId" required disabled={!canManage}>
@@ -402,11 +417,17 @@ export function ProjectStructureManager({
           </form>
         </ActionDialog>
         <ActionDialog
+          protectUnsavedChanges
           onClose={() => !pending && setCreateDialog(null)}
           open={createDialog === "stage"}
           title="创建测试阶段"
         >
           <form className="settings-grid-form action-dialog-form" onSubmit={createStage}>
+            {error ? (
+              <p className="auth-error settings-wide-field" role="alert">
+                {error}
+              </p>
+            ) : null}
             <label>
               所属版本
               <Select name="versionId" required disabled={!canManage}>
@@ -580,79 +601,85 @@ export function ProjectStructureManager({
           </Button>
         </form>
         <div className="settings-paired-forms">
-          <form
-            className="settings-grid-form settings-subform project-structure-subform"
-            onSubmit={uploadAsset}
-          >
-            <label>
-              资源类型
-              <Select name="kind" disabled={!canManage}>
-                <option value="jdk">JDK 压缩包</option>
-                <option value="jar-bundle">依赖 JAR 压缩包</option>
-              </Select>
-            </label>
-            <label>
-              压缩格式
-              <Select name="archiveFormat" disabled={!canManage}>
-                <option value="tar.gz">tar.gz</option>
-                <option value="zip">zip</option>
-              </Select>
-            </label>
-            <label>
-              本地文件
-              <FileInput name="file" accept=".zip,.tar.gz,.tgz" disabled={!canManage} />
-            </label>
-            <Button className="primary-button" disabled={pending || !canManage} type="submit">
-              上传并启用
-            </Button>
-            {runtimeUploadProgress ? (
-              <div className="project-runtime-upload-progress">
-                <OperationProgress
-                  detail={runtimeUploadProgress.detail}
-                  label={runtimeUploadProgress.label}
-                  value={runtimeUploadProgress.percent}
-                />
-              </div>
-            ) : null}
-          </form>
-          <form
-            className="settings-grid-form settings-subform project-structure-subform"
-            onSubmit={registerUrlAsset}
-          >
-            <label>
-              资源类型
-              <Select name="kind" disabled={!canManage}>
-                <option value="jdk">JDK 压缩包</option>
-                <option value="jar-bundle">依赖 JAR 压缩包</option>
-              </Select>
-            </label>
-            <label>
-              压缩格式
-              <Select name="archiveFormat" disabled={!canManage}>
-                <option value="tar.gz">tar.gz</option>
-                <option value="zip">zip</option>
-              </Select>
-            </label>
-            <label>
-              HTTP(S) 链接
-              <Input name="url" type="url" required disabled={!canManage} />
-            </label>
-            <label>
-              文件名
-              <Input name="fileName" required disabled={!canManage} />
-            </label>
-            <label>
-              SHA-256
-              <Input name="sha256" minLength={64} maxLength={64} required disabled={!canManage} />
-            </label>
-            <label>
-              大小（字节）
-              <Input name="sizeBytes" type="number" min={1} required disabled={!canManage} />
-            </label>
-            <Button className="primary-button" disabled={pending || !canManage} type="submit">
-              登记链接并启用
-            </Button>
-          </form>
+          <details className="management-disclosure">
+            <summary>上传本地压缩包</summary>
+            <form
+              className="settings-grid-form settings-subform project-structure-subform"
+              onSubmit={uploadAsset}
+            >
+              <label>
+                资源类型
+                <Select name="kind" disabled={!canManage}>
+                  <option value="jdk">JDK 压缩包</option>
+                  <option value="jar-bundle">依赖 JAR 压缩包</option>
+                </Select>
+              </label>
+              <label>
+                压缩格式
+                <Select name="archiveFormat" disabled={!canManage}>
+                  <option value="tar.gz">tar.gz</option>
+                  <option value="zip">zip</option>
+                </Select>
+              </label>
+              <label>
+                本地文件
+                <FileInput name="file" accept=".zip,.tar.gz,.tgz" disabled={!canManage} />
+              </label>
+              <Button className="primary-button" disabled={pending || !canManage} type="submit">
+                上传并启用
+              </Button>
+              {runtimeUploadProgress ? (
+                <div className="project-runtime-upload-progress">
+                  <OperationProgress
+                    detail={runtimeUploadProgress.detail}
+                    label={runtimeUploadProgress.label}
+                    value={runtimeUploadProgress.percent}
+                  />
+                </div>
+              ) : null}
+            </form>
+          </details>
+          <details className="management-disclosure">
+            <summary>登记内网资源链接</summary>
+            <form
+              className="settings-grid-form settings-subform project-structure-subform"
+              onSubmit={registerUrlAsset}
+            >
+              <label>
+                资源类型
+                <Select name="kind" disabled={!canManage}>
+                  <option value="jdk">JDK 压缩包</option>
+                  <option value="jar-bundle">依赖 JAR 压缩包</option>
+                </Select>
+              </label>
+              <label>
+                压缩格式
+                <Select name="archiveFormat" disabled={!canManage}>
+                  <option value="tar.gz">tar.gz</option>
+                  <option value="zip">zip</option>
+                </Select>
+              </label>
+              <label>
+                HTTP(S) 链接
+                <Input name="url" type="url" required disabled={!canManage} />
+              </label>
+              <label>
+                文件名
+                <Input name="fileName" required disabled={!canManage} />
+              </label>
+              <label>
+                SHA-256
+                <Input name="sha256" minLength={64} maxLength={64} required disabled={!canManage} />
+              </label>
+              <label>
+                大小（字节）
+                <Input name="sizeBytes" type="number" min={1} required disabled={!canManage} />
+              </label>
+              <Button className="primary-button" disabled={pending || !canManage} type="submit">
+                登记链接并启用
+              </Button>
+            </form>
+          </details>
         </div>
       </section>
     </div>

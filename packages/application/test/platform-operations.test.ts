@@ -329,6 +329,61 @@ describe("PlatformOperationsService analytics", () => {
 });
 
 describe("PlatformOperationsService retention", () => {
+  it("pins a manual cleanup to its preview and rejects changed policy revisions", async () => {
+    const policy = {
+      category: "audit" as const,
+      retentionDays: 30,
+      minimumDays: 7,
+      maximumDays: 730,
+      updatedAt: timestamp,
+      revision: 2,
+    };
+    const repository = {
+      listRetentionPolicies: vi.fn(async () => [policy]),
+      previewRetention: vi.fn(async (category, cutoffAt) => ({
+        category,
+        cutoffAt,
+        eligibleRecords: 1,
+        eligibleBytes: 0,
+      })),
+      executeRetention: vi.fn(async () => ({ deletedRecords: 1, objectKeys: [] })),
+    } as unknown as PlatformOperationsRepository;
+    const service = new PlatformOperationsService(
+      repository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    const preview = await service.previewRetention(
+      { ...settingsAdministrator, systemPermissions: ["settings.manage", "settings.read"] },
+      "audit",
+    );
+    expect(preview).toMatchObject({ policyRevision: 2, generatedAt: timestamp });
+    await expect(
+      service.executeRetentionNow(settingsAdministrator, "audit", {
+        confirmation: "audit",
+        expectedRevision: 1,
+        previewCutoffAt: preview.cutoffAt,
+      }),
+    ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await expect(
+      service.executeRetentionNow(settingsAdministrator, "audit", {
+        confirmation: "audit",
+        expectedRevision: 2,
+        previewCutoffAt: timestamp,
+      }),
+    ).rejects.toMatchObject({ code: "RETENTION_PREVIEW_INVALID" });
+    expect(repository.executeRetention).not.toHaveBeenCalled();
+    await service.executeRetentionNow(settingsAdministrator, "audit", {
+      confirmation: "audit",
+      expectedRevision: 2,
+      previewCutoffAt: preview.cutoffAt,
+    });
+    expect(repository.executeRetention).toHaveBeenCalledWith(
+      expect.objectContaining({ cutoffAt: preview.cutoffAt, expectedRevision: 2 }),
+    );
+  });
+
   it("requires an exact confirmation before executing and processing object cleanup", async () => {
     const repository = {
       listRetentionPolicies: vi.fn(async () => [

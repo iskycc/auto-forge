@@ -403,7 +403,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(logRetention).toContainText(/当前将影响 \d+ 条/);
   await logRetention.getByLabel("保留天数").fill("31");
   await logRetention.getByRole("button", { name: "保存" }).click();
-  await expect(page.getByText("保留策略已更新。")).toBeVisible();
+  await expect(page.getByText("保留策略已更新，请重新预览后清理。")).toBeVisible();
 
   await logRetention.getByRole("button", { name: "影响预览" }).click();
   await logRetention.getByRole("button", { name: "执行清理" }).click();

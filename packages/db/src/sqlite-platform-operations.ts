@@ -92,10 +92,34 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     };
   }
 
-  async listServiceAccounts(): Promise<ServiceAccount[]> {
+  async listServiceAccounts(
+    filter?: Parameters<PlatformOperationsRepository["listServiceAccounts"]>[0],
+  ): Promise<ServiceAccount[]> {
+    const where: string[] = [];
+    const values: Array<string | number> = [];
+    if (filter?.cursor) {
+      where.push("id < ?");
+      values.push(filter.cursor);
+    }
+    if (filter?.id) {
+      where.push("id = ?");
+      values.push(filter.id);
+    }
+    if (filter?.query) {
+      where.push("instr(lower(name || ' ' || description), ?) > 0");
+      values.push(filter.query.toLowerCase());
+    }
+    if (filter?.status) {
+      where.push("status = ?");
+      values.push(filter.status);
+    }
+    const limit = filter?.limit === undefined ? "" : " LIMIT ?";
+    if (filter?.limit !== undefined) values.push(Math.min(201, Math.max(1, filter.limit)));
     const rows = this.handle.client
-      .prepare("SELECT * FROM service_accounts ORDER BY normalized_name, id")
-      .all() as ServiceAccountRow[];
+      .prepare(
+        `SELECT * FROM service_accounts ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${filter ? "id DESC" : "normalized_name,id"}${limit}`,
+      )
+      .all(...values) as ServiceAccountRow[];
     return rows.map(mapServiceAccount);
   }
 
@@ -649,6 +673,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async executeRetention(input: Parameters<PlatformOperationsRepository["executeRetention"]>[0]) {
+    assertSqliteRetentionRevision(this.handle, input);
     if (input.category === "source" || input.limit <= 0)
       return { deletedRecords: 0, objectKeys: [] };
     if (
@@ -1456,6 +1481,7 @@ function executeSqliteRetention(
   handle: SqliteDatabaseHandle,
   input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
 ): { deletedRecords: number; objectKeys: string[]; removedBatchStoreIds: string[] } {
+  assertSqliteRetentionRevision(handle, input);
   const keys: string[] = [];
   const removedBatchStoreIds: string[] = [];
   let deletedRecords = 0;
@@ -1579,4 +1605,16 @@ function decodeCursor(cursor: string): { createdAt: string; id: string } {
     // Stable domain error below avoids leaking parser details.
   }
   throw new DomainError("CURSOR_INVALID", "分页游标无效。");
+}
+
+function assertSqliteRetentionRevision(
+  handle: SqliteDatabaseHandle,
+  input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
+): void {
+  if (input.expectedRevision === undefined) return;
+  const policy = handle.client
+    .prepare("SELECT revision FROM retention_policies WHERE category = ?")
+    .get(input.category) as { revision: number } | undefined;
+  if (policy?.revision !== input.expectedRevision)
+    throw new DomainError("VERSION_CONFLICT", "保留策略已修改，请重新生成影响预览。");
 }

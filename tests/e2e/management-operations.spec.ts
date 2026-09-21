@@ -42,16 +42,15 @@ test("service account lifecycle immediately narrows token access and produces ex
   await expect(accountCard).not.toContainText("case.read");
   await expect(accountCard).not.toContainText("audit.read");
 
-  const tokenForm = accountCard.locator("form", {
-    has: page.getByRole("button", { name: "签发" }),
-  });
+  await accountCard.getByRole("button", { name: "签发令牌", exact: true }).click();
+  const tokenForm = page.getByRole("dialog", { name: `签发令牌：${accountName}` });
   await tokenForm.getByLabel("令牌名称").fill("e2e-token");
   await tokenForm
     .getByLabel("过期时间")
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
   await tokenForm.locator('input[name="scopes"][value="case.read"]').check();
   await tokenForm.locator('input[name="scopes"][value="audit.read"]').check();
-  await tokenForm.getByRole("button", { name: "签发" }).click();
+  await tokenForm.getByRole("button", { name: "签发", exact: true }).click();
   const token = await page.locator(".issued-token code").textContent();
   expect(token).toMatch(/^af_api_/);
   const authorized = await page.request.get("/api/v1/case-definitions", {
@@ -60,9 +59,7 @@ test("service account lifecycle immediately narrows token access and produces ex
   expect(authorized.status()).toBe(200);
 
   await accountCard.getByText("编辑账号与权限").click();
-  const editor = accountCard.locator("form", {
-    has: page.getByRole("button", { name: "保存账号" }),
-  });
+  const editor = page.getByRole("dialog", { name: `编辑服务账号：${accountName}` });
   await editor.getByLabel("用途说明").fill("Permissions narrowed by E2E");
   for (const checkbox of await editor.locator('input[name="permissions"]').all()) {
     await checkbox.uncheck();
@@ -78,7 +75,8 @@ test("service account lifecycle immediately narrows token access and produces ex
   });
   expect(narrowed.status()).toBe(403);
 
-  await accountCard.getByRole("button", { name: "禁用账号" }).click();
+  await accountCard.getByRole("button", { name: "编辑账号与权限" }).click();
+  await editor.getByRole("button", { name: "禁用账号" }).click();
   await acceptSystemDialog(page, "禁用服务账号", "确认变更");
   await expect(page.getByText("服务账号已禁用。")).toBeVisible();
   const disabled = await page.request.get("/api/v1/audit-events", {
@@ -87,15 +85,12 @@ test("service account lifecycle immediately narrows token access and produces ex
   expect(disabled.status()).toBe(401);
 
   let refreshedCard = page.locator("article", { hasText: accountName });
-  const accountEditor = refreshedCard.locator("details.service-account-editor");
-  if ((await accountEditor.getAttribute("open")) === null) {
-    await refreshedCard.getByText("编辑账号与权限").click();
-  }
-  await refreshedCard.getByRole("button", { name: "启用账号" }).click();
+  await editor.getByRole("button", { name: "启用账号" }).click();
   await acceptSystemDialog(page, "启用服务账号", "确认变更");
   await expect(page.getByText("服务账号已重新启用。")).toBeVisible();
+  await editor.getByRole("button", { name: `关闭编辑服务账号：${accountName}` }).click();
   refreshedCard = page.locator("article", { hasText: accountName });
-  await refreshedCard.getByRole("button", { name: "令牌" }).click();
+  await refreshedCard.getByRole("button", { name: "令牌", exact: true }).click();
   await refreshedCard.getByRole("button", { name: "撤销 e2e-token" }).click();
   await acceptSystemDialog(page, "撤销 API 令牌", "确认撤销");
   await expect(page.getByText("API 令牌已撤销。")).toBeVisible();
@@ -105,15 +100,14 @@ test("service account lifecycle immediately narrows token access and produces ex
   expect(revoked.status()).toBe(401);
 
   refreshedCard = page.locator("article", { hasText: accountName });
-  const replacementForm = refreshedCard.locator("form", {
-    has: page.getByRole("button", { name: "签发" }),
-  });
+  await refreshedCard.getByRole("button", { name: "签发令牌", exact: true }).click();
+  const replacementForm = page.getByRole("dialog", { name: `签发令牌：${accountName}` });
   await replacementForm.getByLabel("令牌名称").fill("replacement-token");
   await replacementForm
     .getByLabel("过期时间")
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
   await replacementForm.locator('input[name="scopes"][value="audit.read"]').check();
-  await replacementForm.getByRole("button", { name: "签发" }).click();
+  await replacementForm.getByRole("button", { name: "签发", exact: true }).click();
   await expect.poll(() => page.locator(".issued-token code").textContent()).not.toBe(token);
   const replacementToken = await page.locator(".issued-token code").textContent();
   expect(replacementToken).toMatch(/^af_api_/);
@@ -511,3 +505,109 @@ async function ensureDefaultProjectVersion(page: Page): Promise<string> {
   expect(version.status).toBe(201);
   return version.body.id;
 }
+
+test("permission selection supports scoped bulk actions and project-only service accounts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=accounts");
+  await page.getByRole("button", { name: "创建账号", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "创建服务账号" });
+  await dialog.getByLabel("账号名称", { exact: true }).fill(uniqueName("project-only"));
+  const system = dialog.getByRole("group", { name: "系统权限", exact: true });
+  await system.getByRole("button", { name: "全选", exact: true }).click();
+  expect(await system.locator('input[type="checkbox"]:checked').count()).toBeGreaterThan(20);
+  await system.getByRole("button", { name: "取消全选", exact: true }).click();
+  await expect(system.locator('input[type="checkbox"]:checked')).toHaveCount(0);
+  const project = dialog.locator(".project-permission-group").first();
+  await project.locator('input[value="run.read"]').check();
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "POST" &&
+      new URL(candidate.url()).pathname === "/api/v1/service-accounts",
+  );
+  await dialog.getByRole("button", { name: "创建服务账号", exact: true }).click();
+  const created = await response;
+  expect(created.status()).toBe(201);
+  expect((await created.json()).systemPermissions).toEqual([]);
+  await expect(dialog).toBeHidden();
+});
+
+test("retention previews expire on policy edits and stale manual execution is rejected", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=retention");
+  const policy = page
+    .locator(".retention-policy-grid form")
+    .filter({ has: page.getByText("审计", { exact: true }) });
+  const days = policy.getByLabel("保留天数");
+  const original = await days.inputValue();
+  const previewResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/retention/audit/preview"),
+  );
+  await policy.getByRole("button", { name: "影响预览" }).click();
+  const preview = (await (await previewResponse).json()) as {
+    policyRevision: number;
+    cutoffAt: string;
+  };
+  await expect(policy.getByRole("button", { name: "执行清理" })).toBeEnabled();
+  await days.fill(original === "365" ? "366" : "365");
+  await expect(policy.getByRole("button", { name: "执行清理" })).toBeDisabled();
+  await expect(policy.getByRole("button", { name: "影响预览" })).toBeDisabled();
+  await policy.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText("保留策略已更新，请重新预览后清理。", { exact: true })).toBeVisible();
+  await expect(policy.getByRole("button", { name: "执行清理" })).toBeDisabled();
+  const result = await browserJson(page, "/api/v1/settings/retention/audit/execute", {
+    method: "POST",
+    body: {
+      confirmation: "audit",
+      expectedRevision: preview.policyRevision,
+      previewCutoffAt: preview.cutoffAt,
+    },
+  });
+  expect(result.status).toBe(409);
+  await days.fill(original);
+  await policy.getByRole("button", { name: "保存", exact: true }).click();
+});
+
+test("management drafts require confirmation and candidate search preserves project scope", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=accounts");
+  await page.getByRole("button", { name: "创建账号" }).click();
+  const dialog = page.getByRole("dialog", { name: "创建服务账号", exact: true });
+  await dialog.getByLabel("账号名称", { exact: true }).fill("尚未保存的账号");
+  await dialog.getByRole("button", { name: "关闭创建服务账号" }).click();
+  await expect(dialog.getByText("放弃未保存的修改？")).toBeVisible();
+  await dialog.getByRole("button", { name: "继续编辑" }).click();
+  await expect(dialog.getByLabel("账号名称", { exact: true })).toHaveValue("尚未保存的账号");
+  await dialog.getByRole("button", { name: "关闭创建服务账号" }).click();
+  await dialog.getByRole("button", { name: "放弃修改并关闭" }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.goto("/settings/platform?section=configuration");
+  await page.getByLabel("平台时区").fill("Europe/London");
+  await page.getByRole("link", { name: "服务账号", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "放弃未保存的配置？" });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.getByLabel("平台时区")).toHaveValue("Europe/London");
+  await page.getByRole("link", { name: "服务账号", exact: true }).click();
+  await confirm.getByRole("button", { name: "放弃并离开" }).click();
+  await expect(page).toHaveURL(/section=accounts/);
+  await page.goto("/settings/projects?section=members&query=no-matches");
+  await page.getByRole("button", { name: "添加成员", exact: true }).click();
+  const members = page.getByRole("dialog", { name: "添加项目成员" });
+  await members.getByLabel("查找用户").fill("e2e-admin");
+  await members.getByRole("button", { name: "查询用户" }).click();
+  await expect(members.getByRole("checkbox", { name: /e2e-admin/ })).toBeVisible();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: testInfo.outputPath(`member-candidates-${viewport.width}.png`) });
+  }
+});

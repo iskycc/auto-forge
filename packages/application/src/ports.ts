@@ -999,7 +999,11 @@ export interface CaseCatalogRepository {
     nextCursor?: string;
   }>;
   listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
-  listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
+  listSources(
+    limit: number,
+    projectIds?: readonly string[],
+    filter?: { cursor?: string; query?: string; projectVersionId?: string; testStageId?: string },
+  ): Promise<CaseSource[]>;
   getSource(
     sourceId: string,
     projectIds?: readonly string[],
@@ -2246,7 +2250,13 @@ export interface PlatformOperationsRepository {
     pendingCleanupJobs: number;
     deadLetterCleanupJobs: number;
   }>;
-  listServiceAccounts(): Promise<ServiceAccount[]>;
+  listServiceAccounts(filter?: {
+    limit?: number;
+    cursor?: string;
+    query?: string;
+    status?: string;
+    id?: string;
+  }): Promise<ServiceAccount[]>;
   createServiceAccount(record: ServiceAccount): Promise<ServiceAccount>;
   updateServiceAccount(input: {
     accountId: string;
@@ -2322,6 +2332,7 @@ export interface PlatformOperationsRepository {
   }): Promise<RetentionPolicy>;
   previewRetention(category: RetentionCategory, cutoffAt: string): Promise<RetentionPreview>;
   executeRetention(input: {
+    expectedRevision?: number;
     category: RetentionCategory;
     cutoffAt: string;
     limit: number;
@@ -2485,7 +2496,15 @@ export interface WebhookRepository {
     recordedAt: string;
     projectIds?: readonly string[];
   }): Promise<string[]>;
-  listDeliveries(projectId: string, limit: number): Promise<WebhookDelivery[]>;
+  listDeliveries(
+    projectId: string,
+    limit: number,
+    filter?: {
+      cursor?: { createdAt: string; id: string };
+      webhookId?: string;
+      status?: WebhookDelivery["status"];
+    },
+  ): Promise<WebhookDelivery[]>;
   materializeDeliveries(input: { now: string; limit: number }): Promise<number>;
   claimDueDeliveries(input: {
     owner: string;

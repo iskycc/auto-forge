@@ -57,3 +57,12 @@ export function permissionDescription(permission: string): string {
 function permissionPresentation(permission: string): PermissionPresentation | undefined {
   return PERMISSION_PRESENTATIONS[permission as Permission];
 }
+
+export function permissionGroup(permission: string): string {
+  const prefix = permission.split(".")[0];
+  if (["case", "case_source", "case_suite"].includes(prefix ?? "")) return "用例资产与任务";
+  if (["run", "log", "artifact", "analysis"].includes(prefix ?? "")) return "执行与分析";
+  if (prefix === "runner") return "执行节点";
+  if (["user", "role", "ldap", "project"].includes(prefix ?? "")) return "用户与项目";
+  return "平台运维";
+}

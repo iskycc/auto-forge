@@ -14,8 +14,14 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
-import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
+import {
+  permissionDescription,
+  permissionLabel,
+  permissionGroup,
+} from "@/lib/permission-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
+import { UserPicker } from "./user-picker";
+import { CursorPagination } from "./cursor-pagination";
 import { ActionDialog } from "@/components/action-dialog";
 import { CreateUserDialog } from "@/components/create-user-dialog";
 import { UserRoleAssignmentDialog } from "@/components/user-role-assignment-dialog";
@@ -44,6 +50,7 @@ type LdapView = {
 export type AccessSection = "users" | "roles" | "ldap" | "sessions";
 
 export function AccessSettings({
+  currentSessionId,
   users,
   roles,
   projects,
@@ -82,12 +89,15 @@ export function AccessSettings({
     ldapRead: boolean;
     ldapManage: boolean;
   };
+  currentSessionId?: string;
   activeSection: AccessSection;
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
   const toast = useToast();
   const [error, setError] = useState("");
+  const [roleQuery, setRoleQuery] = useState("");
+  const [roleScope, setRoleScope] = useState("");
   const [pending, setPending] = useState(false);
   const [ldapEnabled, setLdapEnabled] = useState(ldap?.enabled ?? false);
   const [tlsRejectUnauthorized, setTlsRejectUnauthorized] = useState(
@@ -125,6 +135,35 @@ export function AccessSettings({
       setError(cause instanceof Error ? cause.message : "操作失败。");
       setPending(false);
       return false;
+    }
+  }
+
+  async function endOtherSessions() {
+    if (
+      !(await confirmAction({
+        title: "退出其他会话",
+        description: "保留当前登录，其他浏览器需要重新登录。",
+        confirmLabel: "确认退出",
+        tone: "danger",
+      }))
+    )
+      return;
+    setPending(true);
+    setError("");
+    try {
+      for (const session of sessions.filter((item) => item.id !== currentSessionId)) {
+        const response = await fetch(`/api/v1/sessions/${encodeURIComponent(session.id)}`, {
+          method: "DELETE",
+        });
+        const message = await readApiErrorMessage(response, "结束会话失败，已完成的操作会保留。");
+        if (message) throw new Error(message);
+      }
+      toast.success("其他登录会话已终止，当前登录保留。");
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "请求未完成。");
+    } finally {
+      setPending(false);
     }
   }
 
@@ -174,9 +213,32 @@ export function AccessSettings({
     );
   }
 
+  async function changeUserStatus(user: User): Promise<void> {
+    const disable = user.status === "active" && !isUserLocked(user);
+    if (
+      disable &&
+      !(await confirmAction({
+        title: "禁用用户",
+        description: `禁用“${user.displayName}”后，该用户的登录会话立即失效。`,
+        confirmLabel: "确认变更",
+        tone: "warning",
+      }))
+    )
+      return;
+    await request(
+      `/api/v1/users/${user.id}/status`,
+      jsonRequest("PATCH", { status: disable ? "disabled" : "active" }),
+      disable ? "用户已禁用。" : "用户已启用并解除登录锁定。",
+    );
+  }
+
   function submitPasswordReset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    if (!form.get("userId")) {
+      setError("请先查询并选择需要重置密码的用户。");
+      return;
+    }
     void request(
       `/api/v1/users/${String(form.get("userId"))}/password`,
       jsonRequest("PUT", { password: form.get("password"), forcePasswordChange: true }),
@@ -210,7 +272,7 @@ export function AccessSettings({
 
   return (
     <div className="settings-stack">
-      {error ? (
+      {error && !createDialog ? (
         <div className="auth-error" role="alert">
           {error}
         </div>
@@ -227,7 +289,25 @@ export function AccessSettings({
           projects={assignableProjects}
           roles={roles}
           selectedUser={roleAssignmentUser}
-          users={users}
+          assignedRoles={
+            roleAssignmentUser
+              ? [
+                  ...systemRoleBindings
+                    .filter((binding) => binding.userId === roleAssignmentUser.id)
+                    .map((binding) => ({ roleId: binding.roleId })),
+                  ...projectMemberships.flatMap((membership) =>
+                    membership.members
+                      .filter((member) => member.user.id === roleAssignmentUser.id)
+                      .flatMap((member) =>
+                        member.roleIds.map((roleId) => ({
+                          roleId,
+                          projectId: membership.projectId,
+                        })),
+                      ),
+                  ),
+                ]
+              : []
+          }
         />
       ) : null}
 
@@ -240,7 +320,7 @@ export function AccessSettings({
             </div>
             {capabilities.userManage ? (
               <div className="button-row">
-                <Button onClick={() => setCreateDialog("password")} type="button">
+                <Button onClick={() => (setError(""), setCreateDialog("password"))} type="button">
                   重置密码
                 </Button>
                 <Button onClick={() => setCreateDialog("user")} type="button" variant="primary">
@@ -262,24 +342,19 @@ export function AccessSettings({
             />
           ) : null}
           <ActionDialog
+            protectUnsavedChanges
             description="重置后会立即撤销目标用户的所有旧会话。"
             onClose={() => !pending && setCreateDialog(null)}
             open={createDialog === "password"}
             title="重置用户密码"
           >
             <form className="settings-grid-form action-dialog-form" onSubmit={submitPasswordReset}>
-              <label>
-                本地用户
-                <Select name="userId" required>
-                  {users
-                    .filter((user) => user.source === "local")
-                    .map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.displayName} · {user.username}
-                      </option>
-                    ))}
-                </Select>
-              </label>
+              {error ? (
+                <p className="form-error settings-wide-field" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <UserPicker purpose="password" />
               <label>
                 新密码
                 <Input minLength={12} name="password" required type="password" />
@@ -320,13 +395,23 @@ export function AccessSettings({
                 </tr>
               </thead>
               <tbody>
+                {!users.length ? (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="inline-empty">
+                        没有匹配的用户。请调整条件或
+                        <a href="/settings/access?section=users">清空筛选</a>。
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
                 {users.map((user) => (
                   <tr key={user.id}>
                     <td>
                       <strong>{user.displayName}</strong>
                       <small className="table-secondary">
                         {user.username}
-                        {user.email ? ` · ${user.email}` : ""} · {user.id}
+                        {user.email ? ` · ${user.email}` : ""}
                       </small>
                       {user.source === "ldap" && user.groups?.length ? (
                         <small className="table-secondary" title={user.groups.join("\n")}>
@@ -388,41 +473,44 @@ export function AccessSettings({
                       ) : null}
                       {capabilities.userManage ? (
                         <>
-                          <Button
-                            className="table-action"
-                            disabled={pending}
-                            onClick={() =>
-                              void request(
-                                `/api/v1/users/${user.id}/status`,
-                                jsonRequest("PATCH", {
-                                  status:
-                                    user.status === "active" && !isUserLocked(user)
-                                      ? "disabled"
-                                      : "active",
-                                }),
-                                user.status === "active" && !isUserLocked(user)
-                                  ? "用户已禁用。"
-                                  : "用户已启用并解除登录锁定。",
-                              )
-                            }
-                            type="button"
-                          >
-                            {user.status === "active" && !isUserLocked(user) ? "禁用" : "启用/解锁"}
-                          </Button>
-                          <Button
-                            className="table-action"
-                            disabled={pending}
-                            onClick={() =>
-                              void request(
-                                `/api/v1/users/${user.id}/sessions`,
-                                { method: "DELETE" },
-                                "该用户的全部会话已撤销。",
-                              )
-                            }
-                            type="button"
-                          >
-                            撤销会话
-                          </Button>
+                          <details className="row-more-actions">
+                            <summary>更多操作</summary>
+                            <div>
+                              <Button
+                                className="table-action"
+                                disabled={pending}
+                                onClick={() => void changeUserStatus(user)}
+                                type="button"
+                              >
+                                {user.status === "active" && !isUserLocked(user)
+                                  ? "禁用"
+                                  : "启用/解锁"}
+                              </Button>
+                              <Button
+                                className="table-action"
+                                disabled={pending}
+                                onClick={() =>
+                                  void confirmAction({
+                                    title: "撤销用户会话",
+                                    description: `“${user.displayName}”需要重新登录，确认撤销其所有会话？`,
+                                    confirmLabel: "确认撤销",
+                                    tone: "danger",
+                                  }).then(
+                                    (accepted) =>
+                                      accepted &&
+                                      request(
+                                        `/api/v1/users/${user.id}/sessions`,
+                                        { method: "DELETE" },
+                                        "该用户的全部会话已撤销。",
+                                      ),
+                                  )
+                                }
+                                type="button"
+                              >
+                                撤销会话
+                              </Button>
+                            </div>
+                          </details>
                         </>
                       ) : !canAssignRoles ? (
                         "仅查看"
@@ -433,14 +521,7 @@ export function AccessSettings({
               </tbody>
             </table>
           </div>
-          {nextUserCursor ? (
-            <a
-              className="button button-secondary settings-next-page"
-              href={userPageHref(userQuery, userSource, nextUserCursor)}
-            >
-              下一页
-            </a>
-          ) : null}
+          <CursorPagination nextCursor={nextUserCursor} count={users.length} label="用户分页" />
         </section>
       ) : null}
 
@@ -465,7 +546,11 @@ export function AccessSettings({
                   </Button>
                 ) : null}
                 {capabilities.roleManage ? (
-                  <Button onClick={() => setCreateDialog("role")} type="button" variant="primary">
+                  <Button
+                    onClick={() => (setError(""), setCreateDialog("role"))}
+                    type="button"
+                    variant="primary"
+                  >
                     <Plus size={16} /> 创建角色
                   </Button>
                 ) : null}
@@ -474,81 +559,84 @@ export function AccessSettings({
               <Shield size={22} aria-hidden="true" />
             )}
           </div>
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>用户</th>
-                  <th>系统角色</th>
-                  <th>影响与操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {systemRoleBindings.length === 0 ? (
+          <details className="management-disclosure">
+            <summary>用户系统角色绑定</summary>
+            <form action="/settings/access" className="settings-user-filter" method="get">
+              <input name="section" type="hidden" value="roles" />
+              <label>
+                搜索用户绑定
+                <Input defaultValue={userQuery} maxLength={120} name="query" />
+              </label>
+              <Button type="submit">筛选绑定</Button>
+            </form>{" "}
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
                   <tr>
-                    <td colSpan={3}>当前没有系统角色绑定。</td>
+                    <th>用户</th>
+                    <th>系统角色</th>
+                    <th>影响与操作</th>
                   </tr>
-                ) : null}
-                {systemRoleBindings.map((binding) => (
-                  <tr key={`${binding.userId}-${binding.roleId}`}>
-                    <td>{userName(users, binding.userId)}</td>
-                    <td>{roleName(roles, binding.roleId)}</td>
-                    <td>
-                      <Button
-                        className="danger-text-button"
-                        disabled={pending || !capabilities.roleManage}
-                        onClick={() => {
-                          void confirmAction({
-                            title: "撤销系统角色",
-                            description:
-                              "目标用户的全部旧会话会立即失效；最后一位系统管理员仍受服务端保护。",
-                            confirmLabel: "确认撤销",
-                            tone: "danger",
-                          }).then((accepted) => {
-                            if (!accepted) return;
-                            void request(
-                              `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
-                              { method: "DELETE" },
-                              "系统角色已撤销。",
-                            );
-                          });
-                        }}
-                        type="button"
-                      >
-                        撤销系统角色
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {nextUserCursor ? (
-            <a
-              className="button button-secondary settings-next-page"
-              href={userPageHref(userQuery, userSource, nextUserCursor).replace(
-                "section=users",
-                "section=roles",
-              )}
-            >
-              下一页用户绑定
-            </a>
-          ) : null}
-          <form action="/settings/access" className="settings-user-filter" method="get">
-            <input name="section" type="hidden" value="roles" />
-            <label>
-              搜索用户绑定
-              <Input defaultValue={userQuery} maxLength={120} name="query" />
-            </label>
-            <Button type="submit">筛选绑定</Button>
-          </form>
+                </thead>
+                <tbody>
+                  {systemRoleBindings.length === 0 ? (
+                    <tr>
+                      <td colSpan={3}>当前没有系统角色绑定。</td>
+                    </tr>
+                  ) : null}
+                  {systemRoleBindings.map((binding) => (
+                    <tr key={`${binding.userId}-${binding.roleId}`}>
+                      <td>{userName(users, binding.userId)}</td>
+                      <td>{roleName(roles, binding.roleId)}</td>
+                      <td>
+                        <Button
+                          className="danger-text-button"
+                          disabled={pending || !capabilities.roleManage}
+                          onClick={() => {
+                            void confirmAction({
+                              title: "撤销系统角色",
+                              description:
+                                "目标用户的全部旧会话会立即失效；最后一位系统管理员仍受服务端保护。",
+                              confirmLabel: "确认撤销",
+                              tone: "danger",
+                            }).then((accepted) => {
+                              if (!accepted) return;
+                              void request(
+                                `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
+                                { method: "DELETE" },
+                                "系统角色已撤销。",
+                              );
+                            });
+                          }}
+                          type="button"
+                        >
+                          撤销系统角色
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <CursorPagination
+              nextCursor={nextUserCursor}
+              count={systemRoleBindings.length}
+              label="用户绑定分页"
+            />
+          </details>
           <ActionDialog
+            protectUnsavedChanges
             description="自定义角色用于组合系统级或项目级权限。"
             onClose={() => !pending && setCreateDialog(null)}
             open={createDialog === "role"}
             title="创建自定义角色"
           >
             <form className="settings-grid-form action-dialog-form" onSubmit={submitRole}>
+              {error ? (
+                <p className="form-error settings-wide-field" role="alert">
+                  {error}
+                </p>
+              ) : null}
               <label>
                 角色标识
                 <Input name="key" placeholder="release-operator" required />
@@ -571,6 +659,7 @@ export function AccessSettings({
                 options={permissionCatalog.map((permission) => ({
                   value: permission,
                   label: permissionLabel(permission),
+                  group: permissionGroup(permission),
                   description: permissionDescription(permission),
                 }))}
                 required
@@ -584,118 +673,148 @@ export function AccessSettings({
               </Button>
             </form>
           </ActionDialog>
+          <div className="management-toolbar">
+            <label>
+              搜索角色
+              <Input
+                type="search"
+                value={roleQuery}
+                onChange={(event) => setRoleQuery(event.target.value)}
+              />
+            </label>
+            <label>
+              角色范围
+              <Select value={roleScope} onChange={(event) => setRoleScope(event.target.value)}>
+                <option value="">全部范围</option>
+                <option value="system">系统</option>
+                <option value="project">项目</option>
+              </Select>
+            </label>
+          </div>
           <div className="role-grid">
-            {roles.map((role) => (
-              <article className="role-card" key={role.id}>
-                <div>
-                  <strong>{role.name}</strong>
-                  <small>
-                    {role.key} · {role.scope === "system" ? "系统" : "项目"}
-                    {role.builtIn ? " · 内置" : role.active ? "" : " · 已停用"}
-                  </small>
-                </div>
-                <p>{role.description || "无描述"}</p>
-                <div className="permission-list">
-                  {role.permissions.map((permission) => (
-                    <span
-                      className="permission-chip"
-                      key={permission}
-                      title={permissionDescription(permission)}
-                    >
-                      {permissionLabel(permission)}
-                    </span>
-                  ))}
-                </div>
-                {capabilities.roleManage ? (
-                  <div className="role-actions">
-                    <details>
-                      <summary className="role-action-summary">复制角色</summary>
-                      <form
-                        className="settings-grid-form settings-subform"
-                        onSubmit={(event) => submitRoleCopy(event, role)}
-                      >
-                        <label>
-                          新角色标识
-                          <Input defaultValue={`${role.key}-copy`} name="key" required />
-                        </label>
-                        <label>
-                          新角色名称
-                          <Input defaultValue={`${role.name} 副本`} name="name" required />
-                        </label>
-                        <Button className="secondary-button" disabled={pending} type="submit">
-                          创建副本
-                        </Button>
-                      </form>
-                    </details>
-                    {!role.builtIn ? (
-                      <>
-                        <details>
-                          <summary className="role-action-summary">编辑角色</summary>
-                          <form
-                            className="settings-grid-form settings-subform"
-                            onSubmit={(event) => submitRoleUpdate(event, role.id)}
-                          >
-                            <label>
-                              角色名称
-                              <Input defaultValue={role.name} name="name" required />
-                            </label>
-                            <CheckboxGroup
-                              className="settings-wide-field"
-                              defaultValue={role.permissions}
-                              label="权限"
-                              name="permissions"
-                              options={permissionCatalog.map((permission) => ({
-                                value: permission,
-                                label: permissionLabel(permission),
-                                description: permissionDescription(permission),
-                              }))}
-                              required
-                            />
-                            <label className="settings-wide-field">
-                              描述
-                              <Input defaultValue={role.description} name="description" />
-                            </label>
-                            <Button className="secondary-button" disabled={pending} type="submit">
-                              保存角色
-                            </Button>
-                          </form>
-                        </details>
-                        <Button
-                          className="table-action"
-                          disabled={pending}
-                          onClick={() =>
-                            void request(
-                              `/api/v1/roles/${role.id}`,
-                              jsonRequest("PATCH", { active: !role.active }),
-                              role.active
-                                ? "角色已停用，相关用户会话已撤销，停用角色不再授予权限。"
-                                : "角色已重新启用。",
-                            )
-                          }
-                          type="button"
-                        >
-                          {role.active ? "停用角色" : "启用角色"}
-                        </Button>
-                        <Button
-                          className="danger-text-button"
-                          disabled={pending}
-                          onClick={() =>
-                            void request(
-                              `/api/v1/roles/${role.id}`,
-                              { method: "DELETE" },
-                              "自定义角色已删除。",
-                            )
-                          }
-                          type="button"
-                        >
-                          删除角色
-                        </Button>
-                      </>
-                    ) : null}
+            {roles
+              .filter(
+                (role) =>
+                  (!roleScope || role.scope === roleScope) &&
+                  `${role.name} ${role.key} ${role.description}`
+                    .toLocaleLowerCase()
+                    .includes(roleQuery.toLocaleLowerCase()),
+              )
+              .map((role) => (
+                <article className="role-card" key={role.id}>
+                  <div>
+                    <strong>{role.name}</strong>
+                    <small>
+                      {role.key} · {role.scope === "system" ? "系统" : "项目"}
+                      {role.builtIn ? " · 内置" : role.active ? "" : " · 已停用"}
+                    </small>
                   </div>
-                ) : null}
-              </article>
-            ))}
+                  <p>{role.description || "无描述"}</p>
+                  <details className="management-disclosure">
+                    <summary>{role.permissions.length} 项权限 · 查看明细</summary>
+                    <div className="permission-list">
+                      {role.permissions.map((permission) => (
+                        <span
+                          className="permission-chip"
+                          key={permission}
+                          title={permissionDescription(permission)}
+                        >
+                          {permissionLabel(permission)}
+                        </span>
+                      ))}
+                    </div>
+                  </details>
+                  {capabilities.roleManage ? (
+                    <div className="role-actions">
+                      <details>
+                        <summary className="role-action-summary">复制角色</summary>
+                        <form
+                          className="settings-grid-form settings-subform"
+                          onSubmit={(event) => submitRoleCopy(event, role)}
+                        >
+                          <label>
+                            新角色标识
+                            <Input defaultValue={`${role.key}-copy`} name="key" required />
+                          </label>
+                          <label>
+                            新角色名称
+                            <Input defaultValue={`${role.name} 副本`} name="name" required />
+                          </label>
+                          <Button className="secondary-button" disabled={pending} type="submit">
+                            创建副本
+                          </Button>
+                        </form>
+                      </details>
+                      {!role.builtIn ? (
+                        <>
+                          <details>
+                            <summary className="role-action-summary">编辑角色</summary>
+                            <form
+                              className="settings-grid-form settings-subform"
+                              onSubmit={(event) => submitRoleUpdate(event, role.id)}
+                            >
+                              <label>
+                                角色名称
+                                <Input defaultValue={role.name} name="name" required />
+                              </label>
+                              <CheckboxGroup
+                                className="settings-wide-field"
+                                defaultValue={role.permissions}
+                                label="权限"
+                                name="permissions"
+                                options={permissionCatalog.map((permission) => ({
+                                  value: permission,
+                                  label: permissionLabel(permission),
+                                  group: permissionGroup(permission),
+                                  description: permissionDescription(permission),
+                                }))}
+                                required
+                              />
+                              <label className="settings-wide-field">
+                                描述
+                                <Input defaultValue={role.description} name="description" />
+                              </label>
+                              <Button className="secondary-button" disabled={pending} type="submit">
+                                保存角色
+                              </Button>
+                            </form>
+                          </details>
+                          <Button
+                            className="table-action"
+                            disabled={pending}
+                            onClick={() =>
+                              void request(
+                                `/api/v1/roles/${role.id}`,
+                                jsonRequest("PATCH", { active: !role.active }),
+                                role.active
+                                  ? "角色已停用，相关用户会话已撤销，停用角色不再授予权限。"
+                                  : "角色已重新启用。",
+                              )
+                            }
+                            type="button"
+                          >
+                            {role.active ? "停用角色" : "启用角色"}
+                          </Button>
+                          <Button
+                            className="danger-text-button"
+                            disabled={pending}
+                            onClick={() =>
+                              void request(
+                                `/api/v1/roles/${role.id}`,
+                                { method: "DELETE" },
+                                "自定义角色已删除。",
+                              )
+                            }
+                            type="button"
+                          >
+                            删除角色
+                          </Button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
           </div>
         </section>
       ) : null}
@@ -726,7 +845,16 @@ export function AccessSettings({
                 />
                 启用 LDAP 登录
               </label>
-              <fieldset className="settings-form-fieldset" disabled={!ldapEnabled}>
+              {!ldapEnabled ? (
+                <p className="settings-note">
+                  LDAP 登录已关闭。启用后可编辑连接、用户检索与默认角色；关闭不会删除已保存的配置。
+                </p>
+              ) : null}
+              <fieldset
+                hidden={!ldapEnabled}
+                className="settings-form-fieldset"
+                disabled={!ldapEnabled}
+              >
                 <div className="form-context-summary settings-wide-field">
                   <span>01 · 服务器</span>
                   <strong>连接内网 LDAP 或 Active Directory</strong>
@@ -931,6 +1059,17 @@ export function AccessSettings({
               <p className="eyebrow">Sessions</p>
               <h2>当前账号会话</h2>
             </div>
+            <Button
+              type="button"
+              disabled={
+                pending ||
+                !currentSessionId ||
+                !sessions.some((item) => item.id !== currentSessionId)
+              }
+              onClick={() => void endOtherSessions()}
+            >
+              退出其他会话
+            </Button>
           </div>
           <div className="table-scroll">
             <table className="data-table">
@@ -945,7 +1084,12 @@ export function AccessSettings({
               <tbody>
                 {sessions.map((session) => (
                   <tr key={session.id}>
-                    <td>{formatLocalDateTime(session.createdAt)}</td>
+                    <td>
+                      {formatLocalDateTime(session.createdAt)}
+                      {session.id === currentSessionId ? (
+                        <span className="permission-chip">当前会话</span>
+                      ) : null}
+                    </td>
                     <td>{formatLocalDateTime(session.lastSeenAt)}</td>
                     <td>{formatLocalDateTime(session.expiresAt)}</td>
                     <td>
@@ -953,10 +1097,22 @@ export function AccessSettings({
                         className="danger-text-button"
                         disabled={pending}
                         onClick={() =>
-                          void request(
-                            `/api/v1/sessions/${session.id}`,
-                            { method: "DELETE" },
-                            "会话已终止。",
+                          void confirmAction({
+                            title: "终止登录会话",
+                            description:
+                              session.id === currentSessionId
+                                ? "这是当前正在使用的会话，终止后需要重新登录。"
+                                : "终止后，对应浏览器需要重新登录。",
+                            confirmLabel: "确认终止",
+                            tone: "danger",
+                          }).then((accepted) =>
+                            accepted
+                              ? request(
+                                  `/api/v1/sessions/${session.id}`,
+                                  { method: "DELETE" },
+                                  "会话已终止。",
+                                )
+                              : undefined,
                           )
                         }
                         type="button"
@@ -1054,11 +1210,4 @@ function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean)
     groupNameAttribute: form.get("groupNameAttribute") ?? "cn",
     defaultRole: form.get("defaultRole"),
   };
-}
-
-function userPageHref(query: string, source: string, cursor: string): string {
-  const parameters = new URLSearchParams({ cursor, section: "users" });
-  if (query) parameters.set("query", query);
-  if (source) parameters.set("source", source);
-  return `/settings/access?${parameters}`;
 }

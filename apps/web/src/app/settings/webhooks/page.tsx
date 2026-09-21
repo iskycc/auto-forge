@@ -1,5 +1,6 @@
 import { hasPermission } from "@autoforge/domain";
 
+import { CursorPagination } from "@/components/cursor-pagination";
 import { WebhookSettings } from "@/components/webhook-settings";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
@@ -7,7 +8,12 @@ import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project"
 
 export const dynamic = "force-dynamic";
 
-export default async function WebhookSettingsPage() {
+export default async function WebhookSettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string; status?: string; webhookId?: string }>;
+}) {
+  const parameters = await searchParams;
   const { identity } = await requirePageProjectScope("project.read");
   const services = await getPlatformServices();
   const projects = await services.identities.listProjects(selectableProjectIds(identity));
@@ -28,7 +34,7 @@ export default async function WebhookSettingsPage() {
   requireAuthorizedPageProjectScope(identity, "project.read", projectId);
   const [configurations, deliveries] = await Promise.all([
     services.webhooks.listConfigurations(projectId),
-    services.webhooks.listDeliveries(projectId, 30),
+    services.webhooks.listDeliveriesPage(projectId, { ...parameters, limit: 30 }),
   ]);
   return (
     <section className="page-stack">
@@ -40,10 +46,17 @@ export default async function WebhookSettingsPage() {
         </div>
       </header>
       <WebhookSettings
+        key={`${projectId}:${parameters.cursor ?? ""}:${parameters.status ?? ""}:${parameters.webhookId ?? ""}`}
+        deliveryFilter={{ status: parameters.status ?? "", webhookId: parameters.webhookId ?? "" }}
         canManage={hasPermission(identity, "project.manage", projectId)}
         initialConfigurations={configurations}
-        initialDeliveries={deliveries}
+        initialDeliveries={deliveries.items}
         projectId={projectId}
+      />
+      <CursorPagination
+        nextCursor={deliveries.nextCursor}
+        count={deliveries.items.length}
+        label="投递历史分页"
       />
     </section>
   );

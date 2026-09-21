@@ -146,12 +146,16 @@ export const updateRetentionPolicyInputSchema = z.object({
 export const retentionPreviewSchema = z.object({
   category: retentionCategorySchema,
   cutoffAt: z.string().datetime(),
+  policyRevision: z.number().int().positive().optional(),
+  generatedAt: z.string().datetime().optional(),
   eligibleRecords: z.number().int().nonnegative(),
   eligibleBytes: z.number().int().nonnegative(),
 });
 
 export const executeRetentionInputSchema = z.object({
   confirmation: retentionCategorySchema,
+  expectedRevision: z.number().int().positive().optional(),
+  previewCutoffAt: z.string().datetime().optional(),
   limit: z.number().int().min(1).max(1_000).default(1_000),
 });
 

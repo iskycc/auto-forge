@@ -16,10 +16,30 @@ import styles from "./system-diagnostics.module.css";
 
 export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDiagnostic }) {
   const dependencies = [
-    { label: "数据库", value: report.database, icon: Database },
-    { label: "对象存储", value: report.objectStore, icon: HardDrive },
-    { label: "任务队列", value: report.queue, icon: Layers3 },
-    { label: "缓存", value: report.cache, icon: MemoryStick },
+    {
+      label: "数据库",
+      value: report.database,
+      icon: Database,
+      advice: "检查数据库地址、凭据、磁盘空间以及数据库服务状态。",
+    },
+    {
+      label: "对象存储",
+      value: report.objectStore,
+      icon: HardDrive,
+      advice: "检查对象目录权限；Full 部署还需确认 MinIO bucket 已创建且凭据有访问权限。",
+    },
+    {
+      label: "任务队列",
+      value: report.queue,
+      icon: Layers3,
+      advice: "检查队列存储与 NATS JetStream 服务状态；修复后手动刷新诊断。",
+    },
+    {
+      label: "缓存",
+      value: report.cache,
+      icon: MemoryStick,
+      advice: "检查缓存服务地址、认证和可用内存；缓存恢复后可从持久数据重建。",
+    },
   ];
   const readyCount = dependencies.filter(({ value }) => value.ready).length;
   const unavailable =
@@ -99,7 +119,7 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
         </section>
       ) : null}
       <section aria-label="基础依赖健康" className={`diagnostic-grid ${styles.dependencies}`}>
-        {dependencies.map(({ label, value, icon: Icon }) => (
+        {dependencies.map(({ label, value, icon: Icon, advice }) => (
           <article className={`content-card ${styles.dependency}`} key={label}>
             <div className={styles.panelHeading}>
               <Icon size={18} />
@@ -109,9 +129,13 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
               </span>
             </div>
             <strong>{value.provider ?? "未提供适配器信息"}</strong>
-            <p title={value.ready ? undefined : value.detail}>
-              {value.ready ? "连接检查通过" : value.detail}
-            </p>
+            <p>{value.ready ? "连接检查通过" : advice}</p>
+            {!value.ready ? (
+              <details>
+                <summary>查看原始诊断</summary>
+                <p>{value.detail}</p>
+              </details>
+            ) : null}
             <small>{value.durationMs === undefined ? "" : `检查耗时 ${value.durationMs} ms`}</small>
           </article>
         ))}

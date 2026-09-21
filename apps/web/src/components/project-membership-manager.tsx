@@ -7,6 +7,7 @@ import { useState, type FormEvent } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { UserPicker } from "./user-picker";
 import { ActionDialog } from "@/components/action-dialog";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 
@@ -51,15 +52,31 @@ export function ProjectMembershipManager({
     }
   }
 
-  function addMemberRole(event: FormEvent<HTMLFormElement>) {
+  async function addMemberRole(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const userId = String(form.get("userId") ?? "").trim();
-    void request(
-      `/api/v1/users/${encodeURIComponent(userId)}/project-roles`,
-      jsonRequest("POST", { projectId: project.id, roleId: form.get("roleId") }),
-      "项目角色已分配，目标用户的旧会话已撤销。",
-    );
+    const ids = [...new Set(form.getAll("userId").map(String))];
+    if (!ids.length) {
+      setError("请先查询并选择用户。");
+      return;
+    }
+    setPending(true);
+    setError("");
+    try {
+      const response = await fetch(
+        "/api/v1/role-assignments",
+        jsonRequest("POST", { userIds: ids, roleIds: [form.get("roleId")], projectId: project.id }),
+      );
+      const message = await readApiErrorMessage(response, "添加成员失败。");
+      if (message) throw new Error(message);
+      setActionDialog(null);
+      toast.success(`已为 ${ids.length} 位用户分配项目角色，旧会话已撤销。`);
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "请求失败，请检查网络后重试。");
+    } finally {
+      setPending(false);
+    }
   }
 
   function openMemberRoleDialog(member: ProjectMember): void {
@@ -141,6 +158,10 @@ export function ProjectMembershipManager({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const ownerUserId = String(form.get("ownerUserId") ?? "");
+    if (!ownerUserId) {
+      setError("请选择新负责人。");
+      return;
+    }
     if (
       !(await confirmAction({
         title: "转移项目负责人",
@@ -159,7 +180,7 @@ export function ProjectMembershipManager({
 
   return (
     <div className="settings-stack">
-      {error ? (
+      {error && !actionDialog ? (
         <div className="auth-error" role="alert">
           {error}
         </div>
@@ -171,21 +192,25 @@ export function ProjectMembershipManager({
             <p className="eyebrow">Project scope</p>
             <h2>{project.name}</h2>
             <p>
-              {project.slug} · {project.archived ? "已归档" : "启用"} · 项目 ID {project.id}
+              {project.slug} · {project.archived ? "已归档" : "启用"}
             </p>
           </div>
           <div className="button-row">
             {canCreateProject ? (
-              <Button onClick={() => setActionDialog("project")} type="button" variant="primary">
+              <Button
+                onClick={() => (setError(""), setActionDialog("project"))}
+                type="button"
+                variant="primary"
+              >
                 创建项目
               </Button>
             ) : null}
             {canManage && !project.archived ? (
               <>
-                <Button onClick={() => setActionDialog("member")} type="button">
+                <Button onClick={() => (setError(""), setActionDialog("member"))} type="button">
                   <UserPlus size={16} /> 添加成员
                 </Button>
-                <Button onClick={() => setActionDialog("owner")} type="button">
+                <Button onClick={() => (setError(""), setActionDialog("owner"))} type="button">
                   转移负责
                 </Button>
               </>
@@ -194,12 +219,18 @@ export function ProjectMembershipManager({
           </div>
         </div>
         <ActionDialog
+          protectUnsavedChanges
           description="新项目创建后会自动由当前用户担任负责人。"
           onClose={() => !pending && setActionDialog(null)}
           open={actionDialog === "project"}
           title="创建项目"
         >
           <form className="settings-grid-form action-dialog-form" onSubmit={createProject}>
+            {error ? (
+              <p className="form-error settings-wide-field" role="alert">
+                {error}
+              </p>
+            ) : null}
             <label>
               项目名称
               <Input name="name" required />
@@ -214,16 +245,19 @@ export function ProjectMembershipManager({
           </form>
         </ActionDialog>
         <ActionDialog
+          protectUnsavedChanges
           description="为用户分配当前项目中的一个项目角色。"
           onClose={() => !pending && setActionDialog(null)}
           open={actionDialog === "member"}
           title="添加项目成员"
         >
           <form className="settings-grid-form action-dialog-form" onSubmit={addMemberRole}>
-            <label>
-              用户 ID
-              <Input name="userId" placeholder="用户详情中显示的 UUID" required />
-            </label>
+            {error ? (
+              <p className="form-error settings-wide-field" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <UserPicker purpose="project-member" projectId={project.id} multiple />
             <label>
               项目角色
               <Select name="roleId" required>
@@ -244,33 +278,26 @@ export function ProjectMembershipManager({
           </form>
         </ActionDialog>
         <ActionDialog
+          protectUnsavedChanges
           description="新负责人会自动获得项目管理能力。"
           onClose={() => !pending && setActionDialog(null)}
           open={actionDialog === "owner"}
           title="转移项目负责人"
         >
           <form className="settings-grid-form action-dialog-form" onSubmit={transferOwner}>
-            <label>
-              新负责人
-              <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
-                <option disabled value="">
-                  选择启用成员
-                </option>
-                {members
-                  .filter((member) => member.user.status === "active")
-                  .map((member) => (
-                    <option key={member.user.id} value={member.user.id}>
-                      {member.user.displayName} · {member.user.username}
-                    </option>
-                  ))}
-              </Select>
-            </label>
+            {error ? (
+              <p className="form-error settings-wide-field" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <UserPicker name="ownerUserId" purpose="project-owner" projectId={project.id} />
             <Button className="secondary-button" disabled={pending} type="submit">
               转移负责人
             </Button>
           </form>
         </ActionDialog>
         <ActionDialog
+          protectUnsavedChanges
           className="member-role-dialog"
           description={`直接添加或移除“${project.name}”内的项目角色；每次变更立即生效并撤销目标用户的旧会话。`}
           onClose={() => !pending && setRoleDialogMember(null)}
@@ -378,7 +405,7 @@ export function ProjectMembershipManager({
                   <td>
                     <strong>{member.user.displayName}</strong>
                     <small className="table-secondary">
-                      {member.user.username} · {member.user.id}
+                      {member.user.username}
                       {member.user.id === project.ownerUserId ? " · 当前负责人" : ""}
                     </small>
                   </td>

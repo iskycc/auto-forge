@@ -66,7 +66,7 @@ export function SecurityAuditTable({
                     <strong>{event.resource}</strong>
                     <small>{event.project}</small>
                     {event.resourceId ? (
-                      <small title={event.resourceId}>编号 {event.resourceId.slice(0, 8)}</small>
+                      <small title={event.resourceId}>编号 …{event.resourceId.slice(-12)}</small>
                     ) : null}
                   </td>
                   <td>

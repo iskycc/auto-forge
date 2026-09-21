@@ -224,7 +224,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           await expect(
             repository.complete({
               ...completion,
-              analysisIds: [ids("target"), ids("other-target")],
+              analysisIds: [ids("target"), ids("bulk-target"), ids("other-target")],
               inheritanceScope: "task_recent_batches",
               inheritedFromAnalysisId: ids("third-second-case"),
             }),
@@ -232,14 +232,30 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           expect((await repository.getClaim(ids("target"), DEFAULT_PROJECT_ID))?.status).toBe(
             "claimed",
           );
+          expect((await repository.getClaim(ids("bulk-target"), DEFAULT_PROJECT_ID))?.status).toBe(
+            "claimed",
+          );
           const completed = await repository.complete({
             ...completion,
+            analysisIds: [ids("target"), ids("bulk-target")],
             inheritanceScope: "task_recent_batches",
             inheritedFromAnalysisId: ids("third-second-case"),
           });
-          expect(completed).toMatchObject([
-            { id: ids("target"), status: "completed", ticketReference: "BUG-1" },
-          ]);
+          expect(completed).toHaveLength(2);
+          expect(completed).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                id: ids("target"),
+                status: "completed",
+                ticketReference: "BUG-1",
+              }),
+              expect.objectContaining({
+                id: ids("bulk-target"),
+                status: "completed",
+                ticketReference: "BUG-1",
+              }),
+            ]),
+          );
         } finally {
           await harness.dispose();
         }
@@ -407,6 +423,13 @@ async function createHarness(
             { name: "target", suite: "suite", caseId: "case", completed: null },
             { name: "other-target", suite: "other-suite", caseId: "other-case", completed: null },
             { name: "future", suite: "suite", caseId: "case", completed: NOW },
+            {
+              name: "bulk-target",
+              batchName: "target",
+              suite: "suite",
+              caseId: "bulk-case",
+              completed: null,
+            },
           ]
         : [
             {

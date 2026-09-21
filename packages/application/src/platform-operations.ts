@@ -89,6 +89,16 @@ export class PlatformOperationsService {
     return this.repository.listServiceAccounts();
   }
 
+  async listServiceAccountsPage(
+    actor: AuthenticatedIdentity,
+    filter: { cursor?: string; query?: string; status?: string },
+  ) {
+    requirePermission(actor, "api_token.manage");
+    const rows = await this.repository.listServiceAccounts({ ...filter, limit: 51 });
+    const items = rows.slice(0, 50);
+    return { items, ...(rows.length > 50 ? { nextCursor: items.at(-1)!.id } : {}) };
+  }
+
   async createServiceAccount(actor: AuthenticatedIdentity, input: unknown) {
     requirePermission(actor, "api_token.manage");
     const parsed = createServiceAccountInputSchema.parse(input);
@@ -139,7 +149,7 @@ export class PlatformOperationsService {
     if (expiresAt <= now || expiresAt.getTime() - now.getTime() > MAXIMUM_TOKEN_LIFETIME_MS) {
       throw new DomainError("API_TOKEN_EXPIRY_INVALID", "API 令牌必须在未来一年内过期。");
     }
-    const account = (await this.repository.listServiceAccounts()).find(
+    const account = (await this.repository.listServiceAccounts({ id: accountId, limit: 1 })).find(
       (candidate) => candidate.id === accountId,
     );
     if (!account || account.status !== "active") {
@@ -389,10 +399,12 @@ export class PlatformOperationsService {
       (candidate) => candidate.category === category,
     );
     if (!policy) throw new DomainError("RETENTION_POLICY_NOT_FOUND", "保留策略不存在。");
-    return this.repository.previewRetention(
-      category,
-      cutoff(this.clock.now(), policy.retentionDays),
-    );
+    const now = this.clock.now();
+    return {
+      ...(await this.repository.previewRetention(category, cutoff(now, policy.retentionDays))),
+      policyRevision: policy.revision,
+      generatedAt: now.toISOString(),
+    };
   }
 
   async executeRetentionNow(
@@ -405,7 +417,25 @@ export class PlatformOperationsService {
     if (parsed.confirmation !== category) {
       throw new DomainError("RETENTION_CONFIRMATION_MISMATCH", "清理确认类别与请求类别不一致。");
     }
-    const result = await this.executeRetention(category, parsed.limit);
+    const policy = (await this.repository.listRetentionPolicies()).find(
+      (item) => item.category === category,
+    );
+    if (!policy) throw new DomainError("RETENTION_POLICY_NOT_FOUND", "保留策略不存在。");
+    if (parsed.expectedRevision !== undefined && parsed.expectedRevision !== policy.revision)
+      throw new DomainError("VERSION_CONFLICT", "保留策略已修改，请重新生成影响预览。");
+    const latestCutoff = cutoff(this.clock.now(), policy.retentionDays);
+    if (parsed.previewCutoffAt && Date.parse(parsed.previewCutoffAt) > Date.parse(latestCutoff))
+      throw new DomainError(
+        "RETENTION_PREVIEW_INVALID",
+        "预览截止时间超出当前策略允许范围，请重新预览。",
+      );
+    const result = await this.repository.executeRetention({
+      category,
+      limit: parsed.limit,
+      recordedAt: this.clock.now().toISOString(),
+      cutoffAt: parsed.previewCutoffAt ?? latestCutoff,
+      expectedRevision: policy.revision,
+    });
     const completedObjectDeletes = await this.processRetentionCleanupJobs(parsed.limit);
     return {
       category,

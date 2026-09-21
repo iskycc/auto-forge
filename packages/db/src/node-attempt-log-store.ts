@@ -173,8 +173,23 @@ export class NodeAttemptLogStore {
     }
   }
 
+  async checkConnectivity(nodeId: string): Promise<NodeLogResponse> {
+    const node = await new PostgresPlatformNodeRepository(this.database).find(nodeId);
+    if (!node?.internalBaseUrl)
+      throw new DomainError(
+        "PLATFORM_LOG_NODE_UNAVAILABLE",
+        "请先保存节点 IP 和端口，再检查连通性。",
+      );
+    // Use the real signed peer protocol, including a target identity check and bounded timeout.
+    return this.transport(
+      { id: node.id, internalBaseUrl: node.internalBaseUrl },
+      { operation: "ping" },
+    );
+  }
+
   async handlePeer(payload: NodeLogRequest): Promise<NodeLogResponse> {
     const request = nodeLogRequestSchema.parse(payload);
+    if (request.operation === "ping") return { schemaVersion: 1, nodeId: this.nodeId };
     const owner = await this.owner(request.batchId);
     if (owner !== this.nodeId)
       throw new DomainError("PLATFORM_LOG_OWNER_MISMATCH", "该节点不是此批次日志的所属节点。");
@@ -220,7 +235,9 @@ export class NodeAttemptLogStore {
     return response;
   }
 
-  private async route(request: NodeLogRequest): Promise<NodeLogResponse> {
+  private async route(
+    request: Exclude<NodeLogRequest, { operation: "ping" }>,
+  ): Promise<NodeLogResponse> {
     let owner = await this.owner(request.batchId);
     if (!owner) {
       const batch = await this.database.pool.query<{ attempt_logs_path: string | null }>(

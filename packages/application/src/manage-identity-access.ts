@@ -1,3 +1,4 @@
+import { assignRoleSelectionInputSchema } from "@autoforge/contracts";
 import type {
   BootstrapAdminInput,
   CreateProjectInput,
@@ -252,6 +253,54 @@ export class IdentityAccessService {
   ) {
     this.authorize(actor, "user.read");
     return this.repository.listUsers(input);
+  }
+
+  async listUserCandidates(
+    actor: AuthenticatedIdentity,
+    input: {
+      purpose: "project-member" | "project-owner" | "system-role" | "password";
+      projectId?: string;
+      query?: string;
+      cursor?: string;
+      limit: number;
+    },
+  ) {
+    const limit = Math.max(1, Math.min(50, input.limit));
+    const filters = {
+      limit,
+      ...(input.query ? { query: input.query } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+    };
+    if (input.purpose === "project-member" || input.purpose === "project-owner") {
+      if (!input.projectId) throw new DomainError("VALIDATION_FAILED", "请选择需要管理的项目。");
+      this.authorize(actor, "project.manage", input.projectId);
+    } else this.authorize(actor, input.purpose === "password" ? "user.manage" : "role.manage");
+    const page =
+      input.purpose === "project-owner"
+        ? await this.repository
+            .listProjectMemberships(input.projectId!, {
+              limit: limit + 1,
+              ...(input.query ? { query: input.query } : {}),
+              ...(input.cursor ? { afterUserId: input.cursor } : {}),
+            })
+            .then((members) => ({
+              items: members.slice(0, limit).map((member) => member.user),
+              ...(members.length > limit ? { nextCursor: members[limit - 1]!.user.id } : {}),
+            }))
+        : await this.repository.listUsers({
+            ...filters,
+            ...(input.purpose === "password" ? { source: "local" as const } : {}),
+          });
+    return {
+      ...page,
+      items: page.items.map(({ id, username, displayName, status, source }) => ({
+        id,
+        username,
+        displayName,
+        status,
+        source,
+      })),
+    };
   }
 
   async listAnalysisAssignees(
@@ -600,6 +649,37 @@ export class IdentityAccessService {
       requestId,
       details: {},
     });
+  }
+
+  async assignRoleSelection(actor: AuthenticatedIdentity, input: unknown, requestId?: string) {
+    const parsed = assignRoleSelectionInputSchema.parse(input);
+    this.authorize(actor, parsed.projectId ? "project.manage" : "role.manage", parsed.projectId);
+    const userIds = [...new Set(parsed.userIds)];
+    const roleIds = [...new Set(parsed.roleIds)];
+    // Validate the whole selection before writing; do not start a partial grant for bad input.
+    for (const userId of userIds) await this.requiredUser(userId);
+    for (const roleId of roleIds) {
+      const role = await this.requiredRole(roleId);
+      if (!role.active || role.scope !== (parsed.projectId ? "project" : "system"))
+        throw new DomainError("ROLE_SCOPE_INVALID", "所选角色已停用或不属于当前授权范围。");
+    }
+    const completed: Array<{ userId: string; roleId: string }> = [];
+    try {
+      for (const userId of userIds)
+        for (const roleId of roleIds) {
+          if (parsed.projectId)
+            await this.assignProjectRole(actor, userId, parsed.projectId, roleId, requestId);
+          else await this.assignSystemRole(actor, userId, roleId, requestId);
+          completed.push({ userId, roleId });
+        }
+    } catch (cause) {
+      throw new DomainError(
+        "ROLE_ASSIGNMENT_PARTIAL",
+        `已完成 ${completed.length}/${userIds.length * roleIds.length} 个绑定，其余分配失败。可重试；已有相同绑定不会重复添加。`,
+        { cause, details: { completed } },
+      );
+    }
+    return { assigned: completed.length };
   }
 
   async assignSystemRole(

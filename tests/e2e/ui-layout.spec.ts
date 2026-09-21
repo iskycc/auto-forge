@@ -147,6 +147,10 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
   await expect(page.getByRole("main")).not.toContainText("/opt/auto-forge/");
 
   await page.goto("/settings/access?section=ldap");
+  if (!(await page.getByLabel("启用 LDAP 登录").isChecked())) {
+    await expect(page.getByLabel("Group Search Base（可选）")).toBeHidden();
+    await page.getByLabel("启用 LDAP 登录").check();
+  }
   await expect(page.getByLabel("Group Search Base（可选）")).toBeVisible();
   await expect(page.getByText("Group 仅保存到用户档案", { exact: true })).toBeVisible();
   await expect(page.getByText("不会根据 Group 创建或修改任何权限绑定")).toBeVisible();

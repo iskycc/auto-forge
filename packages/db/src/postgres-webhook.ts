@@ -243,17 +243,30 @@ export class PostgresWebhookRepository implements WebhookRepository {
     });
   }
 
-  async listDeliveries(projectId: string, limit: number): Promise<WebhookDelivery[]> {
+  async listDeliveries(
+    projectId: string,
+    limit: number,
+    filter: Parameters<WebhookRepository["listDeliveries"]>[2] = {},
+  ): Promise<WebhookDelivery[]> {
     await this.handle.ready;
+    const values: Array<string | number> = [projectId];
+    const bind = (value: string | number) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    const where = ["b.project_id = $1"];
+    if (filter.webhookId) where.push(`d.webhook_id = ${bind(filter.webhookId)}`);
+    if (filter.status) where.push(`d.status = ${bind(filter.status)}`);
+    if (filter.cursor)
+      where.push(
+        `(d.created_at, d.id) < (${bind(filter.cursor.createdAt)}, ${bind(filter.cursor.id)})`,
+      );
     const result = await this.handle.pool.query<DeliveryRow>(
       `SELECT d.id, d.webhook_id, d.webhook_name, d.batch_id, b.suite_name, d.status,
-              d.attempts, d.response_status, d.error_message, d.created_at,
-              d.delivered_at, d.updated_at
-       FROM webhook_deliveries d
-       JOIN run_batches b ON b.id = d.batch_id
-       WHERE b.project_id = $1
-       ORDER BY d.created_at DESC, d.id DESC LIMIT $2`,
-      [projectId, limit],
+      d.attempts, d.response_status, d.error_message, d.created_at, d.delivered_at, d.updated_at
+      FROM webhook_deliveries d JOIN run_batches b ON b.id=d.batch_id
+      WHERE ${where.join(" AND ")} ORDER BY d.created_at DESC,d.id DESC LIMIT ${bind(Math.max(1, Math.min(101, limit)))}`,
+      values,
     );
     return result.rows.map(mapDelivery);
   }

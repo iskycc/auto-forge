@@ -433,6 +433,7 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
       section: "execution",
     }).toString()}`,
   );
+  await page.getByText("上传本地压缩包", { exact: true }).click();
   const uploadForm = page.locator("form", {
     has: page.getByRole("button", { name: "上传并启用" }),
   });

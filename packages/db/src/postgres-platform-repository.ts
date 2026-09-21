@@ -1523,8 +1523,39 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     ).map(toSource);
   }
 
-  async listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
-    return this.listRecentSources(limit, projectIds);
+  async listSources(
+    limit: number,
+    projectIds?: readonly string[],
+    filter: Parameters<CaseCatalogRepository["listSources"]>[2] = {},
+  ): Promise<CaseSource[]> {
+    await this.ready();
+    if (projectIds?.length === 0) return [];
+    const columns = { ...getTableColumns(pgCaseSources), inspectionJson: sql<string>`'{}'` };
+    const query = filter.query
+      ?.trim()
+      .toLowerCase()
+      .replace(/[\\%_]/g, (character) => `\\${character}`);
+    const rows = await this.handle.db
+      .select(columns)
+      .from(pgCaseSources)
+      .where(
+        and(
+          ...(projectIds ? [inArray(pgCaseSources.projectId, [...projectIds])] : []),
+          ...(filter.cursor ? [sql`${pgCaseSources.id} < ${filter.cursor}`] : []),
+          ...(query
+            ? [
+                sql`(lower(${pgCaseSources.originalFileName}) LIKE ${`%${query}%`} ESCAPE '\\' OR lower(${pgCaseSources.displayName}) LIKE ${`%${query}%`} ESCAPE '\\')`,
+              ]
+            : []),
+          ...(filter.projectVersionId
+            ? [eq(pgCaseSources.projectVersionId, filter.projectVersionId)]
+            : []),
+          ...(filter.testStageId ? [eq(pgCaseSources.testStageId, filter.testStageId)] : []),
+        ),
+      )
+      .orderBy(desc(pgCaseSources.id))
+      .limit(Math.max(1, Math.min(201, limit)));
+    return rows.map(toSource);
   }
 
   async getSource(sourceId: string, projectIds?: readonly string[]) {

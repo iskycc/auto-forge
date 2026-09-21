@@ -1,4 +1,8 @@
 import {
+  webhookDeliveryCursorSchema,
+  webhookDeliveryStatusFilterSchema,
+} from "@autoforge/contracts";
+import {
   createWebhookConfigurationInputSchema,
   updateWebhookConfigurationInputSchema,
   type CreateWebhookConfigurationInput,
@@ -117,6 +121,36 @@ export class WebhookNotificationService {
       recordedAt: this.clock.now().toISOString(),
       ...(projectIds ? { projectIds } : {}),
     });
+  }
+
+  async listDeliveriesPage(
+    projectId: string,
+    input: { cursor?: string; webhookId?: string; status?: string; limit?: number },
+  ) {
+    const limit = Math.max(1, Math.min(100, input.limit ?? 30));
+
+    let cursor: { createdAt: string; id: string } | undefined;
+    if (input.cursor) {
+      try {
+        cursor = webhookDeliveryCursorSchema.parse(JSON.parse(input.cursor));
+      } catch (cause) {
+        throw new DomainError("VALIDATION_FAILED", "投递列表游标无效，请返回第一页。", { cause });
+      }
+    }
+    const status = webhookDeliveryStatusFilterSchema.parse(input.status || undefined);
+    const rows = await this.repository.listDeliveries(projectId, limit + 1, {
+      ...(cursor ? { cursor } : {}),
+      ...(status ? { status } : {}),
+      ...(input.webhookId ? { webhookId: input.webhookId.slice(0, 128) } : {}),
+    });
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    return {
+      items,
+      ...(rows.length > limit && last
+        ? { nextCursor: JSON.stringify({ createdAt: last.createdAt, id: last.id }) }
+        : {}),
+    };
   }
 
   listDeliveries(projectId: string, limit = 30) {

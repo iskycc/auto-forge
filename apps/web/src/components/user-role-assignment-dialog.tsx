@@ -4,57 +4,67 @@ import type { Project, Role, User } from "@autoforge/domain";
 import { useState, type FormEvent } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
-import { Button, Select } from "@/components/ui";
+import { UserPicker } from "./user-picker";
+import { useConfirm } from "./ui-feedback";
+import { Button, CheckboxGroup, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 
 export function UserRoleAssignmentDialog({
-  users,
   selectedUser,
+  assignedRoles = [],
   roles,
   projects,
   canAssignSystemRoles,
   onClose,
   onAssigned,
 }: {
-  users: User[];
   selectedUser: User | null;
+  assignedRoles?: Array<{ roleId: string; projectId?: string }>;
   roles: Role[];
   projects: Project[];
   canAssignSystemRoles: boolean;
   onClose(): void;
   onAssigned(message: string): void;
 }) {
+  const confirmAction = useConfirm();
   const [pending, setPending] = useState(false);
+  const [bindings, setBindings] = useState(assignedRoles);
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [error, setError] = useState("");
   const systemRoles = roles.filter((role) => role.scope === "system" && role.active);
   const projectRoles = roles.filter((role) => role.scope === "project" && role.active);
-  const hasUsers = selectedUser !== null || users.length > 0;
 
   async function submit(event: FormEvent<HTMLFormElement>, scope: "system" | "project") {
     event.preventDefault();
     if (pending) return;
     const form = new FormData(event.currentTarget);
     const userId = selectedUser?.id ?? String(form.get("userId") ?? "");
-    const roleId = String(form.get("roleId") ?? "");
+    const roleIds = form.getAll("roleId").map(String);
     const projectId = String(form.get("projectId") ?? "");
-    if (!userId || !roleId || (scope === "project" && !projectId)) {
+    if (!userId || !roleIds.length || (scope === "project" && !projectId)) {
       setError(scope === "system" ? "请选择用户和系统角色。" : "请选择用户、项目和项目角色。");
       return;
     }
     setPending(true);
     setError("");
     try {
-      const response = await fetch(`/api/v1/users/${encodeURIComponent(userId)}/${scope}-roles`, {
+      const response = await fetch("/api/v1/role-assignments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(scope === "system" ? { roleId } : { projectId, roleId }),
+        body: JSON.stringify({
+          userIds: [userId],
+          roleIds,
+          ...(scope === "project" ? { projectId } : {}),
+        }),
       });
-      const message = await readApiErrorMessage(response, "角色分配失败，请稍后重试。");
+      const message = await readApiErrorMessage(response, "角色分配失败。");
       if (message) {
         setError(message);
         return;
       }
-      onAssigned(scope === "system" ? "系统角色已分配，旧会话已撤销。" : "项目成员角色已分配。");
+      onAssigned(
+        `已分配 ${roleIds.length} 个${scope === "system" ? "系统" : "项目"}角色，旧会话已撤销。`,
+      );
     } catch {
       setError("角色分配请求未完成，请检查网络连接后重试。");
     } finally {
@@ -62,25 +72,41 @@ export function UserRoleAssignmentDialog({
     }
   }
 
-  function userSelection(scope: "system" | "project") {
-    if (selectedUser) return null;
-    const id = `role-assignment-${scope}-user`;
-    return (
-      <div className="user-role-field">
-        <label htmlFor={id}>用户</label>
-        <Select disabled={pending || !hasUsers} id={id} name="userId" required>
-          {users.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.displayName} · {user.username}
-            </option>
-          ))}
-        </Select>
-      </div>
-    );
+  async function removeBinding(binding: { roleId: string; projectId?: string }) {
+    if (
+      !selectedUser ||
+      !(await confirmAction({
+        title: "撤销用户角色",
+        description: "撤销后该用户的旧会话立即失效，需要重新登录。",
+        confirmLabel: "确认撤销",
+        tone: "danger",
+      }))
+    )
+      return;
+    setPending(true);
+    setError("");
+    try {
+      const suffix = binding.projectId
+        ? `project-roles/${encodeURIComponent(binding.projectId)}/${encodeURIComponent(binding.roleId)}`
+        : `system-roles/${encodeURIComponent(binding.roleId)}`;
+      const response = await fetch(
+        `/api/v1/users/${encodeURIComponent(selectedUser.id)}/${suffix}`,
+        { method: "DELETE" },
+      );
+      const message = await readApiErrorMessage(response, "撤销角色失败。");
+      if (message) throw new Error(message);
+      setBindings((current) => current.filter((item) => item !== binding));
+      onAssigned("角色已撤销，旧会话已失效。");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "请求失败。");
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
     <ActionDialog
+      protectUnsavedChanges
       className="role-assignment-dialog"
       description="系统角色对全局生效，项目角色仅对选定项目生效。分配后会撤销目标用户的旧会话，需重新登录。"
       onClose={() => {
@@ -93,13 +119,43 @@ export function UserRoleAssignmentDialog({
         {selectedUser ? (
           <div className="member-role-subject user-role-assignment-subject">
             <strong>{selectedUser.displayName}</strong>
-            <span>
-              {selectedUser.username} · {selectedUser.id}
-            </span>
+            <span>{selectedUser.username}</span>
           </div>
         ) : null}
-        {!hasUsers ? (
-          <p className="empty-state">当前列表没有用户，请先创建用户或调整搜索条件。</p>
+        {selectedUser ? (
+          <section className="assigned-role-list">
+            <h3>当前已分配角色</h3>
+            {bindings.length ? (
+              bindings.map((binding) => (
+                <div key={`${binding.projectId ?? "system"}:${binding.roleId}`}>
+                  <span>
+                    {binding.projectId
+                      ? (projects.find((project) => project.id === binding.projectId)?.name ??
+                        "其他项目")
+                      : "系统范围"}{" "}
+                    · {roles.find((role) => role.id === binding.roleId)?.name ?? binding.roleId}
+                  </span>
+                  {(
+                    binding.projectId
+                      ? projects.some((project) => project.id === binding.projectId)
+                      : canAssignSystemRoles
+                  ) ? (
+                    <Button
+                      disabled={pending}
+                      onClick={() => void removeBinding(binding)}
+                      size="compact"
+                      type="button"
+                      variant="danger"
+                    >
+                      撤销
+                    </Button>
+                  ) : null}
+                </div>
+              ))
+            ) : (
+              <p className="settings-note">尚未分配角色。</p>
+            )}
+          </section>
         ) : null}
         <div className="settings-paired-forms">
           {canAssignSystemRoles ? (
@@ -107,26 +163,26 @@ export function UserRoleAssignmentDialog({
               className="settings-grid-form settings-subform"
               onSubmit={(event) => void submit(event, "system")}
             >
-              {userSelection("system")}
-              <div className="user-role-field">
-                <label htmlFor="role-assignment-system-role">系统角色</label>
-                <Select
-                  disabled={pending || systemRoles.length === 0}
-                  id="role-assignment-system-role"
-                  name="roleId"
-                  required
-                >
-                  {systemRoles.map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              {!selectedUser ? <UserPicker purpose="system-role" /> : null}
+              <CheckboxGroup
+                label="系统角色"
+                name="roleId"
+                required
+                options={systemRoles
+                  .filter(
+                    (role) =>
+                      !bindings.some((binding) => binding.roleId === role.id && !binding.projectId),
+                  )
+                  .map((role) => ({
+                    value: role.id,
+                    label: role.name,
+                    description: role.description,
+                  }))}
+              />
               {systemRoles.length === 0 ? (
                 <p className="settings-wide-field field-hint">暂无可分配的系统角色。</p>
               ) : null}
-              <Button disabled={pending || !hasUsers || systemRoles.length === 0} type="submit">
+              <Button disabled={pending || systemRoles.length === 0} type="submit">
                 分配系统角色
               </Button>
             </form>
@@ -136,10 +192,19 @@ export function UserRoleAssignmentDialog({
               className="settings-grid-form settings-subform"
               onSubmit={(event) => void submit(event, "project")}
             >
-              {userSelection("project")}
+              {!selectedUser ? (
+                <UserPicker key={projectId} purpose="project-member" projectId={projectId} />
+              ) : null}
               <div className="user-role-field">
                 <label htmlFor="role-assignment-project">项目</label>
-                <Select disabled={pending} id="role-assignment-project" name="projectId" required>
+                <Select
+                  disabled={pending}
+                  id="role-assignment-project"
+                  name="projectId"
+                  required
+                  value={projectId}
+                  onChange={(event) => setProjectId(event.target.value)}
+                >
                   {projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name}
@@ -147,25 +212,28 @@ export function UserRoleAssignmentDialog({
                   ))}
                 </Select>
               </div>
-              <div className="user-role-field">
-                <label htmlFor="role-assignment-project-role">项目角色</label>
-                <Select
-                  disabled={pending || projectRoles.length === 0}
-                  id="role-assignment-project-role"
-                  name="roleId"
-                  required
-                >
-                  {projectRoles.map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <CheckboxGroup
+                key={projectId}
+                label="项目角色"
+                name="roleId"
+                required
+                options={projectRoles
+                  .filter(
+                    (role) =>
+                      !bindings.some(
+                        (binding) => binding.roleId === role.id && binding.projectId === projectId,
+                      ),
+                  )
+                  .map((role) => ({
+                    value: role.id,
+                    label: role.name,
+                    description: role.description,
+                  }))}
+              />
               {projectRoles.length === 0 ? (
                 <p className="settings-wide-field field-hint">暂无可分配的项目角色。</p>
               ) : null}
-              <Button disabled={pending || !hasUsers || projectRoles.length === 0} type="submit">
+              <Button disabled={pending || projectRoles.length === 0} type="submit">
                 分配项目角色
               </Button>
             </form>
@@ -179,7 +247,7 @@ export function UserRoleAssignmentDialog({
           </p>
         ) : null}
         <div className="action-dialog-actions">
-          <Button disabled={pending} onClick={onClose} type="button">
+          <Button data-dialog-dismiss disabled={pending} onClick={onClose} type="button">
             取消
           </Button>
         </div>

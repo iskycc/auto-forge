@@ -110,6 +110,7 @@ export default async function AccessSettingsPage({
           <p className="eyebrow">System Settings</p>
           <h1>{heading.title}</h1>
           <p>{heading.description}</p>
+          <span className="permission-chip">范围：全平台账号与权限</span>
         </div>
       </header>
       <SectionTabs
@@ -121,6 +122,7 @@ export default async function AccessSettingsPage({
         }))}
       />
       <AccessSettings
+        currentSessionId={identity.sessionId}
         activeSection={activeSection}
         capabilities={capabilities}
         ldap={ldap}

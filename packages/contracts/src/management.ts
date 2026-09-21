@@ -702,3 +702,11 @@ export type UpdateCaseDefinitionInput = z.infer<typeof updateCaseDefinitionInput
 export type DeleteCaseDefinitionsInput = z.infer<typeof deleteCaseDefinitionsInputSchema>;
 export type CreateTerminalSessionInput = z.infer<typeof createTerminalSessionInputSchema>;
 export type CreateTerminalSessionResult = z.infer<typeof createTerminalSessionResultSchema>;
+
+export const webhookDeliveryCursorSchema = z.object({
+  createdAt: z.string().datetime(),
+  id: z.string().min(1).max(256),
+});
+export const webhookDeliveryStatusFilterSchema = z
+  .enum(["pending", "delivering", "succeeded", "failed"])
+  .optional();
