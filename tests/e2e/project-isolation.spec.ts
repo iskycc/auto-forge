@@ -82,8 +82,11 @@ test("project member cannot observe another project's assets through pages or di
   await expect(page.getByRole("link", { name: "导入 JAR" })).toHaveCount(0);
   await expect(page.getByLabel("选择本页全部用例")).toHaveCount(0);
   await page.goto("/objects");
-  await expect(page.getByRole("link", { name: sourceA.objectKey, exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: sourceB.objectKey, exact: true })).toHaveCount(0);
+  await expect(page.locator(`.object-link[href="/case-sources/${sourceA.id}"]`)).toHaveText(
+    `project-a-${suffix}.jar`,
+  );
+  await expect(page.locator(`a[href="/case-sources/${sourceB.id}"]`)).toHaveCount(0);
+  await expect(page.getByText(sourceB.objectKey, { exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "导入 JAR" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "设为全量来源" })).toHaveCount(0);
   await page.goto(`/case-sources/${sourceA.id}`);

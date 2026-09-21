@@ -5,7 +5,7 @@ import { mkdtemp, rm, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { createAttemptLogStore } from "../src/attempt-log-store";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { NodeAttemptLogStore } from "../src/node-attempt-log-store";
@@ -16,6 +16,20 @@ const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const now = "2026-09-05T00:00:00.000Z";
 
 describe.skipIf(!connectionString)("node-owned logs across isolated Full nodes", () => {
+  beforeAll(async () => {
+    // Migration startup can wait on other contract suites. Keep that setup outside
+    // the five-second budget for the log/peer behavior being verified.
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    try {
+      await handle.ready;
+    } finally {
+      await handle.close();
+    }
+  }, 30_000);
+
   it("checks a saved peer address without creating or reading batch log files", async () => {
     const fixture = await createFixture();
     try {

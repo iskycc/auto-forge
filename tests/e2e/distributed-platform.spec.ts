@@ -269,7 +269,11 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
       (await recovered.json()).items.map((chunk: { sequence: number }) => chunk.sequence),
     ).toEqual([0, 1, 2]);
     await page.goto("/settings/platform?section=configuration");
-    await expect(page.getByRole("button", { name: "保存平台配置" })).toBeDisabled();
+    await expect(
+      page.getByText("分布式运行配置由部署文件统一管理。", { exact: false }),
+    ).toBeVisible();
+    await expect(page.getByLabel("监听地址", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "保存平台配置" })).toHaveCount(0);
   } finally {
     await fixture.dispose();
   }

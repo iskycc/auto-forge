@@ -2221,9 +2221,40 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   await page.waitForTimeout(500);
   expect(searchRequests).toHaveLength(0);
   expect(unrelatedRequests).toHaveLength(0);
+  await page.route(
+    "**/api/v1/ddt/value-search?**",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台正在处理高优先级工作，请稍后重试检索。",
+            requestId: "search-priority-deferral",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
   await panel.getByRole("button", { name: "搜索", exact: true }).click();
-  await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
-  await expect(panel.locator("article")).toHaveCount(20);
+  // Shared CI hosts can briefly defer this low-priority scan. Exercise the visible
+  // retry action only for that explicit response; unrelated errors still fail.
+  await expect
+    .poll(
+      async () => {
+        await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+        const alert = panel.getByRole("alert");
+        if (await alert.isVisible()) {
+          await expect(alert).toContainText("平台正在处理高优先级工作，请稍后重试检索。");
+          await panel.getByRole("button", { name: "重试检索" }).click();
+          await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+        }
+        return panel.locator("article").count();
+      },
+      { timeout: 30_000, intervals: [500, 1_000, 2_000] },
+    )
+    .toBe(20);
   await expect(panel.locator("article").first()).toContainText("用户旅程 › step1 › nestedKey");
   await expect(panel.locator("article").first()).toContainText(longKey);
   await expect(panel.locator("article").first().locator("header")).toContainText(

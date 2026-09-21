@@ -21121,7 +21121,7 @@ button.icon-button:disabled {
   padding: var(--space-2, 8px);
 }
 .settings-section[id] {
-  scroll-margin-top: var(--space-6, 24px);
+  scroll-margin-top: calc(var(--space-3) * 2);
 }
 .management-sticky-actions {
   position: sticky;
