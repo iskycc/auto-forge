@@ -20,7 +20,7 @@ test(`platform restart persistence · ${restartPhase}`, async ({ page }) => {
     const logRetention = page.locator(".retention-policy-grid form").filter({ hasText: "日志" });
     await logRetention.getByLabel("保留天数").fill("31");
     await logRetention.getByRole("button", { name: "保存" }).click();
-    await expect(page.getByText("保留策略已更新。")).toBeVisible();
+    await expect(page.getByText(/保留策略已更新/u)).toBeVisible();
     return;
   }
 

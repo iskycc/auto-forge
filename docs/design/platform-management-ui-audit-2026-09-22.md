@@ -302,3 +302,5 @@ pnpm exec playwright test tests/e2e/management-operations.spec.ts tests/e2e/iden
 - DDT 搜索在共享 CI 主机上收到资源优先级退让响应时，旧测试只等待结果，未使用已有“重试检索”入口。测试改为只对该明确提示进行最长 30 秒的显式重试，其他错误仍失败；额外注入一次相同响应验证恢复，生产资源优先级规则不变。
 
 这些修正不增加任务自动重跑，也不放宽生产资源保护。发布前继续以最终提交的 GitHub CI、Full distributed acceptance、Release checks 和发布物验收结果为准。
+
+发布物备份恢复验收另外发现 `platform-restart.spec.ts` 仍精确匹配旧的“保留策略已更新。”文案，在开始备份前就退出。验收改为匹配保存成功的稳定语义，同时继续保留恢复后的配置值、保留天数与诊断断言；通过手动验收入口对同一 `v1.17.18` 发布物重新验证，不改动已发布标签和二进制。
