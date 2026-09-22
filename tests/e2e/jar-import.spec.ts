@@ -644,7 +644,19 @@ public class MixedVisibleTest {
       "utf8",
     ),
   });
+  const selectionProjection = (url: URL) =>
+    /^\/api\/v1\/read-models\/[^/]+\/directory$/u.test(url.pathname) &&
+    url.search === "?query=&outcome=all";
+  await page.route(selectionProjection, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), synchronized: false } });
+  });
   await caseImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(caseImportDialog.getByRole("alert")).toHaveText(
+    "当前范围正在后台准备，请稍后重试。",
+  );
+  await page.unroute(selectionProjection);
+  await previewImportedCasePaths(caseImportDialog);
   await expect(caseImportDialog.locator(".case-import-result")).toContainText(
     "匹配 1 个 · 未匹配 1 个",
   );
@@ -686,7 +698,7 @@ public class MixedVisibleTest {
     "title",
     longCaseRangeFileName,
   );
-  await xlsxImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await previewImportedCasePaths(xlsxImportDialog);
   await expect(xlsxImportDialog.locator(".case-import-result")).toContainText(
     "匹配 1 个 · 未匹配 1 个",
   );
@@ -703,14 +715,14 @@ public class MixedVisibleTest {
   const pasteImportDialog = page.getByLabel("导入用例", { exact: true });
   await expect(pasteImportDialog).toBeVisible();
   await pasteImportDialog.getByLabel("粘贴用例路径").fill(longUnmatchedCasePath);
-  await pasteImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await previewImportedCasePaths(pasteImportDialog);
   await expect(pasteImportDialog.locator(".case-import-result")).toContainText(
     "匹配 0 个 · 未匹配 1 个",
   );
   await expect(pasteImportDialog.getByRole("button", { name: "勾选匹配用例" })).toBeDisabled();
   await expectCaseImportDialogFits(pasteImportDialog);
   await pasteImportDialog.getByLabel("粘贴用例路径").fill(taskCase.className);
-  await pasteImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await previewImportedCasePaths(pasteImportDialog);
   await expect(pasteImportDialog.locator(".case-import-result")).toContainText("匹配 1 个");
   await expectUiIntegrity(page);
   await pasteImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
@@ -2035,6 +2047,26 @@ async function expectDesktopLayoutFits(page: Page, width: number, height: number
       })),
     )
     .toEqual({ viewportWidth: width, documentWidth: width });
+}
+
+async function previewImportedCasePaths(dialog: Locator): Promise<void> {
+  const preview = dialog.getByRole("button", { name: "解析并预览" });
+  const deadline = Date.now() + 30_000;
+  const remainingMs = () => Math.max(1, deadline - Date.now());
+  await preview.click({ timeout: remainingMs() });
+  while (Date.now() < deadline) {
+    await expect(preview).toBeEnabled({ timeout: remainingMs() });
+    if (await dialog.locator(".case-import-result").isVisible()) return;
+    const alert = dialog.getByRole("alert");
+    await expect(alert).toBeVisible({ timeout: remainingMs() });
+    // A bulk selection can need a different snapshot from the visible tree.
+    // Retry only its explicit preparation state; any other error fails here.
+    expect(await alert.innerText()).toBe("当前范围正在后台准备，请稍后重试。");
+    await dialog.page().waitForTimeout(Math.min(1_000, remainingMs()));
+    if (Date.now() >= deadline) break;
+    await preview.click({ timeout: remainingMs() });
+  }
+  throw new Error("用例范围快照在 30 秒内未准备完成。");
 }
 
 async function expectCaseImportDialogFits(dialog: Locator): Promise<void> {
