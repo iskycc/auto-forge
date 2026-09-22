@@ -16,6 +16,7 @@ import {
   Archive,
   Check,
   ChevronRight,
+  CopyPlus,
   FileArchive,
   LoaderCircle,
   RotateCcw,
@@ -29,6 +30,9 @@ import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore }
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
+
+import { TestNgInheritanceDialog } from "./testng-inheritance-dialog";
+import type { InheritanceVersion } from "./version-case-inheritance-dialog";
 
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
 
@@ -64,6 +68,8 @@ async function errorMessage(response: Response): Promise<string> {
 
 export function JarImporter({
   maxJarBytes,
+  versions,
+  canInherit,
   projectId: initialProjectId,
   projectName,
   projectVersionId,
@@ -72,6 +78,8 @@ export function JarImporter({
   testStageName,
 }: {
   maxJarBytes: number;
+  versions: InheritanceVersion[];
+  canInherit: boolean;
   projectId?: string | undefined;
   projectName?: string | undefined;
   projectVersionId?: string | undefined;
@@ -80,6 +88,7 @@ export function JarImporter({
   testStageName?: string | undefined;
 }) {
   const inputId = useId();
+  const [inheriting, setInheriting] = useState(false);
   const router = useRouter();
   const clientReady = useSyncExternalStore(
     subscribeToClientReadiness,
@@ -271,6 +280,35 @@ export function JarImporter({
 
   return (
     <div className="import-workspace">
+      <section className="card import-card">
+        <div className="card-heading">
+          <div>
+            <h2>复用已有版本</h2>
+            <p>从同项目的其他版本复制 TestNG 用例，无需重新上传 JAR。</p>
+          </div>
+          <Button
+            type="button"
+            disabled={!clientReady || busy || !projectVersionId || !testStageId || !canInherit}
+            onClick={() => setInheriting(true)}
+          >
+            <CopyPlus size={17} aria-hidden="true" /> 从其他版本继承
+          </Button>
+        </div>
+        {!canInherit ? <p className="settings-note">继承还需要当前项目的用例查看权限。</p> : null}
+      </section>
+      {inheriting && projectVersionId && testStageId ? (
+        <TestNgInheritanceDialog
+          key={`${projectId}:${projectVersionId}:${testStageId}`}
+          scope={{ projectId, projectVersionId, testStageId }}
+          scopeLabels={{
+            project: projectName ?? "当前项目",
+            version: projectVersionName ?? "当前版本",
+            stage: testStageName ?? "当前阶段",
+          }}
+          versions={versions}
+          onClose={() => setInheriting(false)}
+        />
+      ) : null}
       <section className="card import-card">
         <div className="card-heading">
           <div>

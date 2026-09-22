@@ -120,4 +120,62 @@ describe("CaseDefinitionService", () => {
       }),
     );
   });
+  it("copies only one bounded page and passes the source revision and continuation cursor", async () => {
+    const listCases = vi.fn().mockResolvedValue({
+      items: [{ id: "source-case", revision: 7, methods: [{ id: "source-method" }] }],
+      nextCursor: "next-page",
+    });
+    const inheritCaseDefinitions = vi
+      .fn()
+      .mockResolvedValue({ inheritedCount: 1, skippedCount: 0 });
+    const input = {
+      projectId: "project",
+      sourceProjectVersionId: "source",
+      sourceTestStageId: "source-stage",
+      targetProjectVersionId: "target",
+      targetTestStageId: "target-stage",
+      actorId: "actor",
+      cursor: "first-page",
+    };
+    const service = serviceWith({ listCases, inheritCaseDefinitions });
+    await expect(service.inheritPage(input)).resolves.toEqual({
+      inheritedCount: 1,
+      skippedCount: 0,
+      nextCursor: "next-page",
+    });
+    expect(listCases).toHaveBeenCalledExactlyOnceWith({
+      projectIds: ["project"],
+      projectVersionId: "source",
+      testStageId: "source-stage",
+      scopedOnly: true,
+      limit: 25,
+      cursor: "first-page",
+    });
+    expect(inheritCaseDefinitions.mock.calls[0]![0].records[0]).toMatchObject({
+      sourceRevision: 7,
+    });
+    await expect(
+      service.inheritPage({ ...input, sourceProjectVersionId: "target" }),
+    ).rejects.toMatchObject({ code: "CASE_VERSION_INHERITANCE_SELF_REFERENCE" });
+    expect(listCases).toHaveBeenCalledTimes(1);
+  });
+
+  it("finishes an empty inheritance page without a write", async () => {
+    const inheritCaseDefinitions = vi.fn();
+    const service = serviceWith({
+      listCases: vi.fn().mockResolvedValue({ items: [] }),
+      inheritCaseDefinitions,
+    });
+    await expect(
+      service.inheritPage({
+        projectId: "project",
+        sourceProjectVersionId: "source",
+        sourceTestStageId: "source-stage",
+        targetProjectVersionId: "target",
+        targetTestStageId: "target-stage",
+        actorId: "actor",
+      }),
+    ).resolves.toEqual({ inheritedCount: 0, skippedCount: 0 });
+    expect(inheritCaseDefinitions).not.toHaveBeenCalled();
+  });
 });

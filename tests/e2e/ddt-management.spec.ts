@@ -21,6 +21,197 @@ import {
 import { expectUiIntegrity } from "./support/ui-guard";
 import type { DdtExecutionStatistics } from "@autoforge/contracts";
 
+test("DDT inheritance copies another version with pause, recovery and safe duplicate handling", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await ensureAdministrator(page);
+  const source = await createHierarchy(page);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${source.projectId}/versions`,
+    {
+      method: "POST",
+      body: { name: "DDT 目标版本" },
+    },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${source.projectId}/versions/${version.body.id}/stages`,
+    {
+      method: "POST",
+      body: { name: "目标验收", description: "继承目标" },
+    },
+  );
+  expect(stage.status).toBe(201);
+  const target = { ...source, versionId: version.body.id, stageId: stage.body.id };
+  const rows = Array.from({ length: 70 }, (_, index) => ({
+    CaseID: `COPY-${String(index).padStart(3, "0")}`,
+    srNum: "COPY-SR",
+    marker: "source",
+  }));
+  await importDdtApiFixture(page, source, "COPY-000", 0, rows);
+  await importDdtApiFixture(page, target, "copy-000", 0, [
+    { CaseID: "copy-000", srNum: "COPY-SR", marker: "target-kept" },
+  ]);
+  await selectProjectContext(page, target.projectId, target.versionId, target.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const trigger = page.getByRole("button", { name: "继承用例", exact: true });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "从其他版本继承 DDT 用例", exact: true });
+  await expect(dialog.getByRole("button", { name: "开始继承", exact: true })).toBeDisabled();
+  await expect(
+    dialog.getByLabel("来源版本").locator("option", { hasText: "DDT 目标版本" }),
+  ).toHaveCount(0);
+  await dialog.getByLabel("来源版本").selectOption(source.versionId);
+  await dialog.getByLabel("来源测试阶段").selectOption(source.stageId);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-inheritance-ready-${width}`);
+  }
+  const pattern = "**/api/v1/ddt/cases/inherit?*";
+  let startLabel = "开始继承";
+  // Only a declared priority deferral may be retried. Every run still verifies
+  // a real pause boundary and an injected failure after partial persistence.
+  await expect
+    .poll(
+      async () => {
+        if (startLabel === "继续继承")
+          await expect(dialog.getByRole("alert")).toContainText("高优先级工作");
+        let release!: () => void;
+        const hold = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await page.route(
+          pattern,
+          async (route) => {
+            await hold;
+            await route.continue();
+          },
+          { times: 1 },
+        );
+        try {
+          await dialog.getByRole("button", { name: startLabel, exact: true }).click();
+          await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toBeDisabled();
+          await dialog.getByRole("button", { name: "暂停继承", exact: true }).click();
+        } finally {
+          release();
+        }
+        await expect(dialog.getByRole("status")).toContainText("继承已暂停");
+        startLabel = "继续继承";
+        return dialog.getByRole("status").textContent();
+      },
+      { timeout: 30_000, intervals: [500, 1_000, 2_000] },
+    )
+    .toContain("新增 63 条 · 跳过 1 条");
+  const cursors: string[] = [];
+  await page.route(
+    pattern,
+    async (route) => {
+      cursors.push(route.request().postDataJSON().cursor);
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台正在处理高优先级工作，请稍后继续继承。",
+          },
+        },
+      });
+    },
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "继续继承", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("已完成部分已保留");
+  await expect(dialog.getByRole("status")).toContainText("新增 63 条 · 跳过 1 条");
+  expect(cursors).toEqual(["copy-063"]);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-inheritance-recovery-${width}`);
+  }
+  await expect
+    .poll(
+      async () => {
+        const resume = dialog.getByRole("button", { name: "继续继承", exact: true });
+        if (await resume.isVisible()) {
+          await expect(dialog.getByRole("alert")).toContainText("高优先级工作");
+          await resume.click();
+        }
+        return dialog.getByRole("status").textContent();
+      },
+      { timeout: 30_000, intervals: [500, 1_000, 2_000] },
+    )
+    .toContain("继承完成");
+  await expect(dialog.getByRole("status")).toContainText("新增 69 条 · 跳过 1 条");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-inheritance-complete-${width}`);
+  }
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(trigger).toBeFocused();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-inheritance-workspace-${width}`);
+    const tabTops = await page
+      .getByRole("tablist", { name: "DDT 功能", exact: true })
+      .getByRole("tab")
+      .evaluateAll((tabs) => tabs.map((tab) => tab.getBoundingClientRect().top));
+    expect(Math.max(...tabTops) - Math.min(...tabTops)).toBeLessThan(2);
+  }
+  const existing = await page.request.get(ddtPath(target, "cases/COPY-000"));
+  expect((await existing.json()).data.marker).toBe("target-kept");
+  const original = await page.request.get(ddtPath(source, "cases/COPY-000"));
+  expect((await original.json()).data.marker).toBe("source");
+  const copied = await page.request.get(ddtPath(target, "cases/COPY-069"));
+  expect((await copied.json()).data.marker).toBe("source");
+  const self = await browserJson(page, ddtPath(target, "cases/inherit"), {
+    method: "POST",
+    body: { sourceProjectVersionId: target.versionId, sourceTestStageId: target.stageId },
+  });
+  expect(self.status).toBe(400);
+  const invalid = await browserJson(page, ddtPath(target, "cases/inherit"), {
+    method: "POST",
+    body: { sourceProjectVersionId: source.versionId, sourceTestStageId: target.stageId },
+  });
+  expect(invalid.status).toBe(404);
+  const token = await issueDdtApiToken(page, target.projectId, ["case.read"]);
+  const denied = await page.request.post(ddtPath(target, "cases/inherit"), {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { sourceProjectVersionId: source.versionId, sourceTestStageId: source.stageId },
+  });
+  expect(denied.status()).toBe(403);
+});
+
+test("DDT refreshes stale case summaries when observing a completed import", async ({ page }) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await importDdtApiFixture(page, hierarchy, "COMMITTED-CASE", 1);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  let caseReads = 0;
+  await page.route("**/api/v1/ddt/cases?*", async (route) => {
+    caseReads += 1;
+    // The first parallel list read represents the snapshot just before the
+    // import committed; the imports endpoint already reports its terminal state.
+    if (caseReads === 1) await route.fulfill({ json: { items: [] } });
+    else await route.continue();
+  });
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await expect(
+    page
+      .getByRole("region", { name: "DDT 用例详情" })
+      .getByRole("heading", { name: "COMMITTED-CASE", exact: true }),
+  ).toBeVisible();
+  expect(caseReads).toBe(2);
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+  expect(caseReads).toBe(3);
+});
+
 test("DDT template dialog keeps focus and protects unsaved edits", async ({ page }) => {
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);

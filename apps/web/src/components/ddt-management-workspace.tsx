@@ -17,6 +17,7 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { ActionDialog } from "./action-dialog";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
+import { DdtInheritanceDialog, type DdtInheritanceVersion } from "./ddt-inheritance-dialog";
 import type { DdtExecutionStatistics } from "@autoforge/contracts";
 import { DdtExecutionChart } from "./ddt-execution-chart";
 import { DdtValueSearch } from "./ddt-value-search";
@@ -29,6 +30,7 @@ import {
   Boxes,
   CheckCircle2,
   Code2,
+  CopyPlus,
   Download,
   FileSpreadsheet,
   Filter,
@@ -161,6 +163,12 @@ function workspaceTab(value: string | null): WorkspaceTab {
 
 const DDT_IMPORT_FILE_ACCEPT = ".xlsx,.xls,.xlsb,.csv,.ods,.zip";
 const DDT_IMPORT_FILE_EXTENSIONS = new Set(["xlsx", "xls", "xlsb", "csv", "ods", "zip"]);
+const DDT_TERMINAL_IMPORT_STATES = new Set([
+  "succeeded",
+  "partially_succeeded",
+  "failed",
+  "cancelled",
+]);
 
 const discardDdtEdits = {
   title: "放弃未保存的修改",
@@ -188,6 +196,7 @@ export function DdtManagementWorkspace({
   canManageSuites,
   canRun,
   suites,
+  versions,
 }: {
   scope: Scope;
   scopeLabels: DdtScopeLabels;
@@ -195,6 +204,7 @@ export function DdtManagementWorkspace({
   canManageSuites: boolean;
   canRun: boolean;
   suites: Array<{ id: string; name: string }>;
+  versions: DdtInheritanceVersion[];
 }) {
   const confirmAction = useConfirm();
   const showConcurrentModification = useConcurrentModificationFeedback();
@@ -253,6 +263,7 @@ export function DdtManagementWorkspace({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [showInheritance, setShowInheritance] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [showAddToSuite, setShowAddToSuite] = useState(false);
@@ -264,6 +275,7 @@ export function DdtManagementWorkspace({
   }>();
   const hasLoaded = useRef(false);
   const loadGeneration = useRef(0);
+  const observedImportStates = useRef(new Map<string, string>());
   const appliedFilters = useRef<{ key: string; url: string } | null>(null);
   const filterKey = JSON.stringify([query, srNum, advancedField, advancedOperator, advancedValue]);
 
@@ -307,7 +319,7 @@ export function DdtManagementWorkspace({
           ]),
         );
       }
-      const [casePage, templatePage, importPage, recyclePage] = await Promise.all([
+      const [initialCasePage, templatePage, importPage, recyclePage] = await Promise.all([
         requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
           endpoint("cases", caseParameters),
         ),
@@ -316,6 +328,24 @@ export function DdtManagementWorkspace({
         requestJson<{ items: DeletedCase[] }>(endpoint("recycle")),
       ]);
       if (generation !== loadGeneration.current) return;
+      let casePage = initialCasePage;
+      const importCompleted = importPage.items.some(
+        (job) =>
+          DDT_TERMINAL_IMPORT_STATES.has(job.status) &&
+          observedImportStates.current.get(job.id) !== job.status,
+      );
+      if (importCompleted) {
+        // Parallel reads can observe the case list before commit and the import
+        // status after commit. Refresh once before publishing the terminal state,
+        // otherwise polling stops with a stale (possibly empty) list in cache.
+        clearBrowserSnapshots();
+        casePage = await requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
+          endpoint("cases", caseParameters),
+          { cache: "reload" },
+        );
+        if (generation !== loadGeneration.current) return;
+      }
+      observedImportStates.current = new Map(importPage.items.map((job) => [job.id, job.status]));
       setCases(casePage.items);
       setNextCursor(casePage.nextCursor);
       setTemplates(templatePage.items);
@@ -638,6 +668,17 @@ export function DdtManagementWorkspace({
             disabled={busy || refreshing || savingCase}
           >
             <RefreshCw size={15} className={busy || refreshing ? "spin" : ""} /> 刷新
+          </Button>
+        ) : null}
+        {canManage ? (
+          <Button
+            type="button"
+            disabled={savingCase}
+            onClick={async () => {
+              if (await leaveEditor()) setShowInheritance(true);
+            }}
+          >
+            <CopyPlus size={16} /> 继承用例
           </Button>
         ) : null}
         {canManage ? (
@@ -1092,6 +1133,18 @@ export function DdtManagementWorkspace({
             setSelected((current) => new Set([...current, ...caseIds]));
             toast.success(`已勾选 ${caseIds.length} 条匹配的 DDT 用例，原有选择已保留。`);
             return true;
+          }}
+        />
+      ) : null}
+      {showInheritance ? (
+        <DdtInheritanceDialog
+          scope={scope}
+          scopeLabels={scopeLabels}
+          versions={versions}
+          onClose={() => setShowInheritance(false)}
+          onChanged={async () => {
+            clearBrowserSnapshots();
+            await load();
           }}
         />
       ) : null}

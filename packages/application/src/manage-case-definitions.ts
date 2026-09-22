@@ -1,11 +1,15 @@
-import type { UpdateCaseDefinitionInput } from "@autoforge/contracts";
+import type {
+  InheritTestNgCasesInput,
+  TestNgInheritancePage,
+  UpdateCaseDefinitionInput,
+} from "@autoforge/contracts";
 import { testNgClassCandidateSchema } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 
 import type { CaseCatalogRepository, Clock, IdGenerator } from "./ports";
 
 const VERSION_HISTORY_LIMIT = 100;
-const INHERITANCE_PAGE_SIZE = 100;
+const INHERITANCE_PAGE_SIZE = 25;
 
 export class CaseDefinitionService {
   constructor(
@@ -69,44 +73,51 @@ export class CaseDefinitionService {
     targetTestStageId: string;
     actorId: string;
   }): Promise<{ inheritedCount: number; skippedCount: number }> {
+    let cursor: string | undefined;
+    let inheritedCount = 0;
+    let skippedCount = 0;
+    do {
+      const page = await this.inheritPage({ ...input, ...(cursor ? { cursor } : {}) });
+      inheritedCount += page.inheritedCount;
+      skippedCount += page.skippedCount;
+      cursor = page.nextCursor;
+    } while (cursor);
+    return { inheritedCount, skippedCount };
+  }
+
+  async inheritPage(
+    input: InheritTestNgCasesInput & { actorId?: string | undefined },
+  ): Promise<TestNgInheritancePage> {
     if (input.sourceProjectVersionId === input.targetProjectVersionId) {
       throw new DomainError(
         "CASE_VERSION_INHERITANCE_SELF_REFERENCE",
         "请选择其他项目版本作为用例继承来源。",
       );
     }
-    let cursor: string | undefined;
-    let inheritedCount = 0;
-    let skippedCount = 0;
-    do {
-      const page = await this.catalog.listCases({
-        projectIds: [input.projectId],
-        projectVersionId: input.sourceProjectVersionId,
-        testStageId: input.sourceTestStageId,
-        scopedOnly: true,
-        limit: INHERITANCE_PAGE_SIZE,
-        ...(cursor ? { cursor } : {}),
-      });
-      if (page.items.length > 0) {
-        const result = await this.catalog.inheritCaseDefinitions({
-          ...input,
-          records: page.items.map((definition) => ({
-            sourceCaseDefinitionId: definition.id,
-            targetCaseDefinitionId: this.ids.next(),
-            targetCaseVersionId: this.ids.next(),
-            methods: definition.methods.map((method) => ({
-              sourceMethodId: method.id,
-              targetMethodId: this.ids.next(),
-            })),
-          })),
-          inheritedAt: this.clock.now().toISOString(),
-        });
-        inheritedCount += result.inheritedCount;
-        skippedCount += result.skippedCount;
-      }
-      cursor = page.nextCursor;
-    } while (cursor);
-    return { inheritedCount, skippedCount };
+    const page = await this.catalog.listCases({
+      projectIds: [input.projectId],
+      projectVersionId: input.sourceProjectVersionId,
+      testStageId: input.sourceTestStageId,
+      scopedOnly: true,
+      limit: INHERITANCE_PAGE_SIZE,
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+    });
+    if (!page.items.length) return { inheritedCount: 0, skippedCount: 0 };
+    const result = await this.catalog.inheritCaseDefinitions({
+      ...input,
+      records: page.items.map((definition) => ({
+        sourceCaseDefinitionId: definition.id,
+        sourceRevision: definition.revision,
+        targetCaseDefinitionId: this.ids.next(),
+        targetCaseVersionId: this.ids.next(),
+        methods: definition.methods.map((method) => ({
+          sourceMethodId: method.id,
+          targetMethodId: this.ids.next(),
+        })),
+      })),
+      inheritedAt: this.clock.now().toISOString(),
+    });
+    return { ...result, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
 
   async listVersions(caseDefinitionId: string, projectIds?: readonly string[]) {

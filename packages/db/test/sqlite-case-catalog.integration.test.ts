@@ -318,6 +318,7 @@ describe("SqliteCaseCatalogRepository", () => {
           targetTestStageId: "stage-b",
           records: [
             {
+              sourceRevision: 0,
               sourceCaseDefinitionId: "case-a-stable",
               targetCaseDefinitionId: "case-inherited",
               targetCaseVersionId: "case-inherited-v1",
@@ -325,6 +326,24 @@ describe("SqliteCaseCatalogRepository", () => {
             },
           ],
           actorId: "user-inherit",
+          inheritedAt: "2026-08-08T11:30:00.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "SOURCE_CASE_REVISION_CONFLICT" });
+      await expect(
+        repository.inheritCaseDefinitions({
+          projectId,
+          sourceProjectVersionId: "version-a",
+          sourceTestStageId: "stage-a",
+          targetProjectVersionId: "version-b",
+          targetTestStageId: "stage-b",
+          records: [
+            {
+              sourceCaseDefinitionId: "case-a-stable",
+              targetCaseDefinitionId: "case-inherited",
+              targetCaseVersionId: "case-inherited-v1",
+              methods: [{ sourceMethodId: "method-a-v2", targetMethodId: "method-inherited-v1" }],
+            },
+          ],
           inheritedAt: "2026-08-08T11:30:00.000Z",
         }),
       ).resolves.toEqual({ inheritedCount: 1, skippedCount: 0 });

@@ -20943,7 +20943,7 @@ button.icon-button:disabled {
 .ddt-association-dialog .inline-notice {
   margin-bottom: var(--space-3);
 }
-@media (max-width: 1280px) {
+@media (max-width: 1600px) {
   .ddt-workspace:has(.ddt-case-browser) {
     grid-template-columns: minmax(0, 1fr);
   }

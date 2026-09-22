@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.21 - 2026-09-22
+
+### Changed and fixed
+
+- DDT 管理新增“继承用例”：选择同项目的其他版本和测试阶段，将活动用例复制到当前范围，保留 CaseID、SR、完整字段和用户旅程；目标已有 CaseID（忽略大小写）自动跳过，两个版本独立维护。
+- TestNG JAR 导入页新增“从其他版本继承”：复制来源阶段的当前用例、测试方法和展示配置，共享原 JAR，无需重复上传或扫描；相同完整类名自动跳过。
+- 两种继承均在维护工作线程分批执行，支持暂停、继续、繁忙恢复和右上角完成提示；资源紧张时让位高优先级工作。TestNG 增加来源修订号检查，避免并发更新后复制出不一致的快照和方法。
+- 修复 DDT 导入成功后，列表可能保留提交前空缓存的问题；调整桌面工具栏布局，避免继承按钮挤压子标签。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、新依赖或 Runner Protocol 变更。Lite/Full 共用业务逻辑，均已验证真实数据库行为。
+- 从 v1.17.20 升级只需更新主平台；Full 同步更新全部平台节点及独立后台工作器，无需升级 Runner 或 Adapter。
+- DDT 执行类按目标版本的 SR 分类/关联确定，来源分类和模板不复制。TestNG 保留来源启停、归档状态，sources JAR 仍仅供源码查看。两者均不复制分析/执行历史、任务成员或版本 JDK/依赖包；运行配置需要时单独继承。
+- 继承按批次保存，暂停或退出后已完成部分保留。刷新页面后可重新开始，已有项自动跳过；网络丢失提交响应时，再次请求可能把已复制项统计为跳过。来源数据不冻结为跨请求全局快照。
+- 离线资产种类不变：amd64/arm64 后端镜像、部署包、两个 Jenkins 插件、SBOM 元数据及签名清单。
+
+### Validation and known limitations
+
+- 相关应用、SQLite/PostgreSQL 适配器及后台工作线程测试通过，包含重复项、版本隔离、来源变更保护、锁恢复与繁忙退让。
+- 21 项 Playwright 回归通过，覆盖 DDT 原有工作流、新增继承和 TestNG 导入、执行、日志、分析流程；最终布局调整后重新构建并复跑 TestNG 继承场景通过。
+- 已实际审查 1024×768、1536×960 的页面与弹窗截图；类型检查、变更 lint/格式检查及生产构建通过。
+- 完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行。
+
 ## 1.17.20 - 2026-09-22
 
 ### Changed and fixed

@@ -197,6 +197,32 @@ export class WorkerPool implements WorkDispatcher {
     return (await this.nextSchedulingLane().dispatch({ kind: "trigger-schedules" })) as number;
   }
 
+  inheritDdtCases(input: unknown, signal: AbortSignal): Promise<unknown> {
+    return this.inheritCases({ kind: "inherit-ddt-cases", input }, signal);
+  }
+
+  inheritTestNgCases(input: unknown, signal: AbortSignal): Promise<unknown> {
+    return this.inheritCases({ kind: "inherit-testng-cases", input }, signal);
+  }
+
+  private inheritCases(
+    task: Extract<WorkTask, { kind: "inherit-ddt-cases" | "inherit-testng-cases" }>,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    const lane = this.maintenanceLanes.reduce((least, candidate) =>
+      candidate.pendingCount < least.pendingCount ? candidate : least,
+    );
+    if (lane.pendingCount >= 2) {
+      return Promise.reject(
+        Object.assign(new Error("继承服务繁忙，请稍后继续。"), {
+          name: "DomainError",
+          code: "PLATFORM_BUSY",
+        }),
+      );
+    }
+    return lane.dispatch(task, signal);
+  }
+
   createBatch(input: unknown): Promise<unknown> {
     return this.nextSchedulingLane().dispatch({ kind: "create-batch", input });
   }
@@ -399,6 +425,8 @@ class WorkerLane {
           task.kind === "platform-maintenance" ||
           task.kind === "background-job" ||
           task.kind === "search-ddt-values" ||
+          task.kind === "inherit-ddt-cases" ||
+          task.kind === "inherit-testng-cases" ||
           task.kind === "parse-file"
             ? () => undefined
             : runtimePriority().beginForeground(),

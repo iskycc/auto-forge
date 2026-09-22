@@ -36,6 +36,21 @@ export const ddtScopeSchema = z.object({
   testStageId: z.string().min(1).max(128),
 });
 
+export const inheritDdtCasesInputSchema = z.object({
+  sourceProjectVersionId: z.string().min(1).max(128),
+  sourceTestStageId: z.string().min(1).max(128),
+  cursor: z.string().min(1).max(1_024).optional(),
+});
+
+export const ddtInheritancePageSchema = z.object({
+  inheritedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  nextCursor: z.string().optional(),
+});
+
+export type InheritDdtCasesInput = z.infer<typeof inheritDdtCasesInputSchema>;
+export type DdtInheritancePage = z.infer<typeof ddtInheritancePageSchema>;
+
 export const ddtCaseLookupSchema = ddtScopeSchema.extend({
   caseId: z.string().trim().min(1).max(512),
 });

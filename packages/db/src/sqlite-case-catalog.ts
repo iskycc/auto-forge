@@ -1221,7 +1221,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       for (const record of input.records) {
         const source = this.handle.client
           .prepare(
-            `SELECT class_name FROM case_definitions
+            `SELECT class_name, revision FROM case_definitions
              WHERE id = ? AND project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
           )
           .get(
@@ -1229,11 +1229,17 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
             input.projectId,
             input.sourceProjectVersionId,
             input.sourceTestStageId,
-          ) as { class_name: string } | undefined;
+          ) as { class_name: string; revision: number } | undefined;
         if (!source) {
           throw new DomainError(
             "SOURCE_CASE_DEFINITION_NOT_FOUND",
             "继承来源用例不存在或不属于所选项目版本与测试阶段。",
+          );
+        }
+        if (record.sourceRevision !== undefined && source.revision !== record.sourceRevision) {
+          throw new DomainError(
+            "SOURCE_CASE_REVISION_CONFLICT",
+            "来源用例刚刚更新，本批未保存，请继续继承以读取最新内容。",
           );
         }
         const existing = this.handle.client
@@ -1268,7 +1274,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
             record.targetCaseDefinitionId,
             input.targetProjectVersionId,
             input.targetTestStageId,
-            input.actorId,
+            input.actorId ?? null,
             input.inheritedAt,
             input.inheritedAt,
             record.sourceCaseDefinitionId,
@@ -1289,7 +1295,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           .run(
             record.targetCaseVersionId,
             record.targetCaseDefinitionId,
-            input.actorId,
+            input.actorId ?? null,
             input.inheritedAt,
             record.sourceCaseDefinitionId,
             record.sourceCaseDefinitionId,

@@ -4,14 +4,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
-import { ddtValueSearchPageSchema } from "@autoforge/contracts";
+import { ddtInheritancePageSchema, ddtValueSearchPageSchema } from "@autoforge/contracts";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { createSqliteDatabase } from "../../../packages/db/src/database";
 import { SqliteProjectStructureRepository } from "../../../packages/db/src/sqlite-project-structure";
 import { WorkerPool } from "./worker-pool";
 import { webResourcePlan } from "../src/lib/worker-sizing";
 
-it("unions 12 conditions over 100,000 DDT cases off the Web thread, bounds admission and leaves SQLite writes available", async () => {
+it("searches and inherits from 100,000 DDT cases off the Web thread with bounded admission", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "ddt-search-worker-"));
   const databasePath = resolve(directory, "platform.sqlite");
   const migrationsFolder = resolve("packages/db/drizzle/sqlite");
@@ -145,6 +145,62 @@ it("unions 12 conditions over 100,000 DDT cases off the Web thread, bounds admis
       ),
     );
     expect(recovery.items).toHaveLength(1);
+    await structures.createVersion({
+      id: "target-version",
+      projectId: scope.projectId,
+      name: "target",
+      normalizedName: "target",
+      recordedAt: now,
+    });
+    await structures.createStage({
+      id: "target-stage",
+      projectId: scope.projectId,
+      projectVersionId: "target-version",
+      name: "test",
+      normalizedName: "test",
+      description: "",
+      recordedAt: now,
+    });
+    const inheritance = {
+      scope: { ...scope, projectVersionId: "target-version", testStageId: "target-stage" },
+      input: {
+        sourceProjectVersionId: scope.projectVersionId,
+        sourceTestStageId: scope.testStageId,
+      },
+      sourceName: "继承自 source",
+    };
+    const copies = Promise.all([
+      pool.inheritDdtCases(inheritance, signal),
+      pool.inheritDdtCases(inheritance, signal),
+    ]);
+    await expect(pool.inheritDdtCases(inheritance, signal)).rejects.toMatchObject({
+      code: "PLATFORM_BUSY",
+    });
+    await expect(pool.inheritTestNgCases({}, signal)).rejects.toMatchObject({
+      code: "PLATFORM_BUSY",
+    });
+    for (let probe = 0; probe < 4; probe++) {
+      const response = await fetch(`http://127.0.0.1:${address.port}`, {
+        signal: AbortSignal.timeout(1_500),
+      });
+      expect(await response.text()).toBe("responsive");
+    }
+    const copiedPages = (await copies).map((result) => ddtInheritancePageSchema.parse(result));
+    expect(copiedPages.reduce((sum, item) => sum + item.inheritedCount, 0)).toBe(64);
+    expect(copiedPages.reduce((sum, item) => sum + item.skippedCount, 0)).toBe(64);
+    await expect(
+      pool.inheritDdtCases(
+        { ...inheritance, input: { ...inheritance.input, cursor: copiedPages[0]!.nextCursor } },
+        cancelled.signal,
+      ),
+    ).rejects.toThrow();
+    expect(
+      handle.client
+        .prepare(
+          "SELECT count(*) AS count FROM ddt_cases WHERE project_version_id = 'target-version'",
+        )
+        .get(),
+    ).toEqual({ count: 64 });
   } finally {
     await pool.close();
     server.closeAllConnections();

@@ -57,6 +57,74 @@ const executionClassColumns = `${ddtExecutionClassIdSql} AS executionCaseDefinit
 export class SqliteDdtRepository implements DdtRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
+  async inheritCasesPage(input: Parameters<DdtRepository["inheritCasesPage"]>[0]) {
+    return retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        for (const scope of [input.source, input.target]) {
+          const valid = this.handle.client
+            .prepare(
+              `SELECT 1 FROM test_stages s
+          JOIN project_versions v ON v.id = s.project_version_id
+          WHERE s.project_id = ? AND v.project_id = s.project_id
+            AND v.id = ? AND s.id = ?`,
+            )
+            .get(...scopeParameters(scope));
+          if (!valid)
+            throw new DomainError(
+              "DDT_SCOPE_NOT_FOUND",
+              "来源或目标版本、阶段已不存在，请重新选择。",
+            );
+        }
+        // No JSON body crosses the worker boundary. A window has at most 64 rows
+        // and 2 MiB of bodies, except that one large case must still make progress.
+        const rows = this.handle.client
+          .prepare(
+            `WITH candidates AS (
+        SELECT id, case_id_normalized, length(CAST(data_json AS BLOB)) AS bytes
+        FROM ddt_cases WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
+          AND case_id_normalized > ? ORDER BY case_id_normalized LIMIT ?
+      ), bounded AS (
+        SELECT id, row_number() OVER (ORDER BY case_id_normalized) AS ordinal,
+          sum(bytes) OVER (ORDER BY case_id_normalized) AS total_bytes FROM candidates
+      ) SELECT id, case_id_normalized AS cursor FROM ddt_cases
+        WHERE id IN (SELECT id FROM bounded WHERE ordinal = 1 OR total_bytes <= 2097152)
+        ORDER BY case_id_normalized`,
+          )
+          .all(
+            ...scopeParameters(input.source),
+            input.cursor ?? "",
+            Math.min(input.targetIds.length, 64),
+          ) as Array<{ id: string; cursor: string }>;
+        const insert = this.handle.client.prepare(`INSERT INTO ddt_cases
+        (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
+         sr_num, sr_num_normalized, case_kind, data_json, source_name, revision,
+         created_by, updated_by, created_at, updated_at)
+        SELECT ?, ?, ?, ?, case_id, case_id_normalized, sr_num, sr_num_normalized,
+          case_kind, data_json, ?, 1, ?, ?, ?, ? FROM ddt_cases WHERE id = ?
+        ON CONFLICT(project_id, project_version_id, test_stage_id, case_id_normalized) DO NOTHING`);
+        let inheritedCount = 0;
+        for (const [index, row] of rows.entries()) {
+          inheritedCount += insert.run(
+            input.targetIds[index]!,
+            ...scopeParameters(input.target),
+            input.sourceName,
+            input.actorId ?? null,
+            input.actorId ?? null,
+            input.inheritedAt,
+            input.inheritedAt,
+            row.id,
+          ).changes;
+        }
+        const nextCursor = rows.at(-1)?.cursor;
+        return {
+          inheritedCount,
+          skippedCount: rows.length - inheritedCount,
+          ...(nextCursor ? { nextCursor } : {}),
+        };
+      }),
+    );
+  }
+
   async readValueSearchCandidates(
     scope: DdtScope,
     cursor = "",

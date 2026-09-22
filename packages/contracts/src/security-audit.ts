@@ -72,6 +72,7 @@ const actionsByCategory = {
     "case_source.restore": "恢复用例来源",
     "case_source.delete": "删除用例来源",
     "ddt_case.bulk_update": "批量修改数据驱动用例",
+    "ddt_case.inherit_version": "跨版本继承数据驱动用例",
     "ddt_case.execution_class": "修改数据驱动用例执行类",
     "ddt_case.trash": "将数据驱动用例移入回收站",
     "ddt_case.history_restore": "恢复数据驱动用例历史版本",

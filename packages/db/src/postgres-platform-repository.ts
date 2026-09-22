@@ -1195,9 +1195,9 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
       let inheritedCount = 0;
       let skippedCount = 0;
       for (const record of input.records) {
-        const source = await client.query<{ class_name: string }>(
-          `SELECT class_name FROM case_definitions
-           WHERE id = $1 AND project_id = $2 AND project_version_id = $3 AND test_stage_id = $4`,
+        const source = await client.query<{ class_name: string; revision: number }>(
+          `SELECT class_name, revision FROM case_definitions
+           WHERE id = $1 AND project_id = $2 AND project_version_id = $3 AND test_stage_id = $4 FOR SHARE`,
           [
             record.sourceCaseDefinitionId,
             input.projectId,
@@ -1210,6 +1210,15 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           throw new DomainError(
             "SOURCE_CASE_DEFINITION_NOT_FOUND",
             "继承来源用例不存在或不属于所选项目版本与测试阶段。",
+          );
+        }
+        if (
+          record.sourceRevision !== undefined &&
+          source.rows[0]!.revision !== record.sourceRevision
+        ) {
+          throw new DomainError(
+            "SOURCE_CASE_REVISION_CONFLICT",
+            "来源用例刚刚更新，本批未保存，请继续继承以读取最新内容。",
           );
         }
         const existing = await client.query(
@@ -1236,7 +1245,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
             record.targetCaseDefinitionId,
             input.targetProjectVersionId,
             input.targetTestStageId,
-            input.actorId,
+            input.actorId ?? null,
             input.inheritedAt,
             record.sourceCaseDefinitionId,
           ],
@@ -1255,7 +1264,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           [
             record.targetCaseVersionId,
             record.targetCaseDefinitionId,
-            input.actorId,
+            input.actorId ?? null,
             input.inheritedAt,
             record.sourceCaseDefinitionId,
           ],

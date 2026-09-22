@@ -33,6 +33,7 @@ import type {
   FailureAnalysisExecution,
   FailureAnalysisInheritanceScope,
   FailureAnalysisRecentSuccess,
+  DdtInheritancePage,
 } from "@autoforge/contracts";
 import type {
   AuditEvent,
@@ -784,6 +785,7 @@ export type CaseListPage = {
 
 export type InheritCaseDefinitionRecord = {
   sourceCaseDefinitionId: string;
+  sourceRevision?: number;
   targetCaseDefinitionId: string;
   targetCaseVersionId: string;
   methods: Array<{ sourceMethodId: string; targetMethodId: string }>;
@@ -967,7 +969,7 @@ export interface CaseCatalogRepository {
     targetProjectVersionId: string;
     targetTestStageId: string;
     records: InheritCaseDefinitionRecord[];
-    actorId: string;
+    actorId?: string | undefined;
     inheritedAt: string;
   }): Promise<{ inheritedCount: number; skippedCount: number }>;
   listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]>;
@@ -1082,6 +1084,16 @@ export type CreateCaseSuiteRecord = {
 };
 
 export interface DdtRepository {
+  /** Copy a bounded source window atomically; existing target CaseIDs are never changed. */
+  inheritCasesPage(input: {
+    source: DdtScope;
+    target: DdtScope;
+    targetIds: readonly string[];
+    cursor?: string;
+    sourceName: string;
+    actorId?: string;
+    inheritedAt: string;
+  }): Promise<DdtInheritancePage>;
   listRequirementCategories(
     scope: DdtScope,
     query: { query: string; cursor?: string; limit: number },

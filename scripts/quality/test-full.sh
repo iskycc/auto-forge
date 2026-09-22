@@ -300,6 +300,7 @@ run_adapter_tests() {
       packages/db/test/postgres-transaction.integration.test.ts \
       packages/db/test/api-token-contention.integration.test.ts \
       packages/db/test/ddt-value-search.integration.test.ts \
+      packages/db/test/ddt-inheritance.integration.test.ts \
       packages/db/test/postgres-failure-analysis.integration.test.ts \
       packages/db/test/failure-analysis-history-scope.integration.test.ts \
       packages/db/test/failure-analysis-migration.integration.test.ts \

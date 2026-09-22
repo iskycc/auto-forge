@@ -47,6 +47,8 @@ export type WorkTask =
   | { kind: "create-batch"; input: unknown }
   | { kind: "create-single-ddt-case"; input: unknown }
   | { kind: "search-ddt-values"; input: unknown }
+  | { kind: "inherit-ddt-cases"; input: unknown }
+  | { kind: "inherit-testng-cases"; input: unknown }
   | {
       kind: "parse-file";
       operation: "inspect-jar" | "read-jar-source" | "parse-ddt";

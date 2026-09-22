@@ -127,3 +127,22 @@ export type JarInspection = z.infer<typeof jarInspectionSchema>;
 export type JarImportResult = z.infer<typeof jarImportResultSchema>;
 export type JarImportJob = z.infer<typeof jarImportJobSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
+
+// Each request copies a bounded slice; the cursor resumes without replaying completed slices.
+export const inheritTestNgCasesInputSchema = z.object({
+  projectId: z.string().min(1).max(128),
+  sourceProjectVersionId: z.string().min(1).max(128),
+  sourceTestStageId: z.string().min(1).max(128),
+  targetProjectVersionId: z.string().min(1).max(128),
+  targetTestStageId: z.string().min(1).max(128),
+  cursor: z.string().min(1).max(2_048).optional(),
+});
+
+export const testNgInheritancePageSchema = z.object({
+  inheritedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  nextCursor: z.string().optional(),
+});
+
+export type InheritTestNgCasesInput = z.infer<typeof inheritTestNgCasesInputSchema>;
+export type TestNgInheritancePage = z.infer<typeof testNgInheritancePageSchema>;

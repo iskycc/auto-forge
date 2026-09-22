@@ -3,11 +3,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   CaseSourceService,
+  CaseDefinitionService,
   PlatformOperationsService,
   DdtImportService,
   ImportTestNgJarService,
   ReadModelSnapshotService,
   searchDdtValues,
+  inheritDdtCases,
 } from "@autoforge/application";
 import {
   jobEnvelopeSchema,
@@ -15,6 +17,8 @@ import {
   createSingleCaseRunInputSchema,
   ddtScopeSchema,
   ddtValueSearchInputSchema,
+  inheritDdtCasesInputSchema,
+  inheritTestNgCasesInputSchema,
 } from "@autoforge/contracts";
 import { z } from "zod";
 import {
@@ -176,6 +180,43 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
   await clockInitialization;
   clock.now();
   switch (task.kind) {
+    case "inherit-testng-cases": {
+      if (!backgroundAllowed())
+        throw new DomainError("PLATFORM_BUSY", "平台正在处理高优先级工作，请稍后继续继承。");
+      const input = inheritTestNgCasesInputSchema
+        .extend({ actorId: z.string().min(1).max(128).optional() })
+        .parse(task.input);
+      const catalog =
+        configuration.mode === "lite"
+          ? new SqliteCaseCatalogRepository(sqliteHandle())
+          : new PostgresCaseCatalogRepository(postgresHandle());
+      return new CaseDefinitionService(catalog, clock, { next: () => uuidV7() }).inheritPage(input);
+    }
+    case "inherit-ddt-cases": {
+      if (!backgroundAllowed())
+        throw new DomainError("PLATFORM_BUSY", "平台正在处理高优先级工作，请稍后继续继承。");
+      const { scope, input, sourceName, actorId } = z
+        .object({
+          scope: ddtScopeSchema,
+          input: inheritDdtCasesInputSchema,
+          sourceName: z.string().min(1).max(1_024),
+          actorId: z.string().min(1).max(128).optional(),
+        })
+        .parse(task.input);
+      const repository =
+        configuration.mode === "lite"
+          ? new SqliteDdtRepository(sqliteHandle())
+          : new PostgresDdtRepository(postgresHandle());
+      return inheritDdtCases(
+        repository,
+        clock,
+        { next: () => uuidV7() },
+        scope,
+        input,
+        sourceName,
+        actorId,
+      );
+    }
     case "create-batch":
       return schedulingService().create(createRunBatchInputSchema.parse(task.input));
     case "create-single-ddt-case": {

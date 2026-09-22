@@ -290,6 +290,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           targetTestStageId: stageB,
           records: [
             {
+              sourceRevision: 0,
               sourceCaseDefinitionId: stableCaseId,
               targetCaseDefinitionId: otherVersionCaseId,
               targetCaseVersionId: `case-version-b-v1-${suffix}`,
@@ -302,6 +303,29 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
             },
           ],
           actorId: inheritanceActorId,
+          inheritedAt: "2026-08-21T00:01:30.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "SOURCE_CASE_REVISION_CONFLICT" });
+      await expect(
+        catalog.inheritCaseDefinitions({
+          projectId,
+          sourceProjectVersionId: versionA,
+          sourceTestStageId: stageA,
+          targetProjectVersionId: versionB,
+          targetTestStageId: stageB,
+          records: [
+            {
+              sourceCaseDefinitionId: stableCaseId,
+              targetCaseDefinitionId: otherVersionCaseId,
+              targetCaseVersionId: `case-version-b-v1-${suffix}`,
+              methods: [
+                {
+                  sourceMethodId: sourceA2Record.cases[0]!.methods[0]!.methodId,
+                  targetMethodId: `case-version-b-method-${suffix}`,
+                },
+              ],
+            },
+          ],
           inheritedAt: "2026-08-21T00:01:30.000Z",
         }),
       ).resolves.toEqual({ inheritedCount: 1, skippedCount: 0 });

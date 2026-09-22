@@ -56,6 +56,68 @@ export class PostgresDdtRepository implements DdtRepository {
     await this.handle.ready;
   }
 
+  async inheritCasesPage(input: Parameters<DdtRepository["inheritCasesPage"]>[0]) {
+    await this.ready();
+    return runPostgresTransaction(this.handle, async (client) => {
+      for (const scope of [input.source, input.target]) {
+        const valid = await client.query(
+          `SELECT 1 FROM test_stages s
+          JOIN project_versions v ON v.id = s.project_version_id
+          WHERE s.project_id = $1 AND v.project_id = s.project_id
+            AND v.id = $2 AND s.id = $3`,
+          scopeValues(scope),
+        );
+        if (!valid.rowCount)
+          throw new DomainError(
+            "DDT_SCOPE_NOT_FOUND",
+            "来源或目标版本、阶段已不存在，请重新选择。",
+          );
+      }
+      // Lock only this bounded source window, so deletion/editing cannot change
+      // the copied body between selection and insertion. Never lock the scope.
+      const { rows } = await client.query<{ id: string; cursor: string }>(
+        `WITH candidates AS MATERIALIZED (
+        SELECT id, case_id_normalized, octet_length(data_json) AS bytes
+        FROM ddt_cases WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3
+          AND case_id_normalized > $4 ORDER BY case_id_normalized LIMIT $5
+      ), bounded AS (
+        SELECT id, row_number() OVER (ORDER BY case_id_normalized) AS ordinal,
+          sum(bytes) OVER (ORDER BY case_id_normalized) AS total_bytes FROM candidates
+      ) SELECT id, case_id_normalized AS cursor FROM ddt_cases
+        WHERE id IN (SELECT id FROM bounded WHERE ordinal = 1 OR total_bytes <= 2097152)
+        ORDER BY case_id_normalized FOR SHARE`,
+        [...scopeValues(input.source), input.cursor ?? "", Math.min(input.targetIds.length, 64)],
+      );
+      let inheritedCount = 0;
+      for (const [index, row] of rows.entries()) {
+        const inserted = await client.query(
+          `INSERT INTO ddt_cases
+          (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
+           sr_num, sr_num_normalized, case_kind, data_json, source_name, revision,
+           created_by, updated_by, created_at, updated_at)
+          SELECT $1, $2, $3, $4, case_id, case_id_normalized, sr_num, sr_num_normalized,
+            case_kind, data_json, $5, 1, $6, $6, $7, $7 FROM ddt_cases WHERE id = $8
+          ON CONFLICT(project_id, project_version_id, test_stage_id, case_id_normalized) DO NOTHING`,
+          [
+            input.targetIds[index]!,
+            ...scopeValues(input.target),
+            input.sourceName,
+            input.actorId ?? null,
+            input.inheritedAt,
+            row.id,
+          ],
+        );
+        inheritedCount += inserted.rowCount ?? 0;
+      }
+      const nextCursor = rows.at(-1)?.cursor;
+      return {
+        inheritedCount,
+        skippedCount: rows.length - inheritedCount,
+        ...(nextCursor ? { nextCursor } : {}),
+      };
+    });
+  }
+
   async readValueSearchCandidates(
     scope: DdtScope,
     cursor = "",

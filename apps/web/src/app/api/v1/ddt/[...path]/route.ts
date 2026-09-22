@@ -7,6 +7,8 @@ import {
   ddtCaseListInputSchema,
   ddtValueSearchInputSchema,
   ddtValueSearchPageSchema,
+  inheritDdtCasesInputSchema,
+  ddtInheritancePageSchema,
   resolveDdtImportColumnsInputSchema,
   setDdtSrExecutionClassInputSchema,
   setDdtSrCategoryInputSchema,
@@ -28,7 +30,7 @@ import { z } from "zod";
 
 import { apiErrorResponse, readDdtUploads, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
-import { authorizeDdtScope } from "@/lib/ddt-api";
+import { authorizeDdtScope, ddtScopeQuery } from "@/lib/ddt-api";
 import { workDispatcher } from "@/lib/work-runtime";
 
 export const runtime = "nodejs";
@@ -248,6 +250,41 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     context,
     permission,
     async ({ identity, scope, services, path, currentRequestId }) => {
+      if (matches(path, "cases", "inherit")) {
+        const input = inheritDdtCasesInputSchema.parse(await readJsonBody(request, 8 * 1_024));
+        const source = {
+          projectId: scope.projectId,
+          projectVersionId: input.sourceProjectVersionId,
+          testStageId: input.sourceTestStageId,
+        };
+        const { labels } = await authorizeDdtScope(
+          identity,
+          "case.read",
+          new URL(`?${ddtScopeQuery(source)}`, request.url),
+        );
+        const dispatcher = workDispatcher();
+        if (!dispatcher?.inheritDdtCases)
+          throw new DomainError("PLATFORM_BUSY", "继承服务暂时不可用，请稍后重试。");
+        const result = ddtInheritancePageSchema.parse(
+          await dispatcher.inheritDdtCases(
+            {
+              scope,
+              input,
+              sourceName: `继承自 ${labels.version} / ${labels.stage}`,
+              ...(ddtActorId(identity) ? { actorId: ddtActorId(identity) } : {}),
+            },
+            request.signal,
+          ),
+        );
+        if (result.inheritedCount > 0) await services.readModels.invalidate(scope.projectId);
+        await audit(identity, services, scope, currentRequestId, "ddt_case.inherit_version", {
+          sourceProjectVersionId: input.sourceProjectVersionId,
+          sourceTestStageId: input.sourceTestStageId,
+          inheritedCount: result.inheritedCount,
+          skippedCount: result.skippedCount,
+        });
+        return NextResponse.json(result);
+      }
       if (isCaseAction(path, "execute")) {
         const input = createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1_024));
         const batch = await services.runBatches.createSingleDdtCase(scope, path[1]!, input);

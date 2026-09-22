@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { JarImporter } from "@/components/jar-importer";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
 import {
   selectableProjectIds,
   selectedProjectHierarchy,
@@ -35,11 +35,17 @@ export default async function ImportJarPage() {
         <div>
           <span className="eyebrow">用例来源</span>
           <h1>导入 TestNG JAR</h1>
-          <p>静态读取 class 注解，预览测试类和方法后再写入用例资产。</p>
+          <p>上传 JAR 扫描导入，或从其他版本继承已有用例。</p>
         </div>
       </section>
       <JarImporter
         maxJarBytes={services.config.maxJarBytes}
+        versions={structure.versions.map(({ id, name, stages }) => ({
+          id,
+          name,
+          stages: stages.map(({ id, name }) => ({ id, name })),
+        }))}
+        canInherit={hasPermission(identity, "case.read", projectId)}
         projectId={projectId}
         projectName={projectName}
         projectVersionId={projectVersion?.id}

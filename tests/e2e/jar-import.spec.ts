@@ -76,6 +76,212 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+test("inherits TestNG cases from the JAR import page without reuploading or overwriting", async ({
+  page,
+  playwright,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const slug = `testng-inherit-${randomUUID().slice(0, 8)}`;
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: "TestNG 继承验证", slug },
+  });
+  expect(project.status).toBe(201);
+  const projectId = project.body.id;
+  const source = await createAdditionalProjectHierarchy(page, projectId);
+  const target = await createAdditionalProjectHierarchy(page, projectId);
+  const files = Object.fromEntries(
+    Array.from({ length: 31 }, (_, index) => {
+      const className = `inheritance.Case${String(index).padStart(3, "0")}`;
+      return [
+        `${className.replaceAll(".", "/")}.class`,
+        buildClassFile({
+          className,
+          methods: [
+            {
+              name: "sourceMethod",
+              annotations: [{ type: "Test", values: { groups: ["inherited"] } }],
+            },
+          ],
+        }),
+      ];
+    }),
+  );
+  expect(
+    (
+      await importJarWithIdempotencyKey(page, {
+        ...source,
+        projectId,
+        jar: zipSync(files),
+        fileName: "inherit-source.jar",
+        idempotencyKey: randomUUID(),
+      })
+    ).status,
+  ).toBe("succeeded");
+  expect(
+    (
+      await importJarWithIdempotencyKey(page, {
+        ...target,
+        projectId,
+        jar: zipSync({
+          "inheritance/Case000.class": buildClassFile({
+            className: "inheritance.Case000",
+            methods: [{ name: "targetMethod", annotations: [{ type: "Test" }] }],
+          }),
+        }),
+        fileName: "inherit-target.jar",
+        idempotencyKey: randomUUID(),
+      })
+    ).status,
+  ).toBe("succeeded");
+  await selectProjectContext(page, projectId, target.projectVersionId, target.testStageId);
+  await page.goto("/cases/import");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `testng-inheritance-page-${width}`);
+  }
+  await page.getByRole("button", { name: "从其他版本继承", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "从其他版本继承 TestNG 用例", exact: true });
+  await expect(dialog.getByRole("button", { name: "开始继承", exact: true })).toBeDisabled();
+  await expect(
+    dialog.getByLabel("来源版本").locator(`option[value="${target.projectVersionId}"]`),
+  ).toHaveCount(0);
+  await dialog.getByLabel("来源版本").selectOption(source.projectVersionId);
+  await dialog.getByLabel("来源测试阶段").selectOption(source.testStageId);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `testng-inheritance-ready-${width}`);
+  }
+  const endpoint = "/api/v1/case-sources/jar/inherit";
+  const pattern = `**${endpoint}`;
+  // Make the first failure deterministic; the server is used for every actual copy.
+  await page.route(
+    pattern,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "继承服务繁忙，请稍后继续。",
+            requestId: "test",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "开始继承", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("继承服务繁忙");
+  await expect(dialog.getByRole("status")).toContainText("新增 0 条");
+  const requests: Record<string, unknown>[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === endpoint)
+      requests.push(request.postDataJSON() as Record<string, unknown>);
+  });
+  async function finish() {
+    await expect
+      .poll(
+        async () => {
+          const resume = dialog.getByRole("button", { name: "继续继承", exact: true });
+          if ((await resume.isVisible()) && (await resume.isEnabled())) {
+            const error = dialog.getByRole("alert");
+            if (await error.isVisible()) await expect(error).toContainText(/繁忙|高优先级/u);
+            await resume.click();
+          }
+          return dialog.getByRole("status").textContent();
+        },
+        { timeout: 45_000, intervals: [500, 1_000] },
+      )
+      .toContain("继承完成");
+  }
+  await finish();
+  await expect(dialog.getByRole("status")).toContainText("新增 30 条 · 跳过 1 条已有用例");
+  expect(requests.some((request) => typeof request.cursor === "string")).toBe(true);
+  await expect(page.locator(".toast-viewport")).toContainText("TestNG 继承完成");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `testng-inheritance-complete-${width}`);
+  }
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  type Case = {
+    id: string;
+    className: string;
+    revision: number;
+    sourceId: string;
+    currentVersion: number;
+    displayName: string;
+    methods: Array<{ id: string; methodName: string }>;
+  };
+  async function list(scope: typeof source) {
+    const response = await page.request.get(
+      `/api/v1/case-definitions?${new URLSearchParams({ ...scope, projectId: projectId, limit: "100" })}`,
+    );
+    expect(response.status()).toBe(200);
+    return ((await response.json()) as { items: Case[] }).items;
+  }
+  const originals = await list(source);
+  const copies = await list(target);
+  expect(copies).toHaveLength(31);
+  expect(
+    copies.find((item) => item.className === "inheritance.Case000")?.methods[0]?.methodName,
+  ).toBe("targetMethod");
+  const copy = copies.find((item) => item.className === "inheritance.Case001")!;
+  const original = originals.find((item) => item.className === copy.className)!;
+  expect(copy.id).not.toBe(original.id);
+  expect(copy.methods[0]?.id).not.toBe(original.methods[0]?.id);
+  expect(copy.methods[0]?.methodName).toBe("sourceMethod");
+  expect(copy.sourceId).toBe(original.sourceId);
+  expect(copy.currentVersion).toBe(1);
+  const update = await browserJson(page, `/api/v1/case-definitions/${copy.id}`, {
+    method: "PATCH",
+    body: { expectedRevision: copy.revision, displayName: "目标独立修改" },
+  });
+  expect(update.status).toBe(200);
+  expect((await list(source)).find((item) => item.id === original.id)?.displayName).toBe(
+    original.displayName,
+  );
+  const input = {
+    projectId: projectId,
+    sourceProjectVersionId: source.projectVersionId,
+    sourceTestStageId: source.testStageId,
+    targetProjectVersionId: target.projectVersionId,
+    targetTestStageId: target.testStageId,
+  };
+  const wrongStage = await browserJson<{ error: { code: string } }>(page, endpoint, {
+    method: "POST",
+    body: { ...input, sourceTestStageId: target.testStageId },
+  });
+  expect(wrongStage.body.error.code).toBe("CASE_IMPORT_STAGE_REQUIRED");
+  const anonymous = await playwright.request.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    expect(
+      (
+        await anonymous.post(endpoint, {
+          data: input,
+          headers: { origin: new URL(page.url()).origin },
+        })
+      ).status(),
+    ).toBe(401);
+  } finally {
+    await anonymous.dispose();
+  }
+  await page.getByRole("button", { name: "从其他版本继承", exact: true }).click();
+  await dialog.getByLabel("来源版本").selectOption(source.projectVersionId);
+  await dialog.getByLabel("来源测试阶段").selectOption(source.testStageId);
+  await dialog.getByRole("button", { name: "开始继承", exact: true }).click();
+  await finish();
+  await expect(dialog.getByRole("status")).toContainText("新增 0 条 · 跳过 31 条已有用例");
+  expect((await list(target)).find((item) => item.id === copy.id)?.displayName).toBe(
+    "目标独立修改",
+  );
+});
+
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
   test.setTimeout(300_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1741,17 +1947,18 @@ async function ensureProjectHierarchy(
 
 async function createAdditionalProjectHierarchy(
   page: Page,
+  projectId = DEFAULT_PROJECT_ID,
 ): Promise<{ projectVersionId: string; testStageId: string }> {
   const suffix = randomUUID().slice(0, 8);
   const headers = { origin: new URL(page.url()).origin };
   const versionResponse = await page.request.post(
-    `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions`,
+    `/api/v1/projects/${encodeURIComponent(projectId)}/versions`,
     { data: { name: `跨版本导入 ${suffix}` }, headers },
   );
   expect(versionResponse.status()).toBe(201);
   const version = (await versionResponse.json()) as { id: string };
   const stageResponse = await page.request.post(
-    `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions/${encodeURIComponent(version.id)}/stages`,
+    `/api/v1/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(version.id)}/stages`,
     { data: { name: "回归阶段", description: "验证相同 JAR 跨版本导入" }, headers },
   );
   expect(stageResponse.status()).toBe(201);
@@ -1763,6 +1970,7 @@ async function importJarWithIdempotencyKey(
   page: Page,
   input: {
     jar: Uint8Array;
+    projectId?: string;
     fileName: string;
     projectVersionId: string;
     testStageId: string;
@@ -1773,7 +1981,7 @@ async function importJarWithIdempotencyKey(
   result?: { duplicate: boolean; importedClassCount: number };
 }> {
   const response = await page.request.post(
-    `/api/v1/case-sources/jar/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&projectVersionId=${encodeURIComponent(input.projectVersionId)}&testStageId=${encodeURIComponent(input.testStageId)}`,
+    `/api/v1/case-sources/jar/import?projectId=${encodeURIComponent(input.projectId ?? DEFAULT_PROJECT_ID)}&projectVersionId=${encodeURIComponent(input.projectVersionId)}&testStageId=${encodeURIComponent(input.testStageId)}`,
     {
       headers: {
         origin: new URL(page.url()).origin,

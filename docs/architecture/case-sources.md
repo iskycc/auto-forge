@@ -36,6 +36,24 @@
 - 跨版本继承会在目标阶段创建独立 `CaseDefinition` 与 v1，但 `sourceId` 仍指向来源 JAR；因此继承
   不复制对象，来源删除守卫也会把这些目标版本引用计入，避免误删仍可执行的共享 JAR。
 
+## 从 JAR 导入页继承
+
+`POST /api/v1/case-sources/jar/inherit` 接收 `projectId`、`sourceProjectVersionId`、
+`sourceTestStageId`、`targetProjectVersionId`、`targetTestStageId` 和可选 `cursor`；
+返回 `inheritedCount`、`skippedCount` 和可选 `nextCursor`。要求同项目的来源管理与用例读取权限，
+源、目标层级均在入口校验，不接受同版本继承。
+
+Lite/Full 共用应用分页逻辑，每次最多 25 个 TestNG 用例（保留原启停与归档状态），在维护工作线程执行，
+每页独立短事务，SQLite 使用有界锁退避，Full 使用目标阶段导入锁并共享锁定本页来源记录。
+应用读取后来源修订号发生变化时整页拒绝，继续操作会重新读取，避免当前快照与方法不一致。
+将当前定义和当前执行快照复制为目标独立定义与 v1，沿用来源 JAR 引用；不复制历史、任务成员、JDK 和依赖包。
+同完整类名跳过，不覆盖目标，也不会把目标阶段的权威来源切换到原版本。
+
+前台串行请求，每次最长 15 秒，约 30 秒后主动暂停；资源紧张时后台可返回 `PLATFORM_BUSY`，
+前台保留游标手动继续。暂停等待当前页返回后生效；关闭或离开页面停止后续请求，但已提交部分保留。
+响应丢失时再次请求会跳过已写入类，因此不会重复，统计可能计为跳过。
+刷新页面后不保留游标，重新发起依靠相同类名跳过恢复。每页更新后使后台快照和浏览器缓存失效。
+
 ## 归档与恢复
 
 `PATCH /api/v1/case-sources/{sourceId}` 携带 `archived` 与 `expectedRevision` 在 `active`/`archived` 之间切换。归档来源仍在来源列表中可见并标记状态，其用例与历史执行保持可读。当前归档是纯生命周期标记：只有 `active` 来源允许删除，归档是来源退役前的推荐状态。

@@ -89,6 +89,11 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         ddtContent={
           projectId && projectVersion && testStage ? (
             <DdtManagementWorkspace
+              versions={(structure?.versions ?? []).map((version) => ({
+                id: version.id,
+                name: version.name,
+                stages: version.stages.map((stage) => ({ id: stage.id, name: stage.name })),
+              }))}
               scopeLabels={{
                 project: projects.find((project) => project.id === projectId)?.name ?? projectId,
                 version: projectVersion.name,

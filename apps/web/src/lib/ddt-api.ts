@@ -20,19 +20,24 @@ export async function authorizeDdtScope(
   identity: AuthenticatedIdentity,
   permission: Permission,
   url: URL,
-): Promise<{ scope: DdtScope; services: PlatformServices }> {
+): Promise<{
+  scope: DdtScope;
+  services: PlatformServices;
+  labels: { version: string; stage: string };
+}> {
   const scope = ddtScopeFromUrl(url);
   authorizedProjectScope(identity, permission, scope.projectId);
   const services = await getPlatformServices();
   const structure = await services.projectStructures.list(scope.projectId);
   const version = structure.versions.find((item) => item.id === scope.projectVersionId);
-  if (!version || !version.stages.some((stage) => stage.id === scope.testStageId)) {
+  const stage = version?.stages.find((item) => item.id === scope.testStageId);
+  if (!version || !stage) {
     throw new DomainError(
       "DDT_SCOPE_NOT_FOUND",
       "指定的项目版本或测试阶段不存在，或不属于当前项目。",
     );
   }
-  return { scope, services };
+  return { scope, services, labels: { version: version.name, stage: stage.name } };
 }
 
 export function ddtScopeQuery(scope: DdtScope): string {
