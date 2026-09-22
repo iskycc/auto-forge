@@ -338,24 +338,43 @@ test("topbar hierarchy selectors support keyboard opening, searching and focus r
   await page.goto("/settings/projects");
   const trigger = page.getByRole("button", { name: "当前项目版本", exact: true });
   const listbox = page.getByRole("listbox", { name: "项目版本列表", exact: true });
-  await trigger.focus();
-  await trigger.press("ArrowDown");
-  await expect(listbox).toBeVisible();
-  await expect(listbox.getByRole("option", { name: "UI 验证版本", exact: true })).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await expect(listbox.getByRole("option", { name: "另一个验证版本", exact: true })).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(trigger).toBeFocused();
-  await expect(listbox).toHaveCount(0);
+  const contextSwitchRequests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      new URL(request.url()).pathname === "/api/v1/selected-project"
+    ) {
+      contextSwitchRequests.push(request.url());
+    }
+  });
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await trigger.focus();
+    await trigger.press("ArrowDown");
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole("option", { name: "UI 验证版本", exact: true })).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(
+      listbox.getByRole("option", { name: "另一个验证版本", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await expect(listbox).toHaveCount(0);
 
-  await trigger.press("Enter");
-  const search = page.locator(".project-picker-options").getByLabel("搜索项目版本");
-  await search.fill("UI 验证");
-  await search.press("ArrowUp");
-  await expect(listbox.getByRole("option")).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(listbox).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+    await trigger.press("Enter");
+    const search = page.locator(".project-picker-options").getByLabel("搜索项目版本");
+    await search.fill("UI 验证");
+    await search.press("ArrowUp");
+    await expect(listbox.getByRole("option")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(listbox).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(contextSwitchRequests).toEqual([]);
+    await captureUi(page, "topbar-keyboard-selection", viewport.width, false);
+  }
 });
 
 test("unified role scope selector exposes both system and project filters", async ({ page }) => {

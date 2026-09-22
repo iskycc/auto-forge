@@ -21,6 +21,8 @@ const projectId = "00000000-0000-7000-8000-000000000001";
 for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} background read model snapshots`,
+    // Each isolated fixture applies the full migration history before checking snapshot behavior.
+    { timeout: 30_000 },
     () => {
       it("retains the last published snapshot through repeated resource deferrals and still retries", async () => {
         const harness = await database(dialect);

@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} analysis activation migration`,
+    // Replaying historical schemas is integration setup, not a five-second query budget.
+    { timeout: 30_000 },
     () => {
       it("preserves worked-on batches, leaves untouched executions hidden and rolls back failed upgrades", async () => {
         const database = await legacyDatabase(dialect);
@@ -55,6 +57,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
 for (const dialect of ["sqlite", "postgres"] as const) {
   it.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} upgrades remark images without losing historical remarks or proof and supports rollback`,
+    { timeout: 30_000 },
     async () => {
       const database = await legacyDatabase(dialect);
       const folder = resolve(

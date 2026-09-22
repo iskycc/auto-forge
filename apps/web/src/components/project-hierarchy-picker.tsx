@@ -146,7 +146,7 @@ export function ProjectHierarchyPicker({
                   key={item.id}
                   onClick={() => {
                     closeAndFocusTrigger();
-                    onChange(item.id);
+                    if (!selected) onChange(item.id);
                   }}
                   role="option"
                   type="button"

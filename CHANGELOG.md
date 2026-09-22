@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 1.17.22 - 2026-09-23
+## 1.17.23 - 2026-09-23
 
 ### Changed and fixed
 
@@ -14,6 +14,7 @@ and known limitations.
 - 修复顶栏下拉方向键无法打开、搜索后向上选择及关闭后焦点恢复的问题；修复统一角色页面“全部范围”和“系统”筛选项未显示的问题。
 - 长用户显示名默认展示两行，可展开与收起，避免撑高用户和成员列表；统一新建层级弹窗的底部操作区。
 - 角色绑定按用户搜索后保持结果展开，避免提交筛选后看不到结果；补充用户跨页查找与最后一位管理员保护的回归验证。
+- 重复选择当前项目、版本或阶段时直接关闭下拉，避免无效切换请求与焦点丢失；为回放完整历史迁移的集成测试设置 30 秒上限，避免与默认 5 秒单测时限混用。
 
 ### Database, deployment and compatibility
 
@@ -23,9 +24,10 @@ and known limitations.
 
 ### Validation and known limitations
 
-- 分轮验证 41 个独立 Playwright 场景通过，包含 23 个页面入口、管理与授权流程、顶栏完整创建链路、DDT 工作台/公开 API/高级检索；修复后的最后一轮 23 项相关回归全部通过。
+- 分轮验证 41 个独立 Playwright 场景通过，包含 23 个页面入口、管理与授权流程、顶栏完整创建链路、DDT 工作台/公开 API/高级检索；修复后的最后一轮 23 项相关回归全部通过。 CI 发现的重复选择焦点问题修复后，再次验证三项顶栏交互，1024/1536 两种宽度下保持焦点且不提交无效请求。
 - 实际查看 1024×768、1536×1024 的页面与弹窗截图，授权场景另覆盖 1536×960；复查问题与代表截图见 [UI 复查报告](./docs/design/organization-ui-review-2026-09-23.md)。
 - 24 项相关单元测试、全仓格式/许可证检查、变更文件 lint、Web/测试类型检查及 Web 生产构建通过。
+- v1.17.22 在 CI 发现问题后已转回草稿，正式版本由 v1.17.23 替代。
 - 本地验证使用 Lite；未改动 Full 适配器和执行链路。完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行。
 
 ## 1.17.21 - 2026-09-22
