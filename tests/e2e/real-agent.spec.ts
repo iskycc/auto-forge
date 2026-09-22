@@ -2,11 +2,12 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { appAlert, ensureAdministrator } from "./support/session";
+import { selectJarForInspection } from "./support/jar-import";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -377,7 +378,12 @@ async function importTestJar(page: Page): Promise<void> {
   await ensureProjectHierarchy(page);
   await uploadAdapterDependencies(page);
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles(requiredEnvironment("E2E_REAL_TEST_JAR"));
+  const jarPath = requiredEnvironment("E2E_REAL_TEST_JAR");
+  await selectJarForInspection(page, {
+    name: basename(jarPath),
+    mimeType: "application/java-archive",
+    buffer: await readFile(jarPath),
+  });
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText("com.autoforge.acceptance.RealAgentFixture")).toBeVisible({
     timeout: 20_000,
