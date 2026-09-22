@@ -11,7 +11,7 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectUiIntegrity, inspectUiIntegrity } from "./support/ui-guard";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 
 const primaryRoutes = [
@@ -39,6 +39,55 @@ const primaryRoutes = [
   "/settings/platform?section=storage",
   "/account/security",
 ] as const;
+
+test("layout guard distinguishes floating actions from overlapping controls on the same surface", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <style>
+      body { margin: 0; min-height: 100vh; font: 14px sans-serif; }
+      input, button { box-sizing: border-box; height: 36px; width: 160px; font: inherit; }
+      input { position: absolute; left: 24px; bottom: 24px; }
+      footer { position: fixed; bottom: 0; left: 0; right: 0; height: 84px; background: white; z-index: 2; }
+      button { position: absolute; left: 24px; bottom: 24px; }
+      button + button { left: 200px; }
+    </style>
+    <input aria-label="Scrolling field" />
+    <footer><button>Save</button><button>Cancel</button></footer>
+  `);
+  await expectUiIntegrity(page);
+  await page.getByRole("button", { name: "Save", exact: true }).click({ trial: true });
+
+  await page.getByRole("button", { name: "Cancel", exact: true }).evaluate((button) => {
+    button.style.left = "24px";
+  });
+  expect((await inspectUiIntegrity(page)).overlapViolations).toEqual([
+    expect.objectContaining({ element: "button + button", label: "Save / Cancel" }),
+  ]);
+
+  await page.getByRole("button", { name: "Cancel", exact: true }).evaluate((button) => {
+    button.style.left = "200px";
+  });
+  await page.locator("footer").evaluate((footer) => {
+    footer.style.position = "absolute";
+  });
+  expect((await inspectUiIntegrity(page)).overlapViolations).toEqual([
+    expect.objectContaining({ element: "input + button" }),
+  ]);
+
+  await page.locator("footer").evaluate((footer) => {
+    footer.style.position = "fixed";
+  });
+  await page.getByLabel("Scrolling field").evaluate((input) => {
+    const separateSurface = document.createElement("aside");
+    separateSurface.style.cssText = "position: fixed; inset: 0; z-index: 1";
+    input.before(separateSurface);
+    separateSurface.append(input);
+  });
+  expect((await inspectUiIntegrity(page)).overlapViolations).toEqual([
+    expect.objectContaining({ element: "input + button" }),
+  ]);
+});
 
 test("administration entries are exposed as four-character first-level navigation", async ({
   page,

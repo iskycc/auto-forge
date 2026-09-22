@@ -15,7 +15,7 @@ type UiIntegrityReport = {
   viewportWidth: number;
 };
 
-export async function expectUiIntegrity(page: Page): Promise<void> {
+export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport> {
   // Viewport resizing can briefly expose old flex positions alongside the new media query sizes.
   // Inspect after the browser has painted the responsive layout, rather than that intermediate frame.
   await page.evaluate(
@@ -24,7 +24,7 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       }),
   );
-  const report = await page.evaluate((): UiIntegrityReport => {
+  return page.evaluate((): UiIntegrityReport => {
     const minimumFontSize = 12;
     const minimumControlHeight = 32;
     type PaintedBounds = {
@@ -127,6 +127,20 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
     const interactiveElements = Array.from(
       inspectionRoot.querySelectorAll<HTMLElement>(controlSelector),
     ).filter(isVisible);
+    const floatingSurface = (element: HTMLElement): HTMLElement | undefined => {
+      for (
+        let ancestor = element.parentElement;
+        ancestor && ancestor !== inspectionRoot;
+        ancestor = ancestor.parentElement
+      ) {
+        const position = window.getComputedStyle(ancestor).position;
+        if (position === "fixed" || position === "sticky") return ancestor;
+      }
+      return undefined;
+    };
+    const floatingSurfaces = new Map(
+      interactiveElements.map((element) => [element, floatingSurface(element)]),
+    );
     const overlapViolations: UiViolation[] = [];
     for (let index = 0; index < interactiveElements.length; index += 1) {
       const current = interactiveElements[index];
@@ -143,6 +157,19 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
           Math.min(currentBounds.bottom, peerBounds.bottom) -
           Math.max(currentBounds.top, peerBounds.top);
         if (overlapWidth <= 1 || overlapHeight <= 1) continue;
+        const currentSurface = floatingSurfaces.get(current);
+        const peerSurface = floatingSurfaces.get(peer);
+        // Fixed headers and sticky action bars intentionally cover scrolling
+        // fields. Only exempt a painted overlay over the normal document;
+        // collisions within or between floating surfaces must still fail.
+        if (Boolean(currentSurface) !== Boolean(peerSurface)) {
+          const surface = currentSurface ?? peerSurface;
+          const paintedElement = document.elementFromPoint(
+            Math.max(currentBounds.left, peerBounds.left) + overlapWidth / 2,
+            Math.max(currentBounds.top, peerBounds.top) + overlapHeight / 2,
+          );
+          if (surface?.contains(paintedElement)) continue;
+        }
         overlapViolations.push({
           element: `${current.tagName.toLowerCase()} + ${peer.tagName.toLowerCase()}`,
           label: `${label(current)} / ${label(peer)}`,
@@ -182,7 +209,10 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
       viewportWidth: window.innerWidth,
     };
   });
+}
 
+export async function expectUiIntegrity(page: Page): Promise<void> {
+  const report = await inspectUiIntegrity(page);
   expect(report.fontViolations, "visible text smaller than 12px").toEqual([]);
   expect(report.controlViolations, "visible controls shorter than 32px").toEqual([]);
   expect(report.overlapViolations, "interactive controls overlapping each other").toEqual([]);
