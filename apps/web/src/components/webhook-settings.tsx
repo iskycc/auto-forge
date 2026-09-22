@@ -211,6 +211,15 @@ export function WebhookSettings({
             </span>
             <strong>尚未配置通知端点</strong>
             <p>创建 GET 或 POST Webhook，然后前往任务详情绑定。</p>
+            {canManage ? (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => setEditor({ ...EMPTY_EDITOR })}
+              >
+                创建第一个 Webhook
+              </Button>
+            ) : null}
           </div>
         ) : (
           <div className="webhook-card-grid">
@@ -305,7 +314,7 @@ export function WebhookSettings({
           <Button type="submit">筛选投递</Button>
         </form>
         {deliveries.length === 0 ? (
-          <div className="empty-state table-empty">
+          <div className="empty-state table-empty webhook-delivery-empty">
             <span className="empty-icon">
               <Send size={24} />
             </span>

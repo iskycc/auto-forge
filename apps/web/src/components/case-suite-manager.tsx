@@ -157,8 +157,7 @@ export function CaseSuiteManager({
             type="button"
             variant="ghost"
           >
-            <RefreshCw className={refreshing ? "spin" : ""} size={15} />{" "}
-            {canReadExecutions ? "刷新统计" : "刷新列表"}
+            <RefreshCw className={refreshing ? "spin" : ""} size={15} /> 刷新任务列表
           </Button>
           {canManage ? (
             <Button onClick={openCreateDialog} type="button" variant="primary">
@@ -178,8 +177,46 @@ export function CaseSuiteManager({
         onClose={() => !pending && setCreateOpen(false)}
         open={createOpen}
         title="创建用例任务"
+        protectUnsavedChanges
+        closeDisabled={pending}
+        footer={
+          <>
+            <Button
+              type="button"
+              data-dialog-dismiss
+              disabled={pending}
+              onClick={() => setCreateOpen(false)}
+            >
+              取消
+            </Button>{" "}
+            <Button
+              className="button button-primary"
+              type="submit"
+              form="suite-create-form"
+              disabled={
+                pending ||
+                !name.trim() ||
+                !selectedProjectVersionId ||
+                (createMode === "copy" && !sourceSuiteId)
+              }
+            >
+              {pending ? (
+                <LoaderCircle className="spin" size={16} />
+              ) : createMode === "copy" ? (
+                <Copy size={16} />
+              ) : (
+                <Plus size={16} />
+              )}{" "}
+              {createMode === "copy" ? "复制并编辑" : "创建任务"}
+            </Button>
+          </>
+        }
       >
-        <form className="stack-form action-dialog-form" onSubmit={createSuite}>
+        <form
+          id="suite-create-form"
+          className="stack-form action-dialog-form"
+          onSubmit={createSuite}
+        >
           <fieldset className="suite-create-mode">
             <legend>创建方式</legend>
             <label className={createMode === "blank" ? "selected" : ""}>
@@ -323,25 +360,6 @@ export function CaseSuiteManager({
               {error}
             </span>
           )}
-          <Button
-            className="button button-primary"
-            type="submit"
-            disabled={
-              pending ||
-              !name.trim() ||
-              !selectedProjectVersionId ||
-              (createMode === "copy" && !sourceSuiteId)
-            }
-          >
-            {pending ? (
-              <LoaderCircle className="spin" size={16} />
-            ) : createMode === "copy" ? (
-              <Copy size={16} />
-            ) : (
-              <Plus size={16} />
-            )}{" "}
-            {createMode === "copy" ? "复制并编辑" : "创建任务"}
-          </Button>
         </form>
       </ActionDialog>
       <section className="suite-list" aria-label="用例任务列表">

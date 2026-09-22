@@ -35,7 +35,7 @@ export function FailureAnalysisExecutionHistory({
           <h3>
             <History size={16} aria-hidden="true" /> 前 5 次执行
           </h3>
-          <p>同一任务、同一用例，每个已结束的历史批次取最终结果，按执行时间倒序。</p>
+          <small>同一任务、同一用例 · 最近 5 个批次的最终结果</small>
         </div>
         {claims.length > 1 ? (
           <Select

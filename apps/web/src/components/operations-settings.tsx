@@ -288,8 +288,7 @@ export function OperationsSettings({
         <section className="content-card settings-section">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Automation Identity</p>
-              <h2>服务账号与 API 令牌</h2>
+              <h2>账号与令牌</h2>
             </div>
             {canManageTokens ? (
               <Button
@@ -306,9 +305,7 @@ export function OperationsSettings({
               <KeyRound size={22} />
             )}
           </div>
-          <p className="settings-note">
-            令牌明文只在签发时显示一次，数据库仅保存 SHA-256 摘要；作用域不能超过服务账号权限。
-          </p>
+          <p className="settings-note">令牌仅在签发时显示一次；可用权限不能超过所属服务账号。</p>
           {issuedToken ? (
             <div className="issued-token" role="status">
               <span>
@@ -335,8 +332,33 @@ export function OperationsSettings({
             onClose={() => !pending && setCreateAccountOpen(false)}
             open={createAccountOpen}
             title="创建服务账号"
+            closeDisabled={pending}
+            footer={
+              <>
+                <Button
+                  type="button"
+                  data-dialog-dismiss
+                  onClick={() => setCreateAccountOpen(false)}
+                  disabled={pending}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  form="service-account-create"
+                  type="submit"
+                  disabled={pending}
+                >
+                  <Plus size={16} /> 创建服务账号
+                </Button>
+              </>
+            }
           >
-            <form className="settings-grid-form action-dialog-form" onSubmit={createAccount}>
+            <form
+              id="service-account-create"
+              className="settings-grid-form action-dialog-form"
+              onSubmit={createAccount}
+            >
               {formError ? (
                 <p className="form-error settings-wide-field" role="alert">
                   {formError}
@@ -352,9 +374,6 @@ export function OperationsSettings({
               </label>
               <PermissionCheckboxGroup label="系统权限" name="permissions" />
               <ProjectPermissionFields projects={projects} />
-              <Button className="button button-primary" disabled={pending} type="submit">
-                <Plus size={16} /> 创建服务账号
-              </Button>
             </form>
           </ActionDialog>
           {!canManageTokens ? (
@@ -459,10 +478,36 @@ export function OperationsSettings({
                     <ActionDialog
                       protectUnsavedChanges
                       title={`编辑服务账号：${account.name}`}
+                      closeDisabled={pending}
+                      footer={
+                        <>
+                          <Button
+                            className="button button-primary"
+                            disabled={pending}
+                            type="submit"
+                            form={`edit-service-account-${account.id}`}
+                          >
+                            保存账号
+                          </Button>
+                          <Button
+                            className={
+                              account.status === "active"
+                                ? "button button-danger-quiet"
+                                : "button button-secondary"
+                            }
+                            disabled={pending}
+                            onClick={() => void toggleAccount(account)}
+                            type="button"
+                          >
+                            {account.status === "active" ? "禁用账号" : "启用账号"}
+                          </Button>
+                        </>
+                      }
                       open
                       onClose={() => !pending && setEditingAccountId(undefined)}
                     >
                       <form
+                        id={`edit-service-account-${account.id}`}
                         className="settings-grid-form settings-subform"
                         onSubmit={(event) => void updateAccount(event, account)}
                       >
@@ -491,27 +536,6 @@ export function OperationsSettings({
                         <p className="settings-note settings-wide-field">
                           移除权限后，现有令牌不会重新显示或扩大作用域；后续鉴权会立即按账号与令牌作用域交集收紧。
                         </p>
-                        <span className="settings-form-actions">
-                          <Button
-                            className="button button-primary"
-                            disabled={pending}
-                            type="submit"
-                          >
-                            保存账号
-                          </Button>
-                          <Button
-                            className={
-                              account.status === "active"
-                                ? "button button-danger-quiet"
-                                : "button button-secondary"
-                            }
-                            disabled={pending}
-                            onClick={() => void toggleAccount(account)}
-                            type="button"
-                          >
-                            {account.status === "active" ? "禁用账号" : "启用账号"}
-                          </Button>
-                        </span>
                       </form>
                     </ActionDialog>
                   ) : null}
@@ -617,10 +641,13 @@ export function OperationsSettings({
           <div className="retention-policy-grid">
             {policies.map((policy) => (
               <form key={policy.category} onSubmit={(event) => void updateRetention(event, policy)}>
-                <strong>{retentionLabel(policy.category)}</strong>
-                <small>
-                  允许 {policy.minimumDays}–{policy.maximumDays} 天
-                </small>
+                <div>
+                  <strong>{retentionLabel(policy.category)}</strong>
+                  <small>
+                    已保存 {policy.retentionDays} 天 · 允许 {policy.minimumDays}–
+                    {policy.maximumDays} 天
+                  </small>
+                </div>
                 <label>
                   保留天数
                   <Input
@@ -665,8 +692,8 @@ export function OperationsSettings({
                   {canManageSettings ? (
                     <>
                       <Button
-                        className="button button-primary compact-button"
-                        disabled={pending}
+                        className={`button ${dirtyPolicies[policy.category] ? "button-primary" : "button-secondary"} compact-button`}
+                        disabled={pending || !dirtyPolicies[policy.category]}
                         type="submit"
                       >
                         保存

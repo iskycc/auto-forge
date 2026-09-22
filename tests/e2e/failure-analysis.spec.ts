@@ -105,6 +105,11 @@ test("long case names keep single, bulk and completed analysis dialogs within th
   await single.getByLabel("代码问题已提单", { exact: false }).check();
   await single.getByLabel("问题说明 *").fill("长名称不影响正常提交分析");
   await single.getByLabel("问题单链接或问题单号 *").fill("BUG-LONG-NAME");
+  await single.getByRole("button", { name: "关闭分析弹窗" }).click();
+  await expect(single.getByText("放弃未保存的修改？", { exact: true })).toBeVisible();
+  await single.getByRole("button", { name: "继续编辑", exact: true }).click();
+  await expect(single.getByLabel("问题说明 *")).toHaveValue("长名称不影响正常提交分析");
+  await expect(single.getByLabel("问题单链接或问题单号 *")).toHaveValue("BUG-LONG-NAME");
   await single.getByRole("button", { name: "提交分析" }).click();
   await expect(single).toBeHidden();
   await page.getByLabel("显示已完成分析").check();

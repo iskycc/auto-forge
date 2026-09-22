@@ -72,7 +72,7 @@ export function CheckboxGroup({
 
   return (
     <fieldset
-      className={`ui-checkbox-group ${className ?? ""}`}
+      className={`ui-checkbox-group ${options.length <= 5 && !normalized && !selectedOnly ? "compact-choices" : ""} ${className ?? ""}`}
       disabled={disabled}
       ref={fieldsetRef}
     >

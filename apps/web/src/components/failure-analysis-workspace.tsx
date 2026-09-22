@@ -65,6 +65,9 @@ import {
   writeFailureAnalysisPreferences,
 } from "@/lib/failure-analysis-preferences";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { ExpandableText } from "./expandable-text";
+import { useDialogInteraction } from "./use-dialog-interaction";
+import { DialogDiscardPrompt } from "./dialog-discard-prompt";
 import { useToast } from "@/components/ui-feedback";
 
 type WorkspaceView = "claim" | "workbench";
@@ -1432,6 +1435,31 @@ function CompleteAnalysisDialog({
     id: string;
     scope: FailureAnalysisInheritanceScope;
   }>();
+  const dialogRef = useRef<HTMLElement>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const nestedDialogOpen = Boolean(
+    logClaim ||
+    logComparison ||
+    previewImage ||
+    showCaseConfirmation ||
+    showConclusionPicker ||
+    inheritanceCandidate,
+  );
+  const hasUnsavedChanges =
+    !readOnly &&
+    (category !== initial?.category ||
+      issueDescription !== (initial?.issueDescription ?? "") ||
+      caseFixEvidence !== (initial?.caseFixEvidence ?? "") ||
+      ticketReference !== (initial?.ticketReference ?? "") ||
+      remark !== (initial?.remark ?? "") ||
+      remarkImages.length > 0 ||
+      Boolean(inheritedConclusion));
+  function requestClose() {
+    if (submitting || uploading || nestedDialogOpen) return;
+    if (hasUnsavedChanges) setConfirmDiscard(true);
+    else onClose();
+  }
+  useDialogInteraction({ dialogRef, open: true, active: !nestedDialogOpen, onClose: requestClose });
   const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
   const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
   const closeScreenshotPreview = useCallback(() => {
@@ -1778,7 +1806,7 @@ function CompleteAnalysisDialog({
       <div
         className="runner-update-overlay failure-analysis-overlay"
         role="presentation"
-        onClick={onClose}
+        onClick={requestClose}
       >
         <section
           aria-label={
@@ -1795,6 +1823,9 @@ function CompleteAnalysisDialog({
               ? true
               : undefined
           }
+          ref={dialogRef}
+          tabIndex={-1}
+          inert={nestedDialogOpen}
           className="runner-update-dialog failure-analysis-dialog failure-analysis-completion-dialog"
           data-read-only={readOnly ? "true" : undefined}
           onClick={(event) => event.stopPropagation()}
@@ -1825,25 +1856,32 @@ function CompleteAnalysisDialog({
                 {copying ? <LoaderCircle className="spin" size={14} /> : <Copy size={14} />}
                 复制用例信息
               </Button>
-              <Button aria-label="关闭分析弹窗" onClick={onClose} type="button">
+              <Button
+                disabled={submitting || uploading}
+                aria-label="关闭分析弹窗"
+                onClick={requestClose}
+                type="button"
+              >
                 <X size={16} />
               </Button>
             </div>
           </header>
           <div className="runner-update-body failure-analysis-dialog-body">
+            {confirmDiscard ? (
+              <DialogDiscardPrompt
+                onContinue={() => setConfirmDiscard(false)}
+                onDiscard={() => {
+                  if (!submitting && !uploading) onClose();
+                }}
+              />
+            ) : null}
             <section className="failure-analysis-case-summary">
-              <div>
-                <span className="eyebrow">用例基本信息</span>
-                <h3>
-                  {claims.length > 1 ? `${claims.length} 个最终失败用例` : claims[0]?.caseName}
-                </h3>
-                <p>可直接查看弹窗日志，或打开永久公开日志页重新执行该用例。</p>
-              </div>
+              {claims.length > 1 ? <h3>{claims.length} 个最终失败用例</h3> : null}
               <div className="failure-analysis-case-list">
                 {claims.map((claim) => (
                   <article key={claim.id}>
                     <div>
-                      <strong>{claim.caseName}</strong>
+                      <ExpandableText text={claim.caseName} label="用例名称" />
                       <code>{claim.className}</code>
                       <small>
                         第 {claim.attemptNumber} 次尝试 · {claim.failureSummary}
@@ -2116,7 +2154,12 @@ function CompleteAnalysisDialog({
             {error ? <p className="form-error">{error}</p> : null}
           </div>
           <div className="dialog-actions">
-            <Button onClick={onClose} type="button" variant="secondary">
+            <Button
+              disabled={submitting || uploading}
+              onClick={requestClose}
+              type="button"
+              variant="secondary"
+            >
               {readOnly ? "关闭" : "取消"}
             </Button>
             {!readOnly ? (

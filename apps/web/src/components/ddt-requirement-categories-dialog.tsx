@@ -255,7 +255,7 @@ export function DdtRequirementCategoriesDialog({
             <p className="ddt-association-hint">
               {query
                 ? "没有匹配的需求分类。"
-                : "暂无需求分类。请在“配置需求分类”中新建分类并选择执行类。"}
+                : "暂无需求分类。点击上方“新建分类”，为分类选择一个候选测试类。"}
             </p>
           ) : null}
           {page.nextCursor ? (

@@ -1,5 +1,6 @@
+import { ExecutionCaseFilter } from "@/components/execution-case-filter";
 import { ReadModelStatusBar } from "@/components/read-model-status";
-import { Button, DatetimeInput, Input, Select } from "@/components/ui";
+import { Button, DatetimeInput, Select } from "@/components/ui";
 import {
   ExecutionRecordsTable,
   type ExecutionRecordRow,
@@ -108,7 +109,7 @@ export default async function ExecutionRecordsPage({
       : {}),
   }));
   return (
-    <div className="page-stack">
+    <div className="page-stack execution-records-page">
       <section className="page-hero">
         <div>
           <span className="eyebrow">Execution Records</span>
@@ -119,17 +120,8 @@ export default async function ExecutionRecordsPage({
           <ClipboardList size={24} />
         </span>
       </section>
-      <section className="card case-scope-toolbar" aria-label="执行记录范围">
-        <div className="case-scope-heading">
-          <strong>当前执行范围</strong>
-          <span>仅展示顶栏当前项目版本创建的任务和执行批次。</span>
-        </div>
-        <div className="case-scope-current">
-          <span>
-            <small>项目版本</small>
-            <strong>{projectVersion?.name ?? "尚未配置"}</strong>
-          </span>
-        </div>
+      <section className="scope-caption" aria-label="执行记录范围">
+        当前版本：{projectVersion?.name ?? "尚未配置"} · 仅展示此版本的任务与执行批次
       </section>
       <form className="content-card run-history-filter" method="get">
         <label>
@@ -143,10 +135,14 @@ export default async function ExecutionRecordsPage({
             ))}
           </Select>
         </label>
-        <label>
-          用例 ID
-          <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
-        </label>
+        <ExecutionCaseFilter
+          key={`${filter.caseDefinitionId ?? ""}:${hierarchy.projectVersionId}:${hierarchy.testStageId}`}
+          initialId={filter.caseDefinitionId}
+          projectId={projectId}
+          projectVersionId={hierarchy.projectVersionId}
+          testStageId={hierarchy.testStageId}
+          canReadCases={hasPermission(identity, "case.read", projectId)}
+        />
         <label>
           状态
           <Select defaultValue={filter.status ?? ""} name="status">
@@ -159,9 +155,9 @@ export default async function ExecutionRecordsPage({
           </Select>
         </label>
         <label>
-          Runner
+          执行节点
           <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
-            <option value="">全部 Runner</option>
+            <option value="">全部执行节点</option>
             {runners.map((runner) => (
               <option key={runner.id} value={runner.id}>
                 {runner.name}
@@ -196,8 +192,8 @@ export default async function ExecutionRecordsPage({
         <Button className="button button-secondary" type="submit">
           筛选记录
         </Button>
-        <Link className="button button-secondary" href={`/execution-records?${refreshQuery}`}>
-          刷新
+        <Link className="button button-secondary" href="/execution-records">
+          重置筛选
         </Link>
       </form>
       {batchPage.statistics ? <ReadModelStatusBar snapshots={[batchPage.statistics]} /> : null}

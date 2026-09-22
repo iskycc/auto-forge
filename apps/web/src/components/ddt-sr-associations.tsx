@@ -142,8 +142,8 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
         </Button>
       </div>
       <p className="ddt-association-hint">
-        先配置需求分类及其执行类，再为 SR 选择分类。SR 下所有 DDT
-        用例共享分类执行类，后续导入自动继承。
+        配置顺序：① 加入候选测试类 → ② 新建需求分类并绑定执行类 → ③ 给 SR 设置分类。 SR
+        下全部用例继承该类，后续导入也会自动继承。
       </p>
       {!canManage ? (
         <p className="inline-notice">当前账号只可查看；配置需要用例管理权限。</p>
@@ -290,6 +290,18 @@ function DdtExecutionClassesDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [selectedAdds, setSelectedAdds] = useState<string[]>([]);
+  const [selectedRemoves, setSelectedRemoves] = useState<string[]>([]);
+  const [progress, setProgress] = useState("");
+  const [results, setResults] = useState<Array<{ name: string; message: string }>>([]);
+  const available = candidates.filter(
+    (item) =>
+      item.enabled &&
+      !item.archived &&
+      !range.items.some((included) => included.caseDefinitionId === item.caseDefinitionId),
+  );
+  const toggle = (ids: string[], id: string) =>
+    ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
   const activeRequest = useRef<AbortController | null>(null);
   const toast = useToast();
   const load = useCallback(
@@ -336,32 +348,56 @@ function DdtExecutionClassesDialog({
       activeRequest.current?.abort();
     };
   }, [load, refresh]);
-  const changeRange = async (item: DdtExecutionClass, included: boolean) => {
+  const changeRange = async (items: DdtExecutionClass[], included: boolean) => {
+    if (saving || !items.length) return;
     setSaving(true);
     setError("");
+    const outcomes: Array<{ name: string; message: string }> = [];
+    let failureMessage = "";
+    let revision = range.revision;
     try {
-      await requestDdtJson(endpoint("execution-range"), {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({
-          caseDefinitionId: item.caseDefinitionId,
-          className: item.className,
-          included,
-          expectedRevision: range.revision,
-        }),
-      });
-      toast.success(included ? "已加入候选测试类范围。" : "已从候选测试类范围移除。");
-      setRefresh((value) => value + 1);
-    } catch (failure) {
-      setError(errorMessage(failure));
-      toast.error(errorMessage(failure));
+      for (const item of items) {
+        setProgress(`正在保存 ${outcomes.length + 1} / ${items.length}`);
+        try {
+          await requestDdtJson(endpoint("execution-range"), {
+            method: "POST",
+            headers: jsonHeaders,
+            body: JSON.stringify({
+              caseDefinitionId: item.caseDefinitionId,
+              className: item.className,
+              included,
+              expectedRevision: revision,
+            }),
+          });
+          // Both repository adapters advance the configuration revision once per successful mutation.
+          revision += 1;
+          outcomes.push({ name: item.className, message: included ? "已加入" : "已移除" });
+          (included ? setSelectedAdds : setSelectedRemoves)((ids) =>
+            ids.filter((id) => id !== item.caseDefinitionId),
+          );
+        } catch (failure) {
+          failureMessage = `${item.className}：${errorMessage(failure)} 已保存 ${outcomes.length} / ${items.length} 项；后续项目未执行，请刷新后检查。`;
+          outcomes.push({ name: item.className, message: errorMessage(failure) });
+          break;
+        }
+      }
+      setResults(outcomes);
+      await load();
+      if (failureMessage) {
+        setError(failureMessage);
+        toast.error(failureMessage);
+      } else toast.success(`已${included ? "加入" : "移除"} ${items.length} 个测试类。`);
     } finally {
+      setProgress("");
       setSaving(false);
     }
   };
   return (
     <ActionDialog
       open
+      closeDisabled={saving}
+      protectUnsavedChanges
+      dirty={selectedAdds.length > 0 || selectedRemoves.length > 0}
       title="测试类候选范围"
       description="仅维护当前项目版本和测试阶段需要执行 DDT 的测试类。仍被需求分类或 SR 使用的类需先解除引用。"
       className="ddt-association-dialog"
@@ -388,6 +424,7 @@ function DdtExecutionClassesDialog({
           className="search-field"
           onSubmit={(event) => {
             event.preventDefault();
+            setSelectedAdds([]);
             setQuery(draft.trim());
           }}
         >
@@ -411,16 +448,60 @@ function DdtExecutionClassesDialog({
       >
         <section aria-label="候选测试类范围">
           <h3>已加入范围</h3>
+          {canManage ? (
+            <div className="class-selection-actions">
+              <Button
+                type="button"
+                size="compact"
+                disabled={loading || saving || !range.items.length}
+                onClick={() => setSelectedRemoves(range.items.map((item) => item.caseDefinitionId))}
+              >
+                全选已加载
+              </Button>
+              <Button
+                type="button"
+                size="compact"
+                disabled={saving || !selectedRemoves.length}
+                onClick={() => setSelectedRemoves([])}
+              >
+                取消选择
+              </Button>
+              <Button
+                type="button"
+                size="compact"
+                disabled={loading || saving || !selectedRemoves.length}
+                onClick={() =>
+                  void changeRange(
+                    range.items.filter((item) => selectedRemoves.includes(item.caseDefinitionId)),
+                    false,
+                  )
+                }
+              >
+                移除选中（{selectedRemoves.length}）
+              </Button>
+            </div>
+          ) : null}
           <div className="ddt-association-class-list">
             {range.items.map((item) => (
               <div className="ddt-association-class-item" key={item.caseDefinitionId}>
                 <>
+                  {canManage ? (
+                    <Input
+                      type="checkbox"
+                      aria-label={`选择移除 ${item.className}`}
+                      disabled={loading || saving}
+                      checked={selectedRemoves.includes(item.caseDefinitionId)}
+                      onChange={() =>
+                        setSelectedRemoves((ids) => toggle(ids, item.caseDefinitionId))
+                      }
+                    />
+                  ) : null}
                   <ClassLabel item={item} />
                   {canManage ? (
                     <Button
                       className="button button-secondary"
                       disabled={loading || saving}
-                      onClick={() => void changeRange(item, false)}
+                      onClick={() => void changeRange([item], false)}
                       aria-label={`移除 ${item.className}`}
                     >
                       移除
@@ -446,9 +527,53 @@ function DdtExecutionClassesDialog({
         {canManage ? (
           <section aria-label="可加入的测试类">
             <h3>从 TestNG 用例库添加</h3>
+            <div className="class-selection-actions">
+              <Button
+                type="button"
+                size="compact"
+                disabled={loading || saving || !available.length}
+                onClick={() => setSelectedAdds(available.map((item) => item.caseDefinitionId))}
+              >
+                全选可加入
+              </Button>
+              <Button
+                type="button"
+                size="compact"
+                disabled={saving || !selectedAdds.length}
+                onClick={() => setSelectedAdds([])}
+              >
+                取消选择
+              </Button>
+              <Button
+                type="button"
+                size="compact"
+                disabled={loading || saving || !selectedAdds.length}
+                onClick={() =>
+                  void changeRange(
+                    available.filter((item) => selectedAdds.includes(item.caseDefinitionId)),
+                    true,
+                  )
+                }
+              >
+                加入选中（{selectedAdds.length}）
+              </Button>
+            </div>
             <div className="ddt-association-class-list">
               {candidates.map((item) => (
                 <div className="ddt-association-class-item" key={item.caseDefinitionId}>
+                  <Input
+                    type="checkbox"
+                    aria-label={`选择加入 ${item.className}`}
+                    disabled={
+                      loading ||
+                      saving ||
+                      !available.some(
+                        (candidate) => candidate.caseDefinitionId === item.caseDefinitionId,
+                      )
+                    }
+                    checked={selectedAdds.includes(item.caseDefinitionId)}
+                    onChange={() => setSelectedAdds((ids) => toggle(ids, item.caseDefinitionId))}
+                  />
                   <ClassLabel item={item} />
                   <Button
                     className="button button-secondary"
@@ -461,7 +586,7 @@ function DdtExecutionClassesDialog({
                         (allowed) => allowed.caseDefinitionId === item.caseDefinitionId,
                       )
                     }
-                    onClick={() => void changeRange(item, true)}
+                    onClick={() => void changeRange([item], true)}
                     aria-label={`加入 ${item.className}`}
                   >
                     {range.items.some(
@@ -484,11 +609,32 @@ function DdtExecutionClassesDialog({
           </section>
         ) : null}
       </div>
+      {results.length ? (
+        <details className="class-change-results">
+          <summary>本次操作结果（{results.length} 项）</summary>
+          <ul>
+            {results.map((item) => (
+              <li key={item.name}>
+                <code>{item.name}</code> · {item.message}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <footer className="ddt-association-footer">
         <span>
-          {saving ? "正在保存…" : loading ? "正在读取测试类…" : "每次加入或移除均立即保存"}
+          {saving
+            ? progress
+            : loading
+              ? "正在读取测试类…"
+              : "勾选不会保存；点击加入或移除后立即保存，批量逐项顺序执行"}
         </span>
-        <Button className="button button-secondary" disabled={saving} onClick={onClose}>
+        <Button
+          className="button button-secondary"
+          data-dialog-dismiss
+          disabled={saving}
+          onClick={onClose}
+        >
           完成
         </Button>
       </footer>

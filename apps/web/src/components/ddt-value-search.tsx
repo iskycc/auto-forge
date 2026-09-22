@@ -15,6 +15,7 @@ import type { DdtScope } from "@autoforge/domain";
 import type { DdtScopeLabels } from "./ddt-api-reference";
 import { Button, Input } from "./ui";
 import { DdtCaseDataDialog } from "./ddt-case-data-dialog";
+import { ExpandableText } from "./expandable-text";
 import { DdtSearchPagination } from "./ddt-search-pagination";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
@@ -275,7 +276,6 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
           <p>
             {labels.project} / {labels.version} / {labels.stage}
           </p>
-          <p>匹配任意字段值，包括用户旅程各 Step；不匹配字段名，不区分英文大小写。</p>
         </div>
         <form onSubmit={submit}>
           <div className="ddt-value-search-conditions">
@@ -340,13 +340,17 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               </Button>
             ) : null}
           </div>
-          <p>
-            满足任一条件即匹配（并集），用例不重复显示。点击“搜索”或按回车开始，输入或增删条件时不会查询。
-          </p>
-          <p>
-            最多 {DDT_VALUE_SEARCH_MAX_KEYWORDS} 个条件，合计 {DDT_VALUE_SEARCH_MAX_TEXT_LENGTH}{" "}
-            个字符；空白条件自动忽略。
-          </p>
+          <details className="search-help">
+            <summary>搜索说明 · 多条件取并集，仅匹配字段值</summary>
+            <p>
+              包括用户旅程各
+              Step；不匹配字段名，不区分英文大小写。用例去重显示。点击搜索或按回车开始，输入时不会查询。
+            </p>
+            <p>
+              最多 {DDT_VALUE_SEARCH_MAX_KEYWORDS} 个条件，合计 {DDT_VALUE_SEARCH_MAX_TEXT_LENGTH}{" "}
+              个字符；空白条件自动忽略。
+            </p>
+          </details>
           {formError ? (
             <p className="inline-notice error" role="alert">
               {formError}
@@ -388,7 +392,10 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
                 <header>
                   <div>
                     <h3>{item.caseId}</h3>
-                    <p>CaseName · {item.caseName || "未填写"}</p>
+                    <div className="ddt-search-case-name">
+                      <span>CaseName · </span>
+                      <ExpandableText text={item.caseName || "未填写"} label="用例名称" />
+                    </div>
                     <span>
                       SR · {item.srNum} · {item.matchCount} 个字段匹配
                     </span>
@@ -407,7 +414,9 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
                   {item.matches.map((match, index) => (
                     <div key={index}>
                       <dt>{match.path.join(" › ")}</dt>
-                      <dd>{match.value}</dd>
+                      <dd>
+                        <ExpandableText text={match.value} label="匹配字段值" />
+                      </dd>
                     </div>
                   ))}
                 </dl>

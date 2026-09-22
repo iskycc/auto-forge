@@ -1045,6 +1045,9 @@ public class MixedVisibleTest {
   // 成功码和断言分类码都不能再冒充“失败原因”。该断言通过真实 HTTP 完成协议写入数据，
   // 随根级 test:e2e 在 CI 运行，防止只在展示层伪装修复。
   const analyticsCaseId = completedBatch.runs[0]!.caseDefinitionId;
+  const chartErrors: string[] = [];
+  const recordChartError = (error: Error) => chartErrors.push(error.message);
+  page.on("pageerror", recordChartError);
   await page.goto(
     `/insights?suiteId=${encodeURIComponent(dailySuiteId)}&caseDefinitionId=${encodeURIComponent(analyticsCaseId)}`,
   );
@@ -1067,6 +1070,8 @@ public class MixedVisibleTest {
   await expect(failureReasonDialog).not.toContainText("TEST_ASSERTION_FAILED");
   await failureReasonDialog.getByRole("button", { name: "关闭失败原因明细" }).click();
   await expect(failureReasonDialog).toBeHidden();
+  expect(chartErrors).toEqual([]);
+  page.off("pageerror", recordChartError);
   await captureUi(page, "quality-insights-charts-1536");
   await page.setViewportSize({ width: 1024, height: 768 });
   await expect(failureReasonCard.locator(".insight-pie > span")).toBeVisible();

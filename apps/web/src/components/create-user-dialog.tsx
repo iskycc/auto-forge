@@ -127,8 +127,21 @@ export function CreateUserDialog({ onClose, onCreated }: { onClose(): void; onCr
       }}
       open
       title="创建本地用户"
+      protectUnsavedChanges
+      closeDisabled={pending}
+      footer={
+        <>
+          <Button disabled={pending} data-dialog-dismiss onClick={onClose} type="button">
+            取消
+          </Button>
+          <Button disabled={pending} type="submit" form="create-local-user" variant="primary">
+            <Plus size={16} /> {pending ? "正在创建…" : "创建本地用户"}
+          </Button>
+        </>
+      }
     >
       <form
+        id="create-local-user"
         className="settings-grid-form action-dialog-form create-user-form"
         noValidate
         onSubmit={submit}
@@ -167,14 +180,6 @@ export function CreateUserDialog({ onClose, onCreated }: { onClose(): void; onCr
             ) : null}
           </div>
         ) : null}
-        <div className="settings-form-actions button-row">
-          <Button disabled={pending} onClick={onClose} type="button">
-            取消
-          </Button>
-          <Button disabled={pending} type="submit" variant="primary">
-            <Plus size={16} /> {pending ? "正在创建…" : "创建本地用户"}
-          </Button>
-        </div>
       </form>
     </ActionDialog>
   );

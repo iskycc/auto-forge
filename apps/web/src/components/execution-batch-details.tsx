@@ -229,7 +229,7 @@ export function ExecutionBatchDetails({
           hint={
             batch.statistics?.generation === null
               ? "统计准备中"
-              : `通过 ${batch.succeededRuns} · 失败 ${batch.failedRuns + batch.timedOutRuns}`
+              : `通过 ${batch.succeededRuns} · 失败 ${batch.failedRuns} · 超时 ${batch.timedOutRuns} · 终止 ${batch.finalSummary.cancelled}`
           }
         />
         <Metric
@@ -397,5 +397,7 @@ function ElapsedMetric({
 
   const endMs = terminal ? Date.parse(batchFinishedAt(batch)) : nowMs;
   const durationMs = Math.max(0, endMs - Date.parse(startedAt));
-  return <Metric label="已运行时长" value={formatBatchDuration(durationMs)} />;
+  return (
+    <Metric label={terminal ? "执行耗时" : "已运行时长"} value={formatBatchDuration(durationMs)} />
+  );
 }

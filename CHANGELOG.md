@@ -4,6 +4,29 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.20 - 2026-09-22
+
+### Changed and fixed
+
+- 优化普通用例、DDT、任务详情、执行记录和平台管理的页面密度，减少重复标题与说明；长用例名、搜索命中值和失败原因采用可展开摘要，保留原有目录懒加载、手动检索、底部分页与后台统计快照。
+- 分析与 DDT 弹窗统一草稿关闭保护、键盘导航及焦点恢复；嵌套日志对比关闭后回到原控件，上传和提交期间禁止意外关闭。用户、服务账号、任务创建/复制的长表单使用固定底部操作区。
+- SR 候选测试类支持勾选、全选与批量加入/移除，按修订号顺序保存；遇到冲突停止后续操作，展示部分成功结果并保留未处理选择。
+- 执行记录新增按普通用例名称/类路径或 DDT CaseId 查找、重置筛选；固定批次、任务与操作列，支持键盘调整及重置列宽。终态批次摘要补齐超时、终止数量。
+- 任务详情优先显示用例成员，增加分区导航、圆角保存栏和未保存提示；权限选项较少时采用紧凑工具栏，保留全选/取消全选及正在使用的筛选。
+- 压缩数据保留与存储空间布局，明确已保存策略和离线节点资源时效；修复质量洞察 SVG 标题引起的 React 水合错误。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、新依赖或 Runner Protocol 变更。Lite/Full 使用同一套 UI 与现有 API；从 v1.17.19 升级只需更新主平台，Full 同步更新各平台节点，无需升级 Runner 或 Adapter。
+- 离线资产类型不变，继续发布 amd64/arm64 后端镜像、部署包、Jenkins 插件和签名元数据。
+- 候选类批量操作为逐项保存，可能部分成功，并非服务端原子事务；报告明确显示已处理结果与剩余项。
+
+### Validation and known limitations
+
+- 67 项受影响的 Playwright 场景、21 项单元测试通过；最后的权限工具栏边界调整后重新构建，并定向复跑 18 项权限及管理场景，全部通过。变更格式/lint、Web/server/worker 与测试类型检查、生产构建通过。
+- 在隔离 Lite 环境遍历 34 个页面与 18 个弹窗/数据状态，生成并审查 1024×768、1536×960 截图，改动区域未发现影响操作的溢出或遮挡；补充检查固定列、键盘列宽和任务保存栏。实施明细与代表图见 `docs/design/ui-detail-audit-v1.17.19-2026-09-22.md`。
+- 本地验证不等同于 Full 跨节点、真实 Runner 离线或生产规模压力验收；完整源码、双架构构建与发布资产验收由 GitHub Actions 执行。
+
 ## 1.17.19 - 2026-09-22
 
 ### Fixed

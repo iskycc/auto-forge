@@ -5,6 +5,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { Button } from "./ui";
+import { useDialogInteraction } from "./use-dialog-interaction";
+import { DialogDiscardPrompt } from "./dialog-discard-prompt";
 
 export function ActionDialog({
   children,
@@ -14,6 +16,12 @@ export function ActionDialog({
   title,
   onClose,
   protectUnsavedChanges = false,
+  dirty: controlledDirty,
+  closeDisabled = false,
+  inactive = false,
+  closeLabel,
+  backdropClassName,
+  footer,
 }: {
   children: ReactNode;
   className?: string;
@@ -22,82 +30,31 @@ export function ActionDialog({
   title: string;
   onClose: () => void;
   protectUnsavedChanges?: boolean;
+  dirty?: boolean;
+  closeDisabled?: boolean;
+  inactive?: boolean;
+  closeLabel?: string;
+  backdropClassName?: string;
+  footer?: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   const [dirty, setDirty] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const hasChanges = controlledDirty ?? dirty;
   function requestClose() {
-    if (protectUnsavedChanges && dirty) setConfirmDiscard(true);
+    if (closeDisabled || inactive) return;
+    if (protectUnsavedChanges && hasChanges) setConfirmDiscard(true);
     else onClose();
   }
-  const onCloseRef = useRef(requestClose);
-
+  useDialogInteraction({ dialogRef, open, active: open && !inactive, onClose: requestClose });
   useEffect(() => {
-    onCloseRef.current = requestClose;
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = "hidden";
-    const focusableSelector = [
-      "a[href]",
-      "button:not([disabled])",
-      "input:not([disabled])",
-      "select:not([disabled])",
-      "textarea:not([disabled])",
-      '[tabindex]:not([tabindex="-1"])',
-    ].join(",");
-    const focusableElements = () =>
-      Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
-        (element) => element.getClientRects().length > 0,
-      );
-    const handleKeyboard = (event: KeyboardEvent) => {
-      // Native modal dialogs can be opened from an action dialog (for example,
-      // the reusable log comparison). Let the top-layer dialog own Escape and
-      // focus traversal until it closes.
-      if (document.querySelector("dialog[open]")) return;
-      if ([...document.querySelectorAll(".action-dialog")].at(-1) !== dialogRef.current) return;
-      if (event.key === "Escape") {
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const elements = focusableElements();
-      if (elements.length === 0) {
-        event.preventDefault();
-        dialogRef.current?.focus();
-        return;
-      }
-      const first = elements[0]!;
-      const last = elements.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    const focusFrame = window.requestAnimationFrame(() => {
-      (focusableElements()[0] ?? dialogRef.current)?.focus();
-    });
+    const dialog = dialogRef.current;
     const markDraft = (event: Event) => {
       if (!(event.target instanceof HTMLInputElement) || event.target.type !== "search")
         setDirty(true);
     };
-    const dialog = dialogRef.current;
     dialog?.addEventListener("change", markDraft);
-    window.addEventListener("keydown", handleKeyboard);
-    return () => {
-      dialog?.removeEventListener("change", markDraft);
-      window.cancelAnimationFrame(focusFrame);
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyboard);
-      previousFocus?.focus();
-    };
+    return () => dialog?.removeEventListener("change", markDraft);
   }, [open]);
 
   if (!open && (dirty || confirmDiscard)) {
@@ -106,7 +63,10 @@ export function ActionDialog({
   }
   if (!open || typeof document === "undefined") return null;
   return createPortal(
-    <div className="dialog-backdrop action-dialog-backdrop" onMouseDown={requestClose}>
+    <div
+      className={`dialog-backdrop action-dialog-backdrop ${backdropClassName ?? ""}`}
+      onMouseDown={requestClose}
+    >
       <section
         onChangeCapture={(event) => {
           if (!(event.target instanceof HTMLInputElement) || event.target.type !== "search")
@@ -114,14 +74,16 @@ export function ActionDialog({
         }}
         onClickCapture={(event) => {
           const button = (event.target as HTMLElement).closest("[data-dialog-dismiss]");
-          if (button && protectUnsavedChanges && dirty) {
+          if (button && (closeDisabled || (protectUnsavedChanges && hasChanges))) {
             event.preventDefault();
             event.stopPropagation();
             requestClose();
           }
         }}
         aria-label={title}
-        aria-modal="true"
+        aria-modal={!inactive}
+        aria-hidden={inactive || undefined}
+        inert={inactive}
         className={`action-dialog${className ? ` ${className}` : ""}`}
         onMouseDown={(event) => event.stopPropagation()}
         ref={dialogRef}
@@ -134,7 +96,8 @@ export function ActionDialog({
             {description ? <p>{description}</p> : null}
           </div>
           <Button
-            aria-label={`关闭${title}`}
+            aria-label={closeLabel ?? `关闭${title}`}
+            disabled={closeDisabled}
             className="icon-button"
             onClick={requestClose}
             type="button"
@@ -144,19 +107,16 @@ export function ActionDialog({
         </header>
         <div className="action-dialog-body">
           {confirmDiscard ? (
-            <div className="draft-discard-prompt" role="alert">
-              <strong>放弃未保存的修改？</strong>
-              <p>关闭后，本次填写的内容将丢失。</p>
-              <Button type="button" onClick={() => setConfirmDiscard(false)}>
-                继续编辑
-              </Button>
-              <Button type="button" variant="danger" onClick={onClose}>
-                放弃修改并关闭
-              </Button>
-            </div>
+            <DialogDiscardPrompt
+              onContinue={() => setConfirmDiscard(false)}
+              onDiscard={() => {
+                if (!closeDisabled) onClose();
+              }}
+            />
           ) : null}
           {children}
         </div>
+        {footer ? <footer className="action-dialog-footer">{footer}</footer> : null}
       </section>
     </div>,
     document.body,

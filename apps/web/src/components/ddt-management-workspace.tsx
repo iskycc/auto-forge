@@ -14,6 +14,7 @@ import {
   type DdtHistoryItem,
 } from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { ActionDialog } from "./action-dialog";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
 import type { DdtExecutionStatistics } from "@autoforge/contracts";
@@ -44,7 +45,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 
@@ -1661,6 +1662,7 @@ function ImportDialog({
                 <Button
                   className="button button-secondary"
                   type="button"
+                  data-dialog-dismiss
                   onClick={onClose}
                   disabled={busy}
                 >
@@ -1852,6 +1854,8 @@ function ColumnConflictDialog({
   return (
     <Dialog
       title="解决重复列名"
+      // Closing this nested view retains its draft in ImportDialog.
+      dirty={false}
       subtitle="对照两列内容后选择改名保留或删除，平台会使用已保存的原文件重新预检"
       onClose={onClose}
       closeDisabled={busy}
@@ -2048,6 +2052,7 @@ function ColumnConflictDialog({
             className="button button-secondary"
             type="button"
             disabled={busy}
+            data-dialog-dismiss
             onClick={onClose}
           >
             暂不处理
@@ -2083,7 +2088,10 @@ function TemplateDialog({
     { field: "", required: false, type: "string" },
   ]);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
       await requestJson(endpoint("templates"), {
         method: "POST",
@@ -2098,10 +2106,24 @@ function TemplateDialog({
       await onComplete();
     } catch (saveError) {
       setError(messageOf(saveError));
+    } finally {
+      setSaving(false);
     }
   };
   return (
-    <Dialog title="新建字段模板" subtitle="模板仅作用于当前项目版本和测试阶段" onClose={onClose}>
+    <Dialog
+      title="新建字段模板"
+      subtitle="模板仅作用于当前项目版本和测试阶段"
+      onClose={onClose}
+      dirty={Boolean(
+        srNum ||
+        name ||
+        description ||
+        rules.length !== 1 ||
+        rules.some((rule) => rule.field || rule.required || rule.type !== "string"),
+      )}
+      closeDisabled={saving}
+    >
       <div className="form-grid ddt-template-form">
         {error ? <div className="inline-notice error full-span">{error}</div> : null}
         <label>
@@ -2184,13 +2206,18 @@ function TemplateDialog({
           ))}
         </div>
         <footer className="full-span">
-          <Button className="button button-secondary" type="button" onClick={onClose}>
+          <Button
+            className="button button-secondary"
+            type="button"
+            data-dialog-dismiss
+            onClick={onClose}
+          >
             取消
           </Button>
           <Button
             className="button button-primary"
             type="button"
-            disabled={!srNum.trim() || !name.trim()}
+            disabled={saving || !srNum.trim() || !name.trim()}
             onClick={() => void save()}
           >
             创建模板
@@ -2259,7 +2286,12 @@ function BulkDialog({
           />
         </label>
         <footer className="full-span">
-          <Button className="button button-secondary" type="button" onClick={onClose}>
+          <Button
+            className="button button-secondary"
+            type="button"
+            data-dialog-dismiss
+            onClick={onClose}
+          >
             取消
           </Button>
           <Button
@@ -2377,6 +2409,7 @@ function AddDdtToSuiteDialog({
             className="button button-secondary"
             type="button"
             disabled={busy}
+            data-dialog-dismiss
             onClick={onClose}
           >
             取消
@@ -2406,6 +2439,7 @@ function Dialog({
   inactive = false,
   closeDisabled = false,
   backdropClassName,
+  dirty,
 }: {
   title: string;
   subtitle: string;
@@ -2414,42 +2448,24 @@ function Dialog({
   inactive?: boolean;
   closeDisabled?: boolean;
   backdropClassName?: string;
+  dirty?: boolean;
 }) {
-  const titleId = useId();
   return (
-    <div
-      className={`modal-backdrop${backdropClassName ? ` ${backdropClassName}` : ""}`}
-      role="presentation"
-      onMouseDown={(event) => {
-        if (!inactive && !closeDisabled && event.target === event.currentTarget) onClose();
-      }}
+    <ActionDialog
+      open
+      title={title}
+      description={subtitle}
+      onClose={onClose}
+      className="ddt-dialog"
+      closeLabel="关闭弹窗"
+      protectUnsavedChanges
+      {...(dirty === undefined ? {} : { dirty })}
+      inactive={inactive}
+      closeDisabled={closeDisabled}
+      {...(backdropClassName ? { backdropClassName } : {})}
     >
-      <section
-        className="modal-card ddt-dialog"
-        role="dialog"
-        aria-modal={!inactive}
-        aria-hidden={inactive || undefined}
-        inert={inactive}
-        aria-labelledby={titleId}
-      >
-        <header>
-          <div>
-            <h2 id={titleId}>{title}</h2>
-            <p>{subtitle}</p>
-          </div>
-          <Button
-            className="icon-button"
-            type="button"
-            aria-label="关闭弹窗"
-            disabled={closeDisabled}
-            onClick={onClose}
-          >
-            <X size={18} />
-          </Button>
-        </header>
-        {children}
-      </section>
-    </div>
+      {children}
+    </ActionDialog>
   );
 }
 

@@ -42,7 +42,7 @@ export default async function CaseSuitePage({ params }: Props) {
     (version) => version.id === suite.policy.projectVersionId,
   );
   return (
-    <div className="page-stack">
+    <div className="page-stack suite-detail-page">
       <section className="page-hero">
         <div>
           <Link className="back-link" href="/case-suites">
@@ -71,44 +71,58 @@ export default async function CaseSuitePage({ params }: Props) {
           </div>
         ) : null}
       </section>
-      <CaseSuiteSchedulePanel
-        key={suite.id}
-        canManage={canManage}
-        canReadExecutions={hasPermission(identity, "run.read", suite.projectId)}
-        initialSchedule={schedule}
-        suite={{
-          id: suite.id,
-          name: suite.name,
-          projectId: suite.projectId,
-          projectVersionId: suite.policy.projectVersionId ?? "",
-          enabled: suite.enabled,
-          archived: suite.status === "archived",
-        }}
-      />
+      <nav className="section-links" aria-label="任务分区">
+        <a href="#suite-members">用例列表</a>
+        <a href="#suite-settings">任务配置</a>
+        <a href="#suite-schedule">执行计划</a>
+        <a href="#suite-notifications">完成通知</a>
+      </nav>
       <CaseSuiteRevisionProvider initialRevision={suite.revision} key={suite.id}>
-        <CaseSuiteEditor
-          artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
-          canManage={canManage}
-          projectVersions={projectStructure.versions}
-          runnerGroups={runnerGroups}
-          runners={runners}
-          suite={suite}
-        />
-        <CaseSuiteWebhookBindings
-          canManage={canManage}
-          configurations={webhookConfigurations}
-          initialWebhookIds={webhookIds}
-          suiteId={suiteId}
-        />
-        <CachedSuiteDirectory
-          key={suite.id}
-          canManage={canManage}
-          suite={suite}
-          snapshot={directory.status}
-          manifest={
-            directory.payload ? suiteDirectoryManifestSchema.parse(directory.payload) : null
-          }
-        />
+        <div id="suite-members">
+          <CachedSuiteDirectory
+            key={suite.id}
+            canManage={canManage}
+            suite={suite}
+            snapshot={directory.status}
+            manifest={
+              directory.payload ? suiteDirectoryManifestSchema.parse(directory.payload) : null
+            }
+          />
+        </div>
+        <div id="suite-settings">
+          <CaseSuiteEditor
+            artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
+            canManage={canManage}
+            projectVersions={projectStructure.versions}
+            runnerGroups={runnerGroups}
+            runners={runners}
+            suite={suite}
+          />
+        </div>
+        <div id="suite-schedule">
+          <CaseSuiteSchedulePanel
+            key={suite.id}
+            canManage={canManage}
+            canReadExecutions={hasPermission(identity, "run.read", suite.projectId)}
+            initialSchedule={schedule}
+            suite={{
+              id: suite.id,
+              name: suite.name,
+              projectId: suite.projectId,
+              projectVersionId: suite.policy.projectVersionId ?? "",
+              enabled: suite.enabled,
+              archived: suite.status === "archived",
+            }}
+          />
+        </div>
+        <div id="suite-notifications">
+          <CaseSuiteWebhookBindings
+            canManage={canManage}
+            configurations={webhookConfigurations}
+            initialWebhookIds={webhookIds}
+            suiteId={suiteId}
+          />
+        </div>
       </CaseSuiteRevisionProvider>
     </div>
   );

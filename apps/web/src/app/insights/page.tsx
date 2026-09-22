@@ -16,6 +16,7 @@ import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/li
 import { getPlatformServices } from "@/lib/services";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
+import { ExpandableText } from "@/components/expandable-text";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
 import { BatchComparisonForm } from "@/components/batch-comparison-form";
 import { CachedBatchComparison } from "@/components/cached-batch-comparison";
@@ -180,7 +181,7 @@ export default async function InsightsPage({
         <div>
           <span className="eyebrow">Offline Analytics</span>
           <h1>质量洞察</h1>
-          <p>从已确认的执行结果重建统计事实，按项目、任务、Runner、环境和时间查看趋势。</p>
+          <p>从已确认的执行结果重建统计事实，按项目、任务、执行节点和时间查看趋势。</p>
         </div>
         <AnalyticsExportControl filter={filter} />
       </section>
@@ -200,9 +201,9 @@ export default async function InsightsPage({
             </Select>
           </label>
           <label>
-            Runner
+            执行节点
             <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
-              <option value="">全部 Runner</option>
+              <option value="">全部执行节点</option>
               {runners.map((runner) => (
                 <option key={runner.id} value={runner.id}>
                   {runner.name}
@@ -340,7 +341,7 @@ export default async function InsightsPage({
               <h2>失败原因</h2>
             </div>
             <InsightDetailDialog
-              description="正常 TestNG 失败展示错误堆栈；调度、Runner 等异常执行同时展示错误码与错误信息。"
+              description="正常 TestNG 失败展示错误堆栈；调度、执行节点等异常执行同时展示错误码与错误信息。"
               title="失败原因明细"
             >
               <div className="insight-detail-table-scroll">
@@ -559,7 +560,7 @@ export default async function InsightsPage({
             <BatchComparisonChart comparison={comparison} />
           ) : (
             <div className="inline-empty">
-              选择两个可访问批次，按相同用例范围比较版本、环境、Runner、结果和耗时。
+              选择两个可访问批次，按相同用例范围比较版本、执行节点、结果和耗时。
             </div>
           )}
         </article>
@@ -685,10 +686,7 @@ function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
               key={bucket.bucket}
               r="3.5"
             >
-              <title>
-                {bucket.bucket.slice(0, 10)}：通过 {bucket.passed}，失败 {bucket.failed}，跳过{" "}
-                {bucket.skipped}
-              </title>
+              <title>{`${bucket.bucket.slice(0, 10)}：通过 ${bucket.passed}，失败 ${bucket.failed}，跳过 ${bucket.skipped}`}</title>
             </circle>
           ) : null,
         )}
@@ -735,7 +733,7 @@ function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures
         {visibleFailures.map((failure, index) => (
           <span key={failure.signature} title={failure.description}>
             <i style={{ background: FAILURE_CHART_COLORS[index] }} />
-            <b>{failure.description}</b>
+            <ExpandableText text={failure.description} label="失败原因" />
             <em>{failure.count}</em>
           </span>
         ))}

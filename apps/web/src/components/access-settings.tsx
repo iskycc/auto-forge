@@ -315,8 +315,7 @@ export function AccessSettings({
         <section className="content-card settings-section" id="users">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Identity</p>
-              <h2>用户管理</h2>
+              <h2>用户列表</h2>
             </div>
             {capabilities.userManage ? (
               <div className="button-row">

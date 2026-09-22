@@ -70,6 +70,7 @@ export function CaseSuiteEditor({
   const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [pending, setPending] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -176,6 +177,7 @@ export function CaseSuiteEditor({
       }
       const savedSuite = (await response.json()) as CaseSuite;
       acceptMutation(revision, savedSuite.revision);
+      setDirty(false);
       toast.success("用例任务已更新，配置已保存并立即用于后续批次。");
       router.refresh();
     } catch (caught) {
@@ -282,9 +284,13 @@ export function CaseSuiteEditor({
           <h2>基本信息与执行策略</h2>
         </div>
       </div>
-      <fieldset disabled={!canManage} className="settings-form-fieldset">
+      <fieldset disabled={!canManage || pending} className="settings-form-fieldset">
         <div className="suite-settings-body">
-          <form className="settings-grid-form" onSubmit={(event) => void submit(event)}>
+          <form
+            className="settings-grid-form"
+            onChange={() => setDirty(true)}
+            onSubmit={(event) => void submit(event)}
+          >
             <label>
               任务名称
               <Input name="name" required maxLength={120} defaultValue={suite.name} />
@@ -348,9 +354,10 @@ export function CaseSuiteEditor({
                 <Button
                   size="compact"
                   type="button"
-                  onClick={() =>
-                    setRetryConcurrencyRules((rules) => [...rules, newRetryConcurrencyRule()])
-                  }
+                  onClick={() => {
+                    setDirty(true);
+                    setRetryConcurrencyRules((rules) => [...rules, newRetryConcurrencyRule()]);
+                  }}
                 >
                   <Plus size={14} /> 添加规则
                 </Button>
@@ -374,9 +381,12 @@ export function CaseSuiteEditor({
                             disabled={index === 0}
                             size="compact"
                             type="button"
-                            onClick={() =>
-                              setRetryConcurrencyRules((rules) => moveRule(rules, index, index - 1))
-                            }
+                            onClick={() => {
+                              setDirty(true);
+                              setRetryConcurrencyRules((rules) =>
+                                moveRule(rules, index, index - 1),
+                              );
+                            }}
                           >
                             <ArrowUp size={13} />
                           </Button>
@@ -385,9 +395,12 @@ export function CaseSuiteEditor({
                             disabled={index === retryConcurrencyRules.length - 1}
                             size="compact"
                             type="button"
-                            onClick={() =>
-                              setRetryConcurrencyRules((rules) => moveRule(rules, index, index + 1))
-                            }
+                            onClick={() => {
+                              setDirty(true);
+                              setRetryConcurrencyRules((rules) =>
+                                moveRule(rules, index, index + 1),
+                              );
+                            }}
                           >
                             <ArrowDown size={13} />
                           </Button>
@@ -494,11 +507,12 @@ export function CaseSuiteEditor({
                         size="compact"
                         type="button"
                         variant="danger"
-                        onClick={() =>
+                        onClick={() => {
+                          setDirty(true);
                           setRetryConcurrencyRules((rules) =>
                             rules.filter((candidate) => candidate.id !== rule.id),
-                          )
-                        }
+                          );
+                        }}
                       >
                         <Trash2 size={14} />
                       </Button>
@@ -518,9 +532,10 @@ export function CaseSuiteEditor({
                 <Button
                   size="compact"
                   type="button"
-                  onClick={() =>
-                    setRoundRecoveryRules((rules) => [...rules, newRoundRecoveryRule()])
-                  }
+                  onClick={() => {
+                    setDirty(true);
+                    setRoundRecoveryRules((rules) => [...rules, newRoundRecoveryRule()]);
+                  }}
                 >
                   <Plus size={14} /> 添加恢复步骤
                 </Button>
@@ -627,11 +642,12 @@ export function CaseSuiteEditor({
                           size="compact"
                           type="button"
                           variant="danger"
-                          onClick={() =>
+                          onClick={() => {
+                            setDirty(true);
                             setRoundRecoveryRules((rules) =>
                               rules.filter((candidate) => candidate.id !== rule.id),
-                            )
-                          }
+                            );
+                          }}
                         >
                           <Trash2 size={14} />
                         </Button>
@@ -718,14 +734,20 @@ export function CaseSuiteEditor({
               <div className="resource-mode-grid">
                 <Button
                   aria-pressed={runnerSelectionKind === "runners"}
-                  onClick={() => setRunnerSelectionKind("runners")}
+                  onClick={() => {
+                    setDirty(true);
+                    setRunnerSelectionKind("runners");
+                  }}
                   type="button"
                 >
                   <Server size={17} /> 指定执行机
                 </Button>
                 <Button
                   aria-pressed={runnerSelectionKind === "group"}
-                  onClick={() => setRunnerSelectionKind("group")}
+                  onClick={() => {
+                    setDirty(true);
+                    setRunnerSelectionKind("group");
+                  }}
                   type="button"
                 >
                   <UsersRound size={17} /> 使用执行机组
@@ -828,7 +850,8 @@ export function CaseSuiteEditor({
               <Input name="archived" type="checkbox" defaultChecked={suite.status === "archived"} />
               归档（保留历史记录，不能创建新批次）
             </label>
-            <div className="settings-form-actions">
+            <div className="settings-form-actions suite-save-actions">
+              <span role="status">{dirty ? "任务配置有未保存的修改" : "任务配置已保存"}</span>
               {error ? (
                 <small className="form-error" role="alert">
                   {error}
@@ -856,8 +879,27 @@ export function CaseSuiteEditor({
             onClose={() => !copying && setCopyOpen(false)}
             open={copyOpen}
             title="复制用例任务"
+            protectUnsavedChanges
+            closeDisabled={copying}
+            footer={
+              <>
+                <Button
+                  type="button"
+                  data-dialog-dismiss
+                  disabled={copying}
+                  onClick={() => setCopyOpen(false)}
+                >
+                  取消
+                </Button>{" "}
+                <Button variant="primary" form="suite-copy-form" disabled={copying} type="submit">
+                  {copying ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}{" "}
+                  复制任务
+                </Button>
+              </>
+            }
           >
             <form
+              id="suite-copy-form"
               className="stack-form suite-copy-form action-dialog-form"
               onSubmit={(event) => void copySuite(event)}
             >
@@ -882,10 +924,6 @@ export function CaseSuiteEditor({
                   {copyError}
                 </p>
               ) : null}
-              <Button className="button button-secondary" disabled={copying} type="submit">
-                {copying ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}{" "}
-                复制任务
-              </Button>
             </form>
           </ActionDialog>
         </div>

@@ -88,7 +88,7 @@ describe("shared UI controls", () => {
     const declared = new Set(
       [...stylesheet.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map((match) => match[1]!),
     );
-    const runtimeTokens = new Set(["--donut-value"]);
+    const runtimeTokens = new Set(["--donut-value", "--record-id-width"]);
     const missing = [
       ...new Set([...stylesheet.matchAll(/var\((--[a-z0-9-]+)/gi)].map((match) => match[1]!)),
     ].filter((token) => !declared.has(token) && !runtimeTokens.has(token));

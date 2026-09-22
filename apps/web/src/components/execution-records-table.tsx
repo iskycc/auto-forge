@@ -6,7 +6,15 @@ import { usePlatformNow } from "./platform-time";
 import { ExternalLink, LoaderCircle, OctagonX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from "react";
 
 import {
   EXECUTION_RECORD_COLUMNS,
@@ -206,10 +214,32 @@ export function ExecutionRecordsTable({
           {actionError}
         </p>
       ) : null}
-      <div className="table-scroll resizable-table-scroll">
+      <div className="table-display-tools">
+        <span>可横向滚动查看所有列，任务与操作列固定</span>
+        <Button
+          type="button"
+          size="compact"
+          onClick={() => {
+            persistColumnWidths({});
+            setDragWidths({});
+          }}
+        >
+          重置列宽
+        </Button>
+      </div>
+      <div
+        className="table-scroll resizable-table-scroll"
+        tabIndex={0}
+        aria-label="执行记录表格，可横向滚动"
+      >
         <table
           className="data-table execution-records-table resizable-table"
-          style={{ width: tableWidth }}
+          style={
+            {
+              width: tableWidth,
+              "--record-id-width": `${columnWidth(EXECUTION_RECORD_COLUMNS[0]!)}px`,
+            } as CSSProperties
+          }
         >
           <colgroup>
             {EXECUTION_RECORD_COLUMNS.map((column) => (
@@ -223,7 +253,22 @@ export function ExecutionRecordsTable({
                   <span className="resizable-th-content">
                     {column.label}
                     <span
-                      aria-hidden="true"
+                      tabIndex={0}
+                      aria-orientation="vertical"
+                      aria-valuemin={column.minWidth}
+                      aria-valuenow={columnWidth(column)}
+                      onKeyDown={(event) => {
+                        if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+                        event.preventDefault();
+                        const width =
+                          event.key === "Home"
+                            ? automaticWidths[column.key]!
+                            : Math.max(
+                                column.minWidth,
+                                columnWidth(column) + (event.key === "ArrowRight" ? 20 : -20),
+                              );
+                        persistColumnWidths({ ...storedWidths, [column.key]: width });
+                      }}
                       className="column-resize-handle"
                       onMouseDown={(event) => startResize(event, column)}
                       role="separator"

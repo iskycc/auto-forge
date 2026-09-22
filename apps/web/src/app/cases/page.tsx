@@ -126,10 +126,10 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         initialTab={activeTab}
         scopeContent={
           <section className="card case-scope-toolbar" aria-label="用例范围">
-            <div className="case-scope-heading">
-              <strong>浏览范围</strong>
+            <details className="case-scope-heading">
+              <summary>范围说明</summary>
               <span>由顶栏项目层级统一控制；展开目录时按需加载，搜索覆盖当前范围的所有用例。</span>
-            </div>
+            </details>
             <div className="case-scope-current" aria-label="当前用例层级">
               <span>
                 <small>项目版本</small>

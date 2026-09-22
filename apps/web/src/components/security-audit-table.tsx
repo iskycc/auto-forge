@@ -56,7 +56,12 @@ export function SecurityAuditTable({
                     </time>
                   </td>
                   <td>
-                    <strong title={event.actorId}>{event.actor}</strong>
+                    <span className="audit-actor" title={`${event.actor} · ${event.actorId ?? ""}`}>
+                      <strong>{event.actor.split(" · ")[0]}</strong>
+                      {event.actor.includes(" · ") ? (
+                        <small>{event.actor.split(" · ").slice(1).join(" · ")}</small>
+                      ) : null}
+                    </span>
                   </td>
                   <td>
                     <strong>{event.action}</strong>

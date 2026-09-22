@@ -21,6 +21,151 @@ import {
 import { expectUiIntegrity } from "./support/ui-guard";
 import type { DdtExecutionStatistics } from "@autoforge/contracts";
 
+test("DDT template dialog keeps focus and protects unsaved edits", async ({ page }) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=templates");
+  const trigger = page.getByRole("button", { name: "新建模板", exact: true });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "新建字段模板", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect
+    .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+    .toBe(true);
+  await dialog.getByLabel("srNum", { exact: true }).fill("PAYMENT");
+  await dialog.getByLabel("模板名称", { exact: true }).fill("支付字段草稿");
+  await dialog.getByRole("button", { name: "创建模板", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect
+    .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+    .toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog.getByText("放弃未保存的修改？", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "继续编辑", exact: true }).click();
+  await expect(dialog.getByLabel("模板名称", { exact: true })).toHaveValue("支付字段草稿");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await captureDdtUi(page, `ddt-template-guard-${width}`);
+  }
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await dialog.getByRole("button", { name: "放弃修改并关闭", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).not.toBe("hidden");
+  await trigger.click();
+  await expect(dialog.getByLabel("模板名称", { exact: true })).toHaveValue("");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
+test("DDT candidate classes save selected items sequentially and report partial conflicts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const candidates = [1, 2, 3].map((number) => ({
+    caseDefinitionId: `class-${number}`,
+    className: `audit.Example${number}Test`,
+    displayName: `候选类 ${number}`,
+    enabled: true,
+    archived: false,
+  }));
+  const included = new Set<string>();
+  let revision = 0;
+  let conflict = true;
+  const writes: Array<{ caseDefinitionId: string; expectedRevision: number }> = [];
+  await page.route("**/api/v1/ddt/execution-classes?*", (route) =>
+    route.fulfill({ json: { items: candidates } }),
+  );
+  await page.route("**/api/v1/ddt/execution-range?*", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        json: { revision, items: candidates.filter((item) => included.has(item.caseDefinitionId)) },
+      });
+      return;
+    }
+    const input = route.request().postDataJSON();
+    writes.push(input);
+    expect(input.expectedRevision).toBe(revision);
+    if (input.caseDefinitionId === "class-2" && conflict) {
+      conflict = false;
+      await route.fulfill({
+        status: 409,
+        json: { error: { code: "CONCURRENT_MODIFICATION", message: "候选范围已被其他用户修改。" } },
+      });
+      return;
+    }
+    included.add(input.caseDefinitionId);
+    revision++;
+    await route.fulfill({ json: { saved: true } });
+  });
+  await page.goto("/cases/ddt-associations");
+  await page.getByRole("button", { name: "配置测试类范围" }).click();
+  const dialog = page.getByRole("dialog", { name: "测试类候选范围", exact: true });
+  await dialog.getByRole("button", { name: "全选可加入", exact: true }).click();
+  expect(writes).toHaveLength(0);
+  await dialog.getByRole("button", { name: "加入选中（3）", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("已保存 1 / 3 项");
+  expect(writes.map((item) => item.caseDefinitionId)).toEqual(["class-1", "class-2"]);
+  await expect(dialog.getByLabel("选择加入 audit.Example1Test", { exact: true })).not.toBeChecked();
+  await dialog.getByRole("button", { name: "加入选中（2）", exact: true }).click();
+  await expect(
+    dialog
+      .getByRole("region", { name: "候选测试类范围" })
+      .getByRole("button", { name: /^移除 audit/ }),
+  ).toHaveCount(3);
+  expect(writes.map((item) => item.expectedRevision)).toEqual([0, 1, 1, 2]);
+  await dialog.getByRole("button", { name: "完成", exact: true }).click();
+  await expect(dialog).toBeHidden();
+});
+
+test("execution history finds ordinary and DDT cases only on explicit search", async ({ page }) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const searches: string[] = [];
+  for (const kind of ["case-definitions", "ddt/cases"]) {
+    await page.route(`**/api/v1/${kind}?*`, async (route) => {
+      const url = new URL(route.request().url());
+      searches.push(url.pathname);
+      expect(url.searchParams.get("projectId")).toBe(hierarchy.projectId);
+      expect(url.searchParams.get("projectVersionId")).toBe(hierarchy.versionId);
+      expect(url.searchParams.get("limit")).toBe("30");
+      await route.fulfill({
+        json: {
+          items: [
+            kind === "ddt/cases"
+              ? { id: "ddt-internal-id", caseId: "PAY-009", srNum: "钱包" }
+              : { id: "ordinary-id", displayName: "钱包测试", className: "wallet.PaymentTest" },
+          ],
+        },
+      });
+    });
+  }
+  await page.goto("/execution-records");
+  await page.getByRole("button", { name: "查找用例", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "查找执行用例", exact: true });
+  await dialog.getByLabel("查找关键词", { exact: true }).fill("wallet");
+  expect(searches).toEqual([]);
+  await dialog.getByRole("button", { name: "搜索用例", exact: true }).click();
+  await dialog.getByRole("button", { name: /钱包测试.*wallet.PaymentTest/ }).click();
+  await expect(page.getByLabel("用例 ID", { exact: true })).toHaveValue("ordinary-id");
+  await page.getByRole("button", { name: "查找用例", exact: true }).click();
+  await dialog.getByRole("button", { name: "用例类型", exact: true }).click();
+  await page.getByRole("option", { name: "DDT 用例", exact: true }).click();
+  await dialog.getByLabel("查找关键词", { exact: true }).fill("PAY");
+  expect(searches).toHaveLength(1);
+  await dialog.getByRole("button", { name: "搜索用例", exact: true }).click();
+  await dialog.getByRole("button", { name: /PAY-009.*钱包/ }).click();
+  await expect(page.getByLabel("用例 ID", { exact: true })).toHaveValue("ddt-internal-id");
+  await page.getByRole("button", { name: "筛选记录", exact: true }).click();
+  await expect(page).toHaveURL(/caseDefinitionId=ddt-internal-id/);
+  await page.getByRole("link", { name: "重置筛选", exact: true }).click();
+  await expect(page.getByLabel("用例 ID", { exact: true })).toHaveValue("");
+});
+
 test("DDT overview shows seven-day execution snapshots without periodic dashboard requests", async ({
   page,
 }) => {
@@ -2643,10 +2788,19 @@ test("DDT advanced search unions added conditions and preserves pagination and c
   ]) {
     await page.setViewportSize(viewport);
     await page.evaluate(() => window.scrollTo(0, 0));
-    const inputEdges = await panel
+    const inputBounds = await panel
       .locator(".ddt-value-search-condition input")
-      .evaluateAll((inputs) => inputs.map((input) => input.getBoundingClientRect().left));
-    expect(new Set(inputEdges).size).toBe(1);
+      .evaluateAll((inputs) =>
+        inputs.map((input) => {
+          const { left, top } = input.getBoundingClientRect();
+          return { left, top };
+        }),
+      );
+    expect(inputBounds).toHaveLength(3);
+    expect(inputBounds[0]!.top).toBeCloseTo(inputBounds[1]!.top, 1);
+    expect(inputBounds[0]!.left).toBeCloseTo(inputBounds[2]!.left, 1);
+    expect(inputBounds[1]!.left).toBeGreaterThan(inputBounds[0]!.left);
+    expect(inputBounds[2]!.top).toBeGreaterThan(inputBounds[0]!.top);
     await expectUiIntegrity(page);
     await captureDdtUi(page, `value-search-union-${viewport.width}`);
   }

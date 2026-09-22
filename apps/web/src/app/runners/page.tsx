@@ -139,11 +139,11 @@ export default async function RunnersPage({
         }))
     : [];
   return (
-    <div className="page-stack">
+    <div className={`page-stack runner-page${runners.length ? " has-runners" : ""}`}>
       <section className="page-hero">
         <div>
           <span className="eyebrow">Runner Control</span>
-          <h1>执行机</h1>
+          <h1>执行节点</h1>
           <p>
             Agent 主动注册并持续上报心跳；45 秒未上报会显示离线。不兼容节点不会获得新任务
             {incompatibleCount > 0
@@ -385,7 +385,7 @@ function runnerResourceSummary(runner: Runner): string {
   if (!runner.resourceSnapshot) return "等待资源上报";
   const loadPerCpu =
     runner.resourceSnapshot.loadAverage1m / runner.resourceSnapshot.logicalCpuCount;
-  return `CPU ${runner.resourceSnapshot.cpuUtilizationPercent}% · 内存 ${runner.resourceSnapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
+  return `${runner.state === "offline" ? "最近心跳数据：" : ""}CPU ${runner.resourceSnapshot.cpuUtilizationPercent}% · 内存 ${runner.resourceSnapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
 }
 
 function recentBatchLabel(

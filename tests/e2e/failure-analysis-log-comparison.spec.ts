@@ -89,9 +89,12 @@ test("single and bulk analysis show previous executions and compare real logs wi
   await expect(comparison).toContainText("两侧均暂无日志");
   await page.keyboard.press("Escape");
   await expect(comparison).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("hidden");
   await expect(analysis.getByLabel("问题说明 *")).toHaveValue("对比历史执行后确认响应状态回归");
   await expect(compareButton).toBeFocused();
   await analysis.getByRole("button", { name: "关闭分析弹窗" }).click();
+  await expect(analysis.getByText("放弃未保存的修改？")).toBeVisible();
+  await analysis.getByRole("button", { name: "放弃修改并关闭" }).click();
 
   for (const name of fixture.failedNames.slice(0, 2)) {
     await page

@@ -515,7 +515,7 @@ export function GlobalRunDialog({
                                   任务尚未配置有效执行资源，请先进入任务详情完成配置。
                                 </p>
                               ) : null}
-                              <dl className="summary-grid">
+                              <dl className="execution-config-summary">
                                 <div>
                                   <dt>执行资源</dt>
                                   <dd>{suiteRunnerSummary(selectedSuite, options)}</dd>
@@ -538,7 +538,7 @@ export function GlobalRunDialog({
                                   </dd>
                                 </div>
                                 <div>
-                                  <dt>环境地址</dt>
+                                  <dt>Adapter 地址</dt>
                                   <dd>
                                     {selectedSuite.policy.adapter.enabled
                                       ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
