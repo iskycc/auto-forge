@@ -857,7 +857,13 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
 
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(10_000);
-    const overview = await this.readAnalyticsOverview(input);
+    return this.handle.client.transaction(() => this.readAnalyticsSnapshot(input)).deferred();
+  }
+
+  private readAnalyticsSnapshot(
+    input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0],
+  ): AnalyticsSummary {
+    const overview = this.readAnalyticsOverviewSnapshot(input);
     const selection = sqliteAnalyticsSelection(input.filter, input.projectIds);
     if (!selection) return overview;
     const retryablePlaceholders = RETRYABLE_RUNNER_FAILURE_RESULT_CODES.map(() => "?").join(",");
@@ -946,6 +952,15 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async readAnalyticsOverview(
     input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
   ): Promise<AnalyticsSummary> {
+    // A deferred read transaction pins a WAL snapshot without acquiring the write lock.
+    return this.handle.client
+      .transaction(() => this.readAnalyticsOverviewSnapshot(input))
+      .deferred();
+  }
+
+  private readAnalyticsOverviewSnapshot(
+    input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
+  ): AnalyticsSummary {
     const selection = sqliteAnalyticsSelection(input.filter, input.projectIds);
     const maximumFacts = analyticsOverviewFactLimit(input.maximumFacts);
     if (!selection) return emptyAnalyticsSummary(input.generatedAt, maximumFacts);

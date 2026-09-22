@@ -725,6 +725,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   async rebuildAnalyticsFacts(limit: number): Promise<number> {
     await this.ready();
     return withTransaction(this.handle, async (client) => {
+      // Terminal attempts are immutable inputs. Concurrent builders converge through the
+      // fact primary key; SKIP LOCKED would cache missing results as a ready projection.
       const result = await client.query<{
         attempt_id: string;
         project_id: string;
@@ -750,7 +752,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
          WHERE (f.attempt_id IS NULL OR f.schema_version < $1)
            AND b.batch_kind <> 'case_log_rerun'
            AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
-         ORDER BY a.finished_at,a.id LIMIT $2 FOR UPDATE OF a SKIP LOCKED`,
+         ORDER BY a.finished_at,a.id LIMIT $2`,
         [ANALYTICS_FACT_SCHEMA_VERSION, limit],
       );
       let inserted = 0;
@@ -810,7 +812,16 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(10_000);
-    const overview = await this.readAnalyticsOverview(input);
+    return withAnalyticsReadSnapshot(this.handle, (client) =>
+      this.readAnalyticsSnapshot(input, client),
+    );
+  }
+
+  private async readAnalyticsSnapshot(
+    input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0],
+    client: Queryable,
+  ): Promise<AnalyticsSummary> {
+    const overview = await this.readAnalyticsOverviewSnapshot(input, client);
     const selection = postgresAnalyticsSelection(input.filter, input.projectIds);
     if (!selection) return overview;
     const values = [...selection.values, [...RETRYABLE_RUNNER_FAILURE_RESULT_CODES]];
@@ -827,25 +838,27 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     ];
     const successCodesParameter = `$${flakyValues.length - 1}`;
     const failureCodesParameter = `$${flakyValues.length}`;
-    const [durationResult, projects, suites, runners, outcomes, flakyResult] = await Promise.all([
-      this.handle.pool.query<{ p50: string | number | null; p95: string | number | null }>(
-        `SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,
+    const durationResult = await client.query<{
+      p50: string | number | null;
+      p95: string | number | null;
+    }>(
+      `SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,
                 PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
          FROM analytics_facts ${whereSql} AND duration_ms IS NOT NULL AND duration_ms>=0`,
-        values,
-      ),
-      postgresAnalyticsDimensions(this.handle.pool, "project_id", whereSql, values),
-      postgresAnalyticsDimensions(this.handle.pool, "suite_id", whereSql, values),
-      postgresAnalyticsDimensions(this.handle.pool, "runner_id", whereSql, values),
-      postgresAnalyticsDimensions(this.handle.pool, "outcome", whereSql, values),
-      this.handle.pool.query<{
-        caseDefinitionId: string;
-        displayName: string;
-        samples: string;
-        passed: string;
-        failed: string;
-      }>(
-        `SELECT fact.case_definition_id AS "caseDefinitionId",
+      values,
+    );
+    const projects = await postgresAnalyticsDimensions(client, "project_id", whereSql, values);
+    const suites = await postgresAnalyticsDimensions(client, "suite_id", whereSql, values);
+    const runners = await postgresAnalyticsDimensions(client, "runner_id", whereSql, values);
+    const outcomes = await postgresAnalyticsDimensions(client, "outcome", whereSql, values);
+    const flakyResult = await client.query<{
+      caseDefinitionId: string;
+      displayName: string;
+      samples: string;
+      passed: string;
+      failed: string;
+    }>(
+      `SELECT fact.case_definition_id AS "caseDefinitionId",
                 COALESCE(case_definition.display_name,fact.case_definition_id) AS "displayName",
                 COUNT(*) AS samples,
                 COUNT(*) FILTER (
@@ -869,9 +882,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
               WHERE fact.outcome='failed' AND fact.result_code=ANY(${failureCodesParameter}::text[])
             )>0
          ORDER BY samples DESC,fact.case_definition_id LIMIT 20`,
-        flakyValues,
-      ),
-    ]);
+      flakyValues,
+    );
     const duration = durationResult.rows[0];
     return {
       ...overview,
@@ -900,6 +912,15 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
   ): Promise<AnalyticsSummary> {
     await this.ready();
+    return withAnalyticsReadSnapshot(this.handle, (client) =>
+      this.readAnalyticsOverviewSnapshot(input, client),
+    );
+  }
+
+  private async readAnalyticsOverviewSnapshot(
+    input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
+    client: Queryable,
+  ): Promise<AnalyticsSummary> {
     const selection = postgresAnalyticsSelection(input.filter, input.projectIds);
     const maximumFacts = analyticsOverviewFactLimit(input.maximumFacts);
     if (!selection) return emptyPostgresAnalyticsSummary(input.generatedAt, maximumFacts);
@@ -933,43 +954,42 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
            FROM analytics_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
            ${qualifyPostgresAnalyticsWhere(whereSql)} AND fact.failure_signature IS NOT NULL
          )`;
-    const [totalsResult, trendResult, failuresResult] = await Promise.all([
-      this.handle.pool.query<{
-        sampleCount: string;
-        passed: string;
-        failed: string;
-        skipped: string;
-      }>(
-        `${selectedFactsSql}
+    const totalsResult = await client.query<{
+      sampleCount: string;
+      passed: string;
+      failed: string;
+      skipped: string;
+    }>(
+      `${selectedFactsSql}
          SELECT COUNT(*) AS "sampleCount",COALESCE(SUM(passed),0) AS passed,
                   COALESCE(SUM(failed),0) AS failed,COALESCE(SUM(skipped),0) AS skipped
          FROM ${factsTable} ${maximumFacts ? "" : whereSql}`,
-        factValues,
-      ),
-      this.handle.pool.query<{
-        bucket: string;
-        total: string;
-        passed: string;
-        failed: string;
-        skipped: string;
-      }>(
-        `${selectedFactsSql}
+      factValues,
+    );
+    const trendResult = await client.query<{
+      bucket: string;
+      total: string;
+      passed: string;
+      failed: string;
+      skipped: string;
+    }>(
+      `${selectedFactsSql}
          SELECT TO_CHAR(completed_at::timestamptz AT TIME ZONE ${timeZoneParameter},'YYYY-MM-DD')
                     || 'T00:00:00.000Z' AS bucket,
                   SUM(passed+failed+skipped) AS total,SUM(passed) AS passed,
                   SUM(failed) AS failed,SUM(skipped) AS skipped
          FROM ${factsTable} ${maximumFacts ? "" : whereSql}
          GROUP BY bucket HAVING SUM(passed+failed+skipped)>0 ORDER BY bucket`,
-        trendValues,
-      ),
-      this.handle.pool.query<{
-        signature: string;
-        description: string;
-        resultCode: string | null;
-        count: string;
-        lastSeenAt: Date | string;
-      }>(
-        `${matchingFactsSql}, ranked AS (
+      trendValues,
+    );
+    const failuresResult = await client.query<{
+      signature: string;
+      description: string;
+      resultCode: string | null;
+      count: string;
+      lastSeenAt: Date | string;
+    }>(
+      `${matchingFactsSql}, ranked AS (
              SELECT *,ROW_NUMBER() OVER (PARTITION BY failure_signature ORDER BY completed_at DESC) AS rank
              FROM matching
            )
@@ -978,9 +998,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
                   MAX(result_code) FILTER (WHERE rank=1) AS "resultCode",
                   COUNT(*) AS count,MAX(completed_at) AS "lastSeenAt"
            FROM ranked GROUP BY failure_signature ORDER BY count DESC,signature LIMIT 20`,
-        factValues,
-      ),
-    ]);
+      factValues,
+    );
     const totalsRow = totalsResult.rows[0];
     const totals = {
       sampleCount: Number(totalsRow?.sampleCount ?? 0),
@@ -1486,6 +1505,18 @@ async function executePostgresRetention(
   if (!statement) return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds: [] };
   const result = await client.query(statement, [input.cutoffAt, input.limit]);
   return { deletedRecords: result.rowCount ?? 0, objectKeys: [], removedBatchStoreIds: [] };
+}
+
+// All sections of a cached projection must see the same committed facts. MVCC reads
+// do not take row locks or compete with Runner completion/maintenance writes.
+async function withAnalyticsReadSnapshot<T>(
+  handle: PostgresDatabaseHandle,
+  operation: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  return runPostgresTransaction(handle, async (client) => {
+    await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+    return operation(client);
+  });
 }
 
 async function withTransaction<T>(

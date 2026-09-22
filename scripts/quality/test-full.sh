@@ -307,6 +307,7 @@ run_adapter_tests() {
       packages/db/test/read-model-snapshots.integration.test.ts \
       apps/worker/src/read-model-bundle.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \
+      packages/db/test/analytics-snapshot-consistency.integration.test.ts \
       packages/db/test/postgres-round-recovery.integration.test.ts \
       packages/db/test/postgres-webhook.integration.test.ts \
       packages/db/test/postgres-runner-group.integration.test.ts \
@@ -328,6 +329,7 @@ run_distributed_contract_tests() {
       packages/db/test/platform-node-transport.test.ts \
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \
+      packages/db/test/analytics-snapshot-consistency.integration.test.ts \
       packages/queue/test/sqlite-job-queue.integration.test.ts \
       packages/queue/test/jetstream-job-queue.integration.test.ts \
       apps/web/server/log-stream-relay.integration.test.ts
