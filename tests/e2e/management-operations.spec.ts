@@ -598,7 +598,7 @@ test("management drafts require confirmation and candidate search preserves proj
   await expect(page).toHaveURL(/section=accounts/);
   await page.goto("/settings/projects?section=members&query=no-matches");
   await page.getByRole("button", { name: "添加成员", exact: true }).click();
-  const members = page.getByRole("dialog", { name: "添加项目成员" });
+  const members = page.getByRole("dialog", { name: "分配用户角色" });
   await members.getByLabel("查找用户").fill("e2e-admin");
   await members.getByRole("button", { name: "查询用户" }).click();
   await expect(members.getByRole("checkbox", { name: /e2e-admin/ })).toBeVisible();

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import type { Permission } from "@autoforge/domain";
+import { hasPermission, type Permission } from "@autoforge/domain";
 import { connection } from "next/server";
 
 import { PlatformTimeProvider } from "@/components/platform-time";
@@ -72,6 +72,15 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                     userName: identity.user.displayName,
                     userId: identity.user.id,
                     permissions,
+                    canCreateProject: hasPermission(identity, "project.manage"),
+                    canManageSelectedProject: Boolean(
+                      activeProjectId &&
+                      !projects.find((project) => project.id === activeProjectId)?.archived &&
+                      hasPermission(identity, "project.manage", activeProjectId),
+                    ),
+                    canReadSelectedProject: Boolean(
+                      activeProjectId && hasPermission(identity, "project.read", activeProjectId),
+                    ),
                     forcePasswordChange: identity.user.forcePasswordChange,
                     projects: projects.map(({ id, name }) => ({ id, name })),
                     selectedProjectId: activeProjectId,

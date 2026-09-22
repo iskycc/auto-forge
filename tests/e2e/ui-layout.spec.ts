@@ -26,8 +26,8 @@ const primaryRoutes = [
   "/case-analysis",
   "/settings/webhooks",
   "/audit",
-  "/settings/projects?section=members",
-  "/settings/projects?section=execution",
+  "/settings/access?section=users&scope=project",
+  "/settings/projects",
   "/settings/access?section=users",
   "/settings/access?section=roles",
   "/settings/access?section=ldap",
@@ -95,24 +95,17 @@ test("administration entries are exposed as four-character first-level navigatio
   await ensureAdministrator(page);
   const navigation = page.getByRole("navigation", { name: "主导航" });
 
-  for (const label of [
-    "项目管理",
-    "访问管理",
-    "回调通知",
-    "执行机组",
-    "安全审计",
-    "平台设置",
-    "文件来源",
-  ]) {
+  for (const label of ["组织管理", "回调通知", "执行机组", "安全审计", "平台设置", "文件来源"]) {
     await expect(navigation.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
   await expect(navigation.getByRole("button")).toHaveCount(0);
+  await expect(navigation.getByRole("link", { name: /^(项目管理|访问管理)$/ })).toHaveCount(0);
   await expect(navigation.getByRole("link", { name: "运维计划", exact: true })).toHaveCount(0);
   await expect(navigation.locator(".nav-item-nested, .nav-group")).toHaveCount(0);
 
   await page.goto("/settings/access?section=roles");
   await expect(page.getByRole("heading", { name: "角色与权限", exact: true })).toBeVisible();
-  await expect(navigation.getByRole("link", { name: "访问管理", exact: true })).toHaveClass(
+  await expect(navigation.getByRole("link", { name: "组织管理", exact: true })).toHaveClass(
     /nav-item-active/u,
   );
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
@@ -148,8 +141,8 @@ test("project member filters stay below stable section tabs", async ({ page }) =
     body: { projectId: scope.projectId, roleId: "00000000-0000-7000-8100-000000000005" },
   });
   expect(assigned.status).toBe(204);
-  const tabs = page.getByRole("navigation", { name: "项目管理模块" });
-  const memberSearch = page.getByLabel("搜索项目成员");
+  const tabs = page.getByRole("navigation", { name: "组织管理模块" });
+  const memberSearch = page.getByLabel("搜索用户");
 
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 960 });
@@ -162,28 +155,228 @@ test("project member filters stay below stable section tabs", async ({ page }) =
     const searchBox = (await memberSearch.boundingBox())!;
     expect(searchBox.y).toBeGreaterThanOrEqual(initialTabs.y + initialTabs.height);
 
-    await tabs.getByRole("link", { name: "执行配置", exact: true }).click();
-    await expect(tabs.getByRole("link", { name: "执行配置", exact: true })).toHaveAttribute(
+    await tabs.getByRole("link", { name: "角色权限", exact: true }).click();
+    await expect(tabs.getByRole("link", { name: "角色权限", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    await expect(memberSearch).toHaveCount(0);
+    await expect(memberSearch).not.toBeVisible();
     await expectUiIntegrity(page);
     const executionTabs = (await tabs.boundingBox())!;
     expect(Math.abs(executionTabs.y - initialTabs.y)).toBeLessThanOrEqual(1);
     expect(Math.abs(executionTabs.x - initialTabs.x)).toBeLessThanOrEqual(1);
     await captureUi(page, "project-execution-tabs", width);
 
-    await tabs.getByRole("link", { name: "成员与角色", exact: true }).click();
+    await tabs.getByRole("link", { name: "用户管理", exact: true }).click();
+    await page.getByRole("link", { name: "当前项目成员", exact: true }).click();
     await expect(memberSearch).toBeVisible();
     expect(Math.abs((await tabs.boundingBox())!.y - initialTabs.y)).toBeLessThanOrEqual(1);
     await memberSearch.fill("no-matching-project-member");
     await page.getByRole("button", { name: "筛选", exact: true }).click();
-    await expect(page).toHaveURL(/section=members&query=no-matching-project-member/);
+    await expect(page).toHaveURL(/section=users&scope=project&query=no-matching-project-member/);
     await expect(page.getByRole("row").filter({ hasText: memberName })).toHaveCount(0);
     await expect(memberSearch).toHaveValue("no-matching-project-member");
     expect(Math.abs((await tabs.boundingBox())!.y - initialTabs.y)).toBeLessThanOrEqual(1);
   }
+});
+
+test("many project versions stay compact and configure only the selected version", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  for (let index = 1; index <= 24; index += 1) {
+    const version = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${scope.projectId}/versions`,
+      {
+        method: "POST",
+        body: { name: `版本 ${String(index).padStart(2, "0")} · 钱包支付与跨境结算长期回归验证` },
+      },
+    );
+    expect(version.status).toBe(201);
+    expect(
+      (
+        await browserJson(
+          page,
+          `/api/v1/projects/${scope.projectId}/versions/${version.body.id}/stages`,
+          {
+            method: "POST",
+            body: { name: `专属阶段 ${index}`, description: "阶段说明与资源配置仅随所选版本展示" },
+          },
+        )
+      ).status,
+    ).toBe(201);
+  }
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/settings/projects");
+    const versions = page.getByRole("complementary", { name: "配置所属版本" });
+    await expect(versions.getByRole("button")).toHaveCount(25);
+    expect((await versions.boundingBox())!.height).toBeLessThan(620);
+    await expect(page.locator(".project-stage-row")).toHaveCount(1);
+    await page.getByLabel("搜索项目版本").fill("版本 24");
+    await expect(versions.getByRole("button")).toHaveCount(1);
+    await versions.getByRole("button").click();
+    await expect(page.getByRole("heading", { name: /版本 24/ })).toBeVisible();
+    await expect(page.locator(".project-stage-row")).toContainText("专属阶段 24");
+    await page.getByLabel("搜索项目版本").fill("");
+    await expectUiIntegrity(page);
+    await captureUi(page, "organization-many-versions", viewport.width);
+    await page.getByLabel("搜索项目版本").fill("没有这个版本");
+    await expect(versions.getByText("没有匹配的版本")).toBeVisible();
+    // Filtering must not silently change the configuration target.
+    await expect(page.getByRole("heading", { name: /版本 24/ })).toBeVisible();
+    await page.getByLabel("搜索项目版本").fill("");
+    await page.locator(".project-picker-trigger").click();
+    const picker = page.locator(".project-picker-options");
+    await picker.getByLabel("搜索项目", { exact: true }).fill("ui-selection");
+    await expect(picker.getByRole("option").first()).toBeVisible();
+    await expectUiIntegrity(page);
+    await captureUi(page, "organization-project-search", viewport.width, false);
+    await picker.getByLabel("搜索项目", { exact: true }).fill("没有匹配的项目");
+    await expect(picker.getByRole("option")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".project-picker-trigger")).toBeFocused();
+  }
+  // Changing the global version resets the configuration view to that version.
+  await page.getByRole("button", { name: "当前项目版本", exact: true }).click();
+  await page
+    .getByRole("option", { name: "版本 23 · 钱包支付与跨境结算长期回归验证", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: /版本 23/ })).toBeVisible();
+  await expect(page.locator(".project-stage-row")).toContainText("专属阶段 23");
+  await page.getByText("登记内网资源链接", { exact: true }).click();
+  const resourceForm = page.locator("form", {
+    has: page.getByRole("button", { name: "登记链接并启用", exact: true }),
+  });
+  await resourceForm.getByLabel("资源类型").selectOption("jar-bundle");
+  await resourceForm.getByLabel("压缩格式").selectOption("zip");
+  await resourceForm.getByLabel("HTTP(S) 链接").fill("http://runtime.invalid/dependencies.zip");
+  await resourceForm.getByLabel("文件名").fill("dependencies-for-version-23.zip");
+  await resourceForm.getByLabel("SHA-256").fill("a".repeat(64));
+  await resourceForm.getByLabel("大小（字节）").fill("128");
+  let releaseSave!: () => void;
+  const saving = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route("**/adapter-configuration", async (route) => {
+    await saving;
+    await route.continue();
+  });
+  try {
+    const request = page.waitForRequest(
+      (request) => request.method() === "PUT" && request.url().endsWith("/adapter-configuration"),
+    );
+    await resourceForm.getByRole("button", { name: "登记链接并启用", exact: true }).click();
+    await request;
+    await expect(page.getByRole("button", { name: /版本 24.*个阶段/ })).toBeDisabled();
+  } finally {
+    releaseSave();
+  }
+  await expect(
+    page.getByText("运行时资源链接已登记并设为当前配置。", { exact: true }),
+  ).toBeVisible();
+  await page.unroute("**/adapter-configuration");
+  await page.getByRole("button", { name: /版本 24.*个阶段/ }).click();
+  const runtimeSummary = page.locator(".project-version-detail .settings-note");
+  await expect(runtimeSummary).not.toContainText("dependencies-for-version-23.zip");
+  await page.getByRole("button", { name: /版本 23.*个阶段/ }).click();
+  await expect(runtimeSummary).toContainText("dependencies-for-version-23.zip");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, "organization-configured-version", viewport.width);
+  }
+});
+
+test("project settings preserve long project names and slugs within the administration bar", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const name = "跨境钱包支付与结算长期回归验证项目".repeat(7).slice(0, 120);
+  const slug = uniqueName("long-project").padEnd(64, "x");
+  await createUiProject(page, { name, slug });
+  await page.goto("/settings/projects");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await captureUi(page, "project-long-identifiers", viewport.width);
+    const summary = page.locator(".project-administration-summary");
+    const bounds = await summary.evaluate((element) => ({
+      width: element.clientWidth,
+      contentWidth: element.scrollWidth,
+    }));
+    expect(bounds.contentWidth).toBeLessThanOrEqual(bounds.width + 2);
+    expect((await summary.locator("strong").boundingBox())!.width).toBeGreaterThan(80);
+    await expect(summary).toContainText(slug);
+    await expectUiIntegrity(page);
+  }
+});
+
+test("topbar hierarchy selectors support keyboard opening, searching and focus restoration", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  expect(
+    (
+      await browserJson(page, `/api/v1/projects/${scope.projectId}/versions`, {
+        method: "POST",
+        body: { name: "另一个验证版本" },
+      })
+    ).status,
+  ).toBe(201);
+  await page.goto("/settings/projects");
+  const trigger = page.getByRole("button", { name: "当前项目版本", exact: true });
+  const listbox = page.getByRole("listbox", { name: "项目版本列表", exact: true });
+  await trigger.focus();
+  await trigger.press("ArrowDown");
+  await expect(listbox).toBeVisible();
+  await expect(listbox.getByRole("option", { name: "UI 验证版本", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(listbox.getByRole("option", { name: "另一个验证版本", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(listbox).toHaveCount(0);
+
+  await trigger.press("Enter");
+  const search = page.locator(".project-picker-options").getByLabel("搜索项目版本");
+  await search.fill("UI 验证");
+  await search.press("ArrowUp");
+  await expect(listbox.getByRole("option")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(listbox).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
+test("unified role scope selector exposes both system and project filters", async ({ page }) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/access?section=roles");
+  const scope = page.locator("label").filter({ hasText: "角色范围" }).getByRole("button");
+  const systemRole = page.locator(".role-card").filter({ hasText: "system-admin" });
+  const projectRole = page.locator(".role-card").filter({ hasText: "project-admin" });
+  await expect(scope).toHaveText("全部范围");
+  await scope.click();
+  await page.getByRole("option", { name: "系统", exact: true }).click();
+  await expect(systemRole).toBeVisible();
+  await expect(projectRole).toHaveCount(0);
+  await scope.click();
+  await page.getByRole("option", { name: "项目", exact: true }).click();
+  await expect(projectRole).toBeVisible();
+  await expect(systemRole).toHaveCount(0);
+  await scope.click();
+  await page.getByRole("option", { name: "全部范围", exact: true }).click();
+  await expect(systemRole).toBeVisible();
+  await expect(projectRole).toBeVisible();
 });
 
 test("audit findings use bounded, localized, and unambiguous controls", async ({ page }) => {
@@ -346,10 +539,13 @@ test("top-bar project context persists across pages and removes local project sw
     .toBeGreaterThanOrEqual(320);
 
   await page.goto("/settings/projects?section=execution");
-  await expect(page.getByRole("tree", { name: "项目版本与测试阶段" })).toBeVisible();
-  await expect(page.locator(".project-version-node")).toHaveCount(2);
-  await expect(page.locator(".project-stage-node")).toHaveCount(3);
-  await expect(page.getByLabel("配置所属版本")).toHaveValue(secondVersion.body.id);
+  await expect(page.getByRole("complementary", { name: "配置所属版本" })).toBeVisible();
+  await expect(page.locator(".project-version-option")).toHaveCount(2);
+  await expect(page.locator(".project-stage-row")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: /2.0.0.*个阶段/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await expect(page.getByRole("button", { name: "继承用例" })).toBeVisible();
 
   for (const route of ["/", "/case-suites", "/execution-records", "/cases/import"]) {
@@ -371,39 +567,122 @@ test("top-bar project context persists across pages and removes local project sw
   }
 });
 
-test("project and version creation update the shell without a document reload", async ({
+test("topbar creates project, version and stage and retries selection without duplicate creation", async ({
   page,
 }) => {
   await ensureAdministrator(page);
   await selectProjectContext(page, DEFAULT_PROJECT_ID);
-  await page.goto("/settings/projects?section=members");
+  await page.goto("/settings/access?section=users");
+  const navigation = page.getByRole("navigation", { name: "主导航" });
+  await expect(navigation.getByRole("link", { name: "组织管理", exact: true })).toHaveAttribute(
+    "href",
+    "/settings/access?section=users",
+  );
+  await expect(
+    page
+      .getByRole("navigation", { name: "组织管理模块" })
+      .getByRole("link", { name: "项目与版本", exact: true }),
+  ).toHaveCount(0);
   const navigationEntriesBefore = await page.evaluate(
     () => performance.getEntriesByType("navigation").length,
   );
-  const suffix = uniqueName("instant-project");
-  const projectName = `即时项目 ${suffix}`;
-  await page.getByRole("button", { name: "创建项目" }).click();
-  const projectDialog = page.getByRole("dialog", { name: "创建项目" });
-  await projectDialog.getByLabel("项目名称").fill(projectName);
-  await projectDialog.getByLabel("Slug").fill(suffix);
-  await projectDialog.getByRole("button", { name: "创建项目", exact: true }).click();
-  await expect(page.getByText("项目已创建，可从顶栏切换到新项目。")).toBeVisible();
+  const suffix = uniqueName("topbar-project");
+  const projectName = `顶栏项目 ${suffix}`;
+  const switcher = page.locator(".global-project-switcher");
+  const scopes = [
+    {
+      kind: "project",
+      trigger: ".project-picker-trigger",
+      label: "项目",
+      nameLabel: "项目名称",
+      name: projectName,
+    },
+    {
+      kind: "version",
+      trigger: '[aria-label="当前项目版本"]',
+      label: "项目版本",
+      nameLabel: "版本名称",
+      name: "1.0.0-topbar",
+    },
+    {
+      kind: "stage",
+      trigger: '[aria-label="当前测试阶段"]',
+      label: "测试阶段",
+      nameLabel: "阶段名称",
+      name: "顶栏回归测试",
+    },
+  ];
+  let createProjectRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/projects")
+      createProjectRequests += 1;
+  });
+  for (const scope of scopes) {
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 1024 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await switcher.locator(scope.trigger).click();
+      await expectUiIntegrity(page);
+      await captureUi(page, `topbar-${scope.kind}-actions`, viewport.width, false);
+      await page.getByRole("button", { name: `新建${scope.label}`, exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: `新建${scope.label}`, exact: true });
+      await expectViewportDialog(page.locator("body > .action-dialog-backdrop"), dialog, viewport);
+      if (scope.kind !== "project") await expect(dialog).toContainText(projectName);
+      if (scope.kind === "stage") await expect(dialog).toContainText("1.0.0-topbar");
+      await captureUi(page, `topbar-${scope.kind}-create`, viewport.width, false);
+      await page.keyboard.press("Escape");
+    }
+    await switcher.locator(scope.trigger).click();
+    await page.getByRole("button", { name: `新建${scope.label}`, exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: `新建${scope.label}`, exact: true });
+    await dialog.getByLabel(scope.nameLabel, { exact: true }).fill(scope.name);
+    if (scope.kind === "project") {
+      await dialog.getByLabel("Slug", { exact: true }).fill(suffix);
+      await page.route(
+        "**/api/v1/selected-project",
+        (route) =>
+          route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "PLATFORM_BUSY", message: "切换暂时不可用" } }),
+          }),
+        { times: 1 },
+      );
+    }
+    if (scope.kind === "stage")
+      await dialog.getByLabel("阶段说明").fill("直接在顶栏创建的测试阶段");
+    await dialog.getByRole("button", { name: `新建${scope.label}`, exact: true }).click();
+    if (scope.kind === "project") {
+      await expect(dialog.getByRole("alert")).toContainText("项目已创建，但切换失败");
+      await dialog.getByRole("button", { name: "切换到新建项目", exact: true }).click();
+    }
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".toast-card")).toContainText(`${scope.label}已创建并切换。`);
+    await expect(switcher.locator(scope.trigger)).toContainText(scope.name);
+    if (scope.kind === "project") {
+      expect(createProjectRequests).toBe(1);
+      await expect(
+        switcher.getByRole("button", { name: "当前项目版本", exact: true }),
+      ).toBeEnabled();
+      await expect(
+        switcher.getByRole("button", { name: "当前测试阶段", exact: true }),
+      ).toBeDisabled();
+    }
+  }
   expect(await page.evaluate(() => performance.getEntriesByType("navigation").length)).toBe(
     navigationEntriesBefore,
   );
-  const switcher = page.locator(".global-project-switcher");
-  await switcher.locator(".project-picker-trigger").click();
-  await expect(page.getByRole("option", { name: projectName })).toBeVisible();
-  await page.getByRole("option", { name: projectName }).click();
-
-  await page.goto("/settings/projects?section=execution");
-  await page.getByRole("button", { name: "创建版本" }).click();
-  const versionDialog = page.getByRole("dialog", { name: "创建项目版本" });
-  await versionDialog.getByLabel("版本名称").fill("1.0.0-e2e");
-  await versionDialog.getByRole("button", { name: "创建版本", exact: true }).click();
-  await expect(page.getByText("项目版本已创建。")).toBeVisible();
-  await expect(page.getByRole("tree", { name: "项目版本与测试阶段" })).toContainText("1.0.0-e2e");
-  await expect(switcher).toContainText("1.0.0-e2e");
+  await switcher.getByRole("button", { name: "当前项目版本", exact: true }).click();
+  await page.getByRole("link", { name: "执行资源配置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "项目设置", exact: true })).toBeVisible();
+  await expect(page.locator(".project-stage-row")).toContainText("顶栏回归测试");
+  await expect(
+    page
+      .locator("main")
+      .getByRole("button", { name: /创建项目|创建版本|创建阶段|新建项目|新建测试阶段/ }),
+  ).toHaveCount(0);
 });
 
 test("homepage mirrors the designed six-card workspace and exposes global execution", async ({
@@ -559,11 +838,12 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     { width: 1536, height: 1024 },
   ]) {
     await page.setViewportSize(viewport);
-    await page.goto("/settings/projects?section=members");
-    await expect(page.locator(".project-scope-card > form")).toHaveCount(0);
-    await page.getByRole("button", { name: "创建项目", exact: true }).click();
+    await page.goto("/settings/projects");
+    await expect(page.locator(".project-administration-bar > form")).toHaveCount(0);
+    await page.locator(".project-picker-trigger").click();
+    await page.getByRole("button", { name: "新建项目", exact: true }).click();
     const projectBackdrop = page.locator("body > .action-dialog-backdrop");
-    const projectDialog = page.getByRole("dialog", { name: "创建项目" });
+    const projectDialog = page.getByRole("dialog", { name: "新建项目" });
     await expect(projectDialog.getByLabel("项目名称")).toBeVisible();
     await expect(projectDialog.getByLabel("Slug")).toBeVisible();
     await expectViewportDialog(projectBackdrop, projectDialog, viewport);
@@ -571,13 +851,14 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     await page.keyboard.press("Escape");
     await expect(projectBackdrop).toHaveCount(0);
 
+    await page.goto("/settings/access?section=users&scope=project");
     const administratorRow = page.getByRole("row").filter({ hasText: "E2E Administrator" });
-    await administratorRow.getByRole("button", { name: "管理角色" }).click();
+    await administratorRow.getByRole("button", { name: "分配角色" }).click();
     const memberRoleBackdrop = page.locator("body > .action-dialog-backdrop");
     const memberRoleDialog = page.getByRole("dialog", {
-      name: "管理“E2E Administrator”的项目角色",
+      name: "分配用户角色",
     });
-    await expect(memberRoleDialog.getByText("项目管理员", { exact: true })).toBeVisible();
+    await expect(memberRoleDialog.locator(".assigned-role-list")).toContainText("项目管理员");
     await expectViewportDialog(memberRoleBackdrop, memberRoleDialog, viewport);
     await captureUi(page, "/project-member-role-dialog", viewport.width, false);
     await page.keyboard.press("Escape");
@@ -608,6 +889,7 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
     dialog: string;
     screenshot: string;
     bottomAction?: string;
+    dropdown?: string;
   }> = [
     {
       route: "/settings/webhooks",
@@ -632,25 +914,27 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
     {
       route: "/settings/projects?section=members",
       trigger: "添加成员",
-      dialog: "添加项目成员",
+      dialog: "分配用户角色",
       screenshot: "project-member-dialog",
     },
     {
-      route: "/settings/projects?section=members",
+      route: "/settings/projects",
       trigger: "转移负责",
       dialog: "转移项目负责人",
       screenshot: "project-owner-dialog",
     },
     {
       route: "/settings/projects?section=execution",
-      trigger: "创建版本",
-      dialog: "创建项目版本",
+      dropdown: "当前项目版本",
+      trigger: "新建项目版本",
+      dialog: "新建项目版本",
       screenshot: "project-version-dialog",
     },
     {
       route: "/settings/projects?section=execution",
-      trigger: "创建阶段",
-      dialog: "创建测试阶段",
+      dropdown: "当前测试阶段",
+      trigger: "新建测试阶段",
+      dialog: "新建测试阶段",
       screenshot: "test-stage-dialog",
     },
     {
@@ -682,6 +966,8 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
 
   for (const state of dialogStates) {
     await page.goto(state.route);
+    if (state.dropdown)
+      await page.getByRole("button", { name: state.dropdown, exact: true }).click();
     await page.getByRole("button", { name: state.trigger, exact: true }).click();
     const backdrop = page.locator("body > .action-dialog-backdrop");
     const dialog = page.getByRole("dialog", { name: state.dialog });
@@ -903,7 +1189,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "执行机列表" })).toBeVisible();
 
   await page.goto("/settings/projects?section=execution");
-  await expect(page.getByRole("heading", { name: "项目执行配置" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目设置" })).toBeVisible();
   await expect(page.locator(".project-structure-manager")).toBeVisible();
 });
 
@@ -1068,11 +1354,11 @@ test("execution dialog remembers the last chosen task across reopening, edits an
   await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
 });
 
-async function createUiProject(page: Page) {
+async function createUiProject(page: Page, projectInput?: { name: string; slug: string }) {
   const name = uniqueName("ui-selection");
   const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
     method: "POST",
-    body: { name, slug: name },
+    body: projectInput ?? { name, slug: name },
   });
   expect(project.status).toBe(201);
   const version = await browserJson<{ id: string }>(

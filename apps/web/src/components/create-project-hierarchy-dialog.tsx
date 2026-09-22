@@ -1,0 +1,168 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState, type FormEvent } from "react";
+
+import { readApiErrorMessage } from "@/lib/client-api";
+import { ActionDialog } from "./action-dialog";
+import { Button, Input } from "./ui";
+import { useToast } from "./ui-feedback";
+
+export type ProjectContext = {
+  projectId: string;
+  projectVersionId?: string;
+  testStageId?: string;
+};
+
+export type HierarchyCreationTarget =
+  | { kind: "project" }
+  | { kind: "version"; projectId: string; projectName: string }
+  | {
+      kind: "stage";
+      projectId: string;
+      projectName: string;
+      projectVersionId: string;
+      projectVersionName: string;
+    };
+
+export function CreateProjectHierarchyDialog({
+  target,
+  onCreated,
+  onClose,
+}: {
+  target: HierarchyCreationTarget;
+  onCreated(context: ProjectContext): Promise<void>;
+  onClose(): void;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [createdContext, setCreatedContext] = useState<ProjectContext | null>(null);
+  const label =
+    target.kind === "project" ? "项目" : target.kind === "version" ? "项目版本" : "测试阶段";
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (pending) return;
+    const form = new FormData(event.currentTarget);
+    setPending(true);
+    setError("");
+    let context = createdContext;
+    try {
+      if (!context) {
+        const path =
+          target.kind === "project"
+            ? "/api/v1/projects"
+            : target.kind === "version"
+              ? `/api/v1/projects/${target.projectId}/versions`
+              : `/api/v1/projects/${target.projectId}/versions/${target.projectVersionId}/stages`;
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: form.get("name"),
+            ...(target.kind === "project" ? { slug: form.get("slug") } : {}),
+            ...(target.kind === "stage" ? { description: form.get("description") } : {}),
+          }),
+        });
+        const message = await readApiErrorMessage(response, `新建${label}失败。`);
+        if (message) throw new Error(message);
+        const created = (await response.json()) as { id: string };
+        context =
+          target.kind === "project"
+            ? { projectId: created.id }
+            : target.kind === "version"
+              ? { projectId: target.projectId, projectVersionId: created.id }
+              : {
+                  projectId: target.projectId,
+                  projectVersionId: target.projectVersionId,
+                  testStageId: created.id,
+                };
+        // Creation and selection are separate requests. A selection retry must not create duplicates.
+        setCreatedContext(context);
+      }
+      await onCreated(context);
+      toast.success(`${label}已创建并切换。`);
+      onClose();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "请求未完成，请检查网络后重试。";
+      setError(
+        context
+          ? `${label}已创建，但切换失败：${message} 点击下方按钮重试切换，不会重复创建。`
+          : message,
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <ActionDialog
+      open
+      protectUnsavedChanges={!createdContext}
+      title={`新建${label}`}
+      description={
+        target.kind === "project"
+          ? "创建后由你担任项目负责人，并自动切换到新项目。"
+          : target.kind === "version"
+            ? `所属项目：${target.projectName}`
+            : `所属项目：${target.projectName} · 所属版本：${target.projectVersionName}`
+      }
+      onClose={() => {
+        if (pending) return;
+        onClose();
+        if (createdContext) router.refresh();
+      }}
+    >
+      <form className="settings-grid-form action-dialog-form" onSubmit={submit}>
+        {error ? (
+          <p className="form-error settings-wide-field" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <label className={target.kind === "version" ? "settings-wide-field" : undefined}>
+          {target.kind === "project"
+            ? "项目名称"
+            : target.kind === "version"
+              ? "版本名称"
+              : "阶段名称"}
+          <Input
+            name="name"
+            required
+            maxLength={target.kind === "project" ? 120 : 128}
+            disabled={pending || Boolean(createdContext)}
+          />
+        </label>
+        {target.kind === "project" ? (
+          <label>
+            Slug
+            <Input
+              name="slug"
+              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+              required
+              minLength={2}
+              maxLength={64}
+              disabled={pending || Boolean(createdContext)}
+            />
+          </label>
+        ) : null}
+        {target.kind === "stage" ? (
+          <label>
+            阶段说明
+            <Input
+              name="description"
+              maxLength={2000}
+              disabled={pending || Boolean(createdContext)}
+            />
+          </label>
+        ) : null}
+        <div className="settings-form-actions">
+          <Button type="submit" variant="primary" disabled={pending}>
+            {pending ? "正在保存…" : createdContext ? `切换到新建${label}` : `新建${label}`}
+          </Button>
+        </div>
+      </form>
+    </ActionDialog>
+  );
+}

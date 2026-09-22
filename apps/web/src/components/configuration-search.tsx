@@ -127,17 +127,17 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
   ),
   platformField("worker 指标", "是否暴露 worker 指标", "metrics", "workerMetricsEnabled"),
   routeItem(
-    "项目与成员",
+    "项目成员",
     "项目、成员和项目角色绑定",
     "project member role",
-    "/settings/projects?section=members",
+    "/settings/access?section=users&scope=project",
     "project.read",
   ),
   routeItem(
-    "项目执行配置",
-    "项目版本、测试阶段、JDK 与依赖",
+    "项目设置",
+    "项目负责人、版本 JDK 与依赖；新建层级在顶栏下拉中操作",
     "project jdk adapter stage",
-    "/settings/projects?section=execution",
+    "/settings/projects",
     "project.read",
   ),
   routeItem(

@@ -35,7 +35,7 @@ const PROJECT_SWITCH_FREE_FILES = [
   join(SOURCE_ROOT, "app", "audit", "page.tsx"),
   join(SOURCE_ROOT, "components", "case-suite-manager.tsx"),
   join(SOURCE_ROOT, "components", "jar-importer.tsx"),
-  join(SOURCE_ROOT, "components", "project-membership-manager.tsx"),
+  join(SOURCE_ROOT, "components", "project-actions.tsx"),
 ] as const;
 // Hidden inputs only carry filter state inside GET forms and have no visual
 // styling, so the shared-component boundary applies to rendered controls only.
@@ -110,7 +110,7 @@ describe("shared UI controls", () => {
     const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
 
     expect(appShell).not.toContain("<span>管理中心</span>");
-    expect(appShell).toContain('label: "访问管理"');
+    expect(appShell).toContain('label: "组织管理"');
     expect(appShell).toContain('label: "平台设置"');
     expect(appShell).not.toContain("AdministrationGroup");
     expect(appShell).not.toContain("nav-group-toggle");
@@ -123,7 +123,7 @@ describe("shared UI controls", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
     const projectPickerConsumers = typescriptReactFiles(SOURCE_ROOT)
-      .filter((file) => readFileSync(file, "utf8").includes("<ProjectPicker"))
+      .filter((file) => readFileSync(file, "utf8").includes("<ProjectHierarchyPicker"))
       .map((file) => relative(SOURCE_ROOT, file));
 
     expect(appShell).toContain('label: "安全审计"');
@@ -133,9 +133,9 @@ describe("shared UI controls", () => {
     expect(appShell).toContain("<GlobalProjectSwitcher");
     expect(appShell).toContain("projectVersions={projectVersions}");
     const globalSwitcher = readFileSync(GLOBAL_PROJECT_SWITCHER, "utf8");
-    expect(globalSwitcher).toContain('aria-label="当前项目版本"');
-    expect(globalSwitcher).toContain('aria-label="当前测试阶段"');
-    expect(suiteManager).not.toContain("<ProjectPicker");
+    expect(globalSwitcher).toContain('label="项目版本"');
+    expect(globalSwitcher).toContain('label="测试阶段"');
+    expect(suiteManager).not.toContain("<ProjectHierarchyPicker");
     expect(suiteManager).not.toContain('aria-label="当前项目"');
     expect(suiteManager).not.toContain('aria-label="当前项目版本"');
     expect(suiteManager).not.toContain('aria-label="当前测试阶段"');
@@ -182,7 +182,7 @@ describe("shared UI controls", () => {
       ACCESS_SETTINGS,
       CREATE_USER_DIALOG,
       USER_ROLE_ASSIGNMENT_DIALOG,
-      join(SOURCE_ROOT, "components", "project-membership-manager.tsx"),
+      join(SOURCE_ROOT, "components", "project-actions.tsx"),
       join(SOURCE_ROOT, "components", "project-structure-manager.tsx"),
       join(SOURCE_ROOT, "components", "runner-group-manager.tsx"),
       join(SOURCE_ROOT, "components", "operations-settings.tsx"),

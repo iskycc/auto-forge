@@ -1,7 +1,8 @@
 import { AccessSettings, type AccessSection } from "@/components/access-settings";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { SectionTabs } from "@/components/section-tabs";
+import { OrganizationTabs, organizationSections } from "@/components/organization-tabs";
+import { selectedProjectId } from "@/lib/selected-project";
 import { hasPermission } from "@autoforge/domain";
 
 export default async function AccessSettingsPage({
@@ -9,12 +10,14 @@ export default async function AccessSettingsPage({
 }: {
   searchParams: Promise<{
     section?: string;
+    scope?: string;
     query?: string;
     source?: string;
     cursor?: string;
   }>;
 }) {
   const identity = await requirePageAnyPermission([
+    "project.read",
     "settings.read",
     "user.read",
     "role.read",
@@ -37,26 +40,34 @@ export default async function AccessSettingsPage({
     ldapRead: hasPermissionInAnyScope(identity, "ldap.read"),
     ldapManage: hasPermissionInAnyScope(identity, "ldap.manage"),
   };
-  const availableSections = [
-    ...(capabilities.userRead ? [{ id: "users" as const }] : []),
-    ...(capabilities.roleRead ? [{ id: "roles" as const }] : []),
-    ...(capabilities.ldapRead ? [{ id: "ldap" as const }] : []),
-    { id: "sessions" as const },
-  ];
+  const availableSections = organizationSections(identity);
   const requestedSection = requested.section as AccessSection | undefined;
   const activeSection =
     availableSections.find((section) => section.id === requestedSection)?.id ??
     availableSections[0]!.id;
-  const heading = accessSectionHeading(activeSection);
-  // 每个路由 Tab 只读取自己真正展示的数据。旧实现无论进入哪个 Tab 都会读取
-  // 用户、角色、LDAP、会话及全部项目成员，并形成逐项目 N+1 查询，项目较多时
-  // 单纯切换 Tab 也会被无关 I/O 阻塞。
-  const needsUsers = activeSection === "users" || activeSection === "roles";
+  const accessSection = activeSection as AccessSection;
+  const heading = accessSectionHeading(accessSection);
+  // Load only the active section and visible user page; project readers never query global accounts.
   const needsRoles = activeSection === "users" || activeSection === "roles";
-  const needsProjects = needsRoles;
-  const needsLdap = activeSection === "ldap";
-  const [userPage, roles, projects, ldap, sessions] = await Promise.all([
-    needsUsers && capabilities.userRead
+  const projects =
+    needsRoles && capabilities.projectRead
+      ? await services.identityAccess.listProjects(identity)
+      : [];
+  const projectId = await selectedProjectId(identity, projects, "project.read");
+  const currentProject = projects.find((project) => project.id === projectId);
+  const projectScope =
+    activeSection === "users" &&
+    capabilities.projectRead &&
+    (requested.scope === "project" || !capabilities.userRead);
+  const [memberPage, globalUserPage, roles, ldap, sessions] = await Promise.all([
+    projectScope && currentProject
+      ? services.identityAccess.listProjectMembersPage(identity, currentProject.id, {
+          limit: 50,
+          ...(query ? { query } : {}),
+          ...(cursor ? { cursor } : {}),
+        })
+      : Promise.resolve({ items: [], nextCursor: undefined }),
+    needsRoles && capabilities.userRead && !projectScope
       ? services.identityAccess.listUsers(identity, {
           limit: 50,
           ...(query ? { query } : {}),
@@ -66,27 +77,29 @@ export default async function AccessSettingsPage({
       : Promise.resolve({ items: [], nextCursor: undefined }),
     needsRoles && capabilities.roleRead
       ? services.identityAccess.listRoles(identity)
-      : Promise.resolve([]),
-    needsProjects && capabilities.projectRead
-      ? services.identityAccess.listProjects(identity)
-      : Promise.resolve([]),
-    needsLdap && capabilities.ldapRead
+      : needsRoles && currentProject
+        ? services.identityAccess.listProjectRolesForMemberManagement(identity, currentProject.id)
+        : Promise.resolve([]),
+    activeSection === "ldap" && capabilities.ldapRead
       ? services.identityAccess.getLdapConfiguration(identity)
       : Promise.resolve(null),
     activeSection === "sessions"
       ? services.identityAccess.listSessions(identity)
       : Promise.resolve([]),
   ]);
+  const userPage = projectScope
+    ? { items: memberPage.items.map((member) => member.user), nextCursor: memberPage.nextCursor }
+    : globalUserPage;
   const userIds = userPage.items.map((user) => user.id);
   const bindingsPage =
-    needsRoles && capabilities.roleRead && !capabilities.userRead
+    activeSection === "roles" && capabilities.roleRead && !capabilities.userRead
       ? await services.identityAccess.listSystemRoleBindingsPage(identity, cursor)
       : undefined;
   const [systemRoleBindings, projectBindings] = await Promise.all([
-    needsRoles && capabilities.roleRead
+    needsRoles && capabilities.roleRead && !projectScope
       ? (bindingsPage?.items ?? services.identityAccess.listSystemRoleBindings(identity, userIds))
       : [],
-    activeSection === "users" && capabilities.projectRead
+    activeSection === "users" && capabilities.projectRead && !projectScope
       ? services.identityAccess.listUserProjectRoleBindings(identity, userIds)
       : [],
   ]);
@@ -96,40 +109,48 @@ export default async function AccessSettingsPage({
     members.set(binding.userId, [...(members.get(binding.userId) ?? []), binding.roleId]);
     membershipsByProject.set(binding.projectId, members);
   }
-  const projectMemberships = [...membershipsByProject].map(([projectId, members]) => ({
-    projectId,
-    members: userPage.items
-      .filter((user) => members.has(user.id))
-      .map((user) => ({ user, roleIds: members.get(user.id)! })),
-  }));
+  const projectMemberships =
+    projectScope && currentProject
+      ? [{ projectId: currentProject.id, members: memberPage.items }]
+      : [...membershipsByProject].map(([projectId, members]) => ({
+          projectId,
+          members: userPage.items
+            .filter((user) => members.has(user.id))
+            .map((user) => ({ user, roleIds: members.get(user.id)! })),
+        }));
 
   return (
     <section className="page-stack">
       <header className="page-header settings-page-header">
         <div>
-          <p className="eyebrow">System Settings</p>
+          <p className="eyebrow">Organization</p>
           <h1>{heading.title}</h1>
           <p>{heading.description}</p>
-          <span className="permission-chip">范围：全平台账号与权限</span>
         </div>
       </header>
-      <SectionTabs
-        label="访问管理模块"
-        tabs={availableSections.map(({ id }) => ({
-          href: `/settings/access?section=${id}`,
-          label: accessSectionHeading(id).tab,
-          active: activeSection === id,
-        }))}
-      />
+      <OrganizationTabs identity={identity} activeSection={activeSection} />
       <AccessSettings
         currentSessionId={identity.sessionId}
-        activeSection={activeSection}
-        capabilities={capabilities}
+        activeSection={accessSection}
+        capabilities={{
+          ...capabilities,
+          userRead: capabilities.userRead || capabilities.projectRead,
+          userManage: capabilities.userManage && !projectScope,
+          roleRead: capabilities.roleRead || capabilities.projectRead,
+          systemRoleAssign: capabilities.systemRoleAssign && !projectScope,
+        }}
+        canReadSystemRoles={capabilities.roleRead}
+        canReadAllUsers={capabilities.userRead}
+        projectScope={projectScope}
+        {...(currentProject ? { currentProject } : {})}
         ldap={ldap}
         projects={projects}
         assignableProjectIds={projects
           .filter(
-            (project) => !project.archived && hasPermission(identity, "project.manage", project.id),
+            (project) =>
+              !project.archived &&
+              hasPermission(identity, "project.manage", project.id) &&
+              (!projectScope || project.id === currentProject?.id),
           )
           .map((project) => project.id)}
         projectMemberships={projectMemberships}
@@ -143,7 +164,7 @@ export default async function AccessSettingsPage({
         // Query-string Tab navigation preserves client component state. Include the LDAP
         // configuration version so entering the lazily loaded directory tab and saving a new
         // revision both remount controlled switches from the authoritative persisted values.
-        key={`${activeSection}:${ldap?.updatedAt ?? "none"}`}
+        key={`${activeSection}:${projectScope ? currentProject?.id : "all"}:${ldap?.updatedAt ?? "none"}`}
       />
     </section>
   );
@@ -158,13 +179,13 @@ function accessSectionHeading(section: AccessSection): {
     case "users":
       return {
         title: "用户管理",
-        description: "管理本地账号、账号状态、用户来源和角色分配。",
+        description: "统一管理平台账号与项目成员，在用户行直接分配或撤销角色。",
         tab: "用户管理",
       };
     case "roles":
       return {
         title: "角色与权限",
-        description: "管理系统角色、权限集合和系统级绑定。",
+        description: "统一查看系统与项目角色。系统角色全局生效，项目角色只在分配的项目内生效。",
         tab: "角色权限",
       };
     case "ldap":

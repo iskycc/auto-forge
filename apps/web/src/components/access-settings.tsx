@@ -9,7 +9,9 @@ import {
   type User,
   type UserSession,
 } from "@autoforge/domain";
-import { Network, Plus, RefreshCw, Search, Shield, ShieldAlert, UserRound } from "lucide-react";
+import { Network, Plus, RefreshCw, Search, Shield, ShieldAlert } from "lucide-react";
+import Link from "next/link";
+import { ExpandableText } from "./expandable-text";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -64,7 +66,15 @@ export function AccessSettings({
   nextUserCursor,
   capabilities,
   activeSection,
+  projectScope,
+  currentProject,
+  canReadAllUsers,
+  canReadSystemRoles,
 }: {
+  projectScope: boolean;
+  currentProject?: Project;
+  canReadAllUsers: boolean;
+  canReadSystemRoles: boolean;
   users: User[];
   roles: Role[];
   projects: Project[];
@@ -97,7 +107,7 @@ export function AccessSettings({
   const toast = useToast();
   const [error, setError] = useState("");
   const [roleQuery, setRoleQuery] = useState("");
-  const [roleScope, setRoleScope] = useState("");
+  const [roleScope, setRoleScope] = useState(canReadSystemRoles ? "" : "project");
   const [pending, setPending] = useState(false);
   const [ldapEnabled, setLdapEnabled] = useState(ldap?.enabled ?? false);
   const [tlsRejectUnauthorized, setTlsRejectUnauthorized] = useState(
@@ -111,6 +121,7 @@ export function AccessSettings({
   const [roleAssignmentUser, setRoleAssignmentUser] = useState<User | null>(null);
   const assignableProjectSet = new Set(assignableProjectIds);
   const assignableProjects = projects.filter((project) => assignableProjectSet.has(project.id));
+  const userScopeUrl = `/settings/access?section=users${projectScope ? "&scope=project" : ""}`;
   const canAssignRoles =
     capabilities.roleRead && (capabilities.systemRoleAssign || assignableProjects.length > 0);
 
@@ -317,18 +328,30 @@ export function AccessSettings({
             <div>
               <h2>用户列表</h2>
             </div>
-            {capabilities.userManage ? (
-              <div className="button-row">
-                <Button onClick={() => (setError(""), setCreateDialog("password"))} type="button">
-                  重置密码
+            <div className="button-row">
+              {projectScope && canAssignRoles ? (
+                <Button
+                  onClick={() => {
+                    setRoleAssignmentUser(null);
+                    setCreateDialog("assignment");
+                  }}
+                  type="button"
+                  variant="primary"
+                >
+                  <Plus size={16} /> 添加成员
                 </Button>
-                <Button onClick={() => setCreateDialog("user")} type="button" variant="primary">
-                  <Plus size={16} /> 创建用户
-                </Button>
-              </div>
-            ) : (
-              <UserRound size={22} aria-hidden="true" />
-            )}
+              ) : null}
+              {capabilities.userManage ? (
+                <>
+                  <Button onClick={() => (setError(""), setCreateDialog("password"))} type="button">
+                    重置密码
+                  </Button>
+                  <Button onClick={() => setCreateDialog("user")} type="button" variant="primary">
+                    <Plus size={16} /> 创建用户
+                  </Button>
+                </>
+              ) : null}
+            </div>
           </div>
           {createDialog === "user" ? (
             <CreateUserDialog
@@ -363,20 +386,48 @@ export function AccessSettings({
               </Button>
             </form>
           </ActionDialog>
+          <div className="access-scope-toolbar">
+            <nav aria-label="用户管理范围" className="access-scope-options">
+              {canReadAllUsers ? (
+                <Link
+                  aria-current={!projectScope ? "page" : undefined}
+                  href="/settings/access?section=users"
+                >
+                  全平台用户
+                </Link>
+              ) : null}
+              {capabilities.projectRead ? (
+                <Link
+                  aria-current={projectScope ? "page" : undefined}
+                  href="/settings/access?section=users&scope=project"
+                >
+                  当前项目成员
+                </Link>
+              ) : null}
+            </nav>
+            <span className="settings-note">
+              {projectScope
+                ? `项目：${currentProject?.name ?? "暂无可访问项目"}`
+                : "账号统一创建，角色按系统或项目分配"}
+            </span>
+          </div>
           <form action="/settings/access" className="settings-user-filter" method="get">
             <input name="section" type="hidden" value="users" />
+            {projectScope ? <input name="scope" type="hidden" value="project" /> : null}
             <label>
               搜索用户
               <Input defaultValue={userQuery} maxLength={120} name="query" />
             </label>
-            <label>
-              账号来源
-              <Select defaultValue={userSource} name="source">
-                <option value="">全部来源</option>
-                <option value="local">本地</option>
-                <option value="ldap">LDAP</option>
-              </Select>
-            </label>
+            {!projectScope ? (
+              <label>
+                账号来源
+                <Select defaultValue={userSource} name="source">
+                  <option value="">全部来源</option>
+                  <option value="local">本地</option>
+                  <option value="ldap">LDAP</option>
+                </Select>
+              </label>
+            ) : null}
             <Button className="secondary-button" type="submit">
               <Search size={16} /> 筛选
             </Button>
@@ -399,7 +450,7 @@ export function AccessSettings({
                     <td colSpan={6}>
                       <div className="inline-empty">
                         没有匹配的用户。请调整条件或
-                        <a href="/settings/access?section=users">清空筛选</a>。
+                        <Link href={userScopeUrl}>清空筛选</Link>。
                       </div>
                     </td>
                   </tr>
@@ -407,7 +458,12 @@ export function AccessSettings({
                 {users.map((user) => (
                   <tr key={user.id}>
                     <td>
-                      <strong>{user.displayName}</strong>
+                      <strong>
+                        <ExpandableText text={user.displayName} label="用户显示名称" />
+                      </strong>
+                      {projectScope && user.id === currentProject?.ownerUserId ? (
+                        <span className="permission-chip">负责人</span>
+                      ) : null}
                       <small className="table-secondary">
                         {user.username}
                         {user.email ? ` · ${user.email}` : ""}
@@ -558,71 +614,73 @@ export function AccessSettings({
               <Shield size={22} aria-hidden="true" />
             )}
           </div>
-          <details className="management-disclosure">
-            <summary>用户系统角色绑定</summary>
-            <form action="/settings/access" className="settings-user-filter" method="get">
-              <input name="section" type="hidden" value="roles" />
-              <label>
-                搜索用户绑定
-                <Input defaultValue={userQuery} maxLength={120} name="query" />
-              </label>
-              <Button type="submit">筛选绑定</Button>
-            </form>{" "}
-            <div className="table-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>用户</th>
-                    <th>系统角色</th>
-                    <th>影响与操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {systemRoleBindings.length === 0 ? (
+          {canReadSystemRoles ? (
+            <details className="management-disclosure" open={Boolean(userQuery)}>
+              <summary>用户系统角色绑定</summary>
+              <form action="/settings/access" className="settings-user-filter" method="get">
+                <input name="section" type="hidden" value="roles" />
+                <label>
+                  搜索用户绑定
+                  <Input defaultValue={userQuery} maxLength={120} name="query" />
+                </label>
+                <Button type="submit">筛选绑定</Button>
+              </form>{" "}
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
                     <tr>
-                      <td colSpan={3}>当前没有系统角色绑定。</td>
+                      <th>用户</th>
+                      <th>系统角色</th>
+                      <th>影响与操作</th>
                     </tr>
-                  ) : null}
-                  {systemRoleBindings.map((binding) => (
-                    <tr key={`${binding.userId}-${binding.roleId}`}>
-                      <td>{userName(users, binding.userId)}</td>
-                      <td>{roleName(roles, binding.roleId)}</td>
-                      <td>
-                        <Button
-                          className="danger-text-button"
-                          disabled={pending || !capabilities.roleManage}
-                          onClick={() => {
-                            void confirmAction({
-                              title: "撤销系统角色",
-                              description:
-                                "目标用户的全部旧会话会立即失效；最后一位系统管理员仍受服务端保护。",
-                              confirmLabel: "确认撤销",
-                              tone: "danger",
-                            }).then((accepted) => {
-                              if (!accepted) return;
-                              void request(
-                                `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
-                                { method: "DELETE" },
-                                "系统角色已撤销。",
-                              );
-                            });
-                          }}
-                          type="button"
-                        >
-                          撤销系统角色
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <CursorPagination
-              nextCursor={nextUserCursor}
-              count={systemRoleBindings.length}
-              label="用户绑定分页"
-            />
-          </details>
+                  </thead>
+                  <tbody>
+                    {systemRoleBindings.length === 0 ? (
+                      <tr>
+                        <td colSpan={3}>当前没有系统角色绑定。</td>
+                      </tr>
+                    ) : null}
+                    {systemRoleBindings.map((binding) => (
+                      <tr key={`${binding.userId}-${binding.roleId}`}>
+                        <td>{userName(users, binding.userId)}</td>
+                        <td>{roleName(roles, binding.roleId)}</td>
+                        <td>
+                          <Button
+                            className="danger-text-button"
+                            disabled={pending || !capabilities.roleManage}
+                            onClick={() => {
+                              void confirmAction({
+                                title: "撤销系统角色",
+                                description:
+                                  "目标用户的全部旧会话会立即失效；最后一位系统管理员仍受服务端保护。",
+                                confirmLabel: "确认撤销",
+                                tone: "danger",
+                              }).then((accepted) => {
+                                if (!accepted) return;
+                                void request(
+                                  `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
+                                  { method: "DELETE" },
+                                  "系统角色已撤销。",
+                                );
+                              });
+                            }}
+                            type="button"
+                          >
+                            撤销系统角色
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <CursorPagination
+                nextCursor={nextUserCursor}
+                count={systemRoleBindings.length}
+                label="用户绑定分页"
+              />
+            </details>
+          ) : null}
           <ActionDialog
             protectUnsavedChanges
             description="自定义角色用于组合系统级或项目级权限。"
@@ -684,8 +742,8 @@ export function AccessSettings({
             <label>
               角色范围
               <Select value={roleScope} onChange={(event) => setRoleScope(event.target.value)}>
-                <option value="">全部范围</option>
-                <option value="system">系统</option>
+                {canReadSystemRoles ? <option value="">全部范围</option> : null}
+                {canReadSystemRoles ? <option value="system">系统</option> : null}
                 <option value="project">项目</option>
               </Select>
             </label>

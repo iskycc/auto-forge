@@ -9,7 +9,6 @@ import {
   FileCog,
   Home,
   KeyRound,
-  Landmark,
   Server,
   FolderOpen,
   Layers3,
@@ -64,16 +63,10 @@ const primaryNavigation: NavigationItem[] = [
 
 const administrationNavigation: NavigationItem[] = [
   {
-    label: "项目管理",
-    href: "/settings/projects",
-    icon: Landmark,
-    permission: "project.read",
-  },
-  {
-    label: "访问管理",
+    label: "组织管理",
     href: "/settings/access?section=users",
     icon: ShieldCheck,
-    anyPermissions: ["settings.read", "user.read", "role.read", "ldap.read"],
+    anyPermissions: ["project.read", "settings.read", "user.read", "role.read", "ldap.read"],
     activePrefixes: ["/settings/access"],
   },
   {
@@ -156,6 +149,9 @@ export function AppShell({
   projects = [],
   selectedProjectId,
   projectVersions = [],
+  canCreateProject = false,
+  canManageSelectedProject = false,
+  canReadSelectedProject = false,
   selectedProjectVersionId,
   selectedTestStageId,
 }: {
@@ -168,6 +164,9 @@ export function AppShell({
   forcePasswordChange?: boolean;
   projects?: Array<{ id: string; name: string }>;
   selectedProjectId?: string | undefined;
+  canCreateProject?: boolean;
+  canManageSelectedProject?: boolean;
+  canReadSelectedProject?: boolean;
   projectVersions?: Array<{
     id: string;
     name: string;
@@ -282,12 +281,15 @@ export function AppShell({
             <span />
           ) : (
             <div className="topbar-context">
-              {selectedProjectId ? (
+              {selectedProjectId || canCreateProject ? (
                 <GlobalProjectSwitcher
                   key={`${selectedProjectId}:${selectedProjectVersionId ?? ""}:${selectedTestStageId ?? ""}`}
                   projects={projects}
                   projectVersions={projectVersions}
-                  selectedProjectId={selectedProjectId}
+                  {...(selectedProjectId ? { selectedProjectId } : {})}
+                  canCreateProject={canCreateProject}
+                  canManageSelectedProject={canManageSelectedProject}
+                  canReadSelectedProject={canReadSelectedProject}
                   {...(selectedProjectVersionId ? { selectedProjectVersionId } : {})}
                   {...(selectedTestStageId ? { selectedTestStageId } : {})}
                 />

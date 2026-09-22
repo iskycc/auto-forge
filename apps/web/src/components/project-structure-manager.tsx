@@ -5,9 +5,9 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
 } from "@autoforge/domain";
-import { FolderTree, Link2, Plus, Trash2, UploadCloud } from "lucide-react";
+import { FolderTree, Link2, Trash2, UploadCloud } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Button, FileInput, Input, OperationProgress, Select } from "@/components/ui";
 import { readApiError, readApiErrorMessage } from "@/lib/client-api";
@@ -32,6 +32,8 @@ export function ProjectStructureManager({
   const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [structure, setStructure] = useState(initialStructure);
+  const [versionQuery, setVersionQuery] = useState("");
+  const versionListRef = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [runtimeUploadProgress, setRuntimeUploadProgress] = useState<{
@@ -39,14 +41,23 @@ export function ProjectStructureManager({
     detail: string;
     percent: number;
   }>();
-  const [createDialog, setCreateDialog] = useState<"version" | "stage" | "inherit-cases" | null>(
-    null,
-  );
+  const [inheritDialogOpen, setInheritDialogOpen] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState(
     initialStructure.versions.some((version) => version.id === initialVersionId)
       ? (initialVersionId ?? "")
       : (initialStructure.versions[0]?.id ?? ""),
   );
+
+  useEffect(() => {
+    const list = versionListRef.current;
+    const selected = list?.querySelector<HTMLButtonElement>('[aria-pressed="true"]');
+    if (!list || !selected) return;
+    // Scroll only the version rail; selecting or clearing a filter must not move the page.
+    const top = selected.offsetTop;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + selected.offsetHeight > list.scrollTop + list.clientHeight)
+      list.scrollTop = top + selected.offsetHeight - list.clientHeight;
+  }, [selectedVersionId, versionQuery]);
 
   async function refresh(success: string): Promise<void> {
     const response = await fetch(`/api/v1/projects/${projectId}/structure`, {
@@ -90,37 +101,6 @@ export function ProjectStructureManager({
     }
   }
 
-  function createVersion(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = new FormData(form);
-    void run(async () => {
-      await submitJson(`/api/v1/projects/${projectId}/versions`, "POST", {
-        name: values.get("name"),
-      });
-      form.reset();
-      await refresh("项目版本已创建。");
-      setCreateDialog(null);
-    });
-  }
-
-  function createStage(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = new FormData(form);
-    const versionId = String(values.get("versionId") ?? "");
-    void run(async () => {
-      await submitJson(
-        `/api/v1/projects/${projectId}/versions/${encodeURIComponent(versionId)}/stages`,
-        "POST",
-        { name: values.get("name"), description: values.get("description") },
-      );
-      form.reset();
-      await refresh("测试阶段已创建。");
-      setCreateDialog(null);
-    });
-  }
-
   function inheritCases(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
@@ -143,7 +123,7 @@ export function ProjectStructureManager({
       await refresh(
         `已继承 ${result.inheritedCount} 个用例${result.skippedCount ? `，跳过 ${result.skippedCount} 个同名用例` : ""}。`,
       );
-      setCreateDialog(null);
+      setInheritDialogOpen(false);
     });
   }
 
@@ -304,6 +284,14 @@ export function ProjectStructureManager({
   }
 
   const selectedVersion = structure.versions.find((version) => version.id === selectedVersionId);
+  const matchingVersions = structure.versions.filter((version) =>
+    version.name.toLocaleLowerCase().includes(versionQuery.trim().toLocaleLowerCase()),
+  );
+  const runtimeSourceVersions = structure.versions.filter(
+    (version) =>
+      version.id !== selectedVersionId &&
+      (version.adapterConfiguration.jdkAsset || version.adapterConfiguration.jarBundleAsset),
+  );
   const configuration = selectedVersion?.adapterConfiguration ?? {
     projectId,
     projectVersionId: selectedVersionId,
@@ -312,376 +300,324 @@ export function ProjectStructureManager({
   };
   return (
     <div className="settings-stack project-structure-manager">
-      {error && !createDialog ? (
+      {error && !inheritDialogOpen ? (
         <div className="auth-error" role="alert">
           {error}
         </div>
       ) : null}
 
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Project structure</p>
-            <h2>版本与测试阶段</h2>
-            <p>新用例必须归属到项目版本和测试阶段；旧的未归属用例不进入新目录树。</p>
+      <div className="project-structure-workspace">
+        <aside className="project-version-navigation" aria-label="配置所属版本">
+          <div className="project-version-navigation-heading">
+            <strong>项目版本</strong>
+            <span>{structure.versions.length}</span>
           </div>
-          <div className="button-row">
-            {canManage ? (
-              <>
-                <Button onClick={() => (setError(""), setCreateDialog("version"))} type="button">
-                  <Plus size={15} /> 创建版本
+          <Input
+            aria-label="搜索项目版本"
+            placeholder="搜索版本名称"
+            type="search"
+            value={versionQuery}
+            onChange={(event) => setVersionQuery(event.target.value)}
+          />
+          <div className="project-version-options" ref={versionListRef}>
+            {matchingVersions.map((version) => (
+              <Button
+                key={version.id}
+                type="button"
+                className="project-version-option"
+                aria-pressed={version.id === selectedVersionId}
+                disabled={pending}
+                onClick={() => {
+                  setSelectedVersionId(version.id);
+                  setRuntimeUploadProgress(undefined);
+                  setError("");
+                }}
+              >
+                <strong title={version.name}>{version.name}</strong>
+                <span>
+                  {version.stages.length} 个阶段 ·{" "}
+                  {version.adapterConfiguration.jarBundleAsset ? "依赖已配置" : "未配置依赖"}
+                </span>
+              </Button>
+            ))}
+            {!matchingVersions.length ? (
+              <p className="inline-empty">
+                {structure.versions.length ? "没有匹配的版本" : "暂无版本，请从顶栏新建"}
+              </p>
+            ) : null}
+          </div>
+        </aside>
+        <div className="project-version-detail">
+          <section className="content-card settings-section">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Project structure</p>
+                <h2 title={selectedVersion?.name}>{selectedVersion?.name ?? "版本与测试阶段"}</h2>
+                <p>当前配置版本 · {selectedVersion?.stages.length ?? 0} 个测试阶段</p>
+              </div>
+              <div className="button-row">
+                {canManage ? (
+                  <>
+                    <Button
+                      onClick={() => (setError(""), setInheritDialogOpen(true))}
+                      type="button"
+                    >
+                      <Link2 size={15} /> 继承用例
+                    </Button>
+                  </>
+                ) : (
+                  <FolderTree size={22} aria-hidden="true" />
+                )}
+              </div>
+            </div>
+            <ActionDialog
+              protectUnsavedChanges
+              onClose={() => !pending && setInheritDialogOpen(false)}
+              open={inheritDialogOpen}
+              title="从其他版本继承用例"
+            >
+              <form className="settings-grid-form action-dialog-form" onSubmit={inheritCases}>
+                {error ? (
+                  <p className="auth-error settings-wide-field" role="alert">
+                    {error}
+                  </p>
+                ) : null}
+                <label>
+                  来源版本 / 测试阶段
+                  <Select
+                    name="sourceTestStageId"
+                    required
+                    disabled={!canManage || pending || !selectedVersionId}
+                  >
+                    {structure.versions.flatMap((version) =>
+                      version.stages.map((stage) => (
+                        <option key={stage.id} value={stage.id}>
+                          {version.name} / {stage.name}
+                        </option>
+                      )),
+                    )}
+                  </Select>
+                </label>
+                <label>
+                  目标版本 / 测试阶段
+                  <Select
+                    name="targetTestStageId"
+                    required
+                    disabled={!canManage || pending || !selectedVersionId}
+                  >
+                    {structure.versions.flatMap((version) =>
+                      version.stages.map((stage) => (
+                        <option key={stage.id} value={stage.id}>
+                          {version.name} / {stage.name}
+                        </option>
+                      )),
+                    )}
+                  </Select>
+                </label>
+                <p className="settings-note">
+                  继承会创建独立的目标用例定义，并共享不可变 JAR
+                  来源；目标阶段已有的同类名用例会安全跳过。
+                </p>
+                <Button
+                  className="primary-button"
+                  disabled={pending || !canManage || structure.versions.length < 2}
+                  type="submit"
+                >
+                  开始继承
                 </Button>
-                <Button onClick={() => (setError(""), setCreateDialog("stage"))} type="button">
-                  <Plus size={15} /> 创建阶段
+              </form>
+            </ActionDialog>
+            <div className="project-stage-list" aria-label="当前版本测试阶段">
+              {selectedVersion?.stages.length ? (
+                selectedVersion.stages.map((stage) => (
+                  <div className="project-stage-row" key={stage.id}>
+                    <strong title={stage.name}>{stage.name}</strong>
+                    <span>{stage.description || "暂无阶段说明"}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="inline-empty">当前版本尚无测试阶段。</p>
+              )}
+            </div>
+          </section>
+
+          <section className="content-card settings-section" key={selectedVersionId}>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Runtime assets</p>
+                <h2>JDK 与依赖 JAR 压缩包</h2>
+                <p>资源仅应用于当前配置版本，支持上传、内网链接或从其他版本继承。</p>
+              </div>
+              <UploadCloud size={22} aria-hidden="true" />
+            </div>
+            <p className="settings-note">
+              {selectedVersion ? `${selectedVersion.name} · ` : ""}当前 JDK：
+              {assetSummary(configuration.jdkAsset)}；当前依赖包：
+              {assetSummary(configuration.jarBundleAsset)}
+              {configuration.inheritedFromProjectVersionId
+                ? `；继承自 ${versionName(structure, configuration.inheritedFromProjectVersionId)}`
+                : ""}
+            </p>
+            {configuration.jdkAsset || configuration.jarBundleAsset ? (
+              <div className="project-runtime-actions">
+                <Button
+                  disabled={pending || !canManage || !configuration.jdkAsset}
+                  onClick={() => deleteAsset("jdk")}
+                  type="button"
+                  variant="danger"
+                >
+                  <Trash2 size={14} /> 删除当前 JDK
                 </Button>
                 <Button
-                  onClick={() => (setError(""), setCreateDialog("inherit-cases"))}
+                  disabled={pending || !canManage || !configuration.jarBundleAsset}
+                  onClick={() => deleteAsset("jar-bundle")}
                   type="button"
+                  variant="danger"
                 >
-                  <Link2 size={15} /> 继承用例
+                  <Trash2 size={14} /> 删除当前依赖包
                 </Button>
-              </>
-            ) : (
-              <FolderTree size={22} aria-hidden="true" />
-            )}
-          </div>
-        </div>
-        <ActionDialog
-          protectUnsavedChanges
-          onClose={() => !pending && setCreateDialog(null)}
-          open={createDialog === "version"}
-          title="创建项目版本"
-        >
-          <form className="settings-grid-form action-dialog-form" onSubmit={createVersion}>
-            {error ? (
-              <p className="auth-error settings-wide-field" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <label>
-              版本名称
-              <Input name="name" placeholder="例如 2.4.0" required disabled={!canManage} />
-            </label>
-            <Button className="primary-button" disabled={pending || !canManage} type="submit">
-              创建版本
-            </Button>
-          </form>
-        </ActionDialog>
-        <ActionDialog
-          protectUnsavedChanges
-          onClose={() => !pending && setCreateDialog(null)}
-          open={createDialog === "inherit-cases"}
-          title="从其他版本继承用例"
-        >
-          <form className="settings-grid-form action-dialog-form" onSubmit={inheritCases}>
-            {error ? (
-              <p className="auth-error settings-wide-field" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <label>
-              来源版本 / 测试阶段
-              <Select name="sourceTestStageId" required disabled={!canManage}>
-                {structure.versions.flatMap((version) =>
-                  version.stages.map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {version.name} / {stage.name}
-                    </option>
-                  )),
-                )}
-              </Select>
-            </label>
-            <label>
-              目标版本 / 测试阶段
-              <Select name="targetTestStageId" required disabled={!canManage}>
-                {structure.versions.flatMap((version) =>
-                  version.stages.map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {version.name} / {stage.name}
-                    </option>
-                  )),
-                )}
-              </Select>
-            </label>
-            <p className="settings-note">
-              继承会创建独立的目标用例定义，并共享不可变 JAR
-              来源；目标阶段已有的同类名用例会安全跳过。
-            </p>
-            <Button
-              className="primary-button"
-              disabled={pending || !canManage || structure.versions.length < 2}
-              type="submit"
-            >
-              开始继承
-            </Button>
-          </form>
-        </ActionDialog>
-        <ActionDialog
-          protectUnsavedChanges
-          onClose={() => !pending && setCreateDialog(null)}
-          open={createDialog === "stage"}
-          title="创建测试阶段"
-        >
-          <form className="settings-grid-form action-dialog-form" onSubmit={createStage}>
-            {error ? (
-              <p className="auth-error settings-wide-field" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <label>
-              所属版本
-              <Select name="versionId" required disabled={!canManage}>
-                {structure.versions.map((version) => (
-                  <option key={version.id} value={version.id}>
-                    {version.name}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label>
-              阶段名称
-              <Input name="name" placeholder="例如 系统测试" required disabled={!canManage} />
-            </label>
-            <label>
-              阶段说明
-              <Input name="description" maxLength={2000} disabled={!canManage} />
-            </label>
-            <Button
-              className="primary-button"
-              disabled={pending || !canManage || structure.versions.length === 0}
-              type="submit"
-            >
-              创建测试阶段
-            </Button>
-          </form>
-        </ActionDialog>
-        <div className="project-version-tree" role="tree" aria-label="项目版本与测试阶段">
-          {structure.versions.length === 0 ? (
-            <p className="inline-empty">尚未创建项目版本。</p>
-          ) : null}
-          {structure.versions.map((version) => (
-            <section
-              aria-selected={version.id === selectedVersionId}
-              className="project-version-node"
-              key={version.id}
-              role="treeitem"
-            >
-              <div className="project-version-node-heading">
-                <span className="project-version-branch" aria-hidden="true" />
-                <span>
-                  <small>项目版本</small>
-                  <strong>{version.name}</strong>
-                </span>
-                <span className="status-badge status-ready">
-                  {version.stages.length} 个测试阶段
-                </span>
               </div>
-              <div className="project-stage-children" role="group">
-                {version.stages.length === 0 ? (
-                  <p className="project-stage-empty">尚无测试阶段</p>
-                ) : (
-                  version.stages.map((stage, index) => (
-                    <div
-                      aria-selected={false}
-                      className="project-stage-node"
-                      key={stage.id}
-                      role="treeitem"
+            ) : null}
+            {runtimeSourceVersions.length ? (
+              <form className="project-runtime-inherit" onSubmit={inheritRuntime}>
+                <label>
+                  从其他版本继承资源
+                  <Select name="sourceProjectVersionId" required disabled={!canManage || pending}>
+                    {runtimeSourceVersions.map((version) => (
+                      <option key={version.id} value={version.id}>
+                        {version.name}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <Button disabled={pending || !canManage || !selectedVersionId} type="submit">
+                  <Link2 size={14} /> 继承共享资源
+                </Button>
+              </form>
+            ) : null}
+            <div className="settings-paired-forms">
+              <details className="management-disclosure">
+                <summary>上传本地压缩包</summary>
+                <form
+                  className="settings-grid-form settings-subform project-structure-subform"
+                  onSubmit={uploadAsset}
+                >
+                  <label>
+                    资源类型
+                    <Select name="kind" disabled={!canManage || pending || !selectedVersionId}>
+                      <option value="jdk">JDK 压缩包</option>
+                      <option value="jar-bundle">依赖 JAR 压缩包</option>
+                    </Select>
+                  </label>
+                  <label>
+                    压缩格式
+                    <Select
+                      name="archiveFormat"
+                      disabled={!canManage || pending || !selectedVersionId}
                     >
-                      <span
-                        className={
-                          index === version.stages.length - 1
-                            ? "project-stage-connector last"
-                            : "project-stage-connector"
-                        }
-                        aria-hidden="true"
+                      <option value="tar.gz">tar.gz</option>
+                      <option value="zip">zip</option>
+                    </Select>
+                  </label>
+                  <label>
+                    本地文件
+                    <FileInput
+                      name="file"
+                      accept=".zip,.tar.gz,.tgz"
+                      disabled={!canManage || pending || !selectedVersionId}
+                    />
+                  </label>
+                  <Button
+                    className="primary-button"
+                    disabled={pending || !canManage || !selectedVersionId}
+                    type="submit"
+                  >
+                    上传并启用
+                  </Button>
+                  {runtimeUploadProgress ? (
+                    <div className="project-runtime-upload-progress">
+                      <OperationProgress
+                        detail={runtimeUploadProgress.detail}
+                        label={runtimeUploadProgress.label}
+                        value={runtimeUploadProgress.percent}
                       />
-                      <span>
-                        <small>测试阶段 {index + 1}</small>
-                        <strong>{stage.name}</strong>
-                        {stage.description ? <em>{stage.description}</em> : null}
-                      </span>
                     </div>
-                  ))
-                )}
-              </div>
-            </section>
-          ))}
+                  ) : null}
+                </form>
+              </details>
+              <details className="management-disclosure">
+                <summary>登记内网资源链接</summary>
+                <form
+                  className="settings-grid-form settings-subform project-structure-subform"
+                  onSubmit={registerUrlAsset}
+                >
+                  <label>
+                    资源类型
+                    <Select name="kind" disabled={!canManage || pending || !selectedVersionId}>
+                      <option value="jdk">JDK 压缩包</option>
+                      <option value="jar-bundle">依赖 JAR 压缩包</option>
+                    </Select>
+                  </label>
+                  <label>
+                    压缩格式
+                    <Select
+                      name="archiveFormat"
+                      disabled={!canManage || pending || !selectedVersionId}
+                    >
+                      <option value="tar.gz">tar.gz</option>
+                      <option value="zip">zip</option>
+                    </Select>
+                  </label>
+                  <label>
+                    HTTP(S) 链接
+                    <Input
+                      name="url"
+                      type="url"
+                      required
+                      disabled={!canManage || pending || !selectedVersionId}
+                    />
+                  </label>
+                  <label>
+                    文件名
+                    <Input
+                      name="fileName"
+                      required
+                      disabled={!canManage || pending || !selectedVersionId}
+                    />
+                  </label>
+                  <label>
+                    SHA-256
+                    <Input
+                      name="sha256"
+                      minLength={64}
+                      maxLength={64}
+                      required
+                      disabled={!canManage || pending || !selectedVersionId}
+                    />
+                  </label>
+                  <label>
+                    大小（字节）
+                    <Input
+                      name="sizeBytes"
+                      type="number"
+                      min={1}
+                      required
+                      disabled={!canManage || pending || !selectedVersionId}
+                    />
+                  </label>
+                  <Button
+                    className="primary-button"
+                    disabled={pending || !canManage || !selectedVersionId}
+                    type="submit"
+                  >
+                    登记链接并启用
+                  </Button>
+                </form>
+              </details>
+            </div>
+          </section>
         </div>
-      </section>
-
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Runtime assets</p>
-            <h2>JDK 与依赖 JAR 压缩包</h2>
-            <p>
-              可以流式上传或填写内网 HTTP(S) 地址；不设置固定业务大小上限，Runner
-              下载后仍会校验大小、SHA-256 和任务工作区配额。
-            </p>
-          </div>
-          <UploadCloud size={22} aria-hidden="true" />
-        </div>
-        <label className="project-runtime-version-select">
-          配置所属版本
-          <Select
-            value={selectedVersionId}
-            onChange={(event) => {
-              setSelectedVersionId(event.currentTarget.value);
-              setRuntimeUploadProgress(undefined);
-            }}
-            disabled={structure.versions.length === 0}
-          >
-            {structure.versions.length === 0 ? <option value="">尚无项目版本</option> : null}
-            {structure.versions.map((version) => (
-              <option key={version.id} value={version.id}>
-                {version.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <p className="settings-note">
-          {selectedVersion ? `${selectedVersion.name} · ` : ""}当前 JDK：
-          {assetSummary(configuration.jdkAsset)}；当前依赖包：
-          {assetSummary(configuration.jarBundleAsset)}
-          {configuration.inheritedFromProjectVersionId
-            ? `；继承自 ${versionName(structure, configuration.inheritedFromProjectVersionId)}`
-            : ""}
-        </p>
-        <div className="project-runtime-actions">
-          <Button
-            disabled={pending || !canManage || !configuration.jdkAsset}
-            onClick={() => deleteAsset("jdk")}
-            type="button"
-            variant="danger"
-          >
-            <Trash2 size={14} /> 删除当前 JDK
-          </Button>
-          <Button
-            disabled={pending || !canManage || !configuration.jarBundleAsset}
-            onClick={() => deleteAsset("jar-bundle")}
-            type="button"
-            variant="danger"
-          >
-            <Trash2 size={14} /> 删除当前依赖包
-          </Button>
-        </div>
-        <form className="project-runtime-inherit" onSubmit={inheritRuntime}>
-          <label>
-            从其他版本继承资源
-            <Select name="sourceProjectVersionId" required disabled={!canManage || pending}>
-              {structure.versions
-                .filter(
-                  (version) =>
-                    version.id !== selectedVersionId &&
-                    (version.adapterConfiguration.jdkAsset ||
-                      version.adapterConfiguration.jarBundleAsset),
-                )
-                .map((version) => (
-                  <option key={version.id} value={version.id}>
-                    {version.name}
-                  </option>
-                ))}
-            </Select>
-          </label>
-          <Button
-            disabled={
-              pending ||
-              !canManage ||
-              !selectedVersionId ||
-              !structure.versions.some(
-                (version) =>
-                  version.id !== selectedVersionId &&
-                  (version.adapterConfiguration.jdkAsset ||
-                    version.adapterConfiguration.jarBundleAsset),
-              )
-            }
-            type="submit"
-          >
-            <Link2 size={14} /> 继承共享资源
-          </Button>
-        </form>
-        <div className="settings-paired-forms">
-          <details className="management-disclosure">
-            <summary>上传本地压缩包</summary>
-            <form
-              className="settings-grid-form settings-subform project-structure-subform"
-              onSubmit={uploadAsset}
-            >
-              <label>
-                资源类型
-                <Select name="kind" disabled={!canManage}>
-                  <option value="jdk">JDK 压缩包</option>
-                  <option value="jar-bundle">依赖 JAR 压缩包</option>
-                </Select>
-              </label>
-              <label>
-                压缩格式
-                <Select name="archiveFormat" disabled={!canManage}>
-                  <option value="tar.gz">tar.gz</option>
-                  <option value="zip">zip</option>
-                </Select>
-              </label>
-              <label>
-                本地文件
-                <FileInput name="file" accept=".zip,.tar.gz,.tgz" disabled={!canManage} />
-              </label>
-              <Button className="primary-button" disabled={pending || !canManage} type="submit">
-                上传并启用
-              </Button>
-              {runtimeUploadProgress ? (
-                <div className="project-runtime-upload-progress">
-                  <OperationProgress
-                    detail={runtimeUploadProgress.detail}
-                    label={runtimeUploadProgress.label}
-                    value={runtimeUploadProgress.percent}
-                  />
-                </div>
-              ) : null}
-            </form>
-          </details>
-          <details className="management-disclosure">
-            <summary>登记内网资源链接</summary>
-            <form
-              className="settings-grid-form settings-subform project-structure-subform"
-              onSubmit={registerUrlAsset}
-            >
-              <label>
-                资源类型
-                <Select name="kind" disabled={!canManage}>
-                  <option value="jdk">JDK 压缩包</option>
-                  <option value="jar-bundle">依赖 JAR 压缩包</option>
-                </Select>
-              </label>
-              <label>
-                压缩格式
-                <Select name="archiveFormat" disabled={!canManage}>
-                  <option value="tar.gz">tar.gz</option>
-                  <option value="zip">zip</option>
-                </Select>
-              </label>
-              <label>
-                HTTP(S) 链接
-                <Input name="url" type="url" required disabled={!canManage} />
-              </label>
-              <label>
-                文件名
-                <Input name="fileName" required disabled={!canManage} />
-              </label>
-              <label>
-                SHA-256
-                <Input name="sha256" minLength={64} maxLength={64} required disabled={!canManage} />
-              </label>
-              <label>
-                大小（字节）
-                <Input name="sizeBytes" type="number" min={1} required disabled={!canManage} />
-              </label>
-              <Button className="primary-button" disabled={pending || !canManage} type="submit">
-                登记链接并启用
-              </Button>
-            </form>
-          </details>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

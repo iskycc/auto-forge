@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.22 - 2026-09-23
+
+### Changed and fixed
+
+- 将项目成员与全平台用户合并为“用户管理”，项目角色与系统角色合并为“角色权限”，统一从“组织管理”进入；保留项目权限隔离、用户行授权、成员批量添加和旧成员链接重定向。
+- 项目、版本、测试阶段从顶栏对应下拉中搜索和新建，创建后自动切换；移除独立项目管理侧栏与项目版本子页签。若创建成功但切换失败，只重试切换，避免重复创建。
+- 项目设置与执行资源配置从顶栏下拉底部进入，版本采用可搜索的紧凑列表，只展示选中版本的阶段、JDK 与依赖包；保留负责人转移、资源继承与保存期间的切换保护。
+- 修复顶栏下拉方向键无法打开、搜索后向上选择及关闭后焦点恢复的问题；修复统一角色页面“全部范围”和“系统”筛选项未显示的问题。
+- 长用户显示名默认展示两行，可展开与收起，避免撑高用户和成员列表；统一新建层级弹窗的底部操作区。
+- 角色绑定按用户搜索后保持结果展开，避免提交筛选后看不到结果；补充用户跨页查找与最后一位管理员保护的回归验证。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、新依赖或 Runner Protocol 变更。Lite/Full 共用 UI 与现有授权 API；从 v1.17.21 升级只需更新主平台，Full 同步更新全部平台节点，无需升级 Runner 或 Adapter。
+- 项目创建仍要求系统级管理权限；版本、阶段和项目资源管理按当前项目授权，归档项目不能新建版本或阶段。整合管理入口不会将项目管理权限扩大为系统用户或角色管理权限。
+- 离线资产类型不变：amd64/arm64 后端镜像、部署包、两个 Jenkins 插件、SBOM 元数据及签名清单。
+
+### Validation and known limitations
+
+- 分轮验证 41 个独立 Playwright 场景通过，包含 23 个页面入口、管理与授权流程、顶栏完整创建链路、DDT 工作台/公开 API/高级检索；修复后的最后一轮 23 项相关回归全部通过。
+- 实际查看 1024×768、1536×1024 的页面与弹窗截图，授权场景另覆盖 1536×960；复查问题与代表截图见 [UI 复查报告](./docs/design/organization-ui-review-2026-09-23.md)。
+- 24 项相关单元测试、全仓格式/许可证检查、变更文件 lint、Web/测试类型检查及 Web 生产构建通过。
+- 本地验证使用 Lite；未改动 Full 适配器和执行链路。完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行。
+
 ## 1.17.21 - 2026-09-22
 
 ### Changed and fixed

@@ -223,6 +223,13 @@ test("administrator assigns system and project roles directly from the user row"
       { width: 1536, height: 960 },
     ]) {
       await page.setViewportSize(viewport);
+      const expandName = row.getByRole("button", { name: "展开用户显示名称", exact: true });
+      await expect(expandName).toBeVisible();
+      const collapsedHeight = (await row.boundingBox())!.height;
+      await expandName.click();
+      await expect(row).toContainText(displayName);
+      expect((await row.boundingBox())!.height).toBeGreaterThan(collapsedHeight);
+      await row.getByRole("button", { name: "收起用户显示名称", exact: true }).click();
       await expectUiIntegrity(page);
       await captureUi(page, `user-role-entry-${viewport.width}`);
     }
@@ -449,7 +456,7 @@ test("local user completes forced password change and self-service session lifec
   });
   await roleForm.getByLabel("查找用户").fill(username);
   await roleForm.getByRole("button", { name: "查询用户" }).click();
-  await roleForm.getByRole("radio", { name: new RegExp(username) }).check();
+  await roleForm.getByRole("checkbox", { name: new RegExp(username) }).check();
   await roleForm.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
   for (const viewport of [
     { width: 1024, height: 768 },
@@ -520,7 +527,19 @@ test("administrator can reset a user password and the last administrator binding
 
   await page.goto("/settings/access?section=roles");
   await page.getByText("用户系统角色绑定", { exact: true }).click();
+  await page.getByLabel("搜索用户绑定", { exact: true }).fill(E2E_ADMIN_USERNAME);
+  await page.getByRole("button", { name: "筛选绑定", exact: true }).click();
+  await expect(page).toHaveURL(/section=roles&query=e2e-admin/);
   const administratorRow = page.getByRole("row", { name: /E2E Administrator.*系统管理员/ });
+  await expect(administratorRow).toBeVisible();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, `role-bindings-filtered-${viewport.width}`);
+  }
   await administratorRow.getByRole("button", { name: "撤销系统角色" }).click();
   await acceptSystemDialog(page, "撤销系统角色", "确认撤销");
   await expect(appAlert(page)).toContainText("最后一位");
@@ -618,45 +637,101 @@ test("administrator unlocks and disables a locked user and manages a custom role
   expect(user.id).toBeTruthy();
 });
 
-test("project administrator manages member roles from the member dialog", async ({ page }) => {
+test("project administrators use unified users and roles without global account access", async ({
+  page,
+  browser,
+}) => {
   await ensureAdministrator(page);
-  const username = uniqueName("member-roles");
-  const user = await createActiveUser(page, username, "MemberRoles!Password123");
-  expect(
-    await browserStatus(page, `/api/v1/users/${user.id}/project-roles`, "POST", {
-      projectId: DEFAULT_PROJECT_ID,
-      roleId: VIEWER_ROLE_ID,
-    }),
-  ).toBe(204);
-
-  await page.goto(`/settings/projects?section=members&query=${encodeURIComponent(username)}`);
-  const memberRow = page.getByRole("row").filter({ hasText: username });
-  await memberRow.getByRole("button", { name: "管理角色" }).click();
-
-  const dialog = page.getByRole("dialog", {
-    name: `管理“${username}”的项目角色`,
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: "授权隔离项目", slug: uniqueName("unified-access") },
   });
-  const viewerRole = dialog.locator(".member-role-card").filter({ hasText: "只读观察者" });
-  const testManagerRole = dialog.locator(".member-role-card").filter({ hasText: "测试管理员" });
-  await expect(viewerRole.getByText("已分配", { exact: true })).toBeVisible();
-  await expect(testManagerRole.getByText("未分配", { exact: true })).toBeVisible();
-
-  await testManagerRole.getByRole("button", { name: "添加项目角色 测试管理员" }).click();
-  await expect(page.locator(".toast-card")).toContainText(
-    "项目角色已添加，目标用户的旧会话已撤销。",
-  );
-  await expect(testManagerRole.getByText("已分配", { exact: true })).toBeVisible();
-
-  await viewerRole.getByRole("button", { name: "移除项目角色 只读观察者" }).click();
-  await acceptSystemDialog(page, "移除项目角色", "确认移除");
-  await expect(page.locator(".toast-card")).toContainText(
-    "项目角色已移除，目标用户的旧会话已撤销。",
-  );
-  await expect(viewerRole.getByText("未分配", { exact: true })).toBeVisible();
-
-  await dialog.getByRole("button", { name: "完成" }).click();
-  await expect(memberRow.locator(".permission-list")).toContainText("测试管理员");
-  await expect(memberRow.locator(".permission-list")).not.toContainText("只读观察者");
+  expect(project.status).toBe(201);
+  const password = "MemberRoles!Password123";
+  const operatorName = uniqueName("member-admin");
+  const operator = await createActiveUser(page, operatorName, password);
+  const username = uniqueName("member-roles");
+  const member = await createActiveUser(page, username, password);
+  const outsiderName = uniqueName("outside-project");
+  await createActiveUser(page, outsiderName, password);
+  for (const [userId, roleId] of [
+    [operator.id, PROJECT_ADMIN_ROLE_ID],
+    [member.id, VIEWER_ROLE_ID],
+  ]) {
+    expect(
+      await browserStatus(page, `/api/v1/users/${userId}/project-roles`, "POST", {
+        projectId: project.body.id,
+        roleId,
+      }),
+    ).toBe(204);
+  }
+  const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const operatorPage = await context.newPage();
+    await login(operatorPage, operatorName, password);
+    await operatorPage.goto(
+      `/settings/projects?section=members&query=${encodeURIComponent(username)}`,
+    );
+    await expect(operatorPage).toHaveURL(/settings\/access\?section=users&scope=project&query=/);
+    await expect(operatorPage.getByRole("link", { name: "全平台用户", exact: true })).toHaveCount(
+      0,
+    );
+    await expect(operatorPage.getByRole("button", { name: "创建用户", exact: true })).toHaveCount(
+      0,
+    );
+    const row = operatorPage.getByRole("row").filter({ hasText: username });
+    await row.getByRole("button", { name: "分配角色", exact: true }).click();
+    const dialog = operatorPage.getByRole("dialog", { name: "分配用户角色" });
+    await expect(dialog.getByRole("button", { name: "分配系统角色" })).toHaveCount(0);
+    await dialog.locator(`input[name="roleId"][value="${TEST_MANAGER_ROLE_ID}"]`).check();
+    await dialog.getByRole("button", { name: "分配项目角色" }).click();
+    await expect(dialog).toHaveCount(0);
+    await row.getByRole("button", { name: "分配角色", exact: true }).click();
+    await dialog
+      .locator(".assigned-role-list > div", { hasText: "只读观察者" })
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await acceptSystemDialog(operatorPage, "撤销用户角色", "确认撤销");
+    await expect(dialog).toHaveCount(0);
+    await row.locator("summary").click();
+    await expect(row.locator(".permission-list")).toContainText("测试管理员");
+    await expect(row.locator(".permission-list")).not.toContainText("只读观察者");
+    await operatorPage.goto("/settings/access?section=users&scope=all");
+    await expect(operatorPage.getByRole("row").filter({ hasText: outsiderName })).toHaveCount(0);
+    await operatorPage.getByRole("button", { name: "添加成员", exact: true }).click();
+    await dialog.getByLabel("查找用户").fill(outsiderName);
+    await dialog.getByRole("button", { name: "查询用户", exact: true }).click();
+    await dialog.getByRole("checkbox", { name: new RegExp(outsiderName) }).check();
+    await dialog.getByLabel("查找用户").fill(username);
+    await dialog.getByRole("button", { name: "查询用户", exact: true }).click();
+    await dialog.getByRole("checkbox", { name: new RegExp(username) }).check();
+    await dialog.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
+    await dialog.locator(`input[name="roleId"][value="${TEST_MANAGER_ROLE_ID}"]`).check();
+    await dialog.getByRole("button", { name: "分配项目角色", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    const addedRow = operatorPage.getByRole("row").filter({ hasText: outsiderName });
+    await expect(addedRow).toBeVisible();
+    await addedRow.locator("summary").click();
+    await expect(addedRow.locator(".permission-list")).toContainText("只读观察者");
+    await expect(addedRow.locator(".permission-list")).toContainText("测试管理员");
+    expect(await browserStatus(operatorPage, "/api/v1/users")).toBe(403);
+    expect(
+      await browserStatus(operatorPage, `/api/v1/users/${member.id}/system-roles`, "POST", {
+        roleId: AUDITOR_ROLE_ID,
+      }),
+    ).toBe(403);
+    await operatorPage.goto("/settings/access?section=roles");
+    await expect(
+      operatorPage.getByRole("heading", { name: "角色与权限", exact: true }),
+    ).toBeVisible();
+    await expect(operatorPage.getByText("用户系统角色绑定", { exact: true })).toHaveCount(0);
+    await expect(operatorPage.getByLabel("角色范围").locator("option")).toHaveCount(1);
+    await expect(operatorPage.getByRole("button", { name: "创建角色", exact: true })).toHaveCount(
+      0,
+    );
+  } finally {
+    await context.close();
+  }
 });
 
 test("every built-in role receives only its authorized navigation and API surface", async ({
@@ -682,7 +757,7 @@ test("every built-in role receives only its authorized navigation and API surfac
         "执行节点",
         "质量洞察",
         "用例分析",
-        "项目管理",
+        "组织管理",
         "执行机组",
       ],
       hidden: [] as string[],
@@ -719,7 +794,7 @@ test("every built-in role receives only its authorized navigation and API surfac
         "用例分析",
         "执行机组",
       ],
-      hidden: ["项目管理", "安全审计", "平台配置"],
+      hidden: ["组织管理", "安全审计", "平台配置"],
     },
     {
       key: "viewer",
@@ -736,7 +811,7 @@ test("every built-in role receives only its authorized navigation and API surfac
         "用例分析",
         "执行机组",
       ],
-      hidden: ["项目管理", "安全审计", "平台配置"],
+      hidden: ["组织管理", "安全审计", "平台配置"],
     },
     {
       key: "auditor",
@@ -750,7 +825,7 @@ test("every built-in role receives only its authorized navigation and API surfac
         "文件来源",
         "执行节点",
         "执行机组",
-        "项目管理",
+        "组织管理",
         "平台配置",
       ],
     },
@@ -776,6 +851,14 @@ test("every built-in role receives only its authorized navigation and API surfac
     await expandAdministrationGroup(rolePage, "身份权限");
     await expandAdministrationGroup(rolePage, "执行配置");
     await expandAdministrationGroup(rolePage, "平台运维");
+    await rolePage.locator(".project-picker-trigger").click();
+    await expect(rolePage.getByRole("button", { name: "新建项目", exact: true })).toHaveCount(0);
+    await rolePage.keyboard.press("Escape");
+    await rolePage.getByRole("button", { name: "当前项目版本", exact: true }).click();
+    await expect(rolePage.getByRole("button", { name: "新建项目版本", exact: true })).toHaveCount(
+      roleUser.key === "project-admin" ? 1 : 0,
+    );
+    await rolePage.keyboard.press("Escape");
     const mainNavigation = rolePage.getByRole("navigation", { name: "主导航" });
     for (const label of roleUser.visible) {
       await expect(mainNavigation.getByRole("link", { name: label, exact: true })).toBeVisible();

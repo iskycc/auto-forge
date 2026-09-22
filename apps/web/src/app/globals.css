@@ -21699,3 +21699,290 @@ button.icon-button:disabled {
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
 }
+
+/* Organization: one access entry, compact project configuration and scoped users. */
+:root {
+  --project-version-navigation-width: 224px;
+  --project-version-list-height: clamp(192px, calc(100dvh - 416px), 480px);
+  --project-stage-list-height: 208px;
+}
+
+.project-administration-bar,
+.access-scope-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.project-administration-summary {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.project-administration-summary strong,
+.project-version-option strong,
+.project-stage-row strong,
+.project-picker-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-administration-summary > span {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.project-structure-workspace {
+  display: grid;
+  grid-template-columns: var(--project-version-navigation-width) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.project-version-navigation {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.project-version-navigation-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--font-size-body);
+}
+
+.project-version-navigation-heading > span {
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.project-version-options {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  max-height: var(--project-version-list-height);
+  overflow-y: auto;
+}
+
+.ui-button.project-version-option {
+  display: grid;
+  min-width: 0;
+  justify-content: stretch;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-color: transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.ui-button.project-version-option[aria-pressed="true"] {
+  background: var(--color-info-soft);
+  border-color: var(--color-focus-ring);
+  color: var(--color-info);
+}
+
+.project-version-option > span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: normal;
+}
+
+.project-version-detail {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.project-version-detail .settings-section {
+  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.project-version-detail .section-heading {
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.project-version-detail .section-heading > div:first-child {
+  min-width: 0;
+}
+
+.project-version-detail .section-heading h2 {
+  white-space: normal;
+}
+
+.project-version-detail .project-runtime-actions,
+.project-version-detail .project-runtime-inherit {
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.project-version-detail .project-runtime-inherit label {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-version-detail .section-heading h2,
+.project-version-detail .settings-note,
+.access-scope-toolbar .settings-note {
+  overflow-wrap: anywhere;
+}
+
+.project-stage-list {
+  max-height: var(--project-stage-list-height);
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border);
+}
+
+.project-stage-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-control);
+}
+
+.project-stage-row > span {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.access-scope-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+}
+
+.access-scope-options > a {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  text-decoration: none;
+}
+
+.access-scope-options > a[aria-current="page"] {
+  background: var(--color-surface);
+  color: var(--color-info);
+  box-shadow: var(--shadow-control);
+}
+
+.project-picker-options {
+  min-width: 260px;
+  max-width: min(380px, 60vw);
+  max-height: none;
+  overflow: visible;
+  padding: var(--space-2);
+  gap: var(--space-2);
+}
+
+.project-picker-matches {
+  display: grid;
+  max-height: 260px;
+  gap: var(--space-1);
+  overflow-y: auto;
+}
+
+.project-picker-option {
+  min-width: 0;
+}
+
+.project-picker-option > svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1279px) {
+  .project-structure-workspace {
+    --project-version-navigation-width: 184px;
+    gap: var(--space-3);
+  }
+
+  .project-version-detail .settings-paired-forms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Topbar hierarchy actions remain separate from the scrollable choices. */
+.hierarchy-picker-trigger {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-control);
+  box-shadow: var(--shadow-control);
+  text-align: left;
+  font-size: var(--font-size-control);
+  font-weight: 600;
+}
+
+.global-project-switcher .hierarchy-picker-trigger {
+  min-height: 34px;
+  height: 34px;
+}
+
+.hierarchy-picker-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hierarchy-picker-actions {
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.hierarchy-picker-action,
+.ui-button.hierarchy-picker-action {
+  display: flex;
+  align-items: center;
+  justify-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-info);
+  font-size: var(--font-size-control);
+  text-decoration: none;
+}
+
+.hierarchy-picker-action:hover,
+.ui-button.hierarchy-picker-action:hover:not(:disabled) {
+  background: var(--color-info-soft);
+  box-shadow: none;
+  transform: none;
+}

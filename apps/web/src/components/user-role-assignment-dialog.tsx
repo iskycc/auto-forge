@@ -38,10 +38,12 @@ export function UserRoleAssignmentDialog({
     event.preventDefault();
     if (pending) return;
     const form = new FormData(event.currentTarget);
-    const userId = selectedUser?.id ?? String(form.get("userId") ?? "");
+    const userIds = selectedUser
+      ? [selectedUser.id]
+      : [...new Set(form.getAll("userId").map(String).filter(Boolean))];
     const roleIds = form.getAll("roleId").map(String);
     const projectId = String(form.get("projectId") ?? "");
-    if (!userId || !roleIds.length || (scope === "project" && !projectId)) {
+    if (!userIds.length || !roleIds.length || (scope === "project" && !projectId)) {
       setError(scope === "system" ? "请选择用户和系统角色。" : "请选择用户、项目和项目角色。");
       return;
     }
@@ -52,7 +54,7 @@ export function UserRoleAssignmentDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userIds: [userId],
+          userIds,
           roleIds,
           ...(scope === "project" ? { projectId } : {}),
         }),
@@ -163,7 +165,7 @@ export function UserRoleAssignmentDialog({
               className="settings-grid-form settings-subform"
               onSubmit={(event) => void submit(event, "system")}
             >
-              {!selectedUser ? <UserPicker purpose="system-role" /> : null}
+              {!selectedUser ? <UserPicker purpose="system-role" multiple /> : null}
               <CheckboxGroup
                 label="系统角色"
                 name="roleId"
@@ -193,7 +195,12 @@ export function UserRoleAssignmentDialog({
               onSubmit={(event) => void submit(event, "project")}
             >
               {!selectedUser ? (
-                <UserPicker key={projectId} purpose="project-member" projectId={projectId} />
+                <UserPicker
+                  key={projectId}
+                  purpose="project-member"
+                  projectId={projectId}
+                  multiple
+                />
               ) : null}
               <div className="user-role-field">
                 <label htmlFor="role-assignment-project">项目</label>
