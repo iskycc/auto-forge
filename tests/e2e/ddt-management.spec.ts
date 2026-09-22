@@ -2383,23 +2383,7 @@ test("DDT advanced search submits explicitly, searches only values and handles s
     { times: 1 },
   );
   await panel.getByRole("button", { name: "搜索", exact: true }).click();
-  // Shared CI hosts can briefly defer this low-priority scan. Exercise the visible
-  // retry action only for that explicit response; unrelated errors still fail.
-  await expect
-    .poll(
-      async () => {
-        await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
-        const alert = panel.getByRole("alert");
-        if (await alert.isVisible()) {
-          await expect(alert).toContainText("平台正在处理高优先级工作，请稍后重试检索。");
-          await panel.getByRole("button", { name: "重试检索" }).click();
-          await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
-        }
-        return panel.locator("article").count();
-      },
-      { timeout: 30_000, intervals: [500, 1_000, 2_000] },
-    )
-    .toBe(20);
+  await expectSearchResultsAfterPriorityDeferral(panel, 20);
   await expect(panel.locator("article").first()).toContainText("用户旅程 › step1 › nestedKey");
   await expect(panel.locator("article").first()).toContainText(longKey);
   await expect(panel.locator("article").first().locator("header")).toContainText(
@@ -2690,8 +2674,27 @@ test("DDT advanced search submits explicitly, searches only values and handles s
   await pausedIndexRequest!.abort();
   await expect(panel.getByRole("status")).toContainText("已匹配 7 条（总数统计中）");
   await expect(pagination).not.toContainText("共 7 条");
+  await page.route(
+    searchPattern,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台正在处理高优先级工作，请稍后重试检索。",
+            requestId: "resume-priority-deferral",
+          },
+        },
+      }),
+    { times: 1 },
+  );
   await panel.getByRole("button", { name: "继续统计" }).click();
-  await expect(panel.locator("article")).toHaveCount(20);
+  await expect(panel.getByRole("alert")).toContainText(
+    "平台正在处理高优先级工作，请稍后重试检索。",
+  );
+  await expect(panel.getByRole("status")).toContainText("已匹配 7 条（总数统计中）");
+  await expectSearchResultsAfterPriorityDeferral(panel, 20);
   await expect(pagination).toContainText("共 23 条 · 共 2 页");
   expect(searchRequests.some((url) => new URL(url).searchParams.get("indexOffset") === "7")).toBe(
     true,
@@ -3184,6 +3187,30 @@ async function captureDdtUi(
     fullPage: options.fullPage ?? false,
     animations: "disabled",
   });
+}
+
+async function expectSearchResultsAfterPriorityDeferral(
+  panel: Locator,
+  expectedCount: number,
+): Promise<void> {
+  // Initial and resumed scans can both yield to high-priority execution work.
+  // Exercise the visible recovery action only for that response, within a fixed
+  // budget; unrelated errors and persistent deferral must still fail the test.
+  await expect
+    .poll(
+      async () => {
+        await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+        const alert = panel.getByRole("alert");
+        if (await alert.isVisible()) {
+          await expect(alert).toContainText("平台正在处理高优先级工作，请稍后重试检索。");
+          await panel.getByRole("button", { name: "重试检索" }).click();
+          await expect(panel.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
+        }
+        return panel.locator("article").count();
+      },
+      { timeout: 30_000, intervals: [500, 1_000, 2_000] },
+    )
+    .toBe(expectedCount);
 }
 
 async function expectBelow(list: Locator, feedback: Locator): Promise<void> {
