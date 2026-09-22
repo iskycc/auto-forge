@@ -81,7 +81,7 @@ describe("storage inventory", () => {
       });
       inventories.push(another);
       await expect(another.list({ limit: 1, cursor: published.nextCursor! })).rejects.toMatchObject(
-        { code: "READ_MODEL_GENERATION_CONFLICT" },
+        { code: "STORAGE_INVENTORY_SNAPSHOT_EXPIRED" },
       );
     } finally {
       release();

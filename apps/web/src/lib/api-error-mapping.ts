@@ -102,6 +102,7 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (code === "STORAGE_INVENTORY_SNAPSHOT_EXPIRED") return 409;
   if (
     [
       "PLATFORM_LOG_BUSY",

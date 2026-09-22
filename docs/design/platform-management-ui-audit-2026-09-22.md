@@ -304,3 +304,16 @@ pnpm exec playwright test tests/e2e/management-operations.spec.ts tests/e2e/iden
 这些修正不增加任务自动重跑，也不放宽生产资源保护。发布前继续以最终提交的 GitHub CI、Full distributed acceptance、Release checks 和发布物验收结果为准。
 
 发布物备份恢复验收另外发现 `platform-restart.spec.ts` 仍精确匹配旧的“保留策略已更新。”文案，在开始备份前就退出。验收改为匹配保存成功的稳定语义，同时继续保留恢复后的配置值、保留天数与诊断断言；通过手动验收入口对同一 `v1.17.18` 发布物重新验证，不改动已发布标签和二进制。
+
+## 16. 保存区、范围标签与存储清单后续修复
+
+- 平台配置保存区使用卡片圆角、完整边框和阴影，与窗口底部保留间距；保留固定保存入口及未保存提示。
+- 文件来源“范围：当前项目”被工具栏的通用 `span` 内边距覆盖，造成标签拉伸。通用规则排除标签，并让范围栏垂直居中。
+- 存储清单确实存在单节点缺陷：旧快照按创建时间清理，闲置超过十分钟后，后台新快照一发布就可能使正在读取的旧分页失效。现在从快照被替换时开始保留十分钟；旧分页真正过期时返回专用错误，浏览器最多从首页重读两次，不混合不同快照。Full 继续固定所属节点，代理保留快照过期错误，节点不可达另行提示。仅新增可重建的本地清单索引表，不涉及业务数据库迁移。
+
+验证记录：
+
+- `pnpm exec vitest run --maxWorkers=2` 配合 `storage-inventory-index.test.ts`、`storage-inventory-reader.test.ts`、`storage-inventory.test.ts`、`api-error-mapping.test.ts`、`ui-usage.test.ts`：44 项通过。索引测试使用同一真实 SQLite 文件的两个连接，推进明确时间值验证替换与清理，不等待真实十分钟。
+- `pnpm exec playwright test tests/e2e/platform-operations.spec.ts`：全新隔离数据最终 6 项全部通过，覆盖配置保存/并发冲突、既有清理操作、布局、单节点与固定节点快照恢复、重试上限及手动恢复。前期定位了旧测试的配置搜索焦点干扰；重复使用已消费的死信 fixture 也会产生唯一键冲突，最终验收使用全新数据，未开启自动重试。
+- 修改文件的 Prettier、ESLint，Web 类型检查、测试类型检查、Web 生产构建通过。本轮未执行完整 CI 或跨物理主机 Full 验收；Full 相关验证为共享索引、节点代理单元测试和浏览器响应注入。
+- 实际查看 1024×768、1536×960 的保存栏顶部/底部、文件来源和存储目录截图；圆角与间距正常，范围标签紧凑，保存按钮和末尾字段可操作，无整页横向溢出。固定页头/保存栏有意覆盖滚动内容，配置页用实际点击命中检查代替忽略遮挡层次的矩形重叠判定。截图保存在本地 `.local/platform-ui-followup/screenshots/`。

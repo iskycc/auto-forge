@@ -93,7 +93,7 @@ export default async function ObjectsPage({
           {objects.storage === "local" ? "本地对象存储" : "MinIO 对象存储"}
         </span>
       </section>
-      <div className="management-toolbar">
+      <div className="management-toolbar management-scope-toolbar">
         <span className="permission-chip">范围：当前项目</span>
         <Link href="/settings/platform?section=storage">查看存储空间</Link>
       </div>

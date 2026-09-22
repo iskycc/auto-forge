@@ -10,6 +10,8 @@ import {
 } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 
+const SUPERSEDED_SNAPSHOT_RETENTION_MS = 10 * 60_000;
+
 /** Node-local, disposable read index. Business deletion checks never consult this file. */
 export class StorageInventoryIndex {
   private readonly database: Database.Database;
@@ -20,6 +22,7 @@ export class StorageInventoryIndex {
     this.database.pragma("busy_timeout = 5000");
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS inventory_generations_v1 (id TEXT PRIMARY KEY, summary TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS inventory_retired_generations_v1 (id TEXT PRIMARY KEY, retired_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS inventory_entries_v1 (generation TEXT NOT NULL, ordinal INTEGER NOT NULL, category TEXT NOT NULL, search_text TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(generation,ordinal));
       CREATE INDEX IF NOT EXISTS inventory_category_v1 ON inventory_entries_v1(generation,category,ordinal);
       CREATE TABLE IF NOT EXISTS inventory_state_v2 (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT, refresh_after INTEGER NOT NULL DEFAULT 0, lease TEXT, lease_until INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, requested_revision INTEGER NOT NULL DEFAULT 0, lease_revision INTEGER NOT NULL DEFAULT 0);
@@ -104,14 +107,28 @@ export class StorageInventoryIndex {
       this.database
         .prepare("UPDATE inventory_generations_v1 SET summary=? WHERE id=?")
         .run(JSON.stringify(summary), token);
+      // An idle snapshot can be hours old when its first page is read. Start its
+      // grace period at replacement, so publishing cannot invalidate the next page.
       this.database
         .prepare(
-          "DELETE FROM inventory_entries_v1 WHERE generation IN (SELECT id FROM inventory_generations_v1 WHERE created_at<? AND id<>?)",
+          "INSERT OR IGNORE INTO inventory_retired_generations_v1(id,retired_at) SELECT id,? FROM inventory_generations_v1 WHERE id<>? AND summary IS NOT NULL",
         )
-        .run(now - 600_000, token);
+        .run(now, token);
+      const expiredGenerations = `SELECT g.id FROM inventory_generations_v1 g
+        LEFT JOIN inventory_retired_generations_v1 r ON r.id=g.id
+        WHERE g.id<>? AND (r.retired_at<? OR (g.summary IS NULL AND g.created_at<?))`;
+      const cutoff = now - SUPERSEDED_SNAPSHOT_RETENTION_MS;
       this.database
-        .prepare("DELETE FROM inventory_generations_v1 WHERE created_at<? AND id<>?")
-        .run(now - 600_000, token);
+        .prepare(`DELETE FROM inventory_entries_v1 WHERE generation IN (${expiredGenerations})`)
+        .run(token, cutoff, cutoff);
+      this.database
+        .prepare(`DELETE FROM inventory_generations_v1 WHERE id IN (${expiredGenerations})`)
+        .run(token, cutoff, cutoff);
+      this.database
+        .prepare(
+          "DELETE FROM inventory_retired_generations_v1 WHERE id NOT IN (SELECT id FROM inventory_generations_v1)",
+        )
+        .run();
     })();
   }
   fail(token: string, now: number) {
@@ -130,8 +147,8 @@ export class StorageInventoryIndex {
       .get(generation) as { summary: string } | undefined;
     if (!row)
       throw new DomainError(
-        "READ_MODEL_GENERATION_CONFLICT",
-        "存储清单已更新或请求到达另一平台节点，请重新扫描或使用该节点地址访问。",
+        "STORAGE_INVENTORY_SNAPSHOT_EXPIRED",
+        "存储清单快照已过期，请刷新清单后重试。",
       );
     const where = ["generation=?", "ordinal>?"];
     const parameters: Array<string | number> = [generation, input.after];

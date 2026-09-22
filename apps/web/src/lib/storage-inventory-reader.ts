@@ -1,7 +1,12 @@
 import { DomainError } from "@autoforge/domain";
 import { storageInventoryPageSchema } from "@autoforge/contracts";
+import { z } from "zod";
 import type { PlatformNodeRepository } from "@autoforge/application";
 import type { StorageInventoryQuery, StorageInventoryService } from "./storage-inventory";
+
+const expiredSnapshotResponseSchema = z.object({
+  error: z.object({ code: z.literal("STORAGE_INVENTORY_SNAPSHOT_EXPIRED") }),
+});
 
 /** Pin all pages to the node which owns the disposable filesystem index. */
 export function createStorageInventoryReader(dependencies: {
@@ -49,10 +54,7 @@ export function createStorageInventoryReader(dependencies: {
         signal: AbortSignal.timeout(10_000),
         cache: "no-store",
       });
-      if (!response.ok || !response.body) {
-        await response.body?.cancel();
-        throw new Error(`Storage owner returned HTTP ${response.status}.`);
-      }
+      if (!response.body) throw new Error(`Storage owner returned HTTP ${response.status}.`);
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
       let size = 0;
@@ -68,13 +70,20 @@ export function createStorageInventoryReader(dependencies: {
         await reader.cancel();
         reader.releaseLock();
       }
-      const page = storageInventoryPageSchema.parse(
-        JSON.parse(Buffer.concat(chunks).toString("utf8")),
-      );
+      const payload: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      if (response.status === 409 && expiredSnapshotResponseSchema.safeParse(payload).success)
+        throw new DomainError(
+          "STORAGE_INVENTORY_SNAPSHOT_EXPIRED",
+          "存储清单快照已过期，请刷新清单后重试。",
+        );
+      if (!response.ok) throw new Error(`Storage owner returned HTTP ${response.status}.`);
+      const page = storageInventoryPageSchema.parse(payload);
       if (page.nodeId !== node.id)
         throw new Error("Storage owner returned a different node identity.");
       return page;
     } catch (cause) {
+      if (cause instanceof DomainError && cause.code === "STORAGE_INVENTORY_SNAPSHOT_EXPIRED")
+        throw cause;
       throw new DomainError(
         "READ_MODEL_NODE_UNAVAILABLE",
         "存储清单所属平台节点暂不可用，请检查节点地址与服务状态后重试。",

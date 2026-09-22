@@ -21033,7 +21033,7 @@ button.icon-button:disabled {
   gap: 6px;
   flex: 1 1 200px;
 }
-.management-toolbar > span {
+.management-toolbar > span:not(.permission-chip) {
   color: var(--color-text-secondary);
   padding: 10px 0;
 }
@@ -21137,6 +21137,15 @@ button.icon-button:disabled {
 }
 .management-sticky-actions > span {
   margin-right: auto;
+}
+.settings-form-actions.management-sticky-actions {
+  bottom: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.management-scope-toolbar {
+  align-items: center;
 }
 .user-picker {
   min-width: 0;

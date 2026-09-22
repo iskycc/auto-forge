@@ -4,6 +4,26 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.19 - 2026-09-22
+
+### Fixed
+
+- 平台配置底部保存栏改为圆角卡片，统一边框、阴影和底部间距；保留固定保存及未保存提示。
+- 修复文件来源“范围：当前项目”标签被通用工具栏样式拉伸的问题，恢复正常内边距与居中对齐。
+- 修复存储清单闲置后后台刷新提前清理旧快照，导致单节点分页失败并误报“请求到达另一平台节点”的问题。旧快照从被替换时起保留十分钟，真正过期时浏览器最多从首页重读两次，不合并不同快照的文件。
+- Full 分页恢复继续固定原节点，并区分快照过期与节点不可达。自动恢复不强制触发额外扫描；持续过期时保留明确提示及手动重新扫描入口。
+
+### Database, deployment and compatibility
+
+- 无业务数据库迁移、新配置、新依赖或 Runner Protocol 变更。仅为可重建的节点本地存储清单索引新增过期记录表，首次打开兼容已有索引。
+- 从 v1.17.18 升级只需更新主平台；Full 同步更新所有平台节点及独立后台工作器，无需升级 Runner 或 Adapter。新增快照过期错误码 `STORAGE_INVENTORY_SNAPSHOT_EXPIRED`，HTTP 状态为 409。
+- 离线资产类型不变，继续发布 amd64/arm64 后端镜像、部署包、Jenkins 插件和签名元数据。
+
+### Validation and known limitations
+
+- 44 项相关测试及 6 项生产构建 Playwright 场景通过，覆盖真实双连接清单索引、Full 节点代理、单节点与固定节点恢复、自动重试上限、手动恢复和原有配置/清理流程。实际查看 1024×768、1536×960 截图，保存栏、范围标签及文件目录无变形或整页横向溢出。
+- 本地验证不等同于跨物理主机验收；完整 CI、Full 分布式、双架构发布与发布资产离线验收由 GitHub Actions 执行。连续扫描或节点不可用时仍可能达到恢复上限，此时页面明确提示，不无限重试。
+
 ## 1.17.17 - 2026-09-20
 
 ### Fixed

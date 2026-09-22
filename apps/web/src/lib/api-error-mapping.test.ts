@@ -4,6 +4,17 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it("distinguishes storage snapshot expiry from node unavailability", () => {
+    expect(
+      mapApiError(
+        new DomainError("STORAGE_INVENTORY_SNAPSHOT_EXPIRED", "快照已过期。"),
+        "inventory",
+      ),
+    ).toMatchObject({
+      status: 409,
+      body: { error: { code: "STORAGE_INVENTORY_SNAPSHOT_EXPIRED" } },
+    });
+  });
   it.each([
     "PLATFORM_LOG_BUSY",
     "PLATFORM_LOG_TIMEOUT",

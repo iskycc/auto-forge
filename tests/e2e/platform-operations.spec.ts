@@ -151,7 +151,9 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await page.getByRole("button", { name: "保存平台配置" }).click();
   await expect(page.getByText(/平台时区已立即生效.*无需重启/)).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-time-zone", testTimeZone);
-  await page.reload();
+  // Reopen without the earlier configuration-search focus target. Its delayed
+  // hydration focus must not redirect the next fill into the Runner URL field.
+  await page.goto("/settings/platform?section=configuration");
   await expect(page.getByLabel("平台时区")).toHaveValue(testTimeZone);
   await page.getByLabel("平台时区").fill(originalTimeZone);
   await page.getByRole("button", { name: "保存平台配置" }).click();
@@ -736,4 +738,183 @@ function runtimeAssetObjectPath(
 
 function runtimeAssetObjectKey(assetId: string, archiveFormat: "zip" | "tar.gz"): string {
   return `projects/00000000-0000-7000-8000-000000000001/runtime-assets/${assetId}.${archiveFormat}`;
+}
+
+test("platform save bar and file scope badge keep their rounded desktop layout", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await page.goto("/settings/platform?section=configuration");
+    const bar = page.locator(".settings-form-actions.management-sticky-actions");
+    await expect(bar).toBeVisible();
+    const corners = await bar.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [
+        style.borderTopLeftRadius,
+        style.borderTopRightRadius,
+        style.borderBottomLeftRadius,
+        style.borderBottomRightRadius,
+      ].map(parseFloat);
+    });
+    expect(corners.every((radius) => radius >= 10)).toBe(true);
+    await bar.getByRole("button", { name: "保存平台配置" }).click({ trial: true });
+    await captureUi(page, `rounded-save-bar-${width}`);
+    // The fixed header/footer intentionally paint over scrolling fields, so
+    // use hit testing for the actions and last field, plus actual screenshots.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.locator('input[name="workerShutdownGraceMs"]').click({ trial: true });
+    await bar.getByRole("button", { name: "保存平台配置" }).click({ trial: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    await captureUi(page, `rounded-save-bar-bottom-${width}`);
+    await page.goto("/objects");
+    const scope = page.getByText("范围：当前项目", { exact: true });
+    const geometry = await scope.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return {
+        height: box.height,
+        left: parseFloat(style.paddingLeft),
+        right: parseFloat(style.paddingRight),
+      };
+    });
+    expect(geometry.height).toBeLessThanOrEqual(32);
+    expect(geometry.left).toBeGreaterThanOrEqual(4);
+    expect(geometry.right).toBeGreaterThanOrEqual(4);
+    await expectUiIntegrity(page);
+    await captureUi(page, `file-scope-badge-${width}`);
+  }
+});
+
+for (const nodeId of [undefined, "00000000-0000-7000-8000-000000000123"]) {
+  test(`storage snapshot expiry restarts pagination without mixing files (${nodeId ? "pinned owner" : "single node"})`, async ({
+    page,
+  }) => {
+    await ensureAdministrator(page);
+    const requests: URL[] = [];
+    let replaced = false;
+    await page.route("**/api/v1/settings/storage?**", (route) => {
+      const url = new URL(route.request().url());
+      requests.push(url);
+      const cursor = url.searchParams.get("cursor");
+      if (cursor?.startsWith(INVENTORY_OLD_GENERATION)) {
+        replaced = true;
+        return route.fulfill({ status: 409, json: inventoryExpiredResponse });
+      }
+      const generation = replaced ? INVENTORY_NEW_GENERATION : INVENTORY_OLD_GENERATION;
+      const name = !replaced ? "old-file.txt" : cursor ? "new-last.txt" : "new-first.txt";
+      return route.fulfill({
+        json: inventoryPageFixture({ generation, name, nodeId, more: !cursor }),
+      });
+    });
+    await page.goto("/settings/platform?section=storage");
+    const inventory = page.locator(".storage-inventory");
+    await expect(inventory).toHaveAttribute("aria-busy", "false");
+    await expect(inventory.getByRole("alert")).toHaveCount(0);
+    const tree = page.locator(".storage-inventory-tree");
+    await expect(tree).toContainText("new-first.txt");
+    await expect(tree).toContainText("new-last.txt");
+    await expect(tree).not.toContainText("old-file.txt");
+    expect(requests).toHaveLength(4);
+    expect(requests.map((url) => url.searchParams.get("cursor"))).toEqual([
+      null,
+      `${INVENTORY_OLD_GENERATION}:0`,
+      null,
+      `${INVENTORY_NEW_GENERATION}:0`,
+    ]);
+    for (const url of requests.slice(1)) {
+      expect(url.searchParams.get("nodeId")).toBe(nodeId ?? null);
+      expect(url.searchParams.has("refresh")).toBe(false);
+    }
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureUi(page, `storage-expiry-${nodeId ? "owner" : "single"}-${width}`);
+      await tree.scrollIntoViewIfNeeded();
+      await captureUi(page, `storage-expiry-tree-${nodeId ? "owner" : "single"}-${width}`);
+      await page.evaluate(() => window.scrollTo(0, 0));
+    }
+  });
+}
+
+test("storage snapshot expiry stops automatic retries and permits explicit recovery", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  let requests = 0;
+  let recovered = false;
+  await page.route("**/api/v1/settings/storage?**", (route) => {
+    requests += 1;
+    if (!recovered && new URL(route.request().url()).searchParams.has("cursor"))
+      return route.fulfill({ status: 409, json: inventoryExpiredResponse });
+    return route.fulfill({
+      json: inventoryPageFixture({
+        generation: recovered ? INVENTORY_NEW_GENERATION : INVENTORY_OLD_GENERATION,
+        name: "retained-file.txt",
+        more: !recovered,
+      }),
+    });
+  });
+  await page.goto("/settings/platform?section=storage");
+  const inventory = page.locator(".storage-inventory");
+  await expect(inventory).toHaveAttribute("aria-busy", "false");
+  await expect(inventory.getByRole("alert")).toContainText("存储清单快照已过期");
+  await expect(inventory.getByRole("alert")).not.toContainText("节点");
+  expect(requests).toBe(6);
+  await page.waitForTimeout(1200);
+  expect(requests).toBe(6);
+  recovered = true;
+  await page.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await expect(inventory).toHaveAttribute("aria-busy", "false");
+  await expect(inventory.getByRole("alert")).toHaveCount(0);
+  expect(requests).toBe(7);
+});
+
+const INVENTORY_OLD_GENERATION = "00000000-0000-7000-8000-000000000101";
+const INVENTORY_NEW_GENERATION = "00000000-0000-7000-8000-000000000102";
+const inventoryExpiredResponse = {
+  error: {
+    code: "STORAGE_INVENTORY_SNAPSHOT_EXPIRED",
+    message: "存储清单快照已过期，请刷新清单后重试。",
+    requestId: "inventory-expiry",
+  },
+};
+
+function inventoryPageFixture(input: {
+  generation: string;
+  name: string;
+  nodeId?: string | undefined;
+  more: boolean;
+}): import("@autoforge/contracts").StorageInventoryPage {
+  return {
+    generation: input.generation,
+    ...(input.nodeId ? { nodeId: input.nodeId } : {}),
+    snapshotState: "ready",
+    ...(input.more ? { nextCursor: `${input.generation}:0` } : {}),
+    items: [
+      {
+        id: input.name,
+        name: input.name,
+        category: "other",
+        location: "data-directory",
+        logicalPath: input.name,
+        storagePath: `/data/${input.name}`,
+        sizeBytes: 1,
+        allocatedBytes: 1,
+      },
+    ],
+    summary: {
+      generatedAt: "2026-09-22T00:00:00Z",
+      dataDirectory: "/data",
+      objectStore: "local",
+      objectStoreRoot: "/data/objects",
+      fileCount: 2,
+      logicalBytes: 2,
+      allocatedBytes: 2,
+      externalReferenceCount: 0,
+      externalReferenceBytes: 0,
+      categories: [],
+    },
+  };
 }

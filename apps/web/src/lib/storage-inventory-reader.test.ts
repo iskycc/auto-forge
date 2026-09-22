@@ -94,3 +94,20 @@ it("rejects routing loops, missing owners and mismatched responses without mixin
     code: "READ_MODEL_GENERATION_CONFLICT",
   });
 });
+
+it("preserves an expired peer snapshot as a recoverable conflict instead of a node outage", async () => {
+  const test = fixture();
+  test.request.mockResolvedValueOnce(
+    Response.json(
+      { error: { code: "STORAGE_INVENTORY_SNAPSHOT_EXPIRED", message: "快照已过期。" } },
+      { status: 409 },
+    ),
+  );
+  await expect(
+    test.read(
+      { limit: 50, nodeId: test.ownerId, cursor: `${test.page.generation}:49` },
+      new Headers(),
+    ),
+  ).rejects.toMatchObject({ code: "STORAGE_INVENTORY_SNAPSHOT_EXPIRED" });
+  expect(test.local.list).not.toHaveBeenCalled();
+});

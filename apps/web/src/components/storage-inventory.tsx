@@ -26,10 +26,11 @@ import { LoadingState } from "@/components/loading-state";
 import { removeRuntimeAssetsFromInventory } from "@/components/storage-inventory-deletion";
 import { StorageInventoryTree } from "@/components/storage-inventory-tree";
 import { buildStorageInventoryTree } from "@/components/storage-inventory-tree-model";
-import { readApiErrorMessage } from "@/lib/client-api";
+import { ApiClientError, readApiError, readApiErrorMessage } from "@/lib/client-api";
 
 const INVENTORY_READ_BATCH_SIZE = 500;
 const RUNTIME_ASSET_DELETE_BATCH_SIZE = 100;
+const MAX_SNAPSHOT_RESTARTS = 2;
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
   database: "平台数据库",
@@ -590,6 +591,7 @@ async function loadCompleteInventory({
   let displayedGeneration = cached?.generation;
   let firstRequest = true;
   let nodeId: string | undefined;
+  let snapshotRestarts = 0;
   for (;;) {
     signal.throwIfAborted();
     const parameters = new URLSearchParams({ limit: String(INVENTORY_READ_BATCH_SIZE) });
@@ -597,42 +599,60 @@ async function loadCompleteInventory({
     if (initialCategory) parameters.set("category", initialCategory);
     if (initialQuery) parameters.set("query", initialQuery);
     if (firstRequest && refreshSummary) parameters.set("refresh", "1");
-    const first = await fetchInventory(parameters, signal);
-    firstRequest = false;
-    nodeId = first.nodeId;
-    if (nodeId) parameters.set("nodeId", nodeId);
-    onState(first.snapshotState);
-    if (first.snapshotState === "failed")
-      throw new Error("后台扫描失败，请重新扫描；已加载的清单仍可查看。");
-    if (first.generation && first.generation !== displayedGeneration) {
-      const items = [...first.items];
-      onBatch([...items], first.summary);
-      let cursor = first.nextCursor;
-      const visited = new Set<string>();
-      while (cursor) {
-        if (visited.has(cursor)) throw new Error("存储清单返回重复游标，已停止读取。");
-        visited.add(cursor);
-        parameters.delete("refresh");
-        parameters.set("cursor", cursor);
-        const key = `${scopeKey}:${cursor}`;
-        const cachedPage = readBrowserSnapshot(key);
-        const page = cachedPage
-          ? storageInventoryPageSchema.parse(cachedPage)
-          : await fetchInventory(parameters, signal);
-        writeBrowserSnapshot(key, page, epoch);
-        items.push(...page.items);
-        cursor = page.nextCursor;
+    try {
+      const first = await fetchInventory(parameters, signal);
+      firstRequest = false;
+      nodeId = first.nodeId;
+      if (nodeId) parameters.set("nodeId", nodeId);
+      onState(first.snapshotState);
+      if (first.snapshotState === "failed")
+        throw new Error("后台扫描失败，请重新扫描；已加载的清单仍可查看。");
+      if (first.generation && first.generation !== displayedGeneration) {
+        const items = [...first.items];
+        onBatch([...items], first.summary);
+        let cursor = first.nextCursor;
+        const visited = new Set<string>();
+        while (cursor) {
+          if (visited.has(cursor)) throw new Error("存储清单返回重复游标，已停止读取。");
+          visited.add(cursor);
+          parameters.delete("refresh");
+          parameters.set("cursor", cursor);
+          const key = `${scopeKey}:${cursor}`;
+          const cachedPage = readBrowserSnapshot(key);
+          const page = cachedPage
+            ? storageInventoryPageSchema.parse(cachedPage)
+            : await fetchInventory(parameters, signal);
+          if (page.generation !== first.generation || page.nodeId !== first.nodeId)
+            throw new Error("存储清单分页信息不一致，请刷新清单后重试。");
+          writeBrowserSnapshot(key, page, epoch);
+          items.push(...page.items);
+          cursor = page.nextCursor;
+        }
+        signal.throwIfAborted();
+        onBatch(items, first.summary);
+        writeBrowserSnapshot(
+          scopeKey,
+          { items, summary: first.summary, generation: first.generation },
+          epoch,
+        );
+        displayedGeneration = first.generation;
       }
+      if (first.snapshotState !== "pending" && first.snapshotState !== "stale") return;
+    } catch (cause) {
       signal.throwIfAborted();
-      onBatch(items, first.summary);
-      writeBrowserSnapshot(
-        scopeKey,
-        { items, summary: first.summary, generation: first.generation },
-        epoch,
-      );
-      displayedGeneration = first.generation;
+      if (
+        !(cause instanceof ApiClientError) ||
+        cause.code !== "STORAGE_INVENTORY_SNAPSHOT_EXPIRED" ||
+        snapshotRestarts >= MAX_SNAPSHOT_RESTARTS
+      )
+        throw cause;
+      // Restart from the owner's first page, never combine different snapshots
+      // and never trigger another filesystem scan just to recover a stale cursor.
+      snapshotRestarts += 1;
+      displayedGeneration = undefined;
+      firstRequest = false;
+      onState("stale");
     }
-    if (first.snapshotState !== "pending" && first.snapshotState !== "stale") return;
     await new Promise<void>((resolve, reject) => {
       const abort = () => {
         window.clearTimeout(timer);
@@ -655,7 +675,7 @@ async function fetchInventory(
     cache: "no-store",
     signal,
   });
-  const error = await readApiErrorMessage(response, "存储清单读取失败。");
-  if (error) throw new Error(error);
+  const error = await readApiError(response, "存储清单读取失败。");
+  if (error) throw error;
   return storageInventoryPageSchema.parse(await response.json());
 }
