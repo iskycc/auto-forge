@@ -98,7 +98,8 @@ test("partitions tagged and published checks without polling inside a test job",
   assert.doesNotMatch(publishedAcceptance, /sleep "\$\{wait_interval_seconds\}"/);
   assert.match(publishedAcceptance, /ref: \$\{\{ needs\.prepare\.outputs\.checks_revision \}\}/);
   assert.match(publishedAcceptance, /GITHUB_EVENT_NAME.*workflow_dispatch/);
-  assert.match(publishedAcceptance, /--pattern release-manifest\.json/);
+  assert.match(publishedAcceptance, /node scripts\/release\/download-assets\.mjs/);
+  assert.match(publishedAcceptance, /^\s+release-manifest\.json/m);
   assert.match(
     publishedAcceptance,
     /needs\.prepare\.outputs\.version[^\n]*matrix\.variant[^\n]*\.image\.json/,
