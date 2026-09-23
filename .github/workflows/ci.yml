@@ -144,7 +144,11 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: false
           - scenario: operations
-            specs: tests/e2e/security-audit.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/ui-layout.spec.ts tests/e2e/tab-navigation.spec.ts
+            specs: tests/e2e/security-audit.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts
+            project_maximum_concurrency: ""
+            screenshots: true
+          - scenario: ui
+            specs: tests/e2e/ui-layout.spec.ts tests/e2e/tab-navigation.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
     steps:
@@ -190,7 +194,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Upload browser trace on failure
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-trace-${{ matrix.scenario }}

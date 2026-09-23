@@ -211,6 +211,9 @@ test("administrator assigns system and project roles directly from the user row"
   expect(created.status).toBe(201);
   const targetId = created.body.id;
   const targetContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  // Manually created contexts do not inherit the page fixture's action timeout.
+  targetContext.setDefaultTimeout(30_000);
+  targetContext.setDefaultNavigationTimeout(30_000);
   let targetPage = await targetContext.newPage();
   try {
     await login(targetPage, username, password);

@@ -11,7 +11,7 @@ import { createPostgresDatabase } from "@autoforge/db/postgres";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
-import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
+import { expectPageFitsViewport, expectReadableText, expectUiIntegrity } from "./support/ui-guard";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -2330,14 +2330,7 @@ async function searchKinds(page: Page, query: string): Promise<string[]> {
 
 async function expectDesktopLayoutFits(page: Page, width: number, height: number): Promise<void> {
   await page.setViewportSize({ width, height });
-  await expect
-    .poll(() =>
-      page.evaluate(() => ({
-        viewportWidth: window.innerWidth,
-        documentWidth: document.documentElement.scrollWidth,
-      })),
-    )
-    .toEqual({ viewportWidth: width, documentWidth: width });
+  await expectPageFitsViewport(page);
 }
 
 async function previewImportedCasePaths(dialog: Locator): Promise<void> {
@@ -2470,13 +2463,11 @@ async function expectUiConsistency(page: Page): Promise<void> {
 
     return {
       controlViolations,
-      documentWidth: document.documentElement.scrollWidth,
       fontViolations,
-      viewportWidth: window.innerWidth,
     };
   });
 
   expect(report.fontViolations, "visible text smaller than 12px").toEqual([]);
   expect(report.controlViolations, "visible controls shorter than 32px").toEqual([]);
-  expect(report.documentWidth, "page-level horizontal overflow").toBe(report.viewportWidth);
+  await expectPageFitsViewport(page);
 }

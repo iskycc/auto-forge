@@ -8,7 +8,7 @@ import {
   ensureAdministrator,
   expandAdministrationGroup,
 } from "./support/session";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectPageFitsViewport, expectUiIntegrity } from "./support/ui-guard";
 import { systemDiagnosticSchema } from "@autoforge/contracts";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
@@ -772,7 +772,7 @@ test("platform save bar and file scope badge keep their rounded desktop layout",
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await page.locator('input[name="workerShutdownGraceMs"]').click({ trial: true });
     await bar.getByRole("button", { name: "保存平台配置" }).click({ trial: true });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    await expectPageFitsViewport(page);
     await captureUi(page, `rounded-save-bar-bottom-${width}`);
     await page.goto("/objects");
     const scope = page.getByText("范围：当前项目", { exact: true });

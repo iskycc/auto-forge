@@ -1,5 +1,18 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
+export async function expectPageFitsViewport(page: Page): Promise<void> {
+  // Reserve space for native scrollbars; only content wider than the usable viewport overflows.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        ),
+      { message: "page-level horizontal overflow" },
+    )
+    .toBeLessThanOrEqual(0);
+}
+
 export async function expectReadableText(control: Locator): Promise<void> {
   const contrast = await control.evaluate((element) => {
     const canvas = document.createElement("canvas");

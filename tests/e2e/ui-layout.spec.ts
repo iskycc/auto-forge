@@ -1869,13 +1869,15 @@ async function expectViewportDialog(
   dialog: Locator,
   viewport: { width: number; height: number },
 ): Promise<void> {
-  const [backdropBox, dialogBox] = await Promise.all([
+  const [backdropBox, dialogBox, contentWidth] = await Promise.all([
     backdrop.boundingBox(),
     dialog.boundingBox(),
+    backdrop.page().evaluate(() => document.documentElement.getBoundingClientRect().width),
   ]);
-  expect(backdropBox).toEqual({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+  // A stable scrollbar gutter is outside the document's fixed-position containing block.
+  expect(backdropBox).toEqual({ x: 0, y: 0, width: contentWidth, height: viewport.height });
   expect(dialogBox).not.toBeNull();
-  expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - contentWidth / 2)).toBeLessThanOrEqual(1);
   expect(Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
     1,
   );

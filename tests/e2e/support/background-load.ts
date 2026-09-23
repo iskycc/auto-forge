@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
+import { analyticsExportJobSchema } from "@autoforge/contracts";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { buildClassFile } from "../../../packages/testng-discovery/test/class-fixture";
 import { browserJson } from "./session";
@@ -101,9 +102,22 @@ export async function startBackgroundLoad(
         )
         .toBe(job.expected);
       if (job.url.startsWith("/api/v1/analytics/exports/")) {
+        const response = await page.request.get(job.url);
+        expect(response.status()).toBe(200);
+        const completed = analyticsExportJobSchema.parse(await response.json());
         const download = await page.request.get(`${job.url}/download`);
         expect(download.status()).toBe(200);
-        expect((await download.body()).length).toBeGreaterThan(0);
+        const content = await download.body();
+        expect(content.length).toBe(completed.sizeBytes);
+        expect(createHash("sha256").update(content).digest("hex")).toBe(completed.sha256);
+        // Exports start before the execution batch, so a fast worker can legitimately see no rows.
+        if (completed.format === "json") {
+          expect(JSON.parse(content.toString("utf8"))).toHaveLength(completed.rowCount!);
+        } else if (completed.rowCount === 0) {
+          expect(content.length).toBe(0);
+        } else {
+          expect(content.length).toBeGreaterThan(0);
+        }
       }
     }
   };
