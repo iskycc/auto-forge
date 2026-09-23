@@ -109,14 +109,14 @@ jobs:
       - name: Download current and previous signed assets
         run: |
           mkdir -p release previous-release
-          gh release download "${{ needs.prepare.outputs.tag }}" --dir release
-          gh release download "${{ needs.prepare.outputs.previous_tag }}" --dir previous-release \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar*" \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
-            --pattern release-manifest.json \
-            --pattern SHA256SUMS \
-            --pattern SHA256SUMS.sig \
-            --pattern release-signing-public-key.pem
+          node scripts/release/download-assets.mjs "${{ needs.prepare.outputs.tag }}" release
+          node scripts/release/download-assets.mjs "${{ needs.prepare.outputs.previous_tag }}" previous-release \
+            "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar*" \
+            "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
+            release-manifest.json \
+            SHA256SUMS \
+            SHA256SUMS.sig \
+            release-signing-public-key.pem
 
       - name: Verify manifests, signatures, checksums and deployment bundle
         run: >-
@@ -199,24 +199,24 @@ jobs:
       - name: Download current backend image
         run: |
           mkdir -p release previous-release
-          gh release download "${{ needs.prepare.outputs.tag }}" --dir release \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.docker.tar" \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json" \
-            --pattern release-manifest.json
+          node scripts/release/download-assets.mjs "${{ needs.prepare.outputs.tag }}" release \
+            "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.docker.tar" \
+            "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json" \
+            release-manifest.json
 
       - name: Download current deployment bundle
         if: matrix.needs_deploy
         run: >-
-          gh release download "${{ needs.prepare.outputs.tag }}" --dir release
-          --pattern "autoforge-deploy-${{ needs.prepare.outputs.version }}.tar.gz"
+          node scripts/release/download-assets.mjs "${{ needs.prepare.outputs.tag }}" release
+          "autoforge-deploy-${{ needs.prepare.outputs.version }}.tar.gz"
 
       - name: Download previous amd64 image
         if: matrix.needs_previous
         run: |
-          gh release download "${{ needs.prepare.outputs.previous_tag }}" --dir previous-release \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar*" \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
-            --pattern release-manifest.json
+          node scripts/release/download-assets.mjs "${{ needs.prepare.outputs.previous_tag }}" previous-release \
+            "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar*" \
+            "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
+            release-manifest.json
 
       - name: Preload fixed LDAP fixture image
         if: matrix.needs_ldap
