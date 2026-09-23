@@ -1,4 +1,8 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   failureAnalysisBatchPageSchema,
@@ -83,11 +87,14 @@ export function StartFailureAnalysisDialog({
         onClose={close}
         title="选择执行任务开始分析"
         description="最近已结束且最后一轮仍有失败用例的任务；每次执行只创建一张共享分析卡片。"
-        className="failure-analysis-start-dialog"
+        className={cn(
+          "failure-analysis-start-dialog",
+          startFailureAnalysisDialogStyles["failure-analysis-start-dialog"],
+        )}
       >
         {loading ? (
           <p role="status">
-            <LoaderCircle className="spin" size={16} /> 正在读取最近执行…
+            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在读取最近执行…
           </p>
         ) : error ? (
           <div role="alert">
@@ -95,14 +102,25 @@ export function StartFailureAnalysisDialog({
             <Button onClick={() => void load(cursorHistory.at(-1))}>重试</Button>
           </div>
         ) : page.items.length === 0 ? (
-          <div className="empty-state">
+          <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
             <strong>没有可新增的分析任务</strong>
             <p>全部已开始分析，或当前版本没有符合条件的执行。</p>
-          </div>
+          </EmptyState>
         ) : (
-          <div className="failure-analysis-start-list">
+          <div
+            className={cn(
+              "failure-analysis-start-list",
+              startFailureAnalysisDialogStyles["failure-analysis-start-list"],
+            )}
+          >
             {page.items.map((batch) => (
-              <article className="failure-analysis-start-row" key={batch.id}>
+              <article
+                className={cn(
+                  "failure-analysis-start-row",
+                  startFailureAnalysisDialogStyles["failure-analysis-start-row"],
+                )}
+                key={batch.id}
+              >
                 <div>
                   <strong>
                     #{batch.sequenceNumber} · {batch.suiteName}
@@ -123,7 +141,7 @@ export function StartFailureAnalysisDialog({
             ))}
           </div>
         )}
-        <div className="button-row">
+        <div className={cn("button-row", uiPatterns["button-row"])}>
           <Button
             disabled={loading || cursorHistory.length === 0}
             onClick={() => {
@@ -148,3 +166,10 @@ export function StartFailureAnalysisDialog({
     </>
   );
 }
+
+const startFailureAnalysisDialogStyles = {
+  "failure-analysis-start-dialog": "w-[min(800px,_calc(100vw_-_16px_*_2))]",
+  "failure-analysis-start-list": "grid gap-3 my-4",
+  "failure-analysis-start-row":
+    "flex items-center gap-3 p-3 border border-solid border-border rounded-lg [&_>_div]:grid [&_>_div]:flex-1 [&_>_div]:min-w-0 [&_>_div]:gap-2 [&_>_div]:[overflow-wrap:anywhere] [&_>_.ui-button]:shrink-0 [&_>_div_>_span]:text-muted-foreground [&_>_div_>_span]:text-sm",
+} as const;

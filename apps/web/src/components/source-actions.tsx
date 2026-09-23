@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button } from "@/components/ui";
 
@@ -46,17 +48,32 @@ export function SourceActions({
   }
 
   return (
-    <span className="inline-action-stack">
+    <span className={cn("inline-action-stack", sourceActionsStyles["inline-action-stack"])}>
       <Button
-        className={`button ${authoritative ? "button-success" : "button-secondary"}`}
+        className={cn(
+          uiPatterns["button"],
+          `button ${authoritative ? cn("button-success", uiPatterns["button-success"]) : cn("button-secondary", uiPatterns["button-secondary"])}`,
+        )}
         type="button"
         disabled={authoritative || pending}
         onClick={makeAuthoritative}
       >
-        {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+        {pending ? (
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+        ) : (
+          <Check size={15} />
+        )}
         {authoritative ? "当前全量来源" : "设为全量来源"}
       </Button>
-      {error && <small className="inline-error">{error}</small>}
+      {error && (
+        <small className={cn("inline-error", sourceActionsStyles["inline-error"])}>{error}</small>
+      )}
     </span>
   );
 }
+
+const sourceActionsStyles = {
+  "inline-action-stack":
+    "inline-flex items-center gap-2 flex-wrap [&_.inline-error]:[flex-basis:100%]",
+  "inline-error": "text-destructive text-xs leading-[1.35]",
+} as const;

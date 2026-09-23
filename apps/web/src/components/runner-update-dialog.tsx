@@ -1,4 +1,9 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Dialog } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   DEFAULT_RUNNER_DATA_DIRECTORY,
@@ -123,7 +128,11 @@ export function RunnerUpdateDialog({
   return (
     <>
       <Button
-        className="button button-secondary"
+        className={cn(
+          "button button-secondary",
+          uiPatterns["button"],
+          uiPatterns["button-secondary"],
+        )}
         onClick={() => setOpen(true)}
         title={`更新到内置 Agent ${latestVersion}`}
         type="button"
@@ -131,218 +140,289 @@ export function RunnerUpdateDialog({
         <Download size={15} /> 更新
       </Button>
       {open ? (
-        <div className="runner-update-overlay" role="presentation" onMouseDown={closeDialog}>
-          <section
-            aria-label={`更新 ${runnerName} 的 Agent`}
-            aria-modal="true"
-            className="runner-update-dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-            role="dialog"
+        <Dialog
+          open
+          title={`更新 ${runnerName} 的 Agent`}
+          onClose={closeDialog}
+          className={cn("runner-update-dialog", runnerUpdateDialogStyles["runner-update-dialog"])}
+          backdropClassName="runner-update-overlay"
+        >
+          <header
+            className={cn(
+              "runner-update-titlebar",
+              runnerUpdateDialogStyles["runner-update-titlebar"],
+            )}
           >
-            <header className="runner-update-titlebar">
-              <span>
-                <Download size={16} aria-hidden="true" />
-                <strong>更新执行机 Agent</strong>
-                <small>
-                  {runnerName} → {latestVersion}
-                </small>
-              </span>
-              <Button aria-label="关闭" onClick={closeDialog} type="button">
-                <X size={16} />
+            <span>
+              <Download size={16} aria-hidden="true" />
+              <strong>更新执行机 Agent</strong>
+              <small>
+                {runnerName} → {latestVersion}
+              </small>
+            </span>
+            <Button aria-label="关闭" onClick={closeDialog} type="button">
+              <X size={16} />
+            </Button>
+          </header>
+          <div className={cn("runner-update-body", runnerUpdateDialogStyles["runner-update-body"])}>
+            <p className={cn("runner-update-hint", runnerUpdateDialogStyles["runner-update-hint"])}>
+              原地更新会保留执行机身份、凭据与历史执行记录，仅替换 Agent
+              并重启服务；名称、标签与并发以平台记录为准。更新前自动备份，失败可在自动安装面板回滚。SSH
+              连接信息会使用平台主密钥 AES-GCM 加密保存，后续可直接单机或批量更新。
+            </p>
+            {profile ? (
+              <Notice
+                tone="info"
+                className={cn("inline-notice", uiPatterns["inline-notice"])}
+                role="status"
+              >
+                <CheckCircle2 size={18} />
+                <span>
+                  已保存 {profile.username}@{profile.host}:{profile.port} 的加密连接信息。
+                  <Button
+                    className={cn(
+                      "button button-primary compact-button",
+                      uiPatterns["button"],
+                      uiPatterns["button-primary"],
+                      uiPatterns["compact-button"],
+                    )}
+                    disabled={Boolean(pending)}
+                    onClick={() => void updateWithStoredProfile()}
+                    type="button"
+                  >
+                    <Download size={15} />
+                    {pending === "stored" ? "正在更新…" : "使用已保存连接更新"}
+                  </Button>
+                </span>
+              </Notice>
+            ) : null}
+            <div
+              className={cn("runner-update-grid", runnerUpdateDialogStyles["runner-update-grid"])}
+            >
+              <label>
+                执行机 IP / 主机名
+                <Input
+                  autoComplete="off"
+                  disabled={Boolean(pending)}
+                  onChange={(event) => connectionChanged(() => setHost(event.target.value))}
+                  placeholder="10.20.30.40"
+                  value={host}
+                />
+              </label>
+              <label>
+                SSH 端口
+                <Input
+                  disabled={Boolean(pending)}
+                  max={65_535}
+                  min={1}
+                  onChange={(event) => connectionChanged(() => setPort(Number(event.target.value)))}
+                  type="number"
+                  value={port}
+                />
+              </label>
+              <label>
+                用户名
+                <Input
+                  autoComplete="username"
+                  disabled={Boolean(pending)}
+                  onChange={(event) => connectionChanged(() => setUsername(event.target.value))}
+                  placeholder="root 或可 sudo 的用户"
+                  value={username}
+                />
+              </label>
+              <label>
+                SSH / sudo 密码
+                <Input
+                  autoComplete="current-password"
+                  disabled={Boolean(pending)}
+                  onChange={(event) => connectionChanged(() => setPassword(event.target.value))}
+                  type="password"
+                  value={password}
+                />
+              </label>
+              <label>
+                安装系统模式
+                <Select
+                  disabled={Boolean(pending)}
+                  onChange={(event) =>
+                    connectionChanged(() =>
+                      setInstallationMode(event.target.value as typeof installationMode),
+                    )
+                  }
+                  value={installationMode}
+                >
+                  <option value="auto">自动识别（推荐）</option>
+                  <option value="ubuntu">强制 Ubuntu</option>
+                  <option value="opensuse">强制 openSUSE</option>
+                  <option value="opensuse-leap">强制 openSUSE Leap</option>
+                  <option value="opensuse-tumbleweed">强制 openSUSE Tumbleweed</option>
+                </Select>
+              </label>
+              <label className={cn("checkbox-row", uiPatterns["checkbox-row"])}>
+                <Input
+                  checked={runAsRoot}
+                  disabled={Boolean(pending)}
+                  onChange={(event) => setRunAsRoot(event.target.checked)}
+                  type="checkbox"
+                />
+                以 root 身份运行 Agent
+              </label>
+              <label>
+                工作目录
+                <Input
+                  autoComplete="off"
+                  disabled={Boolean(pending)}
+                  onChange={(event) => setDataDirectory(event.target.value)}
+                  placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
+                  value={dataDirectory}
+                />
+                <small>留空保持执行机当前工作目录；需为绝对路径。</small>
+              </label>
+            </div>
+            {dataDirectory.trim() ? (
+              <Notice
+                tone="warning"
+                className={cn(
+                  "inline-notice warning-notice",
+                  uiPatterns["inline-notice"],
+                  uiPatterns["warning-notice"],
+                )}
+                role="status"
+              >
+                <ShieldAlert size={18} />
+                <span>
+                  更换工作目录后，原目录中的本地身份与 spool
+                  不会自动迁移，执行机将作为新节点重新注册；请先在平台撤销旧身份。
+                </span>
+              </Notice>
+            ) : null}
+            <div
+              className={cn(
+                "runner-installer-actions",
+                runnerUpdateDialogStyles["runner-installer-actions"],
+              )}
+            >
+              <Button
+                className={cn("button-secondary", uiPatterns["button-secondary"])}
+                disabled={!host || !username || !password || Boolean(pending)}
+                onClick={() => void probeHost()}
+                type="button"
+              >
+                <Search size={16} /> {pending === "probe" ? "正在探测…" : "探测并核验主机"}
               </Button>
-            </header>
-            <div className="runner-update-body">
-              <p className="runner-update-hint">
-                原地更新会保留执行机身份、凭据与历史执行记录，仅替换 Agent
-                并重启服务；名称、标签与并发以平台记录为准。更新前自动备份，失败可在自动安装面板回滚。SSH
-                连接信息会使用平台主密钥 AES-GCM 加密保存，后续可直接单机或批量更新。
-              </p>
-              {profile ? (
-                <div className="inline-notice" role="status">
-                  <CheckCircle2 size={18} />
+            </div>
+
+            {probe ? (
+              <div
+                className={cn(
+                  "runner-probe-result",
+                  runnerUpdateDialogStyles["runner-probe-result"],
+                )}
+              >
+                <div
+                  className={cn(
+                    "runner-probe-summary",
+                    runnerUpdateDialogStyles["runner-probe-summary"],
+                  )}
+                >
+                  <CheckCircle2 size={20} />
                   <span>
-                    已保存 {profile.username}@{profile.host}:{profile.port} 的加密连接信息。
-                    <Button
-                      className="button button-primary compact-button"
-                      disabled={Boolean(pending)}
-                      onClick={() => void updateWithStoredProfile()}
-                      type="button"
-                    >
-                      <Download size={15} />
-                      {pending === "stored" ? "正在更新…" : "使用已保存连接更新"}
-                    </Button>
+                    <strong>{probe.operatingSystemName}</strong>
+                    <small>
+                      {probe.architecture} · systemd · {probe.privilegeMode} · {probe.bashPath}
+                      {probe.cgroupV2Available ? " · cgroup v2" : " · 无 cgroup v2（降级隔离）"}
+                    </small>
                   </span>
                 </div>
-              ) : null}
-              <div className="runner-update-grid">
-                <label>
-                  执行机 IP / 主机名
+                <div
+                  className={cn(
+                    "runner-fingerprint",
+                    runnerUpdateDialogStyles["runner-fingerprint"],
+                  )}
+                >
+                  <Fingerprint size={18} />
+                  <span>
+                    <small>SSH 主机指纹</small>
+                    <code>{probe.hostKeySha256}</code>
+                  </span>
+                </div>
+                <label
+                  className={cn(
+                    "checkbox-row runner-fingerprint-confirmation",
+                    uiPatterns["checkbox-row"],
+                    runnerUpdateDialogStyles["runner-fingerprint-confirmation"],
+                  )}
+                >
                   <Input
-                    autoComplete="off"
-                    disabled={Boolean(pending)}
-                    onChange={(event) => connectionChanged(() => setHost(event.target.value))}
-                    placeholder="10.20.30.40"
-                    value={host}
-                  />
-                </label>
-                <label>
-                  SSH 端口
-                  <Input
-                    disabled={Boolean(pending)}
-                    max={65_535}
-                    min={1}
-                    onChange={(event) =>
-                      connectionChanged(() => setPort(Number(event.target.value)))
-                    }
-                    type="number"
-                    value={port}
-                  />
-                </label>
-                <label>
-                  用户名
-                  <Input
-                    autoComplete="username"
-                    disabled={Boolean(pending)}
-                    onChange={(event) => connectionChanged(() => setUsername(event.target.value))}
-                    placeholder="root 或可 sudo 的用户"
-                    value={username}
-                  />
-                </label>
-                <label>
-                  SSH / sudo 密码
-                  <Input
-                    autoComplete="current-password"
-                    disabled={Boolean(pending)}
-                    onChange={(event) => connectionChanged(() => setPassword(event.target.value))}
-                    type="password"
-                    value={password}
-                  />
-                </label>
-                <label>
-                  安装系统模式
-                  <Select
-                    disabled={Boolean(pending)}
-                    onChange={(event) =>
-                      connectionChanged(() =>
-                        setInstallationMode(event.target.value as typeof installationMode),
-                      )
-                    }
-                    value={installationMode}
-                  >
-                    <option value="auto">自动识别（推荐）</option>
-                    <option value="ubuntu">强制 Ubuntu</option>
-                    <option value="opensuse">强制 openSUSE</option>
-                    <option value="opensuse-leap">强制 openSUSE Leap</option>
-                    <option value="opensuse-tumbleweed">强制 openSUSE Tumbleweed</option>
-                  </Select>
-                </label>
-                <label className="checkbox-row">
-                  <Input
-                    checked={runAsRoot}
-                    disabled={Boolean(pending)}
-                    onChange={(event) => setRunAsRoot(event.target.checked)}
+                    checked={fingerprintConfirmed}
+                    onChange={(event) => setFingerprintConfirmed(event.target.checked)}
                     type="checkbox"
                   />
-                  以 root 身份运行 Agent
+                  我已通过可信渠道核对并确认上述 SSH 主机指纹
                 </label>
-                <label>
-                  工作目录
-                  <Input
-                    autoComplete="off"
-                    disabled={Boolean(pending)}
-                    onChange={(event) => setDataDirectory(event.target.value)}
-                    placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
-                    value={dataDirectory}
-                  />
-                  <small>留空保持执行机当前工作目录；需为绝对路径。</small>
-                </label>
+                <div
+                  className={cn(
+                    "runner-installer-actions",
+                    runnerUpdateDialogStyles["runner-installer-actions"],
+                  )}
+                >
+                  <Button
+                    className={cn("button-primary", uiPatterns["button-primary"])}
+                    disabled={!fingerprintConfirmed || Boolean(pending)}
+                    onClick={() => void updateAgent()}
+                    type="button"
+                  >
+                    <Download size={16} />
+                    {pending === "update" ? "正在更新并重启…" : `更新到 ${latestVersion}`}
+                  </Button>
+                  <small>更新前会自动备份当前版本，失败可回滚。</small>
+                </div>
               </div>
-              {dataDirectory.trim() ? (
-                <div className="inline-notice warning-notice" role="status">
+            ) : null}
+
+            {result ? (
+              <div
+                className={cn("form-success", runnerUpdateDialogStyles["form-success"])}
+                role="status"
+              >
+                <CheckCircle2 size={18} />
+                Agent {result.agentVersion} 已更新到 {result.host}
+                ；服务已重启，执行机身份与历史记录保持不变。
+              </div>
+            ) : null}
+            {error ? (
+              <div
+                className={cn(
+                  "runner-update-error",
+                  runnerUpdateDialogStyles["runner-update-error"],
+                )}
+              >
+                <Notice
+                  tone="error"
+                  className={cn("form-error", uiPatterns["form-error"])}
+                  role="alert"
+                >
+                  {error}
+                </Notice>
+                <Notice
+                  tone="warning"
+                  className={cn(
+                    "inline-notice warning-notice",
+                    uiPatterns["inline-notice"],
+                    uiPatterns["warning-notice"],
+                  )}
+                  role="status"
+                >
                   <ShieldAlert size={18} />
                   <span>
-                    更换工作目录后，原目录中的本地身份与 spool
-                    不会自动迁移，执行机将作为新节点重新注册；请先在平台撤销旧身份。
+                    更新失败时旧版本会自动保留；也可在页面顶部“自动安装执行机
+                    Agent”面板中使用同一主机凭据执行“回滚上次安装”。
                   </span>
-                </div>
-              ) : null}
-              <div className="runner-installer-actions">
-                <Button
-                  className="button-secondary"
-                  disabled={!host || !username || !password || Boolean(pending)}
-                  onClick={() => void probeHost()}
-                  type="button"
-                >
-                  <Search size={16} /> {pending === "probe" ? "正在探测…" : "探测并核验主机"}
-                </Button>
+                </Notice>
               </div>
-
-              {probe ? (
-                <div className="runner-probe-result">
-                  <div className="runner-probe-summary">
-                    <CheckCircle2 size={20} />
-                    <span>
-                      <strong>{probe.operatingSystemName}</strong>
-                      <small>
-                        {probe.architecture} · systemd · {probe.privilegeMode} · {probe.bashPath}
-                        {probe.cgroupV2Available ? " · cgroup v2" : " · 无 cgroup v2（降级隔离）"}
-                      </small>
-                    </span>
-                  </div>
-                  <div className="runner-fingerprint">
-                    <Fingerprint size={18} />
-                    <span>
-                      <small>SSH 主机指纹</small>
-                      <code>{probe.hostKeySha256}</code>
-                    </span>
-                  </div>
-                  <label className="checkbox-row runner-fingerprint-confirmation">
-                    <Input
-                      checked={fingerprintConfirmed}
-                      onChange={(event) => setFingerprintConfirmed(event.target.checked)}
-                      type="checkbox"
-                    />
-                    我已通过可信渠道核对并确认上述 SSH 主机指纹
-                  </label>
-                  <div className="runner-installer-actions">
-                    <Button
-                      className="button-primary"
-                      disabled={!fingerprintConfirmed || Boolean(pending)}
-                      onClick={() => void updateAgent()}
-                      type="button"
-                    >
-                      <Download size={16} />
-                      {pending === "update" ? "正在更新并重启…" : `更新到 ${latestVersion}`}
-                    </Button>
-                    <small>更新前会自动备份当前版本，失败可回滚。</small>
-                  </div>
-                </div>
-              ) : null}
-
-              {result ? (
-                <div className="form-success" role="status">
-                  <CheckCircle2 size={18} />
-                  Agent {result.agentVersion} 已更新到 {result.host}
-                  ；服务已重启，执行机身份与历史记录保持不变。
-                </div>
-              ) : null}
-              {error ? (
-                <div className="runner-update-error">
-                  <p className="form-error" role="alert">
-                    {error}
-                  </p>
-                  <div className="inline-notice warning-notice" role="status">
-                    <ShieldAlert size={18} />
-                    <span>
-                      更新失败时旧版本会自动保留；也可在页面顶部“自动安装执行机
-                      Agent”面板中使用同一主机凭据执行“回滚上次安装”。
-                    </span>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </section>
-        </div>
+            ) : null}
+          </div>
+        </Dialog>
       ) : null}
     </>
   );
@@ -362,3 +442,27 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "执行机更新失败。";
 }
+
+const runnerUpdateDialogStyles = {
+  "form-success":
+    "flex items-center gap-2.5 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-success/10 text-success leading-[1.5]",
+  "runner-fingerprint":
+    "flex items-center gap-2.5 min-w-0 rounded-lg py-2.5 px-3 bg-muted [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground [&_svg]:[flex:0_0_auto] [&_svg]:text-info [&_code]:overflow-hidden [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
+  "runner-fingerprint-confirmation": "font-semibold",
+  "runner-installer-actions":
+    "flex items-center gap-3.5 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_small]:text-muted-foreground",
+  "runner-probe-result":
+    "[&_>_label]:grid [&_>_label]:gap-[7px] [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold [&_textarea]:w-full grid gap-4 border border-solid border-border rounded-lg p-[17px] bg-success/10",
+  "runner-probe-summary":
+    "flex items-center gap-2.5 text-success [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground",
+  "runner-update-body": "grid gap-4 p-4.5 overflow-y-auto",
+  "runner-update-dialog":
+    "grid w-[min(640px,_92vw)] max-h-[86vh] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg",
+  "runner-update-error": "grid gap-2.5",
+  "runner-update-grid":
+    "grid grid-cols-2 gap-3.5 [&_.checkbox-row]:flex [&_.checkbox-row]:flex-row [&_.checkbox-row]:items-center [&_.checkbox-row]:self-end [&_.checkbox-row_input]:w-auto [&_label]:grid [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+  "runner-update-hint": "m-0 text-muted-foreground leading-[1.65]",
+
+  "runner-update-titlebar":
+    "flex items-center justify-between gap-3 py-3.5 px-4.5 border-b border-solid border-border [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2.5 [&_small]:text-muted-foreground",
+} as const;

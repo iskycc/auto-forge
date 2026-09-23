@@ -1,4 +1,8 @@
 "use client";
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button } from "@/components/ui";
 import { useConfirm } from "@/components/ui-feedback";
@@ -117,12 +121,16 @@ export function RunnerAdminActions({
 
   if (deregistered) {
     return (
-      <details className="runner-actions-menu">
-        <summary>管理操作</summary>
-        <div className="runner-admin-actions">
-          <span className="muted">已注销</span>
+      <Disclosure
+        header={<>管理操作</>}
+        className={cn("runner-actions-menu", runnerAdminActionsStyles["runner-actions-menu"])}
+      >
+        <div
+          className={cn("runner-admin-actions", runnerAdminActionsStyles["runner-admin-actions"])}
+        >
+          <span className={cn("muted", uiPatterns["muted"])}>已注销</span>
           <Button
-            className="danger-text-button"
+            className={cn("danger-text-button", uiPatterns["danger-text-button"])}
             disabled={pending}
             onClick={() =>
               void remove(
@@ -134,22 +142,24 @@ export function RunnerAdminActions({
             删除
           </Button>
           {error ? (
-            <small className="form-error" role="alert">
+            <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
               {error}
             </small>
           ) : null}
         </div>
-      </details>
+      </Disclosure>
     );
   }
 
   return (
-    <details className="runner-actions-menu">
-      <summary>管理操作</summary>
-      <div className="runner-admin-actions">
+    <Disclosure
+      header={<>管理操作</>}
+      className={cn("runner-actions-menu", runnerAdminActionsStyles["runner-actions-menu"])}
+    >
+      <div className={cn("runner-admin-actions", runnerAdminActionsStyles["runner-admin-actions"])}>
         {state === "draining" || state === "disabled" ? (
           <Button
-            className="text-button"
+            className={cn("text-button", uiPatterns["text-button"])}
             disabled={pending || credentialRevoked}
             onClick={() =>
               void setLifecycleState("active", `确定让执行机「${runnerName}」恢复领取新任务？`)
@@ -160,7 +170,7 @@ export function RunnerAdminActions({
           </Button>
         ) : (
           <Button
-            className="text-button"
+            className={cn("text-button", uiPatterns["text-button"])}
             disabled={pending || credentialRevoked}
             onClick={() =>
               void setLifecycleState(
@@ -175,7 +185,7 @@ export function RunnerAdminActions({
         )}
         {state !== "disabled" ? (
           <Button
-            className="danger-text-button"
+            className={cn("danger-text-button", uiPatterns["danger-text-button"])}
             disabled={pending}
             onClick={() =>
               void setLifecycleState(
@@ -189,11 +199,11 @@ export function RunnerAdminActions({
           </Button>
         ) : null}
         {credentialRevoked ? (
-          <small className="muted">凭据已撤销</small>
+          <small className={cn("muted", uiPatterns["muted"])}>凭据已撤销</small>
         ) : (
           <>
             <Button
-              className="text-button"
+              className={cn("text-button", uiPatterns["text-button"])}
               disabled={pending || credentialRotationRequested}
               onClick={() =>
                 void post(
@@ -206,7 +216,7 @@ export function RunnerAdminActions({
               {credentialRotationRequested ? "等待轮换" : "轮换凭据"}
             </Button>
             <Button
-              className="danger-text-button"
+              className={cn("danger-text-button", uiPatterns["danger-text-button"])}
               disabled={pending}
               onClick={() =>
                 void post(
@@ -221,7 +231,7 @@ export function RunnerAdminActions({
           </>
         )}
         <Button
-          className="danger-text-button"
+          className={cn("danger-text-button", uiPatterns["danger-text-button"])}
           disabled={pending}
           onClick={() =>
             void post(
@@ -234,11 +244,17 @@ export function RunnerAdminActions({
           注销
         </Button>
         {error ? (
-          <small className="form-error" role="alert">
+          <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
             {error}
           </small>
         ) : null}
       </div>
-    </details>
+    </Disclosure>
   );
 }
+
+const runnerAdminActionsStyles = {
+  "runner-actions-menu":
+    "relative [&_.ui-disclosure-label]:min-h-9 [&_.ui-disclosure-label]:inline-flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:border [&_.ui-disclosure-label]:border-solid [&_.ui-disclosure-label]:border-border [&_.ui-disclosure-label]:rounded-lg [&_.ui-disclosure-label]:py-0 [&_.ui-disclosure-label]:px-[13px] [&_.ui-disclosure-label]:bg-card [&_.ui-disclosure-label]:text-foreground [&_.ui-disclosure-label]:shadow-xs [&_.ui-disclosure-label]:text-sm [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&[data-open=true]_.ui-disclosure-label]:bg-accent [&_.ui-disclosure-body_>_.runner-admin-actions]:absolute [&_.ui-disclosure-body_>_.runner-admin-actions]:z-20 [&_.ui-disclosure-body_>_.runner-admin-actions]:right-0 [&_.ui-disclosure-body_>_.runner-admin-actions]:bottom-[calc(100%_+_8px)] [&_.ui-disclosure-body_>_.runner-admin-actions]:w-max [&_.ui-disclosure-body_>_.runner-admin-actions]:min-w-[180px] [&_.ui-disclosure-body_>_.runner-admin-actions]:p-2.5 [&_.ui-disclosure-body_>_.runner-admin-actions]:border [&_.ui-disclosure-body_>_.runner-admin-actions]:border-solid [&_.ui-disclosure-body_>_.runner-admin-actions]:border-border [&_.ui-disclosure-body_>_.runner-admin-actions]:rounded-xl [&_.ui-disclosure-body_>_.runner-admin-actions]:bg-card [&_.ui-disclosure-body_>_.runner-admin-actions]:shadow-xs [&_.ui-button]:w-full",
+  "runner-admin-actions": "flex items-stretch flex-col gap-2.5",
+} as const;

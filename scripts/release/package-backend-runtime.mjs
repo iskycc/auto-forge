@@ -1,3 +1,4 @@
+import { verifyAndRecordFrontendAssets } from "./frontend-assets.mjs";
 import { createRequire } from "node:module";
 import {
   copyFile,
@@ -28,6 +29,7 @@ const requiredFiles = [
 ];
 
 const requiredDirectories = [
+  "docs/licenses",
   "apps/web/.next",
   "apps/web/dist-server",
   "apps/worker/dist",
@@ -47,6 +49,8 @@ export function isExcludedRuntimePath(relativePath) {
   const normalized = relativePath.replaceAll("\\", "/");
   const isNextBuildOutput = normalized.startsWith("apps/web/.next/");
   return (
+    normalized.includes("/.next/dev/") ||
+    normalized.endsWith("/.next/dev") ||
     normalized.includes("/.next/cache/") ||
     normalized.endsWith("/.next/cache") ||
     normalized.includes("/apps/web/data/") ||
@@ -172,6 +176,11 @@ async function packageRuntime(destination) {
   }
 
   await assertPackagedRuntime(runtimeDestination, sqlitePrebuild);
+  await verifyAndRecordFrontendAssets(
+    join(webBuildDirectory, "static"),
+    join(runtimeDestination, "apps/web/.next/static"),
+    join(runtimeDestination, "frontend-assets.json"),
+  );
   process.stdout.write(
     `${JSON.stringify({
       destination: runtimeDestination,

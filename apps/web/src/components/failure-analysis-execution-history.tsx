@@ -1,4 +1,17 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   failureAnalysisExecutionHistorySchema,
@@ -29,7 +42,13 @@ export function FailureAnalysisExecutionHistory({
   const selectedClaim = claims.find((claim) => claim.id === selectedId) ?? claims[0];
   if (!selectedClaim) return null;
   return (
-    <section className="analysis-execution-history" aria-label="前 5 次执行结果">
+    <section
+      className={cn(
+        "analysis-execution-history",
+        failureAnalysisExecutionHistoryStyles["analysis-execution-history"],
+      )}
+      aria-label="前 5 次执行结果"
+    >
       <header>
         <div>
           <h3>
@@ -100,7 +119,13 @@ function ExecutionHistoryResults({
   if (loading) return <p role="status">正在读取该用例的前 5 次执行结果…</p>;
   if (error)
     return (
-      <div className="analysis-history-error" role="alert">
+      <div
+        className={cn(
+          "analysis-history-error",
+          failureAnalysisExecutionHistoryStyles["analysis-history-error"],
+        )}
+        role="alert"
+      >
         <span>{error}</span>
         <Button
           size="compact"
@@ -117,21 +142,28 @@ function ExecutionHistoryResults({
     );
   if (!items.length) return <p role="status">该用例在此任务中暂无更早的执行结果。</p>;
   return (
-    <table className="analysis-execution-table">
-      <caption className="visually-hidden">{claim.caseName}的前 5 次执行结果</caption>
-      <thead>
-        <tr>
-          <th>执行批次 / 时间</th>
-          <th>结果</th>
-          <th>用例版本</th>
-          <th>结果摘要</th>
-          <th>日志</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table
+      className={cn(
+        "analysis-execution-table",
+        failureAnalysisExecutionHistoryStyles["analysis-execution-table"],
+      )}
+    >
+      <caption className={cn("visually-hidden", uiPatterns["visually-hidden"])}>
+        {claim.caseName}的前 5 次执行结果
+      </caption>
+      <TableHeader>
+        <TableRow>
+          <TableHead>执行批次 / 时间</TableHead>
+          <TableHead>结果</TableHead>
+          <TableHead>用例版本</TableHead>
+          <TableHead>结果摘要</TableHead>
+          <TableHead>日志</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {items.map((execution) => (
-          <tr key={execution.executionRunId}>
-            <td>
+          <TableRow key={execution.executionRunId}>
+            <TableCell>
               <a
                 href={`/run-batches/${encodeURIComponent(execution.batchId)}`}
                 target="_blank"
@@ -143,24 +175,35 @@ function ExecutionHistoryResults({
               <time dateTime={execution.createdAt} title={`UTC ${execution.createdAt}`}>
                 {formatPlatformDateTime(execution.createdAt)}
               </time>
-            </td>
-            <td>
-              <span className={`batch-status ${sharedOutcomeClass(execution.outcome)}`}>
+            </TableCell>
+            <TableCell>
+              <Badge
+                className={cn(
+                  failureAnalysisExecutionHistoryStyles["batch-status"],
+                  `batch-status ${sharedOutcomeClass(execution.outcome)}`,
+                )}
+              >
                 {sharedOutcomeLabel(execution.outcome)}
-              </span>
-            </td>
-            <td>
+              </Badge>
+            </TableCell>
+            <TableCell>
               v{execution.caseVersion}
               <small>
                 {execution.attemptNumber ? `第 ${execution.attemptNumber} 次尝试` : "未启动执行"}
               </small>
-            </td>
-            <td>
-              <span className="analysis-execution-summary" title={execution.resultSummary}>
+            </TableCell>
+            <TableCell>
+              <span
+                className={cn(
+                  "analysis-execution-summary",
+                  failureAnalysisExecutionHistoryStyles["analysis-execution-summary"],
+                )}
+                title={execution.resultSummary}
+              >
                 {execution.resultSummary || "暂无结果摘要"}
               </span>
-            </td>
-            <td>
+            </TableCell>
+            <TableCell>
               <Button
                 size="compact"
                 type="button"
@@ -190,10 +233,21 @@ function ExecutionHistoryResults({
               >
                 <GitCompareArrows size={14} /> 日志对比
               </Button>
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
+
+const failureAnalysisExecutionHistoryStyles = {
+  "analysis-execution-history":
+    "grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 py-2 px-3 border border-solid border-border rounded-lg bg-card [&_>_header]:flex [&_>_header]:min-w-0 [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-3 [&_h3]:flex [&_h3]:items-center [&_h3]:gap-2 [&_h3]:m-0 [&_h3]:text-sm [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-xs [&_p]:py-1 [&_p]:min-h-0 [&_>_header_>_.ui-select]:w-[38%] [&_>_header_>_.ui-select]:shrink-0 [&_>_header_small]:text-muted-foreground [&_>_header_small]:text-xs [&_>_header_>_div:first-child]:flex [&_>_header_>_div:first-child]:items-baseline [&_>_header_>_div:first-child]:flex-wrap [&_>_header_>_div:first-child]:gap-2",
+  "analysis-execution-summary":
+    "[display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] overflow-hidden [overflow-wrap:anywhere]",
+  "analysis-execution-table":
+    "[&_small]:m-0 [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:block [&_small]:leading-[1.7] [&_time]:m-0 [&_time]:text-muted-foreground [&_time]:text-xs [&_time]:block [&_time]:leading-[1.7] w-full [table-layout:fixed] [border-collapse:collapse] text-xs [&_th]:p-2 [&_th]:border-b [&_th]:border-solid [&_th]:border-border [&_th]:text-left [&_th]:[vertical-align:middle] [&_th]:bg-muted [&_th]:text-muted-foreground [&_th]:font-medium [&_td]:p-2 [&_td]:border-b [&_td]:border-solid [&_td]:border-border [&_td]:text-left [&_td]:[vertical-align:middle] [&_th:first-child]:w-[25%] [&_th:nth-child(2)]:w-[10%] [&_th:nth-child(3)]:w-[13%] [&_th:last-child]:w-[16%] [&_tr:last-child_td]:border-b-0 [&_a]:text-info [&_a]:font-semibold",
+  "analysis-history-error": "flex items-center justify-between gap-3 text-destructive text-sm",
+  "batch-status": uiPatterns["batch-status"],
+} as const;

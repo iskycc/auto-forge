@@ -1,4 +1,22 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
@@ -173,8 +191,11 @@ export function WebhookSettings({
   }
 
   return (
-    <div className="webhook-settings-stack">
-      <section className="webhook-metric-grid" aria-label="Webhook 概览">
+    <div className={cn("webhook-settings-stack", webhookSettingsStyles["webhook-settings-stack"])}>
+      <section
+        className={cn("webhook-metric-grid", webhookSettingsStyles["webhook-metric-grid"])}
+        aria-label="Webhook 概览"
+      >
         <Metric icon={<Webhook size={18} />} label="已配置" value={configurations.length} />
         <Metric icon={<Activity size={18} />} label="启用中" value={enabledCount} tone="blue" />
         <Metric
@@ -186,10 +207,23 @@ export function WebhookSettings({
         <Metric icon={<Clock3 size={18} />} label="需关注" value={problemCount} tone="orange" />
       </section>
 
-      <section className="card webhook-configurations-card">
-        <div className="section-title-row webhook-section-title">
+      <Card
+        as="section"
+        className={cn(
+          "card webhook-configurations-card",
+          uiPatterns["card"],
+          webhookSettingsStyles["webhook-configurations-card"],
+        )}
+      >
+        <div
+          className={cn(
+            "section-title-row webhook-section-title",
+            uiPatterns["section-title-row"],
+            webhookSettingsStyles["webhook-section-title"],
+          )}
+        >
           <div>
-            <span className="eyebrow">ENDPOINTS</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>ENDPOINTS</span>
             <h2>通知端点</h2>
             <p>配置可复用于同一项目的多个任务；只有绑定后的新完成批次才会通知。</p>
           </div>
@@ -200,13 +234,20 @@ export function WebhookSettings({
           ) : null}
         </div>
         {error ? (
-          <p className="form-error" role="alert">
+          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
             {error}
-          </p>
+          </Notice>
         ) : null}
         {configurations.length === 0 ? (
-          <div className="empty-state table-empty webhook-empty-state">
-            <span className="empty-icon">
+          <EmptyState
+            className={cn(
+              "empty-state table-empty webhook-empty-state",
+              uiPatterns["empty-state"],
+              uiPatterns["table-empty"],
+              webhookSettingsStyles["webhook-empty-state"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <Webhook size={25} />
             </span>
             <strong>尚未配置通知端点</strong>
@@ -220,19 +261,36 @@ export function WebhookSettings({
                 创建第一个 Webhook
               </Button>
             ) : null}
-          </div>
+          </EmptyState>
         ) : (
-          <div className="webhook-card-grid">
+          <div className={cn("webhook-card-grid", webhookSettingsStyles["webhook-card-grid"])}>
             {configurations.map((configuration) => (
-              <article className="webhook-endpoint-card" key={configuration.id}>
-                <div className="webhook-endpoint-heading">
+              <article
+                className={cn(
+                  "webhook-endpoint-card",
+                  webhookSettingsStyles["webhook-endpoint-card"],
+                )}
+                key={configuration.id}
+              >
+                <div
+                  className={cn(
+                    "webhook-endpoint-heading",
+                    webhookSettingsStyles["webhook-endpoint-heading"],
+                  )}
+                >
                   <span
-                    className={`webhook-method webhook-method-${configuration.method.toLowerCase()}`}
+                    className={cn(
+                      webhookSettingsStyles["webhook-method"],
+                      `webhook-method webhook-method webhook-method-${configuration.method.toLowerCase()}`,
+                    )}
                   >
                     {configuration.method}
                   </span>
                   <span
-                    className={`webhook-state ${configuration.enabled ? "enabled" : "disabled"}`}
+                    className={cn(
+                      webhookSettingsStyles["webhook-state"],
+                      `webhook-state ${configuration.enabled ? "enabled" : "disabled"}`,
+                    )}
                   >
                     <i aria-hidden="true" />
                     {configuration.enabled ? "已启用" : "已停用"}
@@ -244,7 +302,12 @@ export function WebhookSettings({
                 </div>
                 <code title={configuration.targetUrl}>{configuration.targetUrl}</code>
                 {canManage ? (
-                  <div className="webhook-card-actions">
+                  <div
+                    className={cn(
+                      "webhook-card-actions",
+                      webhookSettingsStyles["webhook-card-actions"],
+                    )}
+                  >
                     <Button
                       disabled={Boolean(testingId)}
                       onClick={() => void test(configuration)}
@@ -253,7 +316,7 @@ export function WebhookSettings({
                       variant="secondary"
                     >
                       {testingId === configuration.id ? (
-                        <LoaderCircle className="spin" size={14} />
+                        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
                       ) : (
                         <Send size={14} />
                       )}
@@ -280,18 +343,33 @@ export function WebhookSettings({
             ))}
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="card webhook-deliveries-card">
-        <div className="section-title-row webhook-section-title">
+      <Card
+        as="section"
+        className={cn(
+          "card webhook-deliveries-card",
+          uiPatterns["card"],
+          webhookSettingsStyles["webhook-deliveries-card"],
+        )}
+      >
+        <div
+          className={cn(
+            "section-title-row webhook-section-title",
+            uiPatterns["section-title-row"],
+            webhookSettingsStyles["webhook-section-title"],
+          )}
+        >
           <div>
-            <span className="eyebrow">DELIVERIES</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>DELIVERIES</span>
             <h2>最近投递</h2>
             <p>保留响应码、尝试次数和最后错误，便于快速定位接收端问题。</p>
           </div>
-          <span className="table-count">本页 {deliveries.length} 条</span>
+          <span className={cn("table-count", webhookSettingsStyles["table-count"])}>
+            本页 {deliveries.length} 条
+          </span>
         </div>
-        <form className="management-toolbar" method="get">
+        <form className={cn("management-toolbar", uiPatterns["management-toolbar"])} method="get">
           <Select
             name="webhookId"
             aria-label="投递端点"
@@ -314,38 +392,56 @@ export function WebhookSettings({
           <Button type="submit">筛选投递</Button>
         </form>
         {deliveries.length === 0 ? (
-          <div className="empty-state table-empty webhook-delivery-empty">
-            <span className="empty-icon">
+          <EmptyState
+            className={cn(
+              "empty-state table-empty webhook-delivery-empty",
+              uiPatterns["empty-state"],
+              uiPatterns["table-empty"],
+              webhookSettingsStyles["webhook-delivery-empty"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <Send size={24} />
             </span>
             <strong>暂无投递记录</strong>
             <p>任务绑定 Webhook 并执行完成后，投递结果会显示在这里。</p>
-          </div>
+          </EmptyState>
         ) : (
-          <div className="webhook-delivery-table-wrap">
-            <table className="data-table webhook-delivery-table">
-              <thead>
-                <tr>
-                  <th>端点 / 任务</th>
-                  <th>状态</th>
-                  <th>响应</th>
-                  <th>尝试</th>
-                  <th>更新时间</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div
+            className={cn(
+              "webhook-delivery-table-wrap",
+              webhookSettingsStyles["webhook-delivery-table-wrap"],
+            )}
+          >
+            <Table
+              className={cn(
+                "data-table webhook-delivery-table",
+                uiPatterns["data-table"],
+                webhookSettingsStyles["webhook-delivery-table"],
+              )}
+            >
+              <TableHeader>
+                <TableRow>
+                  <TableHead>端点 / 任务</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>响应</TableHead>
+                  <TableHead>尝试</TableHead>
+                  <TableHead>更新时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {deliveries.map((delivery) => (
                   <DeliveryRow delivery={delivery} key={delivery.id} />
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
-      </section>
+      </Card>
 
       <ActionDialog
         protectUnsavedChanges
-        className="webhook-editor-dialog"
+        className={cn("webhook-editor-dialog", webhookSettingsStyles["webhook-editor-dialog"])}
         description="通知失败不影响任务执行结果；系统会自动进行有限重试。"
         onClose={() => !pending && setEditor(undefined)}
         open={Boolean(editor)}
@@ -353,11 +449,17 @@ export function WebhookSettings({
       >
         {editor ? (
           <form
-            className="action-dialog-form webhook-editor-form"
+            className={cn(
+              "action-dialog-form webhook-editor-form",
+              webhookSettingsStyles["action-dialog-form"],
+              webhookSettingsStyles["webhook-editor-form"],
+            )}
             onSubmit={(event) => void save(event)}
           >
-            <div className="webhook-editor-grid">
-              <label className="field-stack">
+            <div
+              className={cn("webhook-editor-grid", webhookSettingsStyles["webhook-editor-grid"])}
+            >
+              <label className={cn("field-stack", uiPatterns["field-stack"])}>
                 <span>名称</span>
                 <Input
                   maxLength={120}
@@ -366,7 +468,7 @@ export function WebhookSettings({
                   value={editor.name}
                 />
               </label>
-              <label className="field-stack">
+              <label className={cn("field-stack", uiPatterns["field-stack"])}>
                 <span>请求方式</span>
                 <Select
                   aria-label="请求方式"
@@ -379,7 +481,13 @@ export function WebhookSettings({
                   <option value="GET">GET · 查询参数</option>
                 </Select>
               </label>
-              <label className="field-stack webhook-editor-wide">
+              <label
+                className={cn(
+                  "field-stack webhook-editor-wide",
+                  uiPatterns["field-stack"],
+                  webhookSettingsStyles["webhook-editor-wide"],
+                )}
+              >
                 <span>目标地址</span>
                 <Input
                   maxLength={2048}
@@ -390,7 +498,13 @@ export function WebhookSettings({
                   value={editor.targetUrl}
                 />
               </label>
-              <label className="field-stack webhook-editor-wide">
+              <label
+                className={cn(
+                  "field-stack webhook-editor-wide",
+                  uiPatterns["field-stack"],
+                  webhookSettingsStyles["webhook-editor-wide"],
+                )}
+              >
                 <span>说明</span>
                 <Input
                   maxLength={500}
@@ -401,19 +515,33 @@ export function WebhookSettings({
               </label>
             </div>
             {editor.method === "POST" ? (
-              <div className="webhook-template-editor">
-                <div className="webhook-template-heading">
+              <div
+                className={cn(
+                  "webhook-template-editor",
+                  webhookSettingsStyles["webhook-template-editor"],
+                )}
+              >
+                <div
+                  className={cn(
+                    "webhook-template-heading",
+                    webhookSettingsStyles["webhook-template-heading"],
+                  )}
+                >
                   <span>
                     <Code2 size={15} /> JSON 请求体模板
                   </span>
                   <small>点击变量插入到光标位置</small>
                 </div>
-                <details>
-                  <summary>插入模板变量</summary>
-                  <div className="webhook-variable-list">
+                <Disclosure header={<>插入模板变量</>}>
+                  <div
+                    className={cn(
+                      "webhook-variable-list",
+                      webhookSettingsStyles["webhook-variable-list"],
+                    )}
+                  >
                     {WEBHOOK_BODY_VARIABLES.map((variable) => (
                       <Button
-                        className="webhook-variable-token"
+                        className={"webhook-variable-token"}
                         key={variable}
                         onClick={() => insertVariable(variable)}
                         size="compact"
@@ -422,7 +550,7 @@ export function WebhookSettings({
                       >{`{{${variable}}}`}</Button>
                     ))}
                   </div>
-                </details>
+                </Disclosure>
                 <Textarea
                   ref={bodyRef}
                   aria-label="JSON 请求体模板"
@@ -472,16 +600,30 @@ export function WebhookSettings({
                   预览模板（不发送）
                 </Button>
                 {templatePreview ? (
-                  <pre className="webhook-template-preview">{templatePreview}</pre>
+                  <pre
+                    className={cn(
+                      "webhook-template-preview",
+                      webhookSettingsStyles["webhook-template-preview"],
+                    )}
+                  >
+                    {templatePreview}
+                  </pre>
                 ) : null}
               </div>
             ) : (
-              <div className="webhook-get-preview">
+              <div
+                className={cn("webhook-get-preview", webhookSettingsStyles["webhook-get-preview"])}
+              >
                 <strong>GET 查询参数</strong>
                 <p>系统会自动附加 event、batchId、suiteId、status 与 completedAt，不发送请求体。</p>
               </div>
             )}
-            <label className="webhook-enabled-field">
+            <label
+              className={cn(
+                "webhook-enabled-field",
+                webhookSettingsStyles["webhook-enabled-field"],
+              )}
+            >
               <Input
                 checked={editor.enabled}
                 onChange={(event) => setEditor({ ...editor, enabled: event.target.checked })}
@@ -493,11 +635,21 @@ export function WebhookSettings({
               </span>
             </label>
             {error ? (
-              <p className="form-error" role="alert">
+              <Notice
+                tone="error"
+                className={cn("form-error", uiPatterns["form-error"])}
+                role="alert"
+              >
                 {error}
-              </p>
+              </Notice>
             ) : null}
-            <div className="webhook-editor-actions management-sticky-actions">
+            <div
+              className={cn(
+                "webhook-editor-actions management-sticky-actions",
+                webhookSettingsStyles["webhook-editor-actions"],
+                webhookSettingsStyles["management-sticky-actions"],
+              )}
+            >
               <Button
                 data-dialog-dismiss
                 disabled={pending}
@@ -507,7 +659,11 @@ export function WebhookSettings({
                 取消
               </Button>
               <Button disabled={pending} type="submit" variant="primary">
-                {pending ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
+                {pending ? (
+                  <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+                ) : (
+                  <Send size={16} />
+                )}
                 {editor.id ? "保存修改" : "创建端点"}
               </Button>
             </div>
@@ -522,14 +678,25 @@ export function WebhookSettings({
         open={Boolean(deleting)}
         title="删除 Webhook"
       >
-        <div className="action-dialog-form">
+        <div className={cn("action-dialog-form", webhookSettingsStyles["action-dialog-form"])}>
           <p>确定删除「{deleting?.name}」？此操作不可恢复。</p>
-          <div className="webhook-editor-actions management-sticky-actions">
+          <div
+            className={cn(
+              "webhook-editor-actions management-sticky-actions",
+              webhookSettingsStyles["webhook-editor-actions"],
+              webhookSettingsStyles["management-sticky-actions"],
+            )}
+          >
             <Button disabled={pending} onClick={() => setDeleting(undefined)} type="button">
               取消
             </Button>
             <Button disabled={pending} onClick={() => void remove()} type="button" variant="danger">
-              {pending ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}删除
+              {pending ? (
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+              ) : (
+                <Trash2 size={16} />
+              )}
+              删除
             </Button>
           </div>
         </div>
@@ -550,7 +717,12 @@ function Metric({
   tone?: string;
 }) {
   return (
-    <article className={`webhook-metric webhook-metric-${tone}`}>
+    <article
+      className={cn(
+        webhookSettingsStyles["webhook-metric"],
+        `webhook-metric webhook-metric webhook-metric-${tone}`,
+      )}
+    >
       <span>{icon}</span>
       <div>
         <strong>{value}</strong>
@@ -568,25 +740,30 @@ function DeliveryRow({ delivery }: { delivery: WebhookDelivery }) {
     failed: "投递失败",
   } as const;
   return (
-    <tr>
-      <td>
+    <TableRow>
+      <TableCell>
         <strong>{delivery.webhookName}</strong>
         <small title={delivery.suiteName}>{delivery.suiteName}</small>
-      </td>
-      <td>
-        <span className={`webhook-delivery-status ${delivery.status}`}>
+      </TableCell>
+      <TableCell>
+        <span
+          className={cn(
+            webhookSettingsStyles["webhook-delivery-status"],
+            `webhook-delivery-status ${delivery.status}`,
+          )}
+        >
           {labels[delivery.status]}
         </span>
-      </td>
-      <td>
+      </TableCell>
+      <TableCell>
         {delivery.responseStatus ?? "—"}
         {delivery.errorMessage ? (
           <small title={delivery.errorMessage}>{delivery.errorMessage}</small>
         ) : null}
-      </td>
-      <td>{delivery.attempts} 次</td>
-      <td>{formatPlatformDateTime(delivery.updatedAt)}</td>
-    </tr>
+      </TableCell>
+      <TableCell>{delivery.attempts} 次</TableCell>
+      <TableCell>{formatPlatformDateTime(delivery.updatedAt)}</TableCell>
+    </TableRow>
   );
 }
 
@@ -617,3 +794,54 @@ async function requestJson<T>(
   if (!response.ok) await throwApiErrorResponse(response, "请求失败。");
   return (await response.json()) as T;
 }
+
+const webhookSettingsStyles = {
+  "action-dialog-form": "mt-0",
+  "management-sticky-actions":
+    "sticky bottom-0 z-3 flex items-center justify-end gap-3 p-3 bg-card border-t border-solid border-border [&_>_span]:mr-auto",
+  "table-count": "text-muted-foreground text-xs whitespace-nowrap",
+  "webhook-card-actions": "flex items-center justify-end gap-2.5",
+  "webhook-card-grid": "grid grid-cols-2 gap-3 mt-[17px] max-[1181px]:grid-cols-[1fr]",
+  "webhook-configurations-card": "p-5",
+  "webhook-deliveries-card": "p-5",
+  "webhook-delivery-empty": "min-h-0 p-5 gap-2 [&_.empty-icon]:hidden",
+  "webhook-delivery-status":
+    "text-xs font-semibold [&.succeeded]:text-success [&.failed]:text-destructive [&.pending]:text-warning [&.delivering]:text-info",
+  "webhook-delivery-table":
+    "w-full [table-layout:fixed] [&_td:first-child]:overflow-hidden [&_td:first-child]:text-ellipsis [&_td:nth-child(3)]:overflow-hidden [&_td:nth-child(3)]:text-ellipsis [&_td:first-child_small]:block [&_td:first-child_small]:overflow-hidden [&_td:first-child_small]:mt-[3px] [&_td:first-child_small]:text-muted-foreground [&_td:first-child_small]:text-xs [&_td:first-child_small]:text-ellipsis [&_td:first-child_small]:whitespace-nowrap [&_td:nth-child(3)_small]:block [&_td:nth-child(3)_small]:overflow-hidden [&_td:nth-child(3)_small]:mt-[3px] [&_td:nth-child(3)_small]:text-muted-foreground [&_td:nth-child(3)_small]:text-xs [&_td:nth-child(3)_small]:text-ellipsis [&_td:nth-child(3)_small]:whitespace-nowrap",
+  "webhook-delivery-table-wrap":
+    "overflow-hidden mt-4 border border-solid border-border rounded-xl",
+  "webhook-editor-actions": "flex items-center justify-end gap-2.5",
+  "webhook-editor-dialog":
+    "w-[min(860px,_calc(100dvw_-_32px))] max-h-[min(880px,_calc(100dvh_-_24px))]",
+  "webhook-editor-form": "grid gap-3.5",
+  "webhook-editor-grid":
+    "grid grid-cols-[1.5fr_1fr] gap-[13px] [&_.ui-select]:w-full [&_.ui-input]:w-full",
+  "webhook-editor-wide": "col-span-full",
+  "webhook-empty-state": "min-h-0 p-5 gap-2",
+  "webhook-enabled-field":
+    "flex items-center gap-2.5 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_small]:text-muted-foreground",
+  "webhook-endpoint-card":
+    "grid min-w-0 gap-3.5 border border-solid border-border rounded-lg p-[17px] bg-card [&_h3]:m-0 [&_h3]:text-lg [&_p]:m-0 [&_p]:mt-[5px] [&_p]:text-muted-foreground [&_p]:text-sm [&_p]:leading-[1.5] [&_code]:overflow-hidden [&_code]:rounded-lg [&_code]:py-[9px] [&_code]:px-2.5 [&_code]:bg-muted [&_code]:text-info [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
+  "webhook-endpoint-heading": "flex items-center justify-between gap-2.5",
+  "webhook-get-preview":
+    "border border-solid border-border rounded-lg py-[13px] px-3.5 bg-info/10 [&_p]:[margin:4px_0_0] [&_p]:text-muted-foreground [&_p]:text-sm",
+  "webhook-method":
+    "inline-flex w-fit items-center rounded-md py-1 px-[7px] font-mono text-xs font-semibold tracking-normal [&.webhook-method-post]:bg-info/10 [&.webhook-method-post]:text-info [&.webhook-method-get]:bg-success/10 [&.webhook-method-get]:text-success",
+  "webhook-metric":
+    "flex min-w-0 items-center gap-[13px] border border-solid border-border rounded-xl py-[17px] px-4.5 bg-card shadow-xs [&_>_span]:grid [&_>_span]:w-9.5 [&_>_span]:h-9.5 [&_>_span]:[flex:0_0_auto] [&_>_span]:place-items-center [&_>_span]:rounded-lg [&_>_span]:bg-muted [&_>_span]:text-muted-foreground [&_>_div]:grid [&_>_div]:gap-px [&_strong]:text-2xl [&_strong]:leading-[1] [&_strong]:tabular-nums [&_small]:text-muted-foreground [&.webhook-metric-grid]:grid [&.webhook-metric-grid]:grid-cols-4 [&.webhook-metric-grid]:gap-3.5 [&.webhook-metric-grid]:max-[1181px]:grid-cols-2 [&.webhook-metric-blue]:[&_>_span]:bg-info/10 [&.webhook-metric-blue]:[&_>_span]:text-info [&.webhook-metric-green]:[&_>_span]:bg-success/10 [&.webhook-metric-green]:[&_>_span]:text-success [&.webhook-metric-orange]:[&_>_span]:bg-warning/10 [&.webhook-metric-orange]:[&_>_span]:text-warning",
+  "webhook-metric-grid": "grid grid-cols-4 gap-3.5 max-[1181px]:grid-cols-2",
+  "webhook-section-title":
+    "[&_p]:text-muted-foreground [&_p]:m-0 [&_p]:mt-[5px] [&_p]:text-sm items-start [&_h2]:m-0",
+  "webhook-settings-stack": "grid gap-4.5",
+  "webhook-state":
+    "flex items-center gap-1.5 text-muted-foreground text-xs [&_i]:w-[7px] [&_i]:h-[7px] [&_i]:rounded-full [&_i]:bg-muted-foreground [&.enabled_i]:bg-success [&.enabled_i]:shadow-xs",
+  "webhook-template-editor":
+    "grid gap-3.5 [&_textarea]:w-full [&_textarea]:[resize:vertical] [&_textarea]:font-mono [&_textarea]:text-xs [&_textarea]:leading-[1.55]",
+  "webhook-template-heading":
+    "flex items-center justify-between gap-2.5 [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-[7px] [&_>_span]:font-semibold [&_small]:text-muted-foreground",
+  "webhook-template-preview":
+    "max-h-[240px] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] p-3 bg-muted rounded-lg",
+  "webhook-variable-list":
+    "flex flex-wrap gap-1.5 [&_.webhook-variable-token]:border [&_.webhook-variable-token]:border-solid [&_.webhook-variable-token]:border-border [&_.webhook-variable-token]:rounded-md [&_.webhook-variable-token]:py-1 [&_.webhook-variable-token]:px-[7px] [&_.webhook-variable-token]:bg-muted [&_.webhook-variable-token]:text-info [&_.webhook-variable-token]:font-mono [&_.webhook-variable-token]:text-xs [&_.webhook-variable-token]:cursor-pointer",
+} as const;

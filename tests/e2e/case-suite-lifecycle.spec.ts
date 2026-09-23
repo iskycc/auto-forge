@@ -16,6 +16,132 @@ import { selectJarForInspection } from "./support/jar-import";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("task adapter names default to project, version and stage without replacing saved names", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("adapter-defaults");
+  const project = await createProject(page, suffix);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${project.id}/versions/${project.versionId}/stages`,
+    { method: "POST", body: { name: "SIT", description: "Adapter default scope" } },
+  );
+  expect(stage.status).toBe(201);
+  const versionWithoutStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${project.id}/versions`,
+    { method: "POST", body: { name: "2.0" } },
+  );
+  expect(versionWithoutStage.status).toBe(201);
+  await selectProjectContext(page, project.id, project.versionId, stage.body.id);
+  await page.goto("/case-suites");
+  await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "创建用例任务", exact: true });
+  await dialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await expect(dialog.getByLabel("TestNG Suite Name", { exact: true })).toHaveValue(project.name);
+  await expect(dialog.getByLabel("TestNG Test Name", { exact: true })).toHaveValue(
+    "Lifecycle version - SIT",
+  );
+  await dialog.getByLabel("任务名称", { exact: true }).fill(`Adapter defaults ${suffix}`);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await dialog.getByLabel("TestNG Test Name", { exact: true }).scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureUi(page, `adapter-defaults-create-${width}`);
+  }
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/case-suites",
+  );
+  await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const created = await createdResponse;
+  expect(created.status()).toBe(201);
+  const suite = (await created.json()) as {
+    id: string;
+    policy: { adapter: { suiteName: string; testName: string } };
+  };
+  expect(suite.policy.adapter).toMatchObject({
+    suiteName: project.name,
+    testName: "Lifecycle version - SIT",
+  });
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id);
+
+  // A saved task keeps its own version and names even if the top bar points elsewhere.
+  await selectProjectContext(page, project.id, versionWithoutStage.body.id);
+  await page.goto(`/case-suites/${suite.id}`);
+  await expect(page.getByLabel("Adapter Suite Name", { exact: true })).toHaveValue(project.name);
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue(
+    "Lifecycle version - SIT",
+  );
+  await page.getByLabel("Adapter Suite Name", { exact: true }).fill("Custom suite");
+  await page.getByLabel("Adapter Test Name", { exact: true }).fill("Custom test");
+  await page.locator('select[name="projectVersionId"]').selectOption(versionWithoutStage.body.id);
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue("Custom test");
+  await page.locator('select[name="projectVersionId"]').selectOption(project.versionId);
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
+  await page.reload();
+  await expect(page.getByLabel("Adapter Suite Name", { exact: true })).toHaveValue("Custom suite");
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue("Custom test");
+  const copy = await browserJson<{ id: string }>(page, `/api/v1/case-suites/${suite.id}/copy`, {
+    method: "POST",
+    body: { name: `Adapter copy ${suffix}`, includeCases: false },
+  });
+  expect(copy.status).toBe(201);
+  await page.goto(`/case-suites/${copy.body.id}`);
+  await expect(page.getByLabel("Adapter Suite Name", { exact: true })).toHaveValue("Custom suite");
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue("Custom test");
+
+  // Older tasks created without adapter names get defaults in the editor, persisted on save.
+  const legacy = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      name: `Legacy adapter ${suffix}`,
+    },
+  });
+  expect(legacy.status).toBe(201);
+  await configureTaskExecution(page, legacy.body.id, runner.id);
+  await selectProjectContext(page, project.id, project.versionId, stage.body.id);
+  await page.goto(`/case-suites/${legacy.body.id}`);
+  await expect(page.getByText("任务配置有未保存的修改", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Adapter Suite Name", { exact: true })).toHaveValue(project.name);
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue(
+    "Lifecycle version - SIT",
+  );
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.getByLabel("Adapter Test Name", { exact: true }).scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureUi(page, `adapter-defaults-edit-${width}`);
+  }
+  await page.locator('select[name="projectVersionId"]').selectOption(versionWithoutStage.body.id);
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue("2.0");
+  await page.locator('select[name="projectVersionId"]').selectOption(project.versionId);
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue(
+    "Lifecycle version - SIT",
+  );
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  await page.reload();
+  await expect(page.getByLabel("Adapter Test Name", { exact: true })).toHaveValue(
+    "Lifecycle version - SIT",
+  );
+
+  await page.goto("/case-suites");
+  await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  await dialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await expect(dialog.getByLabel("TestNG Suite Name", { exact: true })).toHaveValue(project.name);
+  await expect(dialog.getByLabel("TestNG Test Name", { exact: true })).toHaveValue(
+    "Lifecycle version - Lifecycle stage",
+  );
+});
+
 test("tasks and execution history follow the selected project version", async ({ page }) => {
   test.setTimeout(240_000);
   await ensureAdministrator(page);
@@ -194,7 +320,7 @@ test("tasks and execution history follow the selected project version", async ({
   await expect(suiteOptions.filter({ hasText: firstSuiteName })).toHaveCount(1);
   await expect(suiteOptions.filter({ hasText: secondSuiteName })).toHaveCount(0);
   await runDialog.locator('select[aria-label="执行用例任务"]').selectOption(firstSuite.id);
-  await runDialog.getByRole("button", { name: "倒计时执行", exact: true }).click();
+  await runDialog.getByRole("radio", { name: "倒计时执行", exact: true }).locator("..").click();
   await runDialog.getByLabel("倒计时分钟").fill("0");
   await runDialog.getByLabel("倒计时秒").fill("30");
   await expect(runDialog.getByText("30 秒", { exact: true })).toBeVisible();
@@ -387,8 +513,8 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByText("用例已更新。", { exact: true })).toBeVisible();
   await expect(page.getByText("版本历史（2）")).toBeVisible();
-  await page.getByLabel("基准版本").selectOption("1");
-  await page.getByLabel("对比版本").selectOption("2");
+  await page.getByLabel("基准版本").and(page.locator("select")).selectOption("1");
+  await page.getByLabel("对比版本").and(page.locator("select")).selectOption("2");
   await expect(
     page.locator(".version-diff-list").getByText(/方法新增：.*browserAdded/),
   ).toBeVisible();
@@ -460,14 +586,14 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("任务名称").fill(`${suiteName} updated`);
   await page.getByLabel("优先级（-100 到 100）").fill("42");
   await page.getByLabel("并发度（同时在途执行数）").fill("3");
-  await expect(page.getByLabel("失败重跑方式")).toHaveValue("round");
+  await expect(page.locator('select[name="retryMode"]')).toHaveValue("round");
   await expect(page.getByLabel("重试次数上限")).toHaveValue("0");
   for (const viewport of [
     { width: 1024, height: 768 },
     { width: 1536, height: 1024 },
   ]) {
     await page.setViewportSize(viewport);
-    await page.getByLabel("失败重跑方式").scrollIntoViewIfNeeded();
+    await page.getByRole("combobox", { name: "失败重跑方式" }).scrollIntoViewIfNeeded();
     await expectUiIntegrity(page);
     await captureUi(page, `case-suite-default-round-${viewport.width}`);
   }
@@ -585,7 +711,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
 
   await page.getByLabel("Cron（分 时 日 月 周）").fill("17 8 * * 1-5");
   await page.getByLabel("IANA 时区").fill("Asia/Shanghai");
-  await page.getByLabel("错过触发").selectOption("skip");
+  await page.getByLabel("错过触发").and(page.locator("select")).selectOption("skip");
   await page.getByRole("button", { name: "保存计划" }).click();
   await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("计划触发已保存");
 
@@ -710,22 +836,22 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(caseTree).toBeVisible({ timeout: 30_000 });
   // Large tasks keep package contents out of the DOM until the user expands one package. This is a
   // performance contract: rendering every small package eagerly can create tens of thousands of
-  // rows and make the native details arrow block the browser main thread.
+  // rows and make the directory disclosure block the browser main thread.
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(0);
-  await caseTree.locator("summary").first().click();
+  await caseTree.locator(".ui-disclosure-label").first().click();
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(2);
-  // A new snapshot remounts directory groups. Their native disclosure state must match the
+  // A new snapshot remounts directory groups. Their controlled disclosure state must match the
   // remembered expansion so the next click closes the group and releases its rendered rows.
-  const expandedPackage = await caseTree.locator("details").first().elementHandle();
+  const expandedPackage = await caseTree.locator(".ui-disclosure").first().elementHandle();
   expect(expandedPackage).not.toBeNull();
   await page.getByRole("button", { name: "刷新数据", exact: true }).click();
   await expect
     .poll(() => expandedPackage!.evaluate((element) => element.isConnected), { timeout: 30_000 })
     .toBe(false);
-  await expect(caseTree.locator("details").first()).toHaveJSProperty("open", true);
+  await expect(caseTree.locator(".ui-disclosure").first()).toHaveAttribute("data-open", "true");
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(2);
   await expandedPackage!.dispose();
-  await caseTree.locator("summary").first().click();
+  await caseTree.locator(".ui-disclosure-label").first().click();
   await expect(caseTree.locator(".suite-tree-case")).toHaveCount(0);
   await caseTree.getByLabel(/^选择包 /u).check();
   await expect(page.getByRole("button", { name: "批量移除（2）" })).toBeVisible();

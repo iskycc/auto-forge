@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -115,13 +119,34 @@ export function CreateProjectHierarchyDialog({
         if (createdContext) router.refresh();
       }}
     >
-      <form className="settings-grid-form action-dialog-form" onSubmit={submit}>
+      <form
+        className={cn(
+          "settings-grid-form action-dialog-form",
+          uiPatterns["settings-grid-form"],
+          createProjectHierarchyDialogStyles["action-dialog-form"],
+        )}
+        onSubmit={submit}
+      >
         {error ? (
-          <p className="form-error settings-wide-field" role="alert">
+          <Notice
+            tone="error"
+            className={cn(
+              "form-error settings-wide-field",
+              uiPatterns["form-error"],
+              uiPatterns["settings-wide-field"],
+            )}
+            role="alert"
+          >
             {error}
-          </p>
+          </Notice>
         ) : null}
-        <label className={target.kind === "version" ? "settings-wide-field" : undefined}>
+        <label
+          className={
+            target.kind === "version"
+              ? cn("settings-wide-field", uiPatterns["settings-wide-field"])
+              : undefined
+          }
+        >
           {target.kind === "project"
             ? "项目名称"
             : target.kind === "version"
@@ -157,7 +182,12 @@ export function CreateProjectHierarchyDialog({
             />
           </label>
         ) : null}
-        <div className="settings-form-actions">
+        <div
+          className={cn(
+            "settings-form-actions",
+            createProjectHierarchyDialogStyles["settings-form-actions"],
+          )}
+        >
           <Button type="submit" variant="primary" disabled={pending}>
             {pending ? "正在保存…" : createdContext ? `切换到新建${label}` : `新建${label}`}
           </Button>
@@ -166,3 +196,9 @@ export function CreateProjectHierarchyDialog({
     </ActionDialog>
   );
 }
+
+const createProjectHierarchyDialogStyles = {
+  "action-dialog-form": "mt-0",
+  "settings-form-actions":
+    "flex justify-end gap-2.5 [&.management-sticky-actions]:bottom-3 [&.management-sticky-actions]:border [&.management-sticky-actions]:border-solid [&.management-sticky-actions]:border-border [&.management-sticky-actions]:rounded-xl [&.management-sticky-actions]:shadow-xs",
+} as const;

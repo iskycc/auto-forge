@@ -1,4 +1,38 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+
+export async function expectReadableText(control: Locator): Promise<void> {
+  const contrast = await control.evaluate((element) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "white";
+    context.fillRect(0, 0, 1, 1);
+    const surfaces: Element[] = [];
+    for (let surface: Element | null = element; surface; surface = surface.parentElement)
+      surfaces.unshift(surface);
+    for (const surface of surfaces) {
+      context.fillStyle = getComputedStyle(surface).backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+    }
+    const luminance = () => {
+      const pixels = context.getImageData(0, 0, 1, 1).data;
+      const linear = Array.from(pixels.slice(0, 3), (byte) => {
+        const channel = byte / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+    };
+    const background = luminance();
+    context.fillStyle = getComputedStyle(element).color;
+    context.fillRect(0, 0, 1, 1);
+    const foreground = luminance();
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
+  expect(
+    contrast,
+    "normal text must keep at least 4.5:1 contrast on its painted surface",
+  ).toBeGreaterThanOrEqual(4.5);
+}
 
 type UiViolation = {
   element: string;
@@ -63,9 +97,6 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
     const isVisible = (element: HTMLElement): boolean => {
       const style = window.getComputedStyle(element);
       const bounds = paintedBounds(element);
-      const closedDetails = element.closest("details:not([open])");
-      const visibleSummary = closedDetails?.querySelector(":scope > summary");
-      if (closedDetails && !visibleSummary?.contains(element)) return false;
       return (
         style.display !== "none" &&
         style.visibility !== "hidden" &&
@@ -119,7 +150,12 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
       .map((element) => ({
         element: element.tagName.toLowerCase(),
         label: label(element),
-        value: Math.round(element.getBoundingClientRect().height * 10) / 10,
+        // Ant Design exposes an inner combobox input; its enclosing select/picker is the hit target.
+        value:
+          Math.round(
+            (element.closest(".ant-select, .ant-picker") ?? element).getBoundingClientRect()
+              .height * 10,
+          ) / 10,
       }))
       .filter(({ value }) => value < minimumControlHeight)
       .slice(0, 20);
@@ -134,7 +170,12 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
         ancestor = ancestor.parentElement
       ) {
         const position = window.getComputedStyle(ancestor).position;
-        if (position === "fixed" || position === "sticky") return ancestor;
+        if (
+          position === "fixed" ||
+          position === "sticky" ||
+          ancestor.matches(".ant-popover, .ant-select-dropdown, .ant-picker-dropdown")
+        )
+          return ancestor;
       }
       return undefined;
     };
@@ -159,8 +200,8 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
         if (overlapWidth <= 1 || overlapHeight <= 1) continue;
         const currentSurface = floatingSurfaces.get(current);
         const peerSurface = floatingSurfaces.get(peer);
-        // Fixed headers and sticky action bars intentionally cover scrolling
-        // fields. Only exempt a painted overlay over the normal document;
+        // Headers, sticky actions and portaled popovers intentionally cover the page.
+        // Only exempt a painted overlay over the normal document;
         // collisions within or between floating surfaces must still fail.
         if (Boolean(currentSurface) !== Boolean(peerSurface)) {
           const surface = currentSurface ?? peerSurface;

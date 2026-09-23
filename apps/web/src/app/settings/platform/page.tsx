@@ -1,3 +1,6 @@
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import Link from "next/link";
 import { CursorPagination } from "@/components/cursor-pagination";
 import { PlatformNodes } from "@/components/platform-nodes";
@@ -76,13 +79,21 @@ export default async function PlatformSettingsPage({
   ]);
 
   return (
-    <section className="page-stack">
-      <header className="page-header settings-page-header">
+    <section className={cn("page-stack", uiPatterns["page-stack"])}>
+      <header
+        className={cn(
+          "page-header settings-page-header",
+          uiPatterns["page-header"],
+          uiPatterns["settings-page-header"],
+        )}
+      >
         <div>
-          <p className="eyebrow">System Settings</p>
+          <p className={cn("eyebrow", uiPatterns["eyebrow"])}>System Settings</p>
           <h1>{heading.title}</h1>
           <p>{heading.description}</p>
-          <span className="permission-chip">范围：全平台</span>
+          <Badge className={cn("permission-chip", uiPatterns["permission-chip"])}>
+            范围：全平台
+          </Badge>
         </div>
       </header>
       <SectionTabs

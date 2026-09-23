@@ -295,8 +295,12 @@ UI / HTTP / Worker entrypoints
 
 ## 11. 前端约定
 
-视觉基线是[方案 E 前端设计](./docs/design/frontend-design.md)。Apple-like 仅表示轻盈、清晰和桌面应用般的空间层次；禁止复制 Apple Logo、SF Symbols 或专有产品资产。概念图不得作为页面背景、切图或像素级实现捷径。
+全局 UI 统一使用 **Ant Design**，以[前端设计规范](./docs/design/frontend-design.md)为准；方案 E 仅保留桌面信息架构参考。Apple-like 仅表示轻盈、清晰和桌面应用般的空间层次；禁止复制 Apple Logo、SF Symbols 或专有产品资产。概念图不得作为页面背景、切图或像素级实现捷径。
 
+- 新增与修改 UI 必须使用 Ant Design 组件及统一 ConfigProvider 主题；公共表单、弹窗、选择器、通知通过共享组件复用，不再引入 shadcn/ui 或 Radix 作为第二套视觉体系。`globals.css` 已退役，不得恢复大型全局页面样式；页面布局允许使用静态 Tailwind 类，颜色、状态与空间参数遵守语义 token。
+- Ant Design 及其图标、语言包、CSS、SSR 样式依赖必须精确锁定并随离线发布物交付。构建时从本地 npm 依赖编译完整组件 CSS，后端 Docker tar 必须包含全部 `.next/static` 资源、对应服务端模块与许可证清单；缺失资源应使打包校验失败。禁止 CDN、在线字体、远程 Iconfont 和运行时下载组件资源。
+- 公开日志、执行分享页与主平台使用一致的 Ant Design 浅色主题，不再使用纯黑主题；日志等级、结果状态和长文本仍须保持可读性、分页/截断与滚动边界。
+- 组件迁移必须落到真实 Ant Design 组件，不能仅给原生控件或自绘弹窗套样式。共享组件的表单桥接、自定义表格行和业务虚拟列表可保留必要 DOM；维护 `ui-usage.test.ts`，并检查服务端首屏、嵌套弹窗焦点和目录懒加载。复查清单见[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
 - 页面优先服务端取数；不要为简单查询引入全局客户端状态。
 - 交互组件保持小而专一，加载、空数据、错误、无权限和离线状态都要明确呈现。
 - 列表筛选条件进入 URL，支持刷新、分享与浏览器前进后退。

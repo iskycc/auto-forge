@@ -70,6 +70,21 @@ for _ in $(seq 1 60); do
         }
         if (missingRoutes.length > 0) throw new Error(`runtime image is missing Next.js routes: ${missingRoutes.join(", ")}`);
         process.stdout.write(`Verified ${routeEntries.length} Next.js app route modules.\n`);
+        const frontend = JSON.parse(readFileSync("/app/frontend-assets.json", "utf8"));
+        if (frontend.schemaVersion !== 1 || frontend.componentLibrary !== "antd" || !frontend.assets?.length) {
+          throw new Error("Offline frontend asset manifest is missing or invalid.");
+        }
+        for (const asset of frontend.assets) {
+          const assetRoot = "/app/apps/web/.next/static";
+          if (!asset.path.startsWith("/_next/static/")) throw new Error("Unexpected frontend URL");
+          const assetFile = resolve(assetRoot, asset.path.slice("/_next/static/".length));
+          if (!assetFile.startsWith(`${assetRoot}/`)) throw new Error("Frontend path escapes static root");
+          const content = readFileSync(assetFile);
+          if (content.length !== asset.sizeBytes || createHash("sha256").update(content).digest("hex") !== asset.sha256) {
+            throw new Error(`Offline frontend asset checksum mismatch: ${asset.path}`);
+          }
+        }
+        process.stdout.write(`Verified ${frontend.assets.length} offline frontend assets.\n`);
         const root = "/app/resources/agents";
         const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
         for (const key of ["linux-amd64", "linux-arm64", "installer", "adapter"]) {

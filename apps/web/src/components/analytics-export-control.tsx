@@ -1,4 +1,8 @@
 "use client";
+import { LinkButton } from "@/components/ui/link-button";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button } from "@/components/ui";
 import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
@@ -65,18 +69,37 @@ export function AnalyticsExportControl({ filter }: Props) {
   }
 
   return (
-    <div className="analytics-export-control" aria-live="polite">
+    <div
+      className={cn(
+        "analytics-export-control",
+        analyticsExportControlStyles["analytics-export-control"],
+      )}
+      aria-live="polite"
+    >
       {!job || ["failed", "cancelled"].includes(job.status) ? (
-        <Button className="button button-secondary" onClick={() => void start()} type="button">
+        <Button
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          onClick={() => void start()}
+          type="button"
+        >
           <Download size={17} /> 导出当前范围
         </Button>
       ) : null}
       {active ? (
-        <div className="analytics-export-progress">
-          <LoaderCircle className="spin" size={17} aria-hidden="true" />
+        <div
+          className={cn(
+            "analytics-export-progress",
+            analyticsExportControlStyles["analytics-export-progress"],
+          )}
+        >
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={17} aria-hidden="true" />
           <span>正在生成 {job.progressPercent}%</span>
           <Button
-            className="icon-button"
+            className={cn("icon-button", uiPatterns["icon-button"])}
             onClick={() => void cancel()}
             title="取消导出"
             type="button"
@@ -86,21 +109,33 @@ export function AnalyticsExportControl({ filter }: Props) {
         </div>
       ) : null}
       {job?.status === "succeeded" ? (
-        <a
-          className="button button-secondary"
+        <LinkButton
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
           href={`/api/v1/analytics/exports/${encodeURIComponent(job.id)}/download`}
         >
           <Download size={17} /> 下载 {job.rowCount ?? 0} 行
-        </a>
+        </LinkButton>
       ) : null}
       {job?.status === "failed" ? (
-        <span className="field-error" role="alert">
+        <span
+          className={cn("field-error", analyticsExportControlStyles["field-error"])}
+          role="alert"
+        >
           {job.errorSummary ?? "导出生成失败。"}
         </span>
       ) : null}
-      {job?.status === "cancelled" ? <span className="muted">导出已取消。</span> : null}
+      {job?.status === "cancelled" ? (
+        <span className={cn("muted", uiPatterns["muted"])}>导出已取消。</span>
+      ) : null}
       {error ? (
-        <span className="field-error" role="alert">
+        <span
+          className={cn("field-error", analyticsExportControlStyles["field-error"])}
+          role="alert"
+        >
           {error}
         </span>
       ) : null}
@@ -113,3 +148,10 @@ async function responseMessage(response: Response): Promise<string> {
     { error?: { message?: string } } | undefined;
   return body?.error?.message ?? `请求失败（${response.status}）。`;
 }
+
+const analyticsExportControlStyles = {
+  "analytics-export-control": "flex items-center gap-2 flex-wrap",
+  "analytics-export-progress":
+    "flex items-center gap-2 flex-wrap min-h-9 [padding:0_8px_0_12px] border border-solid border-border rounded-lg bg-card text-muted-foreground text-sm",
+  "field-error": "text-destructive text-xs leading-[1.5]",
+} as const;

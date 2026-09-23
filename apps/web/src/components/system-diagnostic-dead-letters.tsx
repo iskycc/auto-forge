@@ -1,3 +1,14 @@
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import type { SystemDiagnostic } from "@autoforge/contracts";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -18,8 +29,15 @@ export function DiagnosticDeadLetters({
   return (
     <>
       {diagnostic.deadLetters.length > 0 ? (
-        <div className="content-card diagnostic-dead-letters">
-          <div className="section-heading">
+        <Card
+          as="div"
+          className={cn(
+            "content-card diagnostic-dead-letters",
+            uiPatterns["content-card"],
+            systemDiagnosticDeadLettersStyles["diagnostic-dead-letters"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
               <h3>死信任务</h3>
               <p>保留最后一次失败原因；确认问题已修复后可重新投递。</p>
@@ -35,38 +53,40 @@ export function DiagnosticDeadLetters({
               </Button>
             ) : null}
           </div>
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>任务类型</th>
-                  <th>关联对象</th>
-                  <th>失败原因</th>
-                  <th>投递次数</th>
-                  <th>失败时间</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+            <Table className={cn("data-table", uiPatterns["data-table"])}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>任务类型</TableHead>
+                  <TableHead>关联对象</TableHead>
+                  <TableHead>失败原因</TableHead>
+                  <TableHead>投递次数</TableHead>
+                  <TableHead>失败时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {diagnostic.deadLetters.map((deadLetter) => (
-                  <tr key={deadLetter.messageId}>
-                    <td>{queueJobKindLabel(deadLetter.kind)}</td>
-                    <td>
+                  <TableRow key={deadLetter.messageId}>
+                    <TableCell>{queueJobKindLabel(deadLetter.kind)}</TableCell>
+                    <TableCell>
                       <code title={deadLetter.runId}>{shortId(deadLetter.runId)}</code>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <strong>{deadLetter.errorCode}</strong>
-                      <small className="table-secondary">{deadLetter.errorSummary}</small>
-                    </td>
-                    <td>{deadLetter.deliveryAttempts}</td>
-                    <td>
+                      <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
+                        {deadLetter.errorSummary}
+                      </small>
+                    </TableCell>
+                    <TableCell>{deadLetter.deliveryAttempts}</TableCell>
+                    <TableCell>
                       <time dateTime={deadLetter.failedAt}>{formatDate(deadLetter.failedAt)}</time>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-        </div>
+        </Card>
       ) : null}
     </>
   );
@@ -96,3 +116,8 @@ function formatDate(value: string): string {
     timeStyle: "medium",
   }).format(new Date(value));
 }
+
+const systemDiagnosticDeadLettersStyles = {
+  "diagnostic-dead-letters":
+    "grid gap-2.5 border border-solid border-border rounded-xl p-3.5 bg-warning/10 [&_.section-heading_h3]:m-0 [&_.section-heading_p]:m-0 [&_.section-heading_p]:mt-[3px] [&_.section-heading_p]:text-muted-foreground [&_.section-heading_p]:text-xs [&_.table-scroll]:max-h-[360px] [&_.table-scroll]:bg-card",
+} as const;

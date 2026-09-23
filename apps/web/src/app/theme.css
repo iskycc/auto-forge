@@ -1,0 +1,131 @@
+@layer theme, base, antd, components, utilities;
+@import "tailwindcss";
+@import "antd/dist/antd.css" layer(antd);
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-info: var(--info);
+  --color-warning: var(--warning);
+  --color-brand: var(--brand);
+  --color-log-background: var(--log-background);
+  --color-log-foreground: var(--log-foreground);
+  --color-chart-1: var(--success);
+  --color-chart-2: var(--info);
+  --color-chart-3: var(--warning);
+  --color-chart-4: var(--destructive);
+  --color-chart-5: var(--muted-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, Consolas, "Liberation Mono", monospace;
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.625rem;
+  --background: #f5f7fb;
+  --foreground: #1f2937;
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --primary: #1668dc;
+  --primary-foreground: #ffffff;
+  --secondary: #e6f4ff;
+  --secondary-foreground: var(--foreground);
+  --muted: #f0f4f9;
+  --muted-foreground: #596579;
+  --accent: #e6f4ff;
+  --accent-foreground: var(--foreground);
+  --destructive: #cf1322;
+  --destructive-foreground: oklch(1 0 0);
+  --border: #e2e8f0;
+  --input: #cbd5e1;
+  --ring: #91caff;
+  --success: #237804;
+  --info: #0958d9;
+  --warning: #ad6800;
+  --brand: oklch(0.57 0.21 28);
+  --ansi-magenta: oklch(0.5 0.17 320);
+  --ansi-cyan: oklch(0.45 0.09 205);
+  --terminal-background: #111318;
+  --terminal-foreground: #e8eaed;
+  --terminal-cursor: #7db1ff;
+  --terminal-selection: #315f91aa;
+  --terminal-red: #ff6b6b;
+  --terminal-green: #69db7c;
+  --terminal-yellow: #ffd43b;
+  --terminal-blue: #74c0fc;
+  --terminal-magenta: #da77f2;
+  --terminal-cyan: #66d9e8;
+  --terminal-white: #f1f3f5;
+  --log-background: #f8fafc;
+  --log-foreground: #1f2937;
+  --log-surface: oklch(0.22 0 0);
+  --log-subtle: oklch(0.27 0 0);
+  --log-muted-foreground: oklch(0.75 0 0);
+  --log-border: oklch(0.35 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    @apply min-w-[1024px] bg-background font-sans text-base text-foreground antialiased;
+  }
+  body {
+    @apply m-0 min-h-screen text-sm;
+  }
+  small {
+    @apply text-xs;
+  }
+  button,
+  a,
+  summary {
+    @apply touch-manipulation;
+  }
+  button:not(:disabled),
+  summary {
+    @apply cursor-pointer;
+  }
+  a {
+    @apply text-inherit no-underline;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  summary:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  input,
+  textarea,
+  select {
+    @apply accent-primary;
+  }
+  ::selection {
+    @apply bg-primary/15;
+  }
+}

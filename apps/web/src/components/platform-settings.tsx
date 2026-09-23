@@ -1,4 +1,10 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, Textarea } from "@/components/ui";
 
@@ -137,47 +143,75 @@ export function PlatformSettings({
   }
 
   return (
-    <form className="settings-stack" onSubmit={submit} onChange={draft.markDirty} ref={formRef}>
+    <form
+      className={cn("settings-stack", uiPatterns["settings-stack"])}
+      onSubmit={submit}
+      onChange={draft.markDirty}
+      ref={formRef}
+    >
       {error ? (
-        <div className="auth-error" role="alert">
+        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
           {error}
-        </div>
+        </Notice>
       ) : null}
 
       {!canManage ? (
-        <div className="implementation-notice" role="status">
+        <div
+          className={cn("implementation-notice", platformSettingsStyles["implementation-notice"])}
+          role="status"
+        >
           当前账号只有平台配置查看权限；所有字段均为只读。
         </div>
       ) : null}
 
       {initial.configurationManaged ? (
-        <div className="implementation-notice" role="status">
+        <div
+          className={cn("implementation-notice", platformSettingsStyles["implementation-notice"])}
+          role="status"
+        >
           分布式运行配置由部署文件统一管理。修改后请同步所有节点并重启；节点 IP
           和端口可在“平台节点”中单独更新。
         </div>
       ) : null}
-      <nav className="management-section-nav" aria-label="配置分区">
+      <nav
+        className={cn("management-section-nav", platformSettingsStyles["management-section-nav"])}
+        aria-label="配置分区"
+      >
         <a href="#platform-runtime">运行与访问</a>
         {initial.mode === "full" ? <a href="#platform-infrastructure">基础设施</a> : null}
         <a href="#platform-limits">容量、会话与调度</a>
       </nav>
       <fieldset
-        className="settings-form-fieldset"
+        className={cn("settings-form-fieldset", platformSettingsStyles["settings-form-fieldset"])}
         disabled={!canManage || initial.configurationManaged}
       >
-        <section id="platform-runtime" className="content-card settings-section">
-          <div className="section-heading">
+        <Card
+          as="section"
+          id="platform-runtime"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <p className="eyebrow">Runtime</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Runtime</p>
               <h2>平台运行配置</h2>
             </div>
             <ServerCog size={22} aria-hidden="true" />
           </div>
-          <p className="settings-note">
+          <p className={cn("settings-note", uiPatterns["settings-note"])}>
             配置保存在平台数据目录中。平台时区、外部/内部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
           </p>
-          <div className="settings-grid-form">
-            <div className="deployment-mode-display" aria-label="部署模式">
+          <div className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}>
+            <div
+              className={cn(
+                "deployment-mode-display",
+                platformSettingsStyles["deployment-mode-display"],
+              )}
+              aria-label="部署模式"
+            >
               <span>部署模式</span>
               <strong>
                 {initial.mode === "lite"
@@ -252,30 +286,38 @@ export function PlatformSettings({
               />
             </label>
           </div>
-        </section>
+        </Card>
 
         {initial.mode === "full" ? (
-          <section id="platform-infrastructure" className="content-card settings-section">
-            <div className="section-heading">
+          <Card
+            as="section"
+            id="platform-infrastructure"
+            className={cn(
+              "content-card settings-section",
+              uiPatterns["content-card"],
+              uiPatterns["settings-section"],
+            )}
+          >
+            <div className={cn("section-heading", uiPatterns["section-heading"])}>
               <div>
-                <p className="eyebrow">Full Infrastructure</p>
+                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Full Infrastructure</p>
                 <h2>Full 基础设施</h2>
               </div>
             </div>
             {!initial.configurationManaged ? (
-              <p className="settings-note">
+              <p className={cn("settings-note", uiPatterns["settings-note"])}>
                 {initial.fullConfigured
                   ? "凭据已配置；敏感字段留空会保留原值，页面永不回显。"
                   : "首次启用 Full 模式必须完整填写以下连接信息。"}
               </p>
             ) : null}
             {initial.configurationManaged ? (
-              <p className="settings-note">
+              <p className={cn("settings-note", uiPatterns["settings-note"])}>
                 PostgreSQL、NATS、Redis
                 和对象存储连接由部署文件管理。凭据不回显；运行状态请查看系统诊断。
               </p>
             ) : (
-              <div className="settings-grid-form">
+              <div className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}>
                 <SecretInput
                   label="PostgreSQL URL"
                   name="databaseUrl"
@@ -319,17 +361,25 @@ export function PlatformSettings({
                 </label>
               </div>
             )}
-          </section>
+          </Card>
         ) : null}
 
-        <section id="platform-limits" className="content-card settings-section">
-          <div className="section-heading">
+        <Card
+          as="section"
+          id="platform-limits"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <p className="eyebrow">Limits</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Limits</p>
               <h2>容量、会话与调度阈值</h2>
             </div>
           </div>
-          <div className="settings-grid-form">
+          <div className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}>
             <label>
               JAR 大小上限（MiB）
               <Input
@@ -382,7 +432,7 @@ export function PlatformSettings({
               name="ddtImportZipSpreadsheetLimit"
               value={initial.limits.ddtImportZipSpreadsheetLimit}
             />
-            <label className="checkbox-field">
+            <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
               <Input
                 defaultChecked={initial.limits.artifactCollectionEnabled}
                 name="artifactCollectionEnabled"
@@ -437,7 +487,7 @@ export function PlatformSettings({
               name="workerShutdownGraceMs"
               value={initial.worker.shutdownGraceMs}
             />
-            <label className="checkbox-field">
+            <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
               <Input
                 defaultChecked={initial.worker.metricsEnabled}
                 name="workerMetricsEnabled"
@@ -446,12 +496,22 @@ export function PlatformSettings({
               启用后台 worker 指标端点
             </label>
           </div>
-        </section>
+        </Card>
       </fieldset>
       {canManage && !initial.configurationManaged ? (
-        <div className="settings-form-actions management-sticky-actions">
+        <div
+          className={cn(
+            "settings-form-actions management-sticky-actions",
+            platformSettingsStyles["settings-form-actions"],
+            platformSettingsStyles["management-sticky-actions"],
+          )}
+        >
           <span role="status">{draft.dirty ? "有未保存的修改" : "配置已保存"}</span>
-          <Button className="primary-button" disabled={pending} type="submit">
+          <Button
+            className={cn("primary-button", uiPatterns["primary-button"])}
+            disabled={pending}
+            type="submit"
+          >
             <Save size={16} aria-hidden="true" /> {pending ? "正在保存…" : "保存平台配置"}
           </Button>
         </div>
@@ -547,3 +607,18 @@ function bytesToMebibytes(bytes: number): number {
 function mebibytesToBytes(mebibytes: number): number {
   return mebibytes * 1024 * 1024;
 }
+
+const platformSettingsStyles = {
+  "deployment-mode-display":
+    "grid gap-1.5 [align-content:start] py-[11px] px-3 border border-solid border-border rounded-lg bg-muted [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_small]:text-muted-foreground [&_>_small]:text-xs",
+  "implementation-notice":
+    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
+  "management-section-nav":
+    "flex flex-wrap gap-3 p-3 bg-card border border-solid border-border rounded-lg [&_a]:p-2",
+  "management-sticky-actions":
+    "sticky bottom-0 z-3 flex items-center justify-end gap-3 p-3 bg-card border-t border-solid border-border [&_>_span]:mr-auto",
+  "settings-form-actions":
+    "flex justify-end gap-2.5 [&.management-sticky-actions]:bottom-3 [&.management-sticky-actions]:border [&.management-sticky-actions]:border-solid [&.management-sticky-actions]:border-border [&.management-sticky-actions]:rounded-xl [&.management-sticky-actions]:shadow-xs",
+  "settings-form-fieldset":
+    "contents min-w-0 m-0 border-0 p-0 [&:disabled]:opacity-78 [&[hidden]]:hidden",
+} as const;

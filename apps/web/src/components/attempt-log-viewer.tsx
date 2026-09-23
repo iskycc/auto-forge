@@ -1,4 +1,9 @@
 "use client";
+import { Segmented } from "./ui/segmented";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { AttemptLogPage, LogChunk } from "@autoforge/contracts";
 import type { RunAttempt } from "@autoforge/domain";
@@ -80,7 +85,7 @@ export function AttemptLogViewer({
   const [recordedAfter, setRecordedAfter] = useState("");
   const [recordedBefore, setRecordedBefore] = useState("");
   const [activeTimeRange, setActiveTimeRange] = useState({ after: "", before: "" });
-  const [darkLogs, setDarkLogs] = useState(true);
+  const [darkLogs, setDarkLogs] = useState(false);
   const [logs, setLogs] = useState<AttemptLogPage["items"]>([]);
   const [nextSequence, setNextSequence] = useState<number | undefined>();
   const [logsTruncated, setLogsTruncated] = useState(false);
@@ -236,22 +241,18 @@ export function AttemptLogViewer({
       title={`执行日志 · ${activeAttempt.id.slice(0, 8)} · ${streamLabel(stream)}${liveLogs ? " · 实时" : ""}`}
       onClose={onClose}
     >
-      <div className="log-toolbar">
-        <div className="segmented-control" aria-label="日志流">
-          {(["stdout", "stderr", "agent"] as const).map((value) => (
-            <Button
-              aria-pressed={stream === value}
-              className={stream === value ? "active" : ""}
-              key={value}
-              onClick={() => setStream(value)}
-              type="button"
-            >
-              {value}
-            </Button>
-          ))}
-        </div>
+      <div className={cn("log-toolbar", attemptLogViewerStyles["log-toolbar"])}>
+        <Segmented
+          label="日志流"
+          value={stream}
+          onChange={setStream}
+          options={(["stdout", "stderr", "agent"] as const).map((value) => ({
+            value,
+            label: value,
+          }))}
+        />
         <form
-          className="log-search"
+          className={cn("log-search", attemptLogViewerStyles["log-search"])}
           onSubmit={(event) => {
             event.preventDefault();
             if (query === activeQuery) {
@@ -269,7 +270,7 @@ export function AttemptLogViewer({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <label className="log-time-filter">
+          <label className={cn("log-time-filter", attemptLogViewerStyles["log-time-filter"])}>
             <span>开始</span>
             <DatetimeInput
               aria-label="日志开始时间"
@@ -277,7 +278,7 @@ export function AttemptLogViewer({
               onChange={(event) => setRecordedAfter(event.target.value)}
             />
           </label>
-          <label className="log-time-filter">
+          <label className={cn("log-time-filter", attemptLogViewerStyles["log-time-filter"])}>
             <span>结束</span>
             <DatetimeInput
               aria-label="日志结束时间"
@@ -285,13 +286,26 @@ export function AttemptLogViewer({
               onChange={(event) => setRecordedBefore(event.target.value)}
             />
           </label>
-          <Button className="button button-secondary compact-button" type="submit">
+          <Button
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
+            type="submit"
+          >
             筛选
           </Button>
         </form>
         <Button
           aria-pressed={darkLogs}
-          className="button button-secondary compact-button"
+          className={cn(
+            "button button-secondary compact-button",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+            uiPatterns["compact-button"],
+          )}
           onClick={() => setDarkLogs((current) => !current)}
           type="button"
         >
@@ -299,7 +313,12 @@ export function AttemptLogViewer({
         </Button>
         {viewingManualRerun ? (
           <Button
-            className="button button-secondary compact-button"
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
             onClick={() => setActiveAttempt({ id: attemptId, status: attemptStatus })}
             type="button"
           >
@@ -310,23 +329,36 @@ export function AttemptLogViewer({
           <AttemptRerunAction attemptId={attemptId} compact onOpenLiveLogs={setActiveAttempt} />
         ) : null}
       </div>
-      {error ? <p className="form-error">{error}</p> : null}
-      <p className="log-output-policy-note" role="note">
+      {error ? (
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+          {error}
+        </Notice>
+      ) : null}
+      <p
+        className={cn("log-output-policy-note", attemptLogViewerStyles["log-output-policy-note"])}
+        role="note"
+      >
         测试日志不限制类名、包名或普通关键字；仅明确的 Bearer、密码、Token 与 API Key
         凭据格式执行安全保护。
       </p>
       {logsTruncated ? (
-        <p className="status-warning" role="status">
+        <p className={cn("status-warning", attemptLogViewerStyles["status-warning"])} role="status">
           日志已达到保留上限，后续内容被明确截断。
         </p>
       ) : null}
       {sequenceGaps.length > 0 ? (
-        <p className="status-warning" role="status">
+        <p className={cn("status-warning", attemptLogViewerStyles["status-warning"])} role="status">
           检测到 {sequenceGaps.length} 个序号缺口；Agent 补传后刷新即可恢复连续内容。
         </p>
       ) : null}
       {canReadLogs ? (
-        <pre className={`execution-log ${darkLogs ? "execution-log-dark" : ""}`} aria-live="polite">
+        <pre
+          className={cn(
+            attemptLogViewerStyles["execution-log"],
+            `execution-log ${darkLogs ? cn("execution-log-dark", attemptLogViewerStyles["execution-log-dark"]) : ""}`,
+          )}
+          aria-live="polite"
+        >
           {visibleLogText
             ? renderedLogs.map((segment, index) => (
                 <span className={segment.classes.join(" ")} key={index}>
@@ -338,11 +370,18 @@ export function AttemptLogViewer({
               : "当前日志流暂无内容。"}
         </pre>
       ) : (
-        <div className="inline-empty">当前账号没有读取执行日志的权限。</div>
+        <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          当前账号没有读取执行日志的权限。
+        </div>
       )}
       {nextSequence !== undefined ? (
         <Button
-          className="button button-secondary compact-button"
+          className={cn(
+            "button button-secondary compact-button",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+            uiPatterns["compact-button"],
+          )}
           disabled={loading}
           onClick={() => void loadLogs(stream, activeQuery, activeTimeRange, nextSequence)}
           type="button"
@@ -353,3 +392,17 @@ export function AttemptLogViewer({
     </TerminalLogViewer>
   );
 }
+
+const attemptLogViewerStyles = {
+  "execution-log": uiPatterns["execution-log"],
+  "execution-log-dark": uiPatterns["execution-log-dark"],
+  "log-output-policy-note": "[margin:0_16px_10px] text-muted-foreground text-xs",
+  "log-search":
+    'flex [flex:1_1_620px] flex-wrap items-center gap-[7px] border border-solid border-border rounded-md bg-card gap-y-1.5 py-[7px] px-2.5 [&_input]:w-auto [&_input]:min-w-[150px] [&_input]:[flex:1_1_150px] [&_input]:min-h-8.5 [&_input]:border-0 [&_input]:p-0 [&_input]:[outline:0] [&_input]:bg-transparent [&_>_button[type="submit"]]:ml-auto [&_.log-time-filter]:min-w-0 [&_.ui-datetime]:w-auto [&_.ui-datetime]:min-w-0 [&_.ui-datetime-display]:min-w-0 [&_.ui-datetime-display]:max-w-full [&_.ui-datetime-display_>_span]:min-w-0',
+  "log-time-filter":
+    "flex items-center gap-[5px] text-muted-foreground text-xs [&_>_span]:[flex:0_0_auto]",
+  "log-toolbar": "flex items-start justify-between gap-3 mb-2.5",
+
+  "status-warning":
+    "[margin:0_0_10px] border border-solid border-transparent rounded-lg py-2 px-2.5 text-warning bg-warning/10 text-xs",
+} as const;

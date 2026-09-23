@@ -464,7 +464,7 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
 }
 
 async function clickRunnerManagementAction(pageRow: Locator, actionName: string): Promise<void> {
-  const actions = pageRow.locator("details.runner-actions-menu");
+  const actions = pageRow.locator(".ui-disclosure.runner-actions-menu");
   if ((await actions.getAttribute("open")) === null) {
     await actions.getByText("管理操作", { exact: true }).click();
   }

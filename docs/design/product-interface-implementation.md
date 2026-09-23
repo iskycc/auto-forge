@@ -4,9 +4,7 @@
 [`frontend-design.md`](./frontend-design.md)。两者分别回答“如何实现”和“应该呈现成什么样”，
 不得把本文当作第二套视觉规范。
 
-本文是当前产品界面的实现约束与后续审视清单。视觉基线仍以
-[`autoforge-apple-like-e-dashboard.png`](./autoforge-apple-like-e-dashboard.png)
-和 [`frontend-design.md`](./frontend-design.md) 为准；设计图负责表达信息层级，真实页面必须使用权威业务数据与可操作组件，不能把设计图当作背景图片。
+组件外观按 [Ant Design 全局重构](./ant-design-migration.md) 统一，方案 E 概念图仅保留为信息层级参考。真实页面使用业务数据与可操作组件，不能把设计图当作背景图片。
 
 ## 1. 本轮审视结论
 

@@ -1,4 +1,22 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, CheckboxGroup, Input, Select } from "@/components/ui";
 
@@ -282,11 +300,11 @@ export function AccessSettings({
   }
 
   return (
-    <div className="settings-stack">
+    <div className={cn("settings-stack", uiPatterns["settings-stack"])}>
       {error && !createDialog ? (
-        <div className="auth-error" role="alert">
+        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
           {error}
-        </div>
+        </Notice>
       ) : null}
       {createDialog === "assignment" && canAssignRoles ? (
         <UserRoleAssignmentDialog
@@ -323,12 +341,20 @@ export function AccessSettings({
       ) : null}
 
       {activeSection === "users" && capabilities.userRead ? (
-        <section className="content-card settings-section" id="users">
-          <div className="section-heading">
+        <Card
+          as="section"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+          id="users"
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
               <h2>用户列表</h2>
             </div>
-            <div className="button-row">
+            <div className={cn("button-row", uiPatterns["button-row"])}>
               {projectScope && canAssignRoles ? (
                 <Button
                   onClick={() => {
@@ -370,24 +396,46 @@ export function AccessSettings({
             open={createDialog === "password"}
             title="重置用户密码"
           >
-            <form className="settings-grid-form action-dialog-form" onSubmit={submitPasswordReset}>
+            <form
+              className={cn(
+                "settings-grid-form action-dialog-form",
+                uiPatterns["settings-grid-form"],
+                accessSettingsStyles["action-dialog-form"],
+              )}
+              onSubmit={submitPasswordReset}
+            >
               {error ? (
-                <p className="form-error settings-wide-field" role="alert">
+                <Notice
+                  tone="error"
+                  className={cn(
+                    "form-error settings-wide-field",
+                    uiPatterns["form-error"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                  role="alert"
+                >
                   {error}
-                </p>
+                </Notice>
               ) : null}
               <UserPicker purpose="password" />
               <label>
                 新密码
                 <Input minLength={12} name="password" required type="password" />
               </label>
-              <Button className="secondary-button" disabled={pending} type="submit">
+              <Button
+                className={cn("secondary-button", uiPatterns["secondary-button"])}
+                disabled={pending}
+                type="submit"
+              >
                 重置密码并撤销会话
               </Button>
             </form>
           </ActionDialog>
-          <div className="access-scope-toolbar">
-            <nav aria-label="用户管理范围" className="access-scope-options">
+          <div className={cn("access-scope-toolbar", accessSettingsStyles["access-scope-toolbar"])}>
+            <nav
+              aria-label="用户管理范围"
+              className={cn("access-scope-options", accessSettingsStyles["access-scope-options"])}
+            >
               {canReadAllUsers ? (
                 <Link
                   aria-current={!projectScope ? "page" : undefined}
@@ -405,13 +453,17 @@ export function AccessSettings({
                 </Link>
               ) : null}
             </nav>
-            <span className="settings-note">
+            <span className={cn("settings-note", uiPatterns["settings-note"])}>
               {projectScope
                 ? `项目：${currentProject?.name ?? "暂无可访问项目"}`
                 : "账号统一创建，角色按系统或项目分配"}
             </span>
           </div>
-          <form action="/settings/access" className="settings-user-filter" method="get">
+          <form
+            action="/settings/access"
+            className={cn("settings-user-filter", accessSettingsStyles["settings-user-filter"])}
+            method="get"
+          >
             <input name="section" type="hidden" value="users" />
             {projectScope ? <input name="scope" type="hidden" value="project" /> : null}
             <label>
@@ -428,68 +480,93 @@ export function AccessSettings({
                 </Select>
               </label>
             ) : null}
-            <Button className="secondary-button" type="submit">
+            <Button
+              className={cn("secondary-button", uiPatterns["secondary-button"])}
+              type="submit"
+            >
               <Search size={16} /> 筛选
             </Button>
           </form>
-          <div className="table-scroll">
-            <table className="data-table access-users-table">
-              <thead>
-                <tr>
-                  <th>用户</th>
-                  <th>来源</th>
-                  <th>状态</th>
-                  <th>最近登录</th>
-                  <th>已分配角色</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+            <Table
+              className={cn(
+                "data-table access-users-table",
+                uiPatterns["data-table"],
+                accessSettingsStyles["access-users-table"],
+              )}
+            >
+              <TableHeader>
+                <TableRow>
+                  <TableHead>用户</TableHead>
+                  <TableHead>来源</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>最近登录</TableHead>
+                  <TableHead>已分配角色</TableHead>
+                  <TableHead>操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {!users.length ? (
-                  <tr>
-                    <td colSpan={6}>
-                      <div className="inline-empty">
+                  <TableRow>
+                    <TableCell colSpan={6}>
+                      <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
                         没有匹配的用户。请调整条件或
                         <Link href={userScopeUrl}>清空筛选</Link>。
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ) : null}
                 {users.map((user) => (
-                  <tr key={user.id}>
-                    <td>
+                  <TableRow key={user.id}>
+                    <TableCell>
                       <strong>
                         <ExpandableText text={user.displayName} label="用户显示名称" />
                       </strong>
                       {projectScope && user.id === currentProject?.ownerUserId ? (
-                        <span className="permission-chip">负责人</span>
+                        <Badge className={cn("permission-chip", uiPatterns["permission-chip"])}>
+                          负责人
+                        </Badge>
                       ) : null}
-                      <small className="table-secondary">
+                      <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
                         {user.username}
                         {user.email ? ` · ${user.email}` : ""}
                       </small>
                       {user.source === "ldap" && user.groups?.length ? (
-                        <small className="table-secondary" title={user.groups.join("\n")}>
+                        <small
+                          className={cn("table-secondary", uiPatterns["table-secondary"])}
+                          title={user.groups.join("\n")}
+                        >
                           Group · {user.groups.join("、")}
                         </small>
                       ) : null}
-                    </td>
-                    <td>{user.source === "ldap" ? "LDAP" : "本地"}</td>
-                    <td>
+                    </TableCell>
+                    <TableCell>{user.source === "ldap" ? "LDAP" : "本地"}</TableCell>
+                    <TableCell>
                       {user.status === "disabled"
                         ? "禁用"
                         : isUserLocked(user)
                           ? `锁定至 ${formatLocalDateTime(user.lockedUntil!)}`
                           : "启用"}
-                    </td>
-                    <td>{user.lastLoginAt ? formatLocalDateTime(user.lastLoginAt) : "—"}</td>
-                    <td>
-                      <details>
-                        <summary className="role-action-summary">
-                          {assignedRoleCount(user.id, systemRoleBindings, projectMemberships)}{" "}
-                          个绑定
-                        </summary>
-                        <div className="permission-list">
+                    </TableCell>
+                    <TableCell>
+                      {user.lastLoginAt ? formatLocalDateTime(user.lastLoginAt) : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Disclosure
+                        header={
+                          <>
+                            {assignedRoleCount(user.id, systemRoleBindings, projectMemberships)}{" "}
+                            个绑定
+                          </>
+                        }
+                        headerClassName={cn(
+                          "role-action-summary",
+                          accessSettingsStyles["role-action-summary"],
+                        )}
+                      >
+                        <div
+                          className={cn("permission-list", accessSettingsStyles["permission-list"])}
+                        >
                           {systemRoleBindings
                             .filter((binding) => binding.userId === user.id)
                             .map((binding) => (
@@ -510,12 +587,20 @@ export function AccessSettings({
                               ),
                           )}
                         </div>
-                      </details>
-                    </td>
-                    <td className="access-user-actions">
+                      </Disclosure>
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "access-user-actions",
+                        accessSettingsStyles["access-user-actions"],
+                      )}
+                    >
                       {canAssignRoles ? (
                         <Button
-                          className="table-action access-role-assignment"
+                          className={cn(
+                            "table-action access-role-assignment",
+                            accessSettingsStyles["table-action"],
+                          )}
                           disabled={pending}
                           onClick={() => {
                             setRoleAssignmentUser(user);
@@ -528,11 +613,16 @@ export function AccessSettings({
                       ) : null}
                       {capabilities.userManage ? (
                         <>
-                          <details className="row-more-actions">
-                            <summary>更多操作</summary>
+                          <Disclosure
+                            header={<>更多操作</>}
+                            className={cn(
+                              "row-more-actions",
+                              accessSettingsStyles["row-more-actions"],
+                            )}
+                          >
                             <div>
                               <Button
-                                className="table-action"
+                                className={cn("table-action", accessSettingsStyles["table-action"])}
                                 disabled={pending}
                                 onClick={() => void changeUserStatus(user)}
                                 type="button"
@@ -542,7 +632,7 @@ export function AccessSettings({
                                   : "启用/解锁"}
                               </Button>
                               <Button
-                                className="table-action"
+                                className={cn("table-action", accessSettingsStyles["table-action"])}
                                 disabled={pending}
                                 onClick={() =>
                                   void confirmAction({
@@ -565,30 +655,38 @@ export function AccessSettings({
                                 撤销会话
                               </Button>
                             </div>
-                          </details>
+                          </Disclosure>
                         </>
                       ) : !canAssignRoles ? (
                         "仅查看"
                       ) : null}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           <CursorPagination nextCursor={nextUserCursor} count={users.length} label="用户分页" />
-        </section>
+        </Card>
       ) : null}
 
       {activeSection === "roles" && capabilities.roleRead ? (
-        <section className="content-card settings-section" id="roles">
-          <div className="section-heading">
+        <Card
+          as="section"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+          id="roles"
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <p className="eyebrow">Authorization</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Authorization</p>
               <h2>角色与权限分层</h2>
             </div>
             {capabilities.roleManage || canAssignRoles ? (
-              <div className="button-row">
+              <div className={cn("button-row", uiPatterns["button-row"])}>
                 {canAssignRoles ? (
                   <Button
                     onClick={() => {
@@ -615,9 +713,16 @@ export function AccessSettings({
             )}
           </div>
           {canReadSystemRoles ? (
-            <details className="management-disclosure" open={Boolean(userQuery)}>
-              <summary>用户系统角色绑定</summary>
-              <form action="/settings/access" className="settings-user-filter" method="get">
+            <Disclosure
+              header={<>用户系统角色绑定</>}
+              className={cn("management-disclosure", accessSettingsStyles["management-disclosure"])}
+              defaultOpen={Boolean(userQuery)}
+            >
+              <form
+                action="/settings/access"
+                className={cn("settings-user-filter", accessSettingsStyles["settings-user-filter"])}
+                method="get"
+              >
                 <input name="section" type="hidden" value="roles" />
                 <label>
                   搜索用户绑定
@@ -625,28 +730,28 @@ export function AccessSettings({
                 </label>
                 <Button type="submit">筛选绑定</Button>
               </form>{" "}
-              <div className="table-scroll">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>用户</th>
-                      <th>系统角色</th>
-                      <th>影响与操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+              <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+                <Table className={cn("data-table", uiPatterns["data-table"])}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>用户</TableHead>
+                      <TableHead>系统角色</TableHead>
+                      <TableHead>影响与操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {systemRoleBindings.length === 0 ? (
-                      <tr>
-                        <td colSpan={3}>当前没有系统角色绑定。</td>
-                      </tr>
+                      <TableRow>
+                        <TableCell colSpan={3}>当前没有系统角色绑定。</TableCell>
+                      </TableRow>
                     ) : null}
                     {systemRoleBindings.map((binding) => (
-                      <tr key={`${binding.userId}-${binding.roleId}`}>
-                        <td>{userName(users, binding.userId)}</td>
-                        <td>{roleName(roles, binding.roleId)}</td>
-                        <td>
+                      <TableRow key={`${binding.userId}-${binding.roleId}`}>
+                        <TableCell>{userName(users, binding.userId)}</TableCell>
+                        <TableCell>{roleName(roles, binding.roleId)}</TableCell>
+                        <TableCell>
                           <Button
-                            className="danger-text-button"
+                            className={cn("danger-text-button", uiPatterns["danger-text-button"])}
                             disabled={pending || !capabilities.roleManage}
                             onClick={() => {
                               void confirmAction({
@@ -668,18 +773,18 @@ export function AccessSettings({
                           >
                             撤销系统角色
                           </Button>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
               <CursorPagination
                 nextCursor={nextUserCursor}
                 count={systemRoleBindings.length}
                 label="用户绑定分页"
               />
-            </details>
+            </Disclosure>
           ) : null}
           <ActionDialog
             protectUnsavedChanges
@@ -688,11 +793,26 @@ export function AccessSettings({
             open={createDialog === "role"}
             title="创建自定义角色"
           >
-            <form className="settings-grid-form action-dialog-form" onSubmit={submitRole}>
+            <form
+              className={cn(
+                "settings-grid-form action-dialog-form",
+                uiPatterns["settings-grid-form"],
+                accessSettingsStyles["action-dialog-form"],
+              )}
+              onSubmit={submitRole}
+            >
               {error ? (
-                <p className="form-error settings-wide-field" role="alert">
+                <Notice
+                  tone="error"
+                  className={cn(
+                    "form-error settings-wide-field",
+                    uiPatterns["form-error"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                  role="alert"
+                >
                   {error}
-                </p>
+                </Notice>
               ) : null}
               <label>
                 角色标识
@@ -710,7 +830,7 @@ export function AccessSettings({
                 </Select>
               </label>
               <CheckboxGroup
-                className="settings-wide-field"
+                className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}
                 label="权限"
                 name="permissions"
                 options={permissionCatalog.map((permission) => ({
@@ -721,16 +841,20 @@ export function AccessSettings({
                 }))}
                 required
               />
-              <label className="settings-wide-field">
+              <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
                 描述
                 <Input name="description" />
               </label>
-              <Button className="primary-button" disabled={pending} type="submit">
+              <Button
+                className={cn("primary-button", uiPatterns["primary-button"])}
+                disabled={pending}
+                type="submit"
+              >
                 <Plus size={16} /> 创建角色
               </Button>
             </form>
           </ActionDialog>
-          <div className="management-toolbar">
+          <div className={cn("management-toolbar", uiPatterns["management-toolbar"])}>
             <label>
               搜索角色
               <Input
@@ -748,7 +872,7 @@ export function AccessSettings({
               </Select>
             </label>
           </div>
-          <div className="role-grid">
+          <div className={cn("role-grid", accessSettingsStyles["role-grid"])}>
             {roles
               .filter(
                 (role) =>
@@ -758,7 +882,10 @@ export function AccessSettings({
                     .includes(roleQuery.toLocaleLowerCase()),
               )
               .map((role) => (
-                <article className="role-card" key={role.id}>
+                <article
+                  className={cn("role-card", accessSettingsStyles["role-card"])}
+                  key={role.id}
+                >
                   <div>
                     <strong>{role.name}</strong>
                     <small>
@@ -767,26 +894,40 @@ export function AccessSettings({
                     </small>
                   </div>
                   <p>{role.description || "无描述"}</p>
-                  <details className="management-disclosure">
-                    <summary>{role.permissions.length} 项权限 · 查看明细</summary>
-                    <div className="permission-list">
+                  <Disclosure
+                    header={<>{role.permissions.length} 项权限 · 查看明细</>}
+                    className={cn(
+                      "management-disclosure",
+                      accessSettingsStyles["management-disclosure"],
+                    )}
+                  >
+                    <div className={cn("permission-list", accessSettingsStyles["permission-list"])}>
                       {role.permissions.map((permission) => (
-                        <span
-                          className="permission-chip"
+                        <Badge
+                          className={cn("permission-chip", uiPatterns["permission-chip"])}
                           key={permission}
                           title={permissionDescription(permission)}
                         >
                           {permissionLabel(permission)}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
-                  </details>
+                  </Disclosure>
                   {capabilities.roleManage ? (
-                    <div className="role-actions">
-                      <details>
-                        <summary className="role-action-summary">复制角色</summary>
+                    <div className={cn("role-actions", accessSettingsStyles["role-actions"])}>
+                      <Disclosure
+                        header={<>复制角色</>}
+                        headerClassName={cn(
+                          "role-action-summary",
+                          accessSettingsStyles["role-action-summary"],
+                        )}
+                      >
                         <form
-                          className="settings-grid-form settings-subform"
+                          className={cn(
+                            "settings-grid-form settings-subform",
+                            uiPatterns["settings-grid-form"],
+                            uiPatterns["settings-subform"],
+                          )}
                           onSubmit={(event) => submitRoleCopy(event, role)}
                         >
                           <label>
@@ -797,17 +938,30 @@ export function AccessSettings({
                             新角色名称
                             <Input defaultValue={`${role.name} 副本`} name="name" required />
                           </label>
-                          <Button className="secondary-button" disabled={pending} type="submit">
+                          <Button
+                            className={cn("secondary-button", uiPatterns["secondary-button"])}
+                            disabled={pending}
+                            type="submit"
+                          >
                             创建副本
                           </Button>
                         </form>
-                      </details>
+                      </Disclosure>
                       {!role.builtIn ? (
                         <>
-                          <details>
-                            <summary className="role-action-summary">编辑角色</summary>
+                          <Disclosure
+                            header={<>编辑角色</>}
+                            headerClassName={cn(
+                              "role-action-summary",
+                              accessSettingsStyles["role-action-summary"],
+                            )}
+                          >
                             <form
-                              className="settings-grid-form settings-subform"
+                              className={cn(
+                                "settings-grid-form settings-subform",
+                                uiPatterns["settings-grid-form"],
+                                uiPatterns["settings-subform"],
+                              )}
                               onSubmit={(event) => submitRoleUpdate(event, role.id)}
                             >
                               <label>
@@ -815,7 +969,10 @@ export function AccessSettings({
                                 <Input defaultValue={role.name} name="name" required />
                               </label>
                               <CheckboxGroup
-                                className="settings-wide-field"
+                                className={cn(
+                                  "settings-wide-field",
+                                  uiPatterns["settings-wide-field"],
+                                )}
                                 defaultValue={role.permissions}
                                 label="权限"
                                 name="permissions"
@@ -827,17 +984,26 @@ export function AccessSettings({
                                 }))}
                                 required
                               />
-                              <label className="settings-wide-field">
+                              <label
+                                className={cn(
+                                  "settings-wide-field",
+                                  uiPatterns["settings-wide-field"],
+                                )}
+                              >
                                 描述
                                 <Input defaultValue={role.description} name="description" />
                               </label>
-                              <Button className="secondary-button" disabled={pending} type="submit">
+                              <Button
+                                className={cn("secondary-button", uiPatterns["secondary-button"])}
+                                disabled={pending}
+                                type="submit"
+                              >
                                 保存角色
                               </Button>
                             </form>
-                          </details>
+                          </Disclosure>
                           <Button
-                            className="table-action"
+                            className={cn("table-action", accessSettingsStyles["table-action"])}
                             disabled={pending}
                             onClick={() =>
                               void request(
@@ -853,7 +1019,7 @@ export function AccessSettings({
                             {role.active ? "停用角色" : "启用角色"}
                           </Button>
                           <Button
-                            className="danger-text-button"
+                            className={cn("danger-text-button", uiPatterns["danger-text-button"])}
                             disabled={pending}
                             onClick={() =>
                               void request(
@@ -873,27 +1039,35 @@ export function AccessSettings({
                 </article>
               ))}
           </div>
-        </section>
+        </Card>
       ) : null}
 
       {activeSection === "ldap" && capabilities.ldapRead ? (
-        <section className="content-card settings-section" id="ldap">
-          <div className="section-heading">
+        <Card
+          as="section"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+          id="ldap"
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <p className="eyebrow">Directory</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Directory</p>
               <h2>LDAP 配置</h2>
             </div>
             <Network size={22} aria-hidden="true" />
           </div>
           {capabilities.ldapManage ? (
             <form
-              className="settings-grid-form"
+              className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}
               onSubmit={(event) => {
                 event.preventDefault();
                 void submitLdapForm(event.currentTarget, "save");
               }}
             >
-              <label className="checkbox-field">
+              <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
                 <Input
                   checked={ldapEnabled}
                   name="enabled"
@@ -903,23 +1077,32 @@ export function AccessSettings({
                 启用 LDAP 登录
               </label>
               {!ldapEnabled ? (
-                <p className="settings-note">
+                <p className={cn("settings-note", uiPatterns["settings-note"])}>
                   LDAP 登录已关闭。启用后可编辑连接、用户检索与默认角色；关闭不会删除已保存的配置。
                 </p>
               ) : null}
               <fieldset
                 hidden={!ldapEnabled}
-                className="settings-form-fieldset"
+                className={cn(
+                  "settings-form-fieldset",
+                  accessSettingsStyles["settings-form-fieldset"],
+                )}
                 disabled={!ldapEnabled}
               >
-                <div className="form-context-summary settings-wide-field">
+                <div
+                  className={cn(
+                    "form-context-summary settings-wide-field",
+                    accessSettingsStyles["form-context-summary"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                >
                   <span>01 · 服务器</span>
                   <strong>连接内网 LDAP 或 Active Directory</strong>
                   <small>
                     389 通常填写 ldap://；636 和 AD 全局编录 3269 会按 LDAPS 处理并自动规范地址。
                   </small>
                 </div>
-                <label className="settings-wide-field">
+                <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
                   LDAP 服务地址
                   <Input
                     defaultValue={ldap?.url || "ldaps://ldap.internal:636"}
@@ -939,7 +1122,13 @@ export function AccessSettings({
                     type="number"
                   />
                 </label>
-                <label className="checkbox-field settings-wide-field">
+                <label
+                  className={cn(
+                    "checkbox-field settings-wide-field",
+                    uiPatterns["checkbox-field"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                >
                   <Input
                     checked={tlsRejectUnauthorized}
                     name="tlsRejectUnauthorized"
@@ -949,16 +1138,31 @@ export function AccessSettings({
                   校验 TLS 服务器证书
                 </label>
                 {!tlsRejectUnauthorized ? (
-                  <div className="inline-notice warning-notice settings-wide-field" role="alert">
+                  <Notice
+                    tone="warning"
+                    className={cn(
+                      "inline-notice warning-notice settings-wide-field",
+                      uiPatterns["inline-notice"],
+                      uiPatterns["warning-notice"],
+                      uiPatterns["settings-wide-field"],
+                    )}
+                    role="alert"
+                  >
                     <ShieldAlert size={18} />
                     <span>
                       {
                         "关闭后 TLS 连接无法确认服务器身份，存在中间人攻击风险；也不会为 ldap:// 明文连接增加加密。仅限可信隔离内网。"
                       }
                     </span>
-                  </div>
+                  </Notice>
                 ) : null}
-                <div className="form-context-summary settings-wide-field">
+                <div
+                  className={cn(
+                    "form-context-summary settings-wide-field",
+                    accessSettingsStyles["form-context-summary"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                >
                   <span>02 · 服务账户</span>
                   <strong>用于搜索用户 DN</strong>
                   <small>Bind DN 留空时使用匿名目录检索。</small>
@@ -981,7 +1185,13 @@ export function AccessSettings({
                   />
                 </label>
                 {hasLdapBindPassword ? (
-                  <label className="checkbox-field settings-wide-field">
+                  <label
+                    className={cn(
+                      "checkbox-field settings-wide-field",
+                      uiPatterns["checkbox-field"],
+                      uiPatterns["settings-wide-field"],
+                    )}
+                  >
                     <Input
                       checked={clearLdapBindPassword}
                       name="clearBindPassword"
@@ -991,16 +1201,22 @@ export function AccessSettings({
                     删除已保存的服务账户密码
                   </label>
                 ) : null}
-                <div className="form-context-summary settings-wide-field">
+                <div
+                  className={cn(
+                    "form-context-summary settings-wide-field",
+                    accessSettingsStyles["form-context-summary"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                >
                   <span>03 · 用户检索与纳管</span>
                   <strong>首次目录登录自动创建平台用户</strong>
                   <small>过滤器中的登录名会按 RFC 4515 规则安全转义。</small>
                 </div>
-                <label className="settings-wide-field">
+                <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
                   用户 Base DN
                   <Input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
                 </label>
-                <label className="settings-wide-field">
+                <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
                   用户过滤器
                   <Input
                     defaultValue={ldap?.userFilter ?? "(uid={{username}})"}
@@ -1029,17 +1245,23 @@ export function AccessSettings({
                   </Select>
                   <small>LDAP 用户统一使用该平台角色，目录 Group 不参与权限分配。</small>
                 </label>
-                <div className="form-context-summary settings-wide-field">
+                <div
+                  className={cn(
+                    "form-context-summary settings-wide-field",
+                    accessSettingsStyles["form-context-summary"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                >
                   <span>04 · Group 获取与展示</span>
                   <strong>Group 仅保存到用户档案</strong>
                   <small>Group 不创建角色绑定，也不会提升或降低任何平台权限。</small>
                 </div>
-                <label className="settings-wide-field">
+                <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
                   Group Search Base（可选）
                   <Input defaultValue={ldap?.groupSearchBase} name="groupSearchBase" />
                   <small>留空时读取用户条目的 Group 属性。</small>
                 </label>
-                <label className="settings-wide-field">
+                <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
                   Group Search Filter
                   <Input
                     defaultValue={ldap?.groupSearchFilter ?? "(member={{userDn}})"}
@@ -1062,9 +1284,14 @@ export function AccessSettings({
                   <small>未配置 Group Search Base 时通常填写 memberOf。</small>
                 </label>
               </fieldset>
-              <div className="settings-form-actions">
+              <div
+                className={cn(
+                  "settings-form-actions",
+                  accessSettingsStyles["settings-form-actions"],
+                )}
+              >
                 <Button
-                  className="secondary-button"
+                  className={cn("secondary-button", uiPatterns["secondary-button"])}
                   disabled={pending || !ldapEnabled}
                   onClick={(event) => {
                     const form = event.currentTarget.form;
@@ -1075,7 +1302,7 @@ export function AccessSettings({
                   <RefreshCw size={16} /> 测试连接
                 </Button>
                 <Button
-                  className="primary-button"
+                  className={cn("primary-button", uiPatterns["primary-button"])}
                   disabled={pending || (!ldapEnabled && !ldap)}
                   type="submit"
                 >
@@ -1084,7 +1311,7 @@ export function AccessSettings({
               </div>
             </form>
           ) : (
-            <dl className="stat-list">
+            <dl className={cn("stat-list", accessSettingsStyles["stat-list"])}>
               <div>
                 <dt>状态</dt>
                 <dd>{ldap?.enabled ? "启用" : "停用"}</dd>
@@ -1103,17 +1330,33 @@ export function AccessSettings({
               </div>
             </dl>
           )}
-          <div className="inline-notice settings-directory-actions" role="status">
+          <Notice
+            tone="info"
+            className={cn(
+              "inline-notice settings-directory-actions",
+              uiPatterns["inline-notice"],
+              accessSettingsStyles["settings-directory-actions"],
+            )}
+            role="status"
+          >
             LDAP Group 仅用于用户档案展示；平台不会根据 Group 创建或修改任何权限绑定。
-          </div>
-        </section>
+          </Notice>
+        </Card>
       ) : null}
 
       {activeSection === "sessions" ? (
-        <section className="content-card settings-section" id="sessions">
-          <div className="section-heading">
+        <Card
+          as="section"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+          id="sessions"
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <p className="eyebrow">Sessions</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Sessions</p>
               <h2>当前账号会话</h2>
             </div>
             <Button
@@ -1128,30 +1371,32 @@ export function AccessSettings({
               退出其他会话
             </Button>
           </div>
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>创建时间</th>
-                  <th>最近活动</th>
-                  <th>过期时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+            <Table className={cn("data-table", uiPatterns["data-table"])}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>创建时间</TableHead>
+                  <TableHead>最近活动</TableHead>
+                  <TableHead>过期时间</TableHead>
+                  <TableHead>操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {sessions.map((session) => (
-                  <tr key={session.id}>
-                    <td>
+                  <TableRow key={session.id}>
+                    <TableCell>
                       {formatLocalDateTime(session.createdAt)}
                       {session.id === currentSessionId ? (
-                        <span className="permission-chip">当前会话</span>
+                        <Badge className={cn("permission-chip", uiPatterns["permission-chip"])}>
+                          当前会话
+                        </Badge>
                       ) : null}
-                    </td>
-                    <td>{formatLocalDateTime(session.lastSeenAt)}</td>
-                    <td>{formatLocalDateTime(session.expiresAt)}</td>
-                    <td>
+                    </TableCell>
+                    <TableCell>{formatLocalDateTime(session.lastSeenAt)}</TableCell>
+                    <TableCell>{formatLocalDateTime(session.expiresAt)}</TableCell>
+                    <TableCell>
                       <Button
-                        className="danger-text-button"
+                        className={cn("danger-text-button", uiPatterns["danger-text-button"])}
                         disabled={pending}
                         onClick={() =>
                           void confirmAction({
@@ -1176,13 +1421,13 @@ export function AccessSettings({
                       >
                         终止
                       </Button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-        </section>
+        </Card>
       ) : null}
     </div>
   );
@@ -1268,3 +1513,37 @@ function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean)
     defaultRole: form.get("defaultRole"),
   };
 }
+
+const accessSettingsStyles = {
+  "access-scope-options":
+    'flex flex-wrap gap-1 p-1 rounded-lg bg-muted border border-solid border-border [&_>_a]:py-2 [&_>_a]:px-3 [&_>_a]:rounded-lg [&_>_a]:text-muted-foreground [&_>_a]:text-sm [&_>_a]:[text-decoration:none] [&_>_a[aria-current="page"]]:bg-card [&_>_a[aria-current="page"]]:text-info [&_>_a[aria-current="page"]]:shadow-lg',
+  "access-scope-toolbar":
+    "flex items-center justify-between gap-3 min-w-0 flex-wrap [&_.settings-note]:[overflow-wrap:anywhere]",
+  "access-user-actions": "[&_.ui-button]:m-1 [&_.access-role-assignment]:text-info",
+  "access-users-table":
+    "[&_th:nth-child(3)]:min-w-16 [&_th:nth-child(3)]:w-[9%] [&_td:nth-child(3)]:min-w-16 [&_th:nth-child(5)]:min-w-[104px] [&_th:nth-child(5)]:w-[18%] [&_td:nth-child(5)]:min-w-[104px] [&_td:nth-child(2)]:whitespace-nowrap [table-layout:fixed] w-full min-w-0 [&_td]:py-3 [&_td]:px-2 [&_td]:[overflow-wrap:anywhere] [&_td]:whitespace-normal [&_th]:py-3 [&_th]:px-2 [&_th]:[overflow-wrap:anywhere] [&_th]:whitespace-normal [&_th:first-child]:w-[26%] [&_th:nth-child(2)]:w-[8%] [&_th:nth-child(4)]:w-[19%] [&_th:last-child]:w-[20%] [&_.table-secondary]:text-xs [&_.access-user-actions]:min-w-0 [&_.access-user-actions_.button]:max-w-full",
+  "action-dialog-form": "mt-0",
+  "form-context-summary":
+    "grid grid-cols-[minmax(0,_1fr)_auto] items-center gap-[4px_12px] py-3 px-3.5 border border-solid border-border rounded-lg bg-muted [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:col-span-full [&_>_strong]:[grid-column:2] [&_>_strong]:[grid-row:1]",
+  "management-disclosure":
+    "min-w-0 p-3 border border-solid border-border rounded-lg [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&[data-open=true]_.ui-disclosure-label]:mb-3",
+  "permission-list":
+    "flex flex-wrap gap-1.5 [&_code]:inline-flex [&_code]:items-center [&_code]:py-1 [&_code]:px-[7px] [&_code]:rounded-md [&_code]:text-muted-foreground [&_code]:bg-muted [&_code]:text-xs",
+  "role-action-summary": "w-fit text-muted-foreground cursor-pointer",
+  "role-actions": "grid gap-2",
+  "role-card":
+    "grid [align-content:start] min-w-0 gap-2.5 p-4 border border-solid border-border rounded-lg [overflow-wrap:anywhere] [&_>_div:first-child]:flex [&_>_div:first-child]:flex-wrap [&_>_div:first-child]:items-baseline [&_>_div:first-child]:justify-between [&_>_div:first-child]:gap-3 [&_>_div:first-child_strong]:min-w-0 [&_>_div:first-child_strong]:max-w-full [&_small]:text-muted-foreground [&_p]:text-muted-foreground [&_p]:m-0",
+  "role-grid": "grid items-start grid-cols-[repeat(auto-fit,_minmax(260px,_1fr))] gap-3",
+  "row-more-actions":
+    "[&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold mt-2 text-xs [&_.ui-disclosure-body_>_div]:grid [&_.ui-disclosure-body_>_div]:gap-2 [&_.ui-disclosure-body_>_div]:mt-2",
+  "settings-directory-actions": "grid gap-2.5 mt-4",
+  "settings-form-actions":
+    "flex justify-end gap-2.5 [&.management-sticky-actions]:bottom-3 [&.management-sticky-actions]:border [&.management-sticky-actions]:border-solid [&.management-sticky-actions]:border-border [&.management-sticky-actions]:rounded-xl [&.management-sticky-actions]:shadow-xs",
+  "settings-form-fieldset":
+    "contents min-w-0 m-0 border-0 p-0 [&:disabled]:opacity-78 [&[hidden]]:hidden",
+  "settings-user-filter":
+    "grid grid-cols-[minmax(220px,_1fr)_minmax(140px,_220px)_auto] items-end gap-3 [margin-block:18px_12px] [&_label]:grid [&_label]:gap-[7px] [&_label]:text-xs [&_label]:font-semibold",
+  "stat-list":
+    "flex flex-col [margin:20px_0_16px] [&_>_div]:flex [&_>_div]:items-center [&_>_div]:justify-between [&_>_div]:py-[11px] [&_>_div]:px-0 [&_>_div]:border-b [&_>_div]:border-solid [&_>_div]:border-border [&_>_div:last-child]:border-b-0 [&_dt]:flex [&_dt]:items-center [&_dt]:gap-2 [&_dt]:text-muted-foreground [&_dd]:m-0 [&_dd]:text-lg [&_dd]:font-semibold [&_dd]:tabular-nums",
+  "table-action": "w-fit border-0 text-destructive bg-transparent cursor-pointer",
+} as const;

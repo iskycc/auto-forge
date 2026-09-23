@@ -1,4 +1,12 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
@@ -269,8 +277,16 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
   }
 
   return (
-    <section className="ddt-value-search" aria-label="DDT 高级检索">
-      <div className="ddt-value-search-form surface-card">
+    <section
+      className={cn("ddt-value-search", ddtValueSearchStyles["ddt-value-search"])}
+      aria-label="DDT 高级检索"
+    >
+      <div
+        className={cn(
+          "ddt-value-search-form surface-card",
+          ddtValueSearchStyles["ddt-value-search-form"],
+        )}
+      >
         <div>
           <h2>按字段值检索用例</h2>
           <p>
@@ -278,13 +294,29 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
           </p>
         </div>
         <form onSubmit={submit}>
-          <div className="ddt-value-search-conditions">
+          <div
+            className={cn(
+              "ddt-value-search-conditions",
+              ddtValueSearchStyles["ddt-value-search-conditions"],
+            )}
+          >
             {conditions.map((condition, index) => (
-              <div className="ddt-value-search-condition" key={condition.id}>
+              <div
+                className={cn(
+                  "ddt-value-search-condition",
+                  ddtValueSearchStyles["ddt-value-search-condition"],
+                )}
+                key={condition.id}
+              >
                 <label htmlFor={`ddt-value-keyword-${condition.id}`}>
                   {index === 0 ? "关键词" : `关键词 ${index + 1}`}
                 </label>
-                <div className="ddt-value-search-controls">
+                <div
+                  className={cn(
+                    "ddt-value-search-controls",
+                    ddtValueSearchStyles["ddt-value-search-controls"],
+                  )}
+                >
                   <Input
                     id={`ddt-value-keyword-${condition.id}`}
                     ref={(element) => {
@@ -318,7 +350,12 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               </div>
             ))}
           </div>
-          <div className="ddt-value-search-actions">
+          <div
+            className={cn(
+              "ddt-value-search-actions",
+              ddtValueSearchStyles["ddt-value-search-actions"],
+            )}
+          >
             <Button
               type="button"
               onClick={addCondition}
@@ -332,7 +369,12 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               variant="primary"
               disabled={pending || !conditions.some((condition) => condition.keyword.trim())}
             >
-              {pending ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />} 搜索
+              {pending ? (
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+              ) : (
+                <Search size={16} />
+              )}{" "}
+              搜索
             </Button>
             {pending ? (
               <Button type="button" onClick={() => controller.current?.abort()}>
@@ -340,8 +382,10 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               </Button>
             ) : null}
           </div>
-          <details className="search-help">
-            <summary>搜索说明 · 多条件取并集，仅匹配字段值</summary>
+          <Disclosure
+            header={<>搜索说明 · 多条件取并集，仅匹配字段值</>}
+            className={cn("search-help", ddtValueSearchStyles["search-help"])}
+          >
             <p>
               包括用户旅程各
               Step；不匹配字段名，不区分英文大小写。用例去重显示。点击搜索或按回车开始，输入时不会查询。
@@ -350,16 +394,28 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               最多 {DDT_VALUE_SEARCH_MAX_KEYWORDS} 个条件，合计 {DDT_VALUE_SEARCH_MAX_TEXT_LENGTH}{" "}
               个字符；空白条件自动忽略。
             </p>
-          </details>
+          </Disclosure>
           {formError ? (
-            <p className="inline-notice error" role="alert">
+            <Notice
+              tone="info"
+              className={cn(
+                "inline-notice error",
+                uiPatterns["inline-notice"],
+                uiPatterns["error"],
+              )}
+              role="alert"
+            >
               {formError}
-            </p>
+            </Notice>
           ) : null}
         </form>
       </div>
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           <span>{error}</span>
           <Button
             disabled={pending}
@@ -370,13 +426,15 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
           >
             重试检索
           </Button>
-        </div>
+        </Notice>
       ) : null}
       {!result ? (
-        <p className="empty-state">输入关键词，检索当前范围内的 DDT 用例。</p>
+        <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
+          输入关键词，检索当前范围内的 DDT 用例。
+        </EmptyState>
       ) : (
         <>
-          <p className="ddt-value-search-status" role="status">
+          <p className={"ddt-value-search-status"} role="status">
             {result.keywords.map((keyword) => `“${keyword}”`).join(" 或 ")} ·{" "}
             {pending ? "正在检索…" : result.complete ? "检索完成" : "检索尚未完成"}
             {!result.complete
@@ -384,15 +442,33 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               : ""}
           </p>
           {!pending && !error && result.complete && !result.totalCount ? (
-            <p className="empty-state">没有匹配的字段值，请尝试其他关键词。</p>
+            <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
+              没有匹配的字段值，请尝试其他关键词。
+            </EmptyState>
           ) : null}
-          <div className="ddt-value-search-results">
+          <div
+            className={cn(
+              "ddt-value-search-results",
+              ddtValueSearchStyles["ddt-value-search-results"],
+            )}
+          >
             {result.items.map((item) => (
-              <article className="ddt-value-search-result surface-card" key={item.id}>
+              <article
+                className={cn(
+                  "ddt-value-search-result surface-card",
+                  ddtValueSearchStyles["ddt-value-search-result"],
+                )}
+                key={item.id}
+              >
                 <header>
                   <div>
                     <h3>{item.caseId}</h3>
-                    <div className="ddt-search-case-name">
+                    <div
+                      className={cn(
+                        "ddt-search-case-name",
+                        ddtValueSearchStyles["ddt-search-case-name"],
+                      )}
+                    >
                       <span>CaseName · </span>
                       <ExpandableText text={item.caseName || "未填写"} label="用例名称" />
                     </div>
@@ -403,7 +479,10 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
                   <Button
                     type="button"
                     variant="secondary"
-                    className="ddt-value-search-preview-trigger"
+                    className={cn(
+                      "ddt-value-search-preview-trigger",
+                      ddtValueSearchStyles["ddt-value-search-preview-trigger"],
+                    )}
                     aria-haspopup="dialog"
                     onClick={() => setPreviewCaseId(item.caseId)}
                   >
@@ -456,3 +535,25 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
     </section>
   );
 }
+
+const ddtValueSearchStyles = {
+  "ddt-search-case-name":
+    "flex min-w-0 gap-1 text-muted-foreground text-xs [&_>_span:first-child]:[flex:0_0_auto]",
+  "ddt-value-search":
+    "grid min-w-0 gap-4 [&_:is(h2,_h3,_p,_dl,_dd)]:m-0 [&_:is(h2,_h3,_p,_dl,_dd)]:[overflow-wrap:anywhere] [&_h2]:text-lg [&_h3]:text-sm [&_:is(p,_dt,_header_span)]:text-muted-foreground [&_:is(p,_dt,_header_span)]:text-xs [&_:is(p,_dt,_header_span)]:leading-[1.6]",
+  "ddt-value-search-actions": "flex min-w-0 items-center gap-3 flex-wrap",
+  "ddt-value-search-condition":
+    "grid min-w-0 gap-2 [grid-column:span_2] grid-cols-[subgrid] items-center [&:only-child]:col-span-full [&:only-child]:grid-cols-[auto_minmax(0,_1fr)]",
+  "ddt-value-search-conditions":
+    "grid min-w-0 gap-2 grid-cols-[auto_minmax(0,_1fr)_auto_minmax(0,_1fr)]",
+  "ddt-value-search-controls":
+    "flex min-w-0 items-center gap-3 [&_>_:first-child]:flex-1 [&_>_:first-child]:min-w-0",
+  "ddt-value-search-form":
+    "grid min-w-0 gap-2 p-3 border border-solid border-border rounded-lg bg-card [&_form]:grid [&_form]:min-w-0 [&_form]:gap-2",
+  "ddt-value-search-preview-trigger": "shrink-0 gap-2",
+  "ddt-value-search-result":
+    "grid min-w-0 gap-2 py-2 px-3 border border-solid border-border rounded-lg bg-card [&_dl]:grid [&_dl]:min-w-0 [&_dl]:gap-1 [&_header]:flex [&_header]:min-w-0 [&_header]:items-center [&_header]:gap-3 [&_header_>_div]:flex-1 [&_header_>_div]:min-w-0 [&_dl_>_div]:grid [&_dl_>_div]:min-w-0 [&_dl_>_div]:grid-cols-[minmax(0,_1fr)_minmax(0,_3fr)] [&_dl_>_div]:items-start [&_dl_>_div]:gap-3 [&_dl_>_div]:pt-1 [&_dl_>_div]:border-t [&_dl_>_div]:border-solid [&_dl_>_div]:border-border [&_:is(dt,_dd)]:min-w-0 [&_:is(dt,_dd)]:[overflow-wrap:anywhere] [&_:is(dt,_dd)]:whitespace-pre-wrap",
+  "ddt-value-search-results": "grid min-w-0 gap-2",
+  "search-help":
+    "[&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:text-xs [&[data-open=true]_p]:mt-2",
+} as const;

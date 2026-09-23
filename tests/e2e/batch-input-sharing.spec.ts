@@ -376,8 +376,11 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
   const uploadForm = page.locator("form", {
     has: page.getByRole("button", { name: "上传并启用" }),
   });
-  await uploadForm.getByLabel("资源类型").selectOption("jar-bundle");
-  await uploadForm.getByLabel("压缩格式").selectOption("zip");
+  await uploadForm
+    .getByLabel("资源类型")
+    .and(uploadForm.locator("select"))
+    .selectOption("jar-bundle");
+  await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("zip");
   await uploadForm
     .getByLabel("本地文件")
     .setInputFiles(requiredEnvironment("E2E_BATCH_SHARE_DEPENDENCY_ARCHIVE"));
@@ -387,8 +390,8 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
   });
   await expect(page.getByText(/java-cases-dependencies\.zip/).first()).toBeVisible();
 
-  await uploadForm.getByLabel("资源类型").selectOption("jdk");
-  await uploadForm.getByLabel("压缩格式").selectOption("tar.gz");
+  await uploadForm.getByLabel("资源类型").and(uploadForm.locator("select")).selectOption("jdk");
+  await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("tar.gz");
   const jdkArchive = requiredEnvironment("E2E_BATCH_SHARE_JDK_ARCHIVE");
   await uploadForm.getByLabel("本地文件").setInputFiles(jdkArchive);
   await uploadForm.getByRole("button", { name: "上传并启用" }).click();

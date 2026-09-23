@@ -1,10 +1,25 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Notice } from "@/components/ui/notice";
+
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { StartFailureAnalysisButton } from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
 import { ExternalLink, LoaderCircle, OctagonX } from "lucide-react";
-import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -208,13 +223,20 @@ export function ExecutionRecordsTable({
   }
 
   return (
-    <div className="execution-record-table-stack">
+    <div
+      className={cn(
+        "execution-record-table-stack",
+        executionRecordsTableStyles["execution-record-table-stack"],
+      )}
+    >
       {actionError ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {actionError}
-        </p>
+        </Notice>
       ) : null}
-      <div className="table-display-tools">
+      <div
+        className={cn("table-display-tools", executionRecordsTableStyles["table-display-tools"])}
+      >
         <span>可横向滚动查看所有列，任务与操作列固定</span>
         <Button
           type="button"
@@ -228,12 +250,21 @@ export function ExecutionRecordsTable({
         </Button>
       </div>
       <div
-        className="table-scroll resizable-table-scroll"
+        className={cn(
+          "table-scroll resizable-table-scroll",
+          uiPatterns["table-scroll"],
+          executionRecordsTableStyles["resizable-table-scroll"],
+        )}
         tabIndex={0}
         aria-label="执行记录表格，可横向滚动"
       >
-        <table
-          className="data-table execution-records-table resizable-table"
+        <Table
+          className={cn(
+            "data-table execution-records-table resizable-table",
+            uiPatterns["data-table"],
+            executionRecordsTableStyles["execution-records-table"],
+            executionRecordsTableStyles["resizable-table"],
+          )}
           style={
             {
               width: tableWidth,
@@ -246,11 +277,16 @@ export function ExecutionRecordsTable({
               <col key={column.key} style={{ width: columnWidth(column) }} />
             ))}
           </colgroup>
-          <thead>
-            <tr>
+          <TableHeader>
+            <TableRow>
               {EXECUTION_RECORD_COLUMNS.map((column) => (
-                <th key={column.key} scope="col">
-                  <span className="resizable-th-content">
+                <TableHead key={column.key} scope="col">
+                  <span
+                    className={cn(
+                      "resizable-th-content",
+                      executionRecordsTableStyles["resizable-th-content"],
+                    )}
+                  >
                     {column.label}
                     <span
                       tabIndex={0}
@@ -269,57 +305,84 @@ export function ExecutionRecordsTable({
                               );
                         persistColumnWidths({ ...storedWidths, [column.key]: width });
                       }}
-                      className="column-resize-handle"
+                      className={cn(
+                        "column-resize-handle",
+                        executionRecordsTableStyles["column-resize-handle"],
+                      )}
                       onMouseDown={(event) => startResize(event, column)}
                       role="separator"
                       aria-label={`调整“${column.label}”列宽`}
                     />
                   </span>
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((row) => (
-              <tr key={row.id}>
-                <td>
+              <TableRow key={row.id}>
+                <TableCell>
                   {/* 自然递增编号完整展示；UUID 通过 title 悬浮查看。 */}
-                  <span className="table-id-text" title={row.id}>
+                  <span
+                    className={cn("table-id-text", executionRecordsTableStyles["table-id-text"])}
+                    title={row.id}
+                  >
                     #{row.sequenceNumber}
                   </span>
-                </td>
-                <td>
+                </TableCell>
+                <TableCell>
                   <strong>{row.suiteName}</strong>
                   <small> v{row.suiteVersion}</small>
-                </td>
-                <td>
-                  <span className={`batch-status batch-status-${row.status}`}>
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    className={cn(
+                      executionRecordsTableStyles["batch-status"],
+                      `batch-status batch-status batch-status-${row.status}`,
+                    )}
+                  >
                     {executionRecordStatusLabel({ ...row, observedAt })}
-                  </span>
-                </td>
-                <td title={row.statisticsPending ? "统计准备中" : undefined}>
+                  </Badge>
+                </TableCell>
+                <TableCell title={row.statisticsPending ? "统计准备中" : undefined}>
                   {row.statisticsPending ? "—" : `${executionRecordPassRate(row)}%`}
-                </td>
-                <td>{row.statisticsPending ? "—" : row.succeededRuns}</td>
-                <td>{row.statisticsPending ? "—" : row.failedRuns + row.timedOutRuns}</td>
-                <td>{row.retryMode === "round" ? `第 ${row.currentRound} 轮` : "-"}</td>
-                <td>{row.retryMode === "round" ? "整轮轮次" : "立即重跑"}</td>
-                <td>{row.selectedRunnerCount}</td>
-                <td>
+                </TableCell>
+                <TableCell>{row.statisticsPending ? "—" : row.succeededRuns}</TableCell>
+                <TableCell>
+                  {row.statisticsPending ? "—" : row.failedRuns + row.timedOutRuns}
+                </TableCell>
+                <TableCell>
+                  {row.retryMode === "round" ? `第 ${row.currentRound} 轮` : "-"}
+                </TableCell>
+                <TableCell>{row.retryMode === "round" ? "整轮轮次" : "立即重跑"}</TableCell>
+                <TableCell>{row.selectedRunnerCount}</TableCell>
+                <TableCell>
                   <time dateTime={row.scheduledFor}>
                     {formatExecutionRecordTime(row.scheduledFor)}
                   </time>
-                </td>
-                <td>{formatBatchDuration(executionRecordDurationMs({ ...row, observedAt }))}</td>
-                <td>
-                  <span className="execution-record-row-actions">
-                    <Link
+                </TableCell>
+                <TableCell>
+                  {formatBatchDuration(executionRecordDurationMs({ ...row, observedAt }))}
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={cn(
+                      "execution-record-row-actions",
+                      executionRecordsTableStyles["execution-record-row-actions"],
+                    )}
+                  >
+                    <LinkButton
                       aria-label={`查看批次 #${row.sequenceNumber} 详情`}
-                      className="button button-secondary compact-button"
+                      className={cn(
+                        "button button-secondary compact-button",
+                        uiPatterns["button"],
+                        uiPatterns["button-secondary"],
+                        uiPatterns["compact-button"],
+                      )}
                       href={`/run-batches/${encodeURIComponent(row.id)}`}
                     >
                       <ExternalLink size={14} aria-hidden="true" /> 详情
-                    </Link>
+                    </LinkButton>
                     <RunBatchPermanentShare batchId={row.id} sequenceNumber={row.sequenceNumber} />
                     {row.analysisScope &&
                     !executionRecordIsActive(row.status) &&
@@ -328,7 +391,12 @@ export function ExecutionRecordsTable({
                     ) : null}
                     {canTerminate && executionRecordIsActive(row.status) ? (
                       <Button
-                        className="button button-danger-quiet compact-button"
+                        className={cn(
+                          "button button-danger-quiet compact-button",
+                          uiPatterns["button"],
+                          uiPatterns["button-danger-quiet"],
+                          uiPatterns["compact-button"],
+                        )}
                         disabled={
                           Boolean(row.terminationRequestedAt) || terminatingBatchId === row.id
                         }
@@ -338,7 +406,11 @@ export function ExecutionRecordsTable({
                         variant="danger"
                       >
                         {terminatingBatchId === row.id ? (
-                          <LoaderCircle className="spin" size={14} aria-hidden="true" />
+                          <LoaderCircle
+                            className={cn("spin", uiPatterns["spin"])}
+                            size={14}
+                            aria-hidden="true"
+                          />
                         ) : (
                           <OctagonX size={14} aria-hidden="true" />
                         )}
@@ -346,12 +418,29 @@ export function ExecutionRecordsTable({
                       </Button>
                     ) : null}
                   </span>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
 }
+
+const executionRecordsTableStyles = {
+  "batch-status": uiPatterns["batch-status"],
+  "column-resize-handle":
+    "absolute top-0 right-[-3px] z-2 w-1.5 h-full cursor-col-resize bg-transparent transition-colors duration-150 motion-reduce:transition-none [&:hover]:bg-info [&:hover]:opacity-45 [&:active]:bg-info [&:active]:opacity-45 [&:focus-visible]:[outline:2px_solid_var(--info)]",
+  "execution-record-row-actions": "inline-flex items-center gap-2 flex-wrap whitespace-normal",
+  "execution-record-table-stack": "grid gap-3",
+  "execution-records-table":
+    "[&_td_small]:text-muted-foreground [&_:is(th,_td):first-child]:sticky [&_:is(th,_td):first-child]:z-1 [&_:is(th,_td):first-child]:bg-card [&_:is(th,_td):first-child]:left-0 [&_:is(th,_td):nth-child(2)]:sticky [&_:is(th,_td):nth-child(2)]:z-1 [&_:is(th,_td):nth-child(2)]:bg-card [&_:is(th,_td):nth-child(2)]:left-[var(--record-id-width)] [&_:is(th,_td):nth-child(2)]:border-r [&_:is(th,_td):nth-child(2)]:border-solid [&_:is(th,_td):nth-child(2)]:border-border [&_:is(th,_td):last-child]:sticky [&_:is(th,_td):last-child]:z-1 [&_:is(th,_td):last-child]:bg-card [&_:is(th,_td):last-child]:right-0 [&_:is(th,_td):last-child]:border-l [&_:is(th,_td):last-child]:border-solid [&_:is(th,_td):last-child]:border-border [&_th:is(:first-child,_:nth-child(2),_:last-child)]:bg-muted",
+  "resizable-table":
+    "min-w-full [table-layout:fixed] [&_th]:relative [&_th]:overflow-visible [&_th]:whitespace-nowrap [&_td]:[overflow-wrap:anywhere] [&_td]:whitespace-normal",
+  "resizable-table-scroll": "overflow-x-auto",
+  "resizable-th-content": "flex items-center gap-1.5 min-w-0 overflow-hidden text-ellipsis",
+  "table-display-tools":
+    "flex items-center justify-between flex-wrap gap-3 text-muted-foreground text-sm",
+  "table-id-text": "text-muted-foreground tabular-nums",
+} as const;

@@ -1,4 +1,10 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LinkButton } from "@/components/ui/link-button";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { systemDiagnosticSchema, type SystemDiagnostic } from "@autoforge/contracts";
 import { Download, RefreshCw } from "lucide-react";
@@ -13,7 +19,7 @@ import {
 } from "@/lib/browser-read-cache";
 import { DiagnosticPanels } from "./system-diagnostic-panels";
 import { DiagnosticDeadLetters } from "./system-diagnostic-dead-letters";
-import styles from "./system-diagnostics.module.css";
+import styles from "./system-diagnostics.styles";
 
 const CACHE_KEY = "system-diagnostics:v2";
 
@@ -124,17 +130,24 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
             <RefreshCw size={15} />
             刷新诊断
           </Button>
-          <a className="button button-secondary" href="/api/v1/settings/diagnostics?download=1">
+          <LinkButton
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            href="/api/v1/settings/diagnostics?download=1"
+          >
             <Download size={15} />
             下载脱敏诊断包
-          </a>
+          </LinkButton>
         </div>
       </div>
       {error ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {error}
           {diagnostic ? " 当前保留上次诊断结果，请留意更新时间。" : ""}
-        </p>
+        </Notice>
       ) : null}
       {loading && !diagnostic ? (
         <LoadingState

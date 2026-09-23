@@ -1,8 +1,10 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { startFailureAnalysisBatchResultSchema } from "@autoforge/contracts";
 import { LoaderCircle, SearchCheck } from "lucide-react";
-import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { useState } from "react";
 import { Button } from "@/components/ui";
 import { useToast } from "@/components/ui-feedback";
@@ -46,21 +48,36 @@ export function StartFailureAnalysisButton({
 
   if (started)
     return (
-      <Link
-        className="button button-secondary compact-button"
+      <LinkButton
+        className={cn(
+          "button button-secondary compact-button",
+          uiPatterns["button"],
+          uiPatterns["button-secondary"],
+          uiPatterns["compact-button"],
+        )}
         href={`/case-analysis/${encodeURIComponent(scope.batchId)}`}
       >
         <SearchCheck size={14} /> 查看分析
-      </Link>
+      </LinkButton>
     );
   return (
     <Button
-      className="button button-secondary compact-button"
+      className={cn(
+        "button button-secondary compact-button",
+        uiPatterns["button"],
+        uiPatterns["button-secondary"],
+        uiPatterns["compact-button"],
+      )}
       disabled={pending}
       onClick={() => void start()}
       type="button"
     >
-      {pending ? <LoaderCircle className="spin" size={14} /> : <SearchCheck size={14} />}开始分析
+      {pending ? (
+        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
+      ) : (
+        <SearchCheck size={14} />
+      )}
+      开始分析
     </Button>
   );
 }

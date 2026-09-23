@@ -1,6 +1,7 @@
 "use client";
+import { cn } from "@/lib/utils";
 
-import { AlertTriangle, CheckCircle2, CircleAlert, Info, X } from "lucide-react";
+import { notification } from "antd";
 import {
   createContext,
   useCallback,
@@ -20,12 +21,6 @@ export type ToastTone = "success" | "error" | "warning" | "info";
 type ToastOptions = {
   title?: string;
   durationMs?: number;
-};
-
-type ToastItem = ToastOptions & {
-  id: number;
-  message: string;
-  tone: ToastTone;
 };
 
 export type ConfirmOptions = {
@@ -61,29 +56,43 @@ type FeedbackContextValue = {
 const FeedbackContext = createContext<FeedbackContextValue | null>(null);
 
 export function UiFeedbackProvider({ children }: { children: ReactNode }) {
-  const nextToastId = useRef(1);
+  // Ant Design derives its API identity from this configuration. Keep it stable
+  // when a confirmation opens so consumers do not restart in-flight reads.
+  const notificationConfig = useMemo<Parameters<typeof notification.useNotification>[0]>(
+    () => ({
+      placement: "topRight",
+      top: 80,
+      maxCount: 1,
+      pauseOnHover: false,
+      classNames: { list: "toast-viewport", root: "toast-card" },
+      styles: { list: { zIndex: 2000 }, close: { width: 32, height: 32 } },
+    }),
+    [],
+  );
+  const [notifications, notificationHolder] = notification.useNotification(notificationConfig);
+  const notificationSequence = useRef(0);
   const dialogRequestRef = useRef<DialogRequest | null>(null);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [dialogRequest, setDialogRequest] = useState<DialogRequest | null>(null);
   const [promptValue, setPromptValue] = useState("");
 
-  const dismissToast = useCallback((id: number) => {
-    setToasts((current) => current.filter((item) => item.id !== id));
-  }, []);
-
-  const dismissAllToasts = useCallback(() => {
-    setToasts([]);
-  }, []);
-
+  const dismissAllToasts = useCallback(() => notifications.destroy(), [notifications]);
   const showToast = useCallback(
     (tone: ToastTone, message: string, options: ToastOptions = {}) => {
-      const id = nextToastId.current++;
-      const item: ToastItem = { id, tone, message, ...options };
-      setToasts([item]);
-      const durationMs = options.durationMs ?? (tone === "error" ? 7_000 : 4_500);
-      window.setTimeout(() => dismissToast(id), durationMs);
+      notifications[tone]({
+        // A replaced notice with the same key retains Ant Design's elapsed timer.
+        // Each completed operation needs its own full reading time; maxCount
+        // still keeps only the latest banner visible.
+        key: `operation-feedback-${++notificationSequence.current}`,
+        title:
+          options.title ??
+          { success: "操作成功", error: "操作失败", warning: "请注意", info: "操作提示" }[tone],
+        description: message,
+        duration: (options.durationMs ?? (tone === "error" ? 7000 : 4500)) / 1000,
+        role: tone === "error" ? "alert" : "status",
+        closable: { "aria-label": "关闭通知" },
+      });
     },
-    [dismissToast],
+    [notifications],
   );
 
   const closeDialog = useCallback((value: boolean | string | null) => {
@@ -104,6 +113,17 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
     setDialogRequest(request);
   }, []);
 
+  const confirm = useCallback(
+    (options: ConfirmOptions) =>
+      new Promise<boolean>((resolve) => openDialog({ kind: "confirm", options, resolve })),
+    [openDialog],
+  );
+  const prompt = useCallback(
+    (options: PromptOptions) =>
+      new Promise<string | null>((resolve) => openDialog({ kind: "prompt", options, resolve })),
+    [openDialog],
+  );
+
   useEffect(
     () => () => {
       const current = dialogRequestRef.current;
@@ -122,12 +142,10 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
         info: (message, options) => showToast("info", message, options),
         dismissAll: dismissAllToasts,
       },
-      confirm: (options) =>
-        new Promise<boolean>((resolve) => openDialog({ kind: "confirm", options, resolve })),
-      prompt: (options) =>
-        new Promise<string | null>((resolve) => openDialog({ kind: "prompt", options, resolve })),
+      confirm,
+      prompt,
     }),
-    [dismissAllToasts, openDialog, showToast],
+    [confirm, dismissAllToasts, prompt, showToast],
   );
 
   const options = dialogRequest?.options;
@@ -136,20 +154,28 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
   return (
     <FeedbackContext.Provider value={value}>
       {children}
-      <div aria-label="操作通知" className="toast-viewport">
-        {toasts.map((item) => (
-          <ToastCard item={item} key={item.id} onDismiss={() => dismissToast(item.id)} />
-        ))}
-      </div>
+      {notificationHolder}
       <ActionDialog
-        className={`confirmation-dialog${options?.tone === "danger" ? " confirmation-dialog-danger" : options?.tone === "warning" ? " confirmation-dialog-warning" : ""}`}
+        className={cn(
+          uiFeedbackStyles["confirmation-dialog"],
+          "confirmation-dialog",
+          options?.tone === "danger" &&
+            cn("confirmation-dialog-danger", uiFeedbackStyles["confirmation-dialog-danger"]),
+          options?.tone === "warning" &&
+            cn("confirmation-dialog-warning", uiFeedbackStyles["confirmation-dialog-warning"]),
+        )}
         onClose={() => closeDialog(dialogRequest?.kind === "confirm" ? false : null)}
         open={dialogRequest !== null}
         title={options?.title ?? "确认操作"}
         {...(options?.description ? { description: options.description } : {})}
       >
         {dialogRequest?.kind === "prompt" ? (
-          <label className="confirmation-dialog-field">
+          <label
+            className={cn(
+              "confirmation-dialog-field",
+              uiFeedbackStyles["confirmation-dialog-field"],
+            )}
+          >
             <span>{dialogRequest.options.inputLabel}</span>
             {dialogRequest.options.multiline ? (
               <Textarea
@@ -173,7 +199,7 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
             )}
           </label>
         ) : null}
-        <div className="action-dialog-actions">
+        <div className={cn("action-dialog-actions", uiFeedbackStyles["action-dialog-actions"])}>
           <Button onClick={() => closeDialog(dialogRequest?.kind === "confirm" ? false : null)}>
             {options?.cancelLabel ?? "取消"}
           </Button>
@@ -210,36 +236,10 @@ function useFeedbackContext(): FeedbackContextValue {
   return context;
 }
 
-function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
-  const Icon =
-    item.tone === "success"
-      ? CheckCircle2
-      : item.tone === "error"
-        ? CircleAlert
-        : item.tone === "warning"
-          ? AlertTriangle
-          : Info;
-  const title =
-    item.title ??
-    ({ success: "操作成功", error: "操作失败", warning: "请注意", info: "操作提示" } as const)[
-      item.tone
-    ];
-  return (
-    <article
-      aria-atomic="true"
-      className={`toast-card toast-${item.tone}`}
-      role={item.tone === "error" ? "alert" : "status"}
-    >
-      <span className="toast-icon" aria-hidden="true">
-        <Icon size={19} />
-      </span>
-      <span className="toast-copy">
-        <strong>{title}</strong>
-        <span>{item.message}</span>
-      </span>
-      <Button aria-label="关闭通知" className="toast-dismiss" onClick={onDismiss} type="button">
-        <X size={15} />
-      </Button>
-    </article>
-  );
-}
+const uiFeedbackStyles = {
+  "action-dialog-actions": "mt-4 flex justify-end gap-2 border-t border-border pt-4",
+  "confirmation-dialog": "w-[min(540px,calc(100vw-3rem))]",
+  "confirmation-dialog-danger": "[&_.action-dialog-header]:border-destructive/20",
+  "confirmation-dialog-field": "grid gap-2 text-sm font-medium",
+  "confirmation-dialog-warning": "[&_.action-dialog-header]:border-warning/20",
+} as const;

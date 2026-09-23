@@ -1,0 +1,1544 @@
+{
+  "findings": [
+    {
+      "route": "/",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/",
+      "heading": "下午好，E2E Administrator",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 3,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-suites",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/case-suites",
+      "heading": "用例任务",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/execution-records",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/execution-records",
+      "heading": "执行记录",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-analysis",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/case-analysis",
+      "heading": "用例分析",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/runners",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/runners",
+      "heading": "执行节点",
+      "widgets": {
+        "tables": 0,
+        "collapses": 12,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/runners?section=groups",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/runners?section=groups",
+      "heading": "执行机组",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/insights",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/insights",
+      "heading": "质量洞察",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/objects",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/objects",
+      "heading": "文件与 JAR 来源",
+      "widgets": {
+        "tables": 2,
+        "collapses": 7,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/audit",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/audit",
+      "heading": "安全审计",
+      "widgets": {
+        "tables": 1,
+        "collapses": 1,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=users",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/access?section=users",
+      "heading": "用户管理",
+      "widgets": {
+        "tables": 1,
+        "collapses": 56,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=roles",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/access?section=roles",
+      "heading": "角色与权限",
+      "widgets": {
+        "tables": 1,
+        "collapses": 28,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=ldap",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/access?section=ldap",
+      "heading": "LDAP 目录",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=sessions",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/access?section=sessions",
+      "heading": "登录会话",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/projects",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/projects",
+      "heading": "项目设置",
+      "widgets": {
+        "tables": 0,
+        "collapses": 2,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=configuration",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=configuration",
+      "heading": "平台配置",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=accounts",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=accounts",
+      "heading": "服务账号",
+      "widgets": {
+        "tables": 0,
+        "collapses": 7,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=retention",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=retention",
+      "heading": "数据保留",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=diagnostics",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=diagnostics",
+      "heading": "系统诊断",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=storage",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=storage",
+      "heading": "存储空间",
+      "widgets": {
+        "tables": 0,
+        "collapses": 62,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/webhooks",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/webhooks",
+      "heading": "任务完成通知",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/account/security",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/account/security",
+      "heading": "账号安全",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases/import",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases/import",
+      "heading": "导入 TestNG JAR",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases/ddt-associations",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases/ddt-associations",
+      "heading": "SR 测试类关联",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=users&scope=project",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/access?section=users&scope=project",
+      "heading": "用户管理",
+      "widgets": {
+        "tables": 1,
+        "collapses": 11,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=roles&scope=project",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/settings/access?section=roles&scope=project",
+      "heading": "角色与权限",
+      "widgets": {
+        "tables": 1,
+        "collapses": 28,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=cases",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=cases",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=search",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=search",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=imports",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=imports",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=templates",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=templates",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=recycle",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=recycle",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=api",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=api",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases/01a0cd2c-fdc6-7626-9d1f-3119a722a028",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/cases/01a0cd2c-fdc6-7626-9d1f-3119a722a028",
+      "heading": "Selection7Test",
+      "widgets": {
+        "tables": 4,
+        "collapses": 2,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-suites/01a0cd2d-178a-7208-b85a-f4c451389285",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/case-suites/01a0cd2d-178a-7208-b85a-f4c451389285",
+      "heading": "上次选择的任务",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-sources/01a0cd26-8b9f-7c1e-9e4d-2fbdb6d1c3e1",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/case-sources/01a0cd26-8b9f-7c1e-9e4d-2fbdb6d1c3e1",
+      "heading": "checkout-tests-v2.jar",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/run-batches/01a0cd29-8d4a-7681-9d90-3a30ba4b2275",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/run-batches/01a0cd29-8d4a-7681-9d90-3a30ba4b2275",
+      "heading": "即时补槽验收任务",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd23-b297-76c8-aff4-9789e2edbd92"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec?view=workbench",
+      "heading": "E2E 失败分析任务 analysis-groups-mudrxqb4-p1vv1a",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec/statistics",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd23-b297-76c8-aff4-9789e2edbd92"
+      },
+      "width": 1024,
+      "status": 200,
+      "actualRoute": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec/statistics",
+      "heading": "分析统计",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/forbidden",
+      "width": 1024,
+      "anonymous": false,
+      "heading": "没有访问权限",
+      "overflow": false
+    },
+    {
+      "route": "/ui-audit-missing-page",
+      "width": 1024,
+      "anonymous": false,
+      "heading": "页面不存在",
+      "overflow": false
+    },
+    {
+      "route": "/",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/",
+      "heading": "下午好，E2E Administrator",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 3,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-suites",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/case-suites",
+      "heading": "用例任务",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/execution-records",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/execution-records",
+      "heading": "执行记录",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-analysis",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/case-analysis",
+      "heading": "用例分析",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/runners",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/runners",
+      "heading": "执行节点",
+      "widgets": {
+        "tables": 0,
+        "collapses": 12,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/runners?section=groups",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/runners?section=groups",
+      "heading": "执行机组",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/insights",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/insights",
+      "heading": "质量洞察",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/objects",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/objects",
+      "heading": "文件与 JAR 来源",
+      "widgets": {
+        "tables": 2,
+        "collapses": 7,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/audit",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/audit",
+      "heading": "安全审计",
+      "widgets": {
+        "tables": 1,
+        "collapses": 1,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=users",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/access?section=users",
+      "heading": "用户管理",
+      "widgets": {
+        "tables": 1,
+        "collapses": 56,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=roles",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/access?section=roles",
+      "heading": "角色与权限",
+      "widgets": {
+        "tables": 1,
+        "collapses": 28,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=ldap",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/access?section=ldap",
+      "heading": "LDAP 目录",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=sessions",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/access?section=sessions",
+      "heading": "登录会话",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/projects",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/projects",
+      "heading": "项目设置",
+      "widgets": {
+        "tables": 0,
+        "collapses": 2,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=configuration",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=configuration",
+      "heading": "平台配置",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=accounts",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=accounts",
+      "heading": "服务账号",
+      "widgets": {
+        "tables": 0,
+        "collapses": 7,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=retention",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=retention",
+      "heading": "数据保留",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=diagnostics",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=diagnostics",
+      "heading": "系统诊断",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=storage",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/platform?section=storage",
+      "heading": "存储空间",
+      "widgets": {
+        "tables": 0,
+        "collapses": 76,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/webhooks",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/webhooks",
+      "heading": "任务完成通知",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/account/security",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/account/security",
+      "heading": "账号安全",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases/import",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases/import",
+      "heading": "导入 TestNG JAR",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases/ddt-associations",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases/ddt-associations",
+      "heading": "SR 测试类关联",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=users&scope=project",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/access?section=users&scope=project",
+      "heading": "用户管理",
+      "widgets": {
+        "tables": 1,
+        "collapses": 11,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=roles&scope=project",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/settings/access?section=roles&scope=project",
+      "heading": "角色与权限",
+      "widgets": {
+        "tables": 1,
+        "collapses": 28,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=cases",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=cases",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=search",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=search",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=imports",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=imports",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=templates",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=templates",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=recycle",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=recycle",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt&ddtView=api",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases?tab=ddt&ddtView=api",
+      "heading": "用例管理",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 2,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/cases/01a0cd2c-fdc6-7626-9d1f-3119a722a028",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/cases/01a0cd2c-fdc6-7626-9d1f-3119a722a028",
+      "heading": "Selection7Test",
+      "widgets": {
+        "tables": 4,
+        "collapses": 2,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-suites/01a0cd2d-178a-7208-b85a-f4c451389285",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/case-suites/01a0cd2d-178a-7208-b85a-f4c451389285",
+      "heading": "上次选择的任务",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-sources/01a0cd26-8b9f-7c1e-9e4d-2fbdb6d1c3e1",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/case-sources/01a0cd26-8b9f-7c1e-9e4d-2fbdb6d1c3e1",
+      "heading": "checkout-tests-v2.jar",
+      "widgets": {
+        "tables": 0,
+        "collapses": 1,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/run-batches/01a0cd29-8d4a-7681-9d90-3a30ba4b2275",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd1a-ec78-7f96-8b00-dc87fd387c33"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/run-batches/01a0cd29-8d4a-7681-9d90-3a30ba4b2275",
+      "heading": "即时补槽验收任务",
+      "widgets": {
+        "tables": 1,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd23-b297-76c8-aff4-9789e2edbd92"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec?view=workbench",
+      "heading": "E2E 失败分析任务 analysis-groups-mudrxqb4-p1vv1a",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 1,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec/statistics",
+      "scope": {
+        "projectId": "00000000-0000-7000-8000-000000000001",
+        "projectVersionId": "01a0cd23-b297-76c8-aff4-9789e2edbd92"
+      },
+      "width": 1536,
+      "status": 200,
+      "actualRoute": "/case-analysis/4f6bcda4-60bc-4b6d-9b29-4f6ecf8c1eec/statistics",
+      "heading": "分析统计",
+      "widgets": {
+        "tables": 0,
+        "collapses": 0,
+        "tabs": 0,
+        "menus": 2,
+        "legacy": 0
+      },
+      "overflow": false
+    },
+    {
+      "route": "/forbidden",
+      "width": 1536,
+      "anonymous": false,
+      "heading": "没有访问权限",
+      "overflow": false
+    },
+    {
+      "route": "/ui-audit-missing-page",
+      "width": 1536,
+      "anonymous": false,
+      "heading": "页面不存在",
+      "overflow": false
+    },
+    {
+      "route": "/login",
+      "width": 1024,
+      "anonymous": true,
+      "actualRoute": "/login",
+      "overflow": false
+    },
+    {
+      "route": "/",
+      "width": 1024,
+      "anonymous": true,
+      "actualRoute": "/",
+      "overflow": false
+    },
+    {
+      "route": "/login",
+      "width": 1536,
+      "anonymous": true,
+      "actualRoute": "/login",
+      "overflow": false
+    },
+    {
+      "route": "/",
+      "width": 1536,
+      "anonymous": true,
+      "actualRoute": "/",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "externalRequests": []
+}

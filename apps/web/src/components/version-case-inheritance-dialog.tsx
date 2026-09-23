@@ -1,11 +1,17 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useRef, useState } from "react";
 import { CopyPlus, LoaderCircle, Pause } from "lucide-react";
 import { ActionDialog } from "./action-dialog";
 import { Button, Select } from "./ui";
 import { useToast } from "./ui-feedback";
-import styles from "./version-case-inheritance-dialog.module.css";
+import styles from "./version-case-inheritance-dialog.styles";
 
 export type InheritanceVersion = {
   id: string;
@@ -152,11 +158,15 @@ export function VersionCaseInheritanceDialog({
           {!progress?.complete ? (
             <Button
               type="button"
-              className="primary-button"
+              className={cn("primary-button", uiPatterns["primary-button"])}
               disabled={pending || !versionId || !stageId}
               onClick={() => void run()}
             >
-              {pending ? <LoaderCircle size={15} className="spin" /> : <CopyPlus size={15} />}
+              {pending ? (
+                <LoaderCircle size={15} className={cn("spin", uiPatterns["spin"])} />
+              ) : (
+                <CopyPlus size={15} />
+              )}
               {pending ? "正在继承…" : progress ? "继续继承" : "开始继承"}
             </Button>
           ) : null}
@@ -207,12 +217,14 @@ export function VersionCaseInheritanceDialog({
             </label>
           </div>
         ) : (
-          <p className="empty-state">
+          <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
             当前项目暂无其他版本，请先创建来源版本并导入 {caseType} 用例。
-          </p>
+          </EmptyState>
         )}
         {sourceVersion && !sourceVersion.stages.length ? (
-          <p className="settings-note">所选版本暂无测试阶段，请选择其他版本。</p>
+          <p className={cn("settings-note", uiPatterns["settings-note"])}>
+            所选版本暂无测试阶段，请选择其他版本。
+          </p>
         ) : null}
         <ul className={styles.rules}>
           {rules.map((rule) => (
@@ -232,9 +244,9 @@ export function VersionCaseInheritanceDialog({
           </div>
         ) : null}
         {error ? (
-          <p className="auth-error" role="alert">
+          <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
             {error} 已完成部分已保留，可点击“继续继承”。
-          </p>
+          </Notice>
         ) : null}
       </div>
     </ActionDialog>

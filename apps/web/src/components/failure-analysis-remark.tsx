@@ -1,4 +1,5 @@
 "use client";
+import { cn } from "@/lib/utils";
 
 import {
   FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES,
@@ -107,7 +108,14 @@ export function FailureAnalysisRemark({
   }
 
   return (
-    <div className="failure-analysis-field failure-analysis-remark" data-analysis-remark>
+    <div
+      className={cn(
+        "failure-analysis-field failure-analysis-remark",
+        failureAnalysisRemarkStyles["failure-analysis-field"],
+        failureAnalysisRemarkStyles["failure-analysis-remark"],
+      )}
+      data-analysis-remark
+    >
       <label htmlFor={inputId}>
         备注说明 <small>选填</small>
       </label>
@@ -123,13 +131,24 @@ export function FailureAnalysisRemark({
         maxLength={4000}
       />
       {!readOnly ? (
-        <small className="failure-analysis-remark-hint">
+        <small
+          className={cn(
+            "failure-analysis-remark-hint",
+            failureAnalysisRemarkStyles["failure-analysis-remark-hint"],
+          )}
+        >
           <ImagePlus size={16} aria-hidden="true" /> 在备注框按 Ctrl+V / ⌘+V 粘贴图片，随提交保存。
           PNG / JPEG / WebP，最多 8 张，单张 10 MiB，合计 20 MiB。
         </small>
       ) : null}
       {drafts.length > 0 || savedImages.length > 0 ? (
-        <div className="failure-analysis-remark-images" aria-label="备注图片">
+        <div
+          className={cn(
+            "failure-analysis-remark-images",
+            failureAnalysisRemarkStyles["failure-analysis-remark-images"],
+          )}
+          aria-label="备注图片"
+        >
           {savedImages.map((image) => (
             <figure key={image.id}>
               <Button
@@ -191,3 +210,14 @@ export function FailureAnalysisRemark({
     </div>
   );
 }
+
+const failureAnalysisRemarkStyles = {
+  "failure-analysis-field":
+    "grid gap-[7px] text-muted-foreground text-sm font-semibold [&_>_span_strong]:text-destructive [&_>_span_small]:text-muted-foreground [&_>_span_small]:font-medium",
+  "failure-analysis-remark":
+    "min-w-0 [&_>_label_small]:text-muted-foreground [&_>_label_small]:text-xs [&_>_label_small]:leading-[1.6]",
+  "failure-analysis-remark-hint":
+    "text-muted-foreground text-xs leading-[1.6] [&_svg]:inline-block [&_svg]:[vertical-align:middle] [&_svg]:mr-1",
+  "failure-analysis-remark-images":
+    "grid grid-cols-[repeat(auto-fill,_minmax(180px,_1fr))] gap-3 min-w-0 [&_figure]:grid [&_figure]:[align-content:start] [&_figure]:gap-2 [&_figure]:min-w-0 [&_figure]:m-0 [&_figure]:p-2 [&_figure]:border [&_figure]:border-solid [&_figure]:border-border [&_figure]:rounded-lg [&_figure]:bg-muted [&_figure_>_button:first-child]:w-full [&_figure_>_button:first-child]:h-[128px] [&_figure_>_button:first-child]:p-1 [&_img]:max-w-full [&_img]:max-h-full [&_img]:[object-fit:contain] [&_figcaption]:grid [&_figcaption]:gap-1 [&_figcaption]:min-w-0 [&_figcaption]:text-xs [&_figcaption]:text-muted-foreground [&_figcaption_>_span]:overflow-hidden [&_figcaption_>_span]:text-ellipsis [&_figcaption_>_span]:whitespace-nowrap [&_figcaption_>_small]:text-xs",
+} as const;

@@ -1,3 +1,6 @@
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { ExecutionCaseFilter } from "@/components/execution-case-filter";
 import { ReadModelStatusBar } from "@/components/read-model-status";
 import { Button, DatetimeInput, Select } from "@/components/ui";
@@ -7,7 +10,7 @@ import {
 } from "@/components/execution-records-table";
 
 import { ClipboardList } from "lucide-react";
-import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 
 import { getPlatformServices } from "@/lib/services";
 import {
@@ -109,21 +112,37 @@ export default async function ExecutionRecordsPage({
       : {}),
   }));
   return (
-    <div className="page-stack execution-records-page">
-      <section className="page-hero">
+    <div
+      className={cn(
+        "page-stack execution-records-page",
+        uiPatterns["page-stack"],
+        pageStyles["execution-records-page"],
+      )}
+    >
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <span className="eyebrow">Execution Records</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Execution Records</span>
           <h1>执行记录</h1>
           <p>每一次执行都以独立批次记录，可按任务、状态与时间筛选，点击进入详情查看日志与产物。</p>
         </div>
-        <span className="hero-icon violet">
+        <span className={cn("hero-icon violet", pageStyles["hero-icon"])}>
           <ClipboardList size={24} />
         </span>
       </section>
-      <section className="scope-caption" aria-label="执行记录范围">
+      <section
+        className={cn("scope-caption", pageStyles["scope-caption"])}
+        aria-label="执行记录范围"
+      >
         当前版本：{projectVersion?.name ?? "尚未配置"} · 仅展示此版本的任务与执行批次
       </section>
-      <form className="content-card run-history-filter" method="get">
+      <form
+        className={cn(
+          "content-card run-history-filter",
+          uiPatterns["content-card"],
+          pageStyles["run-history-filter"],
+        )}
+        method="get"
+      >
         <label>
           用例任务
           <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
@@ -189,27 +208,56 @@ export default async function ExecutionRecordsPage({
             ))}
           </Select>
         </label>
-        <Button className="button button-secondary" type="submit">
+        <Button
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          type="submit"
+        >
           筛选记录
         </Button>
-        <Link className="button button-secondary" href="/execution-records">
+        <LinkButton
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          href="/execution-records"
+        >
           重置筛选
-        </Link>
+        </LinkButton>
       </form>
       {batchPage.statistics ? <ReadModelStatusBar snapshots={[batchPage.statistics]} /> : null}
-      <section className="content-card execution-records-card">
-        <div className="records-table-header">
+      <Card
+        as="section"
+        className={cn(
+          "content-card execution-records-card",
+          uiPatterns["content-card"],
+          pageStyles["execution-records-card"],
+        )}
+      >
+        <div className={"records-table-header"}>
           <h2>批次列表</h2>
-          <span className="table-count">
+          <span className={cn("table-count", pageStyles["table-count"])}>
             本页 {batchPage.items.length} 条 · 每页 {filter.limit} 条
           </span>
         </div>
         {batchPage.items.length === 0 ? (
-          <div className="table-empty">
+          <div className={cn("table-empty", uiPatterns["table-empty"])}>
             <p>暂无符合条件的执行记录。</p>
-            <Link className="button button-primary" href="/run-batches">
+            <LinkButton
+              variant="primary"
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
+              href="/run-batches"
+            >
               前往发起执行
-            </Link>
+            </LinkButton>
           </div>
         ) : (
           <ExecutionRecordsTable
@@ -218,14 +266,32 @@ export default async function ExecutionRecordsPage({
           />
         )}
         {batchPage.nextCursor ? (
-          <Link
-            className="button button-secondary batch-next-page"
+          <LinkButton
+            className={cn(
+              "button button-secondary batch-next-page",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              pageStyles["batch-next-page"],
+            )}
             href={`/execution-records?${nextQuery}`}
           >
             查看更早记录
-          </Link>
+          </LinkButton>
         ) : null}
-      </section>
+      </Card>
     </div>
   );
 }
+
+const pageStyles = {
+  "batch-next-page": "mt-4 w-full justify-center",
+  "execution-records-card":
+    "[&_.records-table-header]:flex [&_.records-table-header]:items-center [&_.records-table-header]:justify-between [&_.records-table-header]:gap-3 [&_.records-table-header]:[padding:4px_0_14px] [&_.records-table-header_h2]:m-0 [&_.records-table-header_h2]:text-base [&_.batch-next-page]:mt-4",
+  "execution-records-page": "[&_.run-history-filter]:p-3 [&_.run-history-filter]:gap-3",
+  "hero-icon":
+    "inline-flex items-center gap-2 border border-solid border-border rounded-lg p-0 bg-card text-muted-foreground text-xs font-semibold shadow-xs w-12 h-12 justify-center [&.violet]:bg-muted [&.violet]:text-info",
+  "run-history-filter":
+    "grid grid-cols-[repeat(auto-fit,_minmax(180px,_1fr))] gap-3 items-end [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+  "scope-caption": "m-0 text-muted-foreground text-sm",
+  "table-count": "text-muted-foreground text-xs whitespace-nowrap",
+} as const;

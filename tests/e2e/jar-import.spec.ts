@@ -11,7 +11,7 @@ import { createPostgresDatabase } from "@autoforge/db/postgres";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -149,8 +149,14 @@ test("inherits TestNG cases from the JAR import page without reuploading or over
   await expect(
     dialog.getByLabel("来源版本").locator(`option[value="${target.projectVersionId}"]`),
   ).toHaveCount(0);
-  await dialog.getByLabel("来源版本").selectOption(source.projectVersionId);
-  await dialog.getByLabel("来源测试阶段").selectOption(source.testStageId);
+  await dialog
+    .getByLabel("来源版本")
+    .and(dialog.locator("select"))
+    .selectOption(source.projectVersionId);
+  await dialog
+    .getByLabel("来源测试阶段")
+    .and(dialog.locator("select"))
+    .selectOption(source.testStageId);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await expectUiIntegrity(page);
@@ -272,8 +278,14 @@ test("inherits TestNG cases from the JAR import page without reuploading or over
     await anonymous.dispose();
   }
   await page.getByRole("button", { name: "从其他版本继承", exact: true }).click();
-  await dialog.getByLabel("来源版本").selectOption(source.projectVersionId);
-  await dialog.getByLabel("来源测试阶段").selectOption(source.testStageId);
+  await dialog
+    .getByLabel("来源版本")
+    .and(dialog.locator("select"))
+    .selectOption(source.projectVersionId);
+  await dialog
+    .getByLabel("来源测试阶段")
+    .and(dialog.locator("select"))
+    .selectOption(source.testStageId);
   await dialog.getByRole("button", { name: "开始继承", exact: true }).click();
   await finish();
   await expect(dialog.getByRole("status")).toContainText("新增 0 条 · 跳过 31 条已有用例");
@@ -585,9 +597,9 @@ public class MixedVisibleTest {
   });
 
   await page.getByRole("link", { name: "查看用例管理" }).click();
-  await expect(page.locator(".case-tree-directory").first()).toHaveAttribute("open", "");
+  await expect(page.locator(".case-tree-directory").first()).toHaveAttribute("data-open", "true");
   const folderCheckbox = page
-    .locator('.case-tree-directory summary input[type="checkbox"]')
+    .locator('.case-tree-directory .ui-disclosure-label input[type="checkbox"]')
     .first();
   await folderCheckbox.check();
   await expect(folderCheckbox).toBeChecked();
@@ -813,13 +825,13 @@ public class MixedVisibleTest {
   await globalSearch.fill("每日冒烟");
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeVisible();
   await globalSearch.press("ArrowDown");
-  await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeFocused();
+  await expect(page.getByRole("option", { name: /每日冒烟测试/ }).getByRole("link")).toBeFocused();
   await expectUiConsistency(page);
 
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
-  await page.getByRole("button", { name: "目标用例任务", exact: true }).click();
+  await page.getByRole("combobox", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
@@ -828,7 +840,7 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
   await expect(page.getByRole("heading", { name: "1 个用例" })).toBeVisible();
   const taskCaseTree = page.getByRole("tree", { name: "任务用例树" });
-  await taskCaseTree.locator("summary").first().click();
+  await taskCaseTree.locator(".ui-disclosure-label").first().click();
   await expect(
     taskCaseTree.getByRole("button", { name: `移除 ${taskCase.displayName}` }),
   ).toBeVisible();
@@ -982,7 +994,7 @@ public class MixedVisibleTest {
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
-  await page.getByRole("button", { name: "目标用例任务", exact: true }).click();
+  await page.getByRole("combobox", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
@@ -1232,7 +1244,11 @@ public class MixedVisibleTest {
   await page.keyboard.press("Escape");
   await expect(caseInspector.getByRole("heading", { name: "失败分析结论（1）" })).toBeVisible();
   await expect(caseInspector.getByText("BUG-E2E-4096")).toBeHidden();
-  await caseInspector.locator(".case-analysis-history-item > summary").click();
+  await caseInspector
+    .locator(
+      ".case-analysis-history-item > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(caseInspector.getByText("结算状态字段与接口契约不一致")).toBeVisible();
   await expect(caseInspector.getByText("BUG-E2E-4096")).toBeVisible();
   await expect
@@ -1344,7 +1360,15 @@ public class MixedVisibleTest {
   await expect(page.locator(".scheduling-log")).toHaveCount(0);
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
-  await expect(page.locator(".execution-log")).toHaveClass(/execution-log-dark/);
+  await expect(page.locator(".execution-log")).not.toHaveClass(
+    /(?:^|\s)execution-log-dark(?:\s|$)/,
+  );
+  await page.getByRole("button", { name: "深色日志", exact: true }).click();
+  await expect(page.locator(".execution-log")).toHaveClass(/(?:^|\s)execution-log-dark(?:\s|$)/);
+  await page.getByRole("button", { name: "浅色日志", exact: true }).click();
+  await expect(page.locator(".execution-log")).not.toHaveClass(
+    /(?:^|\s)execution-log-dark(?:\s|$)/,
+  );
   await expect(
     page.locator(".execution-log .ansi-red").filter({ hasText: "first attempt assertion failed" }),
   ).toContainText("first attempt assertion failed");
@@ -1463,7 +1487,7 @@ public class MixedVisibleTest {
     await expect(anonymousPage.getByText("执行类路径", { exact: true }).first()).toBeVisible();
     const loginToRerun = anonymousPage.getByRole("link", { name: "登录后执行此用例" });
     await expect(loginToRerun).toBeVisible();
-    await expect(loginToRerun).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expectReadableText(loginToRerun);
     await expect(anonymousPage.locator(".share-log-output")).toContainText(
       /first attempt assertion failed|retry passed/,
     );
@@ -1526,7 +1550,9 @@ public class MixedVisibleTest {
     `/insights?outcome=succeeded&leftBatchId=${encodeURIComponent(batch.id)}&rightBatchId=${encodeURIComponent(cancellationBatch.id)}`,
   );
   // A new filter has its own background snapshot; assert the result after the first publication.
-  await expect(page.getByLabel("结果")).toHaveValue("succeeded", { timeout: 30_000 });
+  await expect(page.locator('select[name="outcome"]')).toHaveValue("succeeded", {
+    timeout: 30_000,
+  });
   await expect(page.getByRole("img", { name: /共同用例 1/ })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".insight-change-columns")).toBeVisible();
   await page.locator(".insight-comparison-card").getByRole("button", { name: "查看明细" }).click();
@@ -1549,7 +1575,7 @@ public class MixedVisibleTest {
   await expect(comparisonDialog.getByText("没有符合当前条件的用例。")).toBeVisible();
   await comparisonDialog.locator('select[aria-label="左侧批次结果"]').selectOption("all");
   await expect(comparisonDialog.locator(".insight-comparison-table tbody tr")).toHaveCount(1);
-  await expect(comparisonDialog.getByRole("button", { name: "对比范围" })).toBeVisible();
+  await expect(comparisonDialog.getByRole("combobox", { name: "对比范围" })).toBeVisible();
   await comparisonDialog.getByRole("button", { name: "关闭批次对比明细" }).click();
   await page.getByRole("button", { name: "导出当前范围" }).click();
   const exportLink = page.getByRole("link", { name: /下载 \d+ 行/ });
@@ -1618,7 +1644,7 @@ public class MixedVisibleTest {
   await expect(e2eRunnerRow).toBeVisible();
   await expectUiConsistency(page);
   await captureUi(page, "runner-list-compact");
-  const managementMenu = e2eRunnerRow.locator("details.runner-actions-menu");
+  const managementMenu = e2eRunnerRow.locator(".ui-disclosure.runner-actions-menu");
   await managementMenu.getByText("管理操作", { exact: true }).click();
   const drainAction = managementMenu.getByRole("button", { name: "排空", exact: true });
   await expect(drainAction).toBeVisible();
@@ -1635,16 +1661,17 @@ public class MixedVisibleTest {
   await managementMenu.getByText("管理操作", { exact: true }).click();
   await e2eRunnerRow.getByRole("button", { name: "终端浮窗" }).click();
   const terminalWindow = page.getByRole("dialog", { name: "E2E Runner 直连终端" });
+  const terminalPanel = terminalWindow.locator(".terminal-window");
   const initialTerminalBox = await terminalWindow.boundingBox();
   await page.getByRole("button", { name: "放大终端窗口" }).click();
-  await expect(terminalWindow).toHaveClass(/terminal-window-expanded/u);
+  await expect(terminalPanel).toHaveClass(/(?:^|\s)terminal-window-expanded(?:\s|$)/u);
   await expect(page.getByRole("button", { name: "还原终端窗口" })).toBeVisible();
   await expect
     .poll(async () => (await terminalWindow.boundingBox())?.width ?? 0)
     .toBeGreaterThan(initialTerminalBox?.width ?? 0);
   await captureUi(page, "runner-terminal-expanded");
   await page.getByRole("button", { name: "还原终端窗口" }).click();
-  await expect(terminalWindow).not.toHaveClass(/terminal-window-expanded/u);
+  await expect(terminalPanel).not.toHaveClass(/(?:^|\s)terminal-window-expanded(?:\s|$)/u);
 
   const openCommand = new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(
@@ -1685,7 +1712,10 @@ public class MixedVisibleTest {
   await expect(page.locator(".quality-caption")).toContainText("首页最多读取 10,000 条");
   await expect(page.locator(".dashboard-period-block time")).toContainText("数据截至");
   await expect(page.locator(".quality-trend-value")).toContainText("50.0%");
-  const dashboardAnalytics = await browserJson<{ trend: Array<{ bucket: string }> }>(
+  const dashboardAnalytics = await browserJson<{
+    trend: Array<{ bucket: string }>;
+    failures: Array<{ count: number }>;
+  }>(
     page,
     `/api/v1/analytics?${new URLSearchParams({
       projectId: DEFAULT_PROJECT_ID,
@@ -1703,7 +1733,16 @@ public class MixedVisibleTest {
   await expect(page.locator(".dashboard-runner-snapshots time").first()).toBeVisible();
   await expect(page.locator(".quality-metric-strip")).toContainText("暂无上周基线");
   await expect(page.locator(".failure-scope-metrics")).toContainText("失败类型");
-  await expect(page.locator(".failure-triage-insight")).toContainText("高度集中");
+  // Other acceptance scenarios also create failures. Compare this dashboard with
+  // its scoped snapshot instead of assuming a fixed cross-test concentration.
+  const failureCounts = dashboardAnalytics.body.failures.map(({ count }) => count);
+  const failureTotal = failureCounts.reduce((total, count) => total + count, 0);
+  const concentration = failureTotal
+    ? Math.round(((failureCounts[0] ?? 0) / failureTotal) * 100)
+    : 0;
+  const expectedConcentration =
+    concentration >= 70 ? "高度集中" : concentration >= 40 ? "中度集中" : "原因较分散";
+  await expect(page.locator(".failure-triage-insight")).toContainText(expectedConcentration);
   await expect(page.locator(".activity-summary-strip")).toBeVisible();
   await expectDesktopLayoutFits(page, 1024, 768);
   await captureUi(page, "dashboard-data-1024");
@@ -1740,7 +1779,7 @@ public class MixedVisibleTest {
     .first();
   await expect(completionNotification).toBeVisible();
   await completionNotification.click();
-  await expect(completionNotification).toHaveClass(/read/);
+  await expect(completionNotification).toHaveClass(/(?:^|\s)read(?:\s|$)/);
   await expectUiConsistency(page);
   await page.getByRole("button", { name: "关闭通知" }).click();
   await page.reload();
@@ -1829,7 +1868,11 @@ public class MixedVisibleTest {
     `v${savedPreview.definition.currentVersion}`,
   );
   await expect(
-    page.locator(".case-inspector-section > summary").filter({ hasText: "版本历史" }),
+    page
+      .locator(
+        ".case-inspector-section > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+      )
+      .filter({ hasText: "版本历史" }),
   ).toHaveText(`版本历史（${savedPreview.versions.length}）`);
   const singleDeleteButton = page.getByRole("button", { name: "删除用例", exact: true });
   await singleDeleteButton.scrollIntoViewIfNeeded();
@@ -2378,7 +2421,9 @@ async function expectUiConsistency(page: Page): Promise<void> {
     )
       .filter(isVisible)
       .map((element) => {
-        const bounds = element.getBoundingClientRect();
+        const bounds = (
+          element.closest(".ant-select, .ant-picker") ?? element
+        ).getBoundingClientRect();
         return {
           element: element.tagName.toLowerCase(),
           height: Math.round(bounds.height * 10) / 10,

@@ -1,5 +1,8 @@
 "use client";
-import Link from "next/link";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
+
+import { LinkButton } from "@/components/ui/link-button";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Button } from "./ui";
 
@@ -41,14 +44,21 @@ export function CursorPagination({
     return `${pathname}?${parameters}`;
   }
   return (
-    <nav className="management-pagination" aria-label={label}>
+    <nav
+      className={cn("management-pagination", uiPatterns["management-pagination"])}
+      aria-label={label}
+    >
       <span>
         第 {page} 页 · 本页 {count} 条
       </span>
       <div>
         {page > 1 ? (
-          <Link
-            className="button button-secondary"
+          <LinkButton
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             href={(() => {
               const parameters = new URLSearchParams(current.toString());
               for (const key of [cursorKey, trailKey, pageKey]) parameters.delete(key);
@@ -56,21 +66,35 @@ export function CursorPagination({
             })()}
           >
             第一页
-          </Link>
+          </LinkButton>
         ) : null}
         {trail.length ? (
-          <Link className="button button-secondary" href={destination(false)}>
+          <LinkButton
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            href={destination(false)}
+          >
             上一页
-          </Link>
+          </LinkButton>
         ) : (
           <Button disabled type="button">
             上一页
           </Button>
         )}
         {nextCursor ? (
-          <Link className="button button-secondary" href={destination(true)}>
+          <LinkButton
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            href={destination(true)}
+          >
             下一页
-          </Link>
+          </LinkButton>
         ) : (
           <Button disabled type="button">
             下一页

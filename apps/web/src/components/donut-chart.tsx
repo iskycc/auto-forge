@@ -1,7 +1,8 @@
+import { cn } from "@/lib/utils";
 export type DonutChartSegment = {
   label: string;
   value: number;
-  // 语义 token 引用，如 "var(--color-success)"；组件不硬编码任何颜色。
+  // 语义 token 引用，如 "var(--success)"；组件不硬编码任何颜色。
   color: string;
 };
 
@@ -40,10 +41,18 @@ export function DonutChart({
   });
 
   return (
-    <figure className="round-donut" role="img" aria-label={ariaLabel}>
-      <svg className="round-donut-svg" viewBox="0 0 120 120" aria-hidden="true">
+    <figure
+      className={cn("round-donut", donutChartStyles["round-donut"])}
+      role="img"
+      aria-label={ariaLabel}
+    >
+      <svg
+        className={cn("round-donut-svg", donutChartStyles["round-donut-svg"])}
+        viewBox="0 0 120 120"
+        aria-hidden="true"
+      >
         <circle
-          className="round-donut-track"
+          className={cn("round-donut-track", donutChartStyles["round-donut-track"])}
           cx="60"
           cy="60"
           r={RADIUS}
@@ -64,18 +73,31 @@ export function DonutChart({
             transform="rotate(-90 60 60)"
           />
         ))}
-        <text className="round-donut-value" x="60" y="58" textAnchor="middle">
+        <text
+          className={cn("round-donut-value", donutChartStyles["round-donut-value"])}
+          x="60"
+          y="58"
+          textAnchor="middle"
+        >
           {centerValue}
         </text>
-        <text className="round-donut-caption" x="60" y="76" textAnchor="middle">
+        <text
+          className={cn("round-donut-caption", donutChartStyles["round-donut-caption"])}
+          x="60"
+          y="76"
+          textAnchor="middle"
+        >
           {centerLabel}
         </text>
       </svg>
-      <figcaption className="round-donut-legend">
+      <figcaption className={cn("round-donut-legend", donutChartStyles["round-donut-legend"])}>
         {segments.map((segment) => (
-          <span className="round-donut-legend-item" key={segment.label}>
+          <span
+            className={cn("round-donut-legend-item", donutChartStyles["round-donut-legend-item"])}
+            key={segment.label}
+          >
             <span
-              className="round-donut-swatch"
+              className={cn("round-donut-swatch", donutChartStyles["round-donut-swatch"])}
               style={{ backgroundColor: segment.color }}
               aria-hidden="true"
             />
@@ -86,3 +108,15 @@ export function DonutChart({
     </figure>
   );
 }
+
+const donutChartStyles = {
+  "round-donut": "flex items-center gap-4 m-0",
+  "round-donut-caption": "fill-muted-foreground text-xs",
+  "round-donut-legend": "grid gap-1.5",
+  "round-donut-legend-item":
+    "flex items-center gap-[7px] text-muted-foreground text-xs whitespace-nowrap",
+  "round-donut-svg": "w-[104px] h-[104px] [flex:0_0_auto]",
+  "round-donut-swatch": "w-2.5 h-2.5 [flex:0_0_auto] rounded-md",
+  "round-donut-track": "stroke-input",
+  "round-donut-value": "fill-foreground text-lg font-semibold",
+} as const;

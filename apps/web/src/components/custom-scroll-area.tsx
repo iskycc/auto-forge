@@ -1,4 +1,5 @@
 "use client";
+import { cn } from "@/lib/utils";
 
 import {
   useCallback,
@@ -155,12 +156,19 @@ export function CustomScrollArea({
 
   return (
     <div
-      className={["custom-scroll-area", className].filter(Boolean).join(" ")}
+      className={[cn("custom-scroll-area", customScrollAreaStyles["custom-scroll-area"]), className]
+        .filter(Boolean)
+        .join(" ")}
       data-scrollable={metrics.scrollable ? "true" : "false"}
     >
       <div
         aria-label={ariaLabel}
-        className={["custom-scroll-viewport", viewportClassName].filter(Boolean).join(" ")}
+        className={[
+          cn("custom-scroll-viewport", customScrollAreaStyles["custom-scroll-viewport"]),
+          viewportClassName,
+        ]
+          .filter(Boolean)
+          .join(" ")}
         id={viewportId}
         onScroll={scheduleMeasurement}
         ref={viewportRef}
@@ -177,7 +185,7 @@ export function CustomScrollArea({
         aria-valuemax={metrics.maximumScrollTop}
         aria-valuemin={0}
         aria-valuenow={metrics.scrollTop}
-        className="custom-scrollbar"
+        className={cn("custom-scrollbar", customScrollAreaStyles["custom-scrollbar"])}
         data-visible={metrics.scrollable ? "true" : "false"}
         onKeyDown={scrollWithKeyboard}
         onPointerDown={moveFromScrollbar}
@@ -186,7 +194,7 @@ export function CustomScrollArea({
         tabIndex={metrics.scrollable ? 0 : -1}
       >
         <span
-          className="custom-scrollbar-thumb"
+          className={cn("custom-scrollbar-thumb", customScrollAreaStyles["custom-scrollbar-thumb"])}
           onPointerCancel={endThumbDrag}
           onPointerDown={startThumbDrag}
           onPointerMove={dragThumb}
@@ -230,3 +238,13 @@ function sameMetrics(left: ScrollMetrics, right: ScrollMetrics): boolean {
     Math.abs(left.thumbTop - right.thumbTop) < 0.5
   );
 }
+
+const customScrollAreaStyles = {
+  "custom-scroll-area": "relative min-w-0 min-h-0 overflow-hidden",
+  "custom-scroll-viewport":
+    "w-full h-full min-w-0 min-h-0 overflow-x-hidden overflow-y-scroll [overscroll-behavior:contain] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0 [&:focus-visible]:[outline:2px_solid_var(--info)] [&:focus-visible]:[outline-offset:-2px]",
+  "custom-scrollbar":
+    'absolute z-3 top-2 right-1 bottom-2 w-2.5 rounded-full [background:color-mix(in_srgb,_var(--muted-foreground)_18%,_transparent)] cursor-pointer [touch-action:none] [&[data-visible="false"]]:invisible [&[data-visible="false"]]:opacity-0 [&[data-visible="false"]]:pointer-events-none [&:focus-visible]:[outline:2px_solid_var(--info)] [&:focus-visible]:[outline-offset:1px] [&:hover_.custom-scrollbar-thumb]:bg-foreground [&:focus-visible_.custom-scrollbar-thumb]:bg-foreground',
+  "custom-scrollbar-thumb":
+    "absolute top-0 right-0.5 block w-1.5 min-h-10 rounded-full bg-muted-foreground cursor-grab transition-colors duration-150 motion-reduce:transition-none [&:active]:cursor-grabbing",
+} as const;

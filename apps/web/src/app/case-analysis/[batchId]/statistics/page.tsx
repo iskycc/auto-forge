@@ -1,3 +1,6 @@
+import { LinkButton } from "@/components/ui/link-button";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import {
   failureAnalysisBatchSchema,
   failureAnalysisStatisticsPageSchema,
@@ -6,7 +9,6 @@ import { ReadModelStatusBar, ReadModelPendingPage } from "@/components/read-mode
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { notFound } from "next/navigation";
 import { BarChart3 } from "lucide-react";
-import Link from "next/link";
 
 import { FailureAnalysisStatistics } from "@/components/failure-analysis-statistics";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
@@ -63,22 +65,24 @@ export default async function FailureAnalysisStatisticsPage({
   const batch = failureAnalysisBatchSchema.parse(batchProjection.payload);
   const initialPage = failureAnalysisStatisticsPageSchema.parse(projection.payload);
   return (
-    <div className="page-stack failure-analysis-statistics-page">
-      <section className="page-hero">
+    <div className={cn("page-stack failure-analysis-statistics-page", uiPatterns["page-stack"])}>
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <span className="eyebrow">Failure Analysis · Statistics</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>
+            Failure Analysis · Statistics
+          </span>
           <h1>分析统计</h1>
           <p>
             任务 #{batch.sequenceNumber} · {batch.suiteName}；仅统计这一次执行的分析进度与人员结论。
           </p>
-          <Link
-            className="ui-button ui-button-secondary"
+          <LinkButton
+            className={"ui-button ui-button-secondary"}
             href={`/case-analysis/${encodeURIComponent(batchId)}`}
           >
             返回当前分析任务
-          </Link>
+          </LinkButton>
         </div>
-        <span className="hero-icon violet">
+        <span className={cn("hero-icon violet", pageStyles["hero-icon"])}>
           <BarChart3 aria-hidden="true" size={24} />
         </span>
       </section>
@@ -93,3 +97,8 @@ export default async function FailureAnalysisStatisticsPage({
     </div>
   );
 }
+
+const pageStyles = {
+  "hero-icon":
+    "inline-flex items-center gap-2 border border-solid border-border rounded-lg p-0 bg-card text-muted-foreground text-xs font-semibold shadow-xs w-12 h-12 justify-center [&.violet]:bg-muted [&.violet]:text-info",
+} as const;

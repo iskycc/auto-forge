@@ -1,10 +1,14 @@
+import { Disclosure } from "@/components/ui/disclosure";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import {
   securityAuditActions,
   securityAuditCategories,
   type SecurityAuditCategory,
 } from "@autoforge/contracts";
 import { Download, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
-import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 import { SecurityAuditTable } from "@/components/security-audit-table";
 import { RefreshAuditButton } from "@/components/refresh-audit-button";
@@ -78,32 +82,54 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
   const advancedFilters = Boolean(filter.actorId || filter.recordedAfter || filter.recordedBefore);
 
   return (
-    <section className="page-stack audit-page">
-      <header className="page-header operations-page-header">
+    <section className={cn("page-stack audit-page", uiPatterns["page-stack"])}>
+      <header
+        className={cn(
+          "page-header operations-page-header",
+          uiPatterns["page-header"],
+          pageStyles["operations-page-header"],
+        )}
+      >
         <div>
-          <p className="eyebrow">访问与变更追踪</p>
+          <p className={cn("eyebrow", uiPatterns["eyebrow"])}>访问与变更追踪</p>
           <h1>安全审计</h1>
           <p>追踪重要数据变更、账号登录和访问安全事件。</p>
         </div>
-        <div className="button-row">
+        <div className={cn("button-row", uiPatterns["button-row"])}>
           <RefreshAuditButton />
           {hasPermissionInAnyScope(identity, "audit.export") ? (
-            <a
-              className="button button-secondary"
+            <LinkButton
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               href={`/api/v1/audit-events/export?${exportParameters}`}
             >
               <Download size={16} />
               导出记录
-            </a>
+            </LinkButton>
           ) : null}
         </div>
       </header>
-      <section className="content-card audit-card" aria-label="安全审计记录">
-        <form action="/audit" className="audit-filter-panel" method="get">
-          <div className="audit-filter-grid">
+      <Card
+        as="section"
+        className={cn(
+          "content-card audit-card",
+          uiPatterns["content-card"],
+          pageStyles["audit-card"],
+        )}
+        aria-label="安全审计记录"
+      >
+        <form
+          action="/audit"
+          className={cn("audit-filter-panel", pageStyles["audit-filter-panel"])}
+          method="get"
+        >
+          <div className={cn("audit-filter-grid", pageStyles["audit-filter-grid"])}>
             <label>
               搜索记录
-              <div className="audit-search-field">
+              <div className={cn("audit-search-field", pageStyles["audit-search-field"])}>
                 <Search size={16} aria-hidden="true" />
                 <Input
                   aria-label="搜索审计记录"
@@ -146,12 +172,17 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
               </Select>
             </label>
           </div>
-          <details className="audit-advanced-filters" open={advancedFilters}>
-            <summary>
-              <SlidersHorizontal size={15} />
-              人员与时间筛选
-            </summary>
-            <div className="audit-advanced-grid">
+          <Disclosure
+            header={
+              <>
+                <SlidersHorizontal size={15} />
+                人员与时间筛选
+              </>
+            }
+            className={cn("audit-advanced-filters", pageStyles["audit-advanced-filters"])}
+            defaultOpen={advancedFilters}
+          >
+            <div className={cn("audit-advanced-grid", pageStyles["audit-advanced-grid"])}>
               <label>
                 操作者
                 <Select name="actorId" defaultValue={single(values.actorId) ?? ""}>
@@ -178,13 +209,20 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                 />
               </label>
             </div>
-          </details>
-          <div className="audit-filter-actions">
+          </Disclosure>
+          <div className={cn("audit-filter-actions", pageStyles["audit-filter-actions"])}>
             <p>仅记录重要数据变更与访问安全事件</p>
             <div>
-              <Link className="button button-secondary" href="/audit">
+              <LinkButton
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
+                href="/audit"
+              >
                 清空筛选
-              </Link>
+              </LinkButton>
               <Button type="submit" variant="primary">
                 <Search size={16} />
                 查询
@@ -192,7 +230,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             </div>
           </div>
         </form>
-        <div className="audit-list-heading">
+        <div className={cn("audit-list-heading", pageStyles["audit-list-heading"])}>
           <h2>
             <ShieldCheck size={18} />
             安全事件
@@ -209,28 +247,39 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
           )}
           timeZone={timeZone}
         />
-        <nav aria-label="审计事件分页" className="audit-pagination">
+        <nav
+          aria-label="审计事件分页"
+          className={cn("audit-pagination", pageStyles["audit-pagination"])}
+        >
           <span>第 {cursorTrail.length + 1} 页 · 每页最多 30 条</span>
           <div>
             {cursorTrail.length ? (
-              <Link
-                className="button button-secondary"
+              <LinkButton
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 href={`/audit?${previousPageParameters(values, projectId, cursorTrail, timeZone)}`}
               >
                 上一页
-              </Link>
+              </LinkButton>
             ) : (
               <Button type="button" disabled>
                 上一页
               </Button>
             )}
             {events.nextCursor ? (
-              <Link
-                className="button button-secondary"
+              <LinkButton
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 href={`/audit?${nextPageParameters(values, projectId, events.nextCursor, cursorTrail, timeZone)}`}
               >
                 下一页
-              </Link>
+              </LinkButton>
             ) : (
               <Button type="button" disabled>
                 下一页
@@ -238,7 +287,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             )}
           </div>
         </nav>
-      </section>
+      </Card>
     </section>
   );
 }
@@ -340,3 +389,24 @@ function auditCursorTrail(value: string | string[] | undefined): string[] {
     return [];
   }
 }
+
+const pageStyles = {
+  "audit-advanced-filters":
+    "[&_.ui-disclosure-label]:inline-flex [&_.ui-disclosure-label]:min-h-8 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:list-none [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-label]:w-fit [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:text-sm",
+  "audit-advanced-grid": "grid grid-cols-3 gap-3 pt-4",
+  "audit-card":
+    "[--audit-time-width:16%] [--audit-actor-width:18%] [--audit-action-width:21%] [--audit-result-width:10%] [--audit-detail-width:90px] overflow-hidden",
+  "audit-filter-actions":
+    "flex items-center justify-between gap-3 [&_>_p]:m-0 [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2",
+  "audit-filter-grid":
+    "grid grid-cols-[minmax(0,_1.6fr)_repeat(3,_minmax(0,_1fr))] gap-3 items-end max-[1281px]:grid-cols-2",
+  "audit-filter-panel":
+    "grid gap-4 p-5 border-b border-solid border-border [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.audit-search-field_>_input.ui-input[aria-label]]:[padding-left:calc(12px_*_3)]",
+  "audit-list-heading":
+    "flex items-center justify-between gap-3 py-4 px-5 [&_>_span]:m-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_h2]:flex [&_h2]:items-center [&_h2]:gap-2 [&_h2]:m-0 [&_h2]:text-sm",
+  "audit-pagination":
+    "flex items-center justify-between gap-3 py-4 px-5 border-t border-solid border-border [&_>_span]:m-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2",
+  "audit-search-field":
+    "relative block [&_>_svg]:absolute [&_>_svg]:left-3 [&_>_svg]:top-1/2 [&_>_svg]:[transform:translateY(-50%)] [&_>_svg]:pointer-events-none",
+  "operations-page-header": "items-center",
+} as const;

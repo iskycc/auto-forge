@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -293,14 +297,28 @@ export function SchedulingLogViewer({
 
   return (
     <TerminalLogViewer title={title} onClose={onClose}>
-      {error ? <p className="form-error">{error}</p> : null}
+      {error ? (
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+          {error}
+        </Notice>
+      ) : null}
       {loadingHistory ? (
-        <p className="scheduling-log-status" role="status">
+        <p
+          className={cn(
+            "scheduling-log-status",
+            schedulingLogViewerStyles["scheduling-log-status"],
+          )}
+          role="status"
+        >
           正在自动同步历史调度日志，已加载 {events.length} 条…
         </p>
       ) : null}
       <div
-        className="execution-log execution-log-dark scheduling-log"
+        className={cn(
+          "execution-log scheduling-log",
+          schedulingLogViewerStyles["execution-log"],
+          schedulingLogViewerStyles["scheduling-log"],
+        )}
         aria-live="polite"
         ref={logRef}
         role="log"
@@ -314,18 +332,24 @@ export function SchedulingLogViewer({
       >
         {events.length > 0 ? (
           <div
-            className="scheduling-log-window"
+            className={cn(
+              "scheduling-log-window",
+              schedulingLogViewerStyles["scheduling-log-window"],
+            )}
             style={{ height: events.length * SCHEDULING_EVENT_ROW_HEIGHT_PX }}
           >
             <div
-              className="scheduling-log-visible-rows"
+              className={cn(
+                "scheduling-log-visible-rows",
+                schedulingLogViewerStyles["scheduling-log-visible-rows"],
+              )}
               style={{
                 transform: `translateY(${visibleRange.first * SCHEDULING_EVENT_ROW_HEIGHT_PX}px)`,
               }}
             >
               {visibleEvents.map((event) => (
                 <div className={`scheduling-event ${schedulingEventClass(event)}`} key={event.id}>
-                  <span className="ansi-bright-black">[{formatEventTime(event.recordedAt)}]</span>{" "}
+                  <span className={"ansi-bright-black"}>[{formatEventTime(event.recordedAt)}]</span>{" "}
                   {event.message}
                 </div>
               ))}
@@ -340,3 +364,12 @@ export function SchedulingLogViewer({
     </TerminalLogViewer>
   );
 }
+
+const schedulingLogViewerStyles = {
+  "execution-log": uiPatterns["execution-log"],
+  "scheduling-log":
+    "[&_.scheduling-event]:block [&_.scheduling-event]:h-5.5 [&_.scheduling-event]:leading-[22px] [&_.scheduling-event_.ansi-bright-black]:text-muted-foreground [&_.scheduling-event-green]:text-success [&_.scheduling-event-red]:text-destructive [&_.scheduling-event-yellow]:text-warning [&_.scheduling-event-blue]:text-info",
+  "scheduling-log-status": "[margin:0_16px_10px] text-muted-foreground text-xs",
+  "scheduling-log-visible-rows": "absolute top-0 left-0 w-max min-w-full",
+  "scheduling-log-window": "relative min-w-full",
+} as const;

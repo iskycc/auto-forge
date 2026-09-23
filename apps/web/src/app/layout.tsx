@@ -5,6 +5,7 @@ import { connection } from "next/server";
 
 import { PlatformTimeProvider } from "@/components/platform-time";
 import { AppShell } from "@/components/app-shell";
+import { AntDesignProvider } from "@/components/ant-design-provider";
 import { UiFeedbackProvider } from "@/components/ui-feedback";
 import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
@@ -14,8 +15,7 @@ import {
   selectedProjectId,
 } from "@/lib/selected-project";
 
-import "@xterm/xterm/css/xterm.css";
-import "./globals.css";
+import "./theme.css";
 
 export const metadata: Metadata = {
   title: {
@@ -62,38 +62,40 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html data-time-zone={platformTimeZone} lang="zh-CN">
       <body>
-        <PlatformTimeProvider serverTime={services.clock.now().toISOString()}>
-          <UiFeedbackProvider>
-            <AppShell
-              mode={services.config.mode}
-              timeZone={platformTimeZone}
-              {...(identity
-                ? {
-                    userName: identity.user.displayName,
-                    userId: identity.user.id,
-                    permissions,
-                    canCreateProject: hasPermission(identity, "project.manage"),
-                    canManageSelectedProject: Boolean(
-                      activeProjectId &&
-                      !projects.find((project) => project.id === activeProjectId)?.archived &&
-                      hasPermission(identity, "project.manage", activeProjectId),
-                    ),
-                    canReadSelectedProject: Boolean(
-                      activeProjectId && hasPermission(identity, "project.read", activeProjectId),
-                    ),
-                    forcePasswordChange: identity.user.forcePasswordChange,
-                    projects: projects.map(({ id, name }) => ({ id, name })),
-                    selectedProjectId: activeProjectId,
-                    projectVersions,
-                    selectedProjectVersionId: activeHierarchy.projectVersionId,
-                    selectedTestStageId: activeHierarchy.testStageId,
-                  }
-                : {})}
-            >
-              {children}
-            </AppShell>
-          </UiFeedbackProvider>
-        </PlatformTimeProvider>
+        <AntDesignProvider>
+          <PlatformTimeProvider serverTime={services.clock.now().toISOString()}>
+            <UiFeedbackProvider>
+              <AppShell
+                mode={services.config.mode}
+                timeZone={platformTimeZone}
+                {...(identity
+                  ? {
+                      userName: identity.user.displayName,
+                      userId: identity.user.id,
+                      permissions,
+                      canCreateProject: hasPermission(identity, "project.manage"),
+                      canManageSelectedProject: Boolean(
+                        activeProjectId &&
+                        !projects.find((project) => project.id === activeProjectId)?.archived &&
+                        hasPermission(identity, "project.manage", activeProjectId),
+                      ),
+                      canReadSelectedProject: Boolean(
+                        activeProjectId && hasPermission(identity, "project.read", activeProjectId),
+                      ),
+                      forcePasswordChange: identity.user.forcePasswordChange,
+                      projects: projects.map(({ id, name }) => ({ id, name })),
+                      selectedProjectId: activeProjectId,
+                      projectVersions,
+                      selectedProjectVersionId: activeHierarchy.projectVersionId,
+                      selectedTestStageId: activeHierarchy.testStageId,
+                    }
+                  : {})}
+              >
+                {children}
+              </AppShell>
+            </UiFeedbackProvider>
+          </PlatformTimeProvider>
+        </AntDesignProvider>
       </body>
     </html>
   );

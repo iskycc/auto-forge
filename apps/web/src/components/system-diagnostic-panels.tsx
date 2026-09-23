@@ -1,3 +1,10 @@
+import { Badge } from "@/components/ui/badge";
+import { Notice } from "@/components/ui/notice";
+import { Progress } from "@/components/ui/progress";
+import { Disclosure } from "@/components/ui/disclosure";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import type { SystemDiagnostic } from "@autoforge/contracts";
 import {
   Activity,
@@ -12,7 +19,7 @@ import {
   Server,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import styles from "./system-diagnostics.module.css";
+import styles from "./system-diagnostics.styles";
 
 export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDiagnostic }) {
   const dependencies = [
@@ -49,13 +56,16 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
   const runtime = report.runtime;
   return (
     <>
-      <section className={`content-card ${styles.overview}`}>
+      <Card
+        as="section"
+        className={cn(uiPatterns["content-card"], `content-card ${styles.overview}`)}
+      >
         <div className={styles.overviewHeading}>
           <span className={`${styles.statusIcon} ${styles[tone]}`}>
             {needsAttention ? <CircleAlert size={25} /> : <CircleCheck size={25} />}
           </span>
           <div>
-            <p className="eyebrow">System health</p>
+            <p className={cn("eyebrow", uiPatterns["eyebrow"])}>System health</p>
             <h2>
               {unavailable ? "部分检查不可用" : needsAttention ? "有项目需要关注" : "平台运行正常"}
             </h2>
@@ -64,9 +74,9 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
               {needsAttention ? `发现 ${report.recentErrors.length} 项提示` : "未发现异常"}
             </p>
           </div>
-          <span className={`${styles.badge} ${styles[tone]}`}>
+          <Badge className={`${styles.badge} ${styles[tone]}`}>
             {unavailable ? "检查异常" : needsAttention ? "需要关注" : "健康"}
-          </span>
+          </Badge>
         </div>
         <div className={`diagnostic-summary ${styles.summary}`}>
           <div>
@@ -96,9 +106,13 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
             </small>
           </div>
         </div>
-      </section>
+      </Card>
       {report.recentErrors.length > 0 ? (
-        <section className={`content-card ${styles.issues}`} aria-label="诊断提示">
+        <Card
+          as="section"
+          className={cn(uiPatterns["content-card"], `content-card ${styles.issues}`)}
+          aria-label="诊断提示"
+        >
           <h3>
             <CircleAlert size={17} /> 需要关注
           </h3>
@@ -107,37 +121,39 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
               <li key={issue.code}>
                 <p className={styles.issueSummary}>{issue.summary}</p>
                 {issue.summary.length > 180 ? (
-                  <details>
-                    <summary>查看完整错误</summary>
+                  <Disclosure header={<>查看完整错误</>}>
                     <p>{issue.summary}</p>
-                  </details>
+                  </Disclosure>
                 ) : null}
                 <code>{issue.code}</code>
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       ) : null}
       <section aria-label="基础依赖健康" className={`diagnostic-grid ${styles.dependencies}`}>
         {dependencies.map(({ label, value, icon: Icon, advice }) => (
-          <article className={`content-card ${styles.dependency}`} key={label}>
+          <Card
+            as="article"
+            className={cn(uiPatterns["content-card"], `content-card ${styles.dependency}`)}
+            key={label}
+          >
             <div className={styles.panelHeading}>
               <Icon size={18} />
               <h3>{label}</h3>
-              <span className={`${styles.badge} ${styles[value.ready ? "success" : "danger"]}`}>
+              <Badge className={`${styles.badge} ${styles[value.ready ? "success" : "danger"]}`}>
                 {value.ready ? "就绪" : "异常"}
-              </span>
+              </Badge>
             </div>
             <strong>{value.provider ?? "未提供适配器信息"}</strong>
             <p>{value.ready ? "连接检查通过" : advice}</p>
             {!value.ready ? (
-              <details>
-                <summary>查看原始诊断</summary>
+              <Disclosure header={<>查看原始诊断</>}>
                 <p>{value.detail}</p>
-              </details>
+              </Disclosure>
             ) : null}
             <small>{value.durationMs === undefined ? "" : `检查耗时 ${value.durationMs} ms`}</small>
-          </article>
+          </Card>
         ))}
       </section>
       <div className={styles.panels}>
@@ -153,7 +169,11 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
 function NodeBuildPanel({ report }: { report: SystemDiagnostic }) {
   const runtime = report.runtime;
   return (
-    <section className={`content-card ${styles.panel}`} aria-label="节点与构建">
+    <Card
+      as="section"
+      className={cn(uiPatterns["content-card"], `content-card ${styles.panel}`)}
+      aria-label="节点与构建"
+    >
       <PanelHeading icon={<Server size={18} />} title="节点与构建" />
       <dl className={styles.facts}>
         <Fact label="当前响应节点">{runtime?.hostname ?? "未提供"}</Fact>
@@ -171,24 +191,28 @@ function NodeBuildPanel({ report }: { report: SystemDiagnostic }) {
           )}
         </Fact>
         <Fact label="后台资源策略">
-          <span
+          <Badge
             className={`${styles.badge} ${styles[runtime?.backgroundAllowed ? "success" : "warning"]}`}
           >
             {runtime ? (runtime.backgroundAllowed ? "允许后台工作" : "后台工作暂时退让") : "未提供"}
-          </span>
+          </Badge>
         </Fact>
       </dl>
       <p className={styles.note}>
         资源信息仅属于当前响应节点；后台工作根据 Web 和执行负载动态退让。
       </p>
-    </section>
+    </Card>
   );
 }
 
 function ResourceCapacityPanel({ report }: { report: SystemDiagnostic }) {
   const runtime = report.runtime;
   return (
-    <section className={`content-card ${styles.panel}`} aria-label="资源与容量">
+    <Card
+      as="section"
+      className={cn(uiPatterns["content-card"], `content-card ${styles.panel}`)}
+      aria-label="资源与容量"
+    >
       <PanelHeading icon={<Cpu size={18} />} title="资源与容量" />
       {runtime ? (
         <>
@@ -236,18 +260,24 @@ function ResourceCapacityPanel({ report }: { report: SystemDiagnostic }) {
           }
         />
       ) : (
-        <p className="form-error">平台数据卷容量读取失败。</p>
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+          平台数据卷容量读取失败。
+        </Notice>
       )}
       <p className={styles.note}>
         数据卷为整个文件系统容量，不代表 AutoForge 占用或远端对象存储容量。
       </p>
-    </section>
+    </Card>
   );
 }
 
 function QueueSnapshotPanel({ report }: { report: SystemDiagnostic }) {
   return (
-    <section className={`content-card ${styles.panel}`} aria-label="队列快照">
+    <Card
+      as="section"
+      className={cn(uiPatterns["content-card"], `content-card ${styles.panel}`)}
+      aria-label="队列快照"
+    >
       <PanelHeading icon={<Activity size={18} />} title="队列快照" />
       <div className={styles.queueStats}>
         {[
@@ -264,13 +294,17 @@ function QueueSnapshotPanel({ report }: { report: SystemDiagnostic }) {
       <p className={styles.note}>
         这是队列消息数量，不是执行中的用例数量。死信列表最多展示 20 条，每次最多重新投递 100 条。
       </p>
-    </section>
+    </Card>
   );
 }
 
 function ClockStatusPanel({ report }: { report: SystemDiagnostic }) {
   return (
-    <section className={`content-card ${styles.panel}`} aria-label="平台时间基准">
+    <Card
+      as="section"
+      className={cn(uiPatterns["content-card"], `content-card ${styles.panel}`)}
+      aria-label="平台时间基准"
+    >
       <PanelHeading icon={<Clock3 size={18} />} title="平台时间基准" />
       {report.clock ? (
         <dl className={styles.facts}>
@@ -300,7 +334,7 @@ function ClockStatusPanel({ report }: { report: SystemDiagnostic }) {
       ) : (
         <p className={styles.note}>当前版本未提供时间基准信息。</p>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -344,7 +378,7 @@ function Meter({
         <span>{label}</span>
         <small>{detail}</small>
       </div>
-      <progress
+      <Progress
         className={styles[tone]}
         aria-label={label}
         max={100}

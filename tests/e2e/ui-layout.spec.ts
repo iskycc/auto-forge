@@ -40,6 +40,78 @@ const primaryRoutes = [
   "/account/security",
 ] as const;
 
+test("native-backed filters keep accessible names, keyboard selection and form values", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("/audit");
+  const category = page.getByRole("combobox", { name: "审计分类", exact: true });
+  const nativeCategory = page.locator('select[name="category"]');
+  const option = await nativeCategory
+    .locator("option")
+    .nth(1)
+    .evaluate((element) => ({
+      value: (element as HTMLOptionElement).value,
+      label: element.textContent ?? "",
+    }));
+  await category.focus();
+  await page.keyboard.press("Space");
+  const menuOption = page.getByRole("option", { name: option.label, exact: true });
+  await expect(menuOption).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(nativeCategory).toHaveValue(option.value);
+  await expect(category).toBeFocused();
+  await page.getByRole("button", { name: "查询", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`category=${option.value}`));
+  await expect(page.locator(".ui-select", { has: category })).toContainText(option.label);
+  await page.getByRole("link", { name: "清空筛选", exact: true }).click();
+  await expect(nativeCategory).toHaveValue("");
+  await expect(page.locator(".ui-select", { has: category })).toContainText("全部分类");
+
+  await page.getByText("人员与时间筛选", { exact: true }).click();
+  const startsAt = page.getByRole("textbox", { name: "开始时间", exact: true });
+  await startsAt.fill("2026/09/01 09:30");
+  await expect(page.locator(".ant-picker-content th")).toHaveText([
+    "一",
+    "二",
+    "三",
+    "四",
+    "五",
+    "六",
+    "日",
+  ]);
+  await expect(page.locator(".ant-picker-month-btn")).toHaveText("9月");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await captureUi(page, "date-picker", viewport.width, false);
+  }
+  await page.getByRole("button", { name: "确定", exact: true }).click();
+  await expect(page.locator('input[name="recordedAfter"]')).toHaveValue("2026-09-01T09:30");
+  await page
+    .locator("form.audit-filter-panel")
+    .evaluate((form) => (form as HTMLFormElement).reset());
+  await expect(startsAt).toHaveValue("");
+  await expect(page.locator('input[name="recordedAfter"]')).toHaveValue("");
+  await startsAt.fill("2026/09/02 11:45");
+  await page
+    .locator("form.audit-filter-panel")
+    .evaluate((form) => (form as HTMLFormElement).reset());
+  await expect(startsAt).toHaveValue("");
+  const search = page.getByLabel("搜索审计记录");
+  await search.fill("尚未提交的筛选");
+  await nativeCategory.selectOption(option.value);
+  await page
+    .locator("form.audit-filter-panel")
+    .evaluate((form) => (form as HTMLFormElement).reset());
+  await expect(search).toHaveValue("");
+  await expect(nativeCategory).toHaveValue("");
+  await expect(page.locator(".ui-select", { has: category })).toContainText("全部分类");
+});
+
 test("layout guard distinguishes floating actions from overlapping controls on the same surface", async ({
   page,
 }) => {
@@ -253,8 +325,11 @@ test("many project versions stay compact and configure only the selected version
   const resourceForm = page.locator("form", {
     has: page.getByRole("button", { name: "登记链接并启用", exact: true }),
   });
-  await resourceForm.getByLabel("资源类型").selectOption("jar-bundle");
-  await resourceForm.getByLabel("压缩格式").selectOption("zip");
+  await resourceForm
+    .getByLabel("资源类型")
+    .and(resourceForm.locator("select"))
+    .selectOption("jar-bundle");
+  await resourceForm.getByLabel("压缩格式").and(resourceForm.locator("select")).selectOption("zip");
   await resourceForm.getByLabel("HTTP(S) 链接").fill("http://runtime.invalid/dependencies.zip");
   await resourceForm.getByLabel("文件名").fill("dependencies-for-version-23.zip");
   await resourceForm.getByLabel("SHA-256").fill("a".repeat(64));
@@ -380,10 +455,10 @@ test("topbar hierarchy selectors support keyboard opening, searching and focus r
 test("unified role scope selector exposes both system and project filters", async ({ page }) => {
   await ensureAdministrator(page);
   await page.goto("/settings/access?section=roles");
-  const scope = page.locator("label").filter({ hasText: "角色范围" }).getByRole("button");
+  const scope = page.getByRole("combobox", { name: "角色范围", exact: true });
   const systemRole = page.locator(".role-card").filter({ hasText: "system-admin" });
   const projectRole = page.locator(".role-card").filter({ hasText: "project-admin" });
-  await expect(scope).toHaveText("全部范围");
+  await expect(page.locator(".ui-select").filter({ has: scope })).toContainText("全部范围");
   await scope.click();
   await page.getByRole("option", { name: "系统", exact: true }).click();
   await expect(systemRole).toBeVisible();
@@ -421,7 +496,7 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
     await expect(page.getByLabel("Bind DN（可选）")).toBeDisabled();
     const testConnection = page.getByRole("button", { name: "测试连接" });
     await expect(testConnection).toBeDisabled();
-    await expect(testConnection).toHaveCSS("background-color", "rgb(240, 240, 243)");
+    await expect(testConnection).toHaveCSS("opacity", "0.5");
     await ldapEnabled.check();
     await expect(page.getByLabel("Bind DN（可选）")).toBeEnabled();
   }
@@ -647,7 +722,11 @@ test("topbar creates project, version and stage and retries selection without du
       await captureUi(page, `topbar-${scope.kind}-actions`, viewport.width, false);
       await page.getByRole("button", { name: `新建${scope.label}`, exact: true }).click();
       const dialog = page.getByRole("dialog", { name: `新建${scope.label}`, exact: true });
-      await expectViewportDialog(page.locator("body > .action-dialog-backdrop"), dialog, viewport);
+      await expectViewportDialog(
+        page.locator(".ant-modal-wrap.action-dialog-backdrop"),
+        dialog,
+        viewport,
+      );
       if (scope.kind !== "project") await expect(dialog).toContainText(projectName);
       if (scope.kind === "stage") await expect(dialog).toContainText("1.0.0-topbar");
       await captureUi(page, `topbar-${scope.kind}-create`, viewport.width, false);
@@ -813,12 +892,12 @@ test("global execution dialog covers and centers within the whole viewport", asy
   ]) {
     await page.setViewportSize(viewport);
     await page.getByRole("button", { name: "开始执行", exact: true }).click();
-    const backdrop = page.locator("body > .global-run-backdrop");
+    const backdrop = page.locator(".ant-modal-wrap.global-run-backdrop");
     const dialog = page.getByRole("dialog", { name: "开始执行" });
     await expect(backdrop).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(dialog.locator(".global-run-loading")).toHaveCount(0);
-    await dialog.getByRole("button", { name: "用例任务", exact: true }).click();
+    await dialog.getByRole("radio", { name: "用例任务", exact: true }).locator("..").click();
 
     await expectViewportDialog(backdrop, dialog, viewport);
     expect(
@@ -826,13 +905,13 @@ test("global execution dialog covers and centers within the whole viewport", asy
         document.elementFromPoint(8, 8)?.classList.contains("global-run-backdrop"),
       ),
     ).toBe(true);
-    await dialog.getByRole("button", { name: "倒计时执行", exact: true }).click();
+    await dialog.getByRole("radio", { name: "倒计时执行", exact: true }).locator("..").click();
     await expect(dialog.getByLabel("倒计时分钟")).toBeVisible();
     await expect(dialog.getByLabel("倒计时秒")).toBeVisible();
     await expect(dialog.locator(".delay-start-panel")).toBeInViewport();
     await captureUi(page, "/global-run-dialog-suite", viewport.width, false);
 
-    await dialog.getByRole("button", { name: "单个用例", exact: true }).click();
+    await dialog.getByRole("radio", { name: "单个用例", exact: true }).locator("..").click();
     const adapterToggle = dialog.getByLabel("使用 CoTest TestNG Adapter");
     await expect(adapterToggle).toBeChecked();
     await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
@@ -861,7 +940,7 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     await expect(page.locator(".project-administration-bar > form")).toHaveCount(0);
     await page.locator(".project-picker-trigger").click();
     await page.getByRole("button", { name: "新建项目", exact: true }).click();
-    const projectBackdrop = page.locator("body > .action-dialog-backdrop");
+    const projectBackdrop = page.locator(".ant-modal-wrap.action-dialog-backdrop");
     const projectDialog = page.getByRole("dialog", { name: "新建项目" });
     await expect(projectDialog.getByLabel("项目名称")).toBeVisible();
     await expect(projectDialog.getByLabel("Slug")).toBeVisible();
@@ -873,7 +952,7 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     await page.goto("/settings/access?section=users&scope=project");
     const administratorRow = page.getByRole("row").filter({ hasText: "E2E Administrator" });
     await administratorRow.getByRole("button", { name: "分配角色" }).click();
-    const memberRoleBackdrop = page.locator("body > .action-dialog-backdrop");
+    const memberRoleBackdrop = page.locator(".ant-modal-wrap.action-dialog-backdrop");
     const memberRoleDialog = page.getByRole("dialog", {
       name: "分配用户角色",
     });
@@ -885,7 +964,7 @@ test("project and user creation stay in centered low-frequency dialogs", async (
 
     await page.goto("/settings/access?section=users");
     await page.getByRole("button", { name: "创建用户", exact: true }).click();
-    const userBackdrop = page.locator("body > .action-dialog-backdrop");
+    const userBackdrop = page.locator(".ant-modal-wrap.action-dialog-backdrop");
     const userDialog = page.getByRole("dialog", { name: "创建本地用户" });
     await expect(userDialog.getByLabel("用户名", { exact: true })).toBeVisible();
     await expect(userDialog.getByLabel("显示名称", { exact: true })).toBeVisible();
@@ -988,7 +1067,7 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
     if (state.dropdown)
       await page.getByRole("button", { name: state.dropdown, exact: true }).click();
     await page.getByRole("button", { name: state.trigger, exact: true }).click();
-    const backdrop = page.locator("body > .action-dialog-backdrop");
+    const backdrop = page.locator(".ant-modal-wrap.action-dialog-backdrop");
     const dialog = page.getByRole("dialog", { name: state.dialog });
     await expect(dialog).toBeVisible();
     await expectViewportDialog(backdrop, dialog, viewport);
@@ -1078,9 +1157,9 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(page.locator(".insight-metric-success")).toContainText("方法通过率");
   await expect(page.locator(".insight-metric-danger")).toContainText("方法失败率");
   const flakyFilter = page.locator(".insight-flaky-filter");
-  await expect(flakyFilter.getByLabel("指定任务")).toBeVisible();
-  await flakyFilter.getByLabel("开始时间（平台时区）").fill("2026-08-01T00:00");
-  await flakyFilter.getByLabel("结束时间（平台时区）").fill("2026-08-24T23:59");
+  await expect(flakyFilter.getByRole("combobox", { name: "指定任务" })).toBeVisible();
+  await flakyFilter.locator('input[name="flakyCompletedAfter"]').fill("2026-08-01T00:00");
+  await flakyFilter.locator('input[name="flakyCompletedBefore"]').fill("2026-08-24T23:59");
   await page.route(
     "**/insights?**",
     async (route) => {

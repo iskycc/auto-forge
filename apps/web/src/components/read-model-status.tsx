@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { readModelStatusSchema, type ReadModelStatus } from "@autoforge/contracts";
 import { RefreshCw } from "lucide-react";
@@ -75,7 +77,7 @@ export function ReadModelStatusBar({
         if (
           nextSignature !== signature &&
           nextSignature !== notifiedSignature.current &&
-          !document.querySelector('[role="dialog"][aria-modal="true"]')
+          !document.querySelector('[aria-modal="true"]:is([role="dialog"], [role="alertdialog"])')
         ) {
           notifiedSignature.current = nextSignature;
           if (onRefresh) onRefresh();
@@ -123,7 +125,10 @@ export function ReadModelStatusBar({
 
   if (!snapshots.length) return null;
   return (
-    <div className="read-model-status" ref={container}>
+    <div
+      className={cn("read-model-status", readModelStatusStyles["read-model-status"])}
+      ref={container}
+    >
       <span aria-live="polite">
         {offline
           ? "连接暂时不可用，保留已加载的数据。"
@@ -151,8 +156,8 @@ export function ReadModelPendingPage({
   snapshots: ReadModelStatus[];
 }) {
   return (
-    <div className="page-stack">
-      <section className="page-hero">
+    <div className={cn("page-stack", uiPatterns["page-stack"])}>
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
           <h1>{title}</h1>
           <p>首次准备当前范围的数据。完成后会自动显示，再次访问将复用已保存的结果。</p>
@@ -162,3 +167,8 @@ export function ReadModelPendingPage({
     </div>
   );
 }
+
+const readModelStatusStyles = {
+  "read-model-status":
+    "flex items-center justify-between gap-3 text-muted-foreground text-sm [margin-block-end:12px] [&_>_.ui-button]:shrink-0",
+} as const;

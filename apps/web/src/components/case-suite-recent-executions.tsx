@@ -1,4 +1,8 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   caseSuiteRecentExecutionsSchema,
@@ -83,7 +87,10 @@ export function CaseSuiteRecentExecutions({
 
   return (
     <section
-      className="suite-recent-executions"
+      className={cn(
+        "suite-recent-executions",
+        caseSuiteRecentExecutionsStyles["suite-recent-executions"],
+      )}
       aria-label={view === "history" ? "任务执行历史" : "最近执行记录"}
       aria-busy={state.status === "loading"}
     >
@@ -105,12 +112,24 @@ export function CaseSuiteRecentExecutions({
         </span>
       </header>
       {state.status === "loading" ? (
-        <p className="suite-history-feedback" role="status">
-          <LoaderCircle className="spin" size={17} /> 正在加载执行记录…
+        <p
+          className={cn(
+            "suite-history-feedback",
+            caseSuiteRecentExecutionsStyles["suite-history-feedback"],
+          )}
+          role="status"
+        >
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={17} /> 正在加载执行记录…
         </p>
       ) : null}
       {state.status === "error" ? (
-        <div className="suite-history-feedback" role="alert">
+        <div
+          className={cn(
+            "suite-history-feedback",
+            caseSuiteRecentExecutionsStyles["suite-history-feedback"],
+          )}
+          role="alert"
+        >
           <span>{state.message}</span>
           <Button onClick={refresh} type="button">
             重试
@@ -118,19 +137,35 @@ export function CaseSuiteRecentExecutions({
         </div>
       ) : null}
       {state.status === "ready" && state.items.length === 0 ? (
-        <p className="suite-history-feedback">
+        <p
+          className={cn(
+            "suite-history-feedback",
+            caseSuiteRecentExecutionsStyles["suite-history-feedback"],
+          )}
+        >
           <History size={18} /> 暂无执行记录，开始执行任务后将在这里展示。
         </p>
       ) : null}
       {state.status === "ready" && state.items.length > 0 ? (
-        <ol className="suite-history-list">
+        <ol
+          className={cn(
+            "suite-history-list",
+            caseSuiteRecentExecutionsStyles["suite-history-list"],
+          )}
+        >
           {state.items.map((batch) => (
             <RecentExecution key={batch.id} batch={batch} />
           ))}
         </ol>
       ) : null}
       {view === "history" ? (
-        <footer className="suite-history-pagination" aria-label="执行历史分页">
+        <footer
+          className={cn(
+            "suite-history-pagination",
+            caseSuiteRecentExecutionsStyles["suite-history-pagination"],
+          )}
+          aria-label="执行历史分页"
+        >
           <span>第 {pageCursors.length} 页 · 每页最多 10 条</span>
           <Button
             disabled={state.status === "loading" || pageCursors.length === 1}
@@ -173,24 +208,43 @@ function RecentExecution({ batch }: { batch: CaseSuiteRecentExecution }) {
   return (
     <li>
       <Link
-        className="suite-history-record"
+        className={cn(
+          "suite-history-record",
+          caseSuiteRecentExecutionsStyles["suite-history-record"],
+        )}
         href={`/run-batches/${encodeURIComponent(batch.id)}`}
         aria-label={`查看执行记录 #${batch.sequenceNumber || batch.id}`}
       >
-        <span className="suite-history-identity">
+        <span
+          className={cn(
+            "suite-history-identity",
+            caseSuiteRecentExecutionsStyles["suite-history-identity"],
+          )}
+        >
           <strong>#{batch.sequenceNumber || batch.id.slice(0, 8)}</strong>
-          <span className={`status-badge ${statusTone}`}>
+          <Badge
+            className={cn(
+              caseSuiteRecentExecutionsStyles["status-badge"],
+              `status-badge ${statusTone}`,
+            )}
+          >
             {runBatchCompletionLabel({
               status: batch.status,
               ...(batch.terminationRequestedAt
                 ? { terminationRequestedAt: batch.terminationRequestedAt }
                 : {}),
             })}
-          </span>
+          </Badge>
           {batch.kind === "final_failure_rerun" ? <small>失败重跑</small> : null}
           <ArrowRight size={15} />
         </span>
-        <span className="suite-history-result" title={counts}>
+        <span
+          className={cn(
+            "suite-history-result",
+            caseSuiteRecentExecutionsStyles["suite-history-result"],
+          )}
+          title={counts}
+        >
           <span>
             通过 <strong>{batch.succeededRuns.toLocaleString("zh-CN")}</strong> /{" "}
             {batch.totalRuns.toLocaleString("zh-CN")}
@@ -203,7 +257,12 @@ function RecentExecution({ batch }: { batch: CaseSuiteRecentExecution }) {
             第 {batch.currentRound} / {batch.retryLimit + 1} 轮
           </span>
         </span>
-        <span className="suite-history-metadata">
+        <span
+          className={cn(
+            "suite-history-metadata",
+            caseSuiteRecentExecutionsStyles["suite-history-metadata"],
+          )}
+        >
           <time dateTime={batch.createdAt} title={`创建时间（UTC）：${batch.createdAt}`}>
             {formatLocalDateTime(batch.createdAt)}
           </time>
@@ -219,3 +278,24 @@ function RecentExecution({ batch }: { batch: CaseSuiteRecentExecution }) {
     </li>
   );
 }
+
+const caseSuiteRecentExecutionsStyles = {
+  "status-badge":
+    "inline-flex w-fit items-center gap-[5px] rounded-full py-[5px] px-2 text-xs font-semibold whitespace-nowrap",
+  "suite-history-feedback":
+    'flex items-center justify-center flex-wrap gap-3 m-0 p-5 text-muted-foreground text-sm [&[role="alert"]]:text-destructive',
+  "suite-history-identity":
+    "flex items-center gap-2 [&_>_svg]:ml-auto [&_>_svg]:text-muted-foreground",
+  "suite-history-list":
+    "max-h-[480px] m-0 p-0 overflow-auto [overscroll-behavior:contain] [list-style:none]",
+  "suite-history-metadata":
+    "flex items-center gap-2 flex-wrap gap-x-4 text-muted-foreground text-xs [&_>_span]:[overflow-wrap:anywhere]",
+  "suite-history-pagination":
+    "flex items-center justify-between gap-3 border-t border-solid border-border py-3 px-5 text-muted-foreground text-xs",
+  "suite-history-record":
+    "grid gap-2 border-t border-solid border-border py-3 px-5 text-sm [&:hover]:bg-info/10",
+  "suite-history-result":
+    "flex items-center gap-2 flex-wrap gap-x-4 text-muted-foreground text-xs [&_strong]:text-foreground [&_strong]:tabular-nums",
+  "suite-recent-executions":
+    "[&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:justify-between [&_>_header]:py-3 [&_>_header]:px-5 [&_>_header]:text-sm [&_>_header_>_span]:flex [&_>_header_>_span]:items-center [&_>_header_>_span]:gap-2 border-t border-solid border-border bg-muted [&_>_header_a]:inline-flex [&_>_header_a]:items-center [&_>_header_a]:gap-2 [&_>_header_a]:text-info [&_>_header_a]:whitespace-nowrap",
+} as const;

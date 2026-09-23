@@ -1,4 +1,7 @@
 "use client";
+import { Menu } from "antd";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   BarChart3,
@@ -19,6 +22,7 @@ import {
 } from "lucide-react";
 import type { Permission } from "@autoforge/domain";
 import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -138,6 +142,23 @@ function usesFallbackNavigation(item: NavigationItem, granted: ReadonlySet<Permi
   );
 }
 
+function navigationEntry(item: NavigationItem, active: boolean, granted: ReadonlySet<Permission>) {
+  const Icon = item.icon;
+  return {
+    key: item.href,
+    label: (
+      <Link
+        href={navigationHref(item, granted)}
+        aria-current={active ? "page" : undefined}
+        className={cn("nav-item flex items-center gap-3", active && "nav-item-active")}
+      >
+        <Icon size={19} aria-hidden="true" />
+        <span>{navigationLabel(item, granted)}</span>
+      </Link>
+    ),
+  };
+}
+
 export function AppShell({
   children,
   mode,
@@ -220,53 +241,50 @@ export function AppShell({
   }
 
   return (
-    <div className="app-shell">
+    <div className={cn("app-shell", appShellStyles["app-shell"])}>
       <SessionKeepalive />
-      <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="AutoForge 首页">
-          <span className="brand-mark" aria-hidden="true">
+      <aside className={cn("sidebar", appShellStyles["sidebar"])}>
+        <Link className={cn("brand", appShellStyles["brand"])} href="/" aria-label="AutoForge 首页">
+          <span className={cn("brand-mark", appShellStyles["brand-mark"])} aria-hidden="true">
             <Sparkles size={20} strokeWidth={2.2} />
           </span>
           <span>AutoForge</span>
         </Link>
 
-        <nav className="primary-nav" aria-label="主导航">
-          {visibleNavigation.map((item) => {
-            const Icon = item.icon;
-            const href = navigationHref(item, granted);
-            const label = navigationLabel(item, granted);
-            return (
-              <Link
-                className={`nav-item ${primaryItemIsActive(item) ? "nav-item-active" : ""}`}
-                href={href}
-                key={item.href}
-              >
-                <Icon size={19} aria-hidden="true" />
-                <span>{label}</span>
-              </Link>
-            );
-          })}
+        <nav className={cn("primary-nav", appShellStyles["primary-nav"])} aria-label="主导航">
+          <Menu
+            mode="inline"
+            className="border-0 bg-transparent"
+            selectedKeys={visibleNavigation.filter(primaryItemIsActive).map((item) => item.href)}
+            items={visibleNavigation.map((item) =>
+              navigationEntry(item, primaryItemIsActive(item), granted),
+            )}
+          />
           {visibleAdministration.length > 0 ? (
-            <span className="nav-section-label">系统管理</span>
+            <>
+              <span className={cn("nav-section-label", appShellStyles["nav-section-label"])}>
+                系统管理
+              </span>
+              <Menu
+                mode="inline"
+                className="border-0 bg-transparent"
+                selectedKeys={visibleAdministration
+                  .filter((item) => isActive(pathname, currentSection, item))
+                  .map((item) => item.href)}
+                items={visibleAdministration.map((item) =>
+                  navigationEntry(item, isActive(pathname, currentSection, item), granted),
+                )}
+              />
+            </>
           ) : null}
-          {visibleAdministration.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link
-                className={`nav-item ${isActive(pathname, currentSection, item) ? "nav-item-active" : ""}`}
-                href={navigationHref(item, granted)}
-                key={item.href}
-              >
-                <Icon size={19} aria-hidden="true" />
-                <span>{navigationLabel(item, granted)}</span>
-              </Link>
-            );
-          })}
         </nav>
 
-        <div className="sidebar-footer">
-          <div className="mode-card">
-            <span className="mode-indicator" aria-hidden="true" />
+        <div className={cn("sidebar-footer", appShellStyles["sidebar-footer"])}>
+          <div className={cn("mode-card", appShellStyles["mode-card"])}>
+            <span
+              className={cn("mode-indicator", appShellStyles["mode-indicator"])}
+              aria-hidden="true"
+            />
             <span>
               <strong>{mode === "lite" ? "Lite 模式" : "Full 模式"}</strong>
               <small>{mode === "lite" ? "SQLite · 本地存储" : "PostgreSQL · MinIO"}</small>
@@ -275,12 +293,12 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className="app-frame">
-        <header className="topbar">
+      <div className={cn("app-frame", appShellStyles["app-frame"])}>
+        <header className={cn("topbar", appShellStyles["topbar"])}>
           {forcePasswordChange ? (
             <span />
           ) : (
-            <div className="topbar-context">
+            <div className={cn("topbar-context", appShellStyles["topbar-context"])}>
               {selectedProjectId || canCreateProject ? (
                 <GlobalProjectSwitcher
                   key={`${selectedProjectId}:${selectedProjectVersionId ?? ""}:${selectedTestStageId ?? ""}`}
@@ -297,7 +315,7 @@ export function AppShell({
               <TopbarTools permissions={permissions} />
             </div>
           )}
-          <div className="topbar-actions">
+          <div className={cn("topbar-actions", appShellStyles["topbar-actions"])}>
             {!forcePasswordChange ? (
               <GlobalRunDialog
                 userId={userId ?? ""}
@@ -311,36 +329,70 @@ export function AppShell({
             ) : null}
             {!forcePasswordChange && granted.has("case_source.manage") ? (
               <>
-                <Link
-                  className="icon-button"
+                <LinkButton
+                  className={cn("icon-button", uiPatterns["icon-button"])}
                   href="/cases/import"
                   aria-label="JAR 导入帮助"
                   title="JAR 导入帮助"
                 >
                   <CircleHelp size={19} />
-                </Link>
-                <span className="header-divider" aria-hidden="true" />
+                </LinkButton>
+                <span
+                  className={cn("header-divider", appShellStyles["header-divider"])}
+                  aria-hidden="true"
+                />
               </>
             ) : null}
             {userName ? (
-              <Link
-                className="icon-button"
+              <LinkButton
+                className={cn("icon-button", uiPatterns["icon-button"])}
                 href="/account/security"
                 aria-label="账号安全"
                 title="账号安全"
               >
                 <KeyRound size={18} />
-              </Link>
+              </LinkButton>
             ) : null}
-            <span className="avatar" aria-hidden="true">
+            <span className={cn("avatar", appShellStyles["avatar"])} aria-hidden="true">
               <Bot size={17} />
             </span>
-            <span className="admin-label">{userName ?? "未登录"}</span>
+            <span className={cn("admin-label", appShellStyles["admin-label"])}>
+              {userName ?? "未登录"}
+            </span>
             {userName ? <LogoutButton /> : null}
           </div>
         </header>
-        <main className="main-content">{children}</main>
+        <main className={cn("main-content", appShellStyles["main-content"])}>{children}</main>
       </div>
     </div>
   );
 }
+
+const appShellStyles = {
+  "admin-label": "max-w-28 truncate text-sm font-medium max-[1279px]:hidden",
+  "app-frame": "min-h-screen ml-[208px] max-[1279px]:ml-[176px]",
+  "app-shell": "min-h-screen",
+  avatar:
+    "inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground",
+  brand:
+    "flex h-16 shrink-0 items-center gap-3 border-b border-border px-5 text-xl font-semibold tracking-tight",
+  "brand-mark":
+    "inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-primary-foreground",
+  "header-divider": "mx-1 h-5 w-px bg-border",
+  "main-content": "min-w-0 p-6 max-[1279px]:p-4",
+  "mode-card":
+    "flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 [&>span:last-child]:grid [&>span:last-child]:min-w-0 [&>span:last-child]:gap-1 [&_strong]:text-xs [&_strong]:font-medium [&_small]:truncate [&_small]:text-xs [&_small]:text-muted-foreground",
+  "mode-indicator": "size-2 shrink-0 rounded-full bg-success",
+  "nav-item":
+    "flex min-h-9 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+  "nav-item-active": "bg-accent text-foreground",
+  "nav-section-label": "mb-1 mt-5 px-3 text-xs font-medium text-muted-foreground",
+  "primary-nav": "flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3",
+  sidebar:
+    "fixed inset-y-0 left-0 z-20 flex w-[208px] flex-col border-r border-border bg-card max-[1279px]:w-[176px]",
+  "sidebar-footer": "shrink-0 p-3",
+  topbar:
+    "sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b border-border bg-card px-6 max-[1279px]:gap-3 max-[1279px]:px-4",
+  "topbar-actions": "flex shrink-0 items-center gap-2 max-[1279px]:gap-1",
+  "topbar-context": "flex min-w-0 flex-1 items-center gap-3",
+} as const;

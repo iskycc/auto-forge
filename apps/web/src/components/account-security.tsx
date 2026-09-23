@@ -1,4 +1,18 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
@@ -78,29 +92,42 @@ export function AccountSecurity({
   }
 
   return (
-    <div className="settings-stack">
+    <div className={cn("settings-stack", uiPatterns["settings-stack"])}>
       {identity.user.forcePasswordChange ? (
-        <div className="implementation-notice" role="status">
+        <div
+          className={cn("implementation-notice", accountSecurityStyles["implementation-notice"])}
+          role="status"
+        >
           <ShieldCheck size={18} aria-hidden="true" />
           管理员要求你先修改初始密码。完成前其他页面和业务 API 均不可使用。
         </div>
       ) : null}
       {error ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {error}
-        </p>
+        </Notice>
       ) : null}
 
-      <section className="content-card settings-section">
-        <div className="section-heading">
+      <Card
+        as="section"
+        className={cn(
+          "content-card settings-section",
+          uiPatterns["content-card"],
+          uiPatterns["settings-section"],
+        )}
+      >
+        <div className={cn("section-heading", uiPatterns["section-heading"])}>
           <div>
-            <p className="eyebrow">Password</p>
+            <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Password</p>
             <h2>登录密码</h2>
           </div>
           <KeyRound size={22} aria-hidden="true" />
         </div>
         {identity.user.source === "local" ? (
-          <form className="settings-grid-form" onSubmit={(event) => void changePassword(event)}>
+          <form
+            className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}
+            onSubmit={(event) => void changePassword(event)}
+          >
             <label>
               当前密码
               <Input
@@ -130,59 +157,76 @@ export function AccountSecurity({
                 type="password"
               />
             </label>
-            <Button className="button button-primary" disabled={pending} type="submit">
+            <Button
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
+              disabled={pending}
+              type="submit"
+            >
               修改密码并重新登录
             </Button>
           </form>
         ) : (
-          <div className="inline-empty">
+          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
             LDAP 账号密码由目录服务管理，AutoForge 不保存或修改目录密码。
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="content-card settings-section">
-        <div className="section-heading">
+      <Card
+        as="section"
+        className={cn(
+          "content-card settings-section",
+          uiPatterns["content-card"],
+          uiPatterns["settings-section"],
+        )}
+      >
+        <div className={cn("section-heading", uiPatterns["section-heading"])}>
           <div>
-            <p className="eyebrow">Sessions</p>
+            <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Sessions</p>
             <h2>登录会话</h2>
           </div>
           <LogOut size={22} aria-hidden="true" />
         </div>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>会话</th>
-                <th>创建时间</th>
-                <th>最近活动</th>
-                <th>过期时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+          <Table className={cn("data-table", uiPatterns["data-table"])}>
+            <TableHeader>
+              <TableRow>
+                <TableHead>会话</TableHead>
+                <TableHead>创建时间</TableHead>
+                <TableHead>最近活动</TableHead>
+                <TableHead>过期时间</TableHead>
+                <TableHead>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {sessions.map((session) => (
-                <tr key={session.id}>
-                  <td>{session.id === identity.sessionId ? "当前会话" : session.id}</td>
-                  <td>{formatDate(session.createdAt)}</td>
-                  <td>{formatDate(session.lastSeenAt)}</td>
-                  <td>{formatDate(session.expiresAt)}</td>
-                  <td>
+                <TableRow key={session.id}>
+                  <TableCell>
+                    {session.id === identity.sessionId ? "当前会话" : session.id}
+                  </TableCell>
+                  <TableCell>{formatDate(session.createdAt)}</TableCell>
+                  <TableCell>{formatDate(session.lastSeenAt)}</TableCell>
+                  <TableCell>{formatDate(session.expiresAt)}</TableCell>
+                  <TableCell>
                     <Button
-                      className="danger-text-button"
+                      className={cn("danger-text-button", uiPatterns["danger-text-button"])}
                       disabled={pending}
                       onClick={() => void revokeSession(session)}
                       type="button"
                     >
                       终止
                     </Button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
-      </section>
+      </Card>
     </div>
   );
 }
@@ -195,3 +239,8 @@ async function responseMessage(response: Response, fallback: string): Promise<st
 function formatDate(value: string): string {
   return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
 }
+
+const accountSecurityStyles = {
+  "implementation-notice":
+    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
+} as const;

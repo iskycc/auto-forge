@@ -1,3 +1,8 @@
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { Clock3, Search, Server, ShieldCheck } from "lucide-react";
 import {
   assessRunnerCompatibility,
@@ -56,14 +61,16 @@ export default async function RunnersPage({
   ]);
   if (activeSection === "groups") {
     return (
-      <div className="page-stack">
-        <section className="page-hero">
+      <div className={cn("page-stack", uiPatterns["page-stack"])}>
+        <section className={cn("page-hero", uiPatterns["page-hero"])}>
           <div>
-            <span className="eyebrow">Runner Groups</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Runner Groups</span>
             <h1>执行机组</h1>
             <p>按机房、网络或能力组合执行机；发起任务批跑和单用例执行时可直接选择整组。</p>
           </div>
-          <span className="storage-pill">{runnerGroups.length} 个资源组</span>
+          <span className={cn("storage-pill", pageStyles["storage-pill"])}>
+            {runnerGroups.length} 个资源组
+          </span>
         </section>
         <RunnerGroupManager canManage={canManage} initialGroups={runnerGroups} runners={runners} />
       </div>
@@ -139,10 +146,16 @@ export default async function RunnersPage({
         }))
     : [];
   return (
-    <div className={`page-stack runner-page${runners.length ? " has-runners" : ""}`}>
-      <section className="page-hero">
+    <div
+      className={cn(
+        uiPatterns["page-stack"],
+        "page-stack runner-page",
+        runners.length > 0 && cn("has-runners", pageStyles["has-runners"]),
+      )}
+    >
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <span className="eyebrow">Runner Control</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Runner Control</span>
           <h1>执行节点</h1>
           <p>
             Agent 主动注册并持续上报心跳；45 秒未上报会显示离线。不兼容节点不会获得新任务
@@ -151,8 +164,9 @@ export default async function RunnersPage({
               : "。"}
           </p>
         </div>
-        <span className="storage-pill">
-          <span className="live-dot" /> 在线 {onlineCount} / {runners.length}
+        <span className={cn("storage-pill", pageStyles["storage-pill"])}>
+          <span className={cn("live-dot", pageStyles["live-dot"])} /> 在线 {onlineCount} /{" "}
+          {runners.length}
         </span>
       </section>
       {canManage ? (
@@ -168,41 +182,48 @@ export default async function RunnersPage({
           profiles={installationProfiles}
         />
       ) : null}
-      <section className="runner-metrics">
-        <div className="card">
+      <section className={cn("runner-metrics", pageStyles["runner-metrics"])}>
+        <Card as="div" className={cn("card", uiPatterns["card"])}>
           <Server size={20} />
           <span>执行机总数</span>
           <strong>{runners.length}</strong>
-        </div>
-        <div className="card">
+        </Card>
+        <Card as="div" className={cn("card", uiPatterns["card"])}>
           <ShieldCheck size={20} />
           <span>在线节点</span>
           <strong>{onlineCount}</strong>
-        </div>
-        <div className="card">
+        </Card>
+        <Card as="div" className={cn("card", uiPatterns["card"])}>
           <Clock3 size={20} />
           <span>离线节点</span>
           <strong>{runners.length - onlineCount}</strong>
-        </div>
+        </Card>
       </section>
-      <section className="card runner-list-card">
-        <div className="section-title-row">
+      <Card
+        as="section"
+        className={cn("card runner-list-card", uiPatterns["card"], pageStyles["runner-list-card"])}
+      >
+        <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
           <div>
-            <span className="eyebrow">Runner inventory</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Runner inventory</span>
             <h2>执行机列表</h2>
           </div>
-          <div className="button-row">
+          <div className={cn("button-row", uiPatterns["button-row"])}>
             {canManage && bundledAgentVersion ? (
               <BatchRunnerUpdate latestVersion={bundledAgentVersion} targets={updateTargets} />
             ) : null}
-            <span className="table-count">
+            <span className={cn("table-count", pageStyles["table-count"])}>
               {filteredRunners.length === runners.length
                 ? `共 ${runners.length} 台`
                 : `匹配 ${filteredRunners.length} / ${runners.length} 台`}
             </span>
           </div>
         </div>
-        <form action="/runners" className="runner-list-filter" method="get">
+        <form
+          action="/runners"
+          className={cn("runner-list-filter", pageStyles["runner-list-filter"])}
+          method="get"
+        >
           <label>
             搜索执行机
             <Input
@@ -226,37 +247,63 @@ export default async function RunnersPage({
           </Button>
         </form>
         {runners.length === 0 ? (
-          <div className="empty-state table-empty">
-            <span className="empty-icon">
+          <EmptyState
+            className={cn(
+              "empty-state table-empty",
+              uiPatterns["empty-state"],
+              uiPatterns["table-empty"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <Server size={26} />
             </span>
             <strong>尚未注册执行机</strong>
             <p>点击上方“打开自动安装”，填写连接信息并完成安装后，Agent 会自动出现在这里。</p>
-          </div>
+          </EmptyState>
         ) : visibleRunners.length === 0 ? (
-          <div className="inline-empty">没有匹配当前筛选条件的执行机。</div>
+          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            没有匹配当前筛选条件的执行机。
+          </div>
         ) : (
-          <div className="runner-list" role="table" aria-label="执行机列表">
+          <div
+            className={cn("runner-list", pageStyles["runner-list"])}
+            role="table"
+            aria-label="执行机列表"
+          >
             {visibleRunners.map((runner) => {
               const updateAvailable = bundledAgentVersion
                 ? isAgentUpdateAvailable(runner.agentVersion, bundledAgentVersion)
                 : false;
               return (
-                <article className="runner-list-item" key={runner.id} role="row">
-                  <header className="runner-list-header" role="cell">
-                    <span className="runner-list-identity">
+                <article
+                  className={cn("runner-list-item", pageStyles["runner-list-item"])}
+                  key={runner.id}
+                  role="row"
+                >
+                  <header
+                    className={cn("runner-list-header", pageStyles["runner-list-header"])}
+                    role="cell"
+                  >
+                    <span
+                      className={cn("runner-list-identity", pageStyles["runner-list-identity"])}
+                    >
                       <Server size={18} aria-hidden="true" />
                       <span>
                         <strong>{runner.name}</strong>
                         <small>{runner.labels.join(" · ") || "无标签"}</small>
                       </span>
                     </span>
-                    <span className={`runner-state runner-state-${runner.state}`}>
+                    <span
+                      className={cn(
+                        pageStyles["runner-state"],
+                        `runner-state runner-state runner-state-${runner.state}`,
+                      )}
+                    >
                       <i /> {runnerStateLabel(runner)}
                     </span>
                   </header>
 
-                  <div className="runner-list-facts">
+                  <div className={cn("runner-list-facts", pageStyles["runner-list-facts"])}>
                     <div role="cell">
                       <span>平台</span>
                       <strong>
@@ -284,12 +331,17 @@ export default async function RunnersPage({
                     </div>
                   </div>
 
-                  <footer className="runner-list-actions" role="cell">
+                  <footer
+                    className={cn("runner-list-actions", pageStyles["runner-list-actions"])}
+                    role="cell"
+                  >
                     {runner.credentialRevokedAt && !runner.deregisteredAt ? (
-                      <span className="tag">凭据已撤销</span>
+                      <Badge className={cn("tag", uiPatterns["tag"])}>凭据已撤销</Badge>
                     ) : null}
                     {updateAvailable ? (
-                      <span className="tag">可更新至 {bundledAgentVersion}</span>
+                      <Badge className={cn("tag", uiPatterns["tag"])}>
+                        可更新至 {bundledAgentVersion}
+                      </Badge>
                     ) : null}
                     <RunnerTerminal
                       runnerId={runner.id}
@@ -325,7 +377,7 @@ export default async function RunnersPage({
           </div>
         )}
         {pageCount > 1 ? (
-          <nav aria-label="执行机分页" className="pagination">
+          <nav aria-label="执行机分页" className={cn("pagination", pageStyles["pagination"])}>
             {currentPage > 1 ? (
               <Link href={runnerPageHref(parameters, currentPage - 1)}>上一页</Link>
             ) : (
@@ -339,7 +391,7 @@ export default async function RunnersPage({
             ) : null}
           </nav>
         ) : null}
-      </section>
+      </Card>
     </div>
   );
 }
@@ -395,3 +447,30 @@ function recentBatchLabel(
   const batch = batches.find((candidate) => candidate.selectedRunnerIds.includes(runnerId));
   return batch ? `${batch.suiteName} · ${runBatchStatusLabel(batch.status)}` : "暂无可见任务";
 }
+
+const pageStyles = {
+  "has-runners":
+    "[&_.runner-installer-launcher]:py-3 [&_.runner-installer-launcher]:px-4 [&_.runner-installer-heading_:is(.eyebrow,_p,_.settings-icon)]:hidden [&_.runner-installer-heading_h2]:m-0 [&_.runner-installer-heading_h2]:text-sm",
+  "live-dot": "w-2 h-2 rounded-full bg-success shadow-xs",
+  pagination: "flex justify-end py-3.5 px-4.5 border-t border-solid border-border",
+  "runner-list": "grid gap-[7px] py-2.5 px-3",
+  "runner-list-actions":
+    "flex min-w-0 items-center flex-wrap justify-end gap-1.5 border-l border-solid border-border pl-2.5 max-[1281px]:border-l-0 max-[1281px]:pl-0",
+  "runner-list-card": "overflow-visible",
+  "runner-list-facts":
+    "[&_small]:text-muted-foreground [&_small]:text-xs [&_small]:min-w-0 [&_small]:[overflow-wrap:anywhere] grid grid-cols-3 gap-px overflow-hidden border border-solid border-border rounded-lg bg-border [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:[align-content:start] [&_>_div]:gap-[3px] [&_>_div]:py-[7px] [&_>_div]:px-[9px] [&_>_div]:bg-muted [&_>_div_>_span]:text-muted-foreground [&_>_div_>_span]:text-xs [&_strong]:min-w-0 [&_strong]:[overflow-wrap:anywhere] max-[1281px]:col-span-full max-[1281px]:grid-cols-3",
+  "runner-list-filter":
+    "grid grid-cols-[minmax(220px,_1fr)_minmax(160px,_220px)_auto] items-end gap-2.5 [padding:0_14px_14px] border-b border-solid border-border [&_>_label]:grid [&_>_label]:gap-1.5 [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold",
+  "runner-list-header": "flex min-w-0 items-center justify-between gap-3.5",
+  "runner-list-identity":
+    "flex min-w-0 items-center gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal [&_small]:[overflow-wrap:anywhere] [&_small]:whitespace-normal [&_small]:text-muted-foreground [&_small]:text-xs",
+  "runner-list-item":
+    "grid min-w-0 grid-cols-[minmax(210px,_0.7fr)_minmax(460px,_1.5fr)_auto] items-center gap-2.5 border border-solid border-border rounded-lg py-[9px] px-[11px] bg-card shadow-xs max-[1281px]:grid-cols-[minmax(0,_1fr)_auto]",
+  "runner-metrics":
+    "grid grid-cols-[repeat(3,_1fr)] gap-3.5 [&_.card]:grid [&_.card]:grid-cols-[38px_minmax(0,_1fr)_auto] [&_.card]:items-center [&_.card]:gap-2.5 [&_.card]:p-4 [&_.card]:text-muted-foreground [&_.card_svg]:p-2 [&_.card_svg]:rounded-lg [&_.card_svg]:bg-info/10 [&_.card_svg]:text-info [&_.card_svg]:[box-sizing:content-box] [&_strong]:text-foreground [&_strong]:text-2xl",
+  "runner-state":
+    "inline-flex [flex:0_0_auto] items-center gap-1.5 text-xs font-semibold whitespace-nowrap [&_i]:w-[7px] [&_i]:h-[7px] [&_i]:rounded-full [&_i]:bg-muted-foreground [&.runner-state-online]:text-success [&.runner-state-online]:[&_i]:bg-success [&.runner-state-disabled]:text-destructive [&.runner-state-disabled]:[&_i]:bg-destructive",
+  "storage-pill":
+    "inline-flex items-center gap-2 border border-solid border-border rounded-full py-[9px] px-[13px] bg-card text-muted-foreground text-xs font-semibold shadow-xs",
+  "table-count": "text-muted-foreground text-xs whitespace-nowrap",
+} as const;

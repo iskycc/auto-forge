@@ -119,7 +119,7 @@ async function configureDirectory(
   await form.getByLabel("用户过滤器").fill(userFilter);
   await form.getByLabel("显示名称属性").fill("displayName");
   await form.getByLabel("邮箱属性（可选）").fill("mail");
-  await form.getByLabel("LDAP 用户统一角色").selectOption("editor");
+  await form.getByLabel("LDAP 用户统一角色").and(form.locator("select")).selectOption("editor");
   await form.getByLabel("Group Search Base（可选）").fill("ou=groups,dc=example,dc=test");
   await form
     .getByLabel("Group Search Filter")

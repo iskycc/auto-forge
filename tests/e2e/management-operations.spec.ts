@@ -46,7 +46,7 @@ test("service account lifecycle immediately narrows token access and produces ex
   const tokenForm = page.getByRole("dialog", { name: `签发令牌：${accountName}` });
   await tokenForm.getByLabel("令牌名称").fill("e2e-token");
   await tokenForm
-    .getByLabel("过期时间")
+    .locator('input[name="expiresAt"]')
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
   await tokenForm.locator('input[name="scopes"][value="case.read"]').check();
   await tokenForm.locator('input[name="scopes"][value="audit.read"]').check();
@@ -104,7 +104,7 @@ test("service account lifecycle immediately narrows token access and produces ex
   const replacementForm = page.getByRole("dialog", { name: `签发令牌：${accountName}` });
   await replacementForm.getByLabel("令牌名称").fill("replacement-token");
   await replacementForm
-    .getByLabel("过期时间")
+    .locator('input[name="expiresAt"]')
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
   await replacementForm.locator('input[name="scopes"][value="audit.read"]').check();
   await replacementForm.getByRole("button", { name: "签发", exact: true }).click();
@@ -156,7 +156,7 @@ test("task details manage their own plan and show execution history in a dialog"
   const plan = page.getByRole("region", { name: "任务执行计划" });
   await plan.getByLabel("Cron（分 时 日 月 周）").fill("0 9 * * 1-5");
   await plan.getByLabel("IANA 时区").fill("Asia/Shanghai");
-  await plan.getByLabel("错过触发").selectOption("run-once");
+  await plan.getByLabel("错过触发").and(plan.locator("select")).selectOption("run-once");
   await plan.getByRole("button", { name: "保存计划", exact: true }).click();
   await expect(page.getByText("计划触发已保存。", { exact: true })).toBeVisible();
   const openHistory = plan.getByRole("button", { name: "执行历史与计划", exact: true });

@@ -1,4 +1,8 @@
 "use client";
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useState } from "react";
 import { z } from "zod";
@@ -59,11 +63,11 @@ export function LazyCaseSource({
     return () => controller.abort();
   }, [open, caseDefinitionId, revision, retry]);
   return (
-    <details
-      className="case-inspector-section"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+    <Disclosure
+      header={<>用例源码</>}
+      className={cn("case-inspector-section", lazyCaseSourceStyles["case-inspector-section"])}
+      onOpenChange={(expanded) => setOpen(expanded)}
     >
-      <summary>用例源码</summary>
       {error ? (
         <div role="alert">
           {error}
@@ -75,12 +79,22 @@ export function LazyCaseSource({
         <p>该用例没有附带 Java 源码。</p>
       ) : (
         <>
-          <p className="muted">{source.reference.entryPath}</p>
-          <pre className="source-code-viewer" tabIndex={0}>
+          <p className={cn("muted", uiPatterns["muted"])}>{source.reference.entryPath}</p>
+          <pre
+            className={cn("source-code-viewer", lazyCaseSourceStyles["source-code-viewer"])}
+            tabIndex={0}
+          >
             <code>{source.content}</code>
           </pre>
         </>
       )}
-    </details>
+    </Disclosure>
   );
 }
+
+const lazyCaseSourceStyles = {
+  "case-inspector-section":
+    "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_.ui-disclosure-label]:min-h-11 [&_.ui-disclosure-label]:py-3 [&_.ui-disclosure-label]:px-3.5 [&_.ui-disclosure-label]:text-foreground [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:border-b [&[data-open=true]_.ui-disclosure-label]:border-solid [&[data-open=true]_.ui-disclosure-label]:border-border [&_.ui-disclosure-body_>_:not(summary):not(.table-scroll)]:m-3.5 [&_.ui-disclosure-body_>_.settings-stack]:m-0 [&_.ui-disclosure-body_>_.settings-stack]:p-3.5",
+  "source-code-viewer":
+    "max-h-[640px] overflow-auto m-0 p-4.5 border border-solid border-border rounded-lg bg-log-background text-log-foreground font-mono text-xs leading-[1.65] [tab-size:2] whitespace-pre",
+} as const;

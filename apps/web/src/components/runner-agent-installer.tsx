@@ -1,4 +1,10 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { useConfirm } from "@/components/ui-feedback";
@@ -169,18 +175,35 @@ export function RunnerAgentInstaller({
 
   return (
     <>
-      <section className="card runner-installer-launcher">
-        <div className="runner-installer-heading">
-          <span className="settings-icon">
+      <Card
+        as="section"
+        className={cn(
+          "card runner-installer-launcher",
+          uiPatterns["card"],
+          runnerAgentInstallerStyles["runner-installer-launcher"],
+        )}
+      >
+        <div
+          className={cn(
+            "runner-installer-heading",
+            runnerAgentInstallerStyles["runner-installer-heading"],
+          )}
+        >
+          <span className={cn("settings-icon", runnerAgentInstallerStyles["settings-icon"])}>
             <HardDriveDownload size={20} />
           </span>
           <div>
-            <span className="eyebrow">Internal Agent Resource</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Internal Agent Resource</span>
             <h2>自动安装执行机 Agent</h2>
             <p>通过 SSH 探测主机、核验指纹，并安装平台内置的离线 Agent。</p>
           </div>
         </div>
-        <div className="runner-installer-launcher-actions">
+        <div
+          className={cn(
+            "runner-installer-launcher-actions",
+            runnerAgentInstallerStyles["runner-installer-launcher-actions"],
+          )}
+        >
           <span>
             {controlPlaneUrl
               ? profiles.length > 0
@@ -197,46 +220,82 @@ export function RunnerAgentInstaller({
             <HardDriveDownload size={16} /> 打开自动安装
           </Button>
         </div>
-      </section>
+      </Card>
       <ActionDialog
-        className="runner-installer-dialog"
+        className={"runner-installer-dialog"}
         description="填写 SSH 连接信息并完成主机探测后，再确认 Agent 的安装配置。"
         onClose={closeDialog}
         open={open}
         title="自动安装执行机 Agent"
       >
-        <div className="runner-installer-form">
+        <div
+          className={cn(
+            "runner-installer-form",
+            runnerAgentInstallerStyles["runner-installer-form"],
+          )}
+        >
           {!controlPlaneUrl ? (
-            <div className="inline-notice warning-notice" role="status">
+            <Notice
+              tone="warning"
+              className={cn(
+                "inline-notice warning-notice",
+                uiPatterns["inline-notice"],
+                uiPatterns["warning-notice"],
+              )}
+              role="status"
+            >
               <ShieldAlert size={18} />
               <span>请先在“平台配置”中设置内部访问地址或外部访问地址。</span>
-            </div>
+            </Notice>
           ) : (
-            <div className="runner-control-url">
+            <div
+              className={cn("runner-control-url", runnerAgentInstallerStyles["runner-control-url"])}
+            >
               <span>Agent 控制面</span>
               <code>{controlPlaneUrl}</code>
             </div>
           )}
           {controlPlaneUrl?.startsWith("http:") ? (
-            <div className="inline-notice warning-notice" role="status">
+            <Notice
+              tone="warning"
+              className={cn(
+                "inline-notice warning-notice",
+                uiPatterns["inline-notice"],
+                uiPatterns["warning-notice"],
+              )}
+              role="status"
+            >
               <ShieldAlert size={18} />
               <span>
                 当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。
               </span>
-            </div>
+            </Notice>
           ) : null}
           {controlPlaneUrl && isLoopbackUrl(controlPlaneUrl) ? (
-            <div className="inline-notice warning-notice" role="status">
+            <Notice
+              tone="warning"
+              className={cn(
+                "inline-notice warning-notice",
+                uiPatterns["inline-notice"],
+                uiPatterns["warning-notice"],
+              )}
+              role="status"
+            >
               <ShieldAlert size={18} />
               <span>
                 当前控制面地址仅本机可达。安装到其他主机前，请在“平台配置”中设置 Runner
                 可访问的内部地址。
               </span>
-            </div>
+            </Notice>
           ) : null}
 
           {profiles.length > 0 ? (
-            <div className="runner-saved-profile-row">
+            <div
+              className={cn(
+                "runner-saved-profile-row",
+                runnerAgentInstallerStyles["runner-saved-profile-row"],
+              )}
+            >
               <label>
                 已保存连接
                 <Select
@@ -285,7 +344,11 @@ export function RunnerAgentInstaller({
                 </Select>
               </label>
               <Button
-                className="button button-primary"
+                className={cn(
+                  "button button-primary",
+                  uiPatterns["button"],
+                  uiPatterns["button-primary"],
+                )}
                 disabled={!selectedProfileId || !name.trim() || Boolean(pending)}
                 onClick={() => void probeHost()}
                 type="button"
@@ -296,7 +359,12 @@ export function RunnerAgentInstaller({
             </div>
           ) : null}
 
-          <div className="runner-installer-grid">
+          <div
+            className={cn(
+              "runner-installer-grid",
+              runnerAgentInstallerStyles["runner-installer-grid"],
+            )}
+          >
             <label>
               安装系统模式
               <Select
@@ -360,9 +428,14 @@ export function RunnerAgentInstaller({
             </label>
           </div>
 
-          <div className="runner-installer-actions">
+          <div
+            className={cn(
+              "runner-installer-actions",
+              runnerAgentInstallerStyles["runner-installer-actions"],
+            )}
+          >
             <Button
-              className="button-secondary"
+              className={cn("button-secondary", uiPatterns["button-secondary"])}
               disabled={!host || !username || (!password && !selectedProfileId) || Boolean(pending)}
               onClick={() => void probeHost()}
               type="button"
@@ -373,8 +446,18 @@ export function RunnerAgentInstaller({
           </div>
 
           {probe ? (
-            <div className="runner-probe-result">
-              <div className="runner-probe-summary">
+            <div
+              className={cn(
+                "runner-probe-result",
+                runnerAgentInstallerStyles["runner-probe-result"],
+              )}
+            >
+              <div
+                className={cn(
+                  "runner-probe-summary",
+                  runnerAgentInstallerStyles["runner-probe-summary"],
+                )}
+              >
                 <CheckCircle2 size={20} />
                 <span>
                   <strong>{probe.operatingSystemName}</strong>
@@ -386,22 +469,41 @@ export function RunnerAgentInstaller({
               </div>
               {probe.forcedInstallationMode ||
               probe.detectedOperatingSystemId !== probe.operatingSystemId ? (
-                <div className="inline-notice warning-notice" role="status">
+                <Notice
+                  tone="warning"
+                  className={cn(
+                    "inline-notice warning-notice",
+                    uiPatterns["inline-notice"],
+                    uiPatterns["warning-notice"],
+                  )}
+                  role="status"
+                >
                   <ShieldAlert size={18} />
                   <span>
                     系统报告为 {probe.detectedOperatingSystemId}，将按 {probe.operatingSystemId}
                     模式安装。请确认目标机确实兼容该模式。
                   </span>
-                </div>
+                </Notice>
               ) : null}
-              <div className="runner-fingerprint">
+              <div
+                className={cn(
+                  "runner-fingerprint",
+                  runnerAgentInstallerStyles["runner-fingerprint"],
+                )}
+              >
                 <Fingerprint size={18} />
                 <span>
                   <small>SSH 主机指纹</small>
                   <code>{probe.hostKeySha256}</code>
                 </span>
               </div>
-              <label className="checkbox-row runner-fingerprint-confirmation">
+              <label
+                className={cn(
+                  "checkbox-row runner-fingerprint-confirmation",
+                  uiPatterns["checkbox-row"],
+                  runnerAgentInstallerStyles["runner-fingerprint-confirmation"],
+                )}
+              >
                 <Input
                   checked={fingerprintConfirmed}
                   onChange={(event) => setFingerprintConfirmed(event.target.checked)}
@@ -410,7 +512,13 @@ export function RunnerAgentInstaller({
                 我已通过可信渠道核对并确认上述 SSH 主机指纹
               </label>
 
-              <div className="runner-installer-grid runner-install-options">
+              <div
+                className={cn(
+                  "runner-installer-grid runner-install-options",
+                  runnerAgentInstallerStyles["runner-installer-grid"],
+                  runnerAgentInstallerStyles["runner-install-options"],
+                )}
+              >
                 <label>
                   执行机名称
                   <Input onChange={(event) => setName(event.target.value)} value={name} />
@@ -439,7 +547,7 @@ export function RunnerAgentInstaller({
                   />
                   <small>留空使用默认 {DEFAULT_RUNNER_DATA_DIRECTORY}；需为绝对路径。</small>
                 </label>
-                <label className="checkbox-field">
+                <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
                   <Input
                     checked={terminalEnabled}
                     onChange={(event) => setTerminalEnabled(event.target.checked)}
@@ -447,7 +555,7 @@ export function RunnerAgentInstaller({
                   />
                   允许管理员直连终端
                 </label>
-                <label className="checkbox-field">
+                <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
                   <Input
                     checked={runAsRoot}
                     onChange={(event) => setRunAsRoot(event.target.checked)}
@@ -457,20 +565,36 @@ export function RunnerAgentInstaller({
                 </label>
               </div>
               {runAsRoot ? (
-                <div className="inline-notice warning-notice" role="status">
+                <Notice
+                  tone="warning"
+                  className={cn(
+                    "inline-notice warning-notice",
+                    uiPatterns["inline-notice"],
+                    uiPatterns["warning-notice"],
+                  )}
+                  role="status"
+                >
                   <ShieldAlert size={18} />
                   <span>
                     root 模式会扩大测试进程可访问的主机资源范围，仅建议用于受控内网执行机。
                   </span>
-                </div>
+                </Notice>
               ) : null}
               {!probe.cgroupV2Available ? (
-                <div className="inline-notice warning-notice" role="status">
+                <Notice
+                  tone="warning"
+                  className={cn(
+                    "inline-notice warning-notice",
+                    uiPatterns["inline-notice"],
+                    uiPatterns["warning-notice"],
+                  )}
+                  role="status"
+                >
                   <ShieldAlert size={18} />
                   <span>
                     无 cgroup v2 时不能硬性限制整个进程树的 CPU、内存和进程数，请只运行可信用例。
                   </span>
-                </div>
+                </Notice>
               ) : null}
               <label>
                 私有 CA 证书（可选，PEM）
@@ -481,9 +605,14 @@ export function RunnerAgentInstaller({
                   value={caCertificatePem}
                 />
               </label>
-              <div className="runner-installer-actions">
+              <div
+                className={cn(
+                  "runner-installer-actions",
+                  runnerAgentInstallerStyles["runner-installer-actions"],
+                )}
+              >
                 <Button
-                  className="button-primary"
+                  className={cn("button-primary", uiPatterns["button-primary"])}
                   disabled={!fingerprintConfirmed || !name.trim() || Boolean(pending)}
                   onClick={() => void installAgent()}
                   type="button"
@@ -496,7 +625,7 @@ export function RunnerAgentInstaller({
                       : "安装内置 Agent"}
                 </Button>
                 <Button
-                  className="button-danger-quiet"
+                  className={cn("button-danger-quiet", uiPatterns["button-danger-quiet"])}
                   disabled={!fingerprintConfirmed || !password || Boolean(pending)}
                   onClick={() => void rollbackAgent()}
                   type="button"
@@ -509,22 +638,32 @@ export function RunnerAgentInstaller({
           ) : null}
 
           {result ? (
-            <div className="form-success" role="status">
+            <div
+              className={cn("form-success", runnerAgentInstallerStyles["form-success"])}
+              role="status"
+            >
               <CheckCircle2 size={18} />
               Agent {result.agentVersion} 已安装到 {result.host}
               ；服务已启动，执行机将在注册后出现在下方列表。
             </div>
           ) : null}
           {rollbackResult ? (
-            <div className="form-success" role="status">
+            <div
+              className={cn("form-success", runnerAgentInstallerStyles["form-success"])}
+              role="status"
+            >
               <CheckCircle2 size={18} />
               Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
             </div>
           ) : null}
           {error ? (
-            <p className="form-error" role="alert">
+            <Notice
+              tone="error"
+              className={cn("form-error", uiPatterns["form-error"])}
+              role="alert"
+            >
               {error}
-            </p>
+            </Notice>
           ) : null}
         </div>
       </ActionDialog>
@@ -555,3 +694,34 @@ function isLoopbackUrl(value: string): boolean {
     return false;
   }
 }
+
+const runnerAgentInstallerStyles = {
+  "form-success":
+    "flex items-center gap-2.5 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-success/10 text-success leading-[1.5]",
+  "runner-control-url":
+    "flex items-center gap-2.5 w-fit max-w-full border border-solid border-border rounded-lg py-[9px] px-3 bg-muted [&_span]:overflow-hidden [&_span]:text-ellipsis [&_span]:whitespace-nowrap [&_span]:[flex:0_0_auto] [&_span]:text-muted-foreground [&_span]:text-xs [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:text-info [&_code]:text-xs",
+  "runner-fingerprint":
+    "flex items-center gap-2.5 min-w-0 rounded-lg py-2.5 px-3 bg-muted [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground [&_svg]:[flex:0_0_auto] [&_svg]:text-info [&_code]:overflow-hidden [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
+  "runner-fingerprint-confirmation": "font-semibold",
+  "runner-install-options":
+    "grid-cols-[1.2fr_1.4fr_0.55fr_0.9fr] [&_.checkbox-field]:flex [&_.checkbox-field]:items-center [&_.checkbox-field]:self-end [&_.checkbox-field]:min-h-10.5 [&_.checkbox-field]:flex-row [&_.checkbox-field]:gap-2 [&_.checkbox-field]:border [&_.checkbox-field]:border-solid [&_.checkbox-field]:border-border [&_.checkbox-field]:rounded-lg [&_.checkbox-field]:py-0 [&_.checkbox-field]:px-3 [&_.checkbox-field]:bg-card [&_.checkbox-field]:text-foreground [&_.checkbox-field_input]:w-auto max-[1221px]:grid-cols-2",
+  "runner-installer-actions":
+    "flex items-center gap-3.5 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_small]:text-muted-foreground",
+  "runner-installer-form": "grid gap-5",
+  "runner-installer-grid":
+    "grid grid-cols-[minmax(220px,_1.5fr)_minmax(110px,_0.45fr)_minmax(180px,_1fr)_minmax(_220px,_1.15fr_)] gap-3.5 [&_label]:grid [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_input]:w-full max-[1221px]:grid-cols-2",
+  "runner-installer-heading":
+    "flex items-start gap-3.5 [&_h2]:[margin:3px_0_7px] [&_h2]:text-lg [&_p]:max-w-[860px] [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:leading-[1.65]",
+  "runner-installer-launcher":
+    "flex items-center justify-between gap-4 py-4.5 px-5 overflow-hidden bg-card",
+  "runner-installer-launcher-actions":
+    "flex [flex:0_0_auto] items-center gap-3 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap max-[1221px]:[&_>_span]:hidden",
+  "runner-probe-result":
+    "[&_>_label]:grid [&_>_label]:gap-[7px] [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold [&_textarea]:w-full grid gap-4 border border-solid border-border rounded-lg p-[17px] bg-success/10",
+  "runner-probe-summary":
+    "flex items-center gap-2.5 text-success [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground",
+  "runner-saved-profile-row":
+    "grid grid-cols-[minmax(360px,_1fr)_auto] items-end gap-3 p-3.5 border border-solid border-border rounded-lg bg-muted [&_label]:grid [&_label]:gap-1.5",
+  "settings-icon":
+    "inline-grid w-10.5 h-10.5 [flex:0_0_auto] place-items-center rounded-lg bg-info/10 text-info",
+} as const;

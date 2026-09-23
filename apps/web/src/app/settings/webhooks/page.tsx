@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { hasPermission } from "@autoforge/domain";
 
 import { CursorPagination } from "@/components/cursor-pagination";
@@ -20,10 +22,16 @@ export default async function WebhookSettingsPage({
   const projectId = await selectedProjectId(identity, projects, "project.read");
   if (!projectId) {
     return (
-      <section className="page-stack">
-        <header className="page-header settings-page-header">
+      <section className={cn("page-stack", uiPatterns["page-stack"])}>
+        <header
+          className={cn(
+            "page-header settings-page-header",
+            uiPatterns["page-header"],
+            uiPatterns["settings-page-header"],
+          )}
+        >
           <div>
-            <p className="eyebrow">Webhook</p>
+            <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Webhook</p>
             <h1>任务完成通知</h1>
             <p>当前账号没有可访问的项目。</p>
           </div>
@@ -37,10 +45,16 @@ export default async function WebhookSettingsPage({
     services.webhooks.listDeliveriesPage(projectId, { ...parameters, limit: 30 }),
   ]);
   return (
-    <section className="page-stack">
-      <header className="page-header settings-page-header webhook-page-header">
+    <section className={cn("page-stack", uiPatterns["page-stack"])}>
+      <header
+        className={cn(
+          "page-header settings-page-header webhook-page-header",
+          uiPatterns["page-header"],
+          uiPatterns["settings-page-header"],
+        )}
+      >
         <div>
-          <p className="eyebrow">Webhook</p>
+          <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Webhook</p>
           <h1>任务完成通知</h1>
           <p>在任务正常结束、执行异常或取消后，将批次结果可靠推送到项目内部系统。</p>
         </div>

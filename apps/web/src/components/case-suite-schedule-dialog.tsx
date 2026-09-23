@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { caseSuiteScheduleSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
 import { LoaderCircle, RefreshCw } from "lucide-react";
@@ -31,7 +33,10 @@ export function CaseSuiteScheduleDialog({
 }) {
   return (
     <ActionDialog
-      className="suite-schedule-dialog"
+      className={cn(
+        "suite-schedule-dialog",
+        caseSuiteScheduleDialogStyles["suite-schedule-dialog"],
+      )}
       description={suite.name}
       title="执行历史与计划"
       open={open}
@@ -89,19 +94,30 @@ function ScheduleDialogContent({
   }
 
   return (
-    <div className="suite-schedule-dialog-content">
-      <div className="button-row">
+    <div
+      className={cn(
+        "suite-schedule-dialog-content",
+        caseSuiteScheduleDialogStyles["suite-schedule-dialog-content"],
+      )}
+    >
+      <div className={cn("button-row", uiPatterns["button-row"])}>
         <Button disabled={state.status === "loading"} onClick={refresh} type="button">
           <RefreshCw size={15} /> 刷新计划与历史
         </Button>
       </div>
       {state.status === "loading" ? (
         <p role="status">
-          <LoaderCircle className="spin" size={16} /> 正在加载执行计划…
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在加载执行计划…
         </p>
       ) : null}
       {state.status === "error" ? (
-        <div className="suite-history-feedback" role="alert">
+        <div
+          className={cn(
+            "suite-history-feedback",
+            caseSuiteScheduleDialogStyles["suite-history-feedback"],
+          )}
+          role="alert"
+        >
           <span>{state.message}</span>
           <Button onClick={refresh} type="button">
             重试
@@ -124,7 +140,12 @@ function ScheduleDialogContent({
           view="history"
         />
       ) : (
-        <p className="suite-history-feedback">
+        <p
+          className={cn(
+            "suite-history-feedback",
+            caseSuiteScheduleDialogStyles["suite-history-feedback"],
+          )}
+        >
           {!canReadExecutions
             ? "当前账号无执行记录查看权限。"
             : "任务尚未关联项目版本，无法查询执行历史。"}
@@ -133,3 +154,11 @@ function ScheduleDialogContent({
     </div>
   );
 }
+
+const caseSuiteScheduleDialogStyles = {
+  "suite-history-feedback":
+    'flex items-center justify-center flex-wrap gap-3 m-0 p-5 text-muted-foreground text-sm [&[role="alert"]]:text-destructive',
+  "suite-schedule-dialog":
+    "[&_.suite-recent-executions]:overflow-hidden [&_.suite-recent-executions]:border [&_.suite-recent-executions]:border-solid [&_.suite-recent-executions]:border-border [&_.suite-recent-executions]:rounded-lg",
+  "suite-schedule-dialog-content": "grid gap-4 [&_>_.button-row]:justify-end",
+} as const;

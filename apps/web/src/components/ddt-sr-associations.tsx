@@ -1,4 +1,14 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type {
   DdtScope,
@@ -102,10 +112,23 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
     }
   };
   return (
-    <section className="ddt-sr-associations card" aria-label="SR 关联工作台">
-      <div className="ddt-association-toolbar">
+    <Card
+      as="section"
+      className={cn(
+        "ddt-sr-associations card",
+        ddtSrAssociationsStyles["ddt-sr-associations"],
+        uiPatterns["card"],
+      )}
+      aria-label="SR 关联工作台"
+    >
+      <div
+        className={cn(
+          "ddt-association-toolbar",
+          ddtSrAssociationsStyles["ddt-association-toolbar"],
+        )}
+      >
         <form
-          className="search-field"
+          className={"search-field"}
           onSubmit={(event) => {
             event.preventDefault();
             const url = new URL(window.location.href);
@@ -124,40 +147,92 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
             defaultValue={query}
             disabled={loading}
           />
-          <Button className="button button-secondary" type="submit" disabled={loading}>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            type="submit"
+            disabled={loading}
+          >
             搜索
           </Button>
         </form>
-        <Button className="button button-secondary" disabled={loading} onClick={reload}>
+        <Button
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          disabled={loading}
+          onClick={reload}
+        >
           <RefreshCw size={15} />
           刷新
         </Button>
-        <Button className="button button-secondary" onClick={() => setDialog("range")}>
+        <Button
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          onClick={() => setDialog("range")}
+        >
           <Settings2 size={15} />
           {canManage ? "配置测试类范围" : "查看测试类范围"}
         </Button>
-        <Button className="button button-primary" onClick={() => setDialog("categories")}>
+        <Button
+          className={cn(
+            "button button-primary",
+            uiPatterns["button"],
+            uiPatterns["button-primary"],
+          )}
+          onClick={() => setDialog("categories")}
+        >
           <Settings2 size={15} />
           {canManage ? "配置需求分类" : "查看需求分类"}
         </Button>
       </div>
-      <p className="ddt-association-hint">
+      <p className={cn("ddt-association-hint", ddtSrAssociationsStyles["ddt-association-hint"])}>
         配置顺序：① 加入候选测试类 → ② 新建需求分类并绑定执行类 → ③ 给 SR 设置分类。 SR
         下全部用例继承该类，后续导入也会自动继承。
       </p>
       {!canManage ? (
-        <p className="inline-notice">当前账号只可查看；配置需要用例管理权限。</p>
+        <Notice tone="info" className={cn("inline-notice", uiPatterns["inline-notice"])}>
+          当前账号只可查看；配置需要用例管理权限。
+        </Notice>
       ) : null}
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           {error}
-          <Button className="button button-secondary" onClick={reload}>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            onClick={reload}
+          >
             重试
           </Button>
-        </div>
+        </Notice>
       ) : null}
-      <div className="ddt-sr-table" aria-busy={loading}>
-        <div className="ddt-sr-row ddt-sr-table-heading">
+      <div
+        className={cn("ddt-sr-table", ddtSrAssociationsStyles["ddt-sr-table"])}
+        aria-busy={loading}
+      >
+        <div
+          className={cn(
+            "ddt-sr-row ddt-sr-table-heading",
+            ddtSrAssociationsStyles["ddt-sr-row"],
+            ddtSrAssociationsStyles["ddt-sr-table-heading"],
+          )}
+        >
           <span>SR / 业务分组</span>
           <span>用例数</span>
           <span>需求分类 / 执行类</span>
@@ -165,10 +240,14 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
           <span>操作</span>
         </div>
         {result.items.map((mapping) => (
-          <div className="ddt-sr-row" key={mapping.srNum} data-sr={mapping.srNum}>
+          <div
+            className={cn("ddt-sr-row", ddtSrAssociationsStyles["ddt-sr-row"])}
+            key={mapping.srNum}
+            data-sr={mapping.srNum}
+          >
             <strong>{mapping.srNum}</strong>
             <span>{mapping.caseCount.toLocaleString()}</span>
-            <div className="ddt-sr-class">
+            <div className={cn("ddt-sr-class", ddtSrAssociationsStyles["ddt-sr-class"])}>
               <strong>
                 {mapping.category?.name ?? (mapping.executionClass ? "历史直接关联" : "尚未分类")}
               </strong>
@@ -179,7 +258,16 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                     : "本 SR 下用例共享一个测试类")}
               </code>
             </div>
-            <span className={mapping.legacyConflict ? "ddt-association-warning" : ""}>
+            <span
+              className={
+                mapping.legacyConflict
+                  ? cn(
+                      "ddt-association-warning",
+                      ddtSrAssociationsStyles["ddt-association-warning"],
+                    )
+                  : ""
+              }
+            >
               {mapping.legacyConflict
                 ? "旧关联待确认"
                 : mapping.executionClass
@@ -190,11 +278,15 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                     ? "测试类不可用"
                     : "未关联"}
             </span>
-            <div className="ddt-sr-actions">
+            <div className={cn("ddt-sr-actions", ddtSrAssociationsStyles["ddt-sr-actions"])}>
               {canManage ? (
                 <>
                   <Button
-                    className="button button-secondary"
+                    className={cn(
+                      "button button-secondary",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                    )}
                     disabled={loading}
                     onClick={() => setDialog(mapping)}
                     aria-label={`设置 ${mapping.srNum} 的分类`}
@@ -204,7 +296,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                   </Button>
                   {mapping.category || mapping.executionClass ? (
                     <Button
-                      className="button button-ghost"
+                      className={cn("button button-ghost", uiPatterns["button"])}
                       disabled={loading}
                       onClick={() => void unlink(mapping)}
                       aria-label={`解除 ${mapping.srNum} 的关联`}
@@ -218,7 +310,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
               )}
             </div>
             {mapping.legacyConflict ? (
-              <p className="ddt-sr-conflict">
+              <p className={cn("ddt-sr-conflict", ddtSrAssociationsStyles["ddt-sr-conflict"])}>
                 此 SR
                 原有用例关联了不同测试类，请确认统一的执行类后再执行。原始关联保留用于升级核对。
               </p>
@@ -227,17 +319,23 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
         ))}
       </div>
       {!loading && !error && !result.items.length ? (
-        <div className="empty-state">
+        <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
           <Code2 size={24} />
           <strong>{query ? "没有匹配的 SR" : "当前范围还没有 SR"}</strong>
           <p>导入 DDT 用例后，其 srNum 会显示在这里。</p>
-        </div>
+        </EmptyState>
       ) : null}
-      <footer className="ddt-association-footer">
+      <footer
+        className={cn("ddt-association-footer", ddtSrAssociationsStyles["ddt-association-footer"])}
+      >
         <span>{loading ? "正在读取 SR 关联…" : `已显示 ${result.items.length} 个 SR`}</span>
         {result.nextCursor ? (
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             disabled={loading}
             onClick={() => void load(result.nextCursor)}
           >
@@ -269,7 +367,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
           }}
         />
       ) : null}
-    </section>
+    </Card>
   );
 }
 
@@ -400,16 +498,24 @@ function DdtExecutionClassesDialog({
       dirty={selectedAdds.length > 0 || selectedRemoves.length > 0}
       title="测试类候选范围"
       description="仅维护当前项目版本和测试阶段需要执行 DDT 的测试类。仍被需求分类或 SR 使用的类需先解除引用。"
-      className="ddt-association-dialog"
+      className={cn("ddt-association-dialog", ddtSrAssociationsStyles["ddt-association-dialog"])}
       onClose={() => {
         if (!saving) onClose();
       }}
     >
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           {error}
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             disabled={loading || saving}
             onClick={() => {
               setRefresh((value) => value + 1);
@@ -417,11 +523,11 @@ function DdtExecutionClassesDialog({
           >
             刷新范围
           </Button>
-        </div>
+        </Notice>
       ) : null}
       {canManage ? (
         <form
-          className="search-field"
+          className={"search-field"}
           onSubmit={(event) => {
             event.preventDefault();
             setSelectedAdds([]);
@@ -436,20 +542,41 @@ function DdtExecutionClassesDialog({
             placeholder="搜索当前阶段的类名、包路径或用例名称"
             disabled={saving}
           />
-          <Button className="button button-secondary" type="submit" disabled={loading || saving}>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            type="submit"
+            disabled={loading || saving}
+          >
             搜索
           </Button>
         </form>
       ) : null}
       <div
         className={
-          !canManage ? "ddt-association-class-panels single" : "ddt-association-class-panels"
+          !canManage
+            ? cn(
+                "ddt-association-class-panels single",
+                ddtSrAssociationsStyles["ddt-association-class-panels"],
+              )
+            : cn(
+                "ddt-association-class-panels",
+                ddtSrAssociationsStyles["ddt-association-class-panels"],
+              )
         }
       >
         <section aria-label="候选测试类范围">
           <h3>已加入范围</h3>
           {canManage ? (
-            <div className="class-selection-actions">
+            <div
+              className={cn(
+                "class-selection-actions",
+                ddtSrAssociationsStyles["class-selection-actions"],
+              )}
+            >
               <Button
                 type="button"
                 size="compact"
@@ -481,9 +608,20 @@ function DdtExecutionClassesDialog({
               </Button>
             </div>
           ) : null}
-          <div className="ddt-association-class-list">
+          <div
+            className={cn(
+              "ddt-association-class-list",
+              ddtSrAssociationsStyles["ddt-association-class-list"],
+            )}
+          >
             {range.items.map((item) => (
-              <div className="ddt-association-class-item" key={item.caseDefinitionId}>
+              <div
+                className={cn(
+                  "ddt-association-class-item",
+                  ddtSrAssociationsStyles["ddt-association-class-item"],
+                )}
+                key={item.caseDefinitionId}
+              >
                 <>
                   {canManage ? (
                     <Input
@@ -499,7 +637,11 @@ function DdtExecutionClassesDialog({
                   <ClassLabel item={item} />
                   {canManage ? (
                     <Button
-                      className="button button-secondary"
+                      className={cn(
+                        "button button-secondary",
+                        uiPatterns["button"],
+                        uiPatterns["button-secondary"],
+                      )}
                       disabled={loading || saving}
                       onClick={() => void changeRange([item], false)}
                       aria-label={`移除 ${item.className}`}
@@ -512,11 +654,22 @@ function DdtExecutionClassesDialog({
             ))}
           </div>
           {!loading && !range.items.length ? (
-            <p className="ddt-association-hint">候选范围为空。从右侧加入需要执行 DDT 的测试类。</p>
+            <p
+              className={cn(
+                "ddt-association-hint",
+                ddtSrAssociationsStyles["ddt-association-hint"],
+              )}
+            >
+              候选范围为空。从右侧加入需要执行 DDT 的测试类。
+            </p>
           ) : null}
           {range.nextCursor ? (
             <Button
-              className="button button-secondary"
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               disabled={loading || saving}
               onClick={() => void load(range.nextCursor)}
             >
@@ -527,7 +680,12 @@ function DdtExecutionClassesDialog({
         {canManage ? (
           <section aria-label="可加入的测试类">
             <h3>从 TestNG 用例库添加</h3>
-            <div className="class-selection-actions">
+            <div
+              className={cn(
+                "class-selection-actions",
+                ddtSrAssociationsStyles["class-selection-actions"],
+              )}
+            >
               <Button
                 type="button"
                 size="compact"
@@ -558,9 +716,20 @@ function DdtExecutionClassesDialog({
                 加入选中（{selectedAdds.length}）
               </Button>
             </div>
-            <div className="ddt-association-class-list">
+            <div
+              className={cn(
+                "ddt-association-class-list",
+                ddtSrAssociationsStyles["ddt-association-class-list"],
+              )}
+            >
               {candidates.map((item) => (
-                <div className="ddt-association-class-item" key={item.caseDefinitionId}>
+                <div
+                  className={cn(
+                    "ddt-association-class-item",
+                    ddtSrAssociationsStyles["ddt-association-class-item"],
+                  )}
+                  key={item.caseDefinitionId}
+                >
                   <Input
                     type="checkbox"
                     aria-label={`选择加入 ${item.className}`}
@@ -576,7 +745,11 @@ function DdtExecutionClassesDialog({
                   />
                   <ClassLabel item={item} />
                   <Button
-                    className="button button-secondary"
+                    className={cn(
+                      "button button-secondary",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                    )}
                     disabled={
                       loading ||
                       saving ||
@@ -599,19 +772,33 @@ function DdtExecutionClassesDialog({
               ))}
             </div>
             {!loading && !candidates.length ? (
-              <p className="ddt-association-hint">
+              <p
+                className={cn(
+                  "ddt-association-hint",
+                  ddtSrAssociationsStyles["ddt-association-hint"],
+                )}
+              >
                 没有匹配的测试类，请核对关键词及当前项目、版本和阶段，并确认 JAR 已导入且未归档。
               </p>
             ) : null}
             {candidates.length === 50 ? (
-              <p className="ddt-association-hint">显示前 50 个匹配类，请用搜索缩小范围。</p>
+              <p
+                className={cn(
+                  "ddt-association-hint",
+                  ddtSrAssociationsStyles["ddt-association-hint"],
+                )}
+              >
+                显示前 50 个匹配类，请用搜索缩小范围。
+              </p>
             ) : null}
           </section>
         ) : null}
       </div>
       {results.length ? (
-        <details className="class-change-results">
-          <summary>本次操作结果（{results.length} 项）</summary>
+        <Disclosure
+          header={<>本次操作结果（{results.length} 项）</>}
+          className={cn("class-change-results", ddtSrAssociationsStyles["class-change-results"])}
+        >
           <ul>
             {results.map((item) => (
               <li key={item.name}>
@@ -619,9 +806,11 @@ function DdtExecutionClassesDialog({
               </li>
             ))}
           </ul>
-        </details>
+        </Disclosure>
       ) : null}
-      <footer className="ddt-association-footer">
+      <footer
+        className={cn("ddt-association-footer", ddtSrAssociationsStyles["ddt-association-footer"])}
+      >
         <span>
           {saving
             ? progress
@@ -630,7 +819,11 @@ function DdtExecutionClassesDialog({
               : "勾选不会保存；点击加入或移除后立即保存，批量逐项顺序执行"}
         </span>
         <Button
-          className="button button-secondary"
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
           data-dialog-dismiss
           disabled={saving}
           onClick={onClose}
@@ -643,10 +836,44 @@ function DdtExecutionClassesDialog({
 }
 function ClassLabel({ item }: { item: DdtExecutionClass }) {
   return (
-    <span className="ddt-association-class-label">
+    <span
+      className={cn(
+        "ddt-association-class-label",
+        ddtSrAssociationsStyles["ddt-association-class-label"],
+      )}
+    >
       <strong>{item.displayName}</strong>
       <code>{item.className}</code>
       {!item.enabled || item.archived ? <small>测试类已停用或归档</small> : null}
     </span>
   );
 }
+
+const ddtSrAssociationsStyles = {
+  "class-change-results": "mt-3 [overflow-wrap:anywhere] text-muted-foreground",
+  "class-selection-actions": "flex flex-wrap gap-1 my-2",
+  "ddt-association-class-item":
+    "flex items-center gap-3 p-3 border-b border-solid border-border [&_>_.ddt-association-class-label]:flex-1 [&_label]:flex [&_label]:items-center [&_label]:gap-3 [&_label]:w-full [&_label]:cursor-pointer [&_strong]:text-sm [&_strong]:[overflow-wrap:anywhere] [&_.button]:shrink-0",
+  "ddt-association-class-label":
+    "flex flex-col gap-1 min-w-0 [&_code]:text-xs [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere]",
+  "ddt-association-class-list": "max-h-[360px] overflow-y-auto",
+  "ddt-association-class-panels":
+    "grid grid-cols-[minmax(0,_1fr)_minmax(0,_1fr)] gap-5 [&.single]:grid-cols-[minmax(0,_1fr)] [&_h3]:text-sm [&_h3]:[margin:16px_0_8px]",
+  "ddt-association-dialog":
+    "w-[min(960px,_calc(100vw_-_20px))] max-w-none [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0 [&_.inline-notice]:mb-3",
+  "ddt-association-footer":
+    "flex items-center gap-3 mt-4 [&_>_span]:flex-1 [&_>_span]:text-muted-foreground [&_>_span]:text-sm",
+  "ddt-association-hint": "text-muted-foreground text-sm leading-[1.6] my-4 mx-0",
+  "ddt-association-toolbar":
+    "flex items-center gap-3 [&_.search-field]:flex-1 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0",
+  "ddt-association-warning": "font-semibold",
+  "ddt-sr-actions": "flex items-center gap-1 [&_.button]:px-2",
+  "ddt-sr-associations": "p-5",
+  "ddt-sr-class":
+    "min-w-0 [overflow-wrap:anywhere] flex flex-col gap-1 [&_code]:text-xs [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere]",
+  "ddt-sr-conflict": "col-span-full m-0 text-muted-foreground",
+  "ddt-sr-row":
+    "grid grid-cols-[minmax(100px,_1fr)_64px_minmax(160px,_2fr)_100px_160px] gap-3 items-center p-4 text-sm [&_+_.ddt-sr-row]:border-t [&_+_.ddt-sr-row]:border-solid [&_+_.ddt-sr-row]:border-border [&_>_strong]:min-w-0 [&_>_strong]:[overflow-wrap:anywhere]",
+  "ddt-sr-table": "border border-solid border-border rounded-lg overflow-hidden",
+  "ddt-sr-table-heading": "bg-muted text-muted-foreground font-semibold",
+} as const;

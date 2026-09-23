@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import type { CaseSuiteSchedule } from "@autoforge/contracts";
 import Link from "next/link";
 
@@ -36,7 +37,13 @@ export function CaseSuiteScheduleSummary({
   canReadExecutions: boolean;
 }) {
   return (
-    <section aria-label="当前执行计划" className="suite-schedule-summary">
+    <section
+      aria-label="当前执行计划"
+      className={cn(
+        "suite-schedule-summary",
+        caseSuiteScheduleSummaryStyles["suite-schedule-summary"],
+      )}
+    >
       <h3>当前执行计划</h3>
       <dl>
         <div>
@@ -123,3 +130,8 @@ function triggerResultLabel(status: CaseSuiteSchedule["lastTriggerStatus"]): str
       return "暂无触发结果";
   }
 }
+
+const caseSuiteScheduleSummaryStyles = {
+  "suite-schedule-summary":
+    "[&_>_p]:col-span-full [&_>_p]:m-0 [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_p]:leading-[1.6] grid gap-4 p-5 border border-solid border-border rounded-lg bg-muted [&_h3]:m-0 [&_dl]:m-0 [&_dl]:grid [&_dl]:grid-cols-2 [&_dl]:gap-4 [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:[margin:8px_0_0] [&_dd]:text-sm [&_dd]:tabular-nums [&_dd]:[overflow-wrap:anywhere] [&_a]:text-info",
+} as const;

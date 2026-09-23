@@ -1,4 +1,10 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LinkButton } from "@/components/ui/link-button";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Check, Copy, ExternalLink, Link2, LoaderCircle } from "lucide-react";
 import { useState } from "react";
@@ -52,10 +58,10 @@ export function RunBatchPermanentShare({
   }
 
   return (
-    <span className="run-share-action">
+    <span className={cn("run-share-action", runBatchPermanentShareStyles["run-share-action"])}>
       <Button
         aria-label={`生成批次 #${sequenceNumber} 永久分享链接`}
-        className="compact-button"
+        className={cn("compact-button", uiPatterns["compact-button"])}
         disabled={pending}
         onClick={() => void generate()}
         size="compact"
@@ -63,7 +69,11 @@ export function RunBatchPermanentShare({
         type="button"
         variant="ghost"
       >
-        {pending ? <LoaderCircle className="spin" size={14} /> : <Link2 size={14} />}
+        {pending ? (
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
+        ) : (
+          <Link2 size={14} />
+        )}
         {shareUrl ? "重新生成" : "分享"}
       </Button>
       {shareUrl ? (
@@ -78,26 +88,44 @@ export function RunBatchPermanentShare({
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </Button>
-          <a
+          <LinkButton
             aria-label={`打开批次 #${sequenceNumber} 永久分享链接`}
-            className="ui-button ui-button-ghost ui-button-compact"
+            className={"ui-button ui-button-ghost ui-button-compact"}
             href={shareUrl}
             rel="noreferrer"
             target="_blank"
             title="匿名打开"
           >
             <ExternalLink size={14} />
-          </a>
-          <span aria-live="polite" className="visually-hidden" role="status">
+          </LinkButton>
+          <span
+            aria-live="polite"
+            className={cn("visually-hidden", uiPatterns["visually-hidden"])}
+            role="status"
+          >
             {copied ? "永久分享链接已复制" : error}
           </span>
         </>
       ) : null}
       {error ? (
-        <span className="form-error run-share-error" role="alert">
+        <Notice
+          tone="error"
+          className={cn(
+            "form-error run-share-error",
+            uiPatterns["form-error"],
+            runBatchPermanentShareStyles["run-share-error"],
+          )}
+          role="alert"
+        >
           {error}
-        </span>
+        </Notice>
       ) : null}
     </span>
   );
 }
+
+const runBatchPermanentShareStyles = {
+  "run-share-action": "relative inline-flex items-center gap-[calc(8px_/_2)]",
+  "run-share-error":
+    "absolute z-12 top-[calc(100%_+_8px)] right-0 w-max max-w-[min(360px,_60vw)] border border-solid border-border rounded-lg py-2 px-2.5 bg-card shadow-xs whitespace-normal",
+} as const;

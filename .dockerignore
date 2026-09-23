@@ -1,5 +1,7 @@
 .git
 .github
+.local
+.lite-data
 **/.next
 **/node_modules
 **/target
@@ -17,3 +19,8 @@ test-results
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Local design output is not a build input
+output
+docs/design/ant-design-ui/*.png
+docs/design/ant-design-ui-audit/*.png

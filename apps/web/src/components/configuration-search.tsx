@@ -1,4 +1,5 @@
 "use client";
+import { cn } from "@/lib/utils";
 
 import type { Permission } from "@autoforge/domain";
 import { ChevronRight, Search } from "lucide-react";
@@ -218,13 +219,21 @@ export function ConfigurationSearchDialog({
   ).slice(0, 24);
   return (
     <ActionDialog
-      className="configuration-search-dialog"
+      className={cn(
+        "configuration-search-dialog",
+        configurationSearchStyles["configuration-search-dialog"],
+      )}
       description="搜索平台、项目、访问和运行配置，点击结果直接定位。"
       onClose={onClose}
       open={open}
       title="配置搜索"
     >
-      <div className="configuration-search-input">
+      <div
+        className={cn(
+          "configuration-search-input",
+          configurationSearchStyles["configuration-search-input"],
+        )}
+      >
         <Search aria-hidden="true" size={18} />
         <Input
           aria-label="搜索配置项"
@@ -235,9 +244,16 @@ export function ConfigurationSearchDialog({
           value={query}
         />
       </div>
-      <div className="configuration-search-results">
+      <div
+        className={cn(
+          "configuration-search-results",
+          configurationSearchStyles["configuration-search-results"],
+        )}
+      >
         {visibleItems.length === 0 ? (
-          <p className="popover-empty">没有匹配的可访问配置。</p>
+          <p className={cn("popover-empty", configurationSearchStyles["popover-empty"])}>
+            没有匹配的可访问配置。
+          </p>
         ) : (
           visibleItems.map((item) => (
             <Link href={item.href} key={item.href} onClick={onClose}>
@@ -285,3 +301,13 @@ function matchesConfiguration(item: ConfigurationSearchItem, query: string): boo
     .toLocaleLowerCase("zh-CN")
     .includes(query);
 }
+
+const configurationSearchStyles = {
+  "configuration-search-dialog":
+    "w-[min(720px,_calc(100vw_-_64px))] max-h-[min(760px,_calc(100vh_-_64px))]",
+  "configuration-search-input":
+    "flex items-center gap-3 py-0 px-3 border border-solid border-border rounded-lg bg-card text-muted-foreground [&:focus-within]:border-info [&:focus-within]:shadow-xs [&_input]:min-h-11.5 [&_input]:border-0 [&_input]:[outline:0] [&_input]:bg-transparent",
+  "configuration-search-results":
+    "grid max-h-[52vh] mt-3 overflow-auto border border-solid border-border rounded-lg [&_>_a]:flex [&_>_a]:items-center [&_>_a]:justify-between [&_>_a]:gap-4 [&_>_a]:min-h-15.5 [&_>_a]:py-3 [&_>_a]:px-4 [&_>_a]:border-b [&_>_a]:border-solid [&_>_a]:border-border [&_>_a]:text-foreground [&_>_a]:[text-decoration:none] [&_>_a:last-child]:border-b-0 [&_>_a:hover]:bg-muted [&_>_a:focus-visible]:bg-muted [&_>_a_>_span]:grid [&_>_a_>_span]:min-w-0 [&_>_a_>_span]:gap-[3px] [&_small]:text-muted-foreground",
+  "popover-empty": "m-0 py-6 px-3 text-muted-foreground text-center",
+} as const;

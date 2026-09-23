@@ -71,8 +71,8 @@ test("single and bulk analysis show previous executions and compare real logs wi
   await comparison.getByRole("button", { name: "下一处差异" }).click();
   await comparison.getByRole("button", { name: "下一处差异" }).click();
   await expect(comparison.locator('[data-selected="true"]').first()).toBeVisible();
-  await comparison.getByRole("button", { name: "对比日志流" }).click();
-  await comparison.getByRole("option", { name: "执行机诊断" }).click();
+  await comparison.getByRole("combobox", { name: "对比日志流" }).click();
+  await page.getByRole("option", { name: "执行机诊断" }).click();
   await expect(comparison).toContainText("本次仅对比各日志开头最多 2,000 行");
   await expect(comparison).toContainText("单页连续对比 2,000 行");
   const longLogWindows = comparison.locator(".analysis-log-lines");
@@ -84,8 +84,8 @@ test("single and bulk analysis show previous executions and compare real logs wi
     .poll(() => longLogWindows.last().evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   await expect(longLogWindows.first().locator('[data-diff-row="1999"]')).toHaveCount(1);
-  await comparison.getByRole("button", { name: "对比日志流" }).click();
-  await comparison.getByRole("option", { name: "错误输出" }).click();
+  await comparison.getByRole("combobox", { name: "对比日志流" }).click();
+  await page.getByRole("option", { name: "错误输出" }).click();
   await expect(comparison).toContainText("两侧均暂无日志");
   await page.keyboard.press("Escape");
   await expect(comparison).toHaveCount(0);
@@ -107,8 +107,8 @@ test("single and bulk analysis show previous executions and compare real logs wi
   const bulk = page.getByRole("dialog", { name: "批量分析 2 个用例" });
   const bulkHistory = bulk.getByRole("region", { name: "前 5 次执行结果" });
   await expect(bulkHistory.locator("tbody tr")).toHaveCount(5);
-  await bulk.getByRole("button", { name: "选择查看执行历史的用例" }).click();
-  await bulk.getByRole("option", { name: new RegExp(fixture.failedNames[1]) }).click();
+  await bulk.getByRole("combobox", { name: "选择查看执行历史的用例" }).click();
+  await page.getByRole("option", { name: new RegExp(fixture.failedNames[1]) }).click();
   await expect(bulkHistory.locator("tbody tr").first()).toContainText("失败");
   await bulkHistory.scrollIntoViewIfNeeded();
   await bulk.locator(".runner-update-body").evaluate((element) => {
@@ -199,11 +199,11 @@ test("quality insight comparison preserves scroll, can rerun, and compares both 
   await page.goto("/insights");
   const comparisonCard = page.locator(".insight-comparison-card");
   await expect(comparisonCard).toBeVisible({ timeout: 30_000 });
-  await comparisonCard.getByRole("button", { name: "选择基准批次" }).click();
+  await comparisonCard.getByRole("combobox", { name: "选择基准批次" }).click();
   const baselineOption = page.getByRole("option", { name: /^#980/u });
   await expect(baselineOption).toBeVisible({ timeout: 10_000 });
   await baselineOption.click();
-  await comparisonCard.getByRole("button", { name: "选择对比批次" }).click();
+  await comparisonCard.getByRole("combobox", { name: "选择对比批次" }).click();
   const candidateOption = page.getByRole("option", { name: /^#991/u });
   await expect(candidateOption).toBeVisible({ timeout: 10_000 });
   await candidateOption.click();

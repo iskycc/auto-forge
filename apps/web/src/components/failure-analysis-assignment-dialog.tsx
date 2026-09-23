@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   claimFailureAnalysisResultSchema,
@@ -114,7 +116,10 @@ export function FailureAnalysisAssignmentDialog({
       description={`将选中的 ${executionRunIds.length} 个失败用例分配给现有用户。仅列出已启用且有当前项目分析权限的人员。`}
     >
       <form
-        className="failure-analysis-assignee-search"
+        className={cn(
+          "failure-analysis-assignee-search",
+          failureAnalysisAssignmentDialogStyles["failure-analysis-assignee-search"],
+        )}
         onSubmit={(event) => {
           event.preventDefault();
           void loadUsers(query);
@@ -133,7 +138,7 @@ export function FailureAnalysisAssignmentDialog({
       </form>
       {loading ? (
         <p role="status">
-          <LoaderCircle className="spin" size={16} /> 正在读取人员…
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在读取人员…
         </p>
       ) : error ? (
         <p role="alert">
@@ -142,10 +147,21 @@ export function FailureAnalysisAssignmentDialog({
         </p>
       ) : (
         <form onSubmit={(event) => void assign(event)}>
-          <div className="failure-analysis-assignee-list">
+          <div
+            className={cn(
+              "failure-analysis-assignee-list",
+              failureAnalysisAssignmentDialogStyles["failure-analysis-assignee-list"],
+            )}
+          >
             {users.length ? (
               users.map((user) => (
-                <label className="failure-analysis-assignee-row" key={user.id}>
+                <label
+                  className={cn(
+                    "failure-analysis-assignee-row",
+                    failureAnalysisAssignmentDialogStyles["failure-analysis-assignee-row"],
+                  )}
+                  key={user.id}
+                >
                   <Input
                     type="radio"
                     name="analysisAssignee"
@@ -153,7 +169,12 @@ export function FailureAnalysisAssignmentDialog({
                     onChange={() => setAssigneeId(user.id)}
                     disabled={pending}
                   />
-                  <span className="failure-analysis-assignee-identity">
+                  <span
+                    className={cn(
+                      "failure-analysis-assignee-identity",
+                      failureAnalysisAssignmentDialogStyles["failure-analysis-assignee-identity"],
+                    )}
+                  >
                     <strong>{user.displayName}</strong>
                     <span>{user.username}</span>
                   </span>
@@ -163,7 +184,7 @@ export function FailureAnalysisAssignmentDialog({
               <p>没有符合条件的人员，请检查搜索条件或在项目成员管理中配置分析权限。</p>
             )}
           </div>
-          <div className="button-row">
+          <div className={cn("button-row", uiPatterns["button-row"])}>
             <Button
               disabled={!cursor || pending}
               onClick={() => void loadUsers(query, cursor)}
@@ -180,3 +201,12 @@ export function FailureAnalysisAssignmentDialog({
     </ActionDialog>
   );
 }
+
+const failureAnalysisAssignmentDialogStyles = {
+  "failure-analysis-assignee-identity":
+    "grid min-w-0 gap-2 [overflow-wrap:anywhere] [&_>_span]:text-muted-foreground",
+  "failure-analysis-assignee-list": "grid gap-3 my-4",
+  "failure-analysis-assignee-row":
+    "flex items-center gap-3 p-3 border border-solid border-border rounded-lg cursor-pointer [overflow-wrap:anywhere] [&_span]:text-muted-foreground [&_span]:text-sm",
+  "failure-analysis-assignee-search": "grid grid-cols-[minmax(0,_1fr)_auto] gap-2",
+} as const;

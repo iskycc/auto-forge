@@ -89,9 +89,9 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await expect(page.locator(".execution-log")).toContainText(
       "Configured CoTest environment address: 10.0.0.11",
     );
-    await page.getByRole("button", { name: "stderr", exact: true }).click();
+    await page.getByRole("radio", { name: "stderr", exact: true }).locator("..").click();
     await expect(page.locator(".execution-log")).toContainText("REAL_AGENT_STDERR_CAPTURED");
-    await page.getByRole("button", { name: "agent", exact: true }).click();
+    await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();
     await expect(page.locator(".execution-log")).toContainText(
       "AutoForge Runner Agent started the attempt.",
     );
@@ -138,7 +138,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "查看日志" }).click();
-    await page.getByRole("button", { name: "agent", exact: true }).click();
+    await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();
     await expect
       .poll(async () => page.locator(".execution-log").textContent(), { timeout: 30_000 })
       .toContain("AutoForge Runner Agent started the attempt.");
@@ -174,7 +174,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       "REAL_AGENT_RESTART_FIXTURE_RECOVERED",
     );
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
-    await page.getByRole("button", { name: "执行机", exact: true }).click();
+    await page.getByRole("radio", { name: "执行机", exact: true }).locator("..").click();
     await page.getByRole("button", { name: /执行机异常 1/ }).click();
     const restartFaultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
     await expect(restartFaultDialog).toContainText("AGENT_RESTARTED_DURING_EXECUTION");
@@ -388,11 +388,11 @@ async function importTestJar(page: Page): Promise<void> {
   await expect(page.getByText("com.autoforge.acceptance.RealAgentFixture")).toBeVisible({
     timeout: 20_000,
   });
-  const fixtureClass = page.locator("details.class-preview", {
+  const fixtureClass = page.locator(".ui-disclosure.class-preview", {
     hasText: "com.autoforge.acceptance.RealAgentFixture",
   });
   if ((await fixtureClass.getAttribute("open")) === null) {
-    await fixtureClass.locator("summary").click();
+    await fixtureClass.locator(".ui-disclosure-label").click();
   }
   await expect(fixtureClass.getByText("executesThroughRealAgent", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "确认导入" }).click();
@@ -443,8 +443,11 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
   const uploadForm = page.locator("form", {
     has: page.getByRole("button", { name: "上传并启用" }),
   });
-  await uploadForm.getByLabel("资源类型").selectOption("jar-bundle");
-  await uploadForm.getByLabel("压缩格式").selectOption("zip");
+  await uploadForm
+    .getByLabel("资源类型")
+    .and(uploadForm.locator("select"))
+    .selectOption("jar-bundle");
+  await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("zip");
   await uploadForm
     .getByLabel("本地文件")
     .setInputFiles(requiredEnvironment("E2E_REAL_DEPENDENCY_ARCHIVE"));

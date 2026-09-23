@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import type { Metadata } from "next";
 
 import { JarImporter } from "@/components/jar-importer";
@@ -30,10 +32,12 @@ export default async function ImportJarPage() {
   );
   const testStage = projectVersion?.stages.find((stage) => stage.id === hierarchy.testStageId);
   return (
-    <div className="page-stack narrow-page">
-      <section className="page-hero">
+    <div
+      className={cn("page-stack narrow-page", uiPatterns["page-stack"], uiPatterns["narrow-page"])}
+    >
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <span className="eyebrow">用例来源</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>用例来源</span>
           <h1>导入 TestNG JAR</h1>
           <p>上传 JAR 扫描导入，或从其他版本继承已有用例。</p>
         </div>

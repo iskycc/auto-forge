@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { Project, Role, User } from "@autoforge/domain";
 import { useState, type FormEvent } from "react";
@@ -109,7 +113,10 @@ export function UserRoleAssignmentDialog({
   return (
     <ActionDialog
       protectUnsavedChanges
-      className="role-assignment-dialog"
+      className={cn(
+        "role-assignment-dialog",
+        userRoleAssignmentDialogStyles["role-assignment-dialog"],
+      )}
       description="系统角色对全局生效，项目角色仅对选定项目生效。分配后会撤销目标用户的旧会话，需重新登录。"
       onClose={() => {
         if (!pending) onClose();
@@ -117,15 +124,31 @@ export function UserRoleAssignmentDialog({
       open
       title="分配用户角色"
     >
-      <div className="user-role-assignment-content">
+      <div
+        className={cn(
+          "user-role-assignment-content",
+          userRoleAssignmentDialogStyles["user-role-assignment-content"],
+        )}
+      >
         {selectedUser ? (
-          <div className="member-role-subject user-role-assignment-subject">
+          <div
+            className={cn(
+              "member-role-subject user-role-assignment-subject",
+              userRoleAssignmentDialogStyles["member-role-subject"],
+              userRoleAssignmentDialogStyles["user-role-assignment-subject"],
+            )}
+          >
             <strong>{selectedUser.displayName}</strong>
             <span>{selectedUser.username}</span>
           </div>
         ) : null}
         {selectedUser ? (
-          <section className="assigned-role-list">
+          <section
+            className={cn(
+              "assigned-role-list",
+              userRoleAssignmentDialogStyles["assigned-role-list"],
+            )}
+          >
             <h3>当前已分配角色</h3>
             {bindings.length ? (
               bindings.map((binding) => (
@@ -155,14 +178,23 @@ export function UserRoleAssignmentDialog({
                 </div>
               ))
             ) : (
-              <p className="settings-note">尚未分配角色。</p>
+              <p className={cn("settings-note", uiPatterns["settings-note"])}>尚未分配角色。</p>
             )}
           </section>
         ) : null}
-        <div className="settings-paired-forms">
+        <div
+          className={cn(
+            "settings-paired-forms",
+            userRoleAssignmentDialogStyles["settings-paired-forms"],
+          )}
+        >
           {canAssignSystemRoles ? (
             <form
-              className="settings-grid-form settings-subform"
+              className={cn(
+                "settings-grid-form settings-subform",
+                uiPatterns["settings-grid-form"],
+                uiPatterns["settings-subform"],
+              )}
               onSubmit={(event) => void submit(event, "system")}
             >
               {!selectedUser ? <UserPicker purpose="system-role" multiple /> : null}
@@ -182,7 +214,15 @@ export function UserRoleAssignmentDialog({
                   }))}
               />
               {systemRoles.length === 0 ? (
-                <p className="settings-wide-field field-hint">暂无可分配的系统角色。</p>
+                <p
+                  className={cn(
+                    "settings-wide-field field-hint",
+                    uiPatterns["settings-wide-field"],
+                    uiPatterns["field-hint"],
+                  )}
+                >
+                  暂无可分配的系统角色。
+                </p>
               ) : null}
               <Button disabled={pending || systemRoles.length === 0} type="submit">
                 分配系统角色
@@ -191,7 +231,11 @@ export function UserRoleAssignmentDialog({
           ) : null}
           {projects.length > 0 ? (
             <form
-              className="settings-grid-form settings-subform"
+              className={cn(
+                "settings-grid-form settings-subform",
+                uiPatterns["settings-grid-form"],
+                uiPatterns["settings-subform"],
+              )}
               onSubmit={(event) => void submit(event, "project")}
             >
               {!selectedUser ? (
@@ -202,7 +246,9 @@ export function UserRoleAssignmentDialog({
                   multiple
                 />
               ) : null}
-              <div className="user-role-field">
+              <div
+                className={cn("user-role-field", userRoleAssignmentDialogStyles["user-role-field"])}
+              >
                 <label htmlFor="role-assignment-project">项目</label>
                 <Select
                   disabled={pending}
@@ -238,22 +284,37 @@ export function UserRoleAssignmentDialog({
                   }))}
               />
               {projectRoles.length === 0 ? (
-                <p className="settings-wide-field field-hint">暂无可分配的项目角色。</p>
+                <p
+                  className={cn(
+                    "settings-wide-field field-hint",
+                    uiPatterns["settings-wide-field"],
+                    uiPatterns["field-hint"],
+                  )}
+                >
+                  暂无可分配的项目角色。
+                </p>
               ) : null}
               <Button disabled={pending || projectRoles.length === 0} type="submit">
                 分配项目角色
               </Button>
             </form>
           ) : (
-            <p className="field-hint">没有可分配角色的未归档项目。</p>
+            <p className={cn("field-hint", uiPatterns["field-hint"])}>
+              没有可分配角色的未归档项目。
+            </p>
           )}
         </div>
         {error ? (
-          <p className="auth-error" role="alert">
+          <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
             {error}
-          </p>
+          </Notice>
         ) : null}
-        <div className="action-dialog-actions">
+        <div
+          className={cn(
+            "action-dialog-actions",
+            userRoleAssignmentDialogStyles["action-dialog-actions"],
+          )}
+        >
           <Button data-dialog-dismiss disabled={pending} onClick={onClose} type="button">
             取消
           </Button>
@@ -262,3 +323,18 @@ export function UserRoleAssignmentDialog({
     </ActionDialog>
   );
 }
+
+const userRoleAssignmentDialogStyles = {
+  "action-dialog-actions": "flex justify-end gap-[9px] border-t border-solid border-border pt-4",
+  "assigned-role-list":
+    "grid gap-2 [&_>_div]:flex [&_>_div]:justify-between [&_>_div]:items-center [&_>_div]:gap-3 [&_>_div]:[overflow-wrap:anywhere]",
+  "member-role-subject":
+    "grid gap-[3px] rounded-lg py-3 px-3.5 bg-muted [&_span]:text-muted-foreground [&_span]:text-xs [&_span]:[overflow-wrap:anywhere]",
+  "role-assignment-dialog":
+    "[&_.settings-paired-forms]:grid-cols-[minmax(0,_1fr)] w-[min(700px,_calc(100dvw_-_40px))] [&_.settings-subform]:grid-cols-[minmax(0,_1fr)] [&_.settings-subform]:pt-4 [&_.settings-subform_>_.ui-button]:self-end",
+  "settings-paired-forms":
+    "grid grid-cols-2 gap-4 [&_>_*]:min-w-0 [&_.settings-subform]:mt-0 [&_.settings-subform]:pt-0 [&_.settings-subform]:border-t-0",
+  "user-role-assignment-content": "grid min-w-0 gap-4",
+  "user-role-assignment-subject": "min-w-0 [overflow-wrap:anywhere]",
+  "user-role-field": "grid [align-content:start] min-w-0 gap-2",
+} as const;

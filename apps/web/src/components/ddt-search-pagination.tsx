@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment } from "react";
+import { Pagination } from "antd";
 import { DDT_VALUE_SEARCH_PAGE_SIZE } from "@autoforge/contracts";
 import { Button } from "./ui";
 
@@ -18,40 +18,52 @@ export function DdtSearchPagination({
   onPageChange(page: number): void;
 }) {
   const totalPages = Math.ceil(totalCount / DDT_VALUE_SEARCH_PAGE_SIZE);
-  const visiblePages = [...new Set([1, page - 1, page, page + 1, totalPages])]
-    .filter((number) => number > 0 && number <= totalPages)
-    .sort((left, right) => left - right);
   return (
-    <nav className="ddt-search-pagination" aria-label="检索结果分页">
+    <nav
+      className="ddt-search-pagination flex min-w-0 flex-wrap items-center justify-between gap-3"
+      aria-label="检索结果分页"
+    >
       <p>
         {complete ? "共" : "已匹配"} {totalCount} 条 · {complete ? "共" : "当前"} {totalPages} 页
         {totalPages ? ` · 第 ${page} 页` : ""} · 每页 {DDT_VALUE_SEARCH_PAGE_SIZE} 条
       </p>
-      <div className="button-row">
-        <Button disabled={disabled || page <= 1} onClick={() => onPageChange(page - 1)}>
-          上一页
-        </Button>
-        {visiblePages.map((number, index) => (
-          <Fragment key={number}>
-            {index > 0 && number - visiblePages[index - 1]! > 1 ? (
-              <span aria-hidden="true">…</span>
-            ) : null}
-            <Button
-              size="compact"
-              variant={number === page ? "primary" : "secondary"}
-              aria-label={`第 ${number} 页`}
-              aria-current={number === page ? "page" : undefined}
-              disabled={disabled}
-              onClick={() => onPageChange(number)}
-            >
-              {number}
-            </Button>
-          </Fragment>
-        ))}
-        <Button disabled={disabled || page >= totalPages} onClick={() => onPageChange(page + 1)}>
-          下一页
-        </Button>
-      </div>
+      <Pagination
+        current={page}
+        total={totalCount}
+        pageSize={DDT_VALUE_SEARCH_PAGE_SIZE}
+        disabled={disabled}
+        showSizeChanger={false}
+        showLessItems
+        onChange={onPageChange}
+        className="[&_.ant-pagination-prev]:w-auto [&_.ant-pagination-next]:w-auto [&_.ant-pagination-item]:border-0"
+        itemRender={(number, type, original) => {
+          if (type === "prev")
+            return (
+              <Button size="compact" disabled={disabled || page <= 1}>
+                上一页
+              </Button>
+            );
+          if (type === "next")
+            return (
+              <Button size="compact" disabled={disabled || page >= totalPages}>
+                下一页
+              </Button>
+            );
+          if (type === "page")
+            return (
+              <Button
+                size="compact"
+                variant={number === page ? "primary" : "secondary"}
+                aria-label={`第 ${number} 页`}
+                aria-current={number === page ? "page" : undefined}
+                disabled={disabled}
+              >
+                {number}
+              </Button>
+            );
+          return original;
+        }}
+      />
     </nav>
   );
 }

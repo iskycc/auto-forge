@@ -1,4 +1,5 @@
 "use client";
+import { cn } from "@/lib/utils";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -95,8 +96,20 @@ export function GlobalProjectSwitcher({
 
   if (projects.length === 0 && !canCreateProject) return null;
   return (
-    <div aria-busy={pending} aria-label="当前项目层级" className="global-project-switcher">
-      <div className="global-context-field global-context-project">
+    <div
+      aria-busy={pending}
+      aria-label="当前项目层级"
+      className={cn(
+        "global-project-switcher",
+        globalProjectSwitcherStyles["global-project-switcher"],
+      )}
+    >
+      <div
+        className={cn(
+          "global-context-field global-context-project",
+          globalProjectSwitcherStyles["global-context-field"],
+        )}
+      >
         <span>项目</span>
         <ProjectHierarchyPicker
           disabled={disabled}
@@ -107,7 +120,9 @@ export function GlobalProjectSwitcher({
           {...(canRead ? { settingsLink: { href: "/settings/projects", label: "项目设置" } } : {})}
         />
       </div>
-      <div className="global-context-field">
+      <div
+        className={cn("global-context-field", globalProjectSwitcherStyles["global-context-field"])}
+      >
         <span>版本</span>
         <ProjectHierarchyPicker
           label="项目版本"
@@ -137,7 +152,9 @@ export function GlobalProjectSwitcher({
             : {})}
         />
       </div>
-      <div className="global-context-field">
+      <div
+        className={cn("global-context-field", globalProjectSwitcherStyles["global-context-field"])}
+      >
         <span>阶段</span>
         <ProjectHierarchyPicker
           label="测试阶段"
@@ -183,3 +200,10 @@ function sameContext(left: ProjectContext, right: ProjectContext): boolean {
     left.testStageId === right.testStageId
   );
 }
+
+const globalProjectSwitcherStyles = {
+  "global-context-field":
+    "grid min-w-0 gap-0.5 [&_>_span:not(.ui-select)]:text-muted-foreground [&_>_span:not(.ui-select)]:text-xs [&_>_span:not(.ui-select)]:font-semibold [&_>_span:not(.ui-select)]:leading-[1]",
+  "global-project-switcher":
+    'grid w-[clamp(410px,_42vw,_620px)] min-w-0 [flex:0_1_620px] grid-cols-[minmax(0,_1.35fr)_repeat(2,_minmax(0,_1fr))] items-end gap-[7px] [&_.project-picker-trigger]:min-h-8.5 [&_.project-picker-trigger]:h-8.5 [&_.project-picker-trigger]:grid-cols-[minmax(0,1fr)_auto] [&_.ui-select-trigger]:min-h-8.5 [&_.ui-select-trigger]:h-8.5 [&_.project-picker-icon]:hidden [&[aria-busy="true"]]:opacity-65 [&[aria-busy="true"]]:pointer-events-none max-[1181px]:w-[390px] max-[1181px]:min-w-0 max-[1181px]:[flex-basis:390px] max-[1181px]:grid-cols-[minmax(0,_1.3fr)_repeat(2,_minmax(0,_1fr))] [&_.hierarchy-picker-trigger]:min-h-8.5 [&_.hierarchy-picker-trigger]:h-8.5',
+} as const;

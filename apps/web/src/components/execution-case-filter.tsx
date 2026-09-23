@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useRef, useState } from "react";
 import { ActionDialog } from "./action-dialog";
@@ -78,7 +82,9 @@ export function ExecutionCaseFilter({
     }
   }
   return (
-    <div className="execution-case-filter">
+    <div
+      className={cn("execution-case-filter", executionCaseFilterStyles["execution-case-filter"])}
+    >
       <label>
         用例 ID
         <Input
@@ -104,7 +110,7 @@ export function ExecutionCaseFilter({
         onClose={() => setOpen(false)}
       >
         <form
-          className="case-lookup-form"
+          className={cn("case-lookup-form", executionCaseFilterStyles["case-lookup-form"])}
           onSubmit={(event) => {
             event.preventDefault();
             void search();
@@ -141,12 +147,14 @@ export function ExecutionCaseFilter({
           </Button>
         </form>
         {error ? (
-          <p role="alert" className="form-error">
+          <Notice tone="error" role="alert" className={cn("form-error", uiPatterns["form-error"])}>
             {error}
-          </p>
+          </Notice>
         ) : null}
         {pending ? <p role="status">正在查找…</p> : null}
-        <div className="case-lookup-results">
+        <div
+          className={cn("case-lookup-results", executionCaseFilterStyles["case-lookup-results"])}
+        >
           {choices?.items.map((item) => (
             <Button
               key={item.id}
@@ -174,3 +182,12 @@ export function ExecutionCaseFilter({
     </div>
   );
 }
+
+const executionCaseFilterStyles = {
+  "case-lookup-form":
+    "grid grid-cols-[minmax(0,_1fr)_minmax(0,_2fr)_auto] items-end gap-2 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1",
+  "case-lookup-results":
+    "grid gap-2 my-3 [&_>_button]:grid [&_>_button]:justify-start [&_>_button]:text-left [&_>_button]:[overflow-wrap:anywhere] [&_small]:text-muted-foreground",
+  "execution-case-filter":
+    "grid grid-cols-[minmax(0,_1fr)_auto] items-end gap-1 min-w-0 [&_label]:min-w-0 [&_small]:col-span-full [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap",
+} as const;

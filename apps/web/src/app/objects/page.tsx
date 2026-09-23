@@ -1,5 +1,20 @@
+import { EmptyState } from "@/components/ui/empty-state";
+import { Badge } from "@/components/ui/badge";
+import { Disclosure } from "@/components/ui/disclosure";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { Archive, Database, ExternalLink, FolderOpen, HardDrive } from "lucide-react";
 import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 
 import { CursorPagination } from "@/components/cursor-pagination";
 import { Button, Input } from "@/components/ui";
@@ -81,35 +96,59 @@ export default async function ObjectsPage({
   const sourceByKey = new Map(sources.map((source) => [source.objectKey, source]));
 
   return (
-    <div className="page-stack">
-      <section className="page-hero">
+    <div className={cn("page-stack", uiPatterns["page-stack"])}>
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <span className="eyebrow">受管对象</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>受管对象</span>
           <h1>文件与 JAR 来源</h1>
           <p>管理当前项目的来源资产和导入文件；空间占用与清理请前往存储空间。</p>
         </div>
-        <span className="storage-pill">
+        <span className={cn("storage-pill", pageStyles["storage-pill"])}>
           {objects.storage === "local" ? <HardDrive size={16} /> : <Database size={16} />}
           {objects.storage === "local" ? "本地对象存储" : "MinIO 对象存储"}
         </span>
       </section>
-      <div className="management-toolbar management-scope-toolbar">
-        <span className="permission-chip">范围：当前项目</span>
+      <div
+        className={cn(
+          "management-toolbar management-scope-toolbar",
+          uiPatterns["management-toolbar"],
+          pageStyles["management-scope-toolbar"],
+        )}
+      >
+        <Badge className={cn("permission-chip", uiPatterns["permission-chip"])}>
+          范围：当前项目
+        </Badge>
         <Link href="/settings/platform?section=storage">查看存储空间</Link>
       </div>
-      <section className="card table-card management-table-card">
-        <div className="section-title-row">
+      <Card
+        as="section"
+        className={cn(
+          "card table-card management-table-card",
+          uiPatterns["card"],
+          pageStyles["table-card"],
+          pageStyles["management-table-card"],
+        )}
+      >
+        <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
           <div>
-            <span className="eyebrow">源码管理</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>源码管理</span>
             <h2>TestNG JAR</h2>
           </div>
           {canImport ? (
-            <Link className="button button-primary" href="/cases/import">
+            <LinkButton
+              variant="primary"
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
+              href="/cases/import"
+            >
               <Archive size={16} /> 导入 JAR
-            </Link>
+            </LinkButton>
           ) : null}
         </div>
-        <form className="management-toolbar" method="get">
+        <form className={cn("management-toolbar", uiPatterns["management-toolbar"])} method="get">
           <Input
             aria-label="搜索 JAR 来源"
             name="query"
@@ -119,60 +158,77 @@ export default async function ObjectsPage({
           <Button type="submit">搜索来源</Button>
         </form>
         {sources.length === 0 ? (
-          <div className="empty-state table-empty">
-            <span className="empty-icon">
+          <EmptyState
+            className={cn(
+              "empty-state table-empty",
+              uiPatterns["empty-state"],
+              uiPatterns["table-empty"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <Archive size={25} />
             </span>
             <strong>暂无 JAR 来源</strong>
             <p>导入并预览 TestNG JAR 后，可在这里设置全量用例来源。</p>
-          </div>
+          </EmptyState>
         ) : (
-          <div className="table-scroll">
-            <table className="data-table source-list-table">
-              <thead>
-                <tr>
-                  <th>JAR 来源</th>
-                  <th>规模</th>
-                  <th>摘要</th>
-                  <th>导入时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+            <Table
+              className={cn(
+                "data-table source-list-table",
+                uiPatterns["data-table"],
+                pageStyles["source-list-table"],
+              )}
+            >
+              <TableHeader>
+                <TableRow>
+                  <TableHead>JAR 来源</TableHead>
+                  <TableHead>规模</TableHead>
+                  <TableHead>摘要</TableHead>
+                  <TableHead>导入时间</TableHead>
+                  <TableHead>操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {sources.map((source) => (
-                  <tr key={source.id}>
-                    <td>
-                      <span className="class-cell">
+                  <TableRow key={source.id}>
+                    <TableCell>
+                      <span className={cn("class-cell", pageStyles["class-cell"])}>
                         <strong>{source.originalFileName}</strong>
                         <small>
                           {source.classCount} 类 ·{" "}
                           {source.lifecycleStatus === "archived" ? "已归档" : "可用"}
                         </small>
-                        <details>
-                          <summary>对象键与摘要</summary>
+                        <Disclosure header={<>对象键与摘要</>}>
                           <code>{source.objectKey}</code>
-                        </details>
+                        </Disclosure>
                       </span>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       {source.classCount} 类 · {source.methodCount} 方法
-                    </td>
-                    <td>
-                      <code className="digest">{source.sha256.slice(0, 12)}…</code>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
+                      <code className={cn("digest", pageStyles["digest"])}>
+                        {source.sha256.slice(0, 12)}…
+                      </code>
+                    </TableCell>
+                    <TableCell>
                       <time dateTime={source.createdAt} title={`UTC：${source.createdAt}`}>
                         {formatDate(source.createdAt, timeZone)}
                       </time>
-                    </td>
-                    <td>
-                      <span className="row-actions">
-                        <Link
-                          className="button button-secondary"
+                    </TableCell>
+                    <TableCell>
+                      <span className={cn("row-actions", pageStyles["row-actions"])}>
+                        <LinkButton
+                          className={cn(
+                            "button button-secondary",
+                            uiPatterns["button"],
+                            uiPatterns["button-secondary"],
+                          )}
                           href={`/case-sources/${source.id}`}
                         >
                           <ExternalLink size={14} /> 预览
-                        </Link>
+                        </LinkButton>
                         {hasPermission(identity, "case_source.manage", source.projectId) ? (
                           <SourceActions
                             sourceId={source.id}
@@ -180,11 +236,11 @@ export default async function ObjectsPage({
                           />
                         ) : null}
                       </span>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
         <CursorPagination
@@ -193,17 +249,27 @@ export default async function ObjectsPage({
           count={sources.length}
           label="来源分页"
         />
-      </section>
+      </Card>
 
-      <section className="card table-card management-table-card">
-        <div className="section-title-row">
+      <Card
+        as="section"
+        className={cn(
+          "card table-card management-table-card",
+          uiPatterns["card"],
+          pageStyles["table-card"],
+          pageStyles["management-table-card"],
+        )}
+      >
+        <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
           <div>
-            <span className="eyebrow">对象浏览器</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>对象浏览器</span>
             <h2>纳管文件</h2>
           </div>
-          <span className="table-count">本页 {objects.items.length} 个对象</span>
+          <span className={cn("table-count", pageStyles["table-count"])}>
+            本页 {objects.items.length} 个对象
+          </span>
         </div>
-        <form className="management-toolbar" method="get">
+        <form className={cn("management-toolbar", uiPatterns["management-toolbar"])} method="get">
           <Input
             aria-label="对象键前缀"
             name="prefix"
@@ -213,52 +279,70 @@ export default async function ObjectsPage({
           <Button type="submit">筛选文件</Button>
         </form>
         {objects.items.length === 0 ? (
-          <div className="empty-state table-empty">
-            <span className="empty-icon">
+          <EmptyState
+            className={cn(
+              "empty-state table-empty",
+              uiPatterns["empty-state"],
+              uiPatterns["table-empty"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <FolderOpen size={25} />
             </span>
             <strong>对象空间为空</strong>
             <p>导入 JAR 后，内容寻址对象会显示在这里。</p>
-          </div>
+          </EmptyState>
         ) : (
-          <div className="table-scroll">
-            <table className="data-table object-list-table">
-              <thead>
-                <tr>
-                  <th>文件 / 对象键</th>
-                  <th>类型</th>
-                  <th>大小</th>
-                  <th>更新时间</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+            <Table
+              className={cn(
+                "data-table object-list-table",
+                uiPatterns["data-table"],
+                pageStyles["object-list-table"],
+              )}
+            >
+              <TableHeader>
+                <TableRow>
+                  <TableHead>文件 / 对象键</TableHead>
+                  <TableHead>类型</TableHead>
+                  <TableHead>大小</TableHead>
+                  <TableHead>更新时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {objects.items.map((item) => {
                   const source = sourceByKey.get(item.objectKey);
                   return (
-                    <tr key={item.objectKey}>
-                      <td>
+                    <TableRow key={item.objectKey}>
+                      <TableCell>
                         {source ? (
-                          <Link className="object-link" href={`/case-sources/${source.id}`}>
+                          <Link
+                            className={cn("object-link", pageStyles["object-link"])}
+                            href={`/case-sources/${source.id}`}
+                          >
                             {source.originalFileName}
                           </Link>
                         ) : (
-                          <code className="object-key" title={item.objectKey}>
+                          <code
+                            className={cn("object-key", pageStyles["object-key"])}
+                            title={item.objectKey}
+                          >
                             {item.objectKey}
                           </code>
                         )}
-                      </td>
-                      <td>{source ? "TestNG JAR" : "受管对象"}</td>
-                      <td>{formatBytes(item.sizeBytes)}</td>
-                      <td>
+                      </TableCell>
+                      <TableCell>{source ? "TestNG JAR" : "受管对象"}</TableCell>
+                      <TableCell>{formatBytes(item.sizeBytes)}</TableCell>
+                      <TableCell>
                         <time dateTime={item.lastModified} title={`UTC：${item.lastModified}`}>
                           {formatDate(item.lastModified, timeZone)}
                         </time>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
         <CursorPagination
@@ -266,7 +350,28 @@ export default async function ObjectsPage({
           count={objects.items.length}
           label="文件分页"
         />
-      </section>
+      </Card>
     </div>
   );
 }
+
+const pageStyles = {
+  "class-cell":
+    "[&_small]:overflow-hidden [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:text-ellipsis [&_small]:whitespace-nowrap flex min-w-[180px] flex-col gap-1 [&_strong]:text-sm [&_code]:text-muted-foreground [&_code]:text-xs [&_code]:[overflow-wrap:anywhere] [&_code]:whitespace-normal",
+  digest: "text-muted-foreground text-xs",
+  "management-scope-toolbar": "items-center",
+  "management-table-card":
+    "[&_.ui-card-content_>_.management-toolbar]:mx-4 [&_.ui-card-content_>_.management-pagination]:mx-4 [&_.ui-card-content_>_.table-empty]:min-h-[240px]",
+  "object-key": "block max-w-full overflow-hidden text-ellipsis whitespace-nowrap",
+  "object-link": "text-info font-semibold [&:hover]:[text-decoration:underline]",
+  "object-list-table":
+    "[&_td]:min-w-0 [&_td]:[overflow-wrap:anywhere] min-w-[720px] [table-layout:fixed] [&_th:first-child]:w-[52%]",
+  "row-actions": "inline-flex items-center gap-2",
+  "source-list-table":
+    "min-w-[1040px] [table-layout:fixed] [&_th:first-child]:w-[34%] [&_th:nth-child(2)]:w-[16%] [&_th:nth-child(3)]:w-[14%] [&_th:nth-child(4)]:w-[20%] [&_th:last-child]:w-[250px] [&_td]:min-w-0 [&_td]:[overflow-wrap:anywhere]",
+  "storage-pill":
+    "inline-flex items-center gap-2 border border-solid border-border rounded-full py-[9px] px-[13px] bg-card text-muted-foreground text-xs font-semibold shadow-xs",
+  "table-card":
+    "overflow-hidden [&_.ui-card-content_>_.card-heading]:min-h-17 [&_.ui-card-content_>_.card-heading]:items-center [&_.ui-card-content_>_.card-heading]:border-b [&_.ui-card-content_>_.card-heading]:border-solid [&_.ui-card-content_>_.card-heading]:border-border [&_.ui-card-content_>_.card-heading]:py-3.5 [&_.ui-card-content_>_.card-heading]:px-4.5",
+  "table-count": "text-muted-foreground text-xs whitespace-nowrap",
+} as const;

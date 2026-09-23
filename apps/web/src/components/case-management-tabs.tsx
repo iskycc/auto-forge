@@ -1,7 +1,10 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { DatabaseZap, FileArchive, Import } from "lucide-react";
-import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
+import { Tabs } from "./ui/tabs";
 import { useState, type MouseEvent, type ReactNode } from "react";
 
 type CaseManagementTab = "testng" | "ddt";
@@ -25,10 +28,15 @@ export function CaseManagementTabs({
   );
 
   function activateTab(event: MouseEvent<HTMLAnchorElement>, tab: CaseManagementTab): void {
+    event.stopPropagation();
     if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
       return;
     }
     event.preventDefault();
+    changeTab(tab);
+  }
+
+  function changeTab(tab: CaseManagementTab): void {
     if (tab === activeTab) return;
     setActiveTab(tab);
     setVisitedTabs((current) => new Set([...current, tab]));
@@ -36,9 +44,17 @@ export function CaseManagementTabs({
 
   return (
     <>
-      <section className={`page-hero${activeTab === "ddt" ? " ddt-page-hero" : ""}`}>
+      <section
+        className={cn(
+          uiPatterns["page-hero"],
+          "page-hero",
+          activeTab === "ddt" && cn("ddt-page-hero", caseManagementTabsStyles["ddt-page-hero"]),
+        )}
+      >
         <div>
-          <span className="eyebrow">{activeTab === "ddt" ? "数据驱动测试" : "TestNG 资产"}</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>
+            {activeTab === "ddt" ? "数据驱动测试" : "TestNG 资产"}
+          </span>
           <h1>用例管理</h1>
           <p>
             {activeTab === "ddt"
@@ -47,29 +63,58 @@ export function CaseManagementTabs({
           </p>
         </div>
         {canImport && activeTab === "testng" ? (
-          <Link className="button button-primary button-large" href="/cases/import">
+          <LinkButton
+            variant="primary"
+            className={cn(
+              "button button-primary button-large",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+              uiPatterns["button-large"],
+            )}
+            href="/cases/import"
+          >
             <Import size={18} aria-hidden="true" /> 导入 JAR
-          </Link>
+          </LinkButton>
         ) : null}
       </section>
 
-      <nav className="case-kind-tabs" aria-label="用例类型">
-        <a
-          aria-current={activeTab === "testng" ? "page" : undefined}
-          className={activeTab === "testng" ? "active" : ""}
-          href="/cases?tab=testng"
-          onClick={(event) => activateTab(event, "testng")}
-        >
-          <FileArchive size={17} aria-hidden="true" /> TestNG 用例
-        </a>
-        <a
-          aria-current={activeTab === "ddt" ? "page" : undefined}
-          className={activeTab === "ddt" ? "active" : ""}
-          href="/cases?tab=ddt"
-          onClick={(event) => activateTab(event, "ddt")}
-        >
-          <DatabaseZap size={17} aria-hidden="true" /> DDT 管理
-        </a>
+      <nav className="case-kind-tabs min-w-0" aria-label="用例类型">
+        <Tabs
+          label="用例类型"
+          value={activeTab}
+          onChange={changeTab}
+          items={[
+            {
+              key: "testng",
+              label: (
+                <a
+                  aria-current={activeTab === "testng" ? "page" : undefined}
+                  className={cn(
+                    "inline-flex items-center gap-2",
+                    activeTab === "testng" && "active",
+                  )}
+                  href="/cases?tab=testng"
+                  onClick={(event) => activateTab(event, "testng")}
+                >
+                  <FileArchive size={17} aria-hidden="true" /> TestNG 用例
+                </a>
+              ),
+            },
+            {
+              key: "ddt",
+              label: (
+                <a
+                  aria-current={activeTab === "ddt" ? "page" : undefined}
+                  className={cn("inline-flex items-center gap-2", activeTab === "ddt" && "active")}
+                  href="/cases?tab=ddt"
+                  onClick={(event) => activateTab(event, "ddt")}
+                >
+                  <DatabaseZap size={17} aria-hidden="true" /> DDT 管理
+                </a>
+              ),
+            },
+          ]}
+        />
       </nav>
 
       {activeTab === "testng" ? scopeContent : null}
@@ -83,3 +128,7 @@ export function CaseManagementTabs({
     </>
   );
 }
+
+const caseManagementTabsStyles = {
+  "ddt-page-hero": "py-1 [&_.eyebrow]:hidden",
+} as const;

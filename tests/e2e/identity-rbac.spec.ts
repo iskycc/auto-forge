@@ -286,7 +286,10 @@ test("administrator assigns system and project roles directly from the user row"
     expect((await targetPage.request.get("/api/v1/audit-events?limit=1")).status()).toBe(200);
     await assign.click();
     await expect(dialog.getByRole("alert")).toHaveCount(0);
-    await dialog.getByLabel("项目", { exact: true }).selectOption(DEFAULT_PROJECT_ID);
+    await dialog
+      .getByLabel("项目", { exact: true })
+      .and(dialog.locator("select"))
+      .selectOption(DEFAULT_PROJECT_ID);
     await dialog.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
     await dialog.getByRole("button", { name: "分配项目角色" }).click();
     await expect(dialog).toHaveCount(0);
@@ -601,7 +604,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
   const roleForm = page.getByRole("dialog", { name: "创建自定义角色" });
   await roleForm.getByLabel("角色标识").fill(roleKey);
   await roleForm.getByLabel("角色名称").fill(roleName);
-  await roleForm.getByLabel("作用域").selectOption("project");
+  await roleForm.getByLabel("作用域").and(roleForm.locator("select")).selectOption("project");
   const rolePermissions = roleForm.getByRole("group", { name: "权限" });
   expect(await rolePermissions.getByRole("checkbox").count()).toBeGreaterThan(1);
   await rolePermissions.locator('input[value="case.read"]').check();
@@ -693,7 +696,7 @@ test("project administrators use unified users and roles without global account 
       .click();
     await acceptSystemDialog(operatorPage, "撤销用户角色", "确认撤销");
     await expect(dialog).toHaveCount(0);
-    await row.locator("summary").click();
+    await row.locator(".ui-disclosure-label").click();
     await expect(row.locator(".permission-list")).toContainText("测试管理员");
     await expect(row.locator(".permission-list")).not.toContainText("只读观察者");
     await operatorPage.goto("/settings/access?section=users&scope=all");
@@ -711,7 +714,7 @@ test("project administrators use unified users and roles without global account 
     await expect(dialog).toHaveCount(0);
     const addedRow = operatorPage.getByRole("row").filter({ hasText: outsiderName });
     await expect(addedRow).toBeVisible();
-    await addedRow.locator("summary").click();
+    await addedRow.locator(".ui-disclosure-label").click();
     await expect(addedRow.locator(".permission-list")).toContainText("只读观察者");
     await expect(addedRow.locator(".permission-list")).toContainText("测试管理员");
     expect(await browserStatus(operatorPage, "/api/v1/users")).toBe(403);

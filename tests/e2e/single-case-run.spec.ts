@@ -52,12 +52,12 @@ test("global execution dialog schedules one case through a runner group with Ada
   await page.getByRole("button", { name: "开始执行", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "开始执行" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "单个用例", exact: true }).click();
+  await dialog.getByRole("radio", { name: "单个用例", exact: true }).locator("..").click();
   await selectOptionContaining(
     dialog.locator('select[aria-label="待执行单个用例"]'),
     "SingleCaseFixture",
   );
-  await dialog.getByRole("button", { name: "使用执行机组" }).click();
+  await dialog.getByRole("radio", { name: "使用执行机组" }).locator("..").click();
   await selectOptionContaining(dialog.locator('select[aria-label="执行机组"]'), groupName);
   await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
   await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
@@ -66,8 +66,12 @@ test("global execution dialog schedules one case through a runner group with Ada
   await dialog.getByLabel("单用例执行环境 IP 地址").fill("10.0.0.21");
   await expect(dialog.locator('select[aria-label="失败重跑方式"]')).toHaveValue("round");
   await expect(dialog.locator('select[aria-label="失败重跑次数"]')).toHaveValue("0");
-  const retryModeTrigger = dialog.getByRole("button", { name: "失败重跑方式", exact: true });
-  await expect(retryModeTrigger).toHaveText("本轮结束后统一重跑");
+  const retryModeTrigger = dialog.getByRole("combobox", { name: "失败重跑方式", exact: true });
+  await expect(
+    dialog.locator(".ui-select", {
+      has: page.getByRole("combobox", { name: "失败重跑方式", exact: true }),
+    }),
+  ).toContainText("本轮结束后统一重跑");
   for (const viewport of [
     { width: 1024, height: 768 },
     { width: 1536, height: 1024 },
@@ -188,8 +192,11 @@ async function uploadAdapterDependencies(page: Page, projectId: string): Promise
   const uploadForm = page.locator("form", {
     has: page.getByRole("button", { name: "上传并启用" }),
   });
-  await uploadForm.getByLabel("资源类型").selectOption("jar-bundle");
-  await uploadForm.getByLabel("压缩格式").selectOption("zip");
+  await uploadForm
+    .getByLabel("资源类型")
+    .and(uploadForm.locator("select"))
+    .selectOption("jar-bundle");
+  await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("zip");
   await uploadForm.getByLabel("本地文件").setInputFiles({
     name: "single-case-dependencies.zip",
     mimeType: "application/zip",

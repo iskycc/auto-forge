@@ -1,8 +1,8 @@
 "use client";
 
+import { Result } from "antd";
+import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui";
-
-import { AlertTriangle, RotateCcw } from "lucide-react";
 
 export default function ErrorPage({
   reset,
@@ -11,15 +11,17 @@ export default function ErrorPage({
   reset: () => void;
 }) {
   return (
-    <div className="fatal-state">
-      <span className="fatal-icon">
-        <AlertTriangle size={28} />
-      </span>
-      <h1>页面加载失败</h1>
-      <p>请检查 Lite 数据目录和 SQLite 文件权限，然后重试。</p>
-      <Button className="button button-primary" type="button" onClick={reset}>
-        <RotateCcw size={17} /> 重试
-      </Button>
+    <div className="grid min-h-[calc(100vh_-_150px)] place-items-center">
+      <Result
+        status="warning"
+        title={<h1 className="text-2xl">页面加载失败</h1>}
+        subTitle="请重试；若问题持续，请联系管理员检查平台诊断和服务日志。"
+        extra={
+          <Button variant="primary" type="button" onClick={reset}>
+            <RotateCcw size={17} /> 重试
+          </Button>
+        }
+      />
     </div>
   );
 }

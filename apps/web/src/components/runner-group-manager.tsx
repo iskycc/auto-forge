@@ -1,4 +1,12 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { Runner, RunnerGroup } from "@autoforge/domain";
 import { LoaderCircle, Pencil, Plus, Server, Trash2, UsersRound, X } from "lucide-react";
@@ -123,9 +131,11 @@ export function RunnerGroupManager({
   }
 
   return (
-    <div className="runner-group-manager">
+    <div className={cn("runner-group-manager", runnerGroupManagerStyles["runner-group-manager"])}>
       {canManage ? (
-        <div className="runner-group-toolbar">
+        <div
+          className={cn("runner-group-toolbar", runnerGroupManagerStyles["runner-group-toolbar"])}
+        >
           <span>按机房、网络区域或能力维护可复用资源池。</span>
           <Button
             onClick={() => {
@@ -146,54 +156,88 @@ export function RunnerGroupManager({
         open={createOpen}
         title="新建执行机组"
       >
-        <form className="action-dialog-form" onSubmit={(event) => void create(event)}>
-          <div className="runner-group-fields">
-            <label className="field-stack">
+        <form
+          className={cn("action-dialog-form", runnerGroupManagerStyles["action-dialog-form"])}
+          onSubmit={(event) => void create(event)}
+        >
+          <div
+            className={cn("runner-group-fields", runnerGroupManagerStyles["runner-group-fields"])}
+          >
+            <label className={cn("field-stack", uiPatterns["field-stack"])}>
               <span>组名称</span>
               <Input maxLength={120} name="name" required />
             </label>
-            <label className="field-stack runner-group-description">
+            <label
+              className={cn(
+                "field-stack runner-group-description",
+                uiPatterns["field-stack"],
+                runnerGroupManagerStyles["runner-group-description"],
+              )}
+            >
               <span>说明</span>
               <Textarea maxLength={500} name="description" rows={2} />
             </label>
           </div>
           {error ? (
-            <p className="form-error" role="alert">
+            <Notice
+              tone="error"
+              className={cn("form-error", uiPatterns["form-error"])}
+              role="alert"
+            >
               {error}
-            </p>
+            </Notice>
           ) : null}
           <RunnerMemberPicker runners={runners} selectedRunnerIds={[]} />
           <Button disabled={pending} type="submit" variant="primary">
-            {pending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
+            {pending ? (
+              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+            ) : (
+              <Plus size={16} />
+            )}
             创建执行机组
           </Button>
         </form>
       </ActionDialog>
 
       {error && !createOpen && !editingGroupId ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {error}
-        </p>
+        </Notice>
       ) : null}
 
-      <section className="card runner-group-list-card">
-        <div className="section-title-row">
+      <Card
+        as="section"
+        className={cn(
+          "card runner-group-list-card",
+          uiPatterns["card"],
+          runnerGroupManagerStyles["runner-group-list-card"],
+        )}
+      >
+        <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
           <div>
-            <span className="eyebrow">RESOURCE POOLS</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>RESOURCE POOLS</span>
             <h2>执行机组</h2>
           </div>
-          <span className="table-count">共 {groups.length} 组</span>
+          <span className={cn("table-count", runnerGroupManagerStyles["table-count"])}>
+            共 {groups.length} 组
+          </span>
         </div>
         {groups.length === 0 ? (
-          <div className="empty-state table-empty">
-            <span className="empty-icon">
+          <EmptyState
+            className={cn(
+              "empty-state table-empty",
+              uiPatterns["empty-state"],
+              uiPatterns["table-empty"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <UsersRound size={25} />
             </span>
             <strong>尚未创建执行机组</strong>
             <p>创建后，发起任务批跑和单用例执行时都可以直接选择整组资源。</p>
-          </div>
+          </EmptyState>
         ) : (
-          <div className="runner-group-grid">
+          <div className={cn("runner-group-grid", runnerGroupManagerStyles["runner-group-grid"])}>
             {groups.map((group) =>
               editingGroupId === group.id ? (
                 <ActionDialog
@@ -204,15 +248,29 @@ export function RunnerGroupManager({
                   onClose={() => !pending && setEditingGroupId(undefined)}
                 >
                   <form
-                    className="action-dialog-form"
+                    className={cn(
+                      "action-dialog-form",
+                      runnerGroupManagerStyles["action-dialog-form"],
+                    )}
                     onSubmit={(event) => void update(group, event)}
                   >
-                    <div className="runner-group-fields">
-                      <label className="field-stack">
+                    <div
+                      className={cn(
+                        "runner-group-fields",
+                        runnerGroupManagerStyles["runner-group-fields"],
+                      )}
+                    >
+                      <label className={cn("field-stack", uiPatterns["field-stack"])}>
                         <span>组名称</span>
                         <Input defaultValue={group.name} maxLength={120} name="name" required />
                       </label>
-                      <label className="field-stack runner-group-description">
+                      <label
+                        className={cn(
+                          "field-stack runner-group-description",
+                          uiPatterns["field-stack"],
+                          runnerGroupManagerStyles["runner-group-description"],
+                        )}
+                      >
                         <span>说明</span>
                         <Textarea
                           defaultValue={group.description}
@@ -223,12 +281,21 @@ export function RunnerGroupManager({
                       </label>
                     </div>
                     {error ? (
-                      <p className="form-error" role="alert">
+                      <Notice
+                        tone="error"
+                        className={cn("form-error", uiPatterns["form-error"])}
+                        role="alert"
+                      >
                         {error}
-                      </p>
+                      </Notice>
                     ) : null}
                     <RunnerMemberPicker runners={runners} selectedRunnerIds={group.runnerIds} />
-                    <div className="runner-group-actions">
+                    <div
+                      className={cn(
+                        "runner-group-actions",
+                        runnerGroupManagerStyles["runner-group-actions"],
+                      )}
+                    >
                       <Button disabled={pending} type="submit" variant="primary">
                         保存修改
                       </Button>
@@ -243,9 +310,17 @@ export function RunnerGroupManager({
                   </form>
                 </ActionDialog>
               ) : (
-                <article className="runner-group-card" key={group.id}>
+                <article
+                  className={cn("runner-group-card", runnerGroupManagerStyles["runner-group-card"])}
+                  key={group.id}
+                >
                   <header>
-                    <span className="runner-group-icon">
+                    <span
+                      className={cn(
+                        "runner-group-icon",
+                        runnerGroupManagerStyles["runner-group-icon"],
+                      )}
+                    >
                       <UsersRound size={19} />
                     </span>
                     <span>
@@ -254,9 +329,14 @@ export function RunnerGroupManager({
                     </span>
                     <b>{group.runnerIds.length} 台</b>
                   </header>
-                  <div className="runner-group-members">
+                  <div
+                    className={cn(
+                      "runner-group-members",
+                      runnerGroupManagerStyles["runner-group-members"],
+                    )}
+                  >
                     {group.runnerIds.length === 0 ? (
-                      <span className="muted">当前没有成员</span>
+                      <span className={cn("muted", uiPatterns["muted"])}>当前没有成员</span>
                     ) : (
                       group.runnerIds.map((runnerId) => {
                         const runner = runners.find((candidate) => candidate.id === runnerId);
@@ -264,7 +344,10 @@ export function RunnerGroupManager({
                           <span key={runnerId}>
                             <Server size={14} /> {runner?.name ?? runnerId}
                             <i
-                              className={`dot ${runner?.state === "online" ? "green-dot" : "gray-dot"}`}
+                              className={cn(
+                                runnerGroupManagerStyles["dot"],
+                                `dot ${runner?.state === "online" ? cn("green-dot", runnerGroupManagerStyles["green-dot"]) : cn("gray-dot", runnerGroupManagerStyles["gray-dot"])}`,
+                              )}
                             />
                           </span>
                         );
@@ -272,7 +355,12 @@ export function RunnerGroupManager({
                     )}
                   </div>
                   {canManage ? (
-                    <footer className="runner-group-actions">
+                    <footer
+                      className={cn(
+                        "runner-group-actions",
+                        runnerGroupManagerStyles["runner-group-actions"],
+                      )}
+                    >
                       <Button
                         onClick={() => {
                           setError("");
@@ -297,7 +385,7 @@ export function RunnerGroupManager({
             )}
           </div>
         )}
-      </section>
+      </Card>
     </div>
   );
 }
@@ -338,7 +426,9 @@ function RunnerMemberPicker({
         defaultValue={selectedRunnerIds}
         options={memberOptions}
       />
-      <p className="settings-note">每组最多 64 台。搜索仅筛选候选，已选成员会保留。</p>
+      <p className={cn("settings-note", uiPatterns["settings-note"])}>
+        每组最多 64 台。搜索仅筛选候选，已选成员会保留。
+      </p>
     </div>
   );
 }
@@ -361,3 +451,24 @@ async function requestJson<T = unknown>(
 function compareGroups(left: RunnerGroup, right: RunnerGroup): number {
   return left.name.localeCompare(right.name, "zh-CN") || left.id.localeCompare(right.id);
 }
+
+const runnerGroupManagerStyles = {
+  "action-dialog-form": "mt-0",
+  dot: "inline-block w-[7px] h-[7px] rounded-full",
+  "gray-dot": "bg-border",
+  "green-dot": "bg-success",
+  "runner-group-actions": "flex gap-[7px] mt-auto",
+  "runner-group-card":
+    "flex min-w-0 flex-col border border-solid border-border rounded-lg p-[13px] bg-muted [&_>_header]:grid [&_>_header]:grid-cols-[auto_minmax(0,_1fr)_auto] [&_>_header]:items-center [&_>_header]:gap-[9px] [&_>_header_>_span:nth-child(2)]:flex [&_>_header_>_span:nth-child(2)]:min-w-0 [&_>_header_>_span:nth-child(2)]:flex-col [&_>_header_>_span:nth-child(2)]:gap-0.5 [&_>_header_strong]:[overflow-wrap:anywhere] [&_>_header_strong]:whitespace-normal [&_>_header_strong]:text-sm [&_>_header_small]:[overflow-wrap:anywhere] [&_>_header_small]:whitespace-normal [&_>_header_small]:text-muted-foreground [&_>_header_small]:text-xs [&_>_header_b]:rounded-full [&_>_header_b]:py-1 [&_>_header_b]:px-[7px] [&_>_header_b]:bg-card [&_>_header_b]:text-muted-foreground [&_>_header_b]:text-xs",
+  "runner-group-description": "min-w-0",
+  "runner-group-fields": "grid grid-cols-[minmax(220px,_0.6fr)_minmax(0,_1.4fr)] gap-3",
+  "runner-group-grid": "grid grid-cols-3 gap-3 p-4 max-[1440px]:grid-cols-2",
+  "runner-group-icon":
+    "inline-grid w-[35px] h-[35px] place-items-center rounded-lg bg-info/10 text-info",
+  "runner-group-list-card": "overflow-hidden",
+  "runner-group-manager": "grid gap-3.5",
+  "runner-group-members":
+    "flex min-h-14.5 flex-wrap [align-content:flex-start] gap-1.5 my-3 mx-0 [&_>_span:not(.muted)]:inline-flex [&_>_span:not(.muted)]:items-center [&_>_span:not(.muted)]:gap-[5px] [&_>_span:not(.muted)]:max-w-full [&_>_span:not(.muted)]:border [&_>_span:not(.muted)]:border-solid [&_>_span:not(.muted)]:border-border [&_>_span:not(.muted)]:rounded-full [&_>_span:not(.muted)]:py-1 [&_>_span:not(.muted)]:px-[7px] [&_>_span:not(.muted)]:bg-card [&_>_span:not(.muted)]:text-xs [&_.dot]:w-1.5 [&_.dot]:h-1.5 [&_.dot]:m-0",
+  "runner-group-toolbar": "flex items-center justify-between gap-3 text-muted-foreground text-sm",
+  "table-count": "text-muted-foreground text-xs whitespace-nowrap",
+} as const;

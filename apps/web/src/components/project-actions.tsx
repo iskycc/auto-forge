@@ -1,7 +1,12 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LinkButton } from "@/components/ui/link-button";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { Project } from "@autoforge/domain";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { ActionDialog } from "./action-dialog";
@@ -61,8 +66,18 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
   }
 
   return (
-    <div className="project-administration-bar">
-      <div className="project-administration-summary">
+    <div
+      className={cn(
+        "project-administration-bar",
+        projectActionsStyles["project-administration-bar"],
+      )}
+    >
+      <div
+        className={cn(
+          "project-administration-summary",
+          projectActionsStyles["project-administration-summary"],
+        )}
+      >
         <strong title={project?.name}>{project?.name ?? "暂无项目"}</strong>
         <span>
           {project
@@ -70,11 +85,11 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
             : "请从顶栏新建项目"}
         </span>
       </div>
-      <div className="button-row">
+      <div className={cn("button-row", uiPatterns["button-row"])}>
         {project ? (
-          <Link className="ui-button" href="/settings/access?section=users&scope=project">
+          <LinkButton className={"ui-button"} href="/settings/access?section=users&scope=project">
             管理成员
-          </Link>
+          </LinkButton>
         ) : null}
         {canManage && project && !project.archived ? (
           <Button
@@ -96,14 +111,33 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
           open={actionDialog === "owner"}
           title="转移项目负责人"
         >
-          <form className="settings-grid-form action-dialog-form" onSubmit={transferOwner}>
+          <form
+            className={cn(
+              "settings-grid-form action-dialog-form",
+              uiPatterns["settings-grid-form"],
+              projectActionsStyles["action-dialog-form"],
+            )}
+            onSubmit={transferOwner}
+          >
             {error ? (
-              <p className="form-error settings-wide-field" role="alert">
+              <Notice
+                tone="error"
+                className={cn(
+                  "form-error settings-wide-field",
+                  uiPatterns["form-error"],
+                  uiPatterns["settings-wide-field"],
+                )}
+                role="alert"
+              >
                 {error}
-              </p>
+              </Notice>
             ) : null}
             <UserPicker name="ownerUserId" purpose="project-owner" projectId={project.id} />
-            <Button className="secondary-button" disabled={pending} type="submit">
+            <Button
+              className={cn("secondary-button", uiPatterns["secondary-button"])}
+              disabled={pending}
+              type="submit"
+            >
               转移负责人
             </Button>
           </form>
@@ -116,3 +150,10 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
 function jsonRequest(method: string, body: unknown): RequestInit {
   return { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
 }
+
+const projectActionsStyles = {
+  "action-dialog-form": "mt-0",
+  "project-administration-bar": "flex items-center justify-between gap-3 min-w-0 flex-wrap",
+  "project-administration-summary":
+    "flex min-w-0 flex-1 items-baseline gap-3 [&_strong]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_>_span]:shrink-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+} as const;

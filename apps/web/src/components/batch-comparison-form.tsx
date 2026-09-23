@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, type FormEvent } from "react";
@@ -45,7 +47,11 @@ export function BatchComparisonForm({
   }
 
   return (
-    <form className="batch-comparison-form" method="get" onSubmit={submit}>
+    <form
+      className={cn("batch-comparison-form", batchComparisonFormStyles["batch-comparison-form"])}
+      method="get"
+      onSubmit={submit}
+    >
       <Select
         aria-label="选择基准批次"
         name="leftBatchId"
@@ -74,10 +80,22 @@ export function BatchComparisonForm({
           </option>
         ))}
       </Select>
-      <Button className="button button-secondary" disabled={pending} type="submit">
+      <Button
+        className={cn(
+          "button button-secondary",
+          uiPatterns["button"],
+          uiPatterns["button-secondary"],
+        )}
+        disabled={pending}
+        type="submit"
+      >
         {pending ? <LoadingGlyph compact /> : null}
         {pending ? "正在生成批次对比…" : "开始对比"}
       </Button>
     </form>
   );
 }
+
+const batchComparisonFormStyles = {
+  "batch-comparison-form": "grid grid-cols-[minmax(220px,_1fr)_minmax(220px,_1fr)_auto] gap-3 mb-4",
+} as const;

@@ -4,6 +4,28 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.24 - 2026-09-23
+
+### Changed and fixed
+
+- 全局 UI 统一为 Ant Design，替换旧全局样式、原生表单控件、自绘弹窗、表格、标签页、菜单、提示和进度组件；公开日志与分享页采用一致的浅色主题，保留目录懒加载、后台快照、浏览器缓存及原有授权行为。
+- 修复迁移中的嵌套弹窗焦点、顶栏键盘选择、表头排序入口、固定列宽、DDT 筛选高度、按钮文字对比度及分析统计排版问题；新增组件使用边界检查，防止出现第二套视觉体系。
+- 新建用例任务默认将 Adapter Suite name 填为项目名称，Test name 填为“版本号 - 测试阶段”；旧任务空字段在编辑时补齐并提示保存，显式自定义名称与复制任务的已有配置保持不变。
+- Ant Design 图标、中文日期资源、组件 CSS、服务端依赖和许可证随离线包交付；打包逐个校验静态资源摘要及 19 类组件 CSS，缺失资源或出现外部 CSS 地址时阻止发布。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、Runner Protocol 或 Adapter 执行协议变更。Lite/Full 共用前端与现有 API；升级只需更新主平台，Full 同步更新所有平台节点，无需升级 Runner 或 Adapter。
+- 默认 Adapter 名称使用现有任务字段持久化，不批量改写历史任务；默认阶段优先使用当前选中且属于任务版本的活动阶段，否则使用该版本首个活动阶段，无活动阶段时只填版本号。
+- 新增前端依赖以精确版本和 lockfile 固定，许可证清单及文本一并更新。离线资产类型保持 amd64/arm64 后端镜像、部署包、两个 Jenkins 插件、SBOM 元数据及签名清单。
+- 本次不提交概念图、UI 截图或本地构建产物；保留文字审查结论与机器可读的验证记录。
+
+### Validation and known limitations
+
+- UI 复查汇总 94 个 Playwright 场景的最新结果全部通过，包含完整执行、公开日志、分析、DDT、权限和管理流程；Adapter 默认值另经 3 项相关 E2E、21 项单元及组件边界检查验证。
+- 实际查看 43 个页面/子页在 1024px 和 1536px 下的 86 张截图，并复查相关弹窗及 Adapter 默认值；未发现页面横向溢出、脚本错误或外部资源请求。详见 [Ant Design 复查报告](./docs/design/ant-design-ui-audit.md)。
+- 全仓格式/许可证、lint、类型及 E2E 覆盖清单检查通过；1,026 项 TypeScript 单元测试、Go 测试、50 项脚本测试与 231 项集成测试通过。162 项依赖 Full 服务的集成测试在本地跳过，由 GitHub Actions 的 Full 矩阵补验。Web 生产构建通过，本地 AMD64 Docker tar 在断网容器中完成静态资源与浏览器验证；正式双架构构建和发布资产验收由 GitHub Actions 执行。
+
 ## 1.17.23 - 2026-09-23
 
 ### Changed and fixed

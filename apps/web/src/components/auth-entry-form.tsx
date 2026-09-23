@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { apiErrorSchema, bootstrapAdminInputSchema, loginInputSchema } from "@autoforge/contracts";
 import { LockKeyhole, ShieldCheck } from "lucide-react";
@@ -69,9 +73,13 @@ export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: strin
   }
 
   return (
-    <form className="auth-form" noValidate onSubmit={submit}>
+    <form
+      className={cn("auth-form", authEntryFormStyles["auth-form"])}
+      noValidate
+      onSubmit={submit}
+    >
       {notice ? (
-        <p className="auth-notice" role="status">
+        <p className={cn("auth-notice", authEntryFormStyles["auth-notice"])} role="status">
           {notice}
         </p>
       ) : null}
@@ -126,13 +134,13 @@ export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: strin
       </label>
 
       {error ? (
-        <p className="auth-error" role="alert">
+        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
           {error}
-        </p>
+        </Notice>
       ) : null}
 
       <Button
-        className="auth-submit"
+        className={cn("auth-submit", authEntryFormStyles["auth-submit"])}
         disabled={pending}
         size="large"
         type="submit"
@@ -148,3 +156,11 @@ export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: strin
 function stringValue(form: FormData, name: string): string {
   return String(form.get(name) ?? "");
 }
+
+const authEntryFormStyles = {
+  "auth-form":
+    "grid gap-4 [&_label]:grid [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-sm [&_label]:font-semibold [&_input]:w-full [&_small]:text-muted-foreground [&_small]:font-normal",
+  "auth-notice":
+    "m-0 p-3 border border-solid border-border rounded-lg text-success bg-success/10 text-sm",
+  "auth-submit": "w-full justify-center mt-1",
+} as const;

@@ -1,12 +1,13 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "./ui";
-import { useDialogInteraction } from "./use-dialog-interaction";
 import { DialogDiscardPrompt } from "./dialog-discard-prompt";
+import { Dialog } from "./ui/dialog";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "./ui/patterns";
 
 export function ActionDialog({
   children,
@@ -38,6 +39,7 @@ export function ActionDialog({
   footer?: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
+  const descriptionId = useId();
   const [dirty, setDirty] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const hasChanges = controlledDirty ?? dirty;
@@ -46,7 +48,6 @@ export function ActionDialog({
     if (protectUnsavedChanges && hasChanges) setConfirmDiscard(true);
     else onClose();
   }
-  useDialogInteraction({ dialogRef, open, active: open && !inactive, onClose: requestClose });
   useEffect(() => {
     const dialog = dialogRef.current;
     const markDraft = (event: Event) => {
@@ -62,10 +63,15 @@ export function ActionDialog({
     setConfirmDiscard(false);
   }
   if (!open || typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      className={`dialog-backdrop action-dialog-backdrop ${backdropClassName ?? ""}`}
-      onMouseDown={requestClose}
+  return (
+    <Dialog
+      open={open}
+      title={title}
+      onClose={requestClose}
+      className={className}
+      backdropClassName={cn("dialog-backdrop action-dialog-backdrop", backdropClassName)}
+      inactive={inactive}
+      closeDisabled={closeDisabled}
     >
       <section
         onChangeCapture={(event) => {
@@ -81,31 +87,34 @@ export function ActionDialog({
           }
         }}
         aria-label={title}
-        aria-modal={!inactive}
         aria-hidden={inactive || undefined}
         inert={inactive}
-        className={`action-dialog${className ? ` ${className}` : ""}`}
+        className="action-dialog"
         onMouseDown={(event) => event.stopPropagation()}
         ref={dialogRef}
-        role="dialog"
         tabIndex={-1}
       >
-        <header className="action-dialog-header">
-          <div>
-            <h2>{title}</h2>
-            {description ? <p>{description}</p> : null}
+        <header className="action-dialog-header flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 py-4">
+          <div className="min-w-0">
+            <h2 className="m-0 text-lg font-semibold [overflow-wrap:anywhere]">{title}</h2>
+
+            {description ? (
+              <p className="mt-1 text-sm leading-6 text-muted-foreground" id={descriptionId}>
+                {description}
+              </p>
+            ) : null}
           </div>
           <Button
             aria-label={closeLabel ?? `关闭${title}`}
             disabled={closeDisabled}
-            className="icon-button"
+            className={cn("icon-button", uiPatterns["icon-button"])}
             onClick={requestClose}
             type="button"
           >
             <X size={18} />
           </Button>
         </header>
-        <div className="action-dialog-body">
+        <div className="action-dialog-body min-h-0 min-w-0 overflow-y-auto px-6 py-5 [overflow-wrap:anywhere]">
           {confirmDiscard ? (
             <DialogDiscardPrompt
               onContinue={() => setConfirmDiscard(false)}
@@ -116,9 +125,12 @@ export function ActionDialog({
           ) : null}
           {children}
         </div>
-        {footer ? <footer className="action-dialog-footer">{footer}</footer> : null}
+        {footer ? (
+          <footer className="action-dialog-footer shrink-0 border-t border-border bg-muted/30 px-6 py-4">
+            {footer}
+          </footer>
+        ) : null}
       </section>
-    </div>,
-    document.body,
+    </Dialog>
   );
 }

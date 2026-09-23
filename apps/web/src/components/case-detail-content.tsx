@@ -1,3 +1,16 @@
+import { Badge } from "@/components/ui/badge";
+import { Disclosure } from "@/components/ui/disclosure";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { AlertCircle } from "lucide-react";
 import type { ReactNode } from "react";
@@ -43,13 +56,24 @@ export function CaseDetailContent({
   const historyCaseId = detail.historyContext?.caseDefinitionId ?? definition.id;
   return (
     <>
-      <section className={`case-definition-summary ${inspector ? "" : "card source-summary-card"}`}>
-        <div className={inspector ? "case-inspector-meta" : "source-meta-grid"}>
+      <Card
+        as="section"
+        className={`case-definition-summary ${inspector ? "" : cn("card source-summary-card", uiPatterns["card"], caseDetailContentStyles["source-summary-card"])}`}
+      >
+        <div
+          className={
+            inspector
+              ? cn("case-inspector-meta", caseDetailContentStyles["case-inspector-meta"])
+              : cn("source-meta-grid", caseDetailContentStyles["source-meta-grid"])
+          }
+        >
           <div>
             <span>状态</span>
             <strong>
               <StatusBadge enabled={definition.enabled} />
-              {definition.archived ? <span className="tag">已归档</span> : null}
+              {definition.archived ? (
+                <Badge className={cn("tag", uiPatterns["tag"])}>已归档</Badge>
+              ) : null}
             </strong>
           </div>
           <div>
@@ -82,7 +106,16 @@ export function CaseDetailContent({
             <span>最近更新</span>
             <strong>{formatDate(definition.updatedAt, timeZone)}</strong>
           </div>
-          <div className={inspector ? "case-inspector-meta-wide" : "source-meta-wide"}>
+          <div
+            className={
+              inspector
+                ? cn(
+                    "case-inspector-meta-wide",
+                    caseDetailContentStyles["case-inspector-meta-wide"],
+                  )
+                : "source-meta-wide"
+            }
+          >
             <span>参数（只读）</span>
             <strong>
               {Object.entries(definition.parameters)
@@ -91,10 +124,13 @@ export function CaseDetailContent({
             </strong>
           </div>
         </div>
-      </section>
+      </Card>
 
       {!detail.executable ? (
-        <div className="implementation-notice" role="status">
+        <div
+          className={cn("implementation-notice", caseDetailContentStyles["implementation-notice"])}
+          role="status"
+        >
           <AlertCircle size={17} aria-hidden="true" />
           该用例来自 sources JAR，可查看和管理源码，但不能直接执行；执行时请导入包含 .class 的测试
           JAR。
@@ -127,34 +163,36 @@ export function CaseDetailContent({
         presentation={presentation}
         title={`执行结果统计历史（最近 ${activity.analyses.length} 条）`}
       >
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>完成时间</th>
-                <th>结果</th>
-                <th>通过 / 失败 / 跳过</th>
-                <th>失败签名</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+          <Table className={cn("data-table", uiPatterns["data-table"])}>
+            <TableHeader>
+              <TableRow>
+                <TableHead>完成时间</TableHead>
+                <TableHead>结果</TableHead>
+                <TableHead>通过 / 失败 / 跳过</TableHead>
+                <TableHead>失败签名</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {activity.analyses.length === 0 ? (
-                <tr>
-                  <td colSpan={4}>当前用例尚无执行结果统计。</td>
-                </tr>
+                <TableRow>
+                  <TableCell colSpan={4}>当前用例尚无执行结果统计。</TableCell>
+                </TableRow>
               ) : null}
               {activity.analyses.map((analysis) => (
-                <tr key={analysis.attemptId}>
-                  <td>{formatDate(analysis.completedAt, timeZone)}</td>
-                  <td>{caseExecutionResultLabel(analysis.resultCode ?? analysis.outcome)}</td>
-                  <td>
+                <TableRow key={analysis.attemptId}>
+                  <TableCell>{formatDate(analysis.completedAt, timeZone)}</TableCell>
+                  <TableCell>
+                    {caseExecutionResultLabel(analysis.resultCode ?? analysis.outcome)}
+                  </TableCell>
+                  <TableCell>
                     {analysis.passed} / {analysis.failed} / {analysis.skipped}
-                  </td>
-                  <td>{analysis.failureSignature ?? "—"}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell>{analysis.failureSignature ?? "—"}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </CaseDetailSection>
 
@@ -181,35 +219,40 @@ export function CaseDetailContent({
         title={`测试方法（${definition.methods.length}）`}
         open
       >
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>方法</th>
-                <th>方法签名</th>
-                <th>分组</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+          <Table className={cn("data-table", uiPatterns["data-table"])}>
+            <TableHeader>
+              <TableRow>
+                <TableHead>方法</TableHead>
+                <TableHead>方法签名</TableHead>
+                <TableHead>分组</TableHead>
+                <TableHead>状态</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {definition.methods.map((method) => (
-                <tr key={method.id}>
-                  <td>
+                <TableRow key={method.id}>
+                  <TableCell>
                     <strong>{method.methodName}</strong>
-                  </td>
-                  <td>
-                    <span className="method-signature">
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={cn(
+                        "method-signature",
+                        caseDetailContentStyles["method-signature"],
+                      )}
+                    >
                       {formatMethodSignature(method.descriptor)}
                     </span>
-                  </td>
-                  <td>{method.groups.join("、") || "—"}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell>{method.groups.join("、") || "—"}</TableCell>
+                  <TableCell>
                     <StatusBadge enabled={method.enabled} />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </CaseDetailSection>
 
@@ -243,18 +286,41 @@ function CaseDetailSection({
 }) {
   if (presentation === "inspector") {
     return (
-      <details className="case-inspector-section" open={open}>
-        <summary>{title}</summary>
+      <Disclosure
+        header={<>{title}</>}
+        className={cn("case-inspector-section", caseDetailContentStyles["case-inspector-section"])}
+        defaultOpen={open}
+      >
         {children}
-      </details>
+      </Disclosure>
     );
   }
   return (
-    <section className="card table-card">
-      <div className="card-heading">
+    <Card
+      as="section"
+      className={cn("card table-card", uiPatterns["card"], caseDetailContentStyles["table-card"])}
+    >
+      <div className={cn("card-heading", uiPatterns["card-heading"])}>
         <h2>{title}</h2>
       </div>
       {children}
-    </section>
+    </Card>
   );
 }
+
+const caseDetailContentStyles = {
+  "case-inspector-meta":
+    "grid grid-cols-2 gap-2 [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-1 [&_>_div]:border [&_>_div]:border-solid [&_>_div]:border-border [&_>_div]:rounded-lg [&_>_div]:p-2.5 [&_>_div]:bg-card [&_span]:text-muted-foreground [&_span]:text-xs [&_strong]:min-w-0 [&_strong]:[overflow-wrap:anywhere]",
+  "case-inspector-meta-wide": "col-span-full",
+  "case-inspector-section":
+    "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_.ui-disclosure-label]:min-h-11 [&_.ui-disclosure-label]:py-3 [&_.ui-disclosure-label]:px-3.5 [&_.ui-disclosure-label]:text-foreground [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:border-b [&[data-open=true]_.ui-disclosure-label]:border-solid [&[data-open=true]_.ui-disclosure-label]:border-border [&_.ui-disclosure-body_>_:not(summary):not(.table-scroll)]:m-3.5 [&_.ui-disclosure-body_>_.settings-stack]:m-0 [&_.ui-disclosure-body_>_.settings-stack]:p-3.5",
+  "implementation-notice":
+    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
+  "method-signature":
+    "max-w-[340px] overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground text-xs",
+  "source-meta-grid":
+    "grid grid-cols-[1.4fr_2fr_0.8fr_1fr] gap-px overflow-hidden border border-solid border-border rounded-lg bg-border [&_>_div]:flex [&_>_div]:min-w-0 [&_>_div]:flex-col [&_>_div]:gap-[7px] [&_>_div]:p-[13px] [&_>_div]:bg-muted [&_>_div:last-child:nth-child(4n_+_1)]:col-span-full [&_>_div:last-child:nth-child(4n_+_2)]:[grid-column:span_3] [&_>_div:last-child:nth-child(4n_+_3)]:[grid-column:span_2] [&_span]:text-muted-foreground [&_span]:text-xs [&_code]:text-xs [&_code]:[overflow-wrap:anywhere] [&_code]:whitespace-normal [&_strong]:text-xs [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal",
+  "source-summary-card": "p-4.5",
+  "table-card":
+    "overflow-hidden [&_.ui-card-content_>_.card-heading]:min-h-17 [&_.ui-card-content_>_.card-heading]:items-center [&_.ui-card-content_>_.card-heading]:border-b [&_.ui-card-content_>_.card-heading]:border-solid [&_.ui-card-content_>_.card-heading]:border-border [&_.ui-card-content_>_.card-heading]:py-3.5 [&_.ui-card-content_>_.card-heading]:px-4.5",
+} as const;

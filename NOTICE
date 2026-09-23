@@ -8,3 +8,6 @@ Third-party components remain subject to their respective license terms.
 Release publishers must distribute LICENSE, NOTICE, THIRD_PARTY_LICENSES.json,
 the generated SBOMs, and any license texts or source-code offers required by
 the concrete binaries included in that release.
+
+Frontend component license texts are included in docs/licenses/. Ant Design,
+its icon set and CSS-in-JS runtime, and Day.js are distributed under the MIT license.

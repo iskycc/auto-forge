@@ -1,4 +1,8 @@
 "use client";
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { ActionDialog } from "@/components/action-dialog";
@@ -11,8 +15,10 @@ import { useState, useTransition } from "react";
 
 import { CaseSuiteCard } from "./case-suite-card";
 import { parseExportFilename } from "@/lib/run-batch-export";
+import type { AdapterNameDefaults } from "@/lib/case-suite-adapter-defaults";
 
 export function CaseSuiteManager({
+  adapterNameDefaults,
   canManage,
   canReadExecutions,
   activitySummary,
@@ -21,6 +27,7 @@ export function CaseSuiteManager({
   selectedProjectVersionId,
   selectedProjectVersionName,
 }: {
+  adapterNameDefaults: AdapterNameDefaults;
   canManage: boolean;
   canReadExecutions: boolean;
   activitySummary?: CaseSuiteActivitySummary;
@@ -44,8 +51,8 @@ export function CaseSuiteManager({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [adapterEnabled, setAdapterEnabled] = useState(false);
-  const [adapterSuiteName, setAdapterSuiteName] = useState("");
-  const [adapterTestName, setAdapterTestName] = useState("");
+  const [adapterSuiteName, setAdapterSuiteName] = useState(adapterNameDefaults.suiteName);
+  const [adapterTestName, setAdapterTestName] = useState(adapterNameDefaults.testName);
   const [environmentAddresses, setEnvironmentAddresses] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,8 +113,8 @@ export function CaseSuiteManager({
       setName("");
       setDescription("");
       setAdapterEnabled(false);
-      setAdapterSuiteName("");
-      setAdapterTestName("");
+      setAdapterSuiteName(adapterNameDefaults.suiteName);
+      setAdapterTestName(adapterNameDefaults.testName);
       setEnvironmentAddresses("");
       setCreateOpen(false);
     } catch (caught) {
@@ -145,19 +152,22 @@ export function CaseSuiteManager({
   }
 
   return (
-    <div className="suite-manager">
-      <div className="suite-manager-toolbar">
+    <div className={cn("suite-manager", caseSuiteManagerStyles["suite-manager"])}>
+      <div className={cn("suite-manager-toolbar", caseSuiteManagerStyles["suite-manager-toolbar"])}>
         <span>
           当前版本「{selectedProjectVersionName ?? "尚未配置"}」共 {suites.length} 个任务
         </span>
-        <div className="suite-manager-actions">
+        <div
+          className={cn("suite-manager-actions", caseSuiteManagerStyles["suite-manager-actions"])}
+        >
           <Button
             disabled={refreshing}
             onClick={() => startRefresh(() => router.refresh())}
             type="button"
             variant="ghost"
           >
-            <RefreshCw className={refreshing ? "spin" : ""} size={15} /> 刷新任务列表
+            <RefreshCw className={refreshing ? cn("spin", uiPatterns["spin"]) : ""} size={15} />{" "}
+            刷新任务列表
           </Button>
           {canManage ? (
             <Button onClick={openCreateDialog} type="button" variant="primary">
@@ -167,7 +177,12 @@ export function CaseSuiteManager({
         </div>
       </div>
       {canReadExecutions ? (
-        <p className="suite-statistics-explanation">
+        <p
+          className={cn(
+            "suite-statistics-explanation",
+            caseSuiteManagerStyles["suite-statistics-explanation"],
+          )}
+        >
           近 7
           天按批次创建时间统计；均值为已结束且有用例的批次等权平均，包含执行异常与终止，不含日志诊断重跑。
         </p>
@@ -190,7 +205,11 @@ export function CaseSuiteManager({
               取消
             </Button>{" "}
             <Button
-              className="button button-primary"
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
               type="submit"
               form="suite-create-form"
               disabled={
@@ -201,7 +220,7 @@ export function CaseSuiteManager({
               }
             >
               {pending ? (
-                <LoaderCircle className="spin" size={16} />
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
               ) : createMode === "copy" ? (
                 <Copy size={16} />
               ) : (
@@ -214,10 +233,16 @@ export function CaseSuiteManager({
       >
         <form
           id="suite-create-form"
-          className="stack-form action-dialog-form"
+          className={cn(
+            "stack-form action-dialog-form",
+            caseSuiteManagerStyles["stack-form"],
+            caseSuiteManagerStyles["action-dialog-form"],
+          )}
           onSubmit={createSuite}
         >
-          <fieldset className="suite-create-mode">
+          <fieldset
+            className={cn("suite-create-mode", caseSuiteManagerStyles["suite-create-mode"])}
+          >
             <legend>创建方式</legend>
             <label className={createMode === "blank" ? "selected" : ""}>
               <Input
@@ -273,7 +298,9 @@ export function CaseSuiteManager({
                   ))}
                 </Select>
               </label>
-              <label className="checkbox-field suite-copy-scope">
+              <label
+                className={cn("checkbox-field suite-copy-scope", uiPatterns["checkbox-field"])}
+              >
                 <Input
                   type="checkbox"
                   checked={configurationOnly}
@@ -282,7 +309,14 @@ export function CaseSuiteManager({
                 />
                 仅复制配置，不复制用例
               </label>
-              <div className="form-context-summary suite-copy-summary" aria-label="任务复制范围">
+              <div
+                className={cn(
+                  "form-context-summary suite-copy-summary",
+                  caseSuiteManagerStyles["form-context-summary"],
+                  caseSuiteManagerStyles["suite-copy-summary"],
+                )}
+                aria-label="任务复制范围"
+              >
                 <span>独立副本</span>
                 <strong>
                   {configurationOnly
@@ -307,16 +341,21 @@ export function CaseSuiteManager({
               />
             </label>
           )}
-          <div className="form-context-summary" aria-label="任务项目版本">
+          <div
+            className={cn("form-context-summary", caseSuiteManagerStyles["form-context-summary"])}
+            aria-label="任务项目版本"
+          >
             <span>项目版本</span>
             <strong>{selectedProjectVersionName ?? "暂无可用版本"}</strong>
             <small>使用顶栏当前选择；任务创建后仍可在详情中调整。</small>
           </div>
           {createMode === "blank" ? (
-            <div className="suite-adapter-fields">
+            <div
+              className={cn("suite-adapter-fields", caseSuiteManagerStyles["suite-adapter-fields"])}
+            >
               <strong>Adapter 执行配置</strong>
               <p>配置随任务版本保存；多个环境地址会按任务中的用例顺序循环分配。</p>
-              <label className="checkbox-field">
+              <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
                 <Input
                   checked={adapterEnabled}
                   onChange={(event) => setAdapterEnabled(event.target.checked)}
@@ -356,26 +395,48 @@ export function CaseSuiteManager({
             </div>
           ) : null}
           {error && (
-            <span className="inline-error" role="alert">
+            <span
+              className={cn("inline-error", caseSuiteManagerStyles["inline-error"])}
+              role="alert"
+            >
               {error}
             </span>
           )}
         </form>
       </ActionDialog>
-      <section className="suite-list" aria-label="用例任务列表">
+      <section
+        className={cn("suite-list", caseSuiteManagerStyles["suite-list"])}
+        aria-label="用例任务列表"
+      >
         {exportError ? (
-          <div className="inline-feedback error suite-list-feedback" role="alert">
+          <div
+            className={cn(
+              "inline-feedback error suite-list-feedback",
+              caseSuiteManagerStyles["inline-feedback"],
+              uiPatterns["error"],
+              caseSuiteManagerStyles["suite-list-feedback"],
+            )}
+            role="alert"
+          >
             {exportError}
           </div>
         ) : null}
         {suites.length === 0 ? (
-          <div className="card empty-state suite-empty">
-            <span className="empty-icon">
+          <Card
+            as="div"
+            className={cn(
+              "card empty-state suite-empty",
+              uiPatterns["card"],
+              uiPatterns["empty-state"],
+              caseSuiteManagerStyles["suite-empty"],
+            )}
+          >
+            <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
               <Layers3 size={25} />
             </span>
             <strong>还没有用例任务</strong>
             <p>先创建任务，再从用例管理批量勾选测试类。</p>
-          </div>
+          </Card>
         ) : (
           suites.map((suite) => (
             <CaseSuiteCard
@@ -412,3 +473,27 @@ function parseEnvironmentAddresses(value: string): string[] {
     ),
   ];
 }
+
+const caseSuiteManagerStyles = {
+  "action-dialog-form": "mt-0",
+  "form-context-summary":
+    "grid grid-cols-[minmax(0,_1fr)_auto] items-center gap-[4px_12px] py-3 px-3.5 border border-solid border-border rounded-lg bg-muted [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:col-span-full [&_>_strong]:[grid-column:2] [&_>_strong]:[grid-row:1]",
+  "inline-error": "text-destructive text-xs leading-[1.35]",
+  "inline-feedback":
+    "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
+  "stack-form":
+    'flex flex-col gap-3.5 mt-5 [&_label]:flex [&_label]:flex-col [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.button]:self-start [&_.suite-create-mode_input[type="radio"]]:w-4.5 [&_.suite-create-mode_input[type="radio"]]:[flex:0_0_18px] [&_.suite-create-mode_input[type="radio"]]:mt-0.5 [&_.suite-create-mode_input[type="radio"]]:p-0 [&_.suite-adapter-fields_.checkbox-field]:flex-row [&_.suite-adapter-fields_.checkbox-field]:items-center [&_.suite-adapter-fields_input[type="checkbox"]]:w-4.5 [&_.suite-adapter-fields_input[type="checkbox"]]:[flex:0_0_18px] [&_.suite-adapter-fields_input[type="checkbox"]]:p-0 [&_.suite-copy-scope]:flex-row [&_.suite-copy-scope]:items-center [&_.suite-copy-scope]:gap-2 [&_.suite-copy-scope_input]:w-5 [&_.suite-copy-scope_input]:[flex:0_0_20px] [&_.suite-copy-scope_input]:p-0',
+  "suite-adapter-fields":
+    "grid gap-3 p-3.5 border border-solid border-border rounded-lg bg-muted [&_>_strong]:text-sm [&_>_p]:[margin:-6px_0_0] [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_p]:leading-[1.5]",
+  "suite-copy-summary":
+    "[&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-normal [&_small]:leading-[1.45]",
+  "suite-create-mode":
+    "grid grid-cols-2 gap-2.5 m-0 p-0 border-0 [&_legend]:col-span-full [&_legend]:mb-[-2px] [&_legend]:text-muted-foreground [&_legend]:text-xs [&_legend]:font-semibold [&_label]:flex [&_label]:min-w-0 [&_label]:items-start [&_label]:gap-2.5 [&_label]:p-3 [&_label]:border [&_label]:border-solid [&_label]:border-border [&_label]:rounded-lg [&_label]:bg-muted [&_label]:cursor-pointer [&_label.selected]:border-info [&_label.selected]:bg-info/10 [&_label.selected]:shadow-xs [&_label:has(input:disabled)]:cursor-not-allowed [&_label:has(input:disabled)]:opacity-57.99999999999999 [&_label_>_span]:grid [&_label_>_span]:min-w-0 [&_label_>_span]:gap-[3px] [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-normal [&_small]:leading-[1.45]",
+  "suite-empty": "min-h-[280px]",
+  "suite-list": "grid grid-cols-2 items-start gap-4 max-[1181px]:grid-cols-[1fr]",
+  "suite-list-feedback": "col-span-full",
+  "suite-manager": "grid gap-3.5",
+  "suite-manager-actions": "flex items-center gap-2",
+  "suite-manager-toolbar": "flex items-center justify-between gap-3 text-muted-foreground text-sm",
+  "suite-statistics-explanation": "m-0 text-muted-foreground text-xs leading-[1.6]",
+} as const;

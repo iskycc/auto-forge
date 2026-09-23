@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { notFound } from "next/navigation";
 
 import { ExecutionBatchDetails } from "@/components/execution-batch-details";
@@ -43,7 +45,7 @@ export default async function RunBatchDetailsPage({
   }
 
   return (
-    <div className="page-stack">
+    <div className={cn("page-stack", uiPatterns["page-stack"])}>
       <RunBatchDetailHero
         batchId={batch.id}
         sequenceNumber={batch.sequenceNumber}

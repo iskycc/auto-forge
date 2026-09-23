@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -90,9 +92,19 @@ export function AttemptRerunAction({
   }
 
   return (
-    <div className={`attempt-rerun-action${compact ? " compact" : ""}`}>
+    <div
+      className={cn(
+        attemptRerunActionStyles["attempt-rerun-action"],
+        `attempt-rerun-action${compact ? " compact" : ""}`,
+      )}
+    >
       <Button
-        className={`button button-primary${compact ? " compact-button" : ""}`}
+        className={cn(
+          uiPatterns["button"],
+          uiPatterns["button-primary"],
+          "button button-primary",
+          compact && cn("compact-button", uiPatterns["compact-button"]),
+        )}
         disabled={pending}
         onClick={() => void rerunCase()}
         type="button"
@@ -102,7 +114,12 @@ export function AttemptRerunAction({
       </Button>
       {liveAttempt && onOpenLiveLogs ? (
         <Button
-          className="button button-primary compact-button"
+          className={cn(
+            "button button-primary compact-button",
+            uiPatterns["button"],
+            uiPatterns["button-primary"],
+            uiPatterns["compact-button"],
+          )}
           onClick={() => onOpenLiveLogs(liveAttempt)}
           type="button"
           variant="primary"
@@ -121,3 +138,8 @@ type CaseLogRerunTargetResponse = {
   batchStatus: string;
   attempt: LiveLogAttempt | null;
 };
+
+const attemptRerunActionStyles = {
+  "attempt-rerun-action":
+    "grid justify-items-start gap-2 mb-4.5 [&.compact]:inline-flex [&.compact]:items-center [&.compact]:gap-2.5 [&.compact]:m-0 [&_p]:m-0 [&.compact_p]:max-w-[360px] [&.compact_p]:text-xs",
+} as const;

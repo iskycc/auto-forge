@@ -1,4 +1,8 @@
 "use client";
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { caseSuiteScheduleSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
 import { CalendarClock, History, LoaderCircle, Pause, Play, Save, Trash2 } from "lucide-react";
@@ -119,8 +123,16 @@ export function CaseSuiteSchedulePanel({
   }
 
   return (
-    <section className="content-card suite-schedule-panel" aria-label="任务执行计划">
-      <header className="section-heading">
+    <Card
+      as="section"
+      className={cn(
+        "content-card suite-schedule-panel",
+        uiPatterns["content-card"],
+        caseSuiteSchedulePanelStyles["suite-schedule-panel"],
+      )}
+      aria-label="任务执行计划"
+    >
+      <header className={cn("section-heading", uiPatterns["section-heading"])}>
         <div>
           <h2>
             <CalendarClock size={20} /> 执行计划
@@ -132,14 +144,20 @@ export function CaseSuiteSchedulePanel({
         </Button>
       </header>
       {error ? (
-        <p className="suite-schedule-error" role="alert">
+        <p
+          className={cn(
+            "suite-schedule-error",
+            caseSuiteSchedulePanelStyles["suite-schedule-error"],
+          )}
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
       {canManage ? (
         <form
           key={schedule?.revision ?? "new"}
-          className="schedule-form"
+          className={cn("schedule-form", caseSuiteSchedulePanelStyles["schedule-form"])}
           onSubmit={(event) => void saveSchedule(event)}
         >
           <label>
@@ -173,7 +191,9 @@ export function CaseSuiteSchedulePanel({
               <option value="skip">跳过错过时刻</option>
             </Select>
           </label>
-          <label className="checkbox-field schedule-enable-field">
+          <label
+            className={cn("checkbox-field schedule-enable-field", uiPatterns["checkbox-field"])}
+          >
             <Input
               defaultChecked={schedule?.enabled ?? true}
               name="scheduleEnabled"
@@ -182,10 +202,15 @@ export function CaseSuiteSchedulePanel({
             />{" "}
             启用计划
           </label>
-          <p className="suite-schedule-hint">
+          <p
+            className={cn(
+              "suite-schedule-hint",
+              caseSuiteSchedulePanelStyles["suite-schedule-hint"],
+            )}
+          >
             例如 0 9 * * 1-5 表示工作日 09:00 触发。计划始终使用当前任务保存的执行配置。
           </p>
-          <div className="schedule-actions">
+          <div className={cn("schedule-actions", caseSuiteSchedulePanelStyles["schedule-actions"])}>
             {schedule ? (
               <>
                 <Button
@@ -203,12 +228,19 @@ export function CaseSuiteSchedulePanel({
               </>
             ) : null}
             <Button disabled={pending} type="submit" variant="primary">
-              {pending ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />} 保存计划
+              {pending ? (
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+              ) : (
+                <Save size={15} />
+              )}{" "}
+              保存计划
             </Button>
           </div>
         </form>
       ) : (
-        <p className="suite-schedule-hint">
+        <p
+          className={cn("suite-schedule-hint", caseSuiteSchedulePanelStyles["suite-schedule-hint"])}
+        >
           当前账号可查看计划与已授权的执行历史，修改计划需要任务管理权限。
         </p>
       )}
@@ -218,7 +250,7 @@ export function CaseSuiteSchedulePanel({
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
       />
-    </section>
+    </Card>
   );
 }
 
@@ -229,3 +261,13 @@ function scheduleRequest(body: unknown): RequestInit {
     body: JSON.stringify(body),
   };
 }
+
+const caseSuiteSchedulePanelStyles = {
+  "schedule-actions": "flex gap-2 col-span-full items-center justify-end",
+  "schedule-form":
+    "grid grid-cols-3 gap-4 items-end p-5 border-t border-solid border-border [&_label]:grid [&_label]:gap-2 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.schedule-enable-field]:col-span-full [&_.schedule-enable-field]:flex [&_.schedule-enable-field]:items-center [&_.schedule-enable-field]:gap-2 [&_.schedule-enable-field]:whitespace-nowrap max-[1181px]:grid-cols-[repeat(2,_minmax(220px,_1fr))]",
+  "suite-schedule-error": "m-0 [padding:0_20px_20px] text-destructive",
+  "suite-schedule-hint": "col-span-full m-0 text-muted-foreground text-xs leading-[1.6]",
+  "suite-schedule-panel":
+    "[&_.ui-card-content_>_.section-heading]:flex [&_.ui-card-content_>_.section-heading]:items-center [&_.ui-card-content_>_.section-heading]:gap-3 [&_.ui-card-content_>_.section-heading]:justify-between [&_.ui-card-content_>_.section-heading]:flex-wrap [&_.ui-card-content_>_.section-heading]:m-0 [&_.ui-card-content_>_.section-heading]:p-5 [&_h2]:flex [&_h2]:items-center [&_h2]:gap-3 [&_h2]:m-0 [&_.ui-card-content_>_.section-heading_>_div]:block [&_.ui-card-content_>_.section-heading_>_div]:min-w-0 [&_.section-heading_p]:[margin:8px_0_0] [&_.section-heading_p]:text-muted-foreground [&_.section-heading_p]:text-sm [&_.ui-card-content_>_.suite-schedule-hint]:m-0 [&_.ui-card-content_>_.suite-schedule-hint]:[padding:0_20px_20px]",
+} as const;

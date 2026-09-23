@@ -17,6 +17,62 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@ant-design/colors",
+      "version": "8.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/ant-design-colors#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/cssinjs-utils",
+      "version": "2.1.2",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/cssinjs-util"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/cssinjs",
+      "version": "2.1.2",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/cssinjs"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/fast-color",
+      "version": "3.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/fast-color"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/icons-svg",
+      "version": "4.6.0",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/ant-design-icons/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/icons",
+      "version": "6.3.4",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/ant-design-icons/tree/master#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/nextjs-registry",
+      "version": "1.3.0",
+      "license": "MIT",
+      "homepage": "https://github.com/ant-design/nextjs-registry"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ant-design/react-slick",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "https://react-slick.neostack.com"
+    },
+    {
+      "ecosystem": "npm",
       "name": "@babel/code-frame",
       "version": "7.29.7",
       "license": "MIT",
@@ -108,6 +164,20 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@babel/runtime",
+      "version": "7.29.7",
+      "license": "MIT",
+      "homepage": "https://babel.dev/docs/en/next/babel-runtime"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@babel/runtime",
+      "version": "8.0.5",
+      "license": "MIT",
+      "homepage": "https://babel.dev/docs/en/next/babel-runtime"
+    },
+    {
+      "ecosystem": "npm",
       "name": "@babel/template",
       "version": "7.29.7",
       "license": "MIT",
@@ -126,6 +196,20 @@
       "version": "7.29.8",
       "license": "MIT",
       "homepage": "https://babel.dev/docs/en/next/babel-types"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@emotion/hash",
+      "version": "0.8.0",
+      "license": "MIT",
+      "homepage": "https://github.com/emotion-js/emotion/tree/master#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@emotion/unitless",
+      "version": "0.7.5",
+      "license": "MIT",
+      "homepage": "https://github.com/emotion-js/emotion/tree/master#readme"
     },
     {
       "ecosystem": "npm",
@@ -234,6 +318,307 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@rc-component/async-validator",
+      "version": "6.0.0",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/async-validator"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/cascader",
+      "version": "1.22.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/cascader"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/checkbox",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/checkbox"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/collapse",
+      "version": "1.2.0",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/collapse"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/color-picker",
+      "version": "3.1.1",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/color-picker"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/context",
+      "version": "2.0.2",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/context"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/dialog",
+      "version": "1.10.0",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/dialog"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/drawer",
+      "version": "1.4.2",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/drawer"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/dropdown",
+      "version": "1.0.3",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/dropdown"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/form",
+      "version": "1.8.6",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/field-form"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/image",
+      "version": "1.10.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/image"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/input-number",
+      "version": "1.6.2",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/input-number"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/input",
+      "version": "1.3.1",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/input"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/listy",
+      "version": "1.2.3",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/listy"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/mentions",
+      "version": "1.12.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/mentions"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/menu",
+      "version": "1.5.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/menu"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/mini-decimal",
+      "version": "1.1.4",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/mini-decimal"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/motion",
+      "version": "1.3.3",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/motion"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/mutate-observer",
+      "version": "2.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/mutate-observer"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/notification",
+      "version": "2.0.8",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/notification"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/overflow",
+      "version": "1.0.1",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/overflow"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/pagination",
+      "version": "1.4.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/pagination"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/picker",
+      "version": "1.12.2",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/picker"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/portal",
+      "version": "2.2.1",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/portal"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/progress",
+      "version": "1.0.3",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/progress"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/qrcode",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/qrcode"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/rate",
+      "version": "1.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/rate"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/resize-observer",
+      "version": "1.1.2",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/resize-observer"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/segmented",
+      "version": "1.4.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/segmented"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/select",
+      "version": "1.10.1",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/select"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/slider",
+      "version": "1.1.1",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/slider"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/steps",
+      "version": "1.2.3",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/steps"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/switch",
+      "version": "1.0.3",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/switch"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/table",
+      "version": "1.11.1",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/table"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/tabs",
+      "version": "1.13.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/tabs"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/tooltip",
+      "version": "1.5.2",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/tooltip"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/tour",
+      "version": "2.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/react-component/tour"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/tree-select",
+      "version": "1.16.1",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/tree-select"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/tree",
+      "version": "1.4.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/tree"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/trigger",
+      "version": "3.10.1",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/trigger"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/upload",
+      "version": "1.1.1",
+      "license": "MIT",
+      "homepage": "http://github.com/react-component/upload"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/util",
+      "version": "1.13.0",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/util"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@rc-component/virtual-list",
+      "version": "1.5.2",
+      "license": "MIT",
+      "homepage": "https://react-component.github.io/virtual-list"
+    },
+    {
+      "ecosystem": "npm",
       "name": "@redis/bloom",
       "version": "6.2.0",
       "license": "MIT",
@@ -315,6 +700,13 @@
       "version": "6.0.0",
       "license": "MIT",
       "homepage": "https://github.com/xtermjs/xterm.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "antd",
+      "version": "6.6.5",
+      "license": "MIT",
+      "homepage": "https://ant.design"
     },
     {
       "ecosystem": "npm",
@@ -514,10 +906,24 @@
     },
     {
       "ecosystem": "npm",
+      "name": "class-variance-authority",
+      "version": "0.7.1",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/joe-bell/cva#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "client-only",
       "version": "0.0.1",
       "license": "MIT",
       "homepage": "https://reactjs.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "clsx",
+      "version": "2.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/lukeed/clsx#readme"
     },
     {
       "ecosystem": "npm",
@@ -532,6 +938,13 @@
       "version": "4.1.2",
       "license": "MIT",
       "homepage": "https://github.com/archiverjs/node-compress-commons"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "compute-scroll-into-view",
+      "version": "3.1.1",
+      "license": "MIT",
+      "homepage": "https://scroll-into-view.dev"
     },
     {
       "ecosystem": "npm",
@@ -574,6 +987,13 @@
       "version": "4.0.3",
       "license": "MIT",
       "homepage": "https://github.com/archiverjs/node-crc32-stream"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "csstype",
+      "version": "3.2.3",
+      "license": "MIT",
+      "homepage": "https://github.com/frenic/csstype#readme"
     },
     {
       "ecosystem": "npm",
@@ -773,6 +1193,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "is-mobile",
+      "version": "5.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/juliangruber/is-mobile"
+    },
+    {
+      "ecosystem": "npm",
       "name": "is-unsafe",
       "version": "2.0.0",
       "license": "MIT",
@@ -798,6 +1225,13 @@
       "version": "3.1.0",
       "license": "MIT",
       "homepage": "https://mths.be/jsesc"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "json2mq",
+      "version": "0.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/akiran/json2mq"
     },
     {
       "ecosystem": "npm",
@@ -1235,6 +1669,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "react-is",
+      "version": "19.3.0",
+      "license": "MIT",
+      "homepage": "https://react.dev/"
+    },
+    {
+      "ecosystem": "npm",
       "name": "react",
       "version": "19.2.8",
       "license": "MIT",
@@ -1316,6 +1757,13 @@
       "version": "0.27.0",
       "license": "MIT",
       "homepage": "https://react.dev/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "scroll-into-view-if-needed",
+      "version": "3.1.0",
+      "license": "MIT",
+      "homepage": "https://scroll-into-view.dev"
     },
     {
       "ecosystem": "npm",
@@ -1424,6 +1872,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "string-convert",
+      "version": "0.2.1",
+      "license": "MIT",
+      "homepage": "https://github.com/akiran/string-convert#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "strnum",
       "version": "2.4.1",
       "license": "MIT",
@@ -1438,6 +1893,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "stylis",
+      "version": "4.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/thysultan/stylis.js"
+    },
+    {
+      "ecosystem": "npm",
       "name": "supports-color",
       "version": "7.2.0",
       "license": "MIT",
@@ -1445,10 +1907,24 @@
     },
     {
       "ecosystem": "npm",
+      "name": "tailwind-merge",
+      "version": "3.7.0",
+      "license": "MIT",
+      "homepage": "https://github.com/dcastil/tailwind-merge"
+    },
+    {
+      "ecosystem": "npm",
       "name": "tar-stream",
       "version": "2.2.0",
       "license": "MIT",
       "homepage": "https://github.com/mafintosh/tar-stream"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "throttle-debounce",
+      "version": "5.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/niksy/throttle-debounce#readme"
     },
     {
       "ecosystem": "npm",

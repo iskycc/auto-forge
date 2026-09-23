@@ -7,17 +7,16 @@ const { authenticateRequest, readRecentExecutions, recordAccessDenial } = vi.hoi
   recordAccessDenial: vi.fn().mockResolvedValue(undefined),
   readRecentExecutions: vi.fn().mockResolvedValue({ items: [] }),
 }));
-vi.mock("./services", () => ({
-  getPlatformServices: async () => ({ identityAccess: { recordAccessDenial } }),
-}));
 vi.mock("@/lib/services", () => ({
-  getPlatformServices: async () => ({ caseSuiteActivity: { readRecentExecutions } }),
+  getPlatformServices: async () => ({
+    caseSuiteActivity: { readRecentExecutions },
+    identityAccess: { recordAccessDenial },
+  }),
 }));
-vi.mock("@/lib/auth", async () => ({
+vi.mock("@/lib/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./auth")>()),
   authenticateRequest,
-  authorizedProjectScope: (await import("./auth")).authorizedProjectScope,
 }));
-vi.mock("@/lib/api-response", () => import("./api-response"));
 
 import { GET } from "../app/api/v1/case-suites/[suiteId]/executions/route";
 

@@ -1,4 +1,7 @@
 "use client";
+import { Dialog } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   failureAnalysisCaseConclusionPageSchema,
@@ -110,85 +113,151 @@ export function FailureAnalysisConclusionPicker({
   }
 
   return (
-    <div
-      className="runner-update-overlay failure-analysis-confirm-overlay"
-      onClick={onClose}
-      role="presentation"
+    <Dialog
+      open
+      title={"本任务近 5 次批跑结论"}
+      onClose={onClose}
+      className={cn(
+        "runner-update-dialog failure-analysis-conclusion-picker",
+        failureAnalysisConclusionPickerStyles["runner-update-dialog"],
+        failureAnalysisConclusionPickerStyles["failure-analysis-conclusion-picker"],
+      )}
+      backdropClassName="runner-update-overlay failure-analysis-confirm-overlay"
     >
-      <section
-        aria-label="本任务近 5 次批跑结论"
-        aria-modal="true"
-        className="runner-update-dialog failure-analysis-conclusion-picker"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
+      <header
+        className={cn(
+          "runner-update-titlebar",
+          failureAnalysisConclusionPickerStyles["runner-update-titlebar"],
+        )}
       >
-        <header className="runner-update-titlebar">
-          <span>
-            <ClipboardPaste size={17} />
-            <strong>本任务近 5 次批跑结论</strong>
-            <small>此前最近 5 次已结束批跑 · 每个用例默认显示最近结论，可展开其他结论</small>
-          </span>
-          <Button aria-label="关闭结论选择弹窗" onClick={onClose} type="button">
-            <X size={16} />
-          </Button>
-        </header>
-        <div className="runner-update-body failure-analysis-conclusion-picker-body">
-          <form className="failure-analysis-conclusion-search" onSubmit={submitSearch}>
-            <span className="failure-analysis-search-control">
-              <Search aria-hidden="true" size={15} />
-              <Input
-                aria-label="搜索已分析用例"
-                autoFocus
-                maxLength={200}
-                onChange={(event) => setQueryInput(event.target.value)}
-                placeholder="用例名称、执行类、失败概要、问题说明、问题单"
-                value={queryInput}
-              />
-            </span>
-            <Button disabled={loading} type="submit" variant="secondary">
-              搜索
-            </Button>
-          </form>
-          {error ? (
-            <div className="failure-analysis-conclusion-load-error" role="alert">
-              <p>{error}</p>
-              <Button onClick={() => void load()} type="button">
-                重试
-              </Button>
-            </div>
-          ) : null}
-          {!loading && !error && items.length === 0 ? (
-            <div className="failure-analysis-history-state">没有找到可继承的已完成结论。</div>
-          ) : (
-            <div className="failure-analysis-conclusion-results">
-              {items.map((group) => (
-                <FailureAnalysisConclusionCard
-                  key={`${group.latest.claim.caseDefinitionId}:${group.latest.claim.id}`}
-                  group={group}
-                  projectId={projectId}
-                  batchId={batchId}
-                  onSelect={onSelect}
-                />
-              ))}
-              {loading ? (
-                <div className="failure-analysis-history-state" role="status">
-                  <LoaderCircle className="spin" size={16} /> 正在读取已分析用例…
-                </div>
-              ) : null}
-            </div>
+        <span>
+          <ClipboardPaste size={17} />
+          <strong>本任务近 5 次批跑结论</strong>
+          <small>此前最近 5 次已结束批跑 · 每个用例默认显示最近结论，可展开其他结论</small>
+        </span>
+        <Button aria-label="关闭结论选择弹窗" onClick={onClose} type="button">
+          <X size={16} />
+        </Button>
+      </header>
+      <div
+        className={cn(
+          "runner-update-body failure-analysis-conclusion-picker-body",
+          failureAnalysisConclusionPickerStyles["runner-update-body"],
+          failureAnalysisConclusionPickerStyles["failure-analysis-conclusion-picker-body"],
+        )}
+      >
+        <form
+          className={cn(
+            "failure-analysis-conclusion-search",
+            failureAnalysisConclusionPickerStyles["failure-analysis-conclusion-search"],
           )}
-          {nextCursor ? (
-            <Button
-              disabled={loading}
-              onClick={() => void load(nextCursor, true)}
-              type="button"
-              variant="secondary"
-            >
-              加载更多
+          onSubmit={submitSearch}
+        >
+          <span
+            className={cn(
+              "failure-analysis-search-control",
+              failureAnalysisConclusionPickerStyles["failure-analysis-search-control"],
+            )}
+          >
+            <Search aria-hidden="true" size={15} />
+            <Input
+              aria-label="搜索已分析用例"
+              autoFocus
+              maxLength={200}
+              onChange={(event) => setQueryInput(event.target.value)}
+              placeholder="用例名称、执行类、失败概要、问题说明、问题单"
+              value={queryInput}
+            />
+          </span>
+          <Button disabled={loading} type="submit" variant="secondary">
+            搜索
+          </Button>
+        </form>
+        {error ? (
+          <div
+            className={cn(
+              "failure-analysis-conclusion-load-error",
+              failureAnalysisConclusionPickerStyles["failure-analysis-conclusion-load-error"],
+            )}
+            role="alert"
+          >
+            <p>{error}</p>
+            <Button onClick={() => void load()} type="button">
+              重试
             </Button>
-          ) : null}
-        </div>
-      </section>
-    </div>
+          </div>
+        ) : null}
+        {!loading && !error && items.length === 0 ? (
+          <div
+            className={cn(
+              "failure-analysis-history-state",
+              failureAnalysisConclusionPickerStyles["failure-analysis-history-state"],
+            )}
+          >
+            没有找到可继承的已完成结论。
+          </div>
+        ) : (
+          <div
+            className={cn(
+              "failure-analysis-conclusion-results",
+              failureAnalysisConclusionPickerStyles["failure-analysis-conclusion-results"],
+            )}
+          >
+            {items.map((group) => (
+              <FailureAnalysisConclusionCard
+                key={`${group.latest.claim.caseDefinitionId}:${group.latest.claim.id}`}
+                group={group}
+                projectId={projectId}
+                batchId={batchId}
+                onSelect={onSelect}
+              />
+            ))}
+            {loading ? (
+              <div
+                className={cn(
+                  "failure-analysis-history-state",
+                  failureAnalysisConclusionPickerStyles["failure-analysis-history-state"],
+                )}
+                role="status"
+              >
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />{" "}
+                正在读取已分析用例…
+              </div>
+            ) : null}
+          </div>
+        )}
+        {nextCursor ? (
+          <Button
+            disabled={loading}
+            onClick={() => void load(nextCursor, true)}
+            type="button"
+            variant="secondary"
+          >
+            加载更多
+          </Button>
+        ) : null}
+      </div>
+    </Dialog>
   );
 }
+
+const failureAnalysisConclusionPickerStyles = {
+  "failure-analysis-conclusion-load-error": "flex items-center gap-2 text-destructive",
+  "failure-analysis-conclusion-picker":
+    "w-[min(820px,_calc(100vw_-_56px))] max-h-[calc(100vh_-_56px)] min-w-0 [&_.runner-update-titlebar_>_span]:min-w-0 [&_.runner-update-titlebar_>_span]:flex-wrap [&_.runner-update-titlebar_small]:whitespace-normal [&_.runner-update-titlebar_small]:[overflow-wrap:anywhere]",
+  "failure-analysis-conclusion-picker-body": "grid min-h-0 gap-2 min-w-0",
+  "failure-analysis-conclusion-results":
+    "grid min-h-0 gap-2 overflow-y-auto [overscroll-behavior:contain] min-w-0",
+  "failure-analysis-conclusion-search": "grid grid-cols-[minmax(0,_1fr)_auto] gap-2",
+  "failure-analysis-confirm-overlay": "z-[240]",
+  "failure-analysis-history-state":
+    "flex min-h-13.5 items-center justify-center gap-[7px] border border-dashed border-border rounded-lg text-muted-foreground text-sm [&.error]:[border-color:color-mix(in_srgb,_var(--destructive)_28%,_var(--border))] [&.error]:text-destructive",
+  "failure-analysis-search-control":
+    "relative block [&_>_svg]:absolute [&_>_svg]:z-1 [&_>_svg]:top-1/2 [&_>_svg]:left-3 [&_>_svg]:text-muted-foreground [&_>_svg]:[transform:translateY(-50%)] [&_.ui-input]:pl-9!",
+  "runner-update-body": "grid gap-4 p-4.5 overflow-y-auto",
+  "runner-update-dialog":
+    "grid w-[min(640px,_92vw)] max-h-[86vh] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg",
+
+  "runner-update-titlebar":
+    "flex items-center justify-between gap-3 py-3.5 px-4.5 border-b border-solid border-border [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2.5 [&_small]:text-muted-foreground",
+} as const;

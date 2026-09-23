@@ -1,4 +1,7 @@
-import Link from "next/link";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
+import { LinkButton } from "@/components/ui/link-button";
 import { hasPermission } from "@autoforge/domain";
 import { DdtSrAssociations } from "@/components/ddt-sr-associations";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
@@ -21,20 +24,27 @@ export default async function DdtAssociationsPage() {
   const version = structure?.versions.find((item) => item.id === hierarchy.projectVersionId);
   const stage = version?.stages.find((item) => item.id === hierarchy.testStageId);
   return (
-    <div className="page-stack">
-      <header className="page-header">
+    <div className={cn("page-stack", uiPatterns["page-stack"])}>
+      <header className={cn("page-header", uiPatterns["page-header"])}>
         <div>
-          <p className="eyebrow">DDT / SR</p>
+          <p className={cn("eyebrow", uiPatterns["eyebrow"])}>DDT / SR</p>
           <h1>SR 测试类关联</h1>
           <p>为 SR 设置需求分类，统一使用分类的执行类；现有及后续导入用例自动继承。</p>
         </div>
-        <Link className="button button-secondary" href="/cases?tab=ddt&ddtView=cases">
+        <LinkButton
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          href="/cases?tab=ddt&ddtView=cases"
+        >
           返回 DDT 用例
-        </Link>
+        </LinkButton>
       </header>
       {projectId && version && stage ? (
         <>
-          <div className="ddt-association-scope">
+          <div className={cn("ddt-association-scope", pageStyles["ddt-association-scope"])}>
             <strong>
               {version.name} / {stage.name}
             </strong>
@@ -47,11 +57,19 @@ export default async function DdtAssociationsPage() {
           />
         </>
       ) : (
-        <section className="card empty-state">
+        <Card
+          as="section"
+          className={cn("card empty-state", uiPatterns["card"], uiPatterns["empty-state"])}
+        >
           <strong>请先选择完整的项目层级</strong>
           <p>从顶栏选择项目版本与测试阶段后配置 SR 关联。</p>
-        </section>
+        </Card>
       )}
     </div>
   );
 }
+
+const pageStyles = {
+  "ddt-association-scope":
+    "flex items-center gap-4 text-muted-foreground text-sm [&_strong]:text-foreground",
+} as const;

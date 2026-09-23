@@ -63,17 +63,33 @@ test("large pages reuse browser and database snapshots and refresh after imports
   await expect(page.locator(".case-browser-summary")).toContainText("501 个用例", {
     timeout: 30_000,
   });
-  await expect(page.locator(".case-directory-tree > .case-tree-children > details")).toHaveCount(1);
+  await expect(
+    page.locator(".case-directory-tree > .case-tree-children > .ui-disclosure"),
+  ).toHaveCount(1);
   await expect(page.locator(".case-tree-case")).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "目录分页" })).toHaveCount(0);
   expect(chunkReads).toBe(1);
-  const parent = page.locator(".case-directory-tree > .case-tree-children > details");
-  await parent.locator(":scope > summary").click();
-  await expect(parent.locator(":scope > .case-tree-children > details")).toHaveCount(1);
+  const parent = page.locator(".case-directory-tree > .case-tree-children > .ui-disclosure");
+  await parent
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
+  await expect(
+    parent.locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-panel > .ant-collapse-body > .case-tree-children > .ui-disclosure",
+    ),
+  ).toHaveCount(1);
   await expect(page.locator(".case-tree-case")).toHaveCount(0);
   expect(chunkReads).toBe(2);
-  const leaf = parent.locator(":scope > .case-tree-children > details");
-  await leaf.locator(":scope > summary").click();
+  const leaf = parent.locator(
+    ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-panel > .ant-collapse-body > .case-tree-children > .ui-disclosure",
+  );
+  await leaf
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(page.locator(".case-tree-case")).toHaveCount(100);
   expect(chunkReads).toBe(3);
   const initialFiles = (await Promise.all(branchBodies)).flatMap((branch) => branch.items);
@@ -99,15 +115,31 @@ test("large pages reuse browser and database snapshots and refresh after imports
   await page.getByLabel("选择 Snapshot0100Test", { exact: true }).check();
   await expect(page.getByLabel("已勾选用例的执行统计")).toContainText("已勾选 2 个用例");
   const afterExpansion = chunkReads;
-  await leaf.locator(":scope > summary").click();
+  await leaf
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(page.locator(".case-tree-case")).toHaveCount(0);
-  await leaf.locator(":scope > summary").click();
+  await leaf
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(page.locator(".case-tree-case")).toHaveCount(200);
   await expect(firstCheckbox).toBeChecked();
   expect(chunkReads).toBe(afterExpansion);
-  await parent.locator(":scope > summary").click();
+  await parent
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(page.locator(".case-tree-case")).toHaveCount(0);
-  await parent.locator(":scope > summary").click();
+  await parent
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(page.locator(".case-tree-case")).toHaveCount(100);
   await leaf.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(page.locator(".case-tree-case")).toHaveCount(200);
@@ -140,8 +172,12 @@ test("large pages reuse browser and database snapshots and refresh after imports
   await selectAll.uncheck();
   await expect(page.getByLabel("已勾选用例的执行统计")).toHaveCount(0);
   // Returning from a search preserves the directory expansion; explicitly close it for subtree selection.
-  await expect(parent).toHaveAttribute("open", "");
-  await parent.locator(":scope > summary").click();
+  await expect(parent).toHaveAttribute("data-open", "true");
+  await parent
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await expect(page.locator(".case-tree-case")).toHaveCount(0);
   // A closed folder still selects its complete subtree, without expanding it.
   const folderCheckbox = page.getByRole("checkbox", {
@@ -390,7 +426,9 @@ test("large pages reuse browser and database snapshots and refresh after imports
   await page.getByRole("checkbox", { name: "选择包 cache.fixture", exact: true }).check();
   await expect(page.getByRole("button", { name: "批量移除（502）", exact: true })).toBeEnabled();
   await page.getByRole("checkbox", { name: "选择包 cache.fixture", exact: true }).uncheck();
-  const packageSummary = page.locator(".suite-case-tree details > summary");
+  const packageSummary = page.locator(
+    ".suite-case-tree .ui-disclosure > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+  );
   await packageSummary.click();
   await expect(page.locator(".suite-tree-case")).toHaveCount(100);
   await packageSummary.click();

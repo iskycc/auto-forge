@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 
 const SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const UI_PRIMITIVE = join(SOURCE_ROOT, "components", "ui.tsx");
-const GLOBAL_STYLES = join(SOURCE_ROOT, "app", "globals.css");
+const DESIGN_PRIMITIVES = join(SOURCE_ROOT, "components", "ui");
+const THEME = join(SOURCE_ROOT, "app", "theme.css");
 const APP_SHELL = join(SOURCE_ROOT, "components", "app-shell.tsx");
 const PLATFORM_SETTINGS = join(SOURCE_ROOT, "components", "platform-settings.tsx");
 const ACCESS_SETTINGS = join(SOURCE_ROOT, "components", "access-settings.tsx");
@@ -39,52 +40,65 @@ const PROJECT_SWITCH_FREE_FILES = [
 ] as const;
 // Hidden inputs only carry filter state inside GET forms and have no visual
 // styling, so the shared-component boundary applies to rendered controls only.
-const NATIVE_CONTROL = /<(?:button|select|textarea)\b|<input\b(?![^>]*type="hidden")/;
-const MINIMUM_READABLE_FONT_SIZE_PX = 12;
-const REQUIRED_LAYOUT_CLASSES = [
-  "content-card",
-  "settings-page-header",
-  "settings-tabs",
-  "case-library-workspace",
-  "case-directory-scroll",
-  "case-inspector-pane",
-  "runner-list",
-  "project-structure-manager",
-] as const;
+const NATIVE_CONTROL =
+  /<(?:button|select|textarea|details|summary|progress)\b|<input\b(?![^>]*type="hidden")/;
 
 describe("shared UI controls", () => {
   it("keeps native form controls inside the shared component boundary", () => {
     const violations = typescriptReactFiles(SOURCE_ROOT)
-      .filter((file) => file !== UI_PRIMITIVE)
+      .filter((file) => file !== UI_PRIMITIVE && !file.startsWith(`${DESIGN_PRIMITIVES}/`))
       .filter((file) => NATIVE_CONTROL.test(readFileSync(file, "utf8")))
       .map((file) => relative(SOURCE_ROOT, file));
 
     expect(violations).toEqual([]);
   });
 
-  it("keeps explicit UI text at the documented readable size", () => {
-    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
-    const undersizedDeclarations = [...stylesheet.matchAll(/font-size:\s*([\d.]+)(px|rem)/g)]
-      .map((match) => ({
-        declaration: match[0],
-        pixels: Number(match[1]) * (match[2] === "rem" ? 14 : 1),
-      }))
-      .filter(({ pixels }) => pixels > 0 && pixels < MINIMUM_READABLE_FONT_SIZE_PX);
-
-    expect(undersizedDeclarations).toEqual([]);
+  it("retires the global cascade and bundles Ant Design styles locally", () => {
+    expect(existsSync(join(SOURCE_ROOT, "app", "globals.css"))).toBe(false);
+    const legacyImports = typescriptReactFiles(SOURCE_ROOT)
+      .filter((file) => /(?:globals|\.module)\.css/.test(readFileSync(file, "utf8")))
+      .map((file) => relative(SOURCE_ROOT, file));
+    expect(legacyImports).toEqual([]);
+    expect(readFileSync(THEME, "utf8")).toContain('@import "antd/dist/antd.css"');
   });
 
-  it("defines structural styles for shared settings layouts", () => {
-    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
-    const missingClasses = REQUIRED_LAYOUT_CLASSES.filter(
-      (className) => !stylesheet.includes(`.${className}`),
-    );
+  it("delegates dialog, tab and table widgets to Ant Design", () => {
+    const customWidgets =
+      /<(?:div|section|nav|span|button)\b[^>]*\brole="(?:dialog|alertdialog|tab|tablist)"|<table\b/;
+    const violations = typescriptReactFiles(SOURCE_ROOT)
+      .filter((file) => !file.startsWith(`${DESIGN_PRIMITIVES}/`))
+      .filter((file) => customWidgets.test(readFileSync(file, "utf8")))
+      .map((file) => relative(SOURCE_ROOT, file));
 
-    expect(missingClasses).toEqual([]);
+    expect(violations).toEqual([]);
+    for (const primitive of [
+      "business-table",
+      "dialog",
+      "disclosure",
+      "tabs",
+      "progress",
+      "notice",
+      "empty-state",
+      "segmented",
+    ]) {
+      expect(readFileSync(join(DESIGN_PRIMITIVES, `${primitive}.tsx`), "utf8")).toContain(
+        'from "antd"',
+      );
+    }
+  });
+
+  it("does not keep styled HTML substitutes for notices, status tags and empty states", () => {
+    const styledSubstitute =
+      /<(?:div|section|span|p)\b[^>]*(?:\["(?:form-error|auth-error|warning-notice|inline-notice|empty-state|batch-status|permission-chip|tag|ddt-kind|ddt-api-badge)"\]|styles\.badge)/;
+    const violations = typescriptReactFiles(SOURCE_ROOT)
+      .filter((file) => !file.startsWith(`${DESIGN_PRIMITIVES}/`))
+      .filter((file) => styledSubstitute.test(readFileSync(file, "utf8")))
+      .map((file) => relative(SOURCE_ROOT, file));
+    expect(violations).toEqual([]);
   });
 
   it("does not reference undeclared design tokens", () => {
-    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
+    const stylesheet = readFileSync(THEME, "utf8");
     const declared = new Set(
       [...stylesheet.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map((match) => match[1]!),
     );
@@ -97,11 +111,10 @@ describe("shared UI controls", () => {
   });
 
   it("keeps the focus indicator on the control instead of outlining its whole label", () => {
-    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
+    const stylesheet = readFileSync(THEME, "utf8");
 
     expect(stylesheet).not.toContain("label:focus-within");
-    expect(stylesheet).not.toMatch(/(?:input|select|textarea):focus-visible/);
-    expect(stylesheet).toContain(".ui-input:focus");
+    expect(readFileSync(join(DESIGN_PRIMITIVES, "input.tsx"), "utf8")).toContain("<AntInput");
   });
 
   it("exposes administrator capabilities as first-level navigation", () => {
@@ -209,7 +222,7 @@ describe("shared UI controls", () => {
     expect(violations).toEqual([]);
     const feedback = readFileSync(UI_FEEDBACK, "utf8");
     expect(feedback).toContain("<ActionDialog");
-    expect(feedback).toContain('className="toast-viewport"');
+    expect(feedback).toContain('"toast-viewport"');
     expect(feedback).toContain('tone === "error" ? "alert" : "status"');
   });
 
@@ -236,8 +249,7 @@ describe("shared UI controls", () => {
     }
     const feedback = readFileSync(UI_FEEDBACK, "utf8");
     expect(feedback).toContain("confirmation-dialog-warning");
-    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
-    expect(stylesheet).toMatch(/\.action-dialog-backdrop\s*\{[^}]*z-index:\s*220/s);
+    expect(readFileSync(join(DESIGN_PRIMITIVES, "dialog.tsx"), "utf8")).toContain("<Modal");
   });
 
   it("keeps dense data routes visibly responsive while loading and filtering", () => {
@@ -285,7 +297,8 @@ describe("shared UI controls", () => {
 
     expect(tabLabels.length).toBeGreaterThan(10);
     expect(tabLabels.filter((label) => [...label].length !== 4)).toEqual([]);
-    expect(appShell).toContain('<span className="nav-section-label">系统管理</span>');
+    expect(appShell).toContain('"nav-section-label"');
+    expect(appShell).toContain("系统管理");
     expect(appShell).not.toContain("nav-item-nested");
   });
 

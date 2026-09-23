@@ -1,5 +1,8 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { ArrowLeft, BookOpenText } from "lucide-react";
 import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 
 import { CachedSuiteDirectory } from "@/components/cached-suite-directory";
 import { suiteDirectoryManifestSchema, DIRECTORY_CHUNK_SIZE } from "@autoforge/contracts";
@@ -10,6 +13,7 @@ import { CaseSuiteSchedulePanel } from "@/components/case-suite-schedule-panel";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
 import { hasPermission } from "@autoforge/domain";
+import { selectedProjectHierarchy } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -29,23 +33,38 @@ export default async function CaseSuitePage({ params }: Props) {
     search: "",
   });
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
-  const [runners, runnerGroups, projectStructure, webhookConfigurations, webhookIds, schedule] =
-    await Promise.all([
-      services.runnerControl.list(500),
-      services.runnerGroups.list(),
-      services.projectStructures.list(suite.projectId),
-      services.webhooks.listConfigurations(suite.projectId),
-      services.webhooks.listSuiteBindings(suiteId, projectIds),
-      services.platformOperations.readSuiteSchedule(identity, suite),
-    ]);
+  const [
+    runners,
+    runnerGroups,
+    projectStructure,
+    webhookConfigurations,
+    webhookIds,
+    schedule,
+    projects,
+  ] = await Promise.all([
+    services.runnerControl.list(500),
+    services.runnerGroups.list(),
+    services.projectStructures.list(suite.projectId),
+    services.webhooks.listConfigurations(suite.projectId),
+    services.webhooks.listSuiteBindings(suiteId, projectIds),
+    services.platformOperations.readSuiteSchedule(identity, suite),
+    services.identities.listProjects([suite.projectId]),
+  ]);
+  const hierarchy = await selectedProjectHierarchy(projectStructure);
   const projectVersion = projectStructure.versions.find(
     (version) => version.id === suite.policy.projectVersionId,
   );
   return (
-    <div className="page-stack suite-detail-page">
-      <section className="page-hero">
+    <div
+      className={cn(
+        "page-stack suite-detail-page",
+        uiPatterns["page-stack"],
+        pageStyles["suite-detail-page"],
+      )}
+    >
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <Link className="back-link" href="/case-suites">
+          <Link className={cn("back-link", pageStyles["back-link"])} href="/case-suites">
             <ArrowLeft size={15} /> 用例任务
           </Link>
           <h1>{suite.name}</h1>
@@ -55,23 +74,32 @@ export default async function CaseSuitePage({ params }: Props) {
           </p>
         </div>
         {canManage ? (
-          <div className="button-row">
-            <Link
-              className="button button-secondary"
+          <div className={cn("button-row", uiPatterns["button-row"])}>
+            <LinkButton
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               href={`/cases?targetSuiteId=${encodeURIComponent(suite.id)}`}
             >
               <BookOpenText size={17} /> 添加普通用例
-            </Link>
-            <Link
-              className="button button-primary"
+            </LinkButton>
+            <LinkButton
+              variant="primary"
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
               href={`/cases?tab=ddt&ddtView=cases&targetSuiteId=${encodeURIComponent(suite.id)}`}
             >
               <BookOpenText size={17} /> 添加 DDT 用例
-            </Link>
+            </LinkButton>
           </div>
         ) : null}
       </section>
-      <nav className="section-links" aria-label="任务分区">
+      <nav className={cn("section-links", pageStyles["section-links"])} aria-label="任务分区">
         <a href="#suite-members">用例列表</a>
         <a href="#suite-settings">任务配置</a>
         <a href="#suite-schedule">执行计划</a>
@@ -91,6 +119,8 @@ export default async function CaseSuitePage({ params }: Props) {
         </div>
         <div id="suite-settings">
           <CaseSuiteEditor
+            projectName={projects.find((project) => project.id === suite.projectId)?.name ?? ""}
+            selectedTestStageId={hierarchy.testStageId}
             artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
             canManage={canManage}
             projectVersions={projectStructure.versions}
@@ -127,3 +157,11 @@ export default async function CaseSuitePage({ params }: Props) {
     </div>
   );
 }
+
+const pageStyles = {
+  "back-link":
+    "text-muted-foreground font-semibold inline-flex items-center gap-1.5 mb-[5px] text-sm w-fit [&:hover]:[text-decoration:underline]",
+  "section-links":
+    "flex items-center justify-start flex-wrap gap-3 text-muted-foreground text-sm border-b border-solid border-border pb-3 [&_a]:py-2 [&_a]:px-3 [&_a]:rounded-lg [&_a]:bg-card",
+  "suite-detail-page": '[&_[id^="suite-"]]:[scroll-margin-top:calc(20px_*_5)]',
+} as const;

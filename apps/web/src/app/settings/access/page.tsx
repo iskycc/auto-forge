@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { AccessSettings, type AccessSection } from "@/components/access-settings";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
@@ -120,10 +122,16 @@ export default async function AccessSettingsPage({
         }));
 
   return (
-    <section className="page-stack">
-      <header className="page-header settings-page-header">
+    <section className={cn("page-stack", uiPatterns["page-stack"])}>
+      <header
+        className={cn(
+          "page-header settings-page-header",
+          uiPatterns["page-header"],
+          uiPatterns["settings-page-header"],
+        )}
+      >
         <div>
-          <p className="eyebrow">Organization</p>
+          <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Organization</p>
           <h1>{heading.title}</h1>
           <p>{heading.description}</p>
         </div>

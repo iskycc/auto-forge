@@ -1,4 +1,10 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useState } from "react";
 import { ddtCaseDataSchema } from "@autoforge/contracts";
@@ -64,11 +70,15 @@ export function DdtCaseDataDialog({
       open
       title="DDT 用例数据"
       description="只读查看；关闭后保留搜索结果和查看位置。"
-      className="ddt-case-data-dialog"
+      className={cn("ddt-case-data-dialog", ddtCaseDataDialogStyles["ddt-case-data-dialog"])}
       onClose={onClose}
     >
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           <span>{error}</span>
           <Button
             onClick={() => {
@@ -78,13 +88,15 @@ export function DdtCaseDataDialog({
           >
             重新加载
           </Button>
-        </div>
+        </Notice>
       ) : !data ? (
         <p role="status">正在读取用例数据…</p>
       ) : (
         <>
           {steps ? (
-            <label className="ddt-case-data-step">
+            <label
+              className={cn("ddt-case-data-step", ddtCaseDataDialogStyles["ddt-case-data-step"])}
+            >
               <span>用户旅程步骤</span>
               <Select
                 aria-label="用户旅程步骤"
@@ -109,10 +121,15 @@ export function DdtCaseDataDialog({
 function CaseDataFields({ fields }: { fields: DdtCaseData }) {
   const [visibleCount, setVisibleCount] = useState(FIELDS_PER_WINDOW);
   const entries = Object.entries(fields);
-  if (!entries.length) return <p className="empty-state">此用例暂无字段数据。</p>;
+  if (!entries.length)
+    return (
+      <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
+        此用例暂无字段数据。
+      </EmptyState>
+    );
   return (
     <>
-      <dl className="ddt-case-data-fields">
+      <dl className={cn("ddt-case-data-fields", ddtCaseDataDialogStyles["ddt-case-data-fields"])}>
         {entries.slice(0, visibleCount).map(([field, value]) => (
           <div key={field}>
             <dt>{field}</dt>
@@ -153,3 +170,11 @@ function CaseDataValue({ value }: { value: DdtCaseData[string] }) {
     </>
   );
 }
+
+const ddtCaseDataDialogStyles = {
+  "ddt-case-data-dialog":
+    "[&_.action-dialog-body]:grid [&_.action-dialog-body]:min-w-0 [&_.action-dialog-body]:gap-3 [&_.action-dialog-body]:[overscroll-behavior:contain]",
+  "ddt-case-data-fields":
+    "min-w-0 m-0 [&_>_div]:grid [&_>_div]:grid-cols-[minmax(0,_1fr)_minmax(0,_3fr)] [&_>_div]:gap-3 [&_>_div]:py-2 [&_>_div]:border-b [&_>_div]:border-solid [&_>_div]:border-border [&_:is(dt,_dd,_pre)]:min-w-0 [&_:is(dt,_dd,_pre)]:m-0 [&_:is(dt,_dd,_pre)]:[overflow-wrap:anywhere] [&_:is(dt,_dd,_pre)]:whitespace-pre-wrap [&_dt]:text-muted-foreground [&_pre]:max-h-[360px] [&_pre]:overflow-auto [&_pre]:[font:inherit] [&_pre]:[overscroll-behavior:contain]",
+  "ddt-case-data-step": "flex items-center gap-3 [&_>_span:first-child]:shrink-0",
+} as const;

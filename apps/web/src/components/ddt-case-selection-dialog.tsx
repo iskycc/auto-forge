@@ -1,4 +1,9 @@
 "use client";
+import { Segmented } from "./ui/segmented";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useRef, useState } from "react";
 import type { DdtScope } from "@autoforge/domain";
@@ -107,35 +112,31 @@ export function DdtCaseSelectionDialog({
       open
       title="按清单选择 DDT 用例"
       description="按 CaseID 精确匹配当前项目、版本、阶段的全部已有用例，不限于左侧已加载或筛选的列表。"
-      className="ddt-case-selection-dialog"
+      className={cn(
+        "ddt-case-selection-dialog",
+        ddtCaseSelectionDialogStyles["ddt-case-selection-dialog"],
+      )}
       onClose={() => {
         request.current?.abort();
         onClose();
       }}
     >
-      <div className="ddt-case-selection-source" aria-label="清单输入方式">
-        <Button
-          aria-pressed={source === "text"}
-          disabled={working}
-          onClick={() => {
-            setSource("text");
-            invalidatePreview();
-          }}
-        >
-          粘贴文本
-        </Button>
-        <Button
-          aria-pressed={source === "file"}
-          disabled={working}
-          onClick={() => {
-            setSource("file");
-            invalidatePreview();
-          }}
-        >
-          上传表格
-        </Button>
-      </div>
-      <label className="case-import-source" hidden={source !== "text"}>
+      <Segmented
+        label="清单输入方式"
+        value={source}
+        options={[
+          { value: "text", label: "粘贴文本", disabled: working },
+          { value: "file", label: "上传表格", disabled: working },
+        ]}
+        onChange={(value) => {
+          setSource(value);
+          invalidatePreview();
+        }}
+      />
+      <label
+        className={cn("case-import-source", ddtCaseSelectionDialogStyles["case-import-source"])}
+        hidden={source !== "text"}
+      >
         <span>CaseID 清单</span>
         <Textarea
           aria-label="粘贴 DDT CaseID"
@@ -149,7 +150,10 @@ export function DdtCaseSelectionDialog({
           }}
         />
       </label>
-      <label className="case-import-source" hidden={source !== "file"}>
+      <label
+        className={cn("case-import-source", ddtCaseSelectionDialogStyles["case-import-source"])}
+        hidden={source !== "file"}
+      >
         <span>用例清单文件</span>
         <FileInput
           aria-label="选择 DDT 用例清单文件"
@@ -164,11 +168,16 @@ export function DdtCaseSelectionDialog({
           }}
         />
       </label>
-      <p className="muted">
+      <p className={cn("muted", uiPatterns["muted"])}>
         支持 XLSX、CSV、TSV、TXT，读取首个工作表的第一列，表头可为 CaseID、用例ID
         或用例编号。忽略大小写与首尾空格，重复项自动合并；不会新建或覆盖用例数据。
       </p>
-      <div className="ddt-case-selection-actions">
+      <div
+        className={cn(
+          "ddt-case-selection-actions",
+          ddtCaseSelectionDialogStyles["ddt-case-selection-actions"],
+        )}
+      >
         <Button
           variant="primary"
           disabled={working || (source === "file" ? !file : !text.trim())}
@@ -185,25 +194,42 @@ export function DdtCaseSelectionDialog({
         />
       ) : null}
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           {error}
-        </div>
+        </Notice>
       ) : null}
       {result ? (
-        <section className="case-import-result" aria-label="清单匹配结果">
+        <section
+          className={cn("case-import-result", ddtCaseSelectionDialogStyles["case-import-result"])}
+          aria-label="清单匹配结果"
+        >
           <strong role="status">
             匹配 {result.matched.length} 个 · 未匹配 {result.unmatched.length} 个
           </strong>
-          <div className="ddt-case-selection-preview">
+          <div
+            className={cn(
+              "ddt-case-selection-preview",
+              ddtCaseSelectionDialogStyles["ddt-case-selection-preview"],
+            )}
+          >
             <CaseIdPreview title="已匹配" caseIds={result.matched} />
             <CaseIdPreview title="未匹配" caseIds={result.unmatched} />
           </div>
-          <small className="muted">
+          <small className={cn("muted", uiPatterns["muted"])}>
             确认后将合并到当前勾选，可通过“加入用例任务”加入已有任务或创建新任务。未匹配项不会加入。
           </small>
         </section>
       ) : null}
-      <footer className="ddt-case-selection-actions">
+      <footer
+        className={cn(
+          "ddt-case-selection-actions",
+          ddtCaseSelectionDialogStyles["ddt-case-selection-actions"],
+        )}
+      >
         <Button
           onClick={() => {
             request.current?.abort();
@@ -229,7 +255,12 @@ function CaseIdPreview({ title, caseIds }: { title: string; caseIds: string[] })
     <div>
       <strong>{title}</strong>
       {caseIds.length ? (
-        <ul className="case-import-unmatched">
+        <ul
+          className={cn(
+            "case-import-unmatched",
+            ddtCaseSelectionDialogStyles["case-import-unmatched"],
+          )}
+        >
           {caseIds.slice(0, PREVIEW_COUNT).map((caseId) => (
             <li key={caseId}>
               <code title={caseId}>{caseId}</code>
@@ -237,13 +268,26 @@ function CaseIdPreview({ title, caseIds }: { title: string; caseIds: string[] })
           ))}
         </ul>
       ) : (
-        <small className="muted">无</small>
+        <small className={cn("muted", uiPatterns["muted"])}>无</small>
       )}
       {caseIds.length > PREVIEW_COUNT ? (
-        <small className="muted">
+        <small className={cn("muted", uiPatterns["muted"])}>
           另有 {caseIds.length - PREVIEW_COUNT} 个，仅预览前 {PREVIEW_COUNT} 个
         </small>
       ) : null}
     </div>
   );
 }
+
+const ddtCaseSelectionDialogStyles = {
+  "case-import-result":
+    "grid min-w-0 gap-3 border border-solid border-border rounded-lg p-3.5 bg-muted",
+  "case-import-source": "min-w-0",
+  "case-import-unmatched":
+    "grid min-w-0 gap-1 m-0 pl-4.5 text-muted-foreground text-xs [&_code]:block [&_code]:min-w-0 [&_code]:max-w-full [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:font-mono [&_>_li]:min-w-0",
+  "ddt-case-selection-actions": "flex flex-wrap gap-2 justify-end",
+  "ddt-case-selection-dialog":
+    "[&_.action-dialog-body]:grid [&_.action-dialog-body]:gap-3 [&_.action-dialog-body]:min-w-0 [&_.case-import-source]:grid [&_.case-import-source]:min-w-0 [&_.case-import-source]:gap-2 [&_.case-import-source[hidden]]:hidden [&_p]:[overflow-wrap:anywhere] [&_small]:[overflow-wrap:anywhere]",
+  "ddt-case-selection-preview":
+    "[&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-2 grid grid-cols-2 items-start gap-4",
+} as const;

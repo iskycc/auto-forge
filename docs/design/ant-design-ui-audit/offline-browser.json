@@ -1,0 +1,58 @@
+{
+  "networkNamespace": "Docker --network none",
+  "externalRequests": [],
+  "pageErrors": [],
+  "failedAssets": [],
+  "findings": [
+    {
+      "route": "/",
+      "width": 1024,
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt",
+      "width": 1024,
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=users",
+      "width": 1024,
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=configuration",
+      "width": 1024,
+      "overflow": false
+    },
+    {
+      "route": "/audit",
+      "width": 1024,
+      "overflow": false
+    },
+    {
+      "route": "/",
+      "width": 1536,
+      "overflow": false
+    },
+    {
+      "route": "/cases?tab=ddt",
+      "width": 1536,
+      "overflow": false
+    },
+    {
+      "route": "/settings/access?section=users",
+      "width": 1536,
+      "overflow": false
+    },
+    {
+      "route": "/settings/platform?section=configuration",
+      "width": 1536,
+      "overflow": false
+    },
+    {
+      "route": "/audit",
+      "width": 1536,
+      "overflow": false
+    }
+  ]
+}

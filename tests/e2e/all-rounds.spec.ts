@@ -16,7 +16,7 @@ import {
   ensureAdministrator,
   uniqueName,
 } from "./support/session";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
 
 /**
  * 全部轮次虚拟轮次视图的验收：覆盖 Runner 异常同轮重调度、真实失败整轮重跑、
@@ -503,7 +503,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   page,
 }) => {
   test.setTimeout(300_000);
-  const suiteName = "全部轮次验收任务";
+  const suiteName = `全部轮次验收任务 ${uniqueName("all-rounds")}`;
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
   await ensureProjectHierarchy(page);
@@ -741,6 +741,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     });
   expect(compactCellPadding.top).toBeLessThanOrEqual(8);
   expect(compactCellPadding.bottom).toBeLessThanOrEqual(8);
+  await expectReadableText(
+    page
+      .getByRole("button", { name: "再次执行", exact: true })
+      .getByText("再次执行", { exact: true }),
+  );
   await captureUi(page, "all-rounds-view");
 
   // Runner 重调度完成后仍只有初始逻辑轮，且不会出现虚假的“未执行”行。
@@ -789,7 +794,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   ).toBeVisible();
   await expect(logicalRoundHistory.getByText("第 2 轮", { exact: true })).toHaveCount(0);
   await logicalRoundLogPage.close();
-  await page.getByRole("button", { name: "执行机", exact: true }).click();
+  await page.getByRole("radio", { name: "执行机", exact: true }).locator("..").click();
   await page.getByRole("button", { name: /执行机异常 1/ }).click();
   const faultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
   await expect(faultDialog).toContainText("PROCESS_START_FAILED");
@@ -798,7 +803,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await faultDialog.getByRole("button", { name: "关闭" }).click();
 
   // 初始轮次仍包含两个用例。
-  await page.getByRole("button", { name: "用例", exact: true }).click();
+  await page.getByRole("radio", { name: "用例", exact: true }).locator("..").click();
   await expect(retainedCaseSearch).toHaveValue("AllRoundsFlakyTest");
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
   await retainedCaseSearch.fill("");
@@ -1010,6 +1015,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
     await page.goto(`/run-batches/${encodeURIComponent(recoveryBatch.id)}`);
     const recoveryRoundTable = page.locator(".execution-round-table");
+    // Terminal state commits before the background round snapshot becomes visible.
+    await expect(recoveryRoundTable).toBeVisible({ timeout: 30_000 });
     await expect(
       recoveryRoundTable
         .getByRole("row", { name: /初始轮次/ })
@@ -1227,17 +1234,21 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   }
   await expect
-    .poll(async () => {
-      const progress = await page.request.get(jenkinsRun.progressApiUrl);
-      expect(progress.status()).toBe(200);
-      const body = (await progress.json()) as {
-        active: boolean;
-        statusLabel: string;
-        totalCases: number;
-        totalPassed: number;
-      };
-      return `${body.active}:${body.statusLabel}:${body.totalPassed}/${body.totalCases}`;
-    })
+    .poll(
+      async () => {
+        const progress = await page.request.get(jenkinsRun.progressApiUrl);
+        expect(progress.status()).toBe(200);
+        const body = (await progress.json()) as {
+          active: boolean;
+          statusLabel: string;
+          totalCases: number;
+          totalPassed: number;
+        };
+        return `${body.active}:${body.statusLabel}:${body.totalPassed}/${body.totalCases}`;
+      },
+      // Completion is committed before the public progress snapshot is rebuilt.
+      { timeout: 30_000 },
+    )
     .toBe("false:执行完成:2/2");
   await anonymousProgressPage.reload();
   await expect(anonymousProgressPage.getByText("执行完成", { exact: true })).toBeVisible();
@@ -1275,7 +1286,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(anonymousLogPage.locator("pre.execution-log")).toContainText(
     "compressed public log jenkins-",
   );
-  await expect(anonymousLogPage.getByRole("status")).toContainText("仅展示前 512 KB 内容");
+  await expect(anonymousLogPage.locator(".share-log-truncated")).toContainText(
+    "仅展示前 512 KB 内容",
+  );
   await expect(anonymousLogPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
   await expectIndependentSharedLogScrolling(anonymousLogPage);
   await anonymousLogPage.close();
@@ -1560,6 +1573,18 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(liveLogDialog.locator("pre.execution-log")).toContainText(realtimeMarker.trim(), {
     timeout: 10_000,
   });
+  const logBody = liveLogDialog.locator("pre.execution-log");
+  const lightBackground = await logBody.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await liveLogDialog.getByRole("button", { name: "深色日志", exact: true }).click();
+  const darkBackground = await logBody.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  expect(darkBackground).not.toBe(lightBackground);
+  await captureUi(page, "manual-rerun-dark-log");
+  await liveLogDialog.getByRole("button", { name: "浅色日志", exact: true }).click();
+  await expect(logBody).toHaveCSS("background-color", lightBackground);
   await expectDialogFitsViewport(page, liveLogDialog);
   await captureUi(page, "manual-rerun-live-log");
   await page.getByRole("button", { name: "关闭日志终端" }).click();
@@ -1585,7 +1610,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     name: "查看实时日志",
     exact: true,
   });
-  await expect(sharedRealtimeButton).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expectReadableText(sharedRealtimeButton);
   await sharedRealtimeButton.click();
   const sharedLiveLogDialog = runningPublicLogPage.getByRole("dialog", { name: /执行日志/ });
   await expect(sharedLiveLogDialog.locator("pre.execution-log")).toContainText(
@@ -1622,7 +1647,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
   const dependencyTime = publicLogPage
     .locator(".share-log-fact")
-    .filter({ has: publicLogPage.locator("dt", { hasText: "用例更新时间" }) })
+    .filter({ hasText: "用例更新时间" })
     .locator("time");
   await expect(dependencyTime).toHaveAttribute("title", `UTC ${historicalDependencyUpdatedAt}`);
   await expect(executionHistory).toBeVisible();

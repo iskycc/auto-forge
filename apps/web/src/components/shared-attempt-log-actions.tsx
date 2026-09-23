@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { RunAttempt } from "@autoforge/domain";
 import { isTerminalAttemptStatus } from "@autoforge/domain";
@@ -23,10 +25,19 @@ export function SharedAttemptLogActions({
   const terminal = isTerminalAttemptStatus(attempt.status);
   const refreshExecutionHistory = useCallback(() => router.refresh(), [router]);
   return (
-    <div className="shared-attempt-log-actions">
+    <div
+      className={cn(
+        "shared-attempt-log-actions",
+        sharedAttemptLogActionsStyles["shared-attempt-log-actions"],
+      )}
+    >
       {!terminal ? (
         <Button
-          className="button button-primary"
+          className={cn(
+            "button button-primary",
+            uiPatterns["button"],
+            uiPatterns["button-primary"],
+          )}
           onClick={() => setOpenAttempt(attempt)}
           type="button"
           variant="primary"
@@ -53,3 +64,7 @@ export function SharedAttemptLogActions({
     </div>
   );
 }
+
+const sharedAttemptLogActionsStyles = {
+  "shared-attempt-log-actions": "[&_>_.button]:mb-4.5",
+} as const;

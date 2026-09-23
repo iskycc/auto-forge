@@ -1,4 +1,14 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   formatPlatformDateTime,
@@ -283,10 +293,23 @@ export function OperationsSettings({
   }
 
   return (
-    <div className="settings-stack operations-settings">
+    <div
+      className={cn(
+        "settings-stack operations-settings",
+        uiPatterns["settings-stack"],
+        operationsSettingsStyles["operations-settings"],
+      )}
+    >
       {visibleSection === "accounts" ? (
-        <section className="content-card settings-section">
-          <div className="section-heading">
+        <Card
+          as="section"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
               <h2>账号与令牌</h2>
             </div>
@@ -305,15 +328,24 @@ export function OperationsSettings({
               <KeyRound size={22} />
             )}
           </div>
-          <p className="settings-note">令牌仅在签发时显示一次；可用权限不能超过所属服务账号。</p>
+          <p className={cn("settings-note", uiPatterns["settings-note"])}>
+            令牌仅在签发时显示一次；可用权限不能超过所属服务账号。
+          </p>
           {issuedToken ? (
-            <div className="issued-token" role="status">
+            <div
+              className={cn("issued-token", operationsSettingsStyles["issued-token"])}
+              role="status"
+            >
               <span>
                 <strong>请立即复制并离线保管</strong>
                 <code>{issuedToken}</code>
               </span>
               <Button
-                className="button button-secondary"
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 onClick={() =>
                   void copyTextToClipboard(issuedToken).then(
                     () => toast.success("令牌已复制。"),
@@ -356,13 +388,25 @@ export function OperationsSettings({
           >
             <form
               id="service-account-create"
-              className="settings-grid-form action-dialog-form"
+              className={cn(
+                "settings-grid-form action-dialog-form",
+                uiPatterns["settings-grid-form"],
+                operationsSettingsStyles["action-dialog-form"],
+              )}
               onSubmit={createAccount}
             >
               {formError ? (
-                <p className="form-error settings-wide-field" role="alert">
+                <Notice
+                  tone="error"
+                  className={cn(
+                    "form-error settings-wide-field",
+                    uiPatterns["form-error"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                  role="alert"
+                >
                   {formError}
-                </p>
+                </Notice>
               ) : null}
               <label>
                 账号名称
@@ -377,9 +421,16 @@ export function OperationsSettings({
             </form>
           </ActionDialog>
           {!canManageTokens ? (
-            <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
+            <div
+              className={cn(
+                "implementation-notice",
+                operationsSettingsStyles["implementation-notice"],
+              )}
+            >
+              当前身份没有服务账号管理权限。
+            </div>
           ) : null}
-          <form className="management-toolbar" method="get">
+          <form className={cn("management-toolbar", uiPatterns["management-toolbar"])} method="get">
             <input type="hidden" name="section" value="accounts" />
             <label>
               搜索账号
@@ -405,13 +456,22 @@ export function OperationsSettings({
             <span>本页 {accounts.length} 个账号</span>
             <Button type="submit">搜索</Button>
           </form>
-          <div className="service-account-list">
+          <div
+            className={cn("service-account-list", operationsSettingsStyles["service-account-list"])}
+          >
             {visibleAccounts.length === 0 ? (
-              <div className="inline-empty">没有匹配的服务账号。可调整筛选或创建账号。</div>
+              <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                没有匹配的服务账号。可调整筛选或创建账号。
+              </div>
             ) : (
               visibleAccounts.map((account) => (
                 <article key={account.id}>
-                  <div className="service-account-heading">
+                  <div
+                    className={cn(
+                      "service-account-heading",
+                      operationsSettingsStyles["service-account-heading"],
+                    )}
+                  >
                     <span>
                       <strong>{account.name}</strong>
                       <small>
@@ -420,7 +480,12 @@ export function OperationsSettings({
                       </small>
                     </span>
                     <Button
-                      className="button button-secondary compact-button"
+                      className={cn(
+                        "button button-secondary compact-button",
+                        uiPatterns["button"],
+                        uiPatterns["button-secondary"],
+                        uiPatterns["compact-button"],
+                      )}
                       disabled={pending}
                       onClick={() => void loadTokens(account.id)}
                       type="button"
@@ -428,29 +493,39 @@ export function OperationsSettings({
                       <RefreshCw size={14} /> 令牌
                     </Button>
                   </div>
-                  <p className="settings-note">
+                  <p className={cn("settings-note", uiPatterns["settings-note"])}>
                     系统权限 {account.systemPermissions.length} 项 · 项目授权{" "}
                     {Object.keys(account.projectPermissions).length} 个：
                     {Object.keys(account.projectPermissions)
                       .map((id) => projects.find((project) => project.id === id)?.name ?? id)
                       .join("、") || "无"}
                   </p>
-                  <details className="account-permission-summary">
-                    <summary>查看权限摘要</summary>
-                    <div className="permission-chip-row">
+                  <Disclosure
+                    header={<>查看权限摘要</>}
+                    className={cn(
+                      "account-permission-summary",
+                      operationsSettingsStyles["account-permission-summary"],
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "permission-chip-row",
+                        operationsSettingsStyles["permission-chip-row"],
+                      )}
+                    >
                       {account.systemPermissions.map((permission) => (
-                        <span
-                          className="permission-chip"
+                        <Badge
+                          className={cn("permission-chip", uiPatterns["permission-chip"])}
                           key={permission}
                           title={permissionDescription(permission)}
                         >
                           {permissionLabel(permission)}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
-                  </details>
+                  </Disclosure>
                   {canManageTokens ? (
-                    <div className="button-row">
+                    <div className={cn("button-row", uiPatterns["button-row"])}>
                       <Button
                         onClick={() => {
                           setFormError("");
@@ -482,7 +557,11 @@ export function OperationsSettings({
                       footer={
                         <>
                           <Button
-                            className="button button-primary"
+                            className={cn(
+                              "button button-primary",
+                              uiPatterns["button"],
+                              uiPatterns["button-primary"],
+                            )}
                             disabled={pending}
                             type="submit"
                             form={`edit-service-account-${account.id}`}
@@ -492,8 +571,16 @@ export function OperationsSettings({
                           <Button
                             className={
                               account.status === "active"
-                                ? "button button-danger-quiet"
-                                : "button button-secondary"
+                                ? cn(
+                                    "button button-danger-quiet",
+                                    uiPatterns["button"],
+                                    uiPatterns["button-danger-quiet"],
+                                  )
+                                : cn(
+                                    "button button-secondary",
+                                    uiPatterns["button"],
+                                    uiPatterns["button-secondary"],
+                                  )
                             }
                             disabled={pending}
                             onClick={() => void toggleAccount(account)}
@@ -508,13 +595,25 @@ export function OperationsSettings({
                     >
                       <form
                         id={`edit-service-account-${account.id}`}
-                        className="settings-grid-form settings-subform"
+                        className={cn(
+                          "settings-grid-form settings-subform",
+                          uiPatterns["settings-grid-form"],
+                          uiPatterns["settings-subform"],
+                        )}
                         onSubmit={(event) => void updateAccount(event, account)}
                       >
                         {formError ? (
-                          <p className="form-error settings-wide-field" role="alert">
+                          <Notice
+                            tone="error"
+                            className={cn(
+                              "form-error settings-wide-field",
+                              uiPatterns["form-error"],
+                              uiPatterns["settings-wide-field"],
+                            )}
+                            role="alert"
+                          >
                             {formError}
-                          </p>
+                          </Notice>
                         ) : null}
                         <label>
                           账号名称
@@ -533,7 +632,13 @@ export function OperationsSettings({
                           initialPermissions={account.projectPermissions}
                           projects={projects}
                         />
-                        <p className="settings-note settings-wide-field">
+                        <p
+                          className={cn(
+                            "settings-note settings-wide-field",
+                            uiPatterns["settings-note"],
+                            uiPatterns["settings-wide-field"],
+                          )}
+                        >
                           移除权限后，现有令牌不会重新显示或扩大作用域；后续鉴权会立即按账号与令牌作用域交集收紧。
                         </p>
                       </form>
@@ -547,13 +652,25 @@ export function OperationsSettings({
                       onClose={() => !pending && setIssuingAccountId(undefined)}
                     >
                       <form
-                        className="settings-grid-form action-dialog-form"
+                        className={cn(
+                          "settings-grid-form action-dialog-form",
+                          uiPatterns["settings-grid-form"],
+                          operationsSettingsStyles["action-dialog-form"],
+                        )}
                         onSubmit={(event) => void issueToken(event, account)}
                       >
                         {formError ? (
-                          <p className="form-error settings-wide-field" role="alert">
+                          <Notice
+                            tone="error"
+                            className={cn(
+                              "form-error settings-wide-field",
+                              uiPatterns["form-error"],
+                              uiPatterns["settings-wide-field"],
+                            )}
+                            role="alert"
+                          >
                             {formError}
-                          </p>
+                          </Notice>
                         ) : null}
                         <label>
                           令牌名称
@@ -583,14 +700,25 @@ export function OperationsSettings({
                           }))}
                           required
                         />
-                        <Button className="button button-primary" disabled={pending} type="submit">
+                        <Button
+                          className={cn(
+                            "button button-primary",
+                            uiPatterns["button"],
+                            uiPatterns["button-primary"],
+                          )}
+                          disabled={pending}
+                          type="submit"
+                        >
                           签发
                         </Button>
                       </form>
                     </ActionDialog>
                   ) : null}
                   {(tokens[account.id] ?? []).map((token) => (
-                    <div className="token-row" key={token.id}>
+                    <div
+                      className={cn("token-row", operationsSettingsStyles["token-row"])}
+                      key={token.id}
+                    >
                       <span>
                         <code>{token.prefix}…</code>
                         <small>
@@ -623,22 +751,34 @@ export function OperationsSettings({
               ))
             )}
           </div>
-        </section>
+        </Card>
       ) : null}
 
       {visibleSection === "retention" ? (
-        <section className="content-card settings-section">
-          <div className="section-heading">
+        <Card
+          as="section"
+          className={cn(
+            "content-card settings-section",
+            uiPatterns["content-card"],
+            uiPatterns["settings-section"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <p className="eyebrow">Data Governance</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Data Governance</p>
               <h2>保留与清理策略</h2>
             </div>
             <ShieldCheck size={22} />
           </div>
-          <p className="settings-note">
+          <p className={cn("settings-note", uiPatterns["settings-note"])}>
             每类数据独立配置。预览只统计已满足终态和安全删除条件的记录；对象删除由可重试清理路径处理。
           </p>
-          <div className="retention-policy-grid">
+          <div
+            className={cn(
+              "retention-policy-grid",
+              operationsSettingsStyles["retention-policy-grid"],
+            )}
+          >
             {policies.map((policy) => (
               <form key={policy.category} onSubmit={(event) => void updateRetention(event, policy)}>
                 <div>
@@ -668,7 +808,9 @@ export function OperationsSettings({
                   />
                 </label>
                 {dirtyPolicies[policy.category] ? (
-                  <p className="settings-note">有未保存的修改，请先保存再预览。</p>
+                  <p className={cn("settings-note", uiPatterns["settings-note"])}>
+                    有未保存的修改，请先保存再预览。
+                  </p>
                 ) : null}
                 {previews[policy.category] ? (
                   <p>
@@ -682,7 +824,12 @@ export function OperationsSettings({
                 ) : null}
                 <span>
                   <Button
-                    className="button button-secondary compact-button"
+                    className={cn(
+                      "button button-secondary compact-button",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                      uiPatterns["compact-button"],
+                    )}
                     disabled={pending || dirtyPolicies[policy.category]}
                     onClick={() => void previewRetention(policy)}
                     type="button"
@@ -692,14 +839,23 @@ export function OperationsSettings({
                   {canManageSettings ? (
                     <>
                       <Button
-                        className={`button ${dirtyPolicies[policy.category] ? "button-primary" : "button-secondary"} compact-button`}
+                        className={cn(
+                          uiPatterns["button"],
+                          uiPatterns["compact-button"],
+                          `button ${dirtyPolicies[policy.category] ? cn("button-primary", uiPatterns["button-primary"]) : cn("button-secondary", uiPatterns["button-secondary"])} compact-button`,
+                        )}
                         disabled={pending || !dirtyPolicies[policy.category]}
                         type="submit"
                       >
                         保存
                       </Button>
                       <Button
-                        className="button button-danger-quiet compact-button"
+                        className={cn(
+                          "button button-danger-quiet compact-button",
+                          uiPatterns["button"],
+                          uiPatterns["button-danger-quiet"],
+                          uiPatterns["compact-button"],
+                        )}
                         disabled={pending || !previews[policy.category]}
                         onClick={() => void executeRetention(policy)}
                         type="button"
@@ -712,7 +868,7 @@ export function OperationsSettings({
               </form>
             ))}
           </div>
-        </section>
+        </Card>
       ) : null}
     </div>
   );
@@ -732,7 +888,13 @@ function ProjectPermissionFields({
   if (projects.length === 0) return null;
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
   return (
-    <fieldset className="settings-wide-field settings-fieldset">
+    <fieldset
+      className={cn(
+        "settings-wide-field settings-fieldset",
+        uiPatterns["settings-wide-field"],
+        operationsSettingsStyles["settings-fieldset"],
+      )}
+    >
       <legend>项目作用域权限</legend>
       <label>
         配置授权项目
@@ -747,7 +909,7 @@ function ProjectPermissionFields({
           ))}
         </Select>
       </label>
-      <p className="settings-note">
+      <p className={cn("settings-note", uiPatterns["settings-note"])}>
         仅影响选定项目；切换项目会保留其他项目的已选权限。全选只作用于当前权限组。
       </p>
       {Object.entries(permissions)
@@ -765,7 +927,10 @@ function ProjectPermissionFields({
       {selectedProject ? (
         <PermissionCheckboxGroup
           key={selectedProjectId}
-          className="project-permission-group"
+          className={cn(
+            "project-permission-group",
+            operationsSettingsStyles["project-permission-group"],
+          )}
           label={selectedProject.name}
           name={`projectPermissions:${selectedProjectId}`}
           defaultValue={permissions[selectedProjectId] ?? []}
@@ -795,7 +960,10 @@ function PermissionCheckboxGroup({
 }) {
   return (
     <CheckboxGroup
-      className={`settings-wide-field${className ? ` ${className}` : ""}`}
+      className={cn(
+        uiPatterns["settings-wide-field"],
+        `settings-wide-field${className ? ` ${className}` : ""}`,
+      )}
       {...(defaultValue ? { defaultValue } : {})}
       {...(onSelectionChange ? { onSelectionChange } : {})}
       label={label}
@@ -859,3 +1027,28 @@ function formatBytes(value: number): string {
       ? `${(value / 1024).toFixed(1)} KiB`
       : `${(value / 1_048_576).toFixed(1)} MiB`;
 }
+
+const operationsSettingsStyles = {
+  "account-permission-summary":
+    "text-muted-foreground text-xs [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:px-0",
+  "action-dialog-form": "mt-0",
+  "implementation-notice":
+    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
+  "issued-token":
+    "flex items-center justify-between gap-4 [margin:12px_0_18px] p-3.5 border border-solid border-transparent rounded-lg bg-warning/10 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-[7px] [&_code]:overflow-auto [&_code]:p-2 [&_code]:rounded-md [&_code]:bg-card [&_code]:whitespace-nowrap",
+  "operations-settings": "mt-4",
+  "permission-chip-row":
+    "flex flex-wrap gap-1.5 mt-2.5 [&_code]:py-[3px] [&_code]:px-1.5 [&_code]:rounded-md [&_code]:bg-info/10 [&_code]:text-info [&_code]:text-xs [&_.permission-chip]:py-[3px] [&_.permission-chip]:px-1.5 [&_.permission-chip]:rounded-md [&_.permission-chip]:bg-info/10 [&_.permission-chip]:text-info [&_.permission-chip]:text-xs",
+  "project-permission-group":
+    "p-2.5 border border-solid border-border rounded-lg bg-card [&_.ui-checkbox-group-options]:grid-cols-2 [&_.ui-checkbox-group-options]:max-h-none [&_.ui-checkbox-group-options]:border-0 [&_.ui-checkbox-group-options]:p-0",
+  "retention-policy-grid":
+    "grid grid-cols-[minmax(0,_1fr)] gap-2 [&_form]:grid [&_form]:gap-3 [&_form]:p-3 [&_form]:border [&_form]:border-solid [&_form]:border-border [&_form]:rounded-lg [&_form]:bg-muted [&_form]:grid-cols-[minmax(0,_1fr)_minmax(100px,_0.6fr)_auto] [&_form]:items-center [&_form_>_small]:m-0 [&_form_>_small]:text-muted-foreground [&_form_>_small]:text-xs [&_form_>_p]:m-0 [&_form_>_p]:text-muted-foreground [&_form_>_p]:text-xs [&_form_>_p]:col-span-full [&_form_>_p]:[grid-row:2] [&_label]:grid [&_label]:gap-[5px] [&_label]:text-xs [&_form_>_span]:flex [&_form_>_span]:flex-wrap [&_form_>_span]:gap-[7px] [&_form_>_span]:[grid-column:3] [&_form_>_span]:[grid-row:1] [&_form_>_div_small]:block [&_form_>_div_small]:mt-1 [&_form_>_div_small]:text-muted-foreground",
+  "service-account-heading":
+    "flex items-center justify-between gap-3 [&_>_span]:grid [&_>_span]:gap-[3px] [&_small]:text-muted-foreground [&_small]:text-xs",
+  "service-account-list":
+    "grid gap-3 mt-4.5 [&_>_article]:p-4 [&_>_article]:border [&_>_article]:border-solid [&_>_article]:border-border [&_>_article]:rounded-xl [&_>_article]:bg-muted [&_>_article]:min-w-0 [&_.button-row]:justify-end",
+  "settings-fieldset":
+    "min-w-0 m-0 border border-solid border-border rounded-lg p-3.5 [&_legend]:py-0 [&_legend]:px-1.5 [&_legend]:text-muted-foreground [&_legend]:text-sm [&_legend]:font-semibold",
+  "token-row":
+    "flex items-center justify-between gap-3 mt-2.5 pt-2.5 border-t border-solid border-border [&_>_span:first-child]:grid [&_>_span:first-child]:gap-[3px] [&_small]:text-muted-foreground [&_small]:text-xs [&_>_span:nth-child(2)]:text-muted-foreground [&_>_span:nth-child(2)]:text-xs [&_button]:grid [&_button]:w-8.5 [&_button]:min-h-8.5 [&_button]:place-items-center [&_button]:border-0 [&_button]:rounded-md [&_button]:bg-destructive/10 [&_button]:text-destructive [&_button]:cursor-pointer",
+} as const;

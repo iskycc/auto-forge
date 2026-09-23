@@ -1,16 +1,13 @@
-import { Sparkles } from "lucide-react";
+import { Spin } from "antd";
+import { cn } from "@/lib/utils";
 
 export function LoadingGlyph({ compact = false }: { compact?: boolean }) {
   return (
-    <span aria-hidden="true" className={`loading-glyph${compact ? " loading-glyph-compact" : ""}`}>
-      <span className="loading-glyph-halo" />
-      <span className="loading-glyph-core">
-        <Sparkles size={compact ? 12 : 18} />
-      </span>
-      <span className="loading-glyph-orbit">
-        <i />
-      </span>
-    </span>
+    <Spin
+      aria-hidden="true"
+      size={compact ? "small" : "default"}
+      className={cn("loading-glyph shrink-0", compact ? "loading-glyph-compact size-4" : "size-7")}
+    />
   );
 }
 
@@ -27,13 +24,18 @@ export function LoadingState({
     <div
       aria-busy="true"
       aria-live="polite"
-      className={`loading-state${compact ? " loading-state-compact" : ""}`}
       role="status"
+      className={cn(
+        "loading-state flex min-w-0 items-center gap-3 text-sm",
+        compact
+          ? "loading-state-compact py-2"
+          : "min-h-40 justify-center rounded-xl border border-border bg-card p-6",
+      )}
     >
       <LoadingGlyph compact={compact} />
-      <span>
-        <strong>{label}</strong>
-        {!compact ? <small>{description}</small> : null}
+      <span className="grid min-w-0 gap-1">
+        <strong className="font-medium">{label}</strong>
+        {!compact ? <small className="text-sm text-muted-foreground">{description}</small> : null}
       </span>
     </div>
   );

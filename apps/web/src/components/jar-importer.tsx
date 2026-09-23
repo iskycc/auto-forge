@@ -1,4 +1,14 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, OperationProgress, ProgressBar } from "@/components/ui";
 
@@ -279,9 +289,12 @@ export function JarImporter({
   const busy = phase === "inspecting" || phase === "importing";
 
   return (
-    <div className="import-workspace">
-      <section className="card import-card">
-        <div className="card-heading">
+    <div className={cn("import-workspace", jarImporterStyles["import-workspace"])}>
+      <Card
+        as="section"
+        className={cn("card import-card", uiPatterns["card"], jarImporterStyles["import-card"])}
+      >
+        <div className={cn("card-heading", uiPatterns["card-heading"])}>
           <div>
             <h2>复用已有版本</h2>
             <p>从同项目的其他版本复制 TestNG 用例，无需重新上传 JAR。</p>
@@ -294,8 +307,12 @@ export function JarImporter({
             <CopyPlus size={17} aria-hidden="true" /> 从其他版本继承
           </Button>
         </div>
-        {!canInherit ? <p className="settings-note">继承还需要当前项目的用例查看权限。</p> : null}
-      </section>
+        {!canInherit ? (
+          <p className={cn("settings-note", uiPatterns["settings-note"])}>
+            继承还需要当前项目的用例查看权限。
+          </p>
+        ) : null}
+      </Card>
       {inheriting && projectVersionId && testStageId ? (
         <TestNgInheritanceDialog
           key={`${projectId}:${projectVersionId}:${testStageId}`}
@@ -309,10 +326,13 @@ export function JarImporter({
           onClose={() => setInheriting(false)}
         />
       ) : null}
-      <section className="card import-card">
-        <div className="card-heading">
+      <Card
+        as="section"
+        className={cn("card import-card", uiPatterns["card"], jarImporterStyles["import-card"])}
+      >
+        <div className={cn("card-heading", uiPatterns["card-heading"])}>
           <div>
-            <span className="eyebrow">第 1 步</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>第 1 步</span>
             <h2>选择测试 JAR 或 sources JAR</h2>
             <p>
               普通 JAR 扫描 class 注解；sources JAR 扫描 Java 源码，仅静态读取且不会编译或执行。
@@ -321,7 +341,10 @@ export function JarImporter({
           <FileArchive size={24} aria-hidden="true" />
         </div>
 
-        <div className="import-target-context" aria-label="JAR 导入目标层级">
+        <div
+          className={cn("import-target-context", jarImporterStyles["import-target-context"])}
+          aria-label="JAR 导入目标层级"
+        >
           <span>
             <small>当前项目</small>
             <strong>{projectName ?? "尚未配置"}</strong>
@@ -337,13 +360,16 @@ export function JarImporter({
           <p>导入目标严格使用顶栏当前项目、版本和测试阶段；切换后页面会自动刷新。</p>
         </div>
         {!projectVersionId || !testStageId ? (
-          <p className="auth-error" role="alert">
+          <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
             请先在“项目管理 → 执行配置”创建项目版本和测试阶段，并在顶栏完成选择。
-          </p>
+          </Notice>
         ) : null}
 
         <label
-          className={`file-dropzone ${file ? "file-dropzone-selected" : ""}`}
+          className={cn(
+            jarImporterStyles["file-dropzone"],
+            `file-dropzone ${file ? cn("file-dropzone-selected", jarImporterStyles["file-dropzone-selected"]) : ""}`,
+          )}
           htmlFor={inputId}
         >
           <Input
@@ -353,35 +379,43 @@ export function JarImporter({
             onChange={(event) => chooseFile(event.target.files?.item(0) ?? null)}
             disabled={!clientReady || busy}
           />
-          <span className="upload-icon">
+          <span className={cn("upload-icon", jarImporterStyles["upload-icon"])}>
             <UploadCloud size={26} aria-hidden="true" />
           </span>
           {file ? (
-            <span className="file-summary">
+            <span className={cn("file-summary", jarImporterStyles["file-summary"])}>
               <strong>{file.name}</strong>
               <small>{formatBytes(file.size)} · 点击更换文件</small>
             </span>
           ) : (
-            <span className="file-summary">
+            <span className={cn("file-summary", jarImporterStyles["file-summary"])}>
               <strong>点击选择普通 JAR 或 *-sources.jar</strong>
               <small>最大 {formatBytes(maxJarBytes)}，仅接受 .jar</small>
             </span>
           )}
         </label>
-        <p className="settings-note">
+        <p className={cn("settings-note", uiPatterns["settings-note"])}>
           管理员可在<Link href="/settings/platform">平台配置</Link>调整 JAR 上传上限；修改后需重启
           Web 和 worker。
         </p>
 
-        <div className="button-row">
+        <div className={cn("button-row", uiPatterns["button-row"])}>
           <Button
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             type="button"
             onClick={inspectJar}
             disabled={!clientReady || !file || busy || !projectVersionId || !testStageId}
           >
             {phase === "inspecting" ? (
-              <LoaderCircle className="spin" size={17} aria-hidden="true" />
+              <LoaderCircle
+                className={cn("spin", uiPatterns["spin"])}
+                size={17}
+                aria-hidden="true"
+              />
             ) : (
               <ScanSearch size={17} aria-hidden="true" />
             )}
@@ -389,7 +423,11 @@ export function JarImporter({
           </Button>
           {file && (
             <Button
-              className="button button-secondary"
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               type="button"
               onClick={() => chooseFile(null)}
               disabled={!clientReady || busy}
@@ -398,10 +436,17 @@ export function JarImporter({
             </Button>
           )}
         </div>
-      </section>
+      </Card>
 
       {error && (
-        <div className="alert alert-error" role="alert">
+        <div
+          className={cn(
+            "alert alert-error",
+            jarImporterStyles["alert"],
+            jarImporterStyles["alert-error"],
+          )}
+          role="alert"
+        >
           <AlertCircle size={18} aria-hidden="true" />
           <span>{error}</span>
         </div>
@@ -416,17 +461,24 @@ export function JarImporter({
       ) : null}
 
       {inspection && (
-        <section className="card inspection-card">
-          <div className="card-heading">
+        <Card
+          as="section"
+          className={cn(
+            "card inspection-card",
+            uiPatterns["card"],
+            jarImporterStyles["inspection-card"],
+          )}
+        >
+          <div className={cn("card-heading", uiPatterns["card-heading"])}>
             <div>
-              <span className="eyebrow">第 2 步</span>
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>第 2 步</span>
               <h2>确认扫描结果</h2>
               <p>结果来自 TestNG `@Test` 类级和方法级注解。</p>
             </div>
             <Archive size={24} aria-hidden="true" />
           </div>
 
-          <div className="inspection-stats">
+          <div className={cn("inspection-stats", jarImporterStyles["inspection-stats"])}>
             <div>
               <strong>{inspection.classFileCount}</strong>
               <span>class 文件</span>
@@ -450,17 +502,26 @@ export function JarImporter({
           </div>
 
           {inspection.executable === false ? (
-            <div className="implementation-notice" role="status">
+            <div
+              className={cn("implementation-notice", jarImporterStyles["implementation-notice"])}
+              role="status"
+            >
               这是 sources JAR。导入后可在用例详情查看源码，但不能直接交给 Agent 执行。
             </div>
           ) : (inspection.javaSourceFileCount ?? 0) > 0 ? (
-            <div className="implementation-notice" role="status">
+            <div
+              className={cn("implementation-notice", jarImporterStyles["implementation-notice"])}
+              role="status"
+            >
               这是混合 JAR。class 用于 Agent 执行，匹配的 Java 源文件可在用例详情中查看。
             </div>
           ) : null}
 
           {inspection.warnings.length > 0 && (
-            <div className="warning-list" aria-label="扫描警告">
+            <div
+              className={cn("warning-list", jarImporterStyles["warning-list"])}
+              aria-label="扫描警告"
+            >
               {inspection.warnings.map((warning, index) => (
                 <div key={`${warning.code}-${index}`}>
                   <AlertCircle size={15} aria-hidden="true" />
@@ -474,64 +535,88 @@ export function JarImporter({
           )}
 
           {inspection.classes.length > CLASS_PREVIEW_LIMIT ? (
-            <div className="implementation-notice" role="status">
+            <div
+              className={cn("implementation-notice", jarImporterStyles["implementation-notice"])}
+              role="status"
+            >
               共识别 {inspection.classes.length} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
               个不再逐条展示；导入进度见下方状态，识别异常见上方扫描警告。
             </div>
           ) : (
-            <div className="class-preview-list">
+            <div className={cn("class-preview-list", jarImporterStyles["class-preview-list"])}>
               {uniqueInspectionClasses(inspection.classes).map((candidate) => (
-                <details
-                  className="class-preview"
+                <Disclosure
+                  showArrow={false}
+                  header={
+                    <>
+                      <span className={cn("class-icon", jarImporterStyles["class-icon"])}>
+                        <Archive size={16} aria-hidden="true" />
+                      </span>
+                      <span className={cn("class-title", jarImporterStyles["class-title"])}>
+                        <strong>{candidate.simpleName}</strong>
+                        <small>{candidate.className}</small>
+                      </span>
+                      <span className={cn("method-count", jarImporterStyles["method-count"])}>
+                        {candidate.methods.length} 个方法
+                      </span>
+                      {candidate.source ? (
+                        <Badge className={cn("tag", uiPatterns["tag"])}>可查看源码</Badge>
+                      ) : null}
+                      <ChevronRight
+                        className={cn("summary-chevron", jarImporterStyles["summary-chevron"])}
+                        size={17}
+                        aria-hidden="true"
+                      />
+                    </>
+                  }
+                  className={cn("class-preview", jarImporterStyles["class-preview"])}
                   key={candidate.className}
-                  open={inspection.classes.length <= 3}
+                  defaultOpen={inspection.classes.length <= 3}
                 >
-                  <summary>
-                    <span className="class-icon">
-                      <Archive size={16} aria-hidden="true" />
-                    </span>
-                    <span className="class-title">
-                      <strong>{candidate.simpleName}</strong>
-                      <small>{candidate.className}</small>
-                    </span>
-                    <span className="method-count">{candidate.methods.length} 个方法</span>
-                    {candidate.source ? <span className="tag">可查看源码</span> : null}
-                    <ChevronRight className="summary-chevron" size={17} aria-hidden="true" />
-                  </summary>
-                  <div className="method-list">
+                  <div className={cn("method-list", jarImporterStyles["method-list"])}>
                     {candidate.methods.length === 0 ? (
-                      <p className="empty-inline">类带有 `@Test`，但未发现可导入的 public 方法。</p>
+                      <p className={cn("empty-inline", jarImporterStyles["empty-inline"])}>
+                        类带有 `@Test`，但未发现可导入的 public 方法。
+                      </p>
                     ) : (
                       candidate.methods.map((method) => (
                         <div
-                          className="method-row"
+                          className={cn("method-row", jarImporterStyles["method-row"])}
                           key={`${method.methodName}${method.descriptor}`}
                         >
                           <span
-                            className={`method-status ${method.enabled ? "method-enabled" : "method-disabled"}`}
+                            className={cn(
+                              jarImporterStyles["method-status"],
+                              `method-status ${method.enabled ? cn("method-enabled", jarImporterStyles["method-enabled"]) : cn("method-disabled", jarImporterStyles["method-disabled"])}`,
+                            )}
                           />
                           <code>{method.methodName}</code>
-                          <span className="method-signature">
+                          <span
+                            className={cn(
+                              "method-signature",
+                              jarImporterStyles["method-signature"],
+                            )}
+                          >
                             {formatMethodSignature(method.descriptor)}
                           </span>
-                          <span className="method-origin">
+                          <span className={cn("method-origin", jarImporterStyles["method-origin"])}>
                             {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
                           </span>
                           {method.groups.map((group) => (
-                            <span className="tag" key={group}>
+                            <Badge className={cn("tag", uiPatterns["tag"])} key={group}>
                               {group}
-                            </span>
+                            </Badge>
                           ))}
                         </div>
                       ))
                     )}
                   </div>
-                </details>
+                </Disclosure>
               ))}
             </div>
           )}
 
-          <div className="import-confirmation">
+          <div className={cn("import-confirmation", jarImporterStyles["import-confirmation"])}>
             <div>
               <strong>将创建 {inspection.testClassCount} 个用例定义</strong>
               <span>
@@ -539,7 +624,11 @@ export function JarImporter({
               </span>
             </div>
             <Button
-              className="button button-primary"
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
               type="button"
               onClick={importJar}
               disabled={
@@ -551,18 +640,18 @@ export function JarImporter({
               }
             >
               {phase === "importing" ? (
-                <LoaderCircle className="spin" size={17} />
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={17} />
               ) : (
                 <Check size={17} />
               )}
               {phase === "importing" ? "正在导入" : "确认导入"}
             </Button>
           </div>
-        </section>
+        </Card>
       )}
 
       {(uploadProgress && phase === "importing") || (job && phase !== "done") ? (
-        <div className="import-progress-anchor" ref={importProgressAnchor}>
+        <div className={"import-progress-anchor"} ref={importProgressAnchor}>
           {uploadProgress && phase === "importing" ? (
             <OperationProgress
               detail={uploadProgress.detail}
@@ -572,14 +661,33 @@ export function JarImporter({
           ) : null}
 
           {job ? (
-            <section className="card import-progress" aria-live="polite">
-              <div className="import-progress-heading">
+            <Card
+              as="section"
+              className={cn(
+                "card import-progress",
+                uiPatterns["card"],
+                jarImporterStyles["import-progress"],
+              )}
+              aria-live="polite"
+            >
+              <div
+                className={cn(
+                  "import-progress-heading",
+                  jarImporterStyles["import-progress-heading"],
+                )}
+              >
                 <strong>后台导入 · {job.progressPercent}%</strong>
                 <span>{importJobStatus(job.status)}</span>
               </div>
               <ProgressBar label="导入进度" max={100} value={job.progressPercent} />
               {workerWaitWarning(job) ? (
-                <div className="import-worker-warning" role="alert">
+                <div
+                  className={cn(
+                    "import-worker-warning",
+                    jarImporterStyles["import-worker-warning"],
+                  )}
+                  role="alert"
+                >
                   <AlertCircle size={17} aria-hidden="true" />
                   <span>
                     <strong>后台工作器尚未领取任务</strong>
@@ -590,25 +698,53 @@ export function JarImporter({
                   </span>
                 </div>
               ) : null}
-              <div className="import-progress-actions">
+              <div
+                className={cn(
+                  "import-progress-actions",
+                  jarImporterStyles["import-progress-actions"],
+                )}
+              >
                 {["queued", "running", "cancel_requested"].includes(job.status) ? (
-                  <Button className="button button-secondary" type="button" onClick={cancelImport}>
+                  <Button
+                    className={cn(
+                      "button button-secondary",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                    )}
+                    type="button"
+                    onClick={cancelImport}
+                  >
                     取消导入
                   </Button>
                 ) : null}
                 {job.status === "failed" || job.status === "cancelled" ? (
-                  <Button className="button button-secondary" type="button" onClick={retryImport}>
+                  <Button
+                    className={cn(
+                      "button button-secondary",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                    )}
+                    type="button"
+                    onClick={retryImport}
+                  >
                     幂等重试
                   </Button>
                 ) : null}
               </div>
-            </section>
+            </Card>
           ) : null}
         </div>
       ) : null}
 
       {result && (
-        <div className="alert alert-success" role="status">
+        <div
+          className={cn(
+            "alert alert-success",
+            jarImporterStyles["alert"],
+            jarImporterStyles["alert-success"],
+          )}
+          role="status"
+        >
           <Check size={18} aria-hidden="true" />
           <span>
             {result.duplicate
@@ -638,3 +774,55 @@ function workerWaitWarning(job: JarImportJob): boolean {
   const updatedAt = Date.parse(job.updatedAt);
   return Number.isFinite(updatedAt) && Date.now() - updatedAt >= 10_000;
 }
+
+const jarImporterStyles = {
+  alert:
+    "flex items-start gap-[9px] border border-solid border-border rounded-lg py-[13px] px-[15px] leading-[1.45] [&_svg]:[flex:0_0_auto] [&_svg]:mt-px",
+  "alert-error": "border-destructive/10 bg-destructive/10 text-destructive",
+  "alert-success":
+    "border-success/10 bg-success/10 text-success [&_a]:ml-auto [&_a]:text-info [&_a]:font-semibold [&_a]:whitespace-nowrap",
+  "class-icon": "grid w-8 h-8 place-items-center rounded-lg bg-muted text-info",
+  "class-preview":
+    "shrink-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_.ui-disclosure-label]:grid [&_.ui-disclosure-label]:min-h-15.5 [&_.ui-disclosure-label]:grid-cols-[34px_minmax(0,_1fr)_auto_20px] [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2.5 [&_.ui-disclosure-label]:py-2.5 [&_.ui-disclosure-label]:px-[13px] [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-label:hover]:bg-muted [&[data-open=true]_.summary-chevron]:[transform:rotate(90deg)]",
+  "class-preview-list": "flex max-h-[520px] flex-col gap-2 overflow-auto pr-[3px]",
+  "class-title":
+    "flex min-w-0 flex-col gap-[3px] [&_strong]:text-sm [&_small]:overflow-hidden [&_small]:text-muted-foreground [&_small]:font-mono [&_small]:text-xs [&_small]:text-ellipsis [&_small]:whitespace-nowrap",
+  "empty-inline": "my-2 mx-0 text-muted-foreground text-xs",
+  "file-dropzone":
+    "flex min-h-[132px] items-center justify-center gap-3.5 mt-5 border-1.5 border-dashed border-border rounded-lg bg-card cursor-pointer transition-colors duration-150 motion-reduce:transition-none [&:hover]:border-info [&:hover]:bg-info/10 [&_input]:absolute [&_input]:w-px [&_input]:h-px [&_input]:overflow-hidden [&_input]:[clip:rect(0,_0,_0,_0)]",
+  "file-dropzone-selected": "[border-style:solid] border-muted bg-success/10",
+  "file-summary":
+    "flex max-w-[min(70%,_560px)] flex-col gap-[5px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:text-base [&_small]:text-muted-foreground",
+  "implementation-notice":
+    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
+  "import-card": "p-5.5",
+  "import-confirmation":
+    "flex items-center justify-between gap-5 mt-4.5 pt-4.5 border-t border-solid border-border [&_>_div]:flex [&_>_div]:flex-col [&_>_div]:gap-[5px] [&_>_div_>_span]:text-muted-foreground [&_>_div_>_span]:text-xs",
+  "import-progress": "grid min-w-0 gap-3 overflow-hidden py-4 px-4.5",
+  "import-progress-actions": "flex flex-wrap gap-2.5",
+  "import-progress-heading":
+    "grid min-w-0 grid-cols-[minmax(0,_1fr)_auto] items-start justify-between gap-3 text-muted-foreground [&_strong]:min-w-0 [&_strong]:[overflow-wrap:anywhere] [&_span]:min-w-0 [&_span]:[overflow-wrap:anywhere] [&_span]:max-w-[min(52vw,_520px)] [&_span]:text-right",
+  "import-target-context":
+    "grid grid-cols-[repeat(3,_minmax(130px,_1fr))] gap-2.5 mt-4 border border-solid border-border rounded-lg p-3 bg-muted [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-[3px] [&_small]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_p]:col-span-full [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-xs",
+  "import-worker-warning":
+    "grid grid-cols-[auto_minmax(0,_1fr)] items-start gap-[9px] rounded-lg py-2.5 px-3 bg-warning/10 text-warning [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground [&_small]:[overflow-wrap:anywhere]",
+  "import-workspace": "flex flex-col gap-4",
+  "inspection-card": "p-5.5",
+  "inspection-stats":
+    "grid grid-cols-[repeat(4,_1fr)] gap-px my-5 mx-0 overflow-hidden border border-solid border-border rounded-lg bg-border [&_>_div]:flex [&_>_div]:flex-col [&_>_div]:gap-1 [&_>_div]:p-3.5 [&_>_div]:bg-muted [&_strong]:text-2xl [&_strong]:tabular-nums [&_span]:text-muted-foreground [&_span]:text-xs",
+  "method-count": "text-muted-foreground text-xs whitespace-nowrap",
+  "method-disabled": "bg-muted-foreground",
+  "method-enabled": "bg-success",
+  "method-list": "[padding:0_13px_10px_57px]",
+  "method-origin": "ml-auto whitespace-nowrap",
+  "method-row":
+    "flex min-h-9 items-center gap-2 border-t border-solid border-border text-muted-foreground text-xs [&_code]:text-foreground [&_code]:text-xs [&_code]:font-semibold",
+  "method-signature":
+    "max-w-[340px] overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground text-xs",
+  "method-status": "w-[7px] h-[7px] [flex:0_0_auto] rounded-full",
+  "summary-chevron":
+    "text-muted-foreground transition-colors duration-150 motion-reduce:transition-none",
+  "upload-icon": "grid w-13 h-13 place-items-center rounded-lg bg-card text-info shadow-xs",
+  "warning-list":
+    "flex flex-col gap-[7px] mb-4 rounded-lg p-3 bg-warning/10 text-destructive text-xs [&_>_div]:flex [&_>_div]:items-start [&_>_div]:gap-[7px]",
+} as const;

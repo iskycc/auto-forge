@@ -1,0 +1,246 @@
+{
+  "findings": [
+    {
+      "width": 1536,
+      "route": "/",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/cases",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/cases?tab=ddt",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/case-suites",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/execution-records",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/case-analysis",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/runners",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/runners?section=groups",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/insights",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/objects",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/audit",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/access?section=users",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/access?section=roles",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/access?section=ldap",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/access?section=sessions",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/projects",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/platform?section=configuration",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/platform?section=accounts",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/platform?section=retention",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/platform?section=diagnostics",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/platform?section=storage",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/settings/webhooks",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/account/security",
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/cases/import",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/cases",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/cases?tab=ddt",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/case-suites",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/execution-records",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/case-analysis",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/runners",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/runners?section=groups",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/insights",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/objects",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/audit",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/access?section=users",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/access?section=roles",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/access?section=ldap",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/access?section=sessions",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/projects",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/platform?section=configuration",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/platform?section=accounts",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/platform?section=retention",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/platform?section=diagnostics",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/platform?section=storage",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/settings/webhooks",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/account/security",
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/cases/import",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "externalRequests": []
+}

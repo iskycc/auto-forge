@@ -42,7 +42,7 @@ test("executes and cancels TestNG in a constrained immutable container", async (
     await page.goto(`/run-batches/${encodeURIComponent(successfulBatchId)}`);
     await page.getByRole("button", { name: "查看日志" }).click();
     await expect(page.locator(".execution-log")).toContainText("CONTAINER_POLICY_STDOUT_中文_完成");
-    await page.getByRole("button", { name: "stderr", exact: true }).click();
+    await page.getByRole("radio", { name: "stderr", exact: true }).locator("..").click();
     await expect(page.locator(".execution-log")).toContainText("CONTAINER_POLICY_STDERR_CAPTURED");
     await page.keyboard.press("Escape");
     await expect(page.locator(".execution-log")).toHaveCount(0);

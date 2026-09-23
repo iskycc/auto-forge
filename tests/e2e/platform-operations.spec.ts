@@ -287,7 +287,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   expect(storageBody.items[0]?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
   expect(storageBody.items[0]?.modifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
   if (diagnosticBody.mode === "lite") {
-    await page.getByRole("button", { name: "按文件类型筛选" }).click();
+    await page.getByRole("combobox", { name: "按文件类型筛选" }).click();
     await page.getByRole("option", { name: "用例日志库" }).click();
     await page.getByLabel("搜索文件名称或路径").fill(SQLITE_FIXTURE_BATCH_ID);
     await page.getByRole("button", { name: "应用筛选" }).click();
@@ -295,11 +295,13 @@ test("configuration conflicts, diagnostics and retention controls remain observa
       new RegExp(`section=storage.*category=execution-log.*query=${SQLITE_FIXTURE_BATCH_ID}`, "u"),
     );
     const sqliteGroup = storageTree
-      .locator("details.storage-tree-sqlite-group")
+      .locator(".ui-disclosure.storage-tree-sqlite-group")
       .filter({ hasText: `${SQLITE_FIXTURE_BATCH_ID}.sqlite` });
     await expect(sqliteGroup).toHaveCount(1);
-    await expect(sqliteGroup).not.toHaveAttribute("open", "");
-    const sqliteSummary = sqliteGroup.locator(":scope > summary");
+    await expect(sqliteGroup).not.toHaveAttribute("data-open", "true");
+    const sqliteSummary = sqliteGroup.locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    );
     await expect(sqliteSummary).toContainText("3 个文件");
     await expect(sqliteSummary).toContainText("23 B");
     await expect(sqliteSummary).toContainText(`任务批次 #${SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER}`);
@@ -544,7 +546,7 @@ async function verifyRuntimeAssetDeletion(input: {
   fileName: string;
   objectPath: string;
 }): Promise<void> {
-  await input.page.getByRole("button", { name: "按文件类型筛选" }).click();
+  await input.page.getByRole("combobox", { name: "按文件类型筛选" }).click();
   await input.page.getByRole("option", { name: input.category, exact: true }).click();
   await input.page
     .getByLabel("搜索文件名称或路径")
@@ -555,7 +557,7 @@ async function verifyRuntimeAssetDeletion(input: {
     await input.page.getByRole("button", { name: "应用筛选" }).click();
   }
   const file = input.storageTree
-    .locator("details.storage-tree-file")
+    .locator(".ui-disclosure.storage-tree-file")
     .filter({ hasText: input.fileName });
   await expect(file).toHaveCount(1);
   if (input.category === "JDK 包") {
@@ -563,12 +565,16 @@ async function verifyRuntimeAssetDeletion(input: {
       input.storageTree.getByText(STORAGE_JDK_KEEPER_FILE_NAME, { exact: true }),
     ).toBeVisible();
   }
-  await file.locator(":scope > summary").click();
+  await file
+    .locator(
+      ":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   const deleteButton = file.getByRole("button", { name: `删除${input.category}` });
   await deleteButton.click();
   const preservedTreeState = await input.storageTree.evaluate((tree) => ({
     openNodeIds: Array.from(
-      tree.querySelectorAll<HTMLElement>("details[data-tree-node-id][open]"),
+      tree.querySelectorAll<HTMLElement>('.ui-disclosure[data-tree-node-id][data-open="true"]'),
       (element) => element.dataset.treeNodeId,
     ),
     scrollY: window.scrollY,
@@ -602,8 +608,8 @@ async function verifyRuntimeAssetDeletion(input: {
   await expect(file).toHaveCount(0);
   for (const nodeId of preservedTreeState.openNodeIds) {
     await expect(
-      input.storageTree.locator(`details[data-tree-node-id="${nodeId}"]`),
-    ).toHaveAttribute("open", "");
+      input.storageTree.locator(`.ui-disclosure[data-tree-node-id="${nodeId}"]`),
+    ).toHaveAttribute("data-open", "true");
   }
   const scrollPosition = await input.page.evaluate(() => ({
     current: window.scrollY,
@@ -671,15 +677,15 @@ async function verifyRuntimeAssetBatchDeletion(input: {
   fileNames: readonly string[];
   objectPaths: readonly string[];
 }): Promise<void> {
-  await input.page.getByRole("button", { name: "按文件类型筛选" }).click();
+  await input.page.getByRole("combobox", { name: "按文件类型筛选" }).click();
   await input.page.getByRole("option", { name: "依赖包", exact: true }).click();
   await input.page.getByLabel("搜索文件名称或路径").fill("e2e-removable-dependencies");
   await input.page.getByRole("button", { name: "应用筛选" }).click();
-  const files = input.storageTree.locator("details.storage-tree-file");
+  const files = input.storageTree.locator(".ui-disclosure.storage-tree-file");
   await expect(files).toHaveCount(input.fileNames.length);
   for (const [index, fileName] of input.fileNames.entries()) {
     await input.page.getByLabel(`选择依赖包 ${fileName}`).check();
-    await expect(files.nth(index)).not.toHaveAttribute("open", "");
+    await expect(files.nth(index)).not.toHaveAttribute("data-open", "true");
   }
 
   const floatingAction = input.page.getByRole("region", { name: "批量删除存储资源" });

@@ -1,4 +1,12 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+import { Notice } from "@/components/ui/notice";
+
+import { Tabs } from "./ui/tabs";
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   ddtJourneySteps,
@@ -85,11 +93,17 @@ export function DdtCaseBrowser({
   const dragStart = useRef<{ x: number; width: number } | null>(null);
   return (
     <div
-      className={`ddt-case-browser${collapsed ? " is-collapsed" : ""}`}
+      className={cn(
+        ddtCaseBrowserStyles["ddt-case-browser"],
+        `ddt-case-browser${collapsed ? " is-collapsed" : ""}`,
+      )}
       ref={browserRef}
       style={style}
     >
-      <section className="ddt-case-navigation" aria-label="DDT 用例导航">
+      <section
+        className={cn("ddt-case-navigation", ddtCaseBrowserStyles["ddt-case-navigation"])}
+        aria-label="DDT 用例导航"
+      >
         <header>
           {!collapsed ? (
             <div>
@@ -101,7 +115,7 @@ export function DdtCaseBrowser({
           ) : null}
           <Button
             type="button"
-            className="icon-button"
+            className={cn("icon-button", uiPatterns["icon-button"])}
             aria-label={collapsed ? "展开 CaseID 列表" : "收起 CaseID 列表"}
             title={collapsed ? "展开 CaseID 列表" : "收起 CaseID 列表"}
             onClick={() => setCollapsed(!collapsed)}
@@ -109,11 +123,22 @@ export function DdtCaseBrowser({
             {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
           </Button>
         </header>
-        <div className="ddt-case-navigation-content" hidden={collapsed}>
-          <fieldset className="ddt-case-filters" disabled={savingCase}>
+        <div
+          className={cn(
+            "ddt-case-navigation-content",
+            ddtCaseBrowserStyles["ddt-case-navigation-content"],
+          )}
+          hidden={collapsed}
+        >
+          <fieldset
+            className={cn("ddt-case-filters", ddtCaseBrowserStyles["ddt-case-filters"])}
+            disabled={savingCase}
+          >
             {filters}
           </fieldset>
-          <label className="ddt-loaded-selection">
+          <label
+            className={cn("ddt-loaded-selection", ddtCaseBrowserStyles["ddt-loaded-selection"])}
+          >
             <Input
               type="checkbox"
               aria-label="选择已加载的全部 DDT 用例"
@@ -124,7 +149,7 @@ export function DdtCaseBrowser({
             选择已加载用例
           </label>
           <div
-            className="ddt-case-list"
+            className={cn("ddt-case-list", ddtCaseBrowserStyles["ddt-case-list"])}
             aria-busy={refreshing}
             onKeyDown={(event) => {
               if (!(event.target instanceof HTMLButtonElement) || !event.target.dataset.caseId)
@@ -150,7 +175,10 @@ export function DdtCaseBrowser({
             {cases.map((item) => (
               <div
                 key={item.id}
-                className={`ddt-case-list-row${activeCaseId === item.caseId ? " active" : ""}`}
+                className={cn(
+                  ddtCaseBrowserStyles["ddt-case-list-row"],
+                  `ddt-case-list-row${activeCaseId === item.caseId ? " active" : ""}`,
+                )}
               >
                 <Input
                   type="checkbox"
@@ -161,7 +189,7 @@ export function DdtCaseBrowser({
                 />
                 <Button
                   type="button"
-                  className="ddt-case-list-item"
+                  className={cn("ddt-case-list-item", ddtCaseBrowserStyles["ddt-case-list-item"])}
                   aria-label={item.caseId}
                   aria-current={activeCaseId === item.caseId ? "true" : undefined}
                   data-case-id={item.caseId}
@@ -180,7 +208,7 @@ export function DdtCaseBrowser({
                 </Button>
                 <Button
                   type="button"
-                  className="ddt-case-preview"
+                  className={cn("ddt-case-preview", ddtCaseBrowserStyles["ddt-case-preview"])}
                   variant="ghost"
                   size="compact"
                   aria-label={`快速预览 ${item.caseId}`}
@@ -197,18 +225,27 @@ export function DdtCaseBrowser({
               </div>
             ))}
             {refreshing && !cases.length ? (
-              <div className="ddt-navigation-empty" role="status">
+              <div
+                className={cn("ddt-navigation-empty", ddtCaseBrowserStyles["ddt-navigation-empty"])}
+                role="status"
+              >
                 正在加载用例…
               </div>
             ) : !cases.length ? (
-              <div className="ddt-navigation-empty">
+              <div
+                className={cn("ddt-navigation-empty", ddtCaseBrowserStyles["ddt-navigation-empty"])}
+              >
                 没有符合条件的用例，试试调整筛选条件或导入表格。
               </div>
             ) : null}
             {hasMore ? (
               <Button
                 type="button"
-                className="text-button ddt-load-more"
+                className={cn(
+                  "text-button ddt-load-more",
+                  uiPatterns["text-button"],
+                  ddtCaseBrowserStyles["ddt-load-more"],
+                )}
                 disabled={loadingMore}
                 onClick={onLoadMore}
               >
@@ -216,12 +253,14 @@ export function DdtCaseBrowser({
               </Button>
             ) : null}
           </div>
-          <small className="ddt-navigation-hint">↑ / ↓ 或 J / K 切换用例</small>
+          <small className={cn("ddt-navigation-hint", ddtCaseBrowserStyles["ddt-navigation-hint"])}>
+            ↑ / ↓ 或 J / K 切换用例
+          </small>
         </div>
       </section>
       {!collapsed ? (
         <div
-          className="ddt-case-resizer"
+          className={cn("ddt-case-resizer", ddtCaseBrowserStyles["ddt-case-resizer"])}
           role="separator"
           aria-label="调整 CaseID 列表宽度"
           aria-orientation="vertical"
@@ -257,9 +296,12 @@ export function DdtCaseBrowser({
           }}
         />
       ) : null}
-      <section className="ddt-case-detail-panel" aria-label="DDT 用例详情">
+      <section
+        className={cn("ddt-case-detail-panel", ddtCaseBrowserStyles["ddt-case-detail-panel"])}
+        aria-label="DDT 用例详情"
+      >
         {selected.size ? (
-          <div className="ddt-bulk-workspace">
+          <div className={cn("ddt-bulk-workspace", ddtCaseBrowserStyles["ddt-bulk-workspace"])}>
             <header>
               <FileSpreadsheet size={24} />
               <div>
@@ -369,14 +411,14 @@ export function DdtCaseDetail({
   };
   return (
     <>
-      <header className="ddt-detail-toolbar">
+      <header className={cn("ddt-detail-toolbar", ddtCaseBrowserStyles["ddt-detail-toolbar"])}>
         <span>
           用例详情 <ChevronRight size={14} /> <strong title={item.caseId}>{item.caseId}</strong>
         </span>
         <div>
           <Button
             type="button"
-            className="icon-button"
+            className={cn("icon-button", uiPatterns["icon-button"])}
             aria-label="上一条用例"
             title="上一条用例"
             disabled={!onPrevious || saving}
@@ -386,7 +428,7 @@ export function DdtCaseDetail({
           </Button>
           <Button
             type="button"
-            className="icon-button"
+            className={cn("icon-button", uiPatterns["icon-button"])}
             aria-label="下一条用例"
             title="下一条用例"
             disabled={!onNext || saving}
@@ -397,7 +439,11 @@ export function DdtCaseDetail({
           {canManage ? (
             <Button
               type="button"
-              className="button button-secondary"
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               disabled={Boolean(editor) || saving}
               onClick={() => beginEditing()}
             >
@@ -406,18 +452,18 @@ export function DdtCaseDetail({
           ) : null}
         </div>
       </header>
-      <div className="ddt-case-detail-scroll">
-        <div className="ddt-detail-title">
+      <div className={cn("ddt-case-detail-scroll", ddtCaseBrowserStyles["ddt-case-detail-scroll"])}>
+        <div className={cn("ddt-detail-title", ddtCaseBrowserStyles["ddt-detail-title"])}>
           <FileSpreadsheet size={26} />
           <div>
             <h2>{item.caseId}</h2>
             <p>来自 {item.sourceName || "人工维护"}</p>
           </div>
-          <span className={`ddt-kind ${item.kind}`}>
+          <Badge className={cn(ddtCaseBrowserStyles["ddt-kind"], `ddt-kind ${item.kind}`)}>
             {item.kind === "journey" ? "用户旅程" : "普通用例"}
-          </span>
+          </Badge>
         </div>
-        <dl className="ddt-detail-summary">
+        <dl className={cn("ddt-detail-summary", ddtCaseBrowserStyles["ddt-detail-summary"])}>
           <div>
             <dt>所属 srNum</dt>
             <dd>{item.srNum}</dd>
@@ -442,7 +488,13 @@ export function DdtCaseDetail({
             </dd>
           </div>
         </dl>
-        <section className="ddt-execution-class-summary" aria-label="DDT 执行类">
+        <section
+          className={cn(
+            "ddt-execution-class-summary",
+            ddtCaseBrowserStyles["ddt-execution-class-summary"],
+          )}
+          aria-label="DDT 执行类"
+        >
           <span>执行类 · 继承自 SR {item.srNum}</span>
           <strong>{item.executionClass?.displayName ?? "尚未设置执行类"}</strong>
           <small>
@@ -450,7 +502,12 @@ export function DdtCaseDetail({
               "请在“SR 测试类关联”页面配置当前 SR 的测试类；本 SR 下所有用例自动继承。"}
           </small>
           {item.executionClass ? (
-            <div className="ddt-execution-class-actions">
+            <div
+              className={cn(
+                "ddt-execution-class-actions",
+                ddtCaseBrowserStyles["ddt-execution-class-actions"],
+              )}
+            >
               <Button
                 type="button"
                 variant="secondary"
@@ -463,7 +520,12 @@ export function DdtCaseDetail({
                 <OpenRunDialogButton
                   ddtCase={item}
                   disabled={Boolean(editor) || saving}
-                  className="button button-primary compact-button"
+                  className={cn(
+                    "button button-primary compact-button",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                    uiPatterns["compact-button"],
+                  )}
                 >
                   立即执行
                 </OpenRunDialogButton>
@@ -472,25 +534,21 @@ export function DdtCaseDetail({
           ) : null}
         </section>
         {steps ? (
-          <div className="ddt-journey-switcher">
+          <div className={cn("ddt-journey-switcher", ddtCaseBrowserStyles["ddt-journey-switcher"])}>
             <strong>用户旅程步骤</strong>
-            <div role="tablist" aria-label="用户旅程步骤">
-              {stepNames.map((step) => (
-                <Button
-                  key={step}
-                  type="button"
-                  role="tab"
-                  aria-selected={step === resolvedStep}
-                  disabled={Boolean(editor) || saving}
-                  onClick={() => setActiveStep(step)}
-                >
-                  {step}
-                </Button>
-              ))}
-            </div>
+            <Tabs
+              label="用户旅程步骤"
+              value={resolvedStep}
+              items={stepNames.map((step) => ({
+                key: step,
+                label: step,
+                disabled: Boolean(editor) || saving,
+              }))}
+              onChange={setActiveStep}
+            />
           </div>
         ) : null}
-        <header className="ddt-fields-heading">
+        <header className={cn("ddt-fields-heading", ddtCaseBrowserStyles["ddt-fields-heading"])}>
           <div>
             <h3>{steps ? `${resolvedStep} 字段内容` : "字段内容"}</h3>
             <p>
@@ -504,7 +562,7 @@ export function DdtCaseDetail({
           <small>{canManage ? "可编辑" : "只读查看"}</small>
         </header>
         {editor && !editor.field ? (
-          <label className="ddt-json-editor">
+          <label className={cn("ddt-json-editor", ddtCaseBrowserStyles["ddt-json-editor"])}>
             <span>用例数据 JSON</span>
             <Textarea
               value={editor.text}
@@ -514,15 +572,18 @@ export function DdtCaseDetail({
             />
           </label>
         ) : (
-          <div className="ddt-field-cards">
+          <div className={cn("ddt-field-cards", ddtCaseBrowserStyles["ddt-field-cards"])}>
             {fields.map(([field, value]) => (
-              <article className="ddt-field-card" key={field}>
+              <article
+                className={cn("ddt-field-card", ddtCaseBrowserStyles["ddt-field-card"])}
+                key={field}
+              >
                 <header>
                   <strong>{field}</strong>
                   <div>
                     <Button
                       type="button"
-                      className="icon-button"
+                      className={cn("icon-button", uiPatterns["icon-button"])}
                       aria-label={`复制字段 ${field}`}
                       onClick={() =>
                         void copy(
@@ -537,7 +598,7 @@ export function DdtCaseDetail({
                     {canManage ? (
                       <Button
                         type="button"
-                        className="icon-button"
+                        className={cn("icon-button", uiPatterns["icon-button"])}
                         aria-label={`编辑字段 ${field}`}
                         disabled={Boolean(editor) || saving}
                         onClick={() => beginEditing(field, value)}
@@ -548,7 +609,7 @@ export function DdtCaseDetail({
                   </div>
                 </header>
                 {editor?.field === field ? (
-                  <div className="ddt-field-editor">
+                  <div className={cn("ddt-field-editor", ddtCaseBrowserStyles["ddt-field-editor"])}>
                     <label>
                       <span>字段类型</span>
                       <Select
@@ -588,16 +649,24 @@ export function DdtCaseDetail({
           </div>
         )}
         {error ? (
-          <div className="inline-notice error" role="alert">
+          <Notice
+            tone="info"
+            className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+            role="alert"
+          >
             {error}
-          </div>
+          </Notice>
         ) : null}
         {editor ? (
-          <footer className="ddt-detail-save">
+          <footer className={cn("ddt-detail-save", ddtCaseBrowserStyles["ddt-detail-save"])}>
             <span>请先保存或取消编辑后切换旅程步骤。</span>
             <Button
               type="button"
-              className="button button-secondary"
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               disabled={saving}
               onClick={finishEditing}
             >
@@ -605,7 +674,11 @@ export function DdtCaseDetail({
             </Button>
             <Button
               type="button"
-              className="button button-primary"
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
               disabled={saving}
               onClick={() => void save()}
             >
@@ -613,10 +686,15 @@ export function DdtCaseDetail({
             </Button>
           </footer>
         ) : null}
-        <details className="ddt-history" open>
-          <summary>
-            <History size={16} /> 修改历史 <small>{history.length} 条已加载</small>
-          </summary>
+        <Disclosure
+          header={
+            <>
+              <History size={16} /> 修改历史 <small>{history.length} 条已加载</small>
+            </>
+          }
+          className={cn("ddt-history", ddtCaseBrowserStyles["ddt-history"])}
+          defaultOpen
+        >
           {history.length ? (
             history.map((entry) => (
               <article key={entry.id}>
@@ -630,7 +708,7 @@ export function DdtCaseDetail({
                 {canManage ? (
                   <Button
                     type="button"
-                    className="text-button"
+                    className={cn("text-button", uiPatterns["text-button"])}
                     disabled={Boolean(editor) || saving}
                     onClick={() => void apply(() => onRestore(entry.id))}
                   >
@@ -642,7 +720,7 @@ export function DdtCaseDetail({
           ) : (
             <p>暂无修改历史</p>
           )}
-        </details>
+        </Disclosure>
       </div>
     </>
   );
@@ -674,3 +752,57 @@ function historyLabel(value: string): string {
     )[value] ?? value
   );
 }
+
+const ddtCaseBrowserStyles = {
+  "ddt-bulk-workspace":
+    "[&_p]:text-muted-foreground [&_p]:text-xs [&_p]:[margin:4px_0_0] [&_p]:[overflow-wrap:anywhere] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-3 [&_h2]:m-0 [&_h2]:text-lg [&_h2]:[overflow-wrap:anywhere] overflow-auto p-5 [&_.ddt-selection-bar]:flex-wrap [&_.ddt-selection-bar]:mt-5 [&_.ddt-selection-bar]:p-4",
+  "ddt-case-browser":
+    "[--ddt-case-list-width:clamp(240px,_26%,_440px)] [--ddt-case-list-collapsed-width:52px] [--ddt-case-resizer-width:6px] [--ddt-case-browser-height:320px] [--ddt-case-filter-max-height:none] grid grid-cols-[min(var(--ddt-case-list-width),_40%)_var(--ddt-case-resizer-width)_minmax(_0,_1fr_)] h-[var(--ddt-case-browser-height)] min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs [&.is-collapsed]:grid-cols-[var(--ddt-case-list-collapsed-width)_minmax(0,_1fr)]",
+  "ddt-case-detail-panel": "flex min-w-0 min-h-0 flex-col",
+  "ddt-case-detail-scroll":
+    "min-h-0 flex-1 overflow-auto py-2 px-3 [container-type:inline-size] [&_.ddt-execution-class-summary]:grid-cols-[auto_minmax(0,_1fr)] [&_.ddt-execution-class-summary]:gap-[4px_8px] [&_.ddt-execution-class-summary]:mb-3 [&_.ddt-execution-class-summary]:py-2 [&_.ddt-execution-class-summary]:px-3 [&_.ddt-execution-class-summary_>_small]:col-span-full [&_.ddt-history]:block",
+  "ddt-case-filters":
+    "m-0 border-0 grid grid-cols-2 [flex:0_0_auto] gap-2 overflow-visible py-2 px-3 [&_>_label]:col-span-full [&_>_label_>_span:not(.ui-select)]:hidden [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_.ui-input]:w-full [&_.ui-input]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-1 [&_.search-field_>_svg]:[flex:0_0_auto] [&_label_>_span]:text-muted-foreground [&_label_>_span]:text-xs",
+  "ddt-case-list": "min-h-0 flex-1 overflow-auto p-1",
+  "ddt-case-list-item":
+    "[&.ui-button]:shadow-none [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-1 [&_>_span]:flex-1 flex min-w-0 flex-1 items-center gap-2 border-0 py-3 px-1 bg-transparent text-foreground text-left [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small_>_span]:overflow-hidden [&_small_>_span]:text-ellipsis [&_small_>_span]:whitespace-nowrap [&_small]:flex [&_small]:min-w-0 [&_small]:items-center [&_small]:gap-2 [&_em]:[flex:0_0_auto] [&_em]:text-info [&_em]:[font-style:normal]",
+  "ddt-case-list-row":
+    "flex min-w-0 items-center gap-1 border border-solid border-transparent rounded-lg pl-2 [&.active]:border-ring [&.active]:bg-info/10 [&:hover]:bg-info/10",
+  "ddt-case-navigation":
+    "flex min-w-0 min-h-0 flex-col bg-muted [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:[flex:0_0_auto] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-2 [&_>_header]:px-3 [&_>_header_>_div]:grid [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-1 [&_small]:text-muted-foreground [&_small]:text-xs",
+  "ddt-case-navigation-content": "flex min-w-0 min-h-0 flex-col flex-1 [&[hidden]]:hidden",
+  "ddt-case-preview": "[flex:0_0_auto] mr-1",
+  "ddt-case-resizer":
+    "bg-border cursor-col-resize [touch-action:none] [&:hover]:bg-info [&:focus-visible]:bg-info",
+  "ddt-detail-save":
+    "sticky bottom-0 flex flex-wrap items-center justify-end gap-2 mt-3 border border-solid border-border rounded-lg p-3 bg-card shadow-xs [&_>_span]:flex-1 [&_>_span]:text-xs [&_>_span]:text-muted-foreground",
+  "ddt-detail-summary":
+    "[&_dt]:text-muted-foreground [&_dt]:text-xs grid grid-cols-4 gap-2 my-3 mx-0 [border-block:1px_solid_var(--border)] py-2 my-2 [&_dd]:[margin:4px_0_0] [&_dd]:font-semibold [&_dd]:[overflow-wrap:anywhere] [&_>_div]:min-w-0 [&_>_div]:[overflow-wrap:anywhere]",
+  "ddt-detail-title":
+    "[&_p]:text-muted-foreground [&_p]:text-xs [&_p]:[margin:4px_0_0] [&_p]:[overflow-wrap:anywhere] flex items-center gap-3 flex-wrap [&_>_div]:min-w-0 [&_>_div]:flex-1 [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-info [&_h2]:m-0 [&_h2]:text-lg [&_h2]:[overflow-wrap:anywhere]",
+  "ddt-detail-toolbar":
+    "flex min-h-[calc(20px_*_2)] [flex:0_0_auto] items-center justify-between gap-2 border-b border-solid border-border py-2 px-3 flex-wrap [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:items-center [&_>_span]:gap-1 [&_>_span]:flex-1 [&_>_span]:whitespace-nowrap [&_>_div]:flex [&_>_div]:min-w-0 [&_>_div]:items-center [&_>_div]:gap-1 [&_>_span_>_strong]:max-w-[24ch] [&_>_span_>_strong]:overflow-hidden [&_>_span_>_strong]:text-ellipsis [&_>_span_>_strong]:whitespace-nowrap [&_>_span_>_svg]:[flex:0_0_auto]",
+  "ddt-execution-class-actions": "col-span-full flex flex-wrap gap-2 mt-2",
+  "ddt-execution-class-summary":
+    "grid gap-[3px] mb-3.5 border border-solid border-border rounded-lg py-3 px-3.5 bg-muted [&_>_span]:text-muted-foreground [&_>_small]:text-muted-foreground [&_>_small]:[overflow-wrap:anywhere]",
+  "ddt-field-card":
+    "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-1 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-1 [&_>_header]:px-3 [&_>_header]:bg-muted [&_>_header_>_strong]:min-w-0 [&_>_header_>_strong]:[overflow-wrap:anywhere] [&_>_header_>_div]:flex [&_>_header_>_div]:[flex:0_0_auto] [&_pre]:max-h-[calc(20px_*_12)] [&_pre]:m-0 [&_pre]:overflow-auto [&_pre]:p-3 [&_pre]:font-mono [&_pre]:whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]",
+  "ddt-field-cards": "grid grid-cols-[minmax(0,_1fr)] items-start gap-3",
+  "ddt-field-editor":
+    "[&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_textarea]:w-full [&_textarea]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 grid gap-2 p-3",
+  "ddt-fields-heading":
+    "[&_p]:text-muted-foreground [&_p]:text-xs [&_p]:[margin:4px_0_0] [&_p]:[overflow-wrap:anywhere] [&_small]:text-muted-foreground [&_small]:text-xs flex items-center gap-3 mb-3 [&_>_div]:min-w-0 [&_>_div]:flex-1 [&_h3]:m-0 [&_h3]:text-sm [&_>_small]:[flex:0_0_auto]",
+  "ddt-history":
+    "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&_article_>_div]:min-w-0 [&_article_>_div]:[overflow-wrap:anywhere] [&_article_>_div]:grid [&_article_>_div]:gap-0.5 [&_article_>_div]:mr-auto [&_article_>_button]:[flex:0_0_auto] grid gap-2 mt-5 [&_h3]:flex [&_h3]:items-center [&_h3]:gap-[7px] [&_h3]:m-0 [&_article]:flex [&_article]:items-center [&_article]:gap-3 [&_article]:border-t [&_article]:border-solid [&_article]:border-border [&_article]:py-2.5 [&_article]:px-0 [&_span]:text-muted-foreground [&_small]:text-muted-foreground",
+  "ddt-journey-switcher":
+    'grid gap-2 my-4 [&_>_div]:flex [&_>_div]:gap-2 [&_>_div]:overflow-auto [&_>_div]:pb-1 [&_button]:border [&_button]:border-solid [&_button]:border-border [&_button]:rounded-lg [&_button]:py-2 [&_button]:px-3 [&_button]:bg-muted [&_button[aria-selected="true"]]:border-ring [&_button[aria-selected="true"]]:bg-info/10 [&_button[aria-selected="true"]]:text-info',
+  "ddt-json-editor":
+    "grid gap-[7px] [&_textarea]:min-h-[430px] [&_textarea]:font-mono [&_textarea]:leading-[1.55] [&_small]:text-muted-foreground",
+  "ddt-kind":
+    "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap [&.journey]:bg-info/10 [&.journey]:text-info",
+  "ddt-load-more": "w-fit m-auto",
+  "ddt-loaded-selection":
+    "flex [flex:0_0_auto] items-center gap-2 [border-block:1px_solid_var(--border)] py-2 px-3 text-xs",
+  "ddt-navigation-empty": "p-3",
+  "ddt-navigation-hint": "p-3 border-t border-solid border-border py-1",
+} as const;

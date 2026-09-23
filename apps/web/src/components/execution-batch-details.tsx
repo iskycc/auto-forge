@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   StartFailureAnalysisButton,
@@ -201,9 +205,14 @@ export function ExecutionBatchDetails({
   }
 
   return (
-    <div className="execution-detail-layout">
+    <div
+      className={cn(
+        "execution-detail-layout",
+        executionBatchDetailsStyles["execution-detail-layout"],
+      )}
+    >
       {batch.statistics ? (
-        <p role="status" className="muted">
+        <p role="status" className={cn("muted", uiPatterns["muted"])}>
           {batch.statistics.generatedAt
             ? `轮次统计更新于 ${formatLocalDateTime(batch.statistics.generatedAt)}`
             : "正在准备轮次统计"}
@@ -214,7 +223,10 @@ export function ExecutionBatchDetails({
               : ""}
         </p>
       ) : null}
-      <section className="batch-metrics-band" aria-label="批次概览">
+      <section
+        className={cn("batch-metrics-band", executionBatchDetailsStyles["batch-metrics-band"])}
+        aria-label="批次概览"
+      >
         <Metric
           label="状态"
           value={awaitingScheduledStart ? "倒计时" : runBatchCompletionLabel(batch)}
@@ -256,7 +268,13 @@ export function ExecutionBatchDetails({
         canCancelRuns ||
         (canCreateRuns && retrySuiteId) ||
         canRerunFinalFailures) && (
-        <section className="execution-detail-actions" aria-label="批次操作">
+        <section
+          className={cn(
+            "execution-detail-actions",
+            executionBatchDetailsStyles["execution-detail-actions"],
+          )}
+          aria-label="批次操作"
+        >
           <div>
             <strong>
               {batch.terminationRequestedAt
@@ -271,13 +289,17 @@ export function ExecutionBatchDetails({
                 : "再次执行会读取任务当前版本的完整配置并创建新批次。"}
             </span>
           </div>
-          <div className="button-row">
+          <div className={cn("button-row", uiPatterns["button-row"])}>
             {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
               <StartFailureAnalysisButton scope={analysisScope} />
             ) : null}
             {canCancelRuns && activeBatch ? (
               <Button
-                className="button button-danger-quiet"
+                className={cn(
+                  "button button-danger-quiet",
+                  uiPatterns["button"],
+                  uiPatterns["button-danger-quiet"],
+                )}
                 disabled={actionPending !== undefined || Boolean(batch.terminationRequestedAt)}
                 onClick={() => void terminateBatch()}
                 type="button"
@@ -292,7 +314,11 @@ export function ExecutionBatchDetails({
             ) : null}
             {canCreateRuns && retrySuiteId && !activeBatch ? (
               <Button
-                className="button button-primary"
+                className={cn(
+                  "button button-primary",
+                  uiPatterns["button"],
+                  uiPatterns["button-primary"],
+                )}
                 disabled={actionPending !== undefined}
                 onClick={() => void retryBatch()}
                 type="button"
@@ -303,7 +329,11 @@ export function ExecutionBatchDetails({
             ) : null}
             {canRerunFinalFailures ? (
               <Button
-                className="button button-secondary"
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 disabled={actionPending !== undefined}
                 onClick={() => setFinalFailuresDialogOpen(true)}
                 type="button"
@@ -314,9 +344,13 @@ export function ExecutionBatchDetails({
             ) : null}
           </div>
           {actionError ? (
-            <p className="form-error" role="alert">
+            <Notice
+              tone="error"
+              className={cn("form-error", uiPatterns["form-error"])}
+              role="alert"
+            >
               {actionError}
-            </p>
+            </Notice>
           ) : null}
         </section>
       )}
@@ -374,7 +408,7 @@ function Metric({
   title?: string;
 }) {
   return (
-    <div className="batch-metric" title={title}>
+    <div className={cn("batch-metric", executionBatchDetailsStyles["batch-metric"])} title={title}>
       <span>{label}</span>
       <strong>{value}</strong>
       {hint ? <small>{hint}</small> : null}
@@ -401,3 +435,13 @@ function ElapsedMetric({
     <Metric label={terminal ? "执行耗时" : "已运行时长"} value={formatBatchDuration(durationMs)} />
   );
 }
+
+const executionBatchDetailsStyles = {
+  "batch-metric":
+    "grid min-w-0 gap-[5px] py-4.5 px-5 border-r border-solid border-border [&:last-child]:border-r-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_strong]:text-base [&_>_strong]:tabular-nums [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal [&_>_small]:text-muted-foreground [&_>_small]:text-xs max-[1101px]:[&:nth-child(-n_+_3)]:border-b max-[1101px]:[&:nth-child(-n_+_3)]:border-solid max-[1101px]:[&:nth-child(-n_+_3)]:border-border max-[1101px]:[&:nth-child(3n)]:border-r-0",
+  "batch-metrics-band":
+    "grid grid-cols-6 border border-solid border-border rounded-xl bg-card shadow-xs overflow-hidden max-[1101px]:grid-cols-3",
+  "execution-detail-actions":
+    "flex items-center justify-between gap-5 border border-solid border-border rounded-xl py-4 px-4.5 bg-card [&_>_div:first-child]:grid [&_>_div:first-child]:gap-1 [&_>_div:first-child_>_span]:text-muted-foreground [&_>_div:first-child_>_span]:text-xs [&_.button-row]:[flex:0_0_auto] [&_.button-row]:mt-0 [&_.form-error]:m-0 max-[1181px]:items-start max-[1181px]:flex-col",
+  "execution-detail-layout": "grid grid-cols-[minmax(0,_1fr)] gap-6",
+} as const;

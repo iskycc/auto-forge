@@ -1,4 +1,8 @@
 "use client";
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button } from "@/components/ui";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
@@ -120,23 +124,27 @@ export function SourceLifecyclePanel({
   }
 
   return (
-    <section className="card">
-      <div className="section-title-row">
+    <Card as="section" className={cn("card", uiPatterns["card"])}>
+      <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
         <div>
-          <span className="eyebrow">来源生命周期</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>来源生命周期</span>
           <h2>对比同步与归档删除</h2>
         </div>
       </div>
-      <div className="inline-action-stack">
+      <div className={cn("inline-action-stack", sourceLifecycleStyles["inline-action-stack"])}>
         {comparable && (
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             disabled={pendingAction !== null}
             onClick={() => void compare()}
           >
             {pendingAction === "compare" ? (
-              <LoaderCircle className="spin" size={15} />
+              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
             ) : (
               <GitCompareArrows size={15} />
             )}
@@ -145,13 +153,17 @@ export function SourceLifecyclePanel({
         )}
         {lifecycleStatus === "active" && (
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             disabled={pendingAction !== null}
             onClick={() => void setArchived(true)}
           >
             {pendingAction === "archive" ? (
-              <LoaderCircle className="spin" size={15} />
+              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
             ) : (
               <Archive size={15} />
             )}
@@ -160,13 +172,17 @@ export function SourceLifecyclePanel({
         )}
         {lifecycleStatus === "archived" && (
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             disabled={pendingAction !== null}
             onClick={() => void setArchived(false)}
           >
             {pendingAction === "restore" ? (
-              <LoaderCircle className="spin" size={15} />
+              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
             ) : (
               <RefreshCcw size={15} />
             )}
@@ -175,13 +191,13 @@ export function SourceLifecyclePanel({
         )}
         {!authoritative && lifecycleStatus === "active" && (
           <Button
-            className="danger-text-button"
+            className={cn("danger-text-button", uiPatterns["danger-text-button"])}
             type="button"
             disabled={pendingAction !== null}
             onClick={() => void remove()}
           >
             {pendingAction === "delete" ? (
-              <LoaderCircle className="spin" size={15} />
+              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
             ) : (
               <Trash2 size={15} />
             )}
@@ -191,7 +207,7 @@ export function SourceLifecyclePanel({
         {lifecycleStatus === "deleting" && <small>来源正在删除，JAR 对象将由后台任务清理。</small>}
       </div>
       {comparison && (
-        <div className="comparison-result">
+        <div className={cn("comparison-result", sourceLifecycleStyles["comparison-result"])}>
           <p>
             对比结果：新增 {comparison.added.length}、变更 {comparison.changed.length}、消失{" "}
             {comparison.removed.length}、冲突 {comparison.conflicts.length}
@@ -214,15 +230,19 @@ export function SourceLifecyclePanel({
             title="冲突"
             entries={comparison.conflicts.map((entry) => entry.className)}
           />
-          <div className="inline-action-stack">
+          <div className={cn("inline-action-stack", sourceLifecycleStyles["inline-action-stack"])}>
             <Button
-              className="button button-success"
+              className={cn(
+                "button button-success",
+                uiPatterns["button"],
+                uiPatterns["button-success"],
+              )}
               type="button"
               disabled={pendingAction !== null}
               onClick={() => void confirmSync()}
             >
               {pendingAction === "sync" ? (
-                <LoaderCircle className="spin" size={15} />
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
               ) : (
                 <GitCompareArrows size={15} />
               )}
@@ -231,17 +251,19 @@ export function SourceLifecyclePanel({
           </div>
         </div>
       )}
-      {error && <small className="inline-error">{error}</small>}
-    </section>
+      {error && (
+        <small className={cn("inline-error", sourceLifecycleStyles["inline-error"])}>{error}</small>
+      )}
+    </Card>
   );
 }
 
 function ComparisonPreview({ title, entries }: { title: string; entries: string[] }) {
   if (entries.length === 0) return null;
   return (
-    <div className="method-list">
-      <div className="method-row">
-        <span className="method-origin">{title}</span>
+    <div className={cn("method-list", sourceLifecycleStyles["method-list"])}>
+      <div className={cn("method-row", sourceLifecycleStyles["method-row"])}>
+        <span className={cn("method-origin", sourceLifecycleStyles["method-origin"])}>{title}</span>
         <code>
           {entries.slice(0, PREVIEW_ENTRY_LIMIT).join("，")}
           {entries.length > PREVIEW_ENTRY_LIMIT ? ` 等 ${entries.length} 个` : ""}
@@ -250,3 +272,14 @@ function ComparisonPreview({ title, entries }: { title: string; entries: string[
     </div>
   );
 }
+
+const sourceLifecycleStyles = {
+  "comparison-result": "flex flex-col gap-3 mt-3",
+  "inline-action-stack":
+    "inline-flex items-center gap-2 flex-wrap [&_.inline-error]:[flex-basis:100%]",
+  "inline-error": "text-destructive text-xs leading-[1.35]",
+  "method-list": "[padding:0_13px_10px_57px]",
+  "method-origin": "ml-auto whitespace-nowrap",
+  "method-row":
+    "flex min-h-9 items-center gap-2 border-t border-solid border-border text-muted-foreground text-xs [&_code]:text-foreground [&_code]:text-xs [&_code]:font-semibold",
+} as const;

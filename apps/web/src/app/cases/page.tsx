@@ -1,3 +1,8 @@
+import { EmptyState } from "@/components/ui/empty-state";
+import { Disclosure } from "@/components/ui/disclosure";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { DatabaseZap } from "lucide-react";
 
 import { CachedCaseDirectory } from "@/components/cached-case-directory";
@@ -83,7 +88,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     : null;
 
   return (
-    <div className="page-stack">
+    <div className={cn("page-stack", uiPatterns["page-stack"])}>
       <CaseManagementTabs
         canImport={canImport}
         ddtContent={
@@ -117,25 +122,51 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               suites={suites.map((suite) => ({ id: suite.id, name: suite.name }))}
             />
           ) : (
-            <section className="card case-library-empty-card">
-              <div className="empty-state case-library-empty">
-                <span className="empty-icon">
+            <Card
+              as="section"
+              className={cn(
+                "card case-library-empty-card",
+                uiPatterns["card"],
+                pageStyles["case-library-empty-card"],
+              )}
+            >
+              <EmptyState
+                className={cn(
+                  "empty-state case-library-empty",
+                  uiPatterns["empty-state"],
+                  pageStyles["case-library-empty"],
+                )}
+              >
+                <span className={cn("empty-icon", uiPatterns["empty-icon"])}>
                   <DatabaseZap size={27} />
                 </span>
                 <strong>请先选择完整的项目层级</strong>
                 <p>DDT 用例严格绑定项目、项目版本和测试阶段，配置完整后即可开始导入。</p>
-              </div>
-            </section>
+              </EmptyState>
+            </Card>
           )
         }
         initialTab={activeTab}
         scopeContent={
-          <section className="card case-scope-toolbar" aria-label="用例范围">
-            <details className="case-scope-heading">
-              <summary>范围说明</summary>
+          <Card
+            as="section"
+            className={cn(
+              "card case-scope-toolbar",
+              uiPatterns["card"],
+              pageStyles["case-scope-toolbar"],
+            )}
+            aria-label="用例范围"
+          >
+            <Disclosure
+              header={<>范围说明</>}
+              className={cn("case-scope-heading", pageStyles["case-scope-heading"])}
+            >
               <span>由顶栏项目层级统一控制；展开目录时按需加载，搜索覆盖当前范围的所有用例。</span>
-            </details>
-            <div className="case-scope-current" aria-label="当前用例层级">
+            </Disclosure>
+            <div
+              className={cn("case-scope-current", pageStyles["case-scope-current"])}
+              aria-label="当前用例层级"
+            >
               <span>
                 <small>项目版本</small>
                 <strong>{projectVersion?.name ?? "尚未配置"}</strong>
@@ -145,7 +176,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                 <strong>{testStage?.name ?? "尚未配置"}</strong>
               </span>
             </div>
-          </section>
+          </Card>
         }
         testngContent={
           directoryProjection ? (
@@ -160,15 +191,34 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               suiteManagementProjectIds={suiteManagementProjectIds}
             />
           ) : (
-            <section className="card case-library-empty-card">
-              <div className="empty-state">
+            <Card
+              as="section"
+              className={cn(
+                "card case-library-empty-card",
+                uiPatterns["card"],
+                pageStyles["case-library-empty-card"],
+              )}
+            >
+              <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
                 <strong>请先选择完整的项目层级</strong>
                 <p>请选择项目版本与测试阶段后查看用例。</p>
-              </div>
-            </section>
+              </EmptyState>
+            </Card>
           )
         }
       />
     </div>
   );
 }
+
+const pageStyles = {
+  "case-library-empty":
+    "w-[min(100%,_560px)] min-h-[320px] justify-self-center gap-1 py-10 px-6 [&_.button]:mt-4.5",
+  "case-library-empty-card": "grid min-h-[360px] overflow-hidden",
+  "case-scope-current":
+    "[&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:gap-2 [&_>_span]:border-l [&_>_span]:border-solid [&_>_span]:border-border [&_>_span]:pl-3.5 [&_>_span]:items-center [&_small]:text-muted-foreground [&_small]:shrink-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:[overflow-wrap:anywhere] grid min-w-0 grid-cols-[repeat(2,_minmax(140px,_1fr))] justify-self-end gap-2.5 max-[1181px]:w-full max-[1181px]:justify-self-stretch",
+  "case-scope-heading":
+    "grid gap-[3px] [&_span]:text-muted-foreground [&_span]:text-xs [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:text-sm",
+  "case-scope-toolbar":
+    "grid grid-cols-[minmax(0,_1fr)_minmax(0,_2fr)] items-center gap-3 py-4 px-4.5 py-2 max-[1181px]:grid-cols-[1fr]",
+} as const;

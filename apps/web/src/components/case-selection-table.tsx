@@ -1,4 +1,10 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
 import { useDirectoryBranch } from "./use-directory-tree";
@@ -26,6 +32,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { useDeferredValue, useEffect, useMemo, useState, type SetStateAction } from "react";
 import type { DirectorySelection } from "@/lib/collect-directory-selection";
 
@@ -519,9 +526,14 @@ export function CaseSelectionTable({
   }
 
   return (
-    <div className="case-library-workspace">
-      <section className="case-browser-pane" aria-label="用例目录工作区">
-        <div className="case-browser-search">
+    <div
+      className={cn("case-library-workspace", caseSelectionTableStyles["case-library-workspace"])}
+    >
+      <section
+        className={cn("case-browser-pane", caseSelectionTableStyles["case-browser-pane"])}
+        aria-label="用例目录工作区"
+      >
+        <div className={cn("case-browser-search", caseSelectionTableStyles["case-browser-search"])}>
           <Search size={17} aria-hidden="true" />
           <Input
             aria-label="页内搜索用例"
@@ -567,15 +579,27 @@ export function CaseSelectionTable({
             <option value="never">从未执行</option>
           </Select>
         </div>
-        <div className="case-browser-summary">
+        <div
+          className={cn("case-browser-summary", caseSelectionTableStyles["case-browser-summary"])}
+        >
           <span>
             {directoryTree && !directoryTree.ready
               ? "目录尚未就绪"
               : `全部 ${directoryTree?.totalCount ?? availableCases.length} 个用例`}
           </span>
           {filtering || membershipPending ? (
-            <span className="list-filter-progress" role="status">
-              <LoaderCircle aria-hidden="true" className="spin" size={14} />
+            <span
+              className={cn(
+                "list-filter-progress",
+                caseSelectionTableStyles["list-filter-progress"],
+              )}
+              role="status"
+            >
+              <LoaderCircle
+                aria-hidden="true"
+                className={cn("spin", uiPatterns["spin"])}
+                size={14}
+              />
               {membershipPending ? "正在读取任务成员" : "正在筛选"}
             </span>
           ) : normalizedSearch || deferredOutcomeFilter !== "all" || missingOnly ? (
@@ -584,8 +608,16 @@ export function CaseSelectionTable({
         </div>
 
         {canSelectAnyCase || checkedCaseIds.size > 0 || missingOnly ? (
-          <div className="selection-toolbar case-selection-toolbar">
-            <label className="selection-actions">
+          <div
+            className={cn(
+              "selection-toolbar case-selection-toolbar",
+              caseSelectionTableStyles["selection-toolbar"],
+              caseSelectionTableStyles["case-selection-toolbar"],
+            )}
+          >
+            <label
+              className={cn("selection-actions", caseSelectionTableStyles["selection-actions"])}
+            >
               <Input
                 type="checkbox"
                 aria-label="选择当前搜索结果中的全部用例"
@@ -633,14 +665,25 @@ export function CaseSelectionTable({
                 type="button"
                 variant="danger"
               >
-                {pending ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                {pending ? (
+                  <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                ) : (
+                  <Trash2 size={15} />
+                )}
                 批量删除
               </Button>
             ) : null}
             {manageableSuites.length === 0 && selectedCasesCanJoinSuite ? (
-              <Link className="button button-secondary" href="/case-suites">
+              <LinkButton
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
+                href="/case-suites"
+              >
                 <Layers3 size={15} /> 新建任务
-              </Link>
+              </LinkButton>
             ) : manageableSuites.length > 0 ? (
               <>
                 <Select
@@ -684,14 +727,18 @@ export function CaseSelectionTable({
                   variant={missingOnly ? "primary" : "secondary"}
                 >
                   {membershipPending ? (
-                    <LoaderCircle className="spin" size={15} />
+                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
                   ) : (
                     <ListFilter size={15} />
                   )}
                   {missingOnly ? "仅看未加入" : "筛选未加入"}
                 </Button>
                 <Button
-                  className="button button-primary"
+                  className={cn(
+                    "button button-primary",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                  )}
                   type="button"
                   disabled={
                     checkedCaseIds.size === 0 ||
@@ -702,7 +749,11 @@ export function CaseSelectionTable({
                   }
                   onClick={addToSuite}
                 >
-                  {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+                  {pending ? (
+                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                  ) : (
+                    <Check size={15} />
+                  )}
                   加入任务
                 </Button>
               </>
@@ -710,11 +761,17 @@ export function CaseSelectionTable({
           </div>
         ) : null}
         {crossProjectSelection ? (
-          <div className="inline-feedback" role="alert">
+          <div
+            className={cn("inline-feedback", caseSelectionTableStyles["inline-feedback"])}
+            role="alert"
+          >
             不能跨项目混选，请取消其他项目的勾选。
           </div>
         ) : message ? (
-          <div className="inline-feedback" role="status">
+          <div
+            className={cn("inline-feedback", caseSelectionTableStyles["inline-feedback"])}
+            role="status"
+          >
             {message}
           </div>
         ) : null}
@@ -733,34 +790,69 @@ export function CaseSelectionTable({
         ) : null}
 
         {checkedCaseIds.size > 0 ? (
-          <div aria-label="已勾选用例的执行统计" className="case-selection-stats" role="status">
+          <div
+            aria-label="已勾选用例的执行统计"
+            className={cn("case-selection-stats", caseSelectionTableStyles["case-selection-stats"])}
+            role="status"
+          >
             <span>
               已勾选 <strong>{selectionStats.total}</strong> 个用例
             </span>
-            <span className="batch-status batch-status-succeeded">
+            <Badge
+              className={cn(
+                "batch-status batch-status-succeeded",
+                caseSelectionTableStyles["batch-status"],
+                caseSelectionTableStyles["batch-status-succeeded"],
+              )}
+            >
               成功 {selectionStats.succeededCount}（{selectionStats.successRate}）
-            </span>
-            <span className="batch-status batch-status-failed">
+            </Badge>
+            <Badge
+              className={cn(
+                "batch-status batch-status-failed",
+                caseSelectionTableStyles["batch-status"],
+                caseSelectionTableStyles["batch-status-failed"],
+              )}
+            >
               失败 {selectionStats.failedCount}（{selectionStats.failureRate}）
-            </span>
-            <span className="batch-status batch-status-blocked">
+            </Badge>
+            <Badge
+              className={cn(
+                "batch-status batch-status-blocked",
+                caseSelectionTableStyles["batch-status"],
+                caseSelectionTableStyles["batch-status-blocked"],
+              )}
+            >
               阻塞 {selectionStats.blockedCount}（{selectionStats.blockedRate}）
-            </span>
-            <span className="batch-status batch-status-neutral">
+            </Badge>
+            <Badge
+              className={cn(
+                "batch-status batch-status-neutral",
+                caseSelectionTableStyles["batch-status"],
+                caseSelectionTableStyles["batch-status-neutral"],
+              )}
+            >
               未执行 {selectionStats.notRunCount}
-            </span>
+            </Badge>
           </div>
         ) : null}
 
-        <div aria-busy={filtering} className="case-directory-scroll">
+        <div
+          aria-busy={filtering}
+          className={cn("case-directory-scroll", caseSelectionTableStyles["case-directory-scroll"])}
+        >
           {(directoryTree ? directoryTree.caseCount === 0 : visibleCases.length === 0) ? (
-            <div className="inline-empty">
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
               {directoryTree && !directoryTree.ready
                 ? "目录尚未就绪，完成准备后自动显示。"
                 : "没有匹配的用例，尝试缩短搜索关键词。"}
             </div>
           ) : (
-            <div className="case-directory-tree" role="tree" aria-label="完整用例目录">
+            <div
+              className={cn("case-directory-tree", caseSelectionTableStyles["case-directory-tree"])}
+              role="tree"
+              aria-label="完整用例目录"
+            >
               <DirectoryNode
                 activeCaseId={activeCaseId}
                 canManageProject={canSelectCase}
@@ -792,15 +884,23 @@ export function CaseSelectionTable({
         </div>
       </section>
 
-      <aside className="case-inspector-pane" aria-label="用例详情与操作">
+      <aside
+        className={cn("case-inspector-pane", caseSelectionTableStyles["case-inspector-pane"])}
+        aria-label="用例详情与操作"
+      >
         {!activeCaseId ? (
-          <div className="case-inspector-empty">
+          <div
+            className={cn("case-inspector-empty", caseSelectionTableStyles["case-inspector-empty"])}
+          >
             <FileCode2 size={28} aria-hidden="true" />
             <strong>选择一个用例</strong>
             <p>详情、方法、执行与分析历史、源码及管理操作会显示在这里。</p>
           </div>
         ) : activeDetailError ? (
-          <div className="case-inspector-empty" role="alert">
+          <div
+            className={cn("case-inspector-empty", caseSelectionTableStyles["case-inspector-empty"])}
+            role="alert"
+          >
             <AlertCircle size={24} />
             <strong>详情加载失败</strong>
             <p>{activeDetailError}</p>
@@ -845,27 +945,43 @@ function CaseInspector({
 }) {
   const { definition } = detail;
   return (
-    <div className="case-inspector-content">
-      <header className="case-inspector-header">
+    <div
+      className={cn("case-inspector-content", caseSelectionTableStyles["case-inspector-content"])}
+    >
+      <header
+        className={cn("case-inspector-header", caseSelectionTableStyles["case-inspector-header"])}
+      >
         <div>
-          <span className="eyebrow">Case Definition</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Case Definition</span>
           <h2>{definition.displayName}</h2>
           <code>{definition.className}</code>
         </div>
-        <div className="case-inspector-header-actions">
-          <span className="storage-pill">v{definition.currentVersion}</span>
+        <div className={"case-inspector-header-actions"}>
+          <span className={cn("storage-pill", caseSelectionTableStyles["storage-pill"])}>
+            v{definition.currentVersion}
+          </span>
           {detail.canRun && definition.enabled && !definition.archived && detail.executable ? (
             <OpenRunDialogButton
               caseDefinitionId={definition.id}
-              className="button button-primary compact-button"
+              className={cn(
+                "button button-primary compact-button",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+                uiPatterns["compact-button"],
+              )}
             />
           ) : null}
-          <Link
-            className="button button-secondary compact-button"
+          <LinkButton
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
             href={`/cases/${encodeURIComponent(definition.id)}`}
           >
             完整详情与全部历史
-          </Link>
+          </LinkButton>
         </div>
       </header>
 
@@ -875,13 +991,22 @@ function CaseInspector({
         onDefinitionUpdated={onDefinitionUpdated}
         onVersionsChanged={onReload}
         managementActions={
-          <div className="case-inspector-delete-action">
+          <div
+            className={cn(
+              "case-inspector-delete-action",
+              caseSelectionTableStyles["case-inspector-delete-action"],
+            )}
+          >
             <div>
               <strong>删除用例</strong>
               <p>删除当前目录、版本和任务成员关系；既有执行记录仍保留。</p>
             </div>
             <Button disabled={pending} onClick={onDelete} type="button" variant="danger">
-              {pending ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+              {pending ? (
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+              ) : (
+                <Trash2 size={15} />
+              )}
               删除用例
             </Button>
           </div>
@@ -1035,7 +1160,7 @@ function DirectoryNode({
       )
     : latestOutcomes;
   const content = (
-    <div className="case-tree-children">
+    <div className={cn("case-tree-children", caseSelectionTableStyles["case-tree-children"])}>
       {visibleDirectories.map((directory) => (
         <DirectoryNode
           source={source}
@@ -1074,7 +1199,10 @@ function DirectoryNode({
         return (
           <div
             aria-selected={activeCaseId === item.id}
-            className={`case-tree-case ${activeCaseId === item.id ? "active-case" : ""}`}
+            className={cn(
+              caseSelectionTableStyles["case-tree-case"],
+              `case-tree-case ${activeCaseId === item.id ? "active-case" : ""}`,
+            )}
             key={item.id}
             role="treeitem"
           >
@@ -1088,7 +1216,7 @@ function DirectoryNode({
             ) : null}
             <Link
               aria-label={`查看 ${item.displayName} 详情`}
-              className="case-tree-activate"
+              className={cn("case-tree-activate", caseSelectionTableStyles["case-tree-activate"])}
               href={`/cases/${encodeURIComponent(item.id)}`}
             >
               <FileCode2 size={16} aria-hidden="true" />
@@ -1098,14 +1226,19 @@ function DirectoryNode({
               </span>
               <small>{item.methodCount} 个方法</small>
               {outcomeLabel ? (
-                <span className={`batch-status ${outcomeBadgeClass(latestRun)}`}>
+                <Badge
+                  className={cn(
+                    caseSelectionTableStyles["batch-status"],
+                    `batch-status ${outcomeBadgeClass(latestRun)}`,
+                  )}
+                >
                   {outcomeLabel}
-                </span>
+                </Badge>
               ) : null}
             </Link>
             <Button
               aria-label={`快速预览 ${item.displayName}`}
-              className="case-tree-preview"
+              className={cn("case-tree-preview", caseSelectionTableStyles["case-tree-preview"])}
               onClick={() => onActivate(item.id)}
               title="在右侧快速预览"
               type="button"
@@ -1160,42 +1293,42 @@ function DirectoryNode({
         : "unchecked"
     : selectionState(selected, selectableIds);
   return (
-    <details
+    <Disclosure
+      header={
+        <>
+          <Input
+            aria-label={`选择文件夹 ${node.path}（${source ? count : selectableIds.length} 个用例）`}
+            checked={selecting ?? directorySelection === "checked"}
+            disabled={collecting || !canSelectDirectory || (!source && selectableIds.length === 0)}
+            onChange={async () => {
+              if (!source) return onToggleDirectory(selectableIds);
+              setSelecting(directorySelection !== "checked");
+              try {
+                await onSelectDirectory(node.path);
+              } finally {
+                setSelecting(undefined);
+              }
+            }}
+            onClick={(event) => event.stopPropagation()}
+            indeterminate={directorySelection === "mixed"}
+            type="checkbox"
+          />
+          <Folder size={17} aria-hidden="true" />
+          <strong>{node.name}</strong>
+          <span>{count} 个用例</span>
+        </>
+      }
       aria-selected={false}
-      className="case-tree-directory"
-      onToggle={(event) => {
-        onExpansion(expansionKey, event.currentTarget.open);
-        setOpen(event.currentTarget.open);
+      className={cn("case-tree-directory", caseSelectionTableStyles["case-tree-directory"])}
+      onOpenChange={(expanded) => {
+        onExpansion(expansionKey, expanded);
+        setOpen(expanded);
       }}
       open={renderedOpen}
       role="treeitem"
     >
-      <summary>
-        <Input
-          aria-label={`选择文件夹 ${node.path}（${source ? count : selectableIds.length} 个用例）`}
-          checked={selecting ?? directorySelection === "checked"}
-          disabled={collecting || !canSelectDirectory || (!source && selectableIds.length === 0)}
-          onChange={async () => {
-            if (!source) return onToggleDirectory(selectableIds);
-            setSelecting(directorySelection !== "checked");
-            try {
-              await onSelectDirectory(node.path);
-            } finally {
-              setSelecting(undefined);
-            }
-          }}
-          onClick={(event) => event.stopPropagation()}
-          ref={(input) => {
-            if (input) input.indeterminate = directorySelection === "mixed";
-          }}
-          type="checkbox"
-        />
-        <Folder size={17} aria-hidden="true" />
-        <strong>{node.name}</strong>
-        <span>{count} 个用例</span>
-      </summary>
       {renderedOpen ? content : null}
-    </details>
+    </Disclosure>
   );
 }
 
@@ -1252,3 +1385,52 @@ function batchesOf<T>(items: readonly T[], size: number): T[][] {
   }
   return batches;
 }
+
+const caseSelectionTableStyles = {
+  "batch-status": uiPatterns["batch-status"],
+  "batch-status-blocked": "bg-warning/10 text-warning",
+  "batch-status-failed": "bg-destructive/10 text-destructive",
+  "batch-status-neutral": "bg-muted text-muted-foreground",
+  "batch-status-succeeded": "bg-success/10 text-success",
+  "case-browser-pane":
+    "min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs flex flex-col min-h-0 [&_>_*]:[flex:0_0_auto] [&_>_.case-directory-scroll]:[flex:1_1_0] [&_>_.inline-feedback]:[margin:8px_12px_0]",
+  "case-browser-search":
+    "grid grid-cols-[auto_minmax(0,_1fr)_auto_auto] items-center gap-2 border-b border-solid border-border p-3 text-muted-foreground py-2",
+  "case-browser-summary":
+    "flex min-h-9 items-center justify-between gap-3 py-0 px-3.5 text-muted-foreground text-xs [&_strong]:text-info",
+  "case-directory-scroll": "min-h-0 overflow-auto [overscroll-behavior:contain]",
+  "case-directory-tree": "grid gap-[5px] [padding:8px_10px_16px]",
+  "case-inspector-content":
+    "grid gap-3 p-4 [&_>_*]:min-w-0 [&_.case-execution-history_.data-table]:min-w-[760px]",
+  "case-inspector-delete-action":
+    "flex items-center justify-between gap-4 border-t border-solid border-border pt-3.5 [&_p]:[margin:4px_0_0] [&_p]:text-muted-foreground [&_p]:text-xs [&_.ui-button]:[flex:0_0_auto]",
+  "case-inspector-empty":
+    "grid min-h-full [place-content:center] justify-items-center gap-2 p-8 text-muted-foreground text-center [&_strong]:text-foreground [&_p]:max-w-[360px] [&_p]:m-0",
+  "case-inspector-header":
+    "flex min-w-0 items-start justify-between gap-4 border-b border-solid border-border [padding:2px_2px_16px] [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-[5px] [&_h2]:m-0 [&_h2]:text-2xl [&_h2]:[overflow-wrap:anywhere] [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere] [&_.case-inspector-header-actions]:justify-items-end [&_.case-inspector-header-actions]:[flex:0_0_auto]",
+  "case-inspector-pane":
+    "min-w-0 overflow-auto border border-solid border-border rounded-xl bg-muted shadow-xs min-h-0 [overscroll-behavior:contain]",
+  "case-library-workspace":
+    "grid h-[clamp(560px,_calc(100vh_-_300px),_820px)] min-w-0 grid-cols-[minmax(320px,_0.72fr)_minmax(440px,_1.28fr)] gap-3.5 max-[1181px]:grid-cols-[minmax(300px,_0.68fr)_minmax(420px,_1.32fr)]",
+  "case-selection-stats":
+    "flex flex-wrap items-center [align-content:flex-start] gap-2 py-2 px-3 border-b border-solid border-border bg-muted text-muted-foreground text-xs [&_strong]:text-foreground [&_>_span]:[flex:0_0_auto] [&_>_span:first-child]:[flex-basis:100%]",
+  "case-selection-toolbar":
+    "flex flex-wrap items-center gap-2 [border-block:1px_solid_var(--border)] py-[9px] px-3 py-2 [&_.ui-select]:min-w-0 [&_.ui-select]:[flex:1_1_150px] [@media(min-height:_900px)]:[&_.ui-select]:[flex:1_1_260px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
+  "case-tree-activate":
+    "grid min-w-0 min-h-11 grid-cols-[auto_minmax(0,_1fr)_auto_auto] items-center justify-stretch gap-2 py-1 px-1.5 rounded-md text-inherit text-left [text-decoration:none] [&:hover]:bg-info/10 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal [&_code]:[overflow-wrap:anywhere] [&_code]:whitespace-normal [&_code]:text-muted-foreground [&_code]:text-xs [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:whitespace-nowrap max-[1600px]:[&_small]:hidden max-[1440px]:grid-cols-[auto_minmax(96px,_1fr)] max-[1440px]:gap-1.5 max-[1440px]:[&_.batch-status]:hidden [&_.batch-status]:self-center",
+  "case-tree-case":
+    "grid min-w-0 grid-cols-[auto_minmax(0,_1fr)_auto] items-center gap-[5px] border border-solid border-transparent rounded-lg py-[3px] px-1 [&:hover]:bg-muted [&.active-case]:border-muted [&.active-case]:bg-info/10",
+  "case-tree-children": "grid min-w-0 gap-1",
+  "case-tree-directory":
+    "min-w-0 border-l border-solid border-border ml-[7px] pl-[9px] [&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:min-w-0 [&_.ui-disclosure-label]:min-h-9 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[7px] [&_.ui-disclosure-label]:rounded-md [&_.ui-disclosure-label]:py-0 [&_.ui-disclosure-label]:px-1.5 [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label:hover]:bg-muted [&_.ui-disclosure-label:hover]:text-foreground [&_.ui-disclosure-label::marker]:text-muted-foreground [&_.ui-disclosure-label_strong]:overflow-hidden [&_.ui-disclosure-label_strong]:text-ellipsis [&_.ui-disclosure-label_strong]:whitespace-nowrap [&_.ui-disclosure-label_>_span:last-child]:ml-auto [&_.ui-disclosure-label_>_span:last-child]:text-xs [&_.ui-disclosure-label_>_span:last-child]:whitespace-nowrap max-[1440px]:ml-[3px] max-[1440px]:pl-1.5",
+  "case-tree-preview": "[&.ui-button]:w-8 [&.ui-button]:h-8 [&.ui-button]:p-0",
+  "inline-feedback":
+    "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
+  "list-filter-progress": "inline-flex items-center gap-2 text-muted-foreground text-xs",
+  "selection-actions":
+    "inline-flex items-center gap-2 whitespace-nowrap [&_select]:h-9 [&_select]:max-w-[260px] [&_select]:border [&_select]:border-solid [&_select]:border-border [&_select]:rounded-lg [&_select]:[padding:0_32px_0_11px] [&_select]:bg-card [&_select]:text-foreground",
+  "selection-toolbar":
+    "flex min-h-14.5 items-center justify-between gap-3 py-2.5 px-4.5 border-b border-solid border-border bg-card text-muted-foreground text-xs",
+  "storage-pill":
+    "inline-flex items-center gap-2 border border-solid border-border rounded-full py-[9px] px-[13px] bg-card text-muted-foreground text-xs font-semibold shadow-xs",
+} as const;

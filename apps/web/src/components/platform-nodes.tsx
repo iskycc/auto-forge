@@ -1,4 +1,14 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Badge } from "@/components/ui/badge";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -19,13 +29,15 @@ export function PlatformNodes({
   canManage: boolean;
 }) {
   return (
-    <div className="settings-stack">
-      <p className="settings-note">
+    <div className={cn("settings-stack", uiPatterns["settings-stack"])}>
+      <p className={cn("settings-note", uiPatterns["settings-note"])}>
         节点启动后自动登记。填写各节点之间可直接访问的 IP（或域名）和端口，例如
         http://10.20.0.11:3000。请使用节点自身地址；日志归属由节点 ID 标识，修改地址不会搬移日志。
       </p>
       {nodes.length === 0 ? (
-        <div className="content-card">尚无平台节点，请先启动 Full 分布式节点。</div>
+        <Card as="div" className={cn("content-card", uiPatterns["content-card"])}>
+          尚无平台节点，请先启动 Full 分布式节点。
+        </Card>
       ) : null}
       {nodes.map((node) => (
         <PlatformNodeForm
@@ -106,39 +118,50 @@ function PlatformNodeForm({
   }
   return (
     <form
-      className="content-card settings-section"
+      className={cn(
+        "content-card settings-section",
+        uiPatterns["content-card"],
+        uiPatterns["settings-section"],
+      )}
       onSubmit={submit}
       aria-label={`平台节点 ${node.name}`}
     >
-      <div className="management-toolbar">
+      <div className={cn("management-toolbar", uiPatterns["management-toolbar"])}>
         <h2>{node.name === node.id ? `平台节点 · ${node.id.slice(-8)}` : node.name}</h2>
-        {current ? <span className="permission-chip">当前节点</span> : null}
-        <span className="permission-chip">
+        {current ? (
+          <Badge className={cn("permission-chip", uiPatterns["permission-chip"])}>当前节点</Badge>
+        ) : null}
+        <Badge className={cn("permission-chip", uiPatterns["permission-chip"])}>
           {node.internalBaseUrl ? "地址已配置" : "待配置地址"}
-        </span>
+        </Badge>
       </div>
-      <details className="management-disclosure">
-        <summary>节点标识与配置时间</summary>
-        <p className="settings-note">节点 ID：{node.id}</p>
-        <p className="settings-note">
+      <Disclosure
+        header={<>节点标识与配置时间</>}
+        className={cn("management-disclosure", platformNodesStyles["management-disclosure"])}
+      >
+        <p className={cn("settings-note", uiPatterns["settings-note"])}>节点 ID：{node.id}</p>
+        <p className={cn("settings-note", uiPatterns["settings-note"])}>
           连通检查通过已保存地址访问目标，校验共享密钥与节点身份。检查结果仅代表检查时刻，不自动轮询。
         </p>
-      </details>
+      </Disclosure>
       {!node.internalBaseUrl ? (
         <p role="status">尚未配置内部地址，其他节点暂时无法读取本节点日志。</p>
       ) : null}
       {check ? (
-        <p className="settings-note" role="status">
+        <p className={cn("settings-note", uiPatterns["settings-note"])} role="status">
           {check.message} · {formatPlatformDateTime(check.checkedAt)}
         </p>
       ) : null}
       {error ? (
-        <div className="auth-error" role="alert">
+        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
           {error}
-        </div>
+        </Notice>
       ) : null}
-      <fieldset className="settings-form-fieldset" disabled={!canManage || pending}>
-        <div className="settings-grid-form">
+      <fieldset
+        className={cn("settings-form-fieldset", platformNodesStyles["settings-form-fieldset"])}
+        disabled={!canManage || pending}
+      >
+        <div className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}>
           <label>
             节点名称
             <Input name="name" defaultValue={node.name} maxLength={120} required />
@@ -153,7 +176,7 @@ function PlatformNodeForm({
             />
           </label>
         </div>
-        <div className="settings-form-actions">
+        <div className={cn("settings-form-actions", platformNodesStyles["settings-form-actions"])}>
           <Button
             type="button"
             disabled={checking || !node.internalBaseUrl}
@@ -161,7 +184,7 @@ function PlatformNodeForm({
           >
             {checking ? "检查中…" : "检查连通性"}
           </Button>
-          <Button className="primary-button" type="submit">
+          <Button className={cn("primary-button", uiPatterns["primary-button"])} type="submit">
             {pending ? "正在保存…" : "保存节点地址"}
           </Button>
         </div>
@@ -169,3 +192,12 @@ function PlatformNodeForm({
     </form>
   );
 }
+
+const platformNodesStyles = {
+  "management-disclosure":
+    "min-w-0 p-3 border border-solid border-border rounded-lg [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&[data-open=true]_.ui-disclosure-label]:mb-3",
+  "settings-form-actions":
+    "flex justify-end gap-2.5 [&.management-sticky-actions]:bottom-3 [&.management-sticky-actions]:border [&.management-sticky-actions]:border-solid [&.management-sticky-actions]:border-border [&.management-sticky-actions]:rounded-xl [&.management-sticky-actions]:shadow-xs",
+  "settings-form-fieldset":
+    "contents min-w-0 m-0 border-0 p-0 [&:disabled]:opacity-78 [&[hidden]]:hidden",
+} as const;

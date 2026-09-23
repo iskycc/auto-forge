@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, Textarea } from "@/components/ui";
 
@@ -64,7 +66,10 @@ export function CaseDefinitionEditor({
   }
 
   return (
-    <form className="settings-grid-form" onSubmit={(event) => void submit(event)}>
+    <form
+      className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}
+      onSubmit={(event) => void submit(event)}
+    >
       <label>
         显示名称
         <Input name="displayName" required maxLength={200} defaultValue={definition.displayName} />
@@ -73,7 +78,7 @@ export function CaseDefinitionEditor({
         标签（逗号分隔）
         <Input name="tags" maxLength={2000} defaultValue={definition.tags.join(", ")} />
       </label>
-      <label className="settings-wide-field">
+      <label className={cn("settings-wide-field", uiPatterns["settings-wide-field"])}>
         描述
         <Textarea
           name="description"
@@ -82,24 +87,40 @@ export function CaseDefinitionEditor({
           defaultValue={definition.description}
         />
       </label>
-      <label className="checkbox-field">
+      <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
         <Input name="enabled" type="checkbox" defaultChecked={definition.enabled} />
         启用（禁用后新建批次不再执行该用例）
       </label>
-      <label className="checkbox-field">
+      <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
         <Input name="archived" type="checkbox" defaultChecked={definition.archived} />
         归档（保留历史记录，从日常列表中隐藏）
       </label>
-      <div className="settings-form-actions">
+      <div
+        className={cn("settings-form-actions", caseDefinitionEditorStyles["settings-form-actions"])}
+      >
         {error ? (
-          <small className="form-error" role="alert">
+          <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
             {error}
           </small>
         ) : null}
-        <Button className="primary-button" disabled={pending} type="submit">
-          {pending ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />} 保存修改
+        <Button
+          className={cn("primary-button", uiPatterns["primary-button"])}
+          disabled={pending}
+          type="submit"
+        >
+          {pending ? (
+            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+          ) : (
+            <Save size={15} />
+          )}{" "}
+          保存修改
         </Button>
       </div>
     </form>
   );
 }
+
+const caseDefinitionEditorStyles = {
+  "settings-form-actions":
+    "flex justify-end gap-2.5 [&.management-sticky-actions]:bottom-3 [&.management-sticky-actions]:border [&.management-sticky-actions]:border-solid [&.management-sticky-actions]:border-border [&.management-sticky-actions]:rounded-xl [&.management-sticky-actions]:shadow-xs",
+} as const;

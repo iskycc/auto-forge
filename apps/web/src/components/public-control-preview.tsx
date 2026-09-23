@@ -1,10 +1,12 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import type { PublicPlatformStatistics } from "@autoforge/contracts";
 import { Activity, CheckCircle2, Clock3, RefreshCw, Server } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { formatPlatformTime } from "@/lib/platform-date-time";
 import { Button } from "./ui";
-import styles from "./public-dashboard.module.css";
+import styles from "./public-dashboard.styles";
 
 export function publicSnapshotPresentation(
   statistics: PublicPlatformStatistics,
@@ -61,7 +63,11 @@ export function PublicControlPreview({
           onClick={onRefresh}
           disabled={synchronizing}
         >
-          <RefreshCw aria-hidden="true" size={16} className={synchronizing ? "spin" : undefined} />
+          <RefreshCw
+            aria-hidden="true"
+            size={16}
+            className={synchronizing ? cn("spin", uiPatterns["spin"]) : undefined}
+          />
         </Button>
       </header>
       <div className={styles.previewContent}>

@@ -1,4 +1,9 @@
 "use client";
+import { Dialog } from "@/components/ui/dialog";
+
+import "@xterm/xterm/css/xterm.css";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button } from "@/components/ui";
 
@@ -52,6 +57,9 @@ export function RunnerTerminal({
     void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]).then(
       ([{ Terminal: XtermTerminal }, { FitAddon: XtermFitAddon }]) => {
         if (disposed || !viewportRef.current) return;
+        const tokens = getComputedStyle(viewportRef.current);
+        const terminalColor = (name: string) =>
+          tokens.getPropertyValue(`--terminal-${name}`).trim();
         const terminal = new XtermTerminal({
           allowTransparency: false,
           convertEol: false,
@@ -63,18 +71,18 @@ export function RunnerTerminal({
           scrollback: 3_000,
           screenReaderMode: true,
           theme: {
-            background: "#111318",
-            foreground: "#e8eaed",
-            cursor: "#7db1ff",
-            selectionBackground: "#315f91aa",
-            black: "#111318",
-            red: "#ff6b6b",
-            green: "#69db7c",
-            yellow: "#ffd43b",
-            blue: "#74c0fc",
-            magenta: "#da77f2",
-            cyan: "#66d9e8",
-            white: "#f1f3f5",
+            background: terminalColor("background"),
+            foreground: terminalColor("foreground"),
+            cursor: terminalColor("cursor"),
+            selectionBackground: terminalColor("selection"),
+            black: terminalColor("background"),
+            red: terminalColor("red"),
+            green: terminalColor("green"),
+            yellow: terminalColor("yellow"),
+            blue: terminalColor("blue"),
+            magenta: terminalColor("magenta"),
+            cyan: terminalColor("cyan"),
+            white: terminalColor("white"),
           },
         });
         const fitAddon = new XtermFitAddon();
@@ -121,17 +129,6 @@ export function RunnerTerminal({
       fitAddonRef.current = null;
     };
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (expanded) setExpanded(false);
-      else closeTerminal();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  });
 
   async function connect(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -233,7 +230,11 @@ export function RunnerTerminal({
   return (
     <>
       <Button
-        className="button button-secondary"
+        className={cn(
+          "button button-secondary",
+          uiPatterns["button"],
+          uiPatterns["button-secondary"],
+        )}
         type="button"
         disabled={!available}
         title={unavailableReason}
@@ -242,90 +243,132 @@ export function RunnerTerminal({
         <TerminalSquare size={15} /> 终端浮窗
       </Button>
       {open && (
-        <div className="terminal-backdrop" role="presentation" onMouseDown={closeTerminal}>
-          <section
-            className={`terminal-window${expanded ? " terminal-window-expanded" : ""}`}
-            role="dialog"
-            aria-modal="true"
-            aria-label={`${runnerName} 直连终端`}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header className="terminal-titlebar">
-              <span className="terminal-window-controls" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
-              <span className="terminal-title">
-                <TerminalSquare size={15} />
-                <strong>{runnerName}</strong>
-                <small>Agent WebSocket</small>
-              </span>
-              <span className={`terminal-connection terminal-connection-${connectionState}`}>
-                <i />
-                {connectionLabel(connectionState)}
-              </span>
-              <Button
-                aria-label={expanded ? "还原终端窗口" : "放大终端窗口"}
-                aria-pressed={expanded}
-                onClick={toggleExpanded}
-                title={expanded ? "还原窗口" : "铺满窗口"}
-                type="button"
-                variant="ghost"
+        <Dialog
+          open
+          title={`${runnerName} 直连终端`}
+          onClose={closeTerminal}
+          onEscape={() => {
+            if (expanded) setExpanded(false);
+            else closeTerminal();
+          }}
+          className={cn(
+            "terminal-window",
+            runnerTerminalStyles["terminal-window"],
+            expanded && "terminal-window-expanded",
+            expanded && runnerTerminalStyles["terminal-window-expanded"],
+          )}
+          backdropClassName="terminal-backdrop"
+        >
+          <header className={cn("terminal-titlebar", runnerTerminalStyles["terminal-titlebar"])}>
+            <span className={cn("terminal-title", runnerTerminalStyles["terminal-title"])}>
+              <TerminalSquare size={15} />
+              <strong>{runnerName}</strong>
+              <small>Agent WebSocket</small>
+            </span>
+            <span
+              className={cn(
+                runnerTerminalStyles["terminal-connection"],
+                `terminal-connection terminal-connection terminal-connection-${connectionState}`,
+              )}
+            >
+              <i />
+              {connectionLabel(connectionState)}
+            </span>
+            <Button
+              aria-label={expanded ? "还原终端窗口" : "放大终端窗口"}
+              aria-pressed={expanded}
+              onClick={toggleExpanded}
+              title={expanded ? "还原窗口" : "铺满窗口"}
+              type="button"
+              variant="ghost"
+            >
+              {expanded ? (
+                <Minimize2 aria-hidden="true" size={14} />
+              ) : (
+                <Maximize2 aria-hidden="true" size={14} />
+              )}
+            </Button>
+            <Button type="button" aria-label="关闭终端" onClick={closeTerminal}>
+              <X size={16} />
+            </Button>
+          </header>
+          <div className={cn("terminal-stage", runnerTerminalStyles["terminal-stage"])}>
+            <div
+              className={cn("terminal-viewport", runnerTerminalStyles["terminal-viewport"])}
+              ref={viewportRef}
+            />
+            {(connectionState === "authorization" || connectionState === "connecting") && (
+              <form
+                className={cn("terminal-auth-card", runnerTerminalStyles["terminal-auth-card"])}
+                onSubmit={connect}
               >
-                {expanded ? (
-                  <Minimize2 aria-hidden="true" size={14} />
-                ) : (
-                  <Maximize2 aria-hidden="true" size={14} />
-                )}
-              </Button>
-              <Button type="button" aria-label="关闭终端" onClick={closeTerminal}>
-                <X size={16} />
-              </Button>
-            </header>
-            <div className="terminal-stage">
-              <div className="terminal-viewport" ref={viewportRef} />
-              {(connectionState === "authorization" || connectionState === "connecting") && (
-                <form className="terminal-auth-card" onSubmit={connect}>
-                  <span className="terminal-auth-icon">
-                    <ShieldCheck size={20} />
-                  </span>
-                  <strong>打开受控终端</strong>
-                  <p>将使用当前登录会话和独立终端权限换取一次性短时票据。</p>
-                  {error && <span className="terminal-auth-error">{error}</span>}
-                  <Button
-                    className="button button-primary"
-                    type="submit"
-                    disabled={connectionState === "connecting"}
-                  >
-                    {connectionState === "connecting" ? (
-                      <LoaderCircle className="spin" size={15} />
-                    ) : (
-                      <TerminalSquare size={15} />
+                <span
+                  className={cn("terminal-auth-icon", runnerTerminalStyles["terminal-auth-icon"])}
+                >
+                  <ShieldCheck size={20} />
+                </span>
+                <strong>打开受控终端</strong>
+                <p>将使用当前登录会话和独立终端权限换取一次性短时票据。</p>
+                {error && (
+                  <span
+                    className={cn(
+                      "terminal-auth-error",
+                      runnerTerminalStyles["terminal-auth-error"],
                     )}
-                    {connectionState === "connecting" ? "正在连接" : "连接终端"}
-                  </Button>
-                </form>
-              )}
-              {connectionState === "closed" && (
-                <div className="terminal-closed-card">
-                  <strong>终端连接已结束</strong>
-                  <p>{error ?? "关闭浮窗后可重新创建受控会话。"}</p>
-                  <Button
-                    className="button button-primary"
-                    type="button"
-                    onClick={retryTerminalConnection}
                   >
-                    重新连接
-                  </Button>
-                  <Button className="button button-secondary" type="button" onClick={closeTerminal}>
-                    关闭
-                  </Button>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
+                    {error}
+                  </span>
+                )}
+                <Button
+                  className={cn(
+                    "button button-primary",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                  )}
+                  type="submit"
+                  disabled={connectionState === "connecting"}
+                >
+                  {connectionState === "connecting" ? (
+                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                  ) : (
+                    <TerminalSquare size={15} />
+                  )}
+                  {connectionState === "connecting" ? "正在连接" : "连接终端"}
+                </Button>
+              </form>
+            )}
+            {connectionState === "closed" && (
+              <div
+                className={cn("terminal-closed-card", runnerTerminalStyles["terminal-closed-card"])}
+              >
+                <strong>终端连接已结束</strong>
+                <p>{error ?? "关闭浮窗后可重新创建受控会话。"}</p>
+                <Button
+                  className={cn(
+                    "button button-primary",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                  )}
+                  type="button"
+                  onClick={retryTerminalConnection}
+                >
+                  重新连接
+                </Button>
+                <Button
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
+                  type="button"
+                  onClick={closeTerminal}
+                >
+                  关闭
+                </Button>
+              </div>
+            )}
+          </div>
+        </Dialog>
       )}
     </>
   );
@@ -383,3 +426,29 @@ function connectionLabel(state: ConnectionState): string {
   if (state === "closed") return "已断开";
   return "待连接";
 }
+
+const terminalPromptSurface =
+  "absolute left-1/2 top-1/2 z-10 flex w-[min(380px,calc(100%-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border bg-card p-6 text-card-foreground shadow-lg [&_strong]:text-lg [&_p]:text-sm [&_p]:leading-6 [&_p]:text-muted-foreground [&_.button]:self-start";
+
+const runnerTerminalStyles = {
+  "terminal-auth-card": `${terminalPromptSurface} [&_label]:grid [&_label]:gap-2 [&_label]:text-sm [&_label]:font-medium`,
+  "terminal-auth-error": "text-destructive text-sm leading-6",
+  "terminal-auth-icon": "grid w-10.5 h-10.5 place-items-center rounded-lg bg-muted text-foreground",
+
+  "terminal-closed-card": terminalPromptSurface,
+  "terminal-connection":
+    "inline-flex items-center gap-1.5 text-muted-foreground text-xs font-semibold [&_i]:w-[7px] [&_i]:h-[7px] [&_i]:rounded-full [&_i]:bg-border [&.terminal-connection-connected]:text-success [&.terminal-connection-connected]:[&_i]:bg-success/10 [&.terminal-connection-connected]:[&_i]:shadow-xs [&.terminal-connection-connecting]:[&_i]:bg-destructive/10 [&.terminal-connection-connecting]:[&_i]:animate-pulse [&.terminal-connection-connecting]:[&_i]:motion-reduce:animate-none",
+  "terminal-stage": "relative min-h-0 overflow-hidden",
+  "terminal-title":
+    "flex min-w-0 items-center justify-center gap-2 text-xs [&_strong]:overflow-hidden [&_strong]:max-w-[240px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small]:text-muted-foreground [&_small]:text-xs",
+  "terminal-titlebar":
+    "grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-3 border-b border-border bg-card px-4 text-foreground select-none [&>button]:size-8 [&>button]:border-0 [&>button]:bg-transparent [&>button]:p-0 [&>button]:text-muted-foreground [&>button:hover]:bg-accent [&>button:hover]:text-foreground",
+  "terminal-viewport":
+    "absolute [inset:0] py-3.5 px-3 bg-[var(--terminal-background)] [&_.xterm]:h-full [&_.xterm-viewport]:[scrollbar-color:var(--log-border)_transparent] [&_.xterm-viewport]:[scrollbar-width:thin]",
+  "terminal-window":
+    "grid w-[min(1120px,_92vw)] h-[min(760px,_84vh)] min-h-[430px] [grid-template-rows:48px_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-[var(--terminal-background)] shadow-lg transition-colors duration-150 motion-reduce:transition-none",
+  "terminal-window-controls":
+    "inline-flex gap-[7px] [&_i]:w-2.5 [&_i]:h-2.5 [&_i]:rounded-full [&_i]:bg-destructive/10 [&_i:nth-child(2)]:bg-destructive/10 [&_i:nth-child(3)]:bg-success/10",
+  "terminal-window-expanded":
+    "w-[calc(100vw_-_24px)] h-[calc(100vh_-_24px)] max-w-[calc(100vw-24px)] max-h-[calc(100dvh-24px)] rounded-lg",
+} as const;

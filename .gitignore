@@ -51,3 +51,8 @@ Thumbs.db
 
 # Jenkins plugin integration test harness and evidence
 jenkins-test/
+
+# Local UI concepts and visual review screenshots
+/output/
+/docs/design/ant-design-ui/*.png
+/docs/design/ant-design-ui-audit/*.png

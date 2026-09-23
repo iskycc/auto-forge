@@ -1,4 +1,6 @@
 "use client";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   suiteDirectoryManifestSchema,
@@ -46,7 +48,14 @@ export function CachedSuiteDirectory({
         onRefresh={result.refresh}
       />
       {result.error ? (
-        <div role="alert" className="inline-feedback error">
+        <div
+          role="alert"
+          className={cn(
+            "inline-feedback error",
+            cachedSuiteDirectoryStyles["inline-feedback"],
+            uiPatterns["error"],
+          )}
+        >
           {result.error}
           <Button onClick={result.refresh}>重试</Button>
         </div>
@@ -125,3 +134,8 @@ function SuiteTree({
     </>
   );
 }
+
+const cachedSuiteDirectoryStyles = {
+  "inline-feedback":
+    "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
+} as const;

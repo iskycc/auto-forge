@@ -1,4 +1,22 @@
 "use client";
+import { LinkButton } from "@/components/ui/link-button";
+
+import { Notice } from "@/components/ui/notice";
+
+import { Dialog } from "@/components/ui/dialog";
+import { Tabs } from "./ui/tabs";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   failureAnalysisRerunProofLookupResultSchema,
@@ -66,7 +84,6 @@ import {
 } from "@/lib/failure-analysis-preferences";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { ExpandableText } from "./expandable-text";
-import { useDialogInteraction } from "./use-dialog-interaction";
 import { DialogDiscardPrompt } from "./dialog-discard-prompt";
 import { useToast } from "@/components/ui-feedback";
 
@@ -632,40 +649,63 @@ export function FailureAnalysisWorkspace({
 
   return (
     <>
-      <section
+      <Card
+        as="section"
         aria-hidden={workspaceBlocked ? true : undefined}
-        className="content-card failure-analysis-shell"
+        className={cn(
+          "content-card failure-analysis-shell",
+          uiPatterns["content-card"],
+          failureAnalysisWorkspaceStyles["failure-analysis-shell"],
+        )}
         inert={workspaceBlocked ? true : undefined}
       >
-        <div className="failure-analysis-tabs" role="tablist" aria-label="用例分析步骤">
-          <Button
-            aria-selected={view === "claim"}
-            className={view === "claim" ? "is-active" : ""}
-            onClick={() => changeView("claim")}
-            role="tab"
-            type="button"
-          >
-            认领失败用例
-          </Button>
-          <Button
-            aria-selected={view === "workbench"}
-            className={view === "workbench" ? "is-active" : ""}
-            onClick={() => changeView("workbench")}
-            role="tab"
-            type="button"
-          >
-            我的分析 <span>{myClaimCount}</span>
-          </Button>
-        </div>
+        <Tabs
+          className="failure-analysis-tabs mb-4"
+          label="用例分析步骤"
+          value={view}
+          items={[
+            { key: "claim", label: "认领失败用例" },
+            {
+              key: "workbench",
+              label: (
+                <>
+                  我的分析 <span>{myClaimCount}</span>
+                </>
+              ),
+            },
+          ]}
+          onChange={changeView}
+        />
 
-        {error ? <p className="form-error">{error}</p> : null}
+        {error ? (
+          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+            {error}
+          </Notice>
+        ) : null}
 
         {view === "claim" ? (
-          <div className="failure-analysis-claim-view" role="tabpanel">
-            <form className="failure-analysis-filter" onSubmit={submitSearch}>
+          <div
+            className={cn(
+              "failure-analysis-claim-view",
+              failureAnalysisWorkspaceStyles["failure-analysis-claim-view"],
+            )}
+            role="tabpanel"
+          >
+            <form
+              className={cn(
+                "failure-analysis-filter",
+                failureAnalysisWorkspaceStyles["failure-analysis-filter"],
+              )}
+              onSubmit={submitSearch}
+            >
               <label>
                 类路径、用例名称或失败堆栈
-                <span className="failure-analysis-search-control">
+                <span
+                  className={cn(
+                    "failure-analysis-search-control",
+                    failureAnalysisWorkspaceStyles["failure-analysis-search-control"],
+                  )}
+                >
                   <Search aria-hidden="true" size={15} />
                   <Input
                     aria-label="搜索待认领用例"
@@ -686,7 +726,12 @@ export function FailureAnalysisWorkspace({
                 description="正在按当前筛选与排序条件整理可认领用例。"
               />
             ) : candidates.length === 0 ? (
-              <div className="failure-analysis-empty">
+              <div
+                className={cn(
+                  "failure-analysis-empty",
+                  failureAnalysisWorkspaceStyles["failure-analysis-empty"],
+                )}
+              >
                 <CheckCircle2 size={24} />
                 <strong>
                   {query ? "没有匹配的待认领用例" : "当前任务没有可认领的最终失败用例"}
@@ -728,15 +773,36 @@ export function FailureAnalysisWorkspace({
             />
           </div>
         ) : (
-          <div className="failure-analysis-workbench" role="tabpanel">
-            <div className="failure-analysis-workbench-heading">
+          <div
+            className={cn(
+              "failure-analysis-workbench",
+              failureAnalysisWorkspaceStyles["failure-analysis-workbench"],
+            )}
+            role="tabpanel"
+          >
+            <div
+              className={cn(
+                "failure-analysis-workbench-heading",
+                failureAnalysisWorkspaceStyles["failure-analysis-workbench-heading"],
+              )}
+            >
               <div>
-                <span className="eyebrow">My analysis</span>
+                <span className={cn("eyebrow", uiPatterns["eyebrow"])}>My analysis</span>
                 <h2>我的分析队列</h2>
                 <p>勾选多个用例可批量填写相同分析结论；所有状态与证明均由服务端持久化。</p>
               </div>
-              <div className="failure-analysis-workbench-actions">
-                <label className="failure-analysis-order-control">
+              <div
+                className={cn(
+                  "failure-analysis-workbench-actions",
+                  failureAnalysisWorkspaceStyles["failure-analysis-workbench-actions"],
+                )}
+              >
+                <label
+                  className={cn(
+                    "failure-analysis-order-control",
+                    failureAnalysisWorkspaceStyles["failure-analysis-order-control"],
+                  )}
+                >
                   <span>排列方式</span>
                   <Select
                     aria-label="我的分析排序字段"
@@ -751,7 +817,12 @@ export function FailureAnalysisWorkspace({
                     ))}
                   </Select>
                 </label>
-                <label className="failure-analysis-order-control">
+                <label
+                  className={cn(
+                    "failure-analysis-order-control",
+                    failureAnalysisWorkspaceStyles["failure-analysis-order-control"],
+                  )}
+                >
                   <span>状态分组</span>
                   <Select
                     aria-label="分析完成状态分组"
@@ -765,7 +836,12 @@ export function FailureAnalysisWorkspace({
                     <option value="completed_first">已完成在前</option>
                   </Select>
                 </label>
-                <label className="failure-analysis-completed-filter">
+                <label
+                  className={cn(
+                    "failure-analysis-completed-filter",
+                    failureAnalysisWorkspaceStyles["failure-analysis-completed-filter"],
+                  )}
+                >
                   <Input
                     checked={includeCompleted}
                     disabled={loadingClaims}
@@ -800,10 +876,21 @@ export function FailureAnalysisWorkspace({
                 </Button>
               </div>
             </div>
-            <form className="failure-analysis-filter" onSubmit={submitAnalysisSearch}>
+            <form
+              className={cn(
+                "failure-analysis-filter",
+                failureAnalysisWorkspaceStyles["failure-analysis-filter"],
+              )}
+              onSubmit={submitAnalysisSearch}
+            >
               <label>
                 用例名称、类路径或失败堆栈
-                <span className="failure-analysis-search-control">
+                <span
+                  className={cn(
+                    "failure-analysis-search-control",
+                    failureAnalysisWorkspaceStyles["failure-analysis-search-control"],
+                  )}
+                >
                   <Search aria-hidden="true" size={15} />
                   <Input
                     aria-label="搜索我的分析"
@@ -824,7 +911,12 @@ export function FailureAnalysisWorkspace({
                 description="正在恢复你的认领状态、分析结论和证明材料。"
               />
             ) : claims.length === 0 ? (
-              <div className="failure-analysis-empty">
+              <div
+                className={cn(
+                  "failure-analysis-empty",
+                  failureAnalysisWorkspaceStyles["failure-analysis-empty"],
+                )}
+              >
                 <ClipboardCheck size={25} />
                 <strong>
                   {analysisQuery
@@ -853,7 +945,12 @@ export function FailureAnalysisWorkspace({
               </div>
             ) : (
               <>
-                <label className="failure-analysis-select-all">
+                <label
+                  className={cn(
+                    "failure-analysis-select-all",
+                    failureAnalysisWorkspaceStyles["failure-analysis-select-all"],
+                  )}
+                >
                   <Input
                     checked={allClaimsSelected}
                     disabled={!canManage || selectableClaims.length === 0}
@@ -871,16 +968,38 @@ export function FailureAnalysisWorkspace({
                     <small>{selectableClaims.length} 个可分析用例</small>
                   </span>
                 </label>
-                <div className="failure-analysis-grouped-list">
+                <div
+                  className={cn(
+                    "failure-analysis-grouped-list",
+                    failureAnalysisWorkspaceStyles["failure-analysis-grouped-list"],
+                  )}
+                >
                   {claimGroups.map((group) =>
                     group.claims.length > 0 ? (
-                      <section className="failure-analysis-claim-group" key={group.key}>
+                      <section
+                        className={cn(
+                          "failure-analysis-claim-group",
+                          failureAnalysisWorkspaceStyles["failure-analysis-claim-group"],
+                        )}
+                        key={group.key}
+                      >
                         <h3>
                           {group.label} <span>本页 {group.claims.length}</span>
                         </h3>
-                        <div className="failure-analysis-card-list">
+                        <div
+                          className={cn(
+                            "failure-analysis-card-list",
+                            failureAnalysisWorkspaceStyles["failure-analysis-card-list"],
+                          )}
+                        >
                           {group.claims.map((claim) => (
-                            <article className="failure-analysis-card" key={claim.id}>
+                            <article
+                              className={cn(
+                                "failure-analysis-card",
+                                failureAnalysisWorkspaceStyles["failure-analysis-card"],
+                              )}
+                              key={claim.id}
+                            >
                               <Input
                                 aria-label={`选择分析 ${claim.caseName}`}
                                 checked={selectedAnalysisIds.has(claim.id)}
@@ -894,11 +1013,26 @@ export function FailureAnalysisWorkspace({
                                 }
                                 type="checkbox"
                               />
-                              <div className="failure-analysis-card-main">
-                                <div className="failure-analysis-card-title">
+                              <div
+                                className={cn(
+                                  "failure-analysis-card-main",
+                                  failureAnalysisWorkspaceStyles["failure-analysis-card-main"],
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    "failure-analysis-card-title",
+                                    failureAnalysisWorkspaceStyles["failure-analysis-card-title"],
+                                  )}
+                                >
                                   <h3>{claim.caseName}</h3>
                                   <RecentSuccessBadge execution={claim.recentSuccessfulExecution} />
-                                  <span className={`analysis-status ${claim.status}`}>
+                                  <span
+                                    className={cn(
+                                      failureAnalysisWorkspaceStyles["analysis-status"],
+                                      `analysis-status ${claim.status}`,
+                                    )}
+                                  >
                                     {statusLabel(claim.status)}
                                   </span>
                                 </div>
@@ -915,7 +1049,12 @@ export function FailureAnalysisWorkspace({
                                   <dd>{categoryLabel(claim.category) ?? "尚未选择"}</dd>
                                 </div>
                               </dl>
-                              <div className="failure-analysis-card-actions">
+                              <div
+                                className={cn(
+                                  "failure-analysis-card-actions",
+                                  failureAnalysisWorkspaceStyles["failure-analysis-card-actions"],
+                                )}
+                              >
                                 <Button
                                   disabled={!canManage}
                                   onClick={() => setDialogClaims([claim])}
@@ -927,7 +1066,12 @@ export function FailureAnalysisWorkspace({
                                 </Button>
                                 {claim.status !== "completed" ? (
                                   <Button
-                                    className="failure-analysis-release-trigger"
+                                    className={cn(
+                                      "failure-analysis-release-trigger",
+                                      failureAnalysisWorkspaceStyles[
+                                        "failure-analysis-release-trigger"
+                                      ],
+                                    )}
                                     disabled={!canManage}
                                     onClick={() => setReleaseDialogClaim(claim)}
                                     size="compact"
@@ -957,7 +1101,7 @@ export function FailureAnalysisWorkspace({
             />
           </div>
         )}
-      </section>
+      </Card>
 
       {assignmentOpen ? (
         <FailureAnalysisAssignmentDialog
@@ -980,7 +1124,12 @@ export function FailureAnalysisWorkspace({
       !workspaceBlocked &&
       view === "claim" &&
       selectedRunIds.size > 0 ? (
-        <div className="failure-analysis-floating-action">
+        <div
+          className={cn(
+            "failure-analysis-floating-action",
+            failureAnalysisWorkspaceStyles["failure-analysis-floating-action"],
+          )}
+        >
           <span>已选择 {selectedRunIds.size} 个用例</span>
           {canAssign ? (
             <Button onClick={() => setAssignmentOpen(true)} type="button">
@@ -1074,66 +1223,89 @@ function ReleaseClaimDialog({
   }
 
   return (
-    <div
-      className="runner-update-overlay failure-analysis-confirm-overlay"
-      onClick={onClose}
-      role="presentation"
+    <Dialog
+      open
+      role="alertdialog"
+      zIndex={1100}
+      title={`取消认领 ${claim.caseName}`}
+      onClose={onClose}
+      className={cn(
+        "runner-update-dialog failure-analysis-release-dialog",
+        failureAnalysisWorkspaceStyles["runner-update-dialog"],
+        failureAnalysisWorkspaceStyles["failure-analysis-release-dialog"],
+      )}
+      backdropClassName="runner-update-overlay failure-analysis-confirm-overlay"
     >
-      <section
-        aria-label={`取消认领 ${claim.caseName}`}
-        aria-modal="true"
-        className="runner-update-dialog failure-analysis-release-dialog"
-        onClick={(event) => event.stopPropagation()}
-        role="alertdialog"
-      >
-        <header>
-          <span className="failure-analysis-release-icon" aria-hidden="true">
-            <UserMinus size={21} />
-          </span>
-          <div>
-            <strong>确认取消认领？</strong>
-            <p>“{claim.caseName}”将重新回到待认领列表，其他分析人员可以立即认领该用例。</p>
-          </div>
-        </header>
-        <label className="failure-analysis-field">
-          <span>
-            取消原因 <strong>*</strong>
-          </span>
-          <Textarea
-            autoFocus
-            maxLength={1_000}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="请说明误领、任务调整或交接原因"
-            rows={4}
-            value={reason}
-          />
-          <small>{reason.length}/1000</small>
-        </label>
-        <p className="failure-analysis-release-note">
-          取消原因会永久记录；当前未提交的分析内容不会带给下一位认领人。
-        </p>
-        {error ? <p className="form-error">{error}</p> : null}
-        <div className="dialog-actions">
-          <Button disabled={submitting} onClick={onClose} type="button" variant="secondary">
-            返回
-          </Button>
-          <Button
-            className="failure-analysis-confirm-action"
-            disabled={!normalizedReason || submitting}
-            onClick={() => void releaseClaim()}
-            type="button"
-            variant="danger"
-          >
-            {submitting ? (
-              <LoaderCircle className="spin" size={16} />
-            ) : (
-              <UserMinus aria-hidden="true" size={16} />
-            )}
-            确认取消认领
-          </Button>
+      <header>
+        <span
+          className={cn(
+            "failure-analysis-release-icon",
+            failureAnalysisWorkspaceStyles["failure-analysis-release-icon"],
+          )}
+          aria-hidden="true"
+        >
+          <UserMinus size={21} />
+        </span>
+        <div>
+          <strong>确认取消认领？</strong>
+          <p>“{claim.caseName}”将重新回到待认领列表，其他分析人员可以立即认领该用例。</p>
         </div>
-      </section>
-    </div>
+      </header>
+      <label
+        className={cn(
+          "failure-analysis-field",
+          failureAnalysisWorkspaceStyles["failure-analysis-field"],
+        )}
+      >
+        <span>
+          取消原因 <strong>*</strong>
+        </span>
+        <Textarea
+          autoFocus
+          maxLength={1_000}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="请说明误领、任务调整或交接原因"
+          rows={4}
+          value={reason}
+        />
+        <small>{reason.length}/1000</small>
+      </label>
+      <p
+        className={cn(
+          "failure-analysis-release-note",
+          failureAnalysisWorkspaceStyles["failure-analysis-release-note"],
+        )}
+      >
+        取消原因会永久记录；当前未提交的分析内容不会带给下一位认领人。
+      </p>
+      {error ? (
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+          {error}
+        </Notice>
+      ) : null}
+      <div className={"dialog-actions"}>
+        <Button disabled={submitting} onClick={onClose} type="button" variant="secondary">
+          返回
+        </Button>
+        <Button
+          className={cn(
+            "failure-analysis-confirm-action",
+            failureAnalysisWorkspaceStyles["failure-analysis-confirm-action"],
+          )}
+          disabled={!normalizedReason || submitting}
+          onClick={() => void releaseClaim()}
+          type="button"
+          variant="danger"
+        >
+          {submitting ? (
+            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+          ) : (
+            <UserMinus aria-hidden="true" size={16} />
+          )}
+          确认取消认领
+        </Button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -1159,18 +1331,53 @@ function CandidateTable({
   onSelectAll: (checked: boolean) => void;
 }) {
   return (
-    <div className="failure-analysis-table-wrap">
-      <table className="failure-analysis-table">
+    <div
+      className={cn(
+        "failure-analysis-table-wrap",
+        failureAnalysisWorkspaceStyles["failure-analysis-table-wrap"],
+      )}
+    >
+      <Table
+        className={cn(
+          "failure-analysis-table",
+          failureAnalysisWorkspaceStyles["failure-analysis-table"],
+        )}
+      >
         <colgroup>
-          <col className="failure-analysis-select-column" />
-          <col className="failure-analysis-name-column" />
-          <col className="failure-analysis-path-column" />
-          <col className="failure-analysis-stack-column" />
-          <col className="failure-analysis-status-column" />
+          <col
+            className={cn(
+              "failure-analysis-select-column",
+              failureAnalysisWorkspaceStyles["failure-analysis-select-column"],
+            )}
+          />
+          <col
+            className={cn(
+              "failure-analysis-name-column",
+              failureAnalysisWorkspaceStyles["failure-analysis-name-column"],
+            )}
+          />
+          <col
+            className={cn(
+              "failure-analysis-path-column",
+              failureAnalysisWorkspaceStyles["failure-analysis-path-column"],
+            )}
+          />
+          <col
+            className={cn(
+              "failure-analysis-stack-column",
+              failureAnalysisWorkspaceStyles["failure-analysis-stack-column"],
+            )}
+          />
+          <col
+            className={cn(
+              "failure-analysis-status-column",
+              failureAnalysisWorkspaceStyles["failure-analysis-status-column"],
+            )}
+          />
         </colgroup>
-        <thead>
-          <tr>
-            <th>
+        <TableHeader>
+          <TableRow>
+            <TableHead>
               <Input
                 aria-label="选择本页全部未认领用例"
                 checked={allAvailableSelected}
@@ -1178,7 +1385,7 @@ function CandidateTable({
                 onChange={(event) => onSelectAll(event.target.checked)}
                 type="checkbox"
               />
-            </th>
+            </TableHead>
             <SortableHeading
               active={sort === "case_name"}
               direction={direction}
@@ -1203,12 +1410,12 @@ function CandidateTable({
               label="认领状态"
               onClick={() => onSort("claim_status")}
             />
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {candidates.map((candidate) => (
-            <tr key={candidate.executionRunId}>
-              <td>
+            <TableRow key={candidate.executionRunId}>
+              <TableCell>
                 <Input
                   aria-label={`认领 ${candidate.caseName}`}
                   checked={selectedRunIds.has(candidate.executionRunId)}
@@ -1216,40 +1423,75 @@ function CandidateTable({
                   onChange={(event) => onToggle(candidate.executionRunId, event.target.checked)}
                   type="checkbox"
                 />
-              </td>
-              <td>
-                <strong className="failure-analysis-case-name" title={candidate.caseName}>
+              </TableCell>
+              <TableCell>
+                <strong
+                  className={cn(
+                    "failure-analysis-case-name",
+                    failureAnalysisWorkspaceStyles["failure-analysis-case-name"],
+                  )}
+                  title={candidate.caseName}
+                >
                   {candidate.caseName}
                 </strong>
-                <div className="failure-analysis-case-meta">
+                <div
+                  className={cn(
+                    "failure-analysis-case-meta",
+                    failureAnalysisWorkspaceStyles["failure-analysis-case-meta"],
+                  )}
+                >
                   <small>第 {candidate.attemptNumber} 次尝试</small>
                   <RecentSuccessBadge compact execution={candidate.recentSuccessfulExecution} />
                 </div>
-              </td>
-              <td>
-                <code className="failure-analysis-class-path" title={candidate.className}>
+              </TableCell>
+              <TableCell>
+                <code
+                  className={cn(
+                    "failure-analysis-class-path",
+                    failureAnalysisWorkspaceStyles["failure-analysis-class-path"],
+                  )}
+                  title={candidate.className}
+                >
                   {candidate.className}
                 </code>
-              </td>
-              <td>
-                <span className="failure-analysis-stack" title={candidate.failureSummary}>
+              </TableCell>
+              <TableCell>
+                <span
+                  className={cn(
+                    "failure-analysis-stack",
+                    failureAnalysisWorkspaceStyles["failure-analysis-stack"],
+                  )}
+                  title={candidate.failureSummary}
+                >
                   {candidate.failureSummary}
                 </span>
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 {candidate.claim ? (
-                  <span className={`analysis-status ${candidate.claim.status}`}>
+                  <span
+                    className={cn(
+                      failureAnalysisWorkspaceStyles["analysis-status"],
+                      `analysis-status ${candidate.claim.status}`,
+                    )}
+                  >
                     {statusLabel(candidate.claim.status)}
                     <small>{candidate.claim.claimantDisplayName}</small>
                   </span>
                 ) : (
-                  <span className="analysis-status available">待认领</span>
+                  <span
+                    className={cn(
+                      "analysis-status available",
+                      failureAnalysisWorkspaceStyles["analysis-status"],
+                    )}
+                  >
+                    待认领
+                  </span>
                 )}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -1265,7 +1507,10 @@ function RecentSuccessBadge({
   return (
     <span
       aria-label="同一任务近 5 批次执行有成功"
-      className="failure-analysis-recent-success"
+      className={cn(
+        "failure-analysis-recent-success",
+        failureAnalysisWorkspaceStyles["failure-analysis-recent-success"],
+      )}
       title={`同一任务最近 5 个更早批次中，批次 #${execution.batchSequenceNumber} 执行成功`}
     >
       <History aria-hidden="true" size={13} /> {compact ? "近 5 批成功" : "近 5 批次有成功"}
@@ -1289,7 +1534,12 @@ function Pagination({
   unit: string;
 }) {
   return (
-    <div className="failure-analysis-pagination">
+    <div
+      className={cn(
+        "failure-analysis-pagination",
+        failureAnalysisWorkspaceStyles["failure-analysis-pagination"],
+      )}
+    >
       <Button
         disabled={currentHistory.length === 0 || loading}
         onClick={() => void onMove(currentHistory.at(-1), false)}
@@ -1325,10 +1575,19 @@ function FloatingAction({
   onClick: () => void;
 }) {
   return (
-    <div className="failure-analysis-floating-action">
+    <div
+      className={cn(
+        "failure-analysis-floating-action",
+        failureAnalysisWorkspaceStyles["failure-analysis-floating-action"],
+      )}
+    >
       <span>已选择 {count} 个用例</span>
       <Button disabled={loading} onClick={onClick} type="button" variant="primary">
-        {loading ? <LoaderCircle className="spin" size={16} /> : <ClipboardCheck size={16} />}
+        {loading ? (
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+        ) : (
+          <ClipboardCheck size={16} />
+        )}
         {label}
       </Button>
     </div>
@@ -1347,7 +1606,7 @@ function SortableHeading({
   onClick: () => void;
 }) {
   return (
-    <th>
+    <TableHead>
       <Button
         className={active ? "is-active" : ""}
         onClick={onClick}
@@ -1363,10 +1622,16 @@ function SortableHeading({
             <ArrowUpAZ size={14} />
           )
         ) : (
-          <ArrowUpDown className="failure-analysis-sort-idle" size={13} />
+          <ArrowUpDown
+            className={cn(
+              "failure-analysis-sort-idle",
+              failureAnalysisWorkspaceStyles["failure-analysis-sort-idle"],
+            )}
+            size={13}
+          />
         )}
       </Button>
-    </th>
+    </TableHead>
   );
 }
 
@@ -1459,7 +1724,7 @@ function CompleteAnalysisDialog({
     if (hasUnsavedChanges) setConfirmDiscard(true);
     else onClose();
   }
-  useDialogInteraction({ dialogRef, open: true, active: !nestedDialogOpen, onClose: requestClose });
+
   const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
   const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
   const closeScreenshotPreview = useCallback(() => {
@@ -1500,16 +1765,6 @@ function CompleteAnalysisDialog({
       });
     return () => controller.abort();
   }, [caseDefinitionIds, currentAnalysisIds, historyBatchId, historyLimitPerCase, projectId]);
-
-  useEffect(() => {
-    if (!previewImage) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeScreenshotPreview();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    imageCloseButtonRef.current?.focus();
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [closeScreenshotPreview, previewImage]);
 
   function openScreenshotPreview(
     claim: FailureAnalysisClaimView,
@@ -1803,146 +2058,169 @@ function CompleteAnalysisDialog({
 
   return (
     <>
-      <div
-        className="runner-update-overlay failure-analysis-overlay"
-        role="presentation"
-        onClick={requestClose}
+      <Dialog
+        open
+        title={
+          claims.length > 1 ? `批量分析 ${claims.length} 个用例` : `分析 ${claims[0]?.caseName}`
+        }
+        onClose={requestClose}
+        className={cn(
+          "runner-update-dialog failure-analysis-dialog failure-analysis-completion-dialog",
+          failureAnalysisWorkspaceStyles["runner-update-dialog"],
+          failureAnalysisWorkspaceStyles["failure-analysis-dialog"],
+          failureAnalysisWorkspaceStyles["failure-analysis-completion-dialog"],
+        )}
+        backdropClassName="runner-update-overlay failure-analysis-overlay"
+        panelRef={dialogRef}
+        inactive={Boolean(nestedDialogOpen)}
+        panelProps={{ tabIndex: -1, "data-read-only": readOnly ? "true" : undefined }}
       >
-        <section
-          aria-label={
-            claims.length > 1 ? `批量分析 ${claims.length} 个用例` : `分析 ${claims[0]?.caseName}`
-          }
-          aria-modal="true"
-          aria-hidden={
-            logClaim ||
-            logComparison ||
-            previewImage ||
-            showCaseConfirmation ||
-            showConclusionPicker ||
-            inheritanceCandidate
-              ? true
-              : undefined
-          }
-          ref={dialogRef}
-          tabIndex={-1}
-          inert={nestedDialogOpen}
-          className="runner-update-dialog failure-analysis-dialog failure-analysis-completion-dialog"
-          data-read-only={readOnly ? "true" : undefined}
-          onClick={(event) => event.stopPropagation()}
-          role="dialog"
+        <header
+          className={cn(
+            "runner-update-titlebar",
+            failureAnalysisWorkspaceStyles["runner-update-titlebar"],
+          )}
         >
-          <header className="runner-update-titlebar">
-            <span>
-              <ClipboardCheck size={17} />
-              <strong>
-                {readOnly
-                  ? "用例分析详情"
-                  : claims.length > 1
-                    ? `批量分析 ${claims.length} 个用例`
-                    : "用例分析"}
-              </strong>
-              <small>
-                {claims.length > 1 ? "相同结论将应用到所有选中用例" : claims[0]?.caseName}
-              </small>
-            </span>
-            <div className="failure-analysis-titlebar-actions">
-              <Button
-                disabled={copying}
-                onClick={() => void copyCaseInformation()}
-                size="compact"
-                type="button"
-                variant="secondary"
-              >
-                {copying ? <LoaderCircle className="spin" size={14} /> : <Copy size={14} />}
-                复制用例信息
-              </Button>
-              <Button
-                disabled={submitting || uploading}
-                aria-label="关闭分析弹窗"
-                onClick={requestClose}
-                type="button"
-              >
-                <X size={16} />
-              </Button>
-            </div>
-          </header>
-          <div className="runner-update-body failure-analysis-dialog-body">
-            {confirmDiscard ? (
-              <DialogDiscardPrompt
-                onContinue={() => setConfirmDiscard(false)}
-                onDiscard={() => {
-                  if (!submitting && !uploading) onClose();
-                }}
-              />
-            ) : null}
-            <section className="failure-analysis-case-summary">
-              {claims.length > 1 ? <h3>{claims.length} 个最终失败用例</h3> : null}
-              <div className="failure-analysis-case-list">
-                {claims.map((claim) => (
-                  <article key={claim.id}>
-                    <div>
-                      <ExpandableText text={claim.caseName} label="用例名称" />
-                      <code>{claim.className}</code>
-                      <small>
-                        第 {claim.attemptNumber} 次尝试 · {claim.failureSummary}
-                      </small>
-                    </div>
-                    <span>
-                      <Button
-                        onClick={() => setLogClaim(claim)}
-                        size="compact"
-                        type="button"
-                        variant="secondary"
-                      >
-                        <SquareActivity size={14} /> 弹窗日志
-                      </Button>
-                      <Button
-                        onClick={() => void openPublicLog(claim)}
-                        size="compact"
-                        type="button"
-                        variant="secondary"
-                      >
-                        <ExternalLink size={14} /> 公开日志
-                      </Button>
-                    </span>
-                  </article>
-                ))}
-              </div>
-            </section>
-
-            <FailureAnalysisExecutionHistory
-              claims={claims}
-              projectId={projectId}
-              onCompare={setLogComparison}
-            />
-
-            <AnalysisHistoryPanel
-              historyError={historyError}
-              historyItems={historyItems}
-              historyLoading={historyLoading}
-              historyLimitPerCase={historyLimitPerCase}
-              canInheritSameCase={!readOnly && claims.length === 1}
-              canBrowseTaskConclusions={!readOnly}
-              onBrowse={() => setShowConclusionPicker(true)}
-              onInherit={(item) =>
-                setInheritanceCandidate({ ...item, inheritanceScope: "same_case" })
-              }
-              onPreview={(claim, trigger) => openScreenshotPreview(claim, trigger)}
-              selectedCaseCount={claims.length}
-            />
-
-            <fieldset
-              className="failure-analysis-category-options"
-              data-read-only={readOnly ? "true" : undefined}
-              disabled={readOnly}
+          <span>
+            <ClipboardCheck size={17} />
+            <strong>
+              {readOnly
+                ? "用例分析详情"
+                : claims.length > 1
+                  ? `批量分析 ${claims.length} 个用例`
+                  : "用例分析"}
+            </strong>
+            <small>
+              {claims.length > 1 ? "相同结论将应用到所有选中用例" : claims[0]?.caseName}
+            </small>
+          </span>
+          <div
+            className={cn(
+              "failure-analysis-titlebar-actions",
+              failureAnalysisWorkspaceStyles["failure-analysis-titlebar-actions"],
+            )}
+          >
+            <Button
+              disabled={copying}
+              onClick={() => void copyCaseInformation()}
+              size="compact"
+              type="button"
+              variant="secondary"
             >
-              <legend>{readOnly ? "分析结论" : "选择失败类别"}</legend>
-              {CATEGORY_OPTIONS.filter((option) => !readOnly || option.value === category).map(
-                (option) => (
-                  <label
-                    className={category === option.value ? "is-selected" : ""}
-                    key={option.value}
-                  >
+              {copying ? (
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
+              ) : (
+                <Copy size={14} />
+              )}
+              复制用例信息
+            </Button>
+            <Button
+              disabled={submitting || uploading}
+              aria-label="关闭分析弹窗"
+              onClick={requestClose}
+              type="button"
+            >
+              <X size={16} />
+            </Button>
+          </div>
+        </header>
+        <div
+          className={cn(
+            "runner-update-body failure-analysis-dialog-body",
+            failureAnalysisWorkspaceStyles["runner-update-body"],
+            failureAnalysisWorkspaceStyles["failure-analysis-dialog-body"],
+          )}
+        >
+          {confirmDiscard ? (
+            <DialogDiscardPrompt
+              onContinue={() => setConfirmDiscard(false)}
+              onDiscard={() => {
+                if (!submitting && !uploading) onClose();
+              }}
+            />
+          ) : null}
+          <section
+            className={cn(
+              "failure-analysis-case-summary",
+              failureAnalysisWorkspaceStyles["failure-analysis-case-summary"],
+            )}
+          >
+            {claims.length > 1 ? <h3>{claims.length} 个最终失败用例</h3> : null}
+            <div
+              className={cn(
+                "failure-analysis-case-list",
+                failureAnalysisWorkspaceStyles["failure-analysis-case-list"],
+              )}
+            >
+              {claims.map((claim) => (
+                <article key={claim.id}>
+                  <div>
+                    <ExpandableText text={claim.caseName} label="用例名称" />
+                    <code>{claim.className}</code>
+                    <small>
+                      第 {claim.attemptNumber} 次尝试 · {claim.failureSummary}
+                    </small>
+                  </div>
+                  <span>
+                    <Button
+                      onClick={() => setLogClaim(claim)}
+                      size="compact"
+                      type="button"
+                      variant="secondary"
+                    >
+                      <SquareActivity size={14} /> 弹窗日志
+                    </Button>
+                    <Button
+                      onClick={() => void openPublicLog(claim)}
+                      size="compact"
+                      type="button"
+                      variant="secondary"
+                    >
+                      <ExternalLink size={14} /> 公开日志
+                    </Button>
+                  </span>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <FailureAnalysisExecutionHistory
+            claims={claims}
+            projectId={projectId}
+            onCompare={setLogComparison}
+          />
+
+          <AnalysisHistoryPanel
+            historyError={historyError}
+            historyItems={historyItems}
+            historyLoading={historyLoading}
+            historyLimitPerCase={historyLimitPerCase}
+            canInheritSameCase={!readOnly && claims.length === 1}
+            canBrowseTaskConclusions={!readOnly}
+            onBrowse={() => setShowConclusionPicker(true)}
+            onInherit={(item) =>
+              setInheritanceCandidate({ ...item, inheritanceScope: "same_case" })
+            }
+            onPreview={(claim, trigger) => openScreenshotPreview(claim, trigger)}
+            selectedCaseCount={claims.length}
+          />
+
+          <fieldset
+            className={cn(
+              "failure-analysis-category-options",
+              failureAnalysisWorkspaceStyles["failure-analysis-category-options"],
+            )}
+            data-read-only={readOnly ? "true" : undefined}
+            disabled={readOnly}
+          >
+            <legend>{readOnly ? "分析结论" : "选择失败类别"}</legend>
+            {CATEGORY_OPTIONS.filter((option) => !readOnly || option.value === category).map(
+              (option) => (
+                <label
+                  className={category === option.value ? "is-selected" : ""}
+                  key={option.value}
+                >
+                  {!readOnly ? (
                     <Input
                       checked={category === option.value}
                       name="failure-category"
@@ -1954,238 +2232,299 @@ function CompleteAnalysisDialog({
                       type="radio"
                       value={option.value}
                     />
-                    <span>
-                      <strong>{option.label}</strong>
-                      <small>{option.description}</small>
-                    </span>
-                  </label>
-                ),
-              )}
-            </fieldset>
-
-            {category === "rerun_passed" ? (
-              <section className="failure-analysis-proof-panel">
-                <div>
-                  <FileCheck2 size={18} />
+                  ) : null}
                   <span>
-                    <strong>重跑通过证明</strong>
-                    <small>
-                      请先主动查找这些用例从公开日志页发起的成功重跑；查不到的用例必须粘贴通过截图。
-                    </small>
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </label>
+              ),
+            )}
+          </fieldset>
+
+          {category === "rerun_passed" ? (
+            <section
+              className={cn(
+                "failure-analysis-proof-panel",
+                failureAnalysisWorkspaceStyles["failure-analysis-proof-panel"],
+              )}
+            >
+              <div>
+                <FileCheck2 size={18} />
+                <span>
+                  <strong>重跑通过证明</strong>
+                  <small>
+                    请先主动查找这些用例从公开日志页发起的成功重跑；查不到的用例必须粘贴通过截图。
+                  </small>
+                </span>
+              </div>
+              {!readOnly ? (
+                <div
+                  className={cn(
+                    "failure-analysis-proof-lookup",
+                    failureAnalysisWorkspaceStyles["failure-analysis-proof-lookup"],
+                  )}
+                >
+                  <Button
+                    disabled={lookingUpRerunProofs || uploading}
+                    onClick={() => void lookupRerunProofs()}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {lookingUpRerunProofs ? (
+                      <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                    ) : (
+                      <SearchCheck size={15} />
+                    )}
+                    {lookingUpRerunProofs ? "正在查找…" : "查找重跑通过记录"}
+                  </Button>
+                  {!rerunProofLookup ? (
+                    <small>尚未查找，提交分析暂不可用。</small>
+                  ) : (
+                    <div
+                      className={cn(
+                        "failure-analysis-proof-lookup-result",
+                        failureAnalysisWorkspaceStyles["failure-analysis-proof-lookup-result"],
+                      )}
+                      role="status"
+                    >
+                      {foundRerunProofs.map((item) => {
+                        const claim = claims.find((candidate) => candidate.id === item.analysisId);
+                        return (
+                          <a href={item.url} key={item.analysisId} rel="noreferrer" target="_blank">
+                            <CheckCircle2 size={14} />
+                            {claim?.caseName ?? item.analysisId} · 查看重跑通过日志
+                          </a>
+                        );
+                      })}
+                      {missingRerunProofs.length > 0 ? (
+                        <span
+                          className={cn(
+                            "failure-analysis-proof-missing",
+                            failureAnalysisWorkspaceStyles["failure-analysis-proof-missing"],
+                          )}
+                        >
+                          <AlertTriangle size={15} />
+                          {missingRerunProofs.length} 个用例未找到成功重跑记录，必须提交截图。
+                        </span>
+                      ) : (
+                        <span
+                          className={cn(
+                            "failure-analysis-proof-found",
+                            failureAnalysisWorkspaceStyles["failure-analysis-proof-found"],
+                          )}
+                        >
+                          <CheckCircle2 size={15} /> 全部用例均已找到重跑通过日志。
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+              {uploadedClaims.some((claim) => claim.screenshot) ? (
+                <>
+                  <div
+                    className={cn(
+                      "failure-analysis-uploaded-proof",
+                      failureAnalysisWorkspaceStyles["failure-analysis-uploaded-proof"],
+                    )}
+                  >
+                    <CheckCircle2 size={17} />
+                    <span>
+                      通过截图已上传到平台对象存储
+                      {claims.length > 1 ? "，并关联到全部选中用例" : ""}。
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      "failure-analysis-proof-gallery",
+                      failureAnalysisWorkspaceStyles["failure-analysis-proof-gallery"],
+                    )}
+                    aria-label="重跑通过截图"
+                  >
+                    {screenshotClaims.map((claim) => (
+                      <Button
+                        aria-label={`放大查看截图 ${claim.screenshot!.fileName}`}
+                        className={cn(
+                          "failure-analysis-proof-thumbnail",
+                          failureAnalysisWorkspaceStyles["failure-analysis-proof-thumbnail"],
+                        )}
+                        key={claim.screenshot!.sha256}
+                        onClick={(event) => openScreenshotPreview(claim, event.currentTarget)}
+                        type="button"
+                        variant="ghost"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
+                        <img
+                          alt={`重跑通过截图：${claim.screenshot!.fileName}`}
+                          loading="lazy"
+                          src={failureAnalysisEvidenceUrl(claim, projectId)}
+                        />
+                        <span>
+                          <strong>{claim.screenshot!.fileName}</strong>
+                          <small>点击放大 · {formatFileSize(claim.screenshot!.sizeBytes)}</small>
+                        </span>
+                        <Maximize2 aria-hidden="true" size={16} />
+                      </Button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {!readOnly && rerunProofLookup && missingRerunProofs.length > 0 ? (
+                <div
+                  aria-busy={uploading}
+                  aria-label="使用 Ctrl+V 粘贴重跑通过截图"
+                  className={cn(
+                    "failure-analysis-paste-zone",
+                    failureAnalysisWorkspaceStyles["failure-analysis-paste-zone"],
+                  )}
+                  role="group"
+                  tabIndex={0}
+                >
+                  <ClipboardPaste size={24} />
+                  <strong>
+                    {uploading ? "正在保存粘贴的截图…" : "直接按 Ctrl + V 粘贴执行通过截图"}
+                  </strong>
+                  <span>无需点击选择文件；弹窗内任意位置均可粘贴，最大 10 MB</span>
+                  <span
+                    className={cn(
+                      "failure-analysis-paste-shortcut",
+                      failureAnalysisWorkspaceStyles["failure-analysis-paste-shortcut"],
+                    )}
+                    aria-hidden="true"
+                  >
+                    <kbd>Ctrl</kbd>
+                    <b>+</b>
+                    <kbd>V</kbd>
+                    <small>macOS 使用 ⌘ + V</small>
                   </span>
                 </div>
-                {!readOnly ? (
-                  <div className="failure-analysis-proof-lookup">
-                    <Button
-                      disabled={lookingUpRerunProofs || uploading}
-                      onClick={() => void lookupRerunProofs()}
-                      type="button"
-                      variant="secondary"
-                    >
-                      {lookingUpRerunProofs ? (
-                        <LoaderCircle className="spin" size={15} />
-                      ) : (
-                        <SearchCheck size={15} />
-                      )}
-                      {lookingUpRerunProofs ? "正在查找…" : "查找重跑通过记录"}
-                    </Button>
-                    {!rerunProofLookup ? (
-                      <small>尚未查找，提交分析暂不可用。</small>
-                    ) : (
-                      <div className="failure-analysis-proof-lookup-result" role="status">
-                        {foundRerunProofs.map((item) => {
-                          const claim = claims.find(
-                            (candidate) => candidate.id === item.analysisId,
-                          );
-                          return (
-                            <a
-                              href={item.url}
-                              key={item.analysisId}
-                              rel="noreferrer"
-                              target="_blank"
-                            >
-                              <CheckCircle2 size={14} />
-                              {claim?.caseName ?? item.analysisId} · 查看重跑通过日志
-                            </a>
-                          );
-                        })}
-                        {missingRerunProofs.length > 0 ? (
-                          <span className="failure-analysis-proof-missing">
-                            <AlertTriangle size={15} />
-                            {missingRerunProofs.length} 个用例未找到成功重跑记录，必须提交截图。
-                          </span>
-                        ) : (
-                          <span className="failure-analysis-proof-found">
-                            <CheckCircle2 size={15} /> 全部用例均已找到重跑通过日志。
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-                {uploadedClaims.some((claim) => claim.screenshot) ? (
-                  <>
-                    <div className="failure-analysis-uploaded-proof">
-                      <CheckCircle2 size={17} />
-                      <span>
-                        通过截图已上传到平台对象存储
-                        {claims.length > 1 ? "，并关联到全部选中用例" : ""}。
-                      </span>
-                    </div>
-                    <div className="failure-analysis-proof-gallery" aria-label="重跑通过截图">
-                      {screenshotClaims.map((claim) => (
-                        <Button
-                          aria-label={`放大查看截图 ${claim.screenshot!.fileName}`}
-                          className="failure-analysis-proof-thumbnail"
-                          key={claim.screenshot!.sha256}
-                          onClick={(event) => openScreenshotPreview(claim, event.currentTarget)}
-                          type="button"
-                          variant="ghost"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
-                          <img
-                            alt={`重跑通过截图：${claim.screenshot!.fileName}`}
-                            loading="lazy"
-                            src={failureAnalysisEvidenceUrl(claim, projectId)}
-                          />
-                          <span>
-                            <strong>{claim.screenshot!.fileName}</strong>
-                            <small>点击放大 · {formatFileSize(claim.screenshot!.sizeBytes)}</small>
-                          </span>
-                          <Maximize2 aria-hidden="true" size={16} />
-                        </Button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-                {!readOnly && rerunProofLookup && missingRerunProofs.length > 0 ? (
-                  <div
-                    aria-busy={uploading}
-                    aria-label="使用 Ctrl+V 粘贴重跑通过截图"
-                    className="failure-analysis-paste-zone"
-                    role="group"
-                    tabIndex={0}
-                  >
-                    <ClipboardPaste size={24} />
-                    <strong>
-                      {uploading ? "正在保存粘贴的截图…" : "直接按 Ctrl + V 粘贴执行通过截图"}
-                    </strong>
-                    <span>无需点击选择文件；弹窗内任意位置均可粘贴，最大 10 MB</span>
-                    <span className="failure-analysis-paste-shortcut" aria-hidden="true">
-                      <kbd>Ctrl</kbd>
-                      <b>+</b>
-                      <kbd>V</kbd>
-                      <small>macOS 使用 ⌘ + V</small>
-                    </span>
-                  </div>
-                ) : null}
-                {readOnly && initial?.rerunProofUrl ? (
-                  <a
-                    className="ui-button ui-button-secondary"
-                    href={initial.rerunProofUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <ExternalLink size={14} /> 查看重跑通过永久日志
-                  </a>
-                ) : null}
-              </section>
-            ) : null}
+              ) : null}
+              {readOnly && initial?.rerunProofUrl ? (
+                <LinkButton
+                  className={"ui-button ui-button-secondary"}
+                  href={initial.rerunProofUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <ExternalLink size={14} /> 查看重跑通过永久日志
+                </LinkButton>
+              ) : null}
+            </section>
+          ) : null}
 
-            {category === "case_fixed" || category === "code_issue_filed" ? (
-              <label className="failure-analysis-field">
-                <span>
-                  问题说明 <strong>*</strong>
-                </span>
-                <Textarea
-                  disabled={readOnly}
-                  onChange={(event) => setIssueDescription(event.target.value)}
-                  placeholder={
-                    category === "case_fixed"
-                      ? "说明用例自身存在的问题及影响"
-                      : "说明确认的代码问题及影响"
-                  }
-                  rows={4}
-                  value={issueDescription}
-                />
-              </label>
-            ) : null}
-            {category === "case_fixed" ? (
-              <label className="failure-analysis-field">
-                <span>
-                  用例已修改证明 <strong>*</strong>
-                </span>
-                <Textarea
-                  disabled={readOnly}
-                  onChange={(event) => setCaseFixEvidence(event.target.value)}
-                  placeholder="填写提交记录、变更链接、修改说明等可追溯证明"
-                  rows={3}
-                  value={caseFixEvidence}
-                />
-              </label>
-            ) : null}
-            {category === "code_issue_filed" ? (
-              <label className="failure-analysis-field">
-                <span>
-                  问题单链接或问题单号 <strong>*</strong>
-                </span>
-                <Input
-                  disabled={readOnly}
-                  onChange={(event) => setTicketReference(event.target.value)}
-                  placeholder="例如 BUG-1024 或 https://tracker.example/BUG-1024"
-                  value={ticketReference}
-                />
-              </label>
-            ) : null}
-            {category ? (
-              <FailureAnalysisRemark
-                value={remark}
-                onChange={setRemark}
-                readOnly={readOnly}
-                disabled={submitting}
-                claims={uploadedClaims}
-                projectId={projectId}
-                onFilesChange={setRemarkImages}
-                onPreview={openImagePreview}
-                onError={setError}
-              />
-            ) : null}
-
-            {error ? <p className="form-error">{error}</p> : null}
-          </div>
-          <div className="dialog-actions">
-            <Button
-              disabled={submitting || uploading}
-              onClick={requestClose}
-              type="button"
-              variant="secondary"
+          {category === "case_fixed" || category === "code_issue_filed" ? (
+            <label
+              className={cn(
+                "failure-analysis-field",
+                failureAnalysisWorkspaceStyles["failure-analysis-field"],
+              )}
             >
-              {readOnly ? "关闭" : "取消"}
-            </Button>
-            {!readOnly ? (
-              <Button
-                disabled={
-                  !category ||
-                  submitting ||
-                  uploading ||
-                  lookingUpRerunProofs ||
-                  (category === "rerun_passed" && !rerunProofReady)
+              <span>
+                问题说明 <strong>*</strong>
+              </span>
+              <Textarea
+                disabled={readOnly}
+                onChange={(event) => setIssueDescription(event.target.value)}
+                placeholder={
+                  category === "case_fixed"
+                    ? "说明用例自身存在的问题及影响"
+                    : "说明确认的代码问题及影响"
                 }
-                onClick={requestCompletion}
-                type="button"
-                variant="primary"
-              >
-                {submitting ? (
-                  <LoaderCircle className="spin" size={16} />
-                ) : (
-                  <CheckCircle2 size={16} />
-                )}
-                提交分析
-              </Button>
-            ) : null}
-          </div>
-        </section>
-      </div>
+                rows={4}
+                value={issueDescription}
+              />
+            </label>
+          ) : null}
+          {category === "case_fixed" ? (
+            <label
+              className={cn(
+                "failure-analysis-field",
+                failureAnalysisWorkspaceStyles["failure-analysis-field"],
+              )}
+            >
+              <span>
+                用例已修改证明 <strong>*</strong>
+              </span>
+              <Textarea
+                disabled={readOnly}
+                onChange={(event) => setCaseFixEvidence(event.target.value)}
+                placeholder="填写提交记录、变更链接、修改说明等可追溯证明"
+                rows={3}
+                value={caseFixEvidence}
+              />
+            </label>
+          ) : null}
+          {category === "code_issue_filed" ? (
+            <label
+              className={cn(
+                "failure-analysis-field",
+                failureAnalysisWorkspaceStyles["failure-analysis-field"],
+              )}
+            >
+              <span>
+                问题单链接或问题单号 <strong>*</strong>
+              </span>
+              <Input
+                disabled={readOnly}
+                onChange={(event) => setTicketReference(event.target.value)}
+                placeholder="例如 BUG-1024 或 https://tracker.example/BUG-1024"
+                value={ticketReference}
+              />
+            </label>
+          ) : null}
+          {category ? (
+            <FailureAnalysisRemark
+              value={remark}
+              onChange={setRemark}
+              readOnly={readOnly}
+              disabled={submitting}
+              claims={uploadedClaims}
+              projectId={projectId}
+              onFilesChange={setRemarkImages}
+              onPreview={openImagePreview}
+              onError={setError}
+            />
+          ) : null}
+
+          {error ? (
+            <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+              {error}
+            </Notice>
+          ) : null}
+        </div>
+        <div className={"dialog-actions"}>
+          <Button
+            disabled={submitting || uploading}
+            onClick={requestClose}
+            type="button"
+            variant="secondary"
+          >
+            {readOnly ? "关闭" : "取消"}
+          </Button>
+          {!readOnly ? (
+            <Button
+              disabled={
+                !category ||
+                submitting ||
+                uploading ||
+                lookingUpRerunProofs ||
+                (category === "rerun_passed" && !rerunProofReady)
+              }
+              onClick={requestCompletion}
+              type="button"
+              variant="primary"
+            >
+              {submitting ? (
+                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+              ) : (
+                <CheckCircle2 size={16} />
+              )}
+              提交分析
+            </Button>
+          ) : null}
+        </div>
+      </Dialog>
       {logClaim ? (
         <AttemptLogViewer
           attemptId={logClaim.attemptId}
@@ -2199,119 +2538,131 @@ function CompleteAnalysisDialog({
         <AttemptLogComparison comparison={logComparison} onClose={closeLogComparison} />
       ) : null}
       {previewImage ? (
-        <div
-          className="failure-analysis-image-overlay"
-          onClick={closeScreenshotPreview}
-          role="presentation"
+        <Dialog
+          open
+          title={`图片预览 ${previewImage.fileName}`}
+          onClose={closeScreenshotPreview}
+          initialFocusRef={imageCloseButtonRef}
+          className={cn(
+            "failure-analysis-image-dialog",
+            failureAnalysisWorkspaceStyles["failure-analysis-image-dialog"],
+          )}
+          backdropClassName="failure-analysis-image-overlay"
         >
-          <section
-            aria-label={`图片预览 ${previewImage.fileName}`}
-            aria-modal="true"
-            className="failure-analysis-image-dialog"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <header>
-              <span>
-                <strong>{previewImage.fileName}</strong>
-                <small>{formatFileSize(previewImage.sizeBytes)}</small>
-              </span>
-              <div className="failure-analysis-image-controls" aria-label="图片缩放控制">
-                <Button
-                  aria-label="缩小图片"
-                  disabled={imageZoomPercent <= 50}
-                  onClick={() => setImageZoomPercent((current) => Math.max(50, current - 25))}
-                  size="compact"
-                  type="button"
-                  variant="secondary"
-                >
-                  <Minus size={15} />
-                </Button>
-                <output aria-label="当前图片缩放比例">{imageZoomPercent}%</output>
-                <Button
-                  aria-label="放大图片"
-                  disabled={imageZoomPercent >= 300}
-                  onClick={() => setImageZoomPercent((current) => Math.min(300, current + 25))}
-                  size="compact"
-                  type="button"
-                  variant="secondary"
-                >
-                  <Plus size={15} />
-                </Button>
-                <Button
-                  aria-label="重置图片大小"
-                  disabled={imageZoomPercent === 100}
-                  onClick={() => setImageZoomPercent(100)}
-                  size="compact"
-                  type="button"
-                  variant="secondary"
-                >
-                  <RotateCcw size={15} />
-                </Button>
-                <Button
-                  aria-label="关闭图片预览"
-                  onClick={closeScreenshotPreview}
-                  ref={imageCloseButtonRef}
-                  size="compact"
-                  type="button"
-                >
-                  <X size={16} />
-                </Button>
-              </div>
-            </header>
-            <div className="failure-analysis-image-viewport">
-              {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
-              <img
-                alt={previewImage.alt}
-                src={previewImage.src}
-                style={{ width: `${imageZoomPercent}%` }}
-              />
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {showCaseConfirmation ? (
-        <div
-          className="runner-update-overlay failure-analysis-confirm-overlay"
-          role="presentation"
-          onClick={() => setShowCaseConfirmation(false)}
-        >
-          <section
-            aria-label="确认用例问题"
-            aria-modal="true"
-            className="runner-update-dialog failure-analysis-confirm-dialog"
-            onClick={(event) => event.stopPropagation()}
-            role="alertdialog"
-          >
-            <header>
-              <AlertTriangle size={24} />
-              <div>
-                <strong>请再次确认这是用例问题</strong>
-                <p>
-                  为了避免引发质量风险，请责任人确认问题确实由用例本身引起。不要为了让执行结果通过而修改正确的校验逻辑。
-                </p>
-              </div>
-            </header>
-            <div className="dialog-actions">
+          <header>
+            <span>
+              <strong>{previewImage.fileName}</strong>
+              <small>{formatFileSize(previewImage.sizeBytes)}</small>
+            </span>
+            <div
+              className={cn(
+                "failure-analysis-image-controls",
+                failureAnalysisWorkspaceStyles["failure-analysis-image-controls"],
+              )}
+              aria-label="图片缩放控制"
+            >
               <Button
-                onClick={() => setShowCaseConfirmation(false)}
+                aria-label="缩小图片"
+                disabled={imageZoomPercent <= 50}
+                onClick={() => setImageZoomPercent((current) => Math.max(50, current - 25))}
+                size="compact"
                 type="button"
                 variant="secondary"
               >
-                返回检查
+                <Minus size={15} />
+              </Button>
+              <output aria-label="当前图片缩放比例">{imageZoomPercent}%</output>
+              <Button
+                aria-label="放大图片"
+                disabled={imageZoomPercent >= 300}
+                onClick={() => setImageZoomPercent((current) => Math.min(300, current + 25))}
+                size="compact"
+                type="button"
+                variant="secondary"
+              >
+                <Plus size={15} />
               </Button>
               <Button
-                className="failure-analysis-confirm-action"
-                disabled={submitting}
-                onClick={() => void complete(true)}
+                aria-label="重置图片大小"
+                disabled={imageZoomPercent === 100}
+                onClick={() => setImageZoomPercent(100)}
+                size="compact"
                 type="button"
-                variant="danger"
+                variant="secondary"
               >
-                我已核实，确认提交
+                <RotateCcw size={15} />
+              </Button>
+              <Button
+                aria-label="关闭图片预览"
+                onClick={closeScreenshotPreview}
+                ref={imageCloseButtonRef}
+                size="compact"
+                type="button"
+              >
+                <X size={16} />
               </Button>
             </div>
-          </section>
-        </div>
+          </header>
+          <div
+            className={cn(
+              "failure-analysis-image-viewport",
+              failureAnalysisWorkspaceStyles["failure-analysis-image-viewport"],
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
+            <img
+              alt={previewImage.alt}
+              src={previewImage.src}
+              style={{ width: `${imageZoomPercent}%` }}
+            />
+          </div>
+        </Dialog>
+      ) : null}
+      {showCaseConfirmation ? (
+        <Dialog
+          open
+          role="alertdialog"
+          zIndex={1100}
+          title={"确认用例问题"}
+          onClose={() => setShowCaseConfirmation(false)}
+          className={cn(
+            "runner-update-dialog failure-analysis-confirm-dialog",
+            failureAnalysisWorkspaceStyles["runner-update-dialog"],
+            failureAnalysisWorkspaceStyles["failure-analysis-confirm-dialog"],
+          )}
+          backdropClassName="runner-update-overlay failure-analysis-confirm-overlay"
+        >
+          <header>
+            <AlertTriangle size={24} />
+            <div>
+              <strong>请再次确认这是用例问题</strong>
+              <p>
+                为了避免引发质量风险，请责任人确认问题确实由用例本身引起。不要为了让执行结果通过而修改正确的校验逻辑。
+              </p>
+            </div>
+          </header>
+          <div className={"dialog-actions"}>
+            <Button
+              onClick={() => setShowCaseConfirmation(false)}
+              type="button"
+              variant="secondary"
+            >
+              返回检查
+            </Button>
+            <Button
+              className={cn(
+                "failure-analysis-confirm-action",
+                failureAnalysisWorkspaceStyles["failure-analysis-confirm-action"],
+              )}
+              disabled={submitting}
+              onClick={() => void complete(true)}
+              type="button"
+              variant="danger"
+            >
+              我已核实，确认提交
+            </Button>
+          </div>
+        </Dialog>
       ) : null}
       {showConclusionPicker && !readOnly ? (
         <FailureAnalysisConclusionPicker
@@ -2327,77 +2678,80 @@ function CompleteAnalysisDialog({
         />
       ) : null}
       {inheritanceCandidate ? (
-        <div
-          className="runner-update-overlay failure-analysis-confirm-overlay"
-          role="presentation"
-          onClick={() => setInheritanceCandidate(undefined)}
+        <Dialog
+          open
+          role="alertdialog"
+          zIndex={1100}
+          title={
+            inheritanceCandidate.claim.category === "code_issue_filed"
+              ? "确认继承未闭环代码问题"
+              : "确认继承分析结论"
+          }
+          onClose={() => setInheritanceCandidate(undefined)}
+          className={cn(
+            "runner-update-dialog failure-analysis-confirm-dialog",
+            failureAnalysisWorkspaceStyles["runner-update-dialog"],
+            failureAnalysisWorkspaceStyles["failure-analysis-confirm-dialog"],
+          )}
+          backdropClassName="runner-update-overlay failure-analysis-confirm-overlay"
         >
-          <section
-            aria-label={
-              inheritanceCandidate.claim.category === "code_issue_filed"
-                ? "确认继承未闭环代码问题"
-                : "确认继承分析结论"
-            }
-            aria-modal="true"
-            className="runner-update-dialog failure-analysis-confirm-dialog"
-            onClick={(event) => event.stopPropagation()}
-            role="alertdialog"
-          >
-            <header>
-              <AlertTriangle size={24} />
-              <div>
-                <strong>
-                  {inheritanceCandidate.claim.category === "code_issue_filed"
-                    ? "确认问题单尚未闭环"
-                    : "确认沿用该分析结论"}
-                </strong>
-                <p>
-                  来源：批次 #{inheritanceCandidate.batchSequenceNumber} ·{" "}
-                  {inheritanceCandidate.claim.caseName}
-                  {inheritanceCandidate.inheritanceScope === "task_recent_batches"
-                    ? "（本任务近 5 次批跑）"
-                    : "（当前用例历史）"}
-                </p>
-                {claims.length > 1 ? (
-                  <p>
-                    该结论将填入所选的全部 {claims.length}{" "}
-                    个用例，请确认这些用例失败根因一致；点击“提交分析”后保存。
-                  </p>
-                ) : null}
-                {inheritanceCandidate.claim.category === "code_issue_filed" ? (
-                  <p>
-                    请确认问题单“{inheritanceCandidate.claim.ticketReference}
-                    ”尚未闭环，且当前失败仍由同一代码问题引起。若问题已修复或失败根因发生变化，请返回重新分析。
-                  </p>
-                ) : (
-                  <p>
-                    将继承“{inheritanceCandidate.claim.caseName}
-                    ”的结论和说明。请确认当前失败根因一致；重跑证明不会被继承。
-                  </p>
-                )}
-              </div>
-            </header>
-            <div className="dialog-actions">
-              <Button
-                onClick={() => setInheritanceCandidate(undefined)}
-                type="button"
-                variant="secondary"
-              >
-                返回重新分析
-              </Button>
-              <Button
-                className="failure-analysis-confirm-action"
-                onClick={inheritConclusion}
-                type="button"
-                variant="danger"
-              >
+          <header>
+            <AlertTriangle size={24} />
+            <div>
+              <strong>
                 {inheritanceCandidate.claim.category === "code_issue_filed"
-                  ? "问题仍存在，继承结论"
-                  : "确认继承结论"}
-              </Button>
+                  ? "确认问题单尚未闭环"
+                  : "确认沿用该分析结论"}
+              </strong>
+              <p>
+                来源：批次 #{inheritanceCandidate.batchSequenceNumber} ·{" "}
+                {inheritanceCandidate.claim.caseName}
+                {inheritanceCandidate.inheritanceScope === "task_recent_batches"
+                  ? "（本任务近 5 次批跑）"
+                  : "（当前用例历史）"}
+              </p>
+              {claims.length > 1 ? (
+                <p>
+                  该结论将填入所选的全部 {claims.length}{" "}
+                  个用例，请确认这些用例失败根因一致；点击“提交分析”后保存。
+                </p>
+              ) : null}
+              {inheritanceCandidate.claim.category === "code_issue_filed" ? (
+                <p>
+                  请确认问题单“{inheritanceCandidate.claim.ticketReference}
+                  ”尚未闭环，且当前失败仍由同一代码问题引起。若问题已修复或失败根因发生变化，请返回重新分析。
+                </p>
+              ) : (
+                <p>
+                  将继承“{inheritanceCandidate.claim.caseName}
+                  ”的结论和说明。请确认当前失败根因一致；重跑证明不会被继承。
+                </p>
+              )}
             </div>
-          </section>
-        </div>
+          </header>
+          <div className={"dialog-actions"}>
+            <Button
+              onClick={() => setInheritanceCandidate(undefined)}
+              type="button"
+              variant="secondary"
+            >
+              返回重新分析
+            </Button>
+            <Button
+              className={cn(
+                "failure-analysis-confirm-action",
+                failureAnalysisWorkspaceStyles["failure-analysis-confirm-action"],
+              )}
+              onClick={inheritConclusion}
+              type="button"
+              variant="danger"
+            >
+              {inheritanceCandidate.claim.category === "code_issue_filed"
+                ? "问题仍存在，继承结论"
+                : "确认继承结论"}
+            </Button>
+          </div>
+        </Dialog>
       ) : null}
     </>
   );
@@ -2427,13 +2781,23 @@ function AnalysisHistoryPanel({
   onPreview: (claim: FailureAnalysisClaimView, trigger: HTMLButtonElement) => void;
 }) {
   return (
-    <section className="failure-analysis-history-panel">
+    <section
+      className={cn(
+        "failure-analysis-history-panel",
+        failureAnalysisWorkspaceStyles["failure-analysis-history-panel"],
+      )}
+    >
       <header>
         <span>
           <History size={18} />
           <strong>历史分析结论</strong>
         </span>
-        <span className="failure-analysis-history-header-actions">
+        <span
+          className={cn(
+            "failure-analysis-history-header-actions",
+            failureAnalysisWorkspaceStyles["failure-analysis-history-header-actions"],
+          )}
+        >
           <small>
             {selectedCaseCount > 1
               ? `同一任务 · 按用例展示最近 ${historyLimitPerCase} 条`
@@ -2447,23 +2811,56 @@ function AnalysisHistoryPanel({
         </span>
       </header>
       {historyLoading ? (
-        <div className="failure-analysis-history-state" role="status">
-          <LoaderCircle className="spin" size={16} /> 正在读取历史结论…
+        <div
+          className={cn(
+            "failure-analysis-history-state",
+            failureAnalysisWorkspaceStyles["failure-analysis-history-state"],
+          )}
+          role="status"
+        >
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在读取历史结论…
         </div>
       ) : historyError ? (
-        <div className="failure-analysis-history-state error" role="alert">
+        <div
+          className={cn(
+            "failure-analysis-history-state error",
+            failureAnalysisWorkspaceStyles["failure-analysis-history-state"],
+            uiPatterns["error"],
+          )}
+          role="alert"
+        >
           {historyError}
         </div>
       ) : historyItems.length === 0 ? (
-        <div className="failure-analysis-history-state">
+        <div
+          className={cn(
+            "failure-analysis-history-state",
+            failureAnalysisWorkspaceStyles["failure-analysis-history-state"],
+          )}
+        >
           同一任务下，该用例暂无已完成的历史分析结论。
         </div>
       ) : (
-        <div className="failure-analysis-history-cards">
+        <div
+          className={cn(
+            "failure-analysis-history-cards",
+            failureAnalysisWorkspaceStyles["failure-analysis-history-cards"],
+          )}
+        >
           {historyItems.map((item) => (
             <article key={item.claim.id}>
-              <div className="failure-analysis-history-heading">
-                <span className="analysis-status completed">
+              <div
+                className={cn(
+                  "failure-analysis-history-heading",
+                  failureAnalysisWorkspaceStyles["failure-analysis-history-heading"],
+                )}
+              >
+                <span
+                  className={cn(
+                    "analysis-status completed",
+                    failureAnalysisWorkspaceStyles["analysis-status"],
+                  )}
+                >
                   {categoryLabel(item.claim.category) ?? "已完成"}
                 </span>
                 <strong>{item.claim.caseName}</strong>
@@ -2504,7 +2901,12 @@ function AnalysisHistoryPanel({
                   </div>
                 ) : null}
               </dl>
-              <div className="failure-analysis-history-actions">
+              <div
+                className={cn(
+                  "failure-analysis-history-actions",
+                  failureAnalysisWorkspaceStyles["failure-analysis-history-actions"],
+                )}
+              >
                 {item.claim.rerunProofUrl ? (
                   <a href={item.claim.rerunProofUrl} rel="noreferrer" target="_blank">
                     <ExternalLink size={13} /> 重跑通过日志
@@ -2607,3 +3009,130 @@ function persistFailureAnalysisPreferences(
     // 浏览器禁用存储时继续使用当前会话内的筛选状态。
   }
 }
+
+const failureAnalysisWorkspaceStyles = {
+  "analysis-status":
+    "inline-flex max-w-full [flex:0_0_auto] flex-wrap items-center gap-[5px] py-[3px] px-[7px] rounded-full bg-muted text-muted-foreground text-xs font-semibold [&.available]:bg-info/10 [&.available]:text-info [&.claimed]:bg-warning/10 [&.claimed]:text-warning [&.analyzing]:bg-info/10 [&.analyzing]:text-info [&.completed]:bg-success/10 [&.completed]:text-success [&_small]:overflow-hidden [&_small]:max-w-full [&_small]:text-inherit! [&_small]:text-ellipsis [&_small]:whitespace-nowrap",
+  "failure-analysis-card":
+    "grid grid-cols-[24px_minmax(220px,_1fr)_minmax(170px,_0.32fr)_auto] items-center gap-2.5 py-[9px] px-[11px] border border-solid border-border rounded-lg bg-card shadow-xs [&_h3]:m-0 [&_h3]:text-sm [&_p]:m-0 [&_p]:[display:-webkit-box] [&_p]:mt-[3px] [&_p]:overflow-hidden [&_p]:text-muted-foreground [&_p]:leading-[1.35] [&_p]:[overflow-wrap:anywhere] [&_p]:[-webkit-box-orient:vertical] [&_p]:[-webkit-line-clamp:1] [&_dl]:m-0 [&_dl]:grid [&_dl]:grid-cols-[1fr] [&_dl]:gap-[3px] [&_dl]:leading-[1.3] [&_code]:block [&_code]:mt-0.5 [&_code]:overflow-hidden [&_code]:[overflow-wrap:anywhere] [&_code]:text-info [&_code]:font-mono [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_dl_>_div]:grid [&_dl_>_div]:gap-px [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:m-0 [&_dd]:text-sm [&_dd]:leading-4 [&_dd]:font-semibold max-[1181px]:grid-cols-[24px_minmax(200px,_1fr)_minmax(155px,_0.32fr)_auto]",
+  "failure-analysis-card-actions": "grid min-w-[104px] gap-1",
+  "failure-analysis-card-list": "grid gap-1.5",
+  "failure-analysis-card-main": "min-w-0",
+  "failure-analysis-card-title":
+    "flex min-w-0 items-center gap-[7px] [&_h3]:[flex:1_1_auto] [&_h3]:min-w-0 [&_h3]:overflow-hidden [&_h3]:text-ellipsis [&_h3]:whitespace-nowrap",
+  "failure-analysis-case-list":
+    "[&_article]:flex [&_article]:items-center [&_article]:justify-between [&_article]:gap-[9px] [&_article]:py-[7px] [&_article]:px-[9px] [&_article]:border [&_article]:border-solid [&_article]:border-border [&_article]:rounded-lg [&_article]:bg-card [&_article_>_span]:flex [&_article_>_span]:items-center [&_article_>_span]:[flex:0_0_auto] [&_article_>_span]:gap-[7px] [&_strong]:[overflow-wrap:anywhere] grid min-w-0 grid-cols-[minmax(0,_1fr)] max-h-[236px] gap-1 overflow-y-auto [&_article_>_div]:grid [&_article_>_div]:min-w-0 [&_article_>_div]:gap-px [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:text-info [&_code]:text-xs [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap [&_small]:text-muted-foreground [&_.expandable-text]:font-semibold",
+  "failure-analysis-case-meta": "flex min-w-0 items-center gap-1.5 mt-0.5",
+  "failure-analysis-case-name": "block! overflow-hidden text-ellipsis whitespace-nowrap",
+  "failure-analysis-case-summary":
+    "grid gap-2 p-2.5 border border-solid border-border rounded-lg bg-card min-w-0 grid-cols-[minmax(0,_1fr)] [border-color:color-mix(in_srgb,_var(--info)_20%,_var(--border))] [&_h3]:[overflow-wrap:anywhere] [&_.failure-analysis-case-list_article]:p-2",
+  "failure-analysis-category-options":
+    'grid grid-cols-3 gap-2.5 p-0 border-0 [&_legend]:col-span-full [&_legend]:mb-px [&_legend]:text-foreground [&_legend]:text-sm [&_legend]:font-semibold [&_>_label]:flex [&_>_label]:items-start [&_>_label]:gap-[11px] [&_>_label]:min-h-22 [&_>_label]:p-[13px] [&_>_label]:border [&_>_label]:border-solid [&_>_label]:border-border [&_>_label]:rounded-lg [&_>_label]:bg-muted [&_>_label]:cursor-pointer [&[data-read-only="true"]]:grid-cols-[minmax(0,_1fr)] [&[data-read-only="true"]_>_label]:min-h-auto [&[data-read-only="true"]_>_label]:cursor-default [&_>_label.is-selected]:border-muted [&_>_label.is-selected]:bg-info/10 [&_>_label.is-selected]:shadow-lg [&_label_>_span]:grid [&_label_>_span]:gap-1 [&_small]:text-muted-foreground [&_small]:leading-[1.45]',
+  "failure-analysis-claim-group":
+    "grid gap-[7px] [&_>_h3]:flex [&_>_h3]:items-center [&_>_h3]:gap-[7px] [&_>_h3]:m-0 [&_>_h3]:text-muted-foreground [&_>_h3]:text-sm [&_>_h3_>_span]:rounded-full [&_>_h3_>_span]:py-0.5 [&_>_h3_>_span]:px-[7px] [&_>_h3_>_span]:bg-muted [&_>_h3_>_span]:text-muted-foreground [&_>_h3_>_span]:text-xs [&_>_h3_>_span]:font-semibold",
+  "failure-analysis-claim-view": "grid gap-3 min-w-0",
+  "failure-analysis-class-path": "block! overflow-hidden text-ellipsis whitespace-nowrap",
+  "failure-analysis-completed-filter":
+    "inline-flex min-h-8 items-center gap-[7px] py-0 px-2 text-muted-foreground text-xs font-semibold whitespace-nowrap",
+  "failure-analysis-completion-dialog":
+    'w-[min(980px,_calc(100vw_-_56px))] min-w-0 grid-cols-[minmax(0,_1fr)] [grid-template-rows:auto_minmax(0,_1fr)_auto] max-h-[calc(100vh_-_48px)] [&_.runner-update-body]:min-w-0 [&_.runner-update-body]:min-h-0 [&_.runner-update-body]:grid-cols-[minmax(0,_1fr)] [&_.runner-update-body]:overflow-y-auto [&_.runner-update-titlebar_>_span]:min-w-0 [&_.runner-update-titlebar_strong]:[flex:0_0_auto] [&_.runner-update-titlebar_small]:min-w-0 [&_.runner-update-titlebar_small]:overflow-hidden [&_.runner-update-titlebar_small]:text-ellipsis [&_.runner-update-titlebar_small]:whitespace-nowrap [&_.dialog-actions]:flex [&_.dialog-actions]:justify-end [&_.dialog-actions]:gap-2 [&_.dialog-actions]:border-t [&_.dialog-actions]:border-solid [&_.dialog-actions]:border-border [&_.dialog-actions]:py-3 [&_.dialog-actions]:px-4.5 [&_.dialog-actions]:[background:color-mix(in_srgb,_var(--card)_96%,_transparent)] [&_.dialog-actions]:shadow-lg [&[data-read-only="true"]_.ui-input:disabled]:border-border [&[data-read-only="true"]_.ui-input:disabled]:bg-muted [&[data-read-only="true"]_.ui-input:disabled]:text-foreground [&[data-read-only="true"]_.ui-input:disabled]:opacity-100 [&[data-read-only="true"]_.ui-input:disabled]:[-webkit-text-fill-color:var(--foreground)] [&[data-read-only="true"]_.ui-textarea:disabled]:border-border [&[data-read-only="true"]_.ui-textarea:disabled]:bg-muted [&[data-read-only="true"]_.ui-textarea:disabled]:text-foreground [&[data-read-only="true"]_.ui-textarea:disabled]:opacity-100 [&[data-read-only="true"]_.ui-textarea:disabled]:[-webkit-text-fill-color:var(--foreground)]',
+  "failure-analysis-confirm-action":
+    "[&.ui-button-danger]:border-transparent [&.ui-button-danger]:bg-destructive [&.ui-button-danger]:text-primary-foreground [&.ui-button-danger]:shadow-xs",
+  "failure-analysis-confirm-dialog":
+    "[&_header]:flex [&_header]:items-start [&_header]:min-w-0 [&_header]:min-h-0 [&_header]:overflow-y-auto [&_header]:[overscroll-behavior:contain] [&_header]:gap-3 [&_header]:text-warning w-[min(560px,_calc(100vw_-_48px))] min-w-0 [grid-template-rows:minmax(0,_1fr)_auto] p-5.5 [&_header_>_svg]:[box-sizing:content-box] [&_header_>_svg]:[flex:0_0_auto] [&_header_>_svg]:rounded-full [&_header_>_svg]:p-[9px] [&_header_>_svg]:bg-warning/10 [&_header_>_div]:grid [&_header_>_div]:min-w-0 [&_header_>_div]:gap-[7px] [&_header_strong]:text-foreground [&_header_strong]:text-lg [&_header_p]:m-0 [&_header_p]:[overflow-wrap:anywhere] [&_header_p]:text-muted-foreground [&_header_p]:leading-[1.6] [&_.dialog-actions]:flex [&_.dialog-actions]:justify-end [&_.dialog-actions]:gap-2 [&_.dialog-actions]:mt-4",
+  "failure-analysis-confirm-overlay": "z-[240]",
+  "failure-analysis-dialog": "w-[min(620px,_92vw)]",
+  "failure-analysis-dialog-body":
+    "min-w-0 grid-cols-[minmax(0,1fr)] [&_h3]:m-0 [&_h3]:mt-1 [&_h3]:text-lg [&_p]:m-0 [&_p]:mt-1.5 [&_p]:text-muted-foreground [&_p]:leading-[1.55]",
+  "failure-analysis-empty":
+    "grid min-h-[190px] place-items-center [align-content:center] gap-[9px] p-7 border border-dashed border-border rounded-lg bg-muted text-muted-foreground text-center [&_strong]:text-foreground",
+  "failure-analysis-field":
+    "grid gap-[7px] text-muted-foreground text-sm font-semibold [&_>_span_strong]:text-destructive [&_>_span_small]:text-muted-foreground [&_>_span_small]:font-medium",
+  "failure-analysis-filter":
+    "flex items-end gap-3 [&_>_label]:grid [&_>_label]:w-[min(680px,_100%)] [&_>_label]:gap-[7px] [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold max-[1025px]:[&_>_label]:w-full",
+  "failure-analysis-floating-action":
+    "fixed z-40 right-8 bottom-7 flex items-center gap-3 [padding:10px_10px_10px_16px] border border-solid border-border rounded-full bg-card shadow-xs [&_>_span]:text-muted-foreground [&_>_span]:text-sm [&_>_span]:font-semibold max-[1025px]:right-5 max-[1025px]:bottom-5",
+  "failure-analysis-grouped-list": "grid gap-3",
+  "failure-analysis-history-actions":
+    "flex items-center flex-wrap justify-end gap-2 [&_>_a]:inline-flex [&_>_a]:items-center [&_>_a]:gap-1 [&_>_a]:text-xs [&_>_a]:font-semibold",
+  "failure-analysis-history-cards":
+    "grid max-h-[290px] gap-[5px] overflow-y-auto [overscroll-behavior:contain] [&_>_article]:grid [&_>_article]:gap-1.5 [&_>_article]:border [&_>_article]:border-solid [&_>_article]:border-border [&_>_article]:rounded-lg [&_>_article]:py-2 [&_>_article]:px-[9px] [&_>_article]:bg-card [&_dl]:grid [&_dl]:grid-cols-2 [&_dl]:gap-[4px_12px] [&_dl]:m-0 [&_dl_>_div]:min-w-0 [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:[display:-webkit-box] [&_dd]:[margin:2px_0_0] [&_dd]:overflow-hidden [&_dd]:text-muted-foreground [&_dd]:leading-[1.45] [&_dd]:[overflow-wrap:anywhere] [&_dd]:[-webkit-box-orient:vertical] [&_dd]:[-webkit-line-clamp:2]",
+  "failure-analysis-history-header-actions":
+    "flex [flex:0_0_auto] items-center gap-[7px] flex-wrap justify-end",
+  "failure-analysis-history-heading":
+    "flex items-center min-w-0 gap-2 [&_>_strong]:min-w-0 [&_>_strong]:overflow-hidden [&_>_strong]:text-ellipsis [&_>_strong]:whitespace-nowrap [&_>_small]:ml-auto [&_>_small]:text-muted-foreground [&_>_small]:whitespace-nowrap",
+  "failure-analysis-history-panel":
+    "grid gap-2 border border-solid border-border rounded-lg py-2 px-3 [background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_34%,_var(--card))] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-3 [&_>_header_>_span]:flex [&_>_header_>_span]:items-center [&_>_header_>_span]:gap-[7px] [&_>_header_small]:text-muted-foreground [&_.failure-analysis-history-state]:m-0 [&_.failure-analysis-history-state]:py-1 [&_.failure-analysis-history-state]:min-h-0 [&_.failure-analysis-history-state:not(.error)]:justify-start [&_.failure-analysis-history-state:not(.error)]:border-0 [&_.failure-analysis-history-state:not(.error)]:bg-transparent",
+  "failure-analysis-history-state":
+    "flex min-h-13.5 items-center justify-center gap-[7px] border border-dashed border-border rounded-lg text-muted-foreground text-sm [&.error]:[border-color:color-mix(in_srgb,_var(--destructive)_28%,_var(--border))] [&.error]:text-destructive",
+  "failure-analysis-image-controls":
+    "flex [flex:0_0_auto] items-center gap-1.5 [&_output]:min-w-13.5 [&_output]:text-muted-foreground [&_output]:text-xs [&_output]:font-semibold [&_output]:text-center",
+  "failure-analysis-image-dialog":
+    "grid w-[min(1440px,_calc(100vw_-_48px))] h-[min(900px,_calc(100vh_-_48px))] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-transparent rounded-xl bg-card shadow-lg [&_>_header]:flex [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-4 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:[padding:11px_13px_11px_17px] [&_>_header_>_span]:grid [&_>_header_>_span]:min-w-0 [&_>_header_>_span]:gap-0.5 [&_>_header_strong]:overflow-hidden [&_>_header_strong]:text-ellipsis [&_>_header_strong]:whitespace-nowrap [&_>_header_small]:text-muted-foreground",
+
+  "failure-analysis-image-viewport":
+    "overflow-auto p-4.5 bg-card text-center [&_>_img]:block [&_>_img]:h-auto [&_>_img]:max-w-none [&_>_img]:my-0 [&_>_img]:mx-auto [&_>_img]:rounded-lg [&_>_img]:bg-card [&_>_img]:shadow-xs",
+  "failure-analysis-name-column": "w-[24%] max-[1025px]:w-[26%]",
+  "failure-analysis-order-control":
+    "grid min-w-[138px] gap-[3px] text-muted-foreground text-xs font-semibold [&_.ui-select-trigger]:min-h-8 [&_.ui-select-trigger]:py-0 [&_.ui-select-trigger]:px-[9px]",
+  "failure-analysis-pagination":
+    "flex items-center justify-between gap-3 [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+  "failure-analysis-paste-shortcut":
+    "inline-flex! items-center! gap-[5px]! mt-[3px] [&_kbd]:min-w-[31px] [&_kbd]:border [&_kbd]:border-solid [&_kbd]:border-border [&_kbd]:[border-bottom-width:2px] [&_kbd]:rounded-md [&_kbd]:py-1 [&_kbd]:px-[7px] [&_kbd]:bg-card [&_kbd]:text-foreground [&_kbd]:font-mono [&_kbd]:text-xs [&_kbd]:font-semibold [&_kbd]:shadow-xs [&_b]:text-muted-foreground [&_b]:text-xs [&_small]:ml-[5px] [&_small]:text-muted-foreground",
+  "failure-analysis-paste-zone":
+    'grid! min-h-[146px] place-items-center [align-content:center]! gap-[7px]! border border-dashed border-border rounded-lg bg-card text-muted-foreground text-center [&_>_svg]:text-info [&[aria-busy="true"]]:opacity-72 [&:focus-visible]:[outline:3px_solid_var(--ring)] [&:focus-visible]:[outline-offset:2px]',
+  "failure-analysis-path-column": "w-[24%] max-[1025px]:w-[23%]",
+  "failure-analysis-proof-found": "bg-success/10 text-success",
+  "failure-analysis-proof-gallery":
+    "grid! grid-cols-[repeat(auto-fit,_minmax(210px,_1fr))] gap-2.5!",
+  "failure-analysis-proof-lookup":
+    "grid! grid-cols-[max-content_minmax(0,_1fr)] items-center! gap-2!",
+  "failure-analysis-proof-lookup-result":
+    "flex min-w-0 items-center gap-[7px] flex-wrap [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[5px] [&_a]:rounded-lg [&_a]:py-1.5 [&_a]:px-2 [&_a]:text-xs [&_a]:font-semibold [&_a]:bg-success/10 [&_a]:text-success [&_>_span]:inline-flex [&_>_span]:items-center [&_>_span]:gap-[5px] [&_>_span]:rounded-lg [&_>_span]:py-1.5 [&_>_span]:px-2 [&_>_span]:text-xs [&_>_span]:font-semibold",
+  "failure-analysis-proof-missing": "bg-warning/10 text-warning",
+  "failure-analysis-proof-panel":
+    "[&_>_div]:flex [&_>_div]:items-start [&_>_div]:gap-[9px] grid gap-2 p-2.5 border border-solid border-border rounded-lg bg-muted [&_>_div_>_span]:grid [&_>_div_>_span]:gap-[3px] [&_small]:text-muted-foreground [&_small]:leading-[1.45]",
+  "failure-analysis-proof-thumbnail":
+    "relative grid min-w-0 grid-cols-[104px_minmax(0,_1fr)_auto] items-center gap-2.5 overflow-hidden border border-solid border-border rounded-lg p-2 bg-card text-muted-foreground cursor-zoom-in text-left transition-colors duration-150 motion-reduce:transition-none [&:hover]:[border-color:color-mix(in_srgb,_var(--info)_42%,_var(--border))] [&:hover]:shadow-xs [&:focus-visible]:[outline:3px_solid_var(--ring)] [&:focus-visible]:[outline-offset:2px] [&_>_img]:w-[104px] [&_>_img]:h-17 [&_>_img]:rounded-xl [&_>_img]:bg-muted [&_>_img]:[object-fit:contain] [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-[3px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:text-foreground [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap [&_small]:text-muted-foreground",
+  "failure-analysis-recent-success":
+    "inline-flex min-h-6 [flex:0_0_auto] items-center gap-1 border border-solid border-border rounded-full py-0.5 px-[7px] bg-card text-success text-xs font-semibold whitespace-nowrap",
+  "failure-analysis-release-dialog":
+    "grid w-[min(540px,_calc(100vw_-_48px))] gap-4 p-5.5 [&_>_header]:flex [&_>_header]:items-start [&_>_header]:gap-3 [&_>_header_>_div]:grid [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-1.5 [&_>_header_strong]:text-foreground [&_>_header_strong]:text-lg [&_>_header_p]:m-0 [&_>_header_p]:text-muted-foreground [&_>_header_p]:leading-[1.55] [&_.failure-analysis-field_>_small]:justify-self-end [&_.failure-analysis-field_>_small]:text-muted-foreground [&_.failure-analysis-field_>_small]:font-medium [&_.dialog-actions]:flex [&_.dialog-actions]:justify-end [&_.dialog-actions]:gap-2",
+  "failure-analysis-release-icon":
+    "inline-flex [flex:0_0_auto] rounded-full p-[9px] bg-destructive/10 text-destructive",
+  "failure-analysis-release-note":
+    "m-0 text-muted-foreground leading-[1.55] border-l-3 border-solid border-border py-[7px] px-2.5 rounded-none bg-warning/10 text-xs",
+  "failure-analysis-release-trigger":
+    "text-destructive [&:hover:not(:disabled)]:bg-destructive/10 [&:hover:not(:disabled)]:text-destructive",
+  "failure-analysis-search-control":
+    "relative block [&_>_svg]:absolute [&_>_svg]:z-1 [&_>_svg]:top-1/2 [&_>_svg]:left-3 [&_>_svg]:text-muted-foreground [&_>_svg]:[transform:translateY(-50%)] [&_.ui-input]:pl-9!",
+  "failure-analysis-select-all":
+    "flex w-full items-center gap-2 border border-solid border-border rounded-lg py-[7px] px-2.5 bg-muted text-muted-foreground text-sm font-semibold [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:flex-1 [&_>_span]:items-center [&_>_span]:justify-between [&_>_span]:gap-3 [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-medium",
+  "failure-analysis-select-column": "w-11.5",
+  "failure-analysis-shell": "grid gap-3 min-w-0 [padding:clamp(15px,_1.6vw,_22px)] overflow-hidden",
+  "failure-analysis-sort-idle": "text-muted-foreground opacity-62",
+  "failure-analysis-stack":
+    "[display:-webkit-box] overflow-hidden text-muted-foreground leading-[1.35] [overflow-wrap:anywhere] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]",
+  "failure-analysis-stack-column": "w-[30%] max-[1025px]:w-[29%]",
+  "failure-analysis-status-column": "w-[120px] max-[1025px]:w-[112px]",
+  "failure-analysis-table":
+    "w-full [table-layout:fixed] [border-collapse:collapse] text-sm [&_th]:min-w-0 [&_th]:py-[7px] [&_th]:px-[9px] [&_th]:border-b [&_th]:border-solid [&_th]:border-border [&_th]:[vertical-align:top] [&_th]:text-left [&_th]:bg-muted [&_th]:text-muted-foreground [&_th]:text-xs [&_td]:min-w-0 [&_td]:py-[7px] [&_td]:px-[9px] [&_td]:border-b [&_td]:border-solid [&_td]:border-border [&_td]:[vertical-align:top] [&_td]:text-left [&_th_>_button]:inline-flex [&_th_>_button]:min-h-8 [&_th_>_button]:items-center [&_th_>_button]:gap-[5px] [&_th_>_button]:p-0 [&_th_>_button]:border-0 [&_th_>_button]:bg-transparent [&_th_>_button]:text-inherit [&_th_>_button]:[font:inherit] [&_th_>_button]:font-semibold [&_th_>_button]:cursor-pointer [&_th_>_button.is-active]:text-info [&_tbody_tr]:transition-colors [&_tbody_tr]:duration-150 [&_tbody_tr]:motion-reduce:transition-none [&_tbody_tr:hover]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_38%,_transparent)] [&_tr:last-child_td]:border-b-0 [&_td_strong]:block [&_td_strong]:min-w-0 [&_td_small]:block [&_td_small]:min-w-0 [&_td_small]:mt-0.5 [&_td_small]:text-muted-foreground [&_td_small]:text-xs [&_td_code]:block [&_td_code]:min-w-0 [&_td_code]:[overflow-wrap:anywhere] [&_td_code]:text-info [&_td_code]:font-mono [&_td_code]:leading-[1.45] [&_td_.failure-analysis-case-meta_small]:inline [&_td_.failure-analysis-case-meta_small]:[flex:0_0_auto] [&_td_.failure-analysis-case-meta_small]:mt-0 [&_td_.failure-analysis-case-meta_small]:whitespace-nowrap [&_.failure-analysis-recent-success]:min-h-5 [&_.failure-analysis-recent-success]:min-w-0 [&_.failure-analysis-recent-success]:overflow-hidden [&_.failure-analysis-recent-success]:py-px [&_.failure-analysis-recent-success]:px-[5px] [&_.failure-analysis-recent-success]:text-ellipsis",
+  "failure-analysis-table-wrap":
+    "w-full min-w-0 overflow-hidden border border-solid border-border rounded-lg",
+  "failure-analysis-tabs":
+    "flex w-fit gap-1 p-1 border border-solid border-border rounded-lg bg-muted [&_.ui-button]:min-h-9 [&_.ui-button]:border-0 [&_.ui-button]:bg-transparent [&_.ui-button]:shadow-none [&_.ui-button]:text-muted-foreground [&_.ui-button.is-active]:bg-card [&_.ui-button.is-active]:shadow-xs [&_.ui-button.is-active]:text-foreground [&_.ui-button_span]:min-w-5.5 [&_.ui-button_span]:py-0.5 [&_.ui-button_span]:px-[7px] [&_.ui-button_span]:rounded-full [&_.ui-button_span]:bg-info/10 [&_.ui-button_span]:text-info [&_.ui-button_span]:text-xs",
+  "failure-analysis-titlebar-actions": "flex [flex:0_0_auto] items-center gap-[7px]",
+  "failure-analysis-uploaded-proof":
+    "flex items-start gap-[9px] p-2.5 rounded-lg bg-success/10 text-success [&_a]:ml-auto [&_a]:text-inherit [&_a]:font-semibold",
+  "failure-analysis-workbench": "grid gap-3 min-w-0",
+  "failure-analysis-workbench-actions":
+    "flex [flex:0_0_auto] items-end gap-[7px] flex-wrap justify-end max-[1025px]:w-full max-[1025px]:flex-wrap max-[1025px]:justify-start",
+  "failure-analysis-workbench-heading":
+    "flex items-start justify-between gap-3 [&_h2]:m-0 [&_h2]:mt-0.5 [&_h2]:text-lg [&_p]:m-0 [&_p]:mt-[3px] [&_p]:text-muted-foreground [&_p]:leading-[1.5] max-[1025px]:items-stretch max-[1025px]:flex-col",
+  "runner-update-body": "grid gap-4 p-4.5 overflow-y-auto",
+  "runner-update-dialog":
+    "grid w-[min(640px,_92vw)] max-h-[86vh] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg",
+
+  "runner-update-titlebar":
+    "flex items-center justify-between gap-3 py-3.5 px-4.5 border-b border-solid border-border [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2.5 [&_small]:text-muted-foreground",
+} as const;

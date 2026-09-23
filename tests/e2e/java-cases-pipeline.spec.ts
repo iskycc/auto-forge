@@ -113,10 +113,10 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     await captureExecutionLog(page, "real-stdout-light");
     await page.getByRole("button", { name: "深色日志" }).click();
 
-    await page.getByRole("button", { name: "stderr", exact: true }).click();
+    await page.getByRole("radio", { name: "stderr", exact: true }).locator("..").click();
     await expect(executionLog).toContainText("JAVA_CASES_STDERR_CAPTURED");
     await captureExecutionLog(page, "real-stderr-dark");
-    await page.getByRole("button", { name: "agent", exact: true }).click();
+    await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();
     await expect(executionLog).toContainText("AutoForge Runner Agent started the attempt.");
     await captureExecutionLog(page, "real-agent-dark");
 
@@ -385,11 +385,11 @@ async function importJavaCasesJar(page: Page): Promise<ProjectHierarchy> {
   await expect(page.getByText("com.autoforge.javacases.JavaCasesFixture")).toBeVisible({
     timeout: 20_000,
   });
-  const fixtureClass = page.locator("details.class-preview", {
+  const fixtureClass = page.locator(".ui-disclosure.class-preview", {
     hasText: "com.autoforge.javacases.JavaCasesFixture",
   });
   if ((await fixtureClass.getAttribute("open")) === null) {
-    await fixtureClass.locator("summary").click();
+    await fixtureClass.locator(".ui-disclosure-label").click();
   }
   await expect(
     fixtureClass.getByText("executesThroughJavaCasesModule", { exact: true }),
@@ -481,8 +481,11 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
   const uploadForm = page.locator("form", {
     has: page.getByRole("button", { name: "上传并启用" }),
   });
-  await uploadForm.getByLabel("资源类型").selectOption("jar-bundle");
-  await uploadForm.getByLabel("压缩格式").selectOption("zip");
+  await uploadForm
+    .getByLabel("资源类型")
+    .and(uploadForm.locator("select"))
+    .selectOption("jar-bundle");
+  await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("zip");
   await uploadForm
     .getByLabel("本地文件")
     .setInputFiles(requiredEnvironment("E2E_JAVA_CASES_DEPENDENCY_ARCHIVE"));
@@ -801,13 +804,16 @@ async function addDdtCaseToSuite(
     hierarchy.testStageId,
   );
   await page.goto("/cases?tab=ddt");
-  await page.getByRole("tab", { name: "用例" }).click();
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
   await associateDdtSr(page, "EXECUTION", "com.autoforge.javacases.JavaCasesDdtFixture");
 
   await page.getByLabel(`选择 ${caseId}`).check();
   await page.getByRole("button", { name: "加入用例任务" }).click();
   const suiteDialog = page.getByRole("dialog", { name: /将 1 条 DDT 用例加入任务/u });
-  await suiteDialog.getByLabel("目标用例任务").selectOption(suiteId);
+  await suiteDialog
+    .getByLabel("目标用例任务")
+    .and(suiteDialog.locator("select"))
+    .selectOption(suiteId);
   await suiteDialog.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByText(`已将 1 条 DDT 用例加入任务“${ddtSuiteName}”。`)).toBeVisible();
 }

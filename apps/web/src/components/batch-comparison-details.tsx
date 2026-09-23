@@ -1,4 +1,15 @@
 "use client";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { AnalyticsBatchComparison } from "@autoforge/contracts";
 import { GitCompareArrows } from "lucide-react";
@@ -66,8 +77,19 @@ export function BatchComparisonDetails({
   }
 
   return (
-    <div className="insight-detail-content">
-      <div className="insight-comparison-filters" aria-label="批次对比筛选">
+    <div
+      className={cn(
+        "insight-detail-content",
+        batchComparisonDetailsStyles["insight-detail-content"],
+      )}
+    >
+      <div
+        className={cn(
+          "insight-comparison-filters",
+          batchComparisonDetailsStyles["insight-comparison-filters"],
+        )}
+        aria-label="批次对比筛选"
+      >
         <label>
           <span>对比范围</span>
           <Select
@@ -97,7 +119,13 @@ export function BatchComparisonDetails({
             ))}
           </Select>
         </label>
-        <span aria-hidden="true" className="insight-comparison-filter-arrow">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "insight-comparison-filter-arrow",
+            batchComparisonDetailsStyles["insight-comparison-filter-arrow"],
+          )}
+        >
           →
         </span>
         <label>
@@ -120,40 +148,56 @@ export function BatchComparisonDetails({
           已显示 {filteredCases.length} / {cases.length} 个用例
         </small>
       </div>
-      <div className="insight-detail-table-scroll">
-        <table className="data-table insight-comparison-table">
-          <thead>
-            <tr>
-              <th>用例</th>
-              <th>版本变化</th>
-              <th>结果变化</th>
-              <th>耗时变化</th>
-              <th>执行日志</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div
+        className={cn(
+          "insight-detail-table-scroll",
+          batchComparisonDetailsStyles["insight-detail-table-scroll"],
+        )}
+      >
+        <Table
+          className={cn(
+            "data-table insight-comparison-table",
+            uiPatterns["data-table"],
+            batchComparisonDetailsStyles["insight-comparison-table"],
+          )}
+        >
+          <TableHeader>
+            <TableRow>
+              <TableHead>用例</TableHead>
+              <TableHead>版本变化</TableHead>
+              <TableHead>结果变化</TableHead>
+              <TableHead>耗时变化</TableHead>
+              <TableHead>执行日志</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {visibleCases.map((item) => (
-              <tr key={item.caseDefinitionId}>
-                <td title={`${item.displayName} · ${item.caseDefinitionId}`}>
+              <TableRow key={item.caseDefinitionId}>
+                <TableCell title={`${item.displayName} · ${item.caseDefinitionId}`}>
                   {item.displayName}
-                  <small className="table-secondary">{item.caseDefinitionId}</small>
-                </td>
-                <td>
+                  <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
+                    {item.caseDefinitionId}
+                  </small>
+                </TableCell>
+                <TableCell>
                   {item.leftVersion ?? "—"} → {item.rightVersion ?? "—"}
-                </td>
-                <td>
+                </TableCell>
+                <TableCell>
                   {comparisonOutcomeLabel(item.leftOutcome)} →{" "}
                   {comparisonOutcomeLabel(item.rightOutcome)}
-                </td>
-                <td>
+                </TableCell>
+                <TableCell>
                   {item.durationDeltaMs === undefined
                     ? "—"
                     : `${item.durationDeltaMs >= 0 ? "+" : ""}${item.durationDeltaMs} ms`}
-                </td>
-                <td>
+                </TableCell>
+                <TableCell>
                   <Button
                     aria-label={`对比 ${item.displayName} 的两次执行日志`}
-                    className="insight-comparison-log-button"
+                    className={cn(
+                      "insight-comparison-log-button",
+                      batchComparisonDetailsStyles["insight-comparison-log-button"],
+                    )}
                     disabled={!item.leftAttemptId || !item.rightAttemptId}
                     onClick={() =>
                       setLogComparison({
@@ -190,19 +234,25 @@ export function BatchComparisonDetails({
                   >
                     <GitCompareArrows aria-hidden="true" size={14} /> 日志对比
                   </Button>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
         {filteredCases.length === 0 ? (
-          <div className="inline-empty">
+          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
             {cases.length === 0 ? "两个批次没有可对比用例。" : "没有符合当前条件的用例。"}
           </div>
         ) : null}
       </div>
       {filteredCases.length > 0 ? (
-        <nav aria-label="批次对比明细分页" className="insight-detail-pagination">
+        <nav
+          aria-label="批次对比明细分页"
+          className={cn(
+            "insight-detail-pagination",
+            batchComparisonDetailsStyles["insight-detail-pagination"],
+          )}
+        >
           <span>
             第 {start + 1}–{Math.min(start + COMPARISON_DETAIL_PAGE_SIZE, filteredCases.length)}{" "}
             项，共 {filteredCases.length} 项
@@ -266,3 +316,17 @@ function matchesOutcome(outcome: string | undefined, filter: ComparisonOutcomeFi
   if (filter === "missing") return outcome === undefined;
   return outcome === filter;
 }
+
+const batchComparisonDetailsStyles = {
+  "insight-comparison-filter-arrow": "mb-2.5 text-muted-foreground",
+  "insight-comparison-filters":
+    "flex [flex:0_0_auto] flex-wrap items-end gap-2 [&_>_label]:grid [&_>_label]:min-w-[150px] [&_>_label]:gap-1 [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold [&_>_small]:[margin:0_0_9px_auto] [&_>_small]:text-muted-foreground",
+  "insight-comparison-log-button": "whitespace-nowrap",
+  "insight-comparison-table":
+    "min-w-0! [table-layout:fixed] [&_th:first-child]:w-[30%] [&_th:last-child]:w-[116px] [&_td:first-child]:text-ellipsis [&_td:first-child]:whitespace-nowrap [&_.table-secondary]:inline [&_.table-secondary]:ml-2",
+  "insight-detail-content": "flex w-full min-h-0 flex-col gap-3",
+  "insight-detail-pagination":
+    "flex [flex:0_0_auto] items-center justify-between gap-3 text-muted-foreground text-xs [&_>_div]:flex [&_>_div]:gap-2",
+  "insight-detail-table-scroll":
+    "w-full min-h-0 [flex:1_1_auto] overflow-x-hidden overflow-y-auto [overscroll-behavior:contain] border border-solid border-border rounded-xl [scrollbar-gutter:stable] [&_.data-table]:w-full [&_.data-table]:min-w-0 [&_.data-table]:[table-layout:fixed] [&_.data-table_th]:sticky [&_.data-table_th]:z-1 [&_.data-table_th]:top-0 [&_.data-table_th]:shadow-xs [&_.data-table_td]:py-[13px] [&_.data-table_td]:leading-[1.5] [&_.data-table_td]:overflow-hidden [&_.data-table_td]:text-ellipsis [&_.data-table_td]:whitespace-nowrap [&_.data-table_tbody_tr:nth-child(even)]:bg-muted [&_.insight-comparison-table_th]:py-1 [&_.insight-comparison-table_th]:leading-[1.3] [&_.insight-comparison-table_td]:py-1 [&_.insight-comparison-table_td]:leading-[1.3] [&_.insight-comparison-table_th:last-child]:px-2 [&_.insight-comparison-table_td:last-child]:px-2",
+} as const;

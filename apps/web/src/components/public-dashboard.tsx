@@ -1,4 +1,5 @@
 "use client";
+import { LinkButton } from "@/components/ui/link-button";
 
 import type { PublicPlatformStatistics } from "@autoforge/contracts";
 import {
@@ -22,7 +23,7 @@ import Link from "next/link";
 
 import { PublicControlPreview, publicSnapshotPresentation } from "./public-control-preview";
 import { usePublicStatistics } from "./use-public-statistics";
-import styles from "./public-dashboard.module.css";
+import styles from "./public-dashboard.styles";
 
 const executionStages = [
   { icon: BookOpenCheck, title: "用例入库", description: "TestNG / DDT 统一管理" },
@@ -61,11 +62,11 @@ export function PublicDashboard({
           <a href="#architecture">执行链路</a>
           <a href="#deployment">部署方式</a>
         </nav>
-        <Link className={"button " + styles.headerEntry} href={entryHref}>
+        <LinkButton className={"button " + styles.headerEntry} href={entryHref}>
           <LockKeyhole aria-hidden="true" size={15} />
           {entryLabel}
           <ArrowRight aria-hidden="true" size={15} />
-        </Link>
+        </LinkButton>
       </header>
 
       <section className={styles.hero + " public-hero"} aria-labelledby="public-heading">
@@ -86,14 +87,18 @@ export function PublicDashboard({
             统一资产、执行与分析，让团队专注于交付质量。
           </p>
           <div className={styles.heroActions}>
-            <Link className={"button " + styles.primaryEntry} href={entryHref}>
+            <LinkButton
+              variant="primary"
+              className={"button " + styles.primaryEntry}
+              href={entryHref}
+            >
               {setupRequired ? "开始初始化" : "进入管理平台"}
               <ArrowRight aria-hidden="true" size={17} />
-            </Link>
-            <a className={"button " + styles.secondaryEntry} href="#capabilities">
+            </LinkButton>
+            <LinkButton className={"button " + styles.secondaryEntry} href="#capabilities">
               了解平台能力
               <ArrowRight aria-hidden="true" size={16} />
-            </a>
+            </LinkButton>
           </div>
           <div className={styles.entryHint}>
             <LockKeyhole aria-hidden="true" size={13} />

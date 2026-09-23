@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { hasPermission } from "@autoforge/domain";
 import { redirect } from "next/navigation";
 
@@ -33,10 +35,16 @@ export default async function ProjectsPage({
   );
 
   return (
-    <section className="page-stack">
-      <header className="page-header settings-page-header">
+    <section className={cn("page-stack", uiPatterns["page-stack"])}>
+      <header
+        className={cn(
+          "page-header settings-page-header",
+          uiPatterns["page-header"],
+          uiPatterns["settings-page-header"],
+        )}
+      >
         <div>
-          <p className="eyebrow">Organization</p>
+          <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Organization</p>
           <h1>项目设置</h1>
           <p>管理项目负责人及版本执行资源；新建项目、版本和阶段请使用顶栏下拉列表。</p>
         </div>
@@ -55,7 +63,7 @@ export default async function ProjectsPage({
           projectId={project.id}
         />
       ) : (
-        <p className="inline-empty">当前账号没有可访问的项目。</p>
+        <p className={cn("inline-empty", uiPatterns["inline-empty"])}>当前账号没有可访问的项目。</p>
       )}
     </section>
   );

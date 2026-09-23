@@ -1,3 +1,16 @@
+import { Badge } from "@/components/ui/badge";
+import { Disclosure } from "@/components/ui/disclosure";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import {
   batchComparisonManifestSchema,
   type BatchComparisonManifest,
@@ -100,7 +113,7 @@ export default async function InsightsPage({
   };
   if (!caseProjectId || !hierarchy.projectVersionId)
     return (
-      <section className="page-hero">
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
           <h1>质量洞察</h1>
           <p>请选择项目版本后查看统计。</p>
@@ -176,10 +189,16 @@ export default async function InsightsPage({
   const caseCursorTrail = cursorTrail(parameters.caseTrail);
   const methodSampleCount = summary.passed + summary.failed + summary.skipped;
   return (
-    <div className="page-stack insights-page">
-      <section className="page-hero">
+    <div
+      className={cn(
+        "page-stack insights-page",
+        uiPatterns["page-stack"],
+        pageStyles["insights-page"],
+      )}
+    >
+      <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
-          <span className="eyebrow">Offline Analytics</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Offline Analytics</span>
           <h1>质量洞察</h1>
           <p>从已确认的执行结果重建统计事实，按项目、任务、执行节点和时间查看趋势。</p>
         </div>
@@ -187,8 +206,15 @@ export default async function InsightsPage({
       </section>
 
       <ReadModelStatusBar snapshots={projections.map((entry) => entry.status)} />
-      <form className="content-card insight-filter" method="get">
-        <div className="insight-primary-filters">
+      <form
+        className={cn(
+          "content-card insight-filter",
+          uiPatterns["content-card"],
+          pageStyles["insight-filter"],
+        )}
+        method="get"
+      >
+        <div className={cn("insight-primary-filters", pageStyles["insight-primary-filters"])}>
           <label>
             用例任务
             <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
@@ -222,7 +248,11 @@ export default async function InsightsPage({
             </Select>
           </label>
           <NavigationSubmitButton
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             key={`primary-${JSON.stringify(filter)}`}
             pendingLabel="正在筛选质量数据…"
             type="submit"
@@ -230,10 +260,14 @@ export default async function InsightsPage({
             应用筛选
           </NavigationSubmitButton>
         </div>
-        <details className="insight-advanced-filters">
-          <summary>
-            <SlidersHorizontal aria-hidden="true" size={15} /> 更多筛选条件
-          </summary>
+        <Disclosure
+          header={
+            <>
+              <SlidersHorizontal aria-hidden="true" size={15} /> 更多筛选条件
+            </>
+          }
+          className={cn("insight-advanced-filters", pageStyles["insight-advanced-filters"])}
+        >
           <div>
             <label>
               用例 ID
@@ -262,10 +296,13 @@ export default async function InsightsPage({
               />
             </label>
           </div>
-        </details>
+        </Disclosure>
       </form>
 
-      <section className="insight-metrics" aria-label="质量指标">
+      <section
+        className={cn("insight-metrics", pageStyles["insight-metrics"])}
+        aria-label="质量指标"
+      >
         <Metric icon={FlaskConical} label="执行样本" value={String(summary.sampleCount)} />
         <Metric
           icon={TrendingUp}
@@ -282,160 +319,235 @@ export default async function InsightsPage({
         <Metric icon={BarChart3} label="P95 耗时" value={duration(summary.durationP95Ms)} />
       </section>
 
-      <section className="insight-grid">
-        <article className="content-card insight-chart-card insight-trend-card">
-          <div className="section-heading">
+      <section className={cn("insight-grid", pageStyles["insight-grid"])}>
+        <Card
+          as="article"
+          className={cn(
+            "content-card insight-chart-card insight-trend-card",
+            uiPatterns["content-card"],
+            pageStyles["insight-chart-card"],
+            pageStyles["insight-trend-card"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <span className="eyebrow">TREND</span>
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>TREND</span>
               <h2>每日趋势</h2>
             </div>
-            <div className="insight-heading-actions">
-              <span className="muted">
+            <div className={cn("insight-heading-actions", pageStyles["insight-heading-actions"])}>
+              <span className={cn("muted", uiPatterns["muted"])}>
                 已确认方法结果 {methodSampleCount} 个 · 执行样本 {summary.sampleCount} 次
               </span>
               <InsightDetailDialog
                 description="逐日查看通过、失败与跳过的方法数量。表头固定，数据区域可独立滚动。"
                 title="每日趋势明细"
               >
-                <div className="insight-detail-table-scroll">
-                  <table className="data-table insight-data-table">
-                    <thead>
-                      <tr>
-                        <th>日期（{timeZone}）</th>
-                        <th>方法总数</th>
-                        <th>通过方法</th>
-                        <th>失败方法</th>
-                        <th>跳过方法</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                <div
+                  className={cn(
+                    "insight-detail-table-scroll",
+                    pageStyles["insight-detail-table-scroll"],
+                  )}
+                >
+                  <Table
+                    className={cn(
+                      "data-table insight-data-table",
+                      uiPatterns["data-table"],
+                      pageStyles["insight-data-table"],
+                    )}
+                  >
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>日期（{timeZone}）</TableHead>
+                        <TableHead>方法总数</TableHead>
+                        <TableHead>通过方法</TableHead>
+                        <TableHead>失败方法</TableHead>
+                        <TableHead>跳过方法</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {summary.trend.map((bucket) => (
-                        <tr key={bucket.bucket}>
-                          <td>{bucket.bucket.slice(0, 10)}</td>
-                          <td>{bucket.total}</td>
-                          <td>{bucket.passed}</td>
-                          <td>{bucket.failed}</td>
-                          <td>{bucket.skipped}</td>
-                        </tr>
+                        <TableRow key={bucket.bucket}>
+                          <TableCell>{bucket.bucket.slice(0, 10)}</TableCell>
+                          <TableCell>{bucket.total}</TableCell>
+                          <TableCell>{bucket.passed}</TableCell>
+                          <TableCell>{bucket.failed}</TableCell>
+                          <TableCell>{bucket.skipped}</TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                   {summary.trend.length === 0 ? (
-                    <div className="inline-empty">当前筛选范围还没有已确认执行结果。</div>
+                    <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                      当前筛选范围还没有已确认执行结果。
+                    </div>
                   ) : null}
                 </div>
               </InsightDetailDialog>
             </div>
           </div>
           {summary.trend.length === 0 ? (
-            <div className="inline-empty">当前筛选范围还没有已确认执行结果。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              当前筛选范围还没有已确认执行结果。
+            </div>
           ) : (
             <TrendLineChart trend={summary.trend} />
           )}
-        </article>
+        </Card>
 
-        <article className="content-card insight-chart-card insight-failure-card">
-          <div className="section-heading">
+        <Card
+          as="article"
+          className={cn(
+            "content-card insight-chart-card insight-failure-card",
+            uiPatterns["content-card"],
+            pageStyles["insight-chart-card"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <span className="eyebrow">FAILURES</span>
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>FAILURES</span>
               <h2>失败原因</h2>
             </div>
             <InsightDetailDialog
               description="正常 TestNG 失败展示错误堆栈；调度、执行节点等异常执行同时展示错误码与错误信息。"
               title="失败原因明细"
             >
-              <div className="insight-detail-table-scroll">
-                <table className="data-table insight-detail-wide-table">
-                  <thead>
-                    <tr>
-                      <th>错误堆栈 / 错误信息</th>
-                      <th>异常错误码</th>
-                      <th>次数</th>
-                      <th>最近出现时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+              <div
+                className={cn(
+                  "insight-detail-table-scroll",
+                  pageStyles["insight-detail-table-scroll"],
+                )}
+              >
+                <Table
+                  className={cn(
+                    "data-table insight-detail-wide-table",
+                    uiPatterns["data-table"],
+                    pageStyles["insight-detail-wide-table"],
+                  )}
+                >
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>错误堆栈 / 错误信息</TableHead>
+                      <TableHead>异常错误码</TableHead>
+                      <TableHead>次数</TableHead>
+                      <TableHead>最近出现时间</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {summary.failures.map((failure) => {
                       const presentation = presentAnalyticsFailure(failure);
                       return (
-                        <tr key={failure.signature}>
-                          <td className="insight-detail-long-text" title={presentation.detail}>
+                        <TableRow key={failure.signature}>
+                          <TableCell
+                            className={cn(
+                              "insight-detail-long-text",
+                              pageStyles["insight-detail-long-text"],
+                            )}
+                            title={presentation.detail}
+                          >
                             {presentation.detail}
-                          </td>
-                          <td title={presentation.errorCode ?? "正常 TestNG 失败，无需错误码"}>
+                          </TableCell>
+                          <TableCell
+                            title={presentation.errorCode ?? "正常 TestNG 失败，无需错误码"}
+                          >
                             {presentation.errorCode ?? "—"}
-                          </td>
-                          <td>{failure.count}</td>
-                          <td>
+                          </TableCell>
+                          <TableCell>{failure.count}</TableCell>
+                          <TableCell>
                             <time
                               dateTime={failure.lastSeenAt}
                               title={`UTC：${failure.lastSeenAt}`}
                             >
                               {formatLocalDateTime(failure.lastSeenAt, timeZone)}
                             </time>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
                 {summary.failures.length === 0 ? (
-                  <div className="inline-empty">暂无可聚类的失败。</div>
+                  <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                    暂无可聚类的失败。
+                  </div>
                 ) : null}
               </div>
             </InsightDetailDialog>
           </div>
           {summary.failures.length === 0 ? (
-            <div className="inline-empty">暂无可聚类的失败。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>暂无可聚类的失败。</div>
           ) : (
             <FailureReasonChart failures={summary.failures} />
           )}
-        </article>
+        </Card>
 
-        <article className="content-card insight-chart-card insight-flaky-card">
-          <div className="section-heading">
+        <Card
+          as="article"
+          className={cn(
+            "content-card insight-chart-card insight-flaky-card",
+            uiPatterns["content-card"],
+            pageStyles["insight-chart-card"],
+            pageStyles["insight-flaky-card"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <span className="eyebrow">FLAKY</span>
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>FLAKY</span>
               <h2>不稳定用例</h2>
             </div>
             <InsightDetailDialog
               description="查看当前分析返回的不稳定用例，以及用于判断的成功、失败样本和置信度。"
               title="不稳定用例明细"
             >
-              <div className="insight-detail-table-scroll">
-                <table className="data-table insight-detail-wide-table">
-                  <thead>
-                    <tr>
-                      <th>用例</th>
-                      <th>样本</th>
-                      <th>成功</th>
-                      <th>失败</th>
-                      <th>置信度</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+              <div
+                className={cn(
+                  "insight-detail-table-scroll",
+                  pageStyles["insight-detail-table-scroll"],
+                )}
+              >
+                <Table
+                  className={cn(
+                    "data-table insight-detail-wide-table",
+                    uiPatterns["data-table"],
+                    pageStyles["insight-detail-wide-table"],
+                  )}
+                >
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>用例</TableHead>
+                      <TableHead>样本</TableHead>
+                      <TableHead>成功</TableHead>
+                      <TableHead>失败</TableHead>
+                      <TableHead>置信度</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {flakySummary.flakyCases.map((item) => (
-                      <tr key={item.caseDefinitionId}>
-                        <td title={item.displayName}>
+                      <TableRow key={item.caseDefinitionId}>
+                        <TableCell title={item.displayName}>
                           <Link href={`/cases/${encodeURIComponent(item.caseDefinitionId)}`}>
                             {item.displayName}
                           </Link>
-                        </td>
-                        <td>{item.samples}</td>
-                        <td>{item.passed}</td>
-                        <td>{item.failed}</td>
-                        <td>{percent(item.confidence)}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell>{item.samples}</TableCell>
+                        <TableCell>{item.passed}</TableCell>
+                        <TableCell>{item.failed}</TableCell>
+                        <TableCell>{percent(item.confidence)}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
                 {flakySummary.flakyCases.length === 0 ? (
-                  <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
+                  <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                    至少需要 5 个成功与失败混合样本。
+                  </div>
                 ) : null}
               </div>
             </InsightDetailDialog>
           </div>
-          <form className="insight-flaky-filter" method="get">
+          <form
+            className={cn("insight-flaky-filter", pageStyles["insight-flaky-filter"])}
+            method="get"
+          >
             <label>
               指定任务
               <Select defaultValue={stringParameter(parameters.flakySuiteId)} name="flakySuiteId">
@@ -470,7 +582,13 @@ export default async function InsightsPage({
               筛选不稳定用例
             </NavigationSubmitButton>
           </form>
-          <p className="muted insight-flaky-scope">
+          <p
+            className={cn(
+              "muted insight-flaky-scope",
+              uiPatterns["muted"],
+              pageStyles["insight-flaky-scope"],
+            )}
+          >
             当前范围：
             {stringParameter(parameters.flakySuiteId)
               ? (suites.find((suite) => suite.id === stringParameter(parameters.flakySuiteId))
@@ -481,24 +599,31 @@ export default async function InsightsPage({
               : " · 全部时间"}
           </p>
           {flakySummary.flakyCases.length === 0 ? (
-            <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              至少需要 5 个成功与失败混合样本。
+            </div>
           ) : (
             <FlakyCaseChart cases={flakySummary.flakyCases} />
           )}
-        </article>
+        </Card>
 
-        <article
+        <Card
+          as="article"
           aria-label="当前层级用例执行情况"
-          className="content-card insight-chart-card insight-case-outcome-card"
+          className={cn(
+            "content-card insight-chart-card insight-case-outcome-card",
+            uiPatterns["content-card"],
+            pageStyles["insight-chart-card"],
+          )}
         >
-          <div className="section-heading">
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <span className="eyebrow">CASE OUTCOMES</span>
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>CASE OUTCOMES</span>
               <h2>当前层级用例执行情况</h2>
             </div>
             {caseOutcomeReport ? (
-              <div className="insight-heading-actions">
-                <span className="muted">
+              <div className={cn("insight-heading-actions", pageStyles["insight-heading-actions"])}>
+                <span className={cn("muted", uiPatterns["muted"])}>
                   {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 本页{" "}
                   {caseOutcomeReport.cases.length} 个用例
                 </span>
@@ -519,14 +644,24 @@ export default async function InsightsPage({
           {caseOutcomeReport ? (
             <CaseOutcomeChart report={caseOutcomeReport} />
           ) : (
-            <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              请在顶栏选择项目，并确认该项目已配置可用版本。
+            </div>
           )}
-        </article>
+        </Card>
 
-        <article className="content-card insight-chart-card insight-comparison-card">
-          <div className="section-heading">
+        <Card
+          as="article"
+          className={cn(
+            "content-card insight-chart-card insight-comparison-card",
+            uiPatterns["content-card"],
+            pageStyles["insight-chart-card"],
+            pageStyles["insight-comparison-card"],
+          )}
+        >
+          <div className={cn("section-heading", uiPatterns["section-heading"])}>
             <div>
-              <span className="eyebrow">COMPARE</span>
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>COMPARE</span>
               <h2>批次对比</h2>
             </div>
             {comparison && comparisonProjection ? (
@@ -552,18 +687,20 @@ export default async function InsightsPage({
               label: `#${batch.sequenceNumber} · ${batch.suiteName} · ${runBatchStatusLabel(batch.status)}`,
             }))}
           />
-          <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
+          <p className={cn("muted", uiPatterns["muted"])}>
+            可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。
+          </p>
           {comparisonProjection ? (
             <ReadModelStatusBar snapshots={[comparisonProjection.status]} />
           ) : null}
           {comparison ? (
             <BatchComparisonChart comparison={comparison} />
           ) : (
-            <div className="inline-empty">
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
               选择两个可访问批次，按相同用例范围比较版本、执行节点、结果和耗时。
             </div>
           )}
-        </article>
+        </Card>
       </section>
     </div>
   );
@@ -581,23 +718,30 @@ function Metric({
   tone?: "neutral" | "success" | "danger";
 }) {
   return (
-    <article className={`card insight-metric insight-metric-${tone}`}>
-      <span className="insight-metric-icon">
+    <Card
+      as="article"
+      className={cn(
+        pageStyles["insight-metric"],
+        uiPatterns["card"],
+        `card insight-metric insight-metric insight-metric-${tone}`,
+      )}
+    >
+      <span className={cn("insight-metric-icon", pageStyles["insight-metric-icon"])}>
         <Icon size={18} />
       </span>
-      <span className="insight-metric-label">{label}</span>
+      <span className={"insight-metric-label"}>{label}</span>
       <strong>{value}</strong>
-    </article>
+    </Card>
   );
 }
 
 const INSIGHT_CHART_ITEM_LIMIT = 6;
 const FAILURE_CHART_COLORS = [
-  "var(--color-danger)",
-  "var(--color-chart-coral)",
-  "var(--color-warning)",
-  "var(--color-violet)",
-  "var(--color-info)",
+  "var(--destructive)",
+  "var(--warning)",
+  "var(--warning)",
+  "var(--info)",
+  "var(--info)",
 ] as const;
 
 function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
@@ -624,32 +768,35 @@ function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
   const lastBucket = trend.at(-1)!;
   const markerStep = Math.max(1, Math.ceil(trend.length / 18));
   return (
-    <div className="insight-line-chart">
-      <div className="insight-line-summary" aria-hidden="true">
+    <div className={cn("insight-line-chart", pageStyles["insight-line-chart"])}>
+      <div
+        className={cn("insight-line-summary", pageStyles["insight-line-summary"])}
+        aria-hidden="true"
+      >
         <span>
-          <i className="trend-passed" />
+          <i className={cn("trend-passed", pageStyles["trend-passed"])} />
           通过 <b>{lastBucket.passed}</b>
         </span>
         <span>
-          <i className="trend-failed" />
+          <i className={cn("trend-failed", pageStyles["trend-failed"])} />
           失败 <b>{lastBucket.failed}</b>
         </span>
         <span>
-          <i className="trend-skipped" />
+          <i className={cn("trend-skipped", pageStyles["trend-skipped"])} />
           跳过 <b>{lastBucket.skipped}</b>
         </span>
         <small>最新一天</small>
       </div>
       <svg
         aria-label={`从 ${trend[0]!.bucket.slice(0, 10)} 到 ${lastBucket.bucket.slice(0, 10)} 的方法执行折线趋势`}
-        className="insight-line-plot"
+        className={cn("insight-line-plot", pageStyles["insight-line-plot"])}
         role="img"
         viewBox={`0 0 ${width} ${height}`}
       >
         <defs>
           <linearGradient id="insight-trend-area" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="var(--color-info)" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="var(--color-info)" stopOpacity="0.01" />
+            <stop offset="0%" stopColor="var(--info)" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="var(--info)" stopOpacity="0.01" />
           </linearGradient>
           <filter id="insight-line-shadow" x="-10%" y="-10%" width="120%" height="120%">
             <feDropShadow dx="0" dy="2" floodOpacity="0.14" stdDeviation="2" />
@@ -657,7 +804,7 @@ function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
         </defs>
         {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
           <line
-            className="insight-line-grid"
+            className={cn("insight-line-grid", pageStyles["insight-line-grid"])}
             key={ratio}
             x1={horizontalInset}
             x2={width - horizontalInset}
@@ -666,21 +813,30 @@ function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
           />
         ))}
         <polygon
-          className="insight-line-area"
+          className={cn("insight-line-area", pageStyles["insight-line-area"])}
           points={`${horizontalInset},${height - verticalInset} ${totalPoints} ${width - horizontalInset},${height - verticalInset}`}
         />
-        <polyline className="insight-line-total" points={totalPoints} />
         <polyline
-          className="insight-line-passed"
+          className={cn("insight-line-total", pageStyles["insight-line-total"])}
+          points={totalPoints}
+        />
+        <polyline
+          className={cn("insight-line-passed", pageStyles["insight-line-passed"])}
           filter="url(#insight-line-shadow)"
           points={points((bucket) => bucket.passed)}
         />
-        <polyline className="insight-line-failed" points={points((bucket) => bucket.failed)} />
-        <polyline className="insight-line-skipped" points={points((bucket) => bucket.skipped)} />
+        <polyline
+          className={cn("insight-line-failed", pageStyles["insight-line-failed"])}
+          points={points((bucket) => bucket.failed)}
+        />
+        <polyline
+          className={cn("insight-line-skipped", pageStyles["insight-line-skipped"])}
+          points={points((bucket) => bucket.skipped)}
+        />
         {trend.map((bucket, index) =>
           index % markerStep === 0 || index === trend.length - 1 ? (
             <circle
-              className="insight-line-marker"
+              className={cn("insight-line-marker", pageStyles["insight-line-marker"])}
               cx={x(index)}
               cy={y(bucket.total)}
               key={bucket.bucket}
@@ -692,7 +848,12 @@ function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
         )}
       </svg>
       <div
-        className={`insight-line-axis${trend.length === 1 ? " insight-line-axis-single" : ""}`}
+        className={cn(
+          pageStyles["insight-line-axis"],
+          "insight-line-axis",
+          trend.length === 1 &&
+            cn("insight-line-axis-single", pageStyles["insight-line-axis-single"]),
+        )}
         aria-hidden="true"
       >
         <span>{trend[0]!.bucket.slice(5, 10)}</span>
@@ -708,10 +869,10 @@ function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures
   const totalCount = failures.reduce((total, failure) => total + failure.count, 0);
   const otherCount = Math.max(0, totalCount - visibleCount);
   return (
-    <div className="insight-failure-pie-chart">
+    <div className={cn("insight-failure-pie-chart", pageStyles["insight-failure-pie-chart"])}>
       <div
         aria-label={`失败原因饼图，共 ${failures.length} 类、${totalCount} 次失败`}
-        className="insight-pie"
+        className={cn("insight-pie", pageStyles["insight-pie"])}
         role="img"
         style={pieStyle(
           [
@@ -719,7 +880,7 @@ function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures
               count: failure.count,
               color: FAILURE_CHART_COLORS[index]!,
             })),
-            { count: otherCount, color: "var(--color-text-tertiary)" },
+            { count: otherCount, color: "var(--muted-foreground)" },
           ],
           totalCount,
         )}
@@ -729,7 +890,7 @@ function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures
           <small>失败次数</small>
         </span>
       </div>
-      <div className="insight-pie-legend">
+      <div className={cn("insight-pie-legend", pageStyles["insight-pie-legend"])}>
         {visibleFailures.map((failure, index) => (
           <span key={failure.signature} title={failure.description}>
             <i style={{ background: FAILURE_CHART_COLORS[index] }} />
@@ -739,12 +900,12 @@ function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures
         ))}
         {otherCount > 0 ? (
           <span>
-            <i className="insight-chart-neutral" />
+            <i className={cn("insight-chart-neutral", pageStyles["insight-chart-neutral"])} />
             <b>其他原因</b>
             <em>{otherCount}</em>
           </span>
         ) : null}
-        <p className="insight-chart-caption">
+        <p className={cn("insight-chart-caption", pageStyles["insight-chart-caption"])}>
           展示出现次数最高的 {visibleFailures.length} 类，共 {failures.length} 类
         </p>
       </div>
@@ -756,36 +917,46 @@ function FlakyCaseChart({ cases }: { cases: AnalyticsSummary["flakyCases"] }) {
   const visibleCases = cases.slice(0, INSIGHT_CHART_ITEM_LIMIT);
   const maximum = Math.max(1, ...visibleCases.map((item) => item.samples));
   return (
-    <div className="insight-flaky-column-chart" role="img" aria-label="不稳定用例样本柱状图">
-      <div className="insight-chart-legend" aria-hidden="true">
+    <div
+      className={cn("insight-flaky-column-chart", pageStyles["insight-flaky-column-chart"])}
+      role="img"
+      aria-label="不稳定用例样本柱状图"
+    >
+      <div
+        className={cn("insight-chart-legend", pageStyles["insight-chart-legend"])}
+        aria-hidden="true"
+      >
         <span>
-          <i className="insight-chart-success" />
+          <i className={cn("insight-chart-success", pageStyles["insight-chart-success"])} />
           成功
         </span>
         <span>
-          <i className="insight-chart-danger" />
+          <i className={cn("insight-chart-danger", pageStyles["insight-chart-danger"])} />
           失败
         </span>
       </div>
-      <div className="insight-flaky-columns">
+      <div className={cn("insight-flaky-columns", pageStyles["insight-flaky-columns"])}>
         {visibleCases.map((item) => {
           const samples = Math.max(1, item.passed + item.failed);
           return (
-            <div className="insight-flaky-column" key={item.caseDefinitionId}>
+            <div
+              className={cn("insight-flaky-column", pageStyles["insight-flaky-column"])}
+              key={item.caseDefinitionId}
+            >
               <b>{item.samples}</b>
-              <span className="insight-column-track">
+              <span className={cn("insight-column-track", pageStyles["insight-column-track"])}>
                 <span
                   aria-label={`${item.displayName}：成功 ${item.passed}，失败 ${item.failed}`}
-                  className="insight-column-stack"
+                  className={cn("insight-column-stack", pageStyles["insight-column-stack"])}
                   style={{ height: `${Math.max(8, (item.samples / maximum) * 100)}%` }}
                   title={`${item.displayName}：${item.samples} 个样本，置信度 ${percent(item.confidence)}`}
                 >
                   <i
-                    className="insight-chart-danger"
+                    className={cn("insight-chart-danger", pageStyles["insight-chart-danger"])}
                     style={{ height: `${(item.failed / samples) * 100}%` }}
                   />
                   <i
-                    className="insight-chart-success"
+                    className={cn("insight-chart-success", pageStyles["insight-chart-success"])}
                     style={{ height: `${(item.passed / samples) * 100}%` }}
                   />
                 </span>
@@ -796,7 +967,7 @@ function FlakyCaseChart({ cases }: { cases: AnalyticsSummary["flakyCases"] }) {
           );
         })}
       </div>
-      <p className="insight-chart-caption">
+      <p className={cn("insight-chart-caption", pageStyles["insight-chart-caption"])}>
         展示置信度最高的 {visibleCases.length} 个用例，共 {cases.length} 个
       </p>
     </div>
@@ -814,17 +985,17 @@ function BatchComparisonChart({ comparison }: { comparison: BatchComparisonManif
   const scopeTotal =
     comparison.commonCaseCount + comparison.onlyLeftCaseCount + comparison.onlyRightCaseCount;
   return (
-    <div className="insight-comparison-overview">
-      <div className="insight-donut-group">
+    <div className={cn("insight-comparison-overview", pageStyles["insight-comparison-overview"])}>
+      <div className={cn("insight-donut-group", pageStyles["insight-donut-group"])}>
         <div
           aria-label={`共同用例 ${comparison.commonCaseCount}，仅基准 ${comparison.onlyLeftCaseCount}，仅对比 ${comparison.onlyRightCaseCount}`}
-          className="insight-donut"
+          className={cn("insight-donut", pageStyles["insight-donut"])}
           role="img"
           style={donutStyle(
             [
-              { count: comparison.commonCaseCount, color: "var(--color-info)" },
-              { count: comparison.onlyLeftCaseCount, color: "var(--color-warning)" },
-              { count: comparison.onlyRightCaseCount, color: "var(--color-violet)" },
+              { count: comparison.commonCaseCount, color: "var(--info)" },
+              { count: comparison.onlyLeftCaseCount, color: "var(--warning)" },
+              { count: comparison.onlyRightCaseCount, color: "var(--info)" },
             ],
             scopeTotal,
           )}
@@ -834,29 +1005,38 @@ function BatchComparisonChart({ comparison }: { comparison: BatchComparisonManif
             <small>范围用例</small>
           </span>
         </div>
-        <div className="insight-donut-legend">
+        <div className={cn("insight-donut-legend", pageStyles["insight-donut-legend"])}>
           <span>
-            <i className="insight-chart-info" />
+            <i className={cn("insight-chart-info", pageStyles["insight-chart-info"])} />
             共同 {comparison.commonCaseCount}
           </span>
           <span>
-            <i className="insight-chart-warning" />
+            <i className={cn("insight-chart-warning", pageStyles["insight-chart-warning"])} />
             仅基准 {comparison.onlyLeftCaseCount}
           </span>
           <span>
-            <i className="insight-chart-violet" />
+            <i className={cn("insight-chart-violet", pageStyles["insight-chart-violet"])} />
             仅对比 {comparison.onlyRightCaseCount}
           </span>
         </div>
       </div>
-      <div className="insight-change-column-chart" aria-label="共同用例变化柱状图">
-        <div className="insight-change-columns">
+      <div
+        className={cn("insight-change-column-chart", pageStyles["insight-change-column-chart"])}
+        aria-label="共同用例变化柱状图"
+      >
+        <div className={cn("insight-change-columns", pageStyles["insight-change-columns"])}>
           {changes.map((item) => (
-            <div className="insight-change-column" key={item.label}>
+            <div
+              className={cn("insight-change-column", pageStyles["insight-change-column"])}
+              key={item.label}
+            >
               <b>{item.count}</b>
               <span>
                 <i
-                  className={`insight-chart-${item.tone}`}
+                  className={cn(
+                    pageStyles["insight-chart"],
+                    `insight-chart insight-chart-${item.tone}`,
+                  )}
                   style={{
                     height: `${Math.max(item.count > 0 ? 6 : 0, (item.count / comparisonMaximum) * 100)}%`,
                   }}
@@ -866,7 +1046,13 @@ function BatchComparisonChart({ comparison }: { comparison: BatchComparisonManif
             </div>
           ))}
         </div>
-        <p className={comparison.comparableScope ? "status-success" : "status-warning"}>
+        <p
+          className={
+            comparison.comparableScope
+              ? "status-success"
+              : cn("status-warning", pageStyles["status-warning"])
+          }
+        >
           {comparison.comparableScope
             ? "样本范围一致，可直接比较。"
             : "样本范围不同，不直接比较总体百分比。"}
@@ -979,19 +1165,22 @@ function caseOutcomeCounts(report: CaseOutcomeReport): CaseOutcomeCounts {
 
 function CaseOutcomeChart({ report }: { report: CaseOutcomeReport }) {
   const counts = caseOutcomeCounts(report);
-  if (counts.total === 0) return <div className="inline-empty">该项目版本还没有用例。</div>;
+  if (counts.total === 0)
+    return (
+      <div className={cn("inline-empty", uiPatterns["inline-empty"])}>该项目版本还没有用例。</div>
+    );
   return (
-    <div className="insight-case-outcome-chart">
+    <div className={cn("insight-case-outcome-chart", pageStyles["insight-case-outcome-chart"])}>
       <div
         aria-label={`成功 ${counts.succeeded}，失败 ${counts.failed}，阻塞 ${counts.blocked}，未执行 ${counts.neverRun}`}
-        className="insight-donut insight-case-outcome-donut"
+        className={cn("insight-donut insight-case-outcome-donut", pageStyles["insight-donut"])}
         role="img"
         style={donutStyle(
           [
-            { count: counts.succeeded, color: "var(--color-success)" },
-            { count: counts.failed, color: "var(--color-danger)" },
-            { count: counts.blocked, color: "var(--color-warning)" },
-            { count: counts.neverRun, color: "var(--color-text-tertiary)" },
+            { count: counts.succeeded, color: "var(--success)" },
+            { count: counts.failed, color: "var(--destructive)" },
+            { count: counts.blocked, color: "var(--warning)" },
+            { count: counts.neverRun, color: "var(--muted-foreground)" },
           ],
           counts.total,
         )}
@@ -1001,27 +1190,27 @@ function CaseOutcomeChart({ report }: { report: CaseOutcomeReport }) {
           <small>本页用例</small>
         </span>
       </div>
-      <div className="insight-outcome-legend">
+      <div className={cn("insight-outcome-legend", pageStyles["insight-outcome-legend"])}>
         <span>
-          <i className="insight-chart-success" />
+          <i className={cn("insight-chart-success", pageStyles["insight-chart-success"])} />
           <small>成功</small>
           <strong>{counts.succeeded}</strong>
           <em>{formatRate(counts.succeeded, counts.total)}</em>
         </span>
         <span>
-          <i className="insight-chart-danger" />
+          <i className={cn("insight-chart-danger", pageStyles["insight-chart-danger"])} />
           <small>失败</small>
           <strong>{counts.failed}</strong>
           <em>{formatRate(counts.failed, counts.total)}</em>
         </span>
         <span>
-          <i className="insight-chart-warning" />
+          <i className={cn("insight-chart-warning", pageStyles["insight-chart-warning"])} />
           <small>阻塞</small>
           <strong>{counts.blocked}</strong>
           <em>{formatRate(counts.blocked, counts.total)}</em>
         </span>
         <span>
-          <i className="insight-chart-neutral" />
+          <i className={cn("insight-chart-neutral", pageStyles["insight-chart-neutral"])} />
           <small>未执行</small>
           <strong>{counts.neverRun}</strong>
           <em>{formatRate(counts.neverRun, counts.total)}</em>
@@ -1051,54 +1240,91 @@ function CaseOutcomeDetails({
       ) || left.displayName.localeCompare(right.displayName),
   );
   return (
-    <div className="insight-detail-content">
-      <div className="case-outcome-summary" role="status">
+    <div className={cn("insight-detail-content", pageStyles["insight-detail-content"])}>
+      <div className={cn("case-outcome-summary", pageStyles["case-outcome-summary"])} role="status">
         <span>
           本页 <strong>{counts.total}</strong> 个用例
         </span>
-        <span className="batch-status batch-status-succeeded">
+        <Badge
+          className={cn(
+            "batch-status batch-status-succeeded",
+            pageStyles["batch-status"],
+            pageStyles["batch-status-succeeded"],
+          )}
+        >
           成功 {counts.succeeded}（{formatRate(counts.succeeded, counts.total)}）
-        </span>
-        <span className="batch-status batch-status-failed">
+        </Badge>
+        <Badge
+          className={cn(
+            "batch-status batch-status-failed",
+            pageStyles["batch-status"],
+            pageStyles["batch-status-failed"],
+          )}
+        >
           失败 {counts.failed}（{formatRate(counts.failed, counts.total)}）
-        </span>
-        <span className="batch-status batch-status-blocked">
+        </Badge>
+        <Badge
+          className={cn(
+            "batch-status batch-status-blocked",
+            pageStyles["batch-status"],
+            pageStyles["batch-status-blocked"],
+          )}
+        >
           阻塞 {counts.blocked}（{formatRate(counts.blocked, counts.total)}）
-        </span>
-        <span className="batch-status batch-status-neutral">
+        </Badge>
+        <Badge
+          className={cn(
+            "batch-status batch-status-neutral",
+            pageStyles["batch-status"],
+            pageStyles["batch-status-neutral"],
+          )}
+        >
           未执行 {counts.neverRun}（{formatRate(counts.neverRun, counts.total)}）
-        </span>
+        </Badge>
       </div>
       {counts.total === 0 ? (
-        <div className="inline-empty">该项目版本还没有用例。</div>
+        <div className={cn("inline-empty", uiPatterns["inline-empty"])}>该项目版本还没有用例。</div>
       ) : (
-        <div className="insight-detail-table-scroll">
-          <table className="data-table insight-detail-wide-table">
-            <thead>
-              <tr>
-                <th>用例</th>
-                <th>类名</th>
-                <th>最近结果</th>
-                <th>最近执行时间</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div
+          className={cn("insight-detail-table-scroll", pageStyles["insight-detail-table-scroll"])}
+        >
+          <Table
+            className={cn(
+              "data-table insight-detail-wide-table",
+              uiPatterns["data-table"],
+              pageStyles["insight-detail-wide-table"],
+            )}
+          >
+            <TableHeader>
+              <TableRow>
+                <TableHead>用例</TableHead>
+                <TableHead>类名</TableHead>
+                <TableHead>最近结果</TableHead>
+                <TableHead>最近执行时间</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((item) => {
                 const outcome = report.outcomes.get(item.id);
                 return (
-                  <tr key={item.id}>
-                    <td title={item.displayName}>
+                  <TableRow key={item.id}>
+                    <TableCell title={item.displayName}>
                       <Link href={`/cases/${encodeURIComponent(item.id)}`}>{item.displayName}</Link>
-                    </td>
-                    <td title={item.className}>
+                    </TableCell>
+                    <TableCell title={item.className}>
                       <code>{item.className}</code>
-                    </td>
-                    <td>
-                      <span className={`batch-status ${outcomeBadgeClass(outcome)}`}>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        className={cn(
+                          pageStyles["batch-status"],
+                          `batch-status ${outcomeBadgeClass(outcome)}`,
+                        )}
+                      >
                         {outcomeLabel(outcome)}
-                      </span>
-                    </td>
-                    <td>
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       {report.executedAt.has(item.id) ? (
                         <time
                           dateTime={report.executedAt.get(item.id)}
@@ -1109,16 +1335,16 @@ function CaseOutcomeDetails({
                       ) : (
                         "—"
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
       {trail.length > 0 || report.nextCursor ? (
-        <nav aria-label="用例执行情况分页" className="pagination">
+        <nav aria-label="用例执行情况分页" className={cn("pagination", pageStyles["pagination"])}>
           {trail.length > 0 ? (
             <Link href={`/insights?${casePreviousParameters(parameters, trail)}`}>上一页</Link>
           ) : (
@@ -1146,7 +1372,7 @@ function segmentedCircleStyle(
   segments: ReadonlyArray<{ count: number; color: string }>,
   total: number,
 ): CSSProperties {
-  if (total <= 0) return { background: "var(--color-surface-muted)" };
+  if (total <= 0) return { background: "var(--muted)" };
   let cursor = 0;
   const stops = segments.flatMap((segment) => {
     if (segment.count <= 0) return [];
@@ -1155,7 +1381,7 @@ function segmentedCircleStyle(
     return `${segment.color} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
   });
   if (cursor < 360) {
-    stops.push(`var(--color-surface-muted) ${cursor.toFixed(2)}deg 360deg`);
+    stops.push(`var(--muted) ${cursor.toFixed(2)}deg 360deg`);
   }
   return { background: `conic-gradient(${stops.join(", ")})` };
 }
@@ -1312,3 +1538,113 @@ function casePreviousParameters(
   if (remaining.length > 0) next.set("caseTrail", JSON.stringify(remaining));
   return next;
 }
+
+const pageStyles = {
+  "batch-status": uiPatterns["batch-status"],
+  "batch-status-blocked": "bg-warning/10 text-warning",
+  "batch-status-failed": "bg-destructive/10 text-destructive",
+  "batch-status-neutral": "bg-muted text-muted-foreground",
+  "batch-status-succeeded": "bg-success/10 text-success",
+  "case-outcome-summary":
+    "flex flex-wrap gap-2 [padding:4px_0_12px] text-muted-foreground text-xs [&_strong]:text-foreground",
+  "insight-advanced-filters":
+    "[&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold border-t border-solid border-border pt-3 [&_.ui-disclosure-label]:inline-flex [&_.ui-disclosure-label]:min-h-8 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[7px] [&_.ui-disclosure-label]:text-info [&_.ui-disclosure-label]:text-sm [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-body_>_div]:grid [&_.ui-disclosure-body_>_div]:grid-cols-[repeat(3,_minmax(180px,_1fr))] [&_.ui-disclosure-body_>_div]:gap-3 [&_.ui-disclosure-body_>_div]:pt-2.5 max-[1281px]:[&_.ui-disclosure-body_>_div]:grid-cols-2",
+  "insight-case-outcome-chart":
+    "grid min-h-0 [flex:1_1_auto] items-center gap-7 grid-cols-[minmax(150px,_0.8fr)_minmax(260px,_1.4fr)] max-[1281px]:gap-4.5 [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-[110px_minmax(0,_1fr)] [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-3 [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.insight-donut]:w-[110px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.insight-donut_>_span]:w-18.5",
+  "insight-change-column":
+    "[&_>_b]:text-muted-foreground [&_>_b]:text-xs [&_>_b]:tabular-nums [&_>_small]:overflow-hidden [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:text-ellipsis [&_>_small]:whitespace-nowrap grid min-w-0 [grid-template-rows:auto_140px_auto] items-end gap-1.5 text-center [&_>_span]:flex [&_>_span]:h-[140px] [&_>_span]:items-end [&_>_span]:justify-center [&_>_span_>_i]:block [&_>_span_>_i]:w-[min(44px,_70%)] [&_>_span_>_i]:min-h-0 [&_>_span_>_i]:rounded-lg [&_>_span_>_i]:shadow-xs",
+  "insight-change-column-chart":
+    "grid min-w-0 gap-3 [&_>_p]:m-0 [&_>_p]:text-xs [&_>_p]:text-center",
+  "insight-change-columns":
+    "grid min-h-[180px] grid-cols-[repeat(4,_minmax(54px,_1fr))] items-end gap-[clamp(14px,_2vw,_30px)] px-3 border-b border-solid border-border",
+  "insight-chart":
+    "[&.insight-chart-card]:flex [&.insight-chart-card]:min-h-[342px] [&.insight-chart-card]:flex-col [&.insight-chart-card]:overflow-hidden [&.insight-chart-card]:[&_>_.inline-empty]:flex [&.insight-chart-card]:[&_>_.inline-empty]:[flex:1_1_auto] [&.insight-chart-card]:[&_>_.inline-empty]:items-center [&.insight-chart-card]:[&_>_.inline-empty]:justify-center [&.insight-chart-card]:[@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading]:items-start [&.insight-chart-card]:[@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:grid [&.insight-chart-card]:[@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:gap-0.5 [&.insight-chart-caption]:[margin:4px_0_0] [&.insight-chart-caption]:text-muted-foreground [&.insight-chart-caption]:text-xs [&.insight-chart-caption]:text-right [&.insight-chart-legend]:flex [&.insight-chart-legend]:justify-end [&.insight-chart-legend]:gap-3.5 [&.insight-chart-legend]:text-muted-foreground [&.insight-chart-legend]:text-xs [&.insight-chart-legend]:[&_span]:inline-flex [&.insight-chart-legend]:[&_span]:items-center [&.insight-chart-legend]:[&_span]:gap-1.5 [&.insight-chart-legend]:[&_i]:w-2 [&.insight-chart-legend]:[&_i]:h-2 [&.insight-chart-legend]:[&_i]:[flex:0_0_auto] [&.insight-chart-legend]:[&_i]:rounded-md [&.insight-chart-success]:bg-success! [&.insight-chart-danger]:bg-destructive! [&.insight-chart-warning]:bg-warning! [&.insight-chart-info]:bg-info! [&.insight-chart-violet]:bg-info! [&.insight-chart-neutral]:bg-muted-foreground!",
+  "insight-chart-caption": "[margin:4px_0_0] text-muted-foreground text-xs text-right",
+  "insight-chart-card":
+    "flex min-h-[342px] flex-col overflow-hidden [&_.ui-card-content_>_.inline-empty]:flex [&_.ui-card-content_>_.inline-empty]:[flex:1_1_auto] [&_.ui-card-content_>_.inline-empty]:items-center [&_.ui-card-content_>_.inline-empty]:justify-center [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading]:items-start [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:grid [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:gap-0.5",
+  "insight-chart-danger": "bg-destructive!",
+  "insight-chart-info": "bg-info!",
+  "insight-chart-legend":
+    "flex justify-end gap-3.5 text-muted-foreground text-xs [&_span]:inline-flex [&_span]:items-center [&_span]:gap-1.5 [&_i]:w-2 [&_i]:h-2 [&_i]:[flex:0_0_auto] [&_i]:rounded-md",
+  "insight-chart-neutral": "bg-muted-foreground!",
+  "insight-chart-success": "bg-success!",
+  "insight-chart-violet": "bg-info!",
+  "insight-chart-warning": "bg-warning!",
+  "insight-column-stack":
+    "flex w-[min(34px,_70%)] min-h-1.5 overflow-hidden flex-col justify-end rounded-md bg-muted shadow-xs [&_>_i]:block [&_>_i]:w-full [&_>_i]:min-h-0.5",
+  "insight-column-track":
+    "flex w-full h-[150px] items-end justify-center [@media(min-width:_1024px)_and_(max-width:_1180px)]:h-[130px]",
+  "insight-comparison-card": "min-h-[410px] col-span-full",
+  "insight-comparison-overview":
+    "grid min-h-0 [flex:1_1_auto] items-center gap-7 grid-cols-[minmax(360px,_1fr)_minmax(320px,_1fr)] border-t border-solid border-border pt-3.5",
+  "insight-data-table": "min-w-[620px]",
+  "insight-detail-content": "flex w-full min-h-0 flex-col gap-3",
+  "insight-detail-long-text": "w-[52%] min-w-0",
+  "insight-detail-table-scroll":
+    "w-full min-h-0 [flex:1_1_auto] overflow-x-hidden overflow-y-auto [overscroll-behavior:contain] border border-solid border-border rounded-xl [scrollbar-gutter:stable] [&_.data-table]:w-full [&_.data-table]:min-w-0 [&_.data-table]:[table-layout:fixed] [&_.data-table_th]:sticky [&_.data-table_th]:z-1 [&_.data-table_th]:top-0 [&_.data-table_th]:shadow-xs [&_.data-table_td]:py-[13px] [&_.data-table_td]:leading-[1.5] [&_.data-table_td]:overflow-hidden [&_.data-table_td]:text-ellipsis [&_.data-table_td]:whitespace-nowrap [&_.data-table_tbody_tr:nth-child(even)]:bg-muted [&_.insight-comparison-table_th]:py-1 [&_.insight-comparison-table_th]:leading-[1.3] [&_.insight-comparison-table_td]:py-1 [&_.insight-comparison-table_td]:leading-[1.3] [&_.insight-comparison-table_th:last-child]:px-2 [&_.insight-comparison-table_td:last-child]:px-2",
+  "insight-detail-wide-table": "min-w-0!",
+  "insight-donut":
+    "grid w-[156px] [aspect-ratio:1] [flex:0_0_auto] place-items-center rounded-full shadow-xs [&_>_span]:grid [&_>_span]:w-[104px] [&_>_span]:[aspect-ratio:1] [&_>_span]:[place-content:center] [&_>_span]:border [&_>_span]:border-solid [&_>_span]:border-border [&_>_span]:rounded-full [&_>_span]:bg-card [&_>_span]:shadow-xs [&_>_span]:text-center [&_strong]:text-2xl [&_strong]:tabular-nums [&_strong]:leading-[1.05] [&_small]:mt-1 [&_small]:text-muted-foreground [&_small]:text-xs",
+  "insight-donut-group": "flex min-w-0 items-center justify-center gap-6.5 max-[1281px]:gap-4",
+  "insight-donut-legend":
+    "[&_span]:inline-flex [&_span]:items-center [&_span]:gap-1.5 [&_i]:w-2 [&_i]:h-2 [&_i]:[flex:0_0_auto] [&_i]:rounded-md grid min-w-[110px] gap-[9px] text-muted-foreground text-xs",
+  "insight-failure-pie-chart":
+    "grid min-h-0 [flex:1_1_auto] grid-cols-[minmax(120px,_168px)_minmax(0,_1fr)] items-start gap-5.5 pt-3 [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-[120px_minmax(0,_1fr)] [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-3",
+  "insight-filter":
+    "grid grid-cols-[minmax(0,_1fr)] gap-3.5 items-end [&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+  "insight-flaky-card": "[grid-column:auto] max-[1181px]:[grid-column:auto]",
+  "insight-flaky-column":
+    "grid min-w-0 [grid-template-rows:auto_150px_auto_auto] items-end gap-[5px] text-center [&_>_b]:text-muted-foreground [&_>_b]:text-xs [&_>_b]:tabular-nums [&_>_small]:overflow-hidden [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:text-ellipsis [&_>_small]:whitespace-nowrap [&_>_em]:text-muted-foreground [&_>_em]:text-xs [&_>_em]:[font-style:normal] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[grid-template-rows:auto_130px_auto_auto]",
+  "insight-flaky-column-chart":
+    "grid min-w-0 min-h-0 [flex:1_1_auto] [grid-template-rows:auto_minmax(0,_1fr)_auto] gap-2 pt-2.5",
+  "insight-flaky-columns":
+    "grid min-h-[190px] grid-cols-[repeat(6,_minmax(42px,_1fr))] items-end gap-[clamp(8px,_1.4vw,_18px)] [padding:8px_8px_0] border-b border-solid border-border [background:repeating-linear-gradient(_to_bottom,_transparent_0,_transparent_49px,_var(--border)_50px_)] [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-[7px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:px-0.5",
+  "insight-flaky-filter":
+    "grid grid-cols-2 gap-3 items-end p-3 border border-solid border-border rounded-lg bg-muted [&_label:first-child]:col-span-full [&_>_.ui-button]:w-fit [&_label]:grid [&_label]:gap-[calc(8px_/_2)] [&_label]:min-w-0 [&_label]:text-sm [&_label]:text-muted-foreground",
+  "insight-flaky-scope": "m-0",
+  "insight-grid":
+    "grid grid-cols-[minmax(0,_3fr)_minmax(340px,_2fr)] items-start gap-4 max-[1181px]:grid-cols-[1fr] [&_>_.content-card]:overflow-hidden [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-2",
+  "insight-heading-actions":
+    "flex min-w-0 items-center justify-end gap-2.5 [&_>_.muted]:overflow-hidden [&_>_.muted]:text-ellipsis [&_>_.muted]:whitespace-nowrap [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_.muted]:hidden",
+  "insight-line-area": "[fill:url(#insight-trend-area)]",
+  "insight-line-axis": "flex justify-between px-0.5 text-muted-foreground text-xs",
+  "insight-line-axis-single": "justify-center",
+  "insight-line-chart":
+    "grid min-h-0 [flex:1_1_auto] [grid-template-rows:auto_minmax(0,_1fr)_auto] gap-1.5 pt-2.5",
+  "insight-line-failed":
+    "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-destructive [stroke-width:2.2]",
+  "insight-line-grid": "stroke-border [stroke-dasharray:3_6] [stroke-width:1]",
+  "insight-line-marker":
+    "fill-card stroke-info [stroke-width:2] [vector-effect:non-scaling-stroke]",
+  "insight-line-passed":
+    "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-success [stroke-width:2.7]",
+  "insight-line-plot": "block w-full h-[210px] overflow-visible",
+  "insight-line-skipped":
+    "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-warning [stroke-width:2.2]",
+  "insight-line-summary":
+    "flex items-center gap-3.5 justify-end text-muted-foreground text-xs [&_span]:flex [&_span]:items-center [&_span]:gap-1.5 [&_i]:w-2 [&_i]:h-2 [&_i]:rounded-md [&_b]:text-foreground [&_b]:tabular-nums [&_small]:ml-0.5 [&_small]:text-muted-foreground",
+  "insight-line-total":
+    "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-info [stroke-opacity:0.42] [stroke-width:2]",
+  "insight-metric":
+    "[&.insight-metric-icon]:grid [&.insight-metric-icon]:w-9.5 [&.insight-metric-icon]:h-9.5 [&.insight-metric-icon]:[grid-row:span_2] [&.insight-metric-icon]:place-items-center [&.insight-metric-icon]:rounded-lg [&.insight-metric-icon]:bg-info/10 [&.insight-metric-icon]:text-info [&.insight-metric-success]:[&_.insight-metric-icon]:bg-success/10 [&.insight-metric-success]:[&_.insight-metric-icon]:text-success [&.insight-metric-success]:[&_strong]:text-success [&.insight-metric-danger]:[&_.insight-metric-icon]:bg-destructive/10 [&.insight-metric-danger]:[&_.insight-metric-icon]:text-destructive [&.insight-metric-danger]:[&_strong]:text-destructive",
+  "insight-metric-icon":
+    "grid w-9.5 h-9.5 [grid-row:span_2] place-items-center rounded-lg bg-info/10 text-info",
+  "insight-metrics":
+    "grid grid-cols-4 gap-3.5 [&_.card]:grid [&_.card]:min-w-0 [&_.card]:min-h-[112px] [&_.card]:grid-cols-[auto_minmax(0,_1fr)] [&_.card]:gap-[8px_11px] [&_.card]:items-center [&_.card]:p-4.5 [&_.insight-metric-label]:text-muted-foreground [&_.insight-metric-label]:text-sm [&_.insight-metric-label]:font-semibold [&_.card_strong]:min-w-0 [&_.card_strong]:text-2xl [&_.card_strong]:tabular-nums [&_.card_strong]:leading-[1.05] [&_.card_strong]:whitespace-nowrap",
+  "insight-outcome-legend":
+    "[&_i]:w-2 [&_i]:h-2 [&_i]:[flex:0_0_auto] [&_i]:rounded-md grid grid-cols-[repeat(2,_minmax(110px,_1fr))] gap-2.5 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[auto_minmax(0,_1fr)_auto] [&_>_span]:items-center [&_>_span]:gap-1.5 [&_>_span]:border [&_>_span]:border-solid [&_>_span]:border-border [&_>_span]:rounded-lg [&_>_span]:py-2.5 [&_>_span]:px-3 [&_>_span]:bg-muted [&_small]:text-muted-foreground [&_strong]:text-base [&_strong]:tabular-nums [&_em]:[grid-column:2_/_-1] [&_em]:text-muted-foreground [&_em]:text-xs [&_em]:[font-style:normal] [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-2 [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-[7px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_span]:py-[7px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_span]:px-2",
+  "insight-pie":
+    "grid w-[min(168px,_100%)] [aspect-ratio:1] [place-self:center] place-items-center border border-solid border-border rounded-full shadow-xs [&_>_span]:grid [&_>_span]:w-19 [&_>_span]:[aspect-ratio:1] [&_>_span]:[place-content:center] [&_>_span]:border [&_>_span]:border-solid [&_>_span]:border-border [&_>_span]:rounded-full [&_>_span]:bg-card [&_>_span]:shadow-xs [&_>_span]:text-center [&_strong]:text-2xl [&_strong]:tabular-nums [&_strong]:leading-[1] [&_small]:mt-[5px] [&_small]:text-muted-foreground [&_small]:text-xs [@media(min-width:_1024px)_and_(max-width:_1180px)]:w-[120px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_span]:w-15.5",
+  "insight-pie-legend":
+    "grid min-w-0 gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[9px_minmax(0,_1fr)_auto] [&_>_span]:items-center [&_>_span]:gap-2 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_i]:w-[9px] [&_i]:h-[9px] [&_i]:rounded-md [&_b]:font-semibold [&_b]:[overflow-wrap:anywhere] [&_b]:whitespace-normal [&_em]:text-foreground [&_em]:[font-style:normal] [&_em]:tabular-nums [&_em]:font-semibold [&_.insight-chart-caption]:pt-[3px] [&_.insight-chart-caption]:border-t [&_.insight-chart-caption]:border-solid [&_.insight-chart-caption]:border-border [&_.expandable-text]:text-sm [&_.expandable-text]:leading-[1.5]",
+  "insight-primary-filters":
+    "grid grid-cols-4 items-end gap-3 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold max-[1281px]:grid-cols-2 max-[1281px]:[&_>_.ui-button]:w-fit",
+  "insight-trend-card": "min-w-0 max-[1181px]:[grid-row:auto]",
+  "insights-page": "[&_.page-hero]:flex-wrap",
+  pagination: "flex justify-end py-3.5 px-4.5 border-t border-solid border-border",
+  "status-warning":
+    "[margin:0_0_10px] border border-solid border-transparent rounded-lg py-2 px-2.5 text-warning bg-warning/10 text-xs",
+  "trend-failed": "bg-destructive",
+  "trend-passed": "bg-success",
+  "trend-skipped": "bg-warning",
+} as const;

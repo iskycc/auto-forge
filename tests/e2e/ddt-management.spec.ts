@@ -18,7 +18,7 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
 import type { DdtExecutionStatistics } from "@autoforge/contracts";
 
 test("DDT inheritance copies another version with pause, recovery and safe duplicate handling", async ({
@@ -64,8 +64,11 @@ test("DDT inheritance copies another version with pause, recovery and safe dupli
   await expect(
     dialog.getByLabel("来源版本").locator("option", { hasText: "DDT 目标版本" }),
   ).toHaveCount(0);
-  await dialog.getByLabel("来源版本").selectOption(source.versionId);
-  await dialog.getByLabel("来源测试阶段").selectOption(source.stageId);
+  await dialog.getByLabel("来源版本").and(dialog.locator("select")).selectOption(source.versionId);
+  await dialog
+    .getByLabel("来源测试阶段")
+    .and(dialog.locator("select"))
+    .selectOption(source.stageId);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await expectUiIntegrity(page);
@@ -218,6 +221,20 @@ test("DDT template dialog keeps focus and protects unsaved edits", async ({ page
   await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
   await page.goto("/cases?tab=ddt&ddtView=templates");
   const trigger = page.getByRole("button", { name: "新建模板", exact: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectReadableText(trigger.locator("span").filter({ hasText: "新建模板" }));
+    await captureDdtUi(page, `ddt-template-action-${width}`);
+    await page.getByRole("tab", { name: "导入任务", exact: true }).click();
+    await expectReadableText(
+      page
+        .getByRole("button", { name: "新建导入", exact: true })
+        .locator("span")
+        .filter({ hasText: "新建导入" }),
+    );
+    await captureDdtUi(page, `ddt-import-action-${width}`);
+    await page.getByRole("tab", { name: "字段模板", exact: true }).click();
+  }
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "新建字段模板", exact: true });
   await expect(dialog).toBeVisible();
@@ -344,7 +361,7 @@ test("execution history finds ordinary and DDT cases only on explicit search", a
   await dialog.getByRole("button", { name: /钱包测试.*wallet.PaymentTest/ }).click();
   await expect(page.getByLabel("用例 ID", { exact: true })).toHaveValue("ordinary-id");
   await page.getByRole("button", { name: "查找用例", exact: true }).click();
-  await dialog.getByRole("button", { name: "用例类型", exact: true }).click();
+  await dialog.getByRole("combobox", { name: "用例类型", exact: true }).click();
   await page.getByRole("option", { name: "DDT 用例", exact: true }).click();
   await dialog.getByLabel("查找关键词", { exact: true }).fill("PAY");
   expect(searches).toHaveLength(1);
@@ -927,7 +944,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await page.getByRole("link", { name: "DDT 管理" }).click();
   page.off("request", observeCasePageReload);
   expect(casePageDocumentRequests).toEqual([]);
-  await expect(page.getByRole("link", { name: "DDT 管理" })).toHaveClass(/active/u);
+  await expect(page.getByRole("link", { name: "DDT 管理" })).toHaveClass(/(?:^|\s)active(?:\s|$)/u);
   await expect(page.getByText("CaseID 在当前项目版本与测试阶段内唯一")).toBeVisible();
 
   await page.getByRole("button", { name: "导入表格" }).click();
@@ -963,10 +980,10 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   };
   const dropzone = importDialog.locator(".ddt-dropzone");
   await dispatchFileDrag(dropzone, "dragenter", workbookFile);
-  await expect(dropzone).toHaveClass(/drag-active/u);
+  await expect(dropzone).toHaveClass(/(?:^|\s)drag-active(?:\s|$)/u);
   await expect(dropzone.getByText("松开即可添加文件")).toBeVisible();
   await dispatchFileDrag(dropzone, "drop", workbookFile);
-  await expect(dropzone).not.toHaveClass(/drag-active/u);
+  await expect(dropzone).not.toHaveClass(/(?:^|\s)drag-active(?:\s|$)/u);
   await expect(importDialog.getByText(`ddt-${hierarchy.suffix}.xlsx`)).toBeVisible();
   const previewRoute = "**/api/v1/ddt/imports/preview?**";
   const delayPreview = async (route: Route) => {
@@ -985,7 +1002,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await expect(page.locator(".ddt-status.succeeded", { hasText: "已完成" })).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByRole("tab", { name: "用例" }).click();
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
   await expect(
     page.getByRole("button", { name: `LOGIN-${hierarchy.suffix}`, exact: true }),
   ).toBeVisible();
@@ -1014,7 +1031,10 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await expect(page.getByLabel(`选择 ${orderCaseId}`)).toBeChecked();
   await page.getByRole("button", { name: "加入用例任务" }).click();
   const suiteDialog = page.getByRole("dialog", { name: /将 1 条 DDT 用例加入任务/u });
-  await suiteDialog.getByLabel("目标用例任务").selectOption(suite.id);
+  await suiteDialog
+    .getByLabel("目标用例任务")
+    .and(suiteDialog.locator("select"))
+    .selectOption(suite.id);
   await suiteDialog.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByText(`已将 1 条 DDT 用例加入任务“${suite.name}”。`)).toBeVisible();
 
@@ -1040,7 +1060,8 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     ],
   });
   await page.goto(`/case-suites/${encodeURIComponent(suite.id)}`);
-  await expect(page.getByText("普通用例", { exact: true })).toBeVisible();
+  // Task membership uses a background snapshot; resource protection may defer its refresh.
+  await expect(page.getByText("普通用例", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("DDT 用例", { exact: true })).toBeVisible();
   await page.getByText("com.example", { exact: true }).click();
   await page.getByText("SR · ORDER", { exact: true }).click();
@@ -1048,7 +1069,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await expect(page.getByText(executionClassName, { exact: true })).toHaveCount(2);
 
   await page.goto("/cases?tab=ddt");
-  await page.getByRole("tab", { name: "用例" }).click();
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
 
   for (const viewport of [
     { width: 1024, height: 768 },
@@ -1154,7 +1175,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await templateDialog.getByRole("button", { name: "创建模板" }).click();
   await expect(page.getByText("认证用例字段", { exact: true })).toBeVisible();
 
-  await page.getByRole("tab", { name: "用例" }).click();
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
   await page.getByLabel(`选择 LOGIN-${hierarchy.suffix}`).check();
   await page.getByRole("button", { name: "批量修改" }).click();
   const bulkDialog = page.getByRole("dialog", { name: /批量修改 1 条用例/u });
@@ -1180,7 +1201,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   const deletedRow = page.getByRole("row", { name: new RegExp(`LOGIN-${hierarchy.suffix}`) });
   await expect(deletedRow).toBeVisible();
   await deletedRow.getByRole("button", { name: "恢复" }).click();
-  await page.getByRole("tab", { name: "用例" }).click();
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
   await expect(
     page.getByRole("button", { name: `LOGIN-${hierarchy.suffix}`, exact: true }),
   ).toBeVisible();
@@ -1471,7 +1492,11 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
   await navigation.getByLabel("搜索 DDT 用例").fill("");
   await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
 
-  await navigation.locator(".ddt-advanced-filters > summary").click();
+  await navigation
+    .locator(
+      ".ddt-advanced-filters > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   await navigation.getByLabel("DDT 动态字段", { exact: true }).fill("描述");
   await navigation.getByLabel("动态字段值", { exact: true }).fill("用例 61");
   await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
@@ -1489,13 +1514,17 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
       workspaceBounds!.y + workspaceBounds!.height,
     );
     await captureDdtUi(page, `ddt-case-workspace-filter-${width}`);
-    await navigation.getByRole("button", { name: "动态字段匹配方式", exact: true }).click();
-    await navigation.getByRole("option", { name: "小于等于", exact: true }).click();
-    await navigation.getByRole("button", { name: "动态字段匹配方式", exact: true }).click();
-    await navigation.getByRole("option", { name: "包含", exact: true }).click();
+    await navigation.getByRole("combobox", { name: "动态字段匹配方式", exact: true }).click();
+    await navigation.page().getByRole("option", { name: "小于等于", exact: true }).click();
+    await navigation.getByRole("combobox", { name: "动态字段匹配方式", exact: true }).click();
+    await navigation.page().getByRole("option", { name: "包含", exact: true }).click();
   }
   await navigation.getByLabel("DDT 动态字段", { exact: true }).fill("");
-  await navigation.locator(".ddt-advanced-filters > summary").click();
+  await navigation
+    .locator(
+      ".ddt-advanced-filters > .ant-collapse > .ant-collapse-item > .ant-collapse-header .ui-disclosure-label",
+    )
+    .click();
   const resizer = workspace.getByRole("separator", { name: "调整 CaseID 列表宽度" });
   await resizer.focus();
   const previousWidth = Number(await resizer.getAttribute("aria-valuenow"));
@@ -1519,8 +1548,8 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
 });
 
 async function selectDdtGroup(navigation: Locator, group: string): Promise<void> {
-  await navigation.getByRole("button", { name: "DDT 业务分组", exact: true }).click();
-  await navigation.getByRole("option", { name: group, exact: true }).click();
+  await navigation.getByRole("combobox", { name: "DDT 业务分组", exact: true }).click();
+  await navigation.page().getByRole("option", { name: group, exact: true }).click();
 }
 
 async function expectResponsiveDdtSidebar(page: Page): Promise<void> {
@@ -2160,6 +2189,9 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
         for (const width of [1024, 1536]) {
           await publicPage.setViewportSize({ width, height: 960 });
           await expectUiIntegrity(publicPage);
+          for (const status of await publicPage.locator(".batch-status").all()) {
+            await expectReadableText(status);
+          }
           await captureDdtUi(
             publicPage,
             `ddt-public-log-${suite.id === mixed.id ? "mixed" : "pure"}-${width}`,
@@ -2328,9 +2360,11 @@ test("DDT public API reads raw cases within URL scope and provides a responsive 
     await page.evaluate(() => window.scrollTo(0, 0));
     await expectUiIntegrity(page);
     await captureDdtUi(page, `ddt-open-api-${width}`);
-    await api.getByRole("button", { name: "示例语言", exact: true }).click();
+    await api.getByRole("combobox", { name: "示例语言", exact: true }).click();
     await page.getByRole("option", { name: "Groovy", exact: true }).click();
-    await alignDdtSectionBelowTopbar(api.locator(".ddt-api-guide-grid > article").first());
+    await alignDdtSectionBelowTopbar(
+      api.locator(".ddt-api-guide-grid").getByRole("article").first(),
+    );
     await expectUiIntegrity(page);
     await captureDdtUi(page, `ddt-open-api-example-${width}`);
   }
@@ -2817,8 +2851,8 @@ test("DDT advanced search submits explicitly, searches only values and handles s
       true,
     );
     await captureDdtUi(page, `value-search-data-journey-${viewport.width}`);
-    await dataDialog.getByRole("button", { name: "用户旅程步骤", exact: true }).click();
-    await dataDialog.getByRole("option", { name: "step2", exact: true }).click();
+    await dataDialog.getByRole("combobox", { name: "用户旅程步骤", exact: true }).click();
+    await page.getByRole("option", { name: "step2", exact: true }).click();
     await expect(dataDialog).toContainText("交易已确认");
     await expect(dataDialog.locator("dd")).toContainText(["交易已确认", "false", "0", "空值"]);
     await expect(dataDialog).not.toContainText("字段末尾");
@@ -3071,7 +3105,7 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
   const dialog = page.getByRole("dialog", { name: "按清单选择 DDT 用例" });
   const search = dialog.getByRole("button", { name: "解析并预览" });
   const apply = dialog.getByRole("button", { name: "勾选匹配用例" });
-  await dialog.getByRole("button", { name: "上传表格", exact: true }).click();
+  await dialog.getByRole("radio", { name: "上传表格", exact: true }).locator("..").click();
   const longMissing = `MISSING-${"超长用例编号".repeat(65)}`;
   await dialog.getByLabel("选择 DDT 用例清单文件").setInputFiles({
     name: `${"选择已有用例清单".repeat(10)}.xlsx`,
@@ -3106,9 +3140,9 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
   await expect(dialog.getByRole("status")).toHaveText("匹配 2 个 · 未匹配 2 个");
   await expect(dialog.getByRole("alert")).toBeHidden();
   await expect(dialog.getByText("LIST-204", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "粘贴文本", exact: true }).click();
+  await dialog.getByRole("radio", { name: "粘贴文本", exact: true }).locator("..").click();
   await expect(apply).toBeDisabled();
-  await dialog.getByRole("button", { name: "上传表格", exact: true }).click();
+  await dialog.getByRole("radio", { name: "上传表格", exact: true }).locator("..").click();
   await expect(dialog.locator(".ui-file-name")).toContainText("选择已有用例清单");
   await search.click();
   await expect(dialog.getByRole("status")).toHaveText("匹配 2 个 · 未匹配 2 个");
@@ -3481,8 +3515,11 @@ async function uploadDdtTaskDependencies(page: Page, projectId: string): Promise
   const uploadForm = page.locator("form", {
     has: page.getByRole("button", { name: "上传并启用" }),
   });
-  await uploadForm.getByLabel("资源类型").selectOption("jar-bundle");
-  await uploadForm.getByLabel("压缩格式").selectOption("zip");
+  await uploadForm
+    .getByLabel("资源类型")
+    .and(uploadForm.locator("select"))
+    .selectOption("jar-bundle");
+  await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("zip");
   await uploadForm.getByLabel("本地文件").setInputFiles({
     name: "single-case-dependencies.zip",
     mimeType: "application/zip",

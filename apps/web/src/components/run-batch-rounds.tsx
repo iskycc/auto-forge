@@ -1,4 +1,23 @@
 "use client";
+import { Segmented } from "./ui/segmented";
+import { Notice } from "@/components/ui/notice";
+
+import { Badge } from "@/components/ui/badge";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   browserCacheEpoch,
@@ -27,7 +46,7 @@ import {
   ScrollText,
   Search,
 } from "lucide-react";
-import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -199,7 +218,14 @@ function AttemptFailureHintLine({ attempt }: { attempt: RunAttempt }) {
   const hint = attemptFailureHint(attempt);
   if (!hint) return null;
   return (
-    <small className="table-secondary attempt-failure-line" title={hint}>
+    <small
+      className={cn(
+        "table-secondary attempt-failure-line",
+        uiPatterns["table-secondary"],
+        runBatchRoundsStyles["attempt-failure-line"],
+      )}
+      title={hint}
+    >
       {hint}
     </small>
   );
@@ -322,57 +348,76 @@ export function RunBatchRounds({
 
   if (batch.statistics && !batch.statistics.generation)
     return (
-      <section className="content-card" aria-label="轮次列表">
+      <Card
+        as="section"
+        className={cn("content-card", uiPatterns["content-card"])}
+        aria-label="轮次列表"
+      >
         <p role="status">后台正在准备轮次统计，执行控制仍可使用。</p>
-      </section>
+      </Card>
     );
   return (
     <>
       <section aria-label="轮次列表">
-        <div className="section-heading">
+        <div className={cn("section-heading", uiPatterns["section-heading"])}>
           <div>
-            <span className="step-label">ROUNDS</span>
+            <span className={cn("step-label", runBatchRoundsStyles["step-label"])}>ROUNDS</span>
             <h2>轮次</h2>
           </div>
-          <span className="muted">
+          <span className={cn("muted", uiPatterns["muted"])}>
             共 {summaries.length} 轮
             {recoveries.length > 0 ? ` · ${recoveries.length} 次环境恢复` : ""}
           </span>
         </div>
-        <div className="table-scroll round-table-scroll">
-          <table className="data-table execution-round-table">
+        <div
+          className={cn(
+            "table-scroll round-table-scroll",
+            uiPatterns["table-scroll"],
+            runBatchRoundsStyles["round-table-scroll"],
+          )}
+        >
+          <Table
+            className={cn(
+              "data-table execution-round-table",
+              uiPatterns["data-table"],
+              runBatchRoundsStyles["execution-round-table"],
+            )}
+          >
             <colgroup>
-              <col className="round-column-name" />
-              <col className="round-column-status" />
-              <col className="round-column-count" />
-              <col className="round-column-count" span={6} />
-              <col className="round-column-start" />
-              <col className="round-column-duration" />
+              <col className={"round-column-name"} />
+              <col className={"round-column-status"} />
+              <col className={"round-column-count"} />
+              <col className={"round-column-count"} span={6} />
+              <col className={"round-column-start"} />
+              <col className={"round-column-duration"} />
             </colgroup>
-            <thead>
-              <tr>
-                <th>轮次</th>
-                <th>状态</th>
-                <th>并发数</th>
-                <th>总用例数</th>
-                <th>总通过率</th>
-                <th>轮次通过率</th>
-                <th>通过数</th>
-                <th>失败数</th>
-                <th>未执行数</th>
-                <th>开始时间</th>
-                <th>轮次时长</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
+            <TableHeader>
+              <TableRow>
+                <TableHead>轮次</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>并发数</TableHead>
+                <TableHead>总用例数</TableHead>
+                <TableHead>总通过率</TableHead>
+                <TableHead>轮次通过率</TableHead>
+                <TableHead>通过数</TableHead>
+                <TableHead>失败数</TableHead>
+                <TableHead>未执行数</TableHead>
+                <TableHead>开始时间</TableHead>
+                <TableHead>轮次时长</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow
                 className={summarySelected ? "selected-row" : undefined}
                 onClick={() => selectRound("summary")}
               >
-                <td>
+                <TableCell>
                   <Button
                     aria-pressed={summarySelected}
-                    className="round-select-button"
+                    className={cn(
+                      "round-select-button",
+                      runBatchRoundsStyles["round-select-button"],
+                    )}
                     onClick={(event) => {
                       event.stopPropagation();
                       selectRound("summary");
@@ -383,44 +428,42 @@ export function RunBatchRounds({
                   >
                     总结
                   </Button>
-                </td>
-                <td>
-                  <span
-                    className={`batch-status ${
-                      batch.status === "succeeded"
-                        ? "batch-status-succeeded"
-                        : batch.status === "failed"
-                          ? "batch-status-failed"
-                          : batch.status === "cancelled"
-                            ? "batch-status-neutral"
-                            : ""
-                    }`.trim()}
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    className={cn(
+                      runBatchRoundsStyles["batch-status"],
+                      `batch-status ${batch.status === "succeeded" ? cn("batch-status-succeeded", runBatchRoundsStyles["batch-status-succeeded"]) : batch.status === "failed" ? cn("batch-status-failed", runBatchRoundsStyles["batch-status-failed"]) : batch.status === "cancelled" ? cn("batch-status-neutral", runBatchRoundsStyles["batch-status-neutral"]) : ""}`,
+                    ).trim()}
                   >
                     {batch.status === "cancelled"
                       ? "已终止"
                       : ["succeeded", "failed"].includes(batch.status)
                         ? "已完成"
                         : "实时汇总"}
-                  </span>
-                </td>
-                <td>—</td>
-                <td>{finalStats.totalRuns}</td>
-                <td>{finalStats.passRate}%</td>
-                <td>—</td>
-                <td>{finalStats.passed}</td>
-                <td>{finalStats.failed + finalStats.timedOut}</td>
-                <td>{finalStats.notExecuted}</td>
-                <td>—</td>
-                <td>—</td>
-              </tr>
+                  </Badge>
+                </TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>{finalStats.totalRuns}</TableCell>
+                <TableCell>{finalStats.passRate}%</TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>{finalStats.passed}</TableCell>
+                <TableCell>{finalStats.failed + finalStats.timedOut}</TableCell>
+                <TableCell>{finalStats.notExecuted}</TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>—</TableCell>
+              </TableRow>
               {/* 虚拟轮次：跨全部轮次逐条查看/筛选执行记录，并导出所有轮次结果。 */}
-              <tr
+              <TableRow
                 className={allRoundsSelected ? "selected-row" : undefined}
                 onClick={() => selectRound("all")}
               >
-                <td>
+                <TableCell>
                   <Button
-                    className="round-select-button"
+                    className={cn(
+                      "round-select-button",
+                      runBatchRoundsStyles["round-select-button"],
+                    )}
                     variant="ghost"
                     size="compact"
                     type="button"
@@ -432,23 +475,23 @@ export function RunBatchRounds({
                   >
                     全部轮次
                   </Button>
-                </td>
-                <td>—</td>
-                <td>—</td>
-                <td>{allRoundsStats.totalRuns}</td>
-                <td>{allRoundsStats.passRate}%</td>
-                <td>—</td>
-                <td>{allRoundsStats.passed}</td>
-                <td>{allRoundsStats.failed + allRoundsStats.timedOut}</td>
-                <td>{allRoundsStats.notExecuted}</td>
-                <td>—</td>
-                <td>—</td>
-              </tr>
+                </TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>{allRoundsStats.totalRuns}</TableCell>
+                <TableCell>{allRoundsStats.passRate}%</TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>{allRoundsStats.passed}</TableCell>
+                <TableCell>{allRoundsStats.failed + allRoundsStats.timedOut}</TableCell>
+                <TableCell>{allRoundsStats.notExecuted}</TableCell>
+                <TableCell>—</TableCell>
+                <TableCell>—</TableCell>
+              </TableRow>
               {summaries.flatMap((summary) => {
                 const recovery = recoveries.find((item) => item.afterRound === summary.round);
                 const roundConcurrency = concurrencyByRound.get(summary.round);
                 const rows = [
-                  <tr
+                  <TableRow
                     key={`round-${summary.round}`}
                     className={
                       !allRoundsSelected &&
@@ -460,9 +503,12 @@ export function RunBatchRounds({
                     }
                     onClick={() => selectRound(summary.round)}
                   >
-                    <td>
+                    <TableCell>
                       <Button
-                        className="round-select-button"
+                        className={cn(
+                          "round-select-button",
+                          runBatchRoundsStyles["round-select-button"],
+                        )}
                         variant="ghost"
                         size="compact"
                         type="button"
@@ -476,19 +522,27 @@ export function RunBatchRounds({
                       >
                         {roundLabel(batch.retryMode, summary.round)}
                       </Button>
-                    </td>
-                    <td>
-                      <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        className={cn(
+                          runBatchRoundsStyles["batch-status"],
+                          `batch-status ${roundStatusClass(summary)}`,
+                        ).trim()}
+                      >
                         {roundStatusLabel(summary, batch.currentRound)}
-                      </span>
-                    </td>
-                    <td>
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       {roundConcurrency ? (
                         <span
                           className={
                             roundConcurrency.source === "rule_transition"
-                              ? "round-concurrency changed"
-                              : "round-concurrency"
+                              ? cn(
+                                  "round-concurrency changed",
+                                  runBatchRoundsStyles["round-concurrency"],
+                                )
+                              : cn("round-concurrency", runBatchRoundsStyles["round-concurrency"])
                           }
                           title={
                             roundConcurrency.source === "rule_transition"
@@ -506,18 +560,18 @@ export function RunBatchRounds({
                       ) : (
                         "—"
                       )}
-                    </td>
-                    <td>{summary.totalRuns}</td>
-                    <td>{summary.overallPassRate}%</td>
-                    <td>
+                    </TableCell>
+                    <TableCell>{summary.totalRuns}</TableCell>
+                    <TableCell>{summary.overallPassRate}%</TableCell>
+                    <TableCell>
                       {summary.roundPassRate === null
                         ? "—"
                         : `${summary.roundPassRate}%${summary.status === "running" ? "（进行中）" : ""}`}
-                    </td>
-                    <td>{summary.passed}</td>
-                    <td>{summary.failed + summary.timedOut}</td>
-                    <td>{summary.notExecuted}</td>
-                    <td>
+                    </TableCell>
+                    <TableCell>{summary.passed}</TableCell>
+                    <TableCell>{summary.failed + summary.timedOut}</TableCell>
+                    <TableCell>{summary.notExecuted}</TableCell>
+                    <TableCell>
                       {summary.startedAt ? (
                         <time title={`UTC ${summary.startedAt}`}>
                           {formatLocalDateTime(summary.startedAt)}
@@ -525,15 +579,15 @@ export function RunBatchRounds({
                       ) : (
                         "—"
                       )}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       {summary.durationMs !== null
                         ? formatBatchDuration(summary.durationMs)
                         : summary.status === "running" && summary.startedAt
                           ? "进行中"
                           : "—"}
-                    </td>
-                  </tr>,
+                    </TableCell>
+                  </TableRow>,
                 ];
                 if (recovery) {
                   const succeeded = recovery.steps.filter(
@@ -541,19 +595,25 @@ export function RunBatchRounds({
                   ).length;
                   const failed = recovery.steps.filter((step) => step.status === "failed").length;
                   rows.push(
-                    <tr
+                    <TableRow
                       key={`recovery-${recovery.afterRound}`}
                       className={
                         selectedRecovery?.afterRound === recovery.afterRound
-                          ? "selected-row recovery-round-row"
-                          : "recovery-round-row"
+                          ? cn(
+                              "selected-row recovery-round-row",
+                              runBatchRoundsStyles["recovery-round-row"],
+                            )
+                          : cn("recovery-round-row", runBatchRoundsStyles["recovery-round-row"])
                       }
                       onClick={() => selectRound(`recovery-${recovery.afterRound}`)}
                     >
-                      <td>
+                      <TableCell>
                         <Button
                           aria-pressed={selectedRecovery?.afterRound === recovery.afterRound}
-                          className="round-select-button"
+                          className={cn(
+                            "round-select-button",
+                            runBatchRoundsStyles["round-select-button"],
+                          )}
                           onClick={(event) => {
                             event.stopPropagation();
                             selectRound(`recovery-${recovery.afterRound}`);
@@ -564,24 +624,29 @@ export function RunBatchRounds({
                         >
                           环境恢复
                         </Button>
-                        <small className="table-secondary">第 {recovery.afterRound} 轮后</small>
-                      </td>
-                      <td>
-                        <span
-                          className={`batch-status ${recoveryStatusClass(recovery.status)}`.trim()}
+                        <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
+                          第 {recovery.afterRound} 轮后
+                        </small>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={cn(
+                            runBatchRoundsStyles["batch-status"],
+                            `batch-status ${recoveryStatusClass(recovery.status)}`,
+                          ).trim()}
                         >
                           {recoveryStatusLabel(recovery.status)}
-                        </span>
-                      </td>
-                      <td colSpan={7}>
+                        </Badge>
+                      </TableCell>
+                      <TableCell colSpan={7}>
                         Jenkins 流水线 {recovery.steps.length} 个 · 完成 {succeeded} · 失败 {failed}
-                      </td>
-                      <td>
+                      </TableCell>
+                      <TableCell>
                         <time title={`UTC ${recovery.activatedAt}`}>
                           {formatLocalDateTime(recovery.activatedAt)}
                         </time>
-                      </td>
-                      <td>
+                      </TableCell>
+                      <TableCell>
                         {recovery.finishedAt
                           ? formatBatchDuration(
                               Math.max(
@@ -590,14 +655,14 @@ export function RunBatchRounds({
                               ),
                             )
                           : "进行中"}
-                      </td>
-                    </tr>,
+                      </TableCell>
+                    </TableRow>,
                   );
                 }
                 return rows;
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </section>
 
@@ -693,31 +758,50 @@ export function RunBatchRounds({
 function RecoveryDetailPanel({ recovery }: { recovery: RecoveryGroup }) {
   return (
     <section
-      className="round-detail-panel"
+      className={cn("round-detail-panel", runBatchRoundsStyles["round-detail-panel"])}
       aria-label={`环境恢复详情：第 ${recovery.afterRound} 轮后`}
     >
-      <div className="round-detail-header">
-        <div className="round-detail-title">
+      <div className={cn("round-detail-header", runBatchRoundsStyles["round-detail-header"])}>
+        <div className={cn("round-detail-title", runBatchRoundsStyles["round-detail-title"])}>
           <h2>环境恢复 · 第 {recovery.afterRound} 轮后</h2>
-          <span className={`batch-status ${recoveryStatusClass(recovery.status)}`.trim()}>
+          <Badge
+            className={cn(
+              runBatchRoundsStyles["batch-status"],
+              `batch-status ${recoveryStatusClass(recovery.status)}`,
+            ).trim()}
+          >
             {recoveryStatusLabel(recovery.status)}
-          </span>
+          </Badge>
         </div>
-        <span className="muted">下一轮在全部流水线及等待时间结束后统一开始</span>
+        <span className={cn("muted", uiPatterns["muted"])}>
+          下一轮在全部流水线及等待时间结束后统一开始
+        </span>
       </div>
-      <div className="recovery-step-grid">
+      <div className={cn("recovery-step-grid", runBatchRoundsStyles["recovery-step-grid"])}>
         {recovery.steps.map((step, index) => (
-          <article className="recovery-step-card" key={step.ruleId}>
-            <div className="recovery-step-heading">
+          <article
+            className={cn("recovery-step-card", runBatchRoundsStyles["recovery-step-card"])}
+            key={step.ruleId}
+          >
+            <div
+              className={cn("recovery-step-heading", runBatchRoundsStyles["recovery-step-heading"])}
+            >
               <div>
-                <span className="step-label">JENKINS {index + 1}</span>
+                <span className={cn("step-label", runBatchRoundsStyles["step-label"])}>
+                  JENKINS {index + 1}
+                </span>
                 <h3>{jenkinsJobName(step.jenkinsJobUrl)}</h3>
               </div>
-              <span className={`batch-status ${recoveryStepStatusClass(step)}`.trim()}>
+              <Badge
+                className={cn(
+                  runBatchRoundsStyles["batch-status"],
+                  `batch-status ${recoveryStepStatusClass(step)}`,
+                ).trim()}
+              >
                 {recoveryStepStatusLabel(step)}
-              </span>
+              </Badge>
             </div>
-            <dl className="recovery-step-facts">
+            <dl className={cn("recovery-step-facts", runBatchRoundsStyles["recovery-step-facts"])}>
               <RecoveryFact
                 label="构建编号"
                 value={step.rebuildNumber ? `#${step.rebuildNumber}` : "等待发现"}
@@ -740,19 +824,29 @@ function RecoveryDetailPanel({ recovery }: { recovery: RecoveryGroup }) {
               <RecoveryFact label="构建后等待" value={`${step.waitMinutes} 分钟`} />
             </dl>
             {step.errorMessage ? (
-              <p className="form-error" role="alert">
+              <Notice
+                tone="error"
+                className={cn("form-error", uiPatterns["form-error"])}
+                role="alert"
+              >
                 {step.errorMessage}
-              </p>
+              </Notice>
             ) : null}
-            <a
-              className="button button-secondary compact-button recovery-build-link"
+            <LinkButton
+              className={cn(
+                "button button-secondary compact-button recovery-build-link",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+                uiPatterns["compact-button"],
+                runBatchRoundsStyles["recovery-build-link"],
+              )}
               href={step.rebuildUrl ?? step.jenkinsJobUrl}
               rel="noreferrer"
               target="_blank"
             >
               <ExternalLink aria-hidden="true" size={15} />
               {step.rebuildUrl ? "查看 Jenkins 构建" : "查看 Jenkins 任务"}
-            </a>
+            </LinkButton>
           </article>
         ))}
       </div>
@@ -842,15 +936,36 @@ function SummaryRoundPanel({
 }) {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   return (
-    <section className="round-detail-panel" aria-label="轮次详情：总结">
-      <div className="round-detail-header">
-        <div className="round-detail-title">
+    <section
+      className={cn("round-detail-panel", runBatchRoundsStyles["round-detail-panel"])}
+      aria-label="轮次详情：总结"
+    >
+      <div className={cn("round-detail-header", runBatchRoundsStyles["round-detail-header"])}>
+        <div className={cn("round-detail-title", runBatchRoundsStyles["round-detail-title"])}>
           <h2>总结</h2>
-          <span className="batch-status batch-status-neutral">最终结果</span>
+          <Badge
+            className={cn(
+              "batch-status batch-status-neutral",
+              runBatchRoundsStyles["batch-status"],
+              runBatchRoundsStyles["batch-status-neutral"],
+            )}
+          >
+            最终结果
+          </Badge>
         </div>
-        <div className="round-detail-header-actions">
+        <div
+          className={cn(
+            "round-detail-header-actions",
+            runBatchRoundsStyles["round-detail-header-actions"],
+          )}
+        >
           <Button
-            className="button button-secondary compact-button"
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
             onClick={onRefresh}
             type="button"
           >
@@ -858,7 +973,12 @@ function SummaryRoundPanel({
           </Button>
           {canReadLogs ? (
             <Button
-              className="button button-secondary compact-button"
+              className={cn(
+                "button button-secondary compact-button",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+                uiPatterns["compact-button"],
+              )}
               onClick={() => setExportDialogOpen(true)}
               type="button"
             >
@@ -875,11 +995,11 @@ function SummaryRoundPanel({
         />
       ) : null}
       {actionError ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {actionError}
-        </p>
+        </Notice>
       ) : null}
-      <div className="round-tab-content">
+      <div className={cn("round-tab-content", runBatchRoundsStyles["round-tab-content"])}>
         <RoundCasesTable
           key="summary"
           batch={batch}
@@ -939,15 +1059,36 @@ function AllRoundsPanel({
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   return (
-    <section className="round-detail-panel" aria-label="轮次详情：全部轮次">
-      <div className="round-detail-header">
-        <div className="round-detail-title">
+    <section
+      className={cn("round-detail-panel", runBatchRoundsStyles["round-detail-panel"])}
+      aria-label="轮次详情：全部轮次"
+    >
+      <div className={cn("round-detail-header", runBatchRoundsStyles["round-detail-header"])}>
+        <div className={cn("round-detail-title", runBatchRoundsStyles["round-detail-title"])}>
           <h2>全部轮次</h2>
-          <span className="batch-status batch-status-neutral">逐条记录</span>
+          <Badge
+            className={cn(
+              "batch-status batch-status-neutral",
+              runBatchRoundsStyles["batch-status"],
+              runBatchRoundsStyles["batch-status-neutral"],
+            )}
+          >
+            逐条记录
+          </Badge>
         </div>
-        <div className="round-detail-header-actions">
+        <div
+          className={cn(
+            "round-detail-header-actions",
+            runBatchRoundsStyles["round-detail-header-actions"],
+          )}
+        >
           <Button
-            className="button button-secondary compact-button"
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
             onClick={onRefresh}
             type="button"
             title="重新从服务端拉取最新执行状态"
@@ -956,7 +1097,12 @@ function AllRoundsPanel({
           </Button>
           {canReadLogs ? (
             <Button
-              className="button button-secondary compact-button"
+              className={cn(
+                "button button-secondary compact-button",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+                uiPatterns["compact-button"],
+              )}
               onClick={() => setExportDialogOpen(true)}
               type="button"
             >
@@ -973,13 +1119,13 @@ function AllRoundsPanel({
         />
       ) : null}
       {actionError ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {actionError}
-        </p>
+        </Notice>
       ) : null}
       {/* 全部轮次没有环形图，不能使用 round-detail-body 的双列网格，
           否则表格会被挤进 320px 的图表列。 */}
-      <div className="round-tab-content">
+      <div className={cn("round-tab-content", runBatchRoundsStyles["round-tab-content"])}>
         <RoundCasesTable
           key="all"
           batch={batch}
@@ -1052,37 +1198,57 @@ function RoundDetailPanel({
   );
   const notExecuted = Math.max(0, batch.totalRuns - summary.executed);
   const resultSegments: DonutChartSegment[] = [
-    { label: "通过", value: summary.passed, color: "var(--color-success)" },
-    { label: "失败", value: summary.failed, color: "var(--color-danger)" },
-    { label: "超时", value: summary.timedOut, color: "var(--color-warning)" },
-    { label: "进行中", value: inProgress, color: "var(--color-info)" },
-    { label: "取消", value: summary.cancelled, color: "var(--color-text-tertiary)" },
-    { label: "未执行", value: notExecuted, color: "var(--color-border-strong)" },
+    { label: "通过", value: summary.passed, color: "var(--success)" },
+    { label: "失败", value: summary.failed, color: "var(--destructive)" },
+    { label: "超时", value: summary.timedOut, color: "var(--warning)" },
+    { label: "进行中", value: inProgress, color: "var(--info)" },
+    { label: "取消", value: summary.cancelled, color: "var(--muted-foreground)" },
+    { label: "未执行", value: notExecuted, color: "var(--input)" },
   ];
   const progressSegments: DonutChartSegment[] = [
-    { label: "累计通过", value: passedRunsSoFar, color: "var(--color-success)" },
+    { label: "累计通过", value: passedRunsSoFar, color: "var(--success)" },
     {
       label: "未通过",
       value: Math.max(0, batch.totalRuns - passedRunsSoFar),
-      color: "var(--color-border-strong)",
+      color: "var(--input)",
     },
   ];
 
   return (
-    <section className="round-detail-panel" aria-label={`轮次详情：${label}`}>
-      <div className="round-detail-header">
-        <div className="round-detail-title">
+    <section
+      className={cn("round-detail-panel", runBatchRoundsStyles["round-detail-panel"])}
+      aria-label={`轮次详情：${label}`}
+    >
+      <div className={cn("round-detail-header", runBatchRoundsStyles["round-detail-header"])}>
+        <div className={cn("round-detail-title", runBatchRoundsStyles["round-detail-title"])}>
           <h2>{label}</h2>
-          <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
+          <Badge
+            className={cn(
+              runBatchRoundsStyles["batch-status"],
+              `batch-status ${roundStatusClass(summary)}`,
+            ).trim()}
+          >
             {roundStatusLabel(summary, batch.currentRound)}
-          </span>
+          </Badge>
           {summary.status === "running" && canReadLogs ? (
-            <span className="status-badge">实时更新</span>
+            <Badge className={cn("status-badge", runBatchRoundsStyles["status-badge"])}>
+              实时更新
+            </Badge>
           ) : null}
         </div>
-        <div className="round-detail-header-actions">
+        <div
+          className={cn(
+            "round-detail-header-actions",
+            runBatchRoundsStyles["round-detail-header-actions"],
+          )}
+        >
           <Button
-            className="button button-secondary compact-button"
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
             onClick={onRefresh}
             type="button"
             title="重新从服务端拉取最新执行状态"
@@ -1091,7 +1257,12 @@ function RoundDetailPanel({
           </Button>
           {canReadLogs ? (
             <Button
-              className="button button-secondary compact-button"
+              className={cn(
+                "button button-secondary compact-button",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+                uiPatterns["compact-button"],
+              )}
               onClick={() => onOpenScheduling(undefined)}
               type="button"
             >
@@ -1100,7 +1271,12 @@ function RoundDetailPanel({
           ) : null}
           {canReadLogs ? (
             <Button
-              className="button button-secondary compact-button"
+              className={cn(
+                "button button-secondary compact-button",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+                uiPatterns["compact-button"],
+              )}
               onClick={() => setExportDialogOpen(true)}
               type="button"
             >
@@ -1118,13 +1294,13 @@ function RoundDetailPanel({
         />
       ) : null}
       {actionError ? (
-        <p className="form-error" role="alert">
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {actionError}
-        </p>
+        </Notice>
       ) : null}
-      <div className="round-detail-body">
-        <div className="round-donuts">
-          <div className="round-donut-block">
+      <div className={cn("round-detail-body", runBatchRoundsStyles["round-detail-body"])}>
+        <div className={cn("round-donuts", runBatchRoundsStyles["round-donuts"])}>
+          <div className={cn("round-donut-block", runBatchRoundsStyles["round-donut-block"])}>
             <h3>本轮结果分布</h3>
             <DonutChart
               segments={resultSegments}
@@ -1133,7 +1309,7 @@ function RoundDetailPanel({
               ariaLabel={`本轮结果分布：通过 ${summary.passed}，失败 ${summary.failed}，超时 ${summary.timedOut}，进行中 ${inProgress}，取消 ${summary.cancelled}，未执行 ${notExecuted}`}
             />
           </div>
-          <div className="round-donut-block">
+          <div className={cn("round-donut-block", runBatchRoundsStyles["round-donut-block"])}>
             <h3>总体通过进度</h3>
             <DonutChart
               segments={progressSegments}
@@ -1143,32 +1319,28 @@ function RoundDetailPanel({
             />
           </div>
         </div>
-        <div className="round-tab-content">
-          <div className="round-tab-toolbar">
-            <div className="segmented-control" aria-label="轮次详情视图">
-              <Button
-                aria-pressed={activeTab === "cases"}
-                className={activeTab === "cases" ? "active" : ""}
-                onClick={() => onTabChange("cases")}
-                type="button"
-              >
-                用例
-              </Button>
-              <Button
-                aria-pressed={activeTab === "runners"}
-                className={activeTab === "runners" ? "active" : ""}
-                onClick={() => {
-                  setRunnerTabMounted(true);
-                  onTabChange("runners");
-                }}
-                type="button"
-              >
-                执行机
-              </Button>
-            </div>
+        <div className={cn("round-tab-content", runBatchRoundsStyles["round-tab-content"])}>
+          <div className={cn("round-tab-toolbar", runBatchRoundsStyles["round-tab-toolbar"])}>
+            <Segmented
+              label="轮次详情视图"
+              value={activeTab}
+              options={[
+                { value: "cases", label: "用例" },
+                { value: "runners", label: "执行机" },
+              ]}
+              onChange={(value) => {
+                if (value === "runners") setRunnerTabMounted(true);
+                onTabChange(value);
+              }}
+            />
             {activeTab === "runners" ? (
               <Button
-                className="button button-secondary compact-button"
+                className={cn(
+                  "button button-secondary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  uiPatterns["compact-button"],
+                )}
                 onClick={() => setFaultDialogOpen(true)}
                 type="button"
               >
@@ -1176,7 +1348,10 @@ function RoundDetailPanel({
               </Button>
             ) : null}
           </div>
-          <div className="round-tab-panel" hidden={activeTab !== "cases"}>
+          <div
+            className={cn("round-tab-panel", runBatchRoundsStyles["round-tab-panel"])}
+            hidden={activeTab !== "cases"}
+          >
             <RoundCasesTable
               key={summary.round}
               batch={batch}
@@ -1195,7 +1370,10 @@ function RoundDetailPanel({
             />
           </div>
           {runnerTabMounted ? (
-            <div className="round-tab-panel" hidden={activeTab !== "runners"}>
+            <div
+              className={cn("round-tab-panel", runBatchRoundsStyles["round-tab-panel"])}
+              hidden={activeTab !== "runners"}
+            >
               <RoundRunnerCards
                 batch={batch}
                 round={summary.round}
@@ -1388,8 +1566,8 @@ function RoundCasesTable({
   }
 
   return (
-    <div className="round-cases">
-      <div className="round-filter-row">
+    <div className={cn("round-cases", runBatchRoundsStyles["round-cases"])}>
+      <div className={cn("round-filter-row", runBatchRoundsStyles["round-filter-row"])}>
         <Select
           aria-label="按状态筛选"
           value={statusFilter}
@@ -1407,7 +1585,7 @@ function RoundCasesTable({
           <option value="cancelled">取消</option>
           <option value="pending">未执行</option>
         </Select>
-        <span className="round-filter-search">
+        <span className={cn("round-filter-search", runBatchRoundsStyles["round-filter-search"])}>
           <Search size={15} aria-hidden="true" />
           <Input
             aria-label="按名称搜索用例"
@@ -1420,39 +1598,50 @@ function RoundCasesTable({
           />
         </span>
         {loading && retainingCurrentPage ? (
-          <span className="round-inline-refresh" role="status">
-            <RefreshCw className="spin" size={14} /> 正在同步最新数据
+          <span
+            className={cn("round-inline-refresh", runBatchRoundsStyles["round-inline-refresh"])}
+            role="status"
+          >
+            <RefreshCw className={cn("spin", uiPatterns["spin"])} size={14} /> 正在同步最新数据
           </span>
         ) : null}
       </div>
       {loadError && rows.length === 0 ? (
-        <div className="inline-empty" role="alert">
+        <div className={cn("inline-empty", uiPatterns["inline-empty"])} role="alert">
           {loadError}
         </div>
       ) : loading && rows.length === 0 ? (
         <LoadingState compact label="正在读取当前页用例" />
       ) : rows.length === 0 ? (
-        <div className="inline-empty">没有匹配当前筛选条件的用例。</div>
+        <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          没有匹配当前筛选条件的用例。
+        </div>
       ) : (
-        <div className="table-scroll">
-          <table className="data-table execution-case-table">
+        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+          <Table
+            className={cn(
+              "data-table execution-case-table",
+              uiPatterns["data-table"],
+              runBatchRoundsStyles["execution-case-table"],
+            )}
+          >
             <colgroup>
-              <col style={{ width: `${columnWidths.case}ch` }} />
-              {showRoundColumn ? <col className="case-column-round" /> : null}
-              <col style={{ width: `${columnWidths.status}ch` }} />
-              <col style={{ width: `${columnWidths.runner}ch` }} />
-              <col className="case-column-duration" />
-              <col className="case-column-actions" />
+              <col style={batch.accessToken ? undefined : { width: `${columnWidths.case}ch` }} />
+              {showRoundColumn ? <col className={"case-column-round"} /> : null}
+              <col style={batch.accessToken ? undefined : { width: `${columnWidths.status}ch` }} />
+              <col style={batch.accessToken ? undefined : { width: `${columnWidths.runner}ch` }} />
+              <col className={"case-column-duration"} />
+              <col className={"case-column-actions"} />
             </colgroup>
-            <thead>
-              <tr>
+            <TableHeader>
+              <TableRow>
                 <SortableCaseTh
                   label="用例"
                   sortKey="name"
                   active={sortSpec}
                   onToggle={() => toggleSort("name")}
                 />
-                {showRoundColumn ? <th>轮次</th> : null}
+                {showRoundColumn ? <TableHead>轮次</TableHead> : null}
                 <SortableCaseTh
                   label={showRoundColumn ? "状态" : "本轮状态"}
                   sortKey="status"
@@ -1471,10 +1660,10 @@ function RoundCasesTable({
                   active={sortSpec}
                   onToggle={() => toggleSort("duration")}
                 />
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+                <TableHead>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((row) => (
                 <RoundCaseRow
                   key={row.attempt ? row.attempt.id : `${row.run.id}:${row.round}`}
@@ -1500,12 +1689,12 @@ function RoundCasesTable({
                   onOpenLogs={onOpenLogs}
                 />
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
-      <div className="round-pagination">
-        <label className="round-page-size">
+      <div className={cn("round-pagination", runBatchRoundsStyles["round-pagination"])}>
+        <label className={cn("round-page-size", runBatchRoundsStyles["round-page-size"])}>
           每页
           <Select
             aria-label="每页显示用例数"
@@ -1524,7 +1713,12 @@ function RoundCasesTable({
           个用例
         </label>
         <Button
-          className="button button-secondary compact-button"
+          className={cn(
+            "button button-secondary compact-button",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+            uiPatterns["compact-button"],
+          )}
           disabled={currentPage <= 1}
           onClick={() => setPage(currentPage - 1)}
           type="button"
@@ -1535,7 +1729,12 @@ function RoundCasesTable({
           第 {currentPage} / {pageCount} 页 · 共 {totalRows} 条
         </span>
         <Button
-          className="button button-secondary compact-button"
+          className={cn(
+            "button button-secondary compact-button",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+            uiPatterns["compact-button"],
+          )}
           disabled={currentPage >= pageCount}
           onClick={() => setPage(currentPage + 1)}
           type="button"
@@ -1560,20 +1759,25 @@ function SortableCaseTh({
 }) {
   const isActive = active.key === sortKey;
   return (
-    <th aria-sort={isActive ? (active.direction === "asc" ? "ascending" : "descending") : "none"}>
+    <TableHead
+      aria-sort={isActive ? (active.direction === "asc" ? "ascending" : "descending") : "none"}
+    >
       <Button
-        className="sortable-th-button"
+        className={cn("sortable-th-button", runBatchRoundsStyles["sortable-th-button"])}
         variant="ghost"
         size="compact"
         onClick={onToggle}
         type="button"
       >
         {label}
-        <span aria-hidden="true" className="sortable-th-indicator">
+        <span
+          aria-hidden="true"
+          className={cn("sortable-th-indicator", runBatchRoundsStyles["sortable-th-indicator"])}
+        >
           {isActive ? (active.direction === "asc" ? "▲" : "▼") : ""}
         </span>
       </Button>
-    </th>
+    </TableHead>
   );
 }
 
@@ -1650,26 +1854,46 @@ function RoundCaseRow({
 
   return (
     <>
-      <tr>
-        <td>
-          <span className="execution-case-heading">
+      <TableRow>
+        <TableCell>
+          <span
+            className={cn("execution-case-heading", runBatchRoundsStyles["execution-case-heading"])}
+          >
             <strong>{run.displayName}</strong>
-            <span className={`execution-case-type ${run.caseType === "ddt" ? "ddt" : "testng"}`}>
+            <span
+              className={cn(
+                runBatchRoundsStyles["execution-case-type"],
+                `execution-case-type ${run.caseType === "ddt" ? "ddt" : "testng"}`,
+              )}
+            >
               {run.caseType === "ddt" ? "DDT" : "普通用例"}
             </span>
           </span>
-          <small className="table-secondary">{run.className}</small>
+          <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
+            {run.className}
+          </small>
           {run.caseType === "ddt" && run.ddtSrNum ? (
-            <small className="table-secondary">SR · {run.ddtSrNum}</small>
+            <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
+              SR · {run.ddtSrNum}
+            </small>
           ) : null}
-        </td>
-        {showRoundColumn ? <td className="round-cell-nowrap">第 {row.round} 轮</td> : null}
-        <td>
+        </TableCell>
+        {showRoundColumn ? (
+          <TableCell className={cn("round-cell-nowrap", runBatchRoundsStyles["round-cell-nowrap"])}>
+            第 {row.round} 轮
+          </TableCell>
+        ) : null}
+        <TableCell>
           {attempt ? (
             <>
-              <span className={`batch-status ${attemptStatusClass(attempt)}`.trim()}>
+              <Badge
+                className={cn(
+                  runBatchRoundsStyles["batch-status"],
+                  `batch-status ${attemptStatusClass(attempt)}`,
+                ).trim()}
+              >
                 {attemptStatusLabel(attempt)}
-              </span>
+              </Badge>
               {/* 终态失败提示直接露出，无需展开详情：adapter 正常失败显示完整描述，
                   blocked（重启协调、超时等）显示原因码。 */}
               {isTerminalAttemptStatus(attempt.status) && attempt.status !== "succeeded" ? (
@@ -1677,27 +1901,43 @@ function RoundCaseRow({
               ) : null}
             </>
           ) : (
-            <span className="batch-status batch-status-neutral">未执行</span>
+            <Badge
+              className={cn(
+                "batch-status batch-status-neutral",
+                runBatchRoundsStyles["batch-status"],
+                runBatchRoundsStyles["batch-status-neutral"],
+              )}
+            >
+              未执行
+            </Badge>
           )}
-        </td>
+        </TableCell>
         {/* 执行机优先展示注册名称（一般为 runner-IP），title 保留完整 UUID。 */}
-        <td>
+        <TableCell>
           {runnerId ? (
-            <span className="round-runner-name" title={runnerId}>
+            <span
+              className={cn("round-runner-name", runBatchRoundsStyles["round-runner-name"])}
+              title={runnerId}
+            >
               {runnerDisplayName(runnerId, runnerDirectory)}
             </span>
           ) : (
             "—"
           )}
-        </td>
-        <td>
+        </TableCell>
+        <TableCell>
           {attempt?.durationMs === undefined ? "—" : formatAttemptDuration(attempt.durationMs)}
-        </td>
-        <td>
-          <div className="round-row-actions">
+        </TableCell>
+        <TableCell>
+          <div className={cn("round-row-actions", runBatchRoundsStyles["round-row-actions"])}>
             {attempt && canReadLogs ? (
               <Button
-                className="button button-secondary compact-button"
+                className={cn(
+                  "button button-secondary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  uiPatterns["compact-button"],
+                )}
                 onClick={() => onOpenLogs(attempt)}
                 type="button"
               >
@@ -1705,18 +1945,28 @@ function RoundCaseRow({
               </Button>
             ) : null}
             {attempt && publicRunShareToken ? (
-              <Link
+              <LinkButton
                 aria-label="查看公开日志"
-                className="button button-secondary compact-button"
+                className={cn(
+                  "button button-secondary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  uiPatterns["compact-button"],
+                )}
                 href={`/share/run/${encodeURIComponent(publicRunShareToken)}/attempt/${encodeURIComponent(attempt.id)}`}
                 prefetch={false}
               >
                 <Eye size={15} /> 公开日志
-              </Link>
+              </LinkButton>
             ) : null}
             {canShareLog ? (
               <Button
-                className="button button-secondary compact-button"
+                className={cn(
+                  "button button-secondary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  uiPatterns["compact-button"],
+                )}
                 disabled={sharePending}
                 onClick={() => void openShareLog()}
                 type="button"
@@ -1727,7 +1977,12 @@ function RoundCaseRow({
             ) : null}
             {hasDetail && attempt ? (
               <Button
-                className="button button-secondary compact-button"
+                className={cn(
+                  "button button-secondary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  uiPatterns["compact-button"],
+                )}
                 aria-expanded={expanded}
                 onClick={onToggleDetail}
                 type="button"
@@ -1737,7 +1992,7 @@ function RoundCaseRow({
             ) : null}
             {canCancelRuns && canCancelRoundCaseRow(row) ? (
               <Button
-                className="danger-text-button"
+                className={cn("danger-text-button", uiPatterns["danger-text-button"])}
                 disabled={cancelPending}
                 onClick={() => onCancelRun(run.id)}
                 type="button"
@@ -1746,12 +2001,16 @@ function RoundCaseRow({
               </Button>
             ) : null}
           </div>
-          {shareError ? <p className="form-error">{shareError}</p> : null}
-        </td>
-      </tr>
+          {shareError ? (
+            <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+              {shareError}
+            </Notice>
+          ) : null}
+        </TableCell>
+      </TableRow>
       {expanded && attempt ? (
-        <tr className="round-detail-row">
-          <td colSpan={showRoundColumn ? 6 : 5}>
+        <TableRow className={cn("round-detail-row", runBatchRoundsStyles["round-detail-row"])}>
+          <TableCell colSpan={showRoundColumn ? 6 : 5}>
             <AttemptInlineDetail
               attempt={attempt}
               canReadAttemptEvents={canReadAttemptEvents}
@@ -1760,8 +2019,8 @@ function RoundCaseRow({
               cached={detailEntry}
               onRemember={onRememberDetail}
             />
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       ) : null}
     </>
   );
@@ -1844,28 +2103,39 @@ function AttemptInlineDetail({
   }, [attempt.id, artifactsEnabled, canReadArtifacts, canReadAttemptEvents, loaded, onRemember]);
 
   return (
-    <div className="attempt-inline-detail">
-      {error ? <p className="form-error">{error}</p> : null}
+    <div className={cn("attempt-inline-detail", runBatchRoundsStyles["attempt-inline-detail"])}>
+      {error ? (
+        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+          {error}
+        </Notice>
+      ) : null}
       {attempt.testNg ? (
-        <div className="attempt-inline-block">
+        <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
           <h3>结构化测试结果</h3>
           <TestNgResults result={attempt.testNg} />
         </div>
       ) : null}
       {/* 产物收集全局开关关闭时，不展示产物区块（服务端也未收集任何产物）。 */}
       {artifactsEnabled ? (
-        <div className="attempt-inline-block">
+        <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
           <h3>产物</h3>
           {!canReadArtifacts ? (
-            <div className="inline-empty">当前账号没有读取执行产物的权限。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              当前账号没有读取执行产物的权限。
+            </div>
           ) : artifacts === undefined ? (
-            <div className="inline-empty">正在读取产物...</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>正在读取产物...</div>
           ) : artifacts.length === 0 ? (
-            <div className="inline-empty">当前尝试没有已声明产物。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              当前尝试没有已声明产物。
+            </div>
           ) : (
-            <div className="artifact-list">
+            <div className={cn("artifact-list", runBatchRoundsStyles["artifact-list"])}>
               {artifacts.map((artifact) => (
-                <div className="artifact-row" key={artifact.artifactId}>
+                <div
+                  className={cn("artifact-row", runBatchRoundsStyles["artifact-row"])}
+                  key={artifact.artifactId}
+                >
                   <FileText size={17} />
                   <span>
                     <strong>{artifact.relativePath}</strong>
@@ -1874,25 +2144,35 @@ function AttemptInlineDetail({
                     </small>
                   </span>
                   {artifact.downloadPath ? (
-                    <span className="artifact-actions">
+                    <span
+                      className={cn("artifact-actions", runBatchRoundsStyles["artifact-actions"])}
+                    >
                       {isPreviewable(artifact.mediaType) ? (
-                        <a
-                          className="icon-button small-icon-button"
+                        <LinkButton
+                          className={cn(
+                            "icon-button small-icon-button",
+                            uiPatterns["icon-button"],
+                            uiPatterns["small-icon-button"],
+                          )}
                           href={`${artifact.downloadPath}?preview=1`}
                           target="_blank"
                           rel="noreferrer"
                           aria-label={`预览 ${artifact.relativePath}`}
                         >
                           <Eye size={15} />
-                        </a>
+                        </LinkButton>
                       ) : null}
-                      <a
-                        className="icon-button small-icon-button"
+                      <LinkButton
+                        className={cn(
+                          "icon-button small-icon-button",
+                          uiPatterns["icon-button"],
+                          uiPatterns["small-icon-button"],
+                        )}
                         href={artifact.downloadPath}
                         aria-label={`下载 ${artifact.relativePath}`}
                       >
                         <Download size={15} />
-                      </a>
+                      </LinkButton>
                     </span>
                   ) : null}
                 </div>
@@ -1902,17 +2182,24 @@ function AttemptInlineDetail({
         </div>
       ) : null}
       {canReadAttemptEvents ? (
-        <div className="attempt-inline-block">
+        <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
           <h3>状态事件</h3>
           {events === undefined ? (
-            <div className="inline-empty">正在读取状态事件...</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              正在读取状态事件...
+            </div>
           ) : events.length === 0 ? (
-            <div className="inline-empty">当前尝试暂无状态事件。</div>
+            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              当前尝试暂无状态事件。
+            </div>
           ) : (
-            <ol className="execution-timeline">
+            <ol className={cn("execution-timeline", runBatchRoundsStyles["execution-timeline"])}>
               {events.map((event) => (
                 <li key={event.eventId}>
-                  <span className="timeline-marker" aria-hidden="true" />
+                  <span
+                    className={cn("timeline-marker", runBatchRoundsStyles["timeline-marker"])}
+                    aria-hidden="true"
+                  />
                   <div>
                     <strong>{eventLabel(event.eventType)}</strong>
                     <span>
@@ -1953,34 +2240,40 @@ function RoundRunnerCards({
     .map((summary) => [summary.runnerId, summary] as const);
 
   if (cards.length === 0) {
-    return <div className="inline-empty">本轮还没有执行机参与执行。</div>;
+    return (
+      <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+        本轮还没有执行机参与执行。
+      </div>
+    );
   }
   return (
-    <div className="runner-card-grid">
+    <div className={cn("runner-card-grid", runBatchRoundsStyles["runner-card-grid"])}>
       {cards.map(([runnerId, card]) => {
         const directoryEntry = runnerDirectory.get(runnerId);
         const resourceSnapshot = directoryEntry?.resourceSnapshot;
         return (
-          <div className="runner-card" key={runnerId}>
-            <div className="runner-card-heading">
+          <div className={cn("runner-card", runBatchRoundsStyles["runner-card"])} key={runnerId}>
+            <div className={cn("runner-card-heading", runBatchRoundsStyles["runner-card-heading"])}>
               <strong title={runnerId}>{directoryEntry?.name || shortId(runnerId)}</strong>
-              <span className="muted">本轮执行 {card.executed} 个</span>
+              <span className={cn("muted", uiPatterns["muted"])}>本轮执行 {card.executed} 个</span>
             </div>
-            <div className="runner-card-stats">
+            <div className={cn("runner-card-stats", runBatchRoundsStyles["runner-card-stats"])}>
               <span>通过 {card.passed}</span>
               <span>失败 {card.failed}</span>
             </div>
             {resourceSnapshot ? (
               <small
-                className="muted runner-card-resources"
+                className={cn("muted runner-card-resources", uiPatterns["muted"])}
                 title={`采集于 UTC ${resourceSnapshot.observedAt}`}
               >
                 {runnerResourceLabel(resourceSnapshot)}
               </small>
             ) : (
-              <small className="muted runner-card-resources">暂无资源快照</small>
+              <small className={cn("muted runner-card-resources", uiPatterns["muted"])}>
+                暂无资源快照
+              </small>
             )}
-            <small className="muted">
+            <small className={cn("muted", uiPatterns["muted"])}>
               最后活动{" "}
               <time title={`UTC ${card.lastActivity}`}>
                 {formatLocalDateTime(card.lastActivity)}
@@ -1988,7 +2281,12 @@ function RoundRunnerCards({
             </small>
             {canReadLogs ? (
               <Button
-                className="button button-secondary compact-button"
+                className={cn(
+                  "button button-secondary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  uiPatterns["compact-button"],
+                )}
                 onClick={() => onOpenScheduling(runnerId)}
                 type="button"
               >
@@ -2004,8 +2302,11 @@ function RoundRunnerCards({
 
 function TestNgResults({ result }: { result: NonNullable<RunAttempt["testNg"]> }) {
   return (
-    <div className="testng-results">
-      <div className="testng-counts" aria-label="TestNG 结果汇总">
+    <div className={cn("testng-results", runBatchRoundsStyles["testng-results"])}>
+      <div
+        className={cn("testng-counts", runBatchRoundsStyles["testng-counts"])}
+        aria-label="TestNG 结果汇总"
+      >
         <TestNgCount label="总计" value={result.total} />
         <TestNgCount label="通过" value={result.passed} />
         <TestNgCount label="失败" value={result.failed} />
@@ -2013,64 +2314,91 @@ function TestNgResults({ result }: { result: NonNullable<RunAttempt["testNg"]> }
         <TestNgCount label="配置失败" value={result.configurationFailures} />
       </div>
       {result.detailsTruncated ? (
-        <p className="result-notice">明细已达到安全解析上限；汇总计数仍包含完整报告。</p>
+        <p className={cn("result-notice", runBatchRoundsStyles["result-notice"])}>
+          明细已达到安全解析上限；汇总计数仍包含完整报告。
+        </p>
       ) : null}
       {result.suites.map((suite, suiteIndex) => (
-        <details
-          className="testng-suite"
+        <Disclosure
+          header={
+            <>
+              <span>{suite.name}</span>
+              <small>
+                {suite.passed}/{suite.total} 通过 · {formatAttemptDuration(suite.durationMs)}
+              </small>
+            </>
+          }
+          className={cn("testng-suite", runBatchRoundsStyles["testng-suite"])}
           key={`${suite.name}-${suiteIndex}`}
-          open={suiteIndex === 0}
+          defaultOpen={suiteIndex === 0}
         >
-          <summary>
-            <span>{suite.name}</span>
-            <small>
-              {suite.passed}/{suite.total} 通过 · {formatAttemptDuration(suite.durationMs)}
-            </small>
-          </summary>
           {suite.tests.map((test, testIndex) => (
-            <div className="testng-test" key={`${test.name}-${testIndex}`}>
-              <div className="testng-scope-heading">
+            <div
+              className={cn("testng-test", runBatchRoundsStyles["testng-test"])}
+              key={`${test.name}-${testIndex}`}
+            >
+              <div
+                className={cn("testng-scope-heading", runBatchRoundsStyles["testng-scope-heading"])}
+              >
                 <strong>{test.name}</strong>
                 <span>{formatAttemptDuration(test.durationMs)}</span>
               </div>
               {test.classes.map((classResult, classIndex) => (
-                <div className="testng-class" key={`${classResult.name}-${classIndex}`}>
-                  <div className="testng-scope-heading">
+                <div
+                  className={cn("testng-class", runBatchRoundsStyles["testng-class"])}
+                  key={`${classResult.name}-${classIndex}`}
+                >
+                  <div
+                    className={cn(
+                      "testng-scope-heading",
+                      runBatchRoundsStyles["testng-scope-heading"],
+                    )}
+                  >
                     <code>{classResult.name}</code>
                     <span>{formatAttemptDuration(classResult.durationMs)}</span>
                   </div>
-                  <div className="table-scroll">
-                    <table className="data-table testng-method-table">
-                      <thead>
-                        <tr>
-                          <th>方法</th>
-                          <th>类型</th>
-                          <th>状态</th>
-                          <th>耗时</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                  <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+                    <Table
+                      className={cn(
+                        "data-table testng-method-table",
+                        uiPatterns["data-table"],
+                        runBatchRoundsStyles["testng-method-table"],
+                      )}
+                    >
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>方法</TableHead>
+                          <TableHead>类型</TableHead>
+                          <TableHead>状态</TableHead>
+                          <TableHead>耗时</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
                         {classResult.methods.map((method, methodIndex) => (
-                          <tr key={`${method.name}-${method.signature ?? ""}-${methodIndex}`}>
-                            <td>
+                          <TableRow key={`${method.name}-${method.signature ?? ""}-${methodIndex}`}>
+                            <TableCell>
                               <strong>{method.name}</strong>
                               {method.signature ? (
-                                <small className="table-secondary">{method.signature}</small>
+                                <small
+                                  className={cn("table-secondary", uiPatterns["table-secondary"])}
+                                >
+                                  {method.signature}
+                                </small>
                               ) : null}
-                            </td>
-                            <td>{method.configuration ? "配置" : "测试"}</td>
-                            <td>{testNgStatusLabel(method.status)}</td>
-                            <td>{formatAttemptDuration(method.durationMs)}</td>
-                          </tr>
+                            </TableCell>
+                            <TableCell>{method.configuration ? "配置" : "测试"}</TableCell>
+                            <TableCell>{testNgStatusLabel(method.status)}</TableCell>
+                            <TableCell>{formatAttemptDuration(method.durationMs)}</TableCell>
+                          </TableRow>
                         ))}
-                      </tbody>
-                    </table>
+                      </TableBody>
+                    </Table>
                   </div>
                 </div>
               ))}
             </div>
           ))}
-        </details>
+        </Disclosure>
       ))}
     </div>
   );
@@ -2123,3 +2451,98 @@ async function fetchCasePage(url: string, signal: AbortSignal): Promise<Response
   }
   throw new Error("后台正在准备当前用例页，请稍后重试。");
 }
+
+const runBatchRoundsStyles = {
+  "artifact-actions": "inline-flex items-center gap-1",
+  "artifact-list": "grid gap-px mt-4.5 [border-block:1px_solid_var(--border)]",
+  "artifact-row":
+    "[&_small]:block [&_small]:text-muted-foreground [&_small]:text-xs grid grid-cols-[24px_minmax(0,_1fr)_auto] items-center gap-2.5 py-[11px] px-1 border-b border-solid border-border [&:last-child]:border-b-0 [&_span]:min-w-0 [&_strong]:block [&_strong]:overflow-hidden [&_strong]:text-sm [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap",
+  "attempt-failure-line": "mt-[3px] [overflow-wrap:anywhere] leading-[1.3] whitespace-pre-wrap",
+  "attempt-inline-block": "grid gap-2.5 [&_>_h3]:m-0 [&_>_h3]:text-sm",
+  "attempt-inline-detail": "grid gap-4.5 py-1.5 px-1",
+  "batch-status": uiPatterns["batch-status"],
+  "batch-status-failed": "bg-destructive/10 text-destructive",
+  "batch-status-neutral": "bg-muted text-muted-foreground",
+  "batch-status-succeeded": "bg-success/10 text-success",
+  "execution-case-heading":
+    "flex min-w-0 items-center gap-[7px] [&_>_strong]:min-w-0 [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal",
+  "execution-case-table":
+    "min-w-[760px] [table-layout:fixed] [&_.case-column-round]:w-19.5 [&_.case-column-duration]:w-19 [&_.case-column-actions]:w-[17rem] [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
+  "execution-case-type":
+    "[flex:0_0_auto] rounded-full py-0.5 px-[7px] bg-info/10 text-info text-xs font-semibold [&.ddt]:bg-info/10 [&.ddt]:text-info",
+  "execution-round-table":
+    "min-w-[980px] [table-layout:fixed] [&_.round-column-name]:w-[128px] [&_.round-column-status]:w-23 [&_.round-column-count]:w-21.5 [&_.round-column-start]:w-[166px] [&_.round-column-duration]:w-23 [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3]",
+  "execution-timeline":
+    'grid m-0 p-0 [list-style:none] [&_li]:grid [&_li]:grid-cols-[18px_minmax(0,_1fr)] [&_li]:gap-2.5 [&_li]:min-h-16 [&_li:not(:last-child)_.timeline-marker::after]:absolute [&_li:not(:last-child)_.timeline-marker::after]:top-3.5 [&_li:not(:last-child)_.timeline-marker::after]:bottom-[-50px] [&_li:not(:last-child)_.timeline-marker::after]:left-1 [&_li:not(:last-child)_.timeline-marker::after]:w-px [&_li:not(:last-child)_.timeline-marker::after]:bg-border [&_li:not(:last-child)_.timeline-marker::after]:[content:""] [&_li_>_div]:grid [&_li_>_div]:[align-content:start] [&_li_>_div]:gap-[3px] [&_li_>_div]:pb-4 [&_strong]:text-sm [&_span]:text-muted-foreground [&_span]:text-xs [&_span]:[overflow-wrap:anywhere] [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:[overflow-wrap:anywhere]',
+  "recovery-build-link": "justify-self-start",
+  "recovery-round-row":
+    "[&_>_td]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_42%,_var(--card))] [&_td:first-child_small]:block [&_td:first-child_small]:px-2 [&_td:first-child_small]:whitespace-nowrap",
+  "recovery-step-card":
+    "grid min-w-0 gap-3.5 border border-solid border-border rounded-lg p-4 bg-muted [&_>_.form-error]:m-0",
+  "recovery-step-facts":
+    "grid grid-cols-2 gap-[12px_18px] m-0 [&_div]:grid [&_div]:min-w-0 [&_div]:gap-[3px] [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:min-w-0 [&_dd]:m-0 [&_dd]:text-foreground [&_dd]:text-sm [&_dd]:[overflow-wrap:anywhere]",
+  "recovery-step-grid": "grid grid-cols-[repeat(auto-fit,_minmax(320px,_1fr))] gap-3",
+  "recovery-step-heading":
+    "flex items-start justify-between gap-3 [&_h3]:[margin:3px_0_0] [&_h3]:text-sm [&_h3]:[overflow-wrap:anywhere]",
+  "result-notice": "m-0 text-warning text-xs",
+  "round-cases": "grid gap-2",
+  "round-cell-nowrap": "whitespace-nowrap",
+  "round-concurrency":
+    "inline-flex items-center gap-[5px] tabular-nums font-semibold [&.changed]:text-warning [&_small]:rounded-full [&_small]:py-0.5 [&_small]:px-[5px] [&_small]:bg-warning/10 [&_small]:text-xs [&_small]:font-semibold [&_small]:whitespace-nowrap",
+  "round-detail-body":
+    "grid grid-cols-[minmax(220px,_260px)_minmax(0,_1fr)] gap-4 items-start max-[1101px]:grid-cols-[1fr]",
+  "round-detail-header":
+    "flex items-center justify-between gap-3 [&_.status-badge]:bg-info/10 [&_.status-badge]:text-info",
+  "round-detail-header-actions": "flex flex-wrap items-center gap-2",
+  "round-detail-panel":
+    "grid gap-3.5 border border-solid border-border rounded-xl p-4 bg-card shadow-xs [&_>_.form-error]:m-0",
+  "round-detail-row": "[&_>_td]:bg-muted",
+  "round-detail-title": "flex items-center gap-2.5 [&_h2]:m-0 [&_h2]:text-base",
+  "round-donut-block":
+    "grid gap-2.5 [&_h3]:m-0 [&_h3]:text-muted-foreground [&_h3]:text-sm [&_h3]:font-semibold",
+  "round-donuts": "grid gap-4.5 max-[1101px]:grid-cols-2 max-[1101px]:items-start",
+  "round-filter-row":
+    "flex flex-wrap items-center gap-2.5 [&_.ui-select]:w-auto [&_.ui-select]:min-w-[150px]",
+  "round-filter-search":
+    "flex min-w-[min(360px,_100%)] [flex:1_0_360px] items-center gap-[7px] py-0 px-2.5 border border-solid border-border rounded-lg bg-card text-muted-foreground [&_.ui-input]:w-full [&_.ui-input]:min-h-8.5 [&_.ui-input]:min-w-0 [&_.ui-input]:[flex:1_1_auto] [&_.ui-input]:border-0 [&_.ui-input]:p-0 [&_.ui-input]:[outline:0] [&_.ui-input]:bg-transparent [&:focus-within]:border-info [&:focus-within]:shadow-xs",
+  "round-inline-refresh":
+    "inline-flex [flex:0_0_100%] items-center gap-1.5 text-muted-foreground text-xs whitespace-nowrap",
+  "round-page-size":
+    "inline-flex items-center gap-1.5 mr-auto text-muted-foreground [&_.ui-select]:w-auto [&_.ui-select]:min-w-18 [&_.ui-select]:py-1",
+  "round-pagination": "flex items-center justify-end gap-3 text-muted-foreground text-xs",
+  "round-row-actions": "flex flex-wrap items-center gap-1",
+  "round-runner-name": "block min-w-0 [overflow-wrap:anywhere] whitespace-normal",
+  "round-select-button": "font-semibold",
+  "round-tab-content":
+    "grid w-full min-w-0 gap-3.5 justify-items-start [&_>_.round-cases]:w-full [&_>_.runner-card-grid]:w-full [&_>_.inline-empty]:w-full",
+  "round-tab-panel": "w-full min-w-0",
+  "round-tab-toolbar": "flex items-center justify-between gap-3 mb-3 [&_.segmented-control]:mb-0",
+  "round-table-scroll":
+    "border border-solid border-border rounded-lg bg-card [&_tbody_tr]:cursor-pointer",
+  "runner-card":
+    "grid gap-2 border border-solid border-border rounded-lg p-3.5 bg-card [&_>_small]:text-xs [&_>_.ui-button]:justify-self-start",
+  "runner-card-grid": "grid grid-cols-[repeat(auto-fill,_minmax(230px,_1fr))] gap-3",
+  "runner-card-heading":
+    "flex items-baseline justify-between gap-2 [&_strong]:font-mono [&_strong]:text-sm",
+  "runner-card-stats": "flex gap-3 text-muted-foreground text-xs",
+
+  "sortable-th-button":
+    "inline-flex items-center gap-[5px] min-h-8 py-0.5 px-1 border-0 rounded-md bg-transparent text-inherit [font:inherit] font-semibold cursor-pointer [&:hover]:text-foreground",
+  "sortable-th-indicator": "inline-block min-w-3 text-info text-xs leading-[1]",
+  "status-badge":
+    "inline-flex w-fit items-center gap-[5px] rounded-full py-[5px] px-2 text-xs font-semibold whitespace-nowrap",
+  "step-label":
+    "inline-grid min-w-7 h-6 place-items-center rounded-md bg-info/10 text-info text-xs font-semibold tracking-normal",
+  "testng-class": "grid gap-2 pl-4.5",
+  "testng-counts":
+    "grid grid-cols-5 [border-block:1px_solid_var(--border)] [&_>_div]:grid [&_>_div]:gap-1 [&_>_div]:py-3 [&_>_div]:px-3.5 [&_>_div]:border-r [&_>_div]:border-solid [&_>_div]:border-border [&_>_div:last-child]:border-r-0 [&_span]:text-muted-foreground [&_span]:text-xs [&_strong]:text-base",
+  "testng-method-table": "[&_th]:py-2 [&_td]:py-2",
+  "testng-results": "grid gap-3.5",
+  "testng-scope-heading":
+    "[&_span]:text-muted-foreground [&_span]:text-xs flex min-w-0 items-baseline justify-between gap-3 [&_code]:[overflow-wrap:anywhere] [&_code]:text-xs",
+  "testng-suite":
+    "[&_.ui-disclosure-label_small]:text-muted-foreground [&_.ui-disclosure-label_small]:text-xs border-b border-solid border-border [&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:min-h-10 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:justify-between [&_.ui-disclosure-label]:gap-3 [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:text-sm [&_.ui-disclosure-label]:font-semibold",
+  "testng-test": "grid gap-2 [padding:10px_0_16px_18px]",
+  "timeline-marker":
+    "relative w-[9px] h-[9px] mt-[5px] border-2 border-solid border-border rounded-full bg-card",
+} as const;

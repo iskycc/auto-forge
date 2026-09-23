@@ -1,4 +1,12 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Progress } from "@/components/ui/progress";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type { CaseSuiteExecutionStatistics } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
@@ -34,22 +42,33 @@ export function CaseSuiteCard({
   const averagePassedCases = statistics?.averagePassedCases ?? null;
 
   return (
-    <article
+    <Card
+      as="article"
       aria-label={`任务 ${suite.name}`}
-      className={`card suite-card ${suite.status === "archived" ? "suite-card-archived" : ""} ${!suite.enabled ? "suite-card-disabled" : ""}`.trim()}
+      className={cn(
+        uiPatterns["card"],
+        caseSuiteCardStyles["suite-card"],
+        `card suite-card ${suite.status === "archived" ? cn("suite-card-archived", caseSuiteCardStyles["suite-card-archived"]) : ""} ${!suite.enabled ? cn("suite-card-disabled", caseSuiteCardStyles["suite-card-disabled"]) : ""}`,
+      ).trim()}
     >
-      <Link className="suite-card-link" href={`/case-suites/${encodeURIComponent(suite.id)}`}>
-        <span className="suite-icon">
+      <Link
+        className={cn("suite-card-link", caseSuiteCardStyles["suite-card-link"])}
+        href={`/case-suites/${encodeURIComponent(suite.id)}`}
+      >
+        <span className={cn("suite-icon", caseSuiteCardStyles["suite-icon"])}>
           <Layers3 size={20} />
         </span>
-        <span className="suite-copy">
-          <span className="suite-title-line">
+        <span className={cn("suite-copy", caseSuiteCardStyles["suite-copy"])}>
+          <span className={cn("suite-title-line", caseSuiteCardStyles["suite-title-line"])}>
             <strong title={suite.name}>{suite.name}</strong>
-            <span
-              className={`status-badge ${suite.status === "archived" || !suite.enabled ? "warning" : ""}`.trim()}
+            <Badge
+              className={cn(
+                caseSuiteCardStyles["status-badge"],
+                `status-badge ${suite.status === "archived" || !suite.enabled ? "warning" : ""}`,
+              ).trim()}
             >
               {suite.status === "archived" ? "已归档" : suite.enabled ? "已启用" : "已停用"}
-            </span>
+            </Badge>
           </span>
           <small title={suite.description}>{suite.description || "暂无说明"}</small>
           <small>
@@ -59,15 +78,18 @@ export function CaseSuiteCard({
             </time>
           </small>
         </span>
-        <span className="suite-count">
+        <span className={cn("suite-count", caseSuiteCardStyles["suite-count"])}>
           <strong>{suite.caseCount.toLocaleString("zh-CN")}</strong>
           <small>个用例</small>
         </span>
-        <ArrowRight size={18} className="muted" />
+        <ArrowRight size={18} className={cn("muted", uiPatterns["muted"])} />
       </Link>
 
       {canReadExecutions ? (
-        <div className="suite-statistics" aria-label="近 7 天执行统计">
+        <div
+          className={cn("suite-statistics", caseSuiteCardStyles["suite-statistics"])}
+          aria-label="近 7 天执行统计"
+        >
           <dl>
             <div>
               <dt>7 天执行次数</dt>
@@ -91,22 +113,34 @@ export function CaseSuiteCard({
               </dd>
             </div>
           </dl>
-          <div className="suite-statistics-caption">
+          <div
+            className={cn(
+              "suite-statistics-caption",
+              caseSuiteCardStyles["suite-statistics-caption"],
+            )}
+          >
             <span>
               {statistics?.completedExecutionCount
                 ? `已结束 ${statistics.completedExecutionCount} 次 · 均值按已结束批次计算`
                 : "暂无已结束执行，均值待统计"}
             </span>
             {passRate === null ? null : (
-              <progress aria-label="近 7 天平均通过率" max={100} value={passRate} />
+              <Progress aria-label="近 7 天平均通过率" max={100} value={passRate} />
             )}
           </div>
         </div>
       ) : (
-        <p className="suite-activity-permission">当前账号无执行记录查看权限</p>
+        <p
+          className={cn(
+            "suite-activity-permission",
+            caseSuiteCardStyles["suite-activity-permission"],
+          )}
+        >
+          当前账号无执行记录查看权限
+        </p>
       )}
 
-      <footer className="suite-card-actions">
+      <footer className={cn("suite-card-actions", caseSuiteCardStyles["suite-card-actions"])}>
         <Button
           aria-controls={historyId}
           aria-expanded={expanded}
@@ -117,19 +151,26 @@ export function CaseSuiteCard({
         >
           <History size={16} /> 最近执行
           <ChevronDown
-            className={`suite-history-chevron ${expanded ? "expanded" : ""}`}
+            className={cn(
+              caseSuiteCardStyles["suite-history-chevron"],
+              `suite-history-chevron ${expanded ? "expanded" : ""}`,
+            )}
             size={15}
           />
         </Button>
         <Button
           aria-label={`导出 ${suite.name} 用例`}
-          className="suite-card-export"
+          className={cn("suite-card-export", caseSuiteCardStyles["suite-card-export"])}
           disabled={exportDisabled}
           onClick={onExport}
           type="button"
           variant="ghost"
         >
-          {exporting ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
+          {exporting ? (
+            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+          ) : (
+            <Download size={15} />
+          )}
           {exporting ? "导出中" : "导出用例"}
         </Button>
       </footer>
@@ -142,6 +183,34 @@ export function CaseSuiteCard({
           />
         ) : null}
       </div>
-    </article>
+    </Card>
   );
 }
+
+const caseSuiteCardStyles = {
+  "status-badge":
+    "inline-flex w-fit items-center gap-[5px] rounded-full py-[5px] px-2 text-xs font-semibold whitespace-nowrap",
+  "suite-activity-permission": "m-0 text-muted-foreground text-xs leading-[1.6] py-4 px-5",
+  "suite-card":
+    "grid min-w-0 grid-cols-[minmax(0,_1fr)] p-0 overflow-hidden transition-colors duration-150 motion-reduce:transition-none [&:hover]:shadow-xs [:is(&,_.suite-schedule-dialog)_.status-badge]:shrink-0 [:is(&,_.suite-schedule-dialog)_.status-badge]:bg-success/10 [:is(&,_.suite-schedule-dialog)_.status-badge]:text-success [:is(&,_.suite-schedule-dialog)_.status-badge.info]:bg-info/10 [:is(&,_.suite-schedule-dialog)_.status-badge.info]:text-info [:is(&,_.suite-schedule-dialog)_.status-badge.warning]:bg-warning/10 [:is(&,_.suite-schedule-dialog)_.status-badge.warning]:text-warning [:is(&,_.suite-schedule-dialog)_.status-badge.danger]:bg-destructive/10 [:is(&,_.suite-schedule-dialog)_.status-badge.danger]:text-destructive",
+  "suite-card-actions":
+    "flex items-center gap-2 justify-between border-t border-solid border-border py-2 px-4",
+  "suite-card-archived": "bg-muted [&_.suite-icon]:bg-muted [&_.suite-icon]:text-muted-foreground",
+  "suite-card-disabled": "bg-muted [&_.suite-icon]:bg-muted [&_.suite-icon]:text-muted-foreground",
+  "suite-card-export": "whitespace-nowrap",
+  "suite-card-link":
+    "grid min-w-0 min-h-23 grid-cols-[44px_minmax(0,_1fr)_auto_20px] items-center gap-3 p-5",
+  "suite-copy":
+    "flex min-w-0 flex-col gap-[5px] [&_small]:overflow-hidden [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:text-ellipsis [&_small]:whitespace-nowrap",
+  "suite-count":
+    "flex min-w-0 flex-col gap-[5px] items-end py-0 px-3 [&_small]:overflow-hidden [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:text-ellipsis [&_small]:whitespace-nowrap [&_strong]:text-2xl",
+  "suite-history-chevron":
+    "transition-colors duration-150 motion-reduce:transition-none [&.expanded]:[transform:rotate(180deg)]",
+  "suite-icon": "grid w-10.5 h-10.5 place-items-center rounded-lg bg-info/10 text-info",
+  "suite-statistics":
+    "[margin:0_20px_16px] border border-solid border-border rounded-lg p-4 bg-muted [&_dl]:grid [&_dl]:grid-cols-3 [&_dl]:gap-3 [&_dl]:m-0 [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:[margin:8px_0_0] [&_dd]:text-2xl [&_dd]:font-semibold [&_dd]:tabular-nums [&_dd_small]:ml-2 [&_dd_small]:text-muted-foreground [&_dd_small]:text-xs [&_dd_small]:font-normal",
+  "suite-statistics-caption":
+    "flex items-center gap-2 flex-wrap justify-between mt-3 text-muted-foreground text-xs [&_.ui-progress]:w-full [&_.ui-progress]:h-2 [&_.ui-progress]:overflow-hidden [&_.ui-progress]:border-0 [&_.ui-progress]:rounded-full [&_.ui-progress]:bg-border [&_.ui-progress]:[accent-color:var(--success)] [&_progress::-webkit-progress-bar]:rounded-full [&_progress::-webkit-progress-bar]:bg-border [&_progress::-webkit-progress-value]:rounded-full [&_progress::-webkit-progress-value]:bg-success",
+  "suite-title-line":
+    "flex min-w-0 items-center gap-2 [&_>_strong]:overflow-hidden [&_>_strong]:text-ellipsis [&_>_strong]:whitespace-nowrap",
+} as const;

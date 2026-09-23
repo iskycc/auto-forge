@@ -1,4 +1,23 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Tabs } from "./ui/tabs";
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   browserCacheEpoch,
@@ -630,8 +649,11 @@ export function DdtManagementWorkspace({
   const nextCase = activeCaseIndex >= 0 ? cases[activeCaseIndex + 1] : undefined;
 
   return (
-    <section className="ddt-workspace" aria-label="DDT 管理工作台">
-      <div className="ddt-workspace-bar">
+    <section
+      className={cn("ddt-workspace", ddtManagementWorkspaceStyles["ddt-workspace"])}
+      aria-label="DDT 管理工作台"
+    >
+      <div className={cn("ddt-workspace-bar", ddtManagementWorkspaceStyles["ddt-workspace-bar"])}>
         <div>
           <strong>DDT 工作台</strong>
           <span>CaseID 在当前项目版本与测试阶段内唯一</span>
@@ -646,7 +668,11 @@ export function DdtManagementWorkspace({
           </Button>
         ) : null}
         <Button
-          className="button button-secondary"
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
           type="button"
           disabled={savingCase}
           onClick={async () => {
@@ -657,7 +683,11 @@ export function DdtManagementWorkspace({
         </Button>
         {!isIndependentTab ? (
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             onClick={async () => {
               if (!(await leaveEditor())) return;
@@ -667,7 +697,11 @@ export function DdtManagementWorkspace({
             }}
             disabled={busy || refreshing || savingCase}
           >
-            <RefreshCw size={15} className={busy || refreshing ? "spin" : ""} /> 刷新
+            <RefreshCw
+              size={15}
+              className={busy || refreshing ? cn("spin", uiPatterns["spin"]) : ""}
+            />{" "}
+            刷新
           </Button>
         ) : null}
         {canManage ? (
@@ -683,7 +717,11 @@ export function DdtManagementWorkspace({
         ) : null}
         {canManage ? (
           <Button
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             type="button"
             onClick={async () => {
               if (await leaveEditor()) setShowImport(true);
@@ -694,8 +732,11 @@ export function DdtManagementWorkspace({
         ) : null}
       </div>
 
-      <div className="ddt-subtabs" role="tablist" aria-label="DDT 功能">
-        {(
+      <Tabs
+        className="ddt-subtabs"
+        label="DDT 功能"
+        value={tab}
+        items={(
           [
             ["overview", BarChart3, "概览"],
             ["cases", FileSpreadsheet, "用例"],
@@ -705,33 +746,36 @@ export function DdtManagementWorkspace({
             ["recycle", ArchiveRestore, "回收站"],
             ["api", Globe2, "开放 API"],
           ] as const
-        ).map(([value, Icon, label]) => (
-          <Button
-            key={value}
-            className={tab === value ? "active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            disabled={savingCase}
-            onClick={async () => {
-              if (await leaveEditor()) setTab(value);
-            }}
-          >
-            <Icon size={16} /> {label}
-            {value === "recycle" && deletedCases.length ? (
-              <small>{deletedCases.length}</small>
-            ) : null}
-          </Button>
-        ))}
-      </div>
+        ).map(([value, Icon, label]) => ({
+          key: value,
+          disabled: savingCase,
+          label: (
+            <span className="inline-flex items-center gap-2">
+              <Icon size={16} /> {label}
+              {value === "recycle" && deletedCases.length ? (
+                <small>{deletedCases.length}</small>
+              ) : null}
+            </span>
+          ),
+        }))}
+        onChange={(value) => {
+          void (async () => {
+            if (await leaveEditor()) setTab(value);
+          })();
+        }}
+      />
 
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           {error}
           <Button type="button" aria-label="关闭错误" onClick={() => setError("")}>
             <X size={14} />
           </Button>
-        </div>
+        </Notice>
       ) : null}
       {deleteProgress ? (
         <OperationProgress
@@ -752,8 +796,8 @@ export function DdtManagementWorkspace({
       ) : null}
 
       {!busy && tab === "overview" ? (
-        <div className="ddt-overview">
-          <div className="ddt-metrics">
+        <div className={cn("ddt-overview", ddtManagementWorkspaceStyles["ddt-overview"])}>
+          <div className={cn("ddt-metrics", ddtManagementWorkspaceStyles["ddt-metrics"])}>
             <Metric
               label="用例总数"
               value={dashboard.caseCount}
@@ -767,16 +811,28 @@ export function DdtManagementWorkspace({
             />
             <Metric label="今日更新" value={dashboard.updatedToday} hint="含导入覆盖与人工编辑" />
           </div>
-          <div className="ddt-chart-grid">
+          <div className={cn("ddt-chart-grid", ddtManagementWorkspaceStyles["ddt-chart-grid"])}>
             <DdtExecutionChart execution={dashboard.execution} />
-            <article className="card ddt-chart-card">
+            <Card
+              as="article"
+              className={cn(
+                "card ddt-chart-card",
+                uiPatterns["card"],
+                ddtManagementWorkspaceStyles["ddt-chart-card"],
+              )}
+            >
               <header>
                 <div>
                   <strong>主要业务分组</strong>
                   <span>按 srNum 用例量排序</span>
                 </div>
               </header>
-              <div className="ddt-group-ranking">
+              <div
+                className={cn(
+                  "ddt-group-ranking",
+                  ddtManagementWorkspaceStyles["ddt-group-ranking"],
+                )}
+              >
                 {dashboard.groups.length ? (
                   dashboard.groups.map((group, index) => (
                     <Button
@@ -800,10 +856,17 @@ export function DdtManagementWorkspace({
                     </Button>
                   ))
                 ) : (
-                  <p className="ddt-chart-empty">导入后将在这里展示业务分组</p>
+                  <p
+                    className={cn(
+                      "ddt-chart-empty",
+                      ddtManagementWorkspaceStyles["ddt-chart-empty"],
+                    )}
+                  >
+                    导入后将在这里展示业务分组
+                  </p>
                 )}
               </div>
-            </article>
+            </Card>
           </div>
         </div>
       ) : null}
@@ -836,7 +899,7 @@ export function DdtManagementWorkspace({
           }}
           filters={
             <>
-              <label className="search-field">
+              <label className={"search-field"}>
                 <Search size={16} />
                 <Input
                   value={query}
@@ -864,11 +927,24 @@ export function DdtManagementWorkspace({
                   ))}
                 </Select>
               </label>
-              <details className="ddt-advanced-filters">
-                <summary>
-                  <Filter size={14} /> 高级筛选
-                </summary>
-                <div className="ddt-advanced-filter-fields">
+              <Disclosure
+                showArrow={false}
+                header={
+                  <>
+                    <Filter size={14} /> 高级筛选
+                  </>
+                }
+                className={cn(
+                  "ddt-advanced-filters",
+                  ddtManagementWorkspaceStyles["ddt-advanced-filters"],
+                )}
+              >
+                <div
+                  className={cn(
+                    "ddt-advanced-filter-fields",
+                    ddtManagementWorkspaceStyles["ddt-advanced-filter-fields"],
+                  )}
+                >
                   <label>
                     <span>动态字段</span>
                     <Input
@@ -916,16 +992,26 @@ export function DdtManagementWorkspace({
                     </label>
                   ) : null}
                 </div>
-              </details>
-              <Button className="text-button" type="button" onClick={() => void exportSelection()}>
+              </Disclosure>
+              <Button
+                className={cn("text-button", uiPatterns["text-button"])}
+                type="button"
+                onClick={() => void exportSelection()}
+              >
                 <Download size={15} /> 导出当前范围
               </Button>
             </>
           }
           selectionActions={
-            <div className="ddt-selection-bar">
+            <div
+              className={cn("ddt-selection-bar", ddtManagementWorkspaceStyles["ddt-selection-bar"])}
+            >
               <Button
-                className="button button-secondary"
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 type="button"
                 onClick={() => void exportSelection()}
               >
@@ -934,20 +1020,24 @@ export function DdtManagementWorkspace({
               {canManage ? (
                 <>
                   <Button
-                    className="button button-secondary"
+                    className={cn(
+                      "button button-secondary",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                    )}
                     type="button"
                     onClick={() => setShowBulk(true)}
                   >
                     <PencilLine size={15} /> 批量修改
                   </Button>
                   <Button
-                    className="button button-danger"
+                    className={cn("button button-danger", uiPatterns["button"])}
                     type="button"
                     disabled={Boolean(deleteProgress)}
                     onClick={() => void deleteSelected()}
                   >
                     {deleteProgress ? (
-                      <LoaderCircle className="spin" size={15} />
+                      <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
                     ) : (
                       <Trash2 size={15} />
                     )}{" "}
@@ -957,14 +1047,22 @@ export function DdtManagementWorkspace({
               ) : null}
               {canManageSuites ? (
                 <Button
-                  className="button button-secondary"
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
                   type="button"
                   onClick={() => setShowAddToSuite(true)}
                 >
                   <ListPlus size={15} /> 加入用例任务
                 </Button>
               ) : null}
-              <Button type="button" className="text-button" onClick={() => setSelected(new Set())}>
+              <Button
+                type="button"
+                className={cn("text-button", uiPatterns["text-button"])}
+                onClick={() => setSelected(new Set())}
+              >
                 清空选择
               </Button>
             </div>
@@ -980,13 +1078,27 @@ export function DdtManagementWorkspace({
           ) : detailLoading ? (
             <LoadingState label="正在读取用例" description="正在加载所选用例的字段与修改历史。" />
           ) : detailError ? (
-            <div className="ddt-detail-error">
-              <div className="inline-notice error" role="alert">
+            <div
+              className={cn("ddt-detail-error", ddtManagementWorkspaceStyles["ddt-detail-error"])}
+            >
+              <Notice
+                tone="info"
+                className={cn(
+                  "inline-notice error",
+                  uiPatterns["inline-notice"],
+                  uiPatterns["error"],
+                )}
+                role="alert"
+              >
                 {detailError}
-              </div>
+              </Notice>
               <Button
                 type="button"
-                className="button button-secondary"
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 onClick={() => void openCase(activeCaseId)}
               >
                 重试读取用例
@@ -1205,11 +1317,18 @@ export function DdtManagementWorkspace({
 
 function Metric({ label, value, hint }: { label: string; value: number; hint: string }) {
   return (
-    <article className="card ddt-metric">
+    <Card
+      as="article"
+      className={cn(
+        "card ddt-metric",
+        uiPatterns["card"],
+        ddtManagementWorkspaceStyles["ddt-metric"],
+      )}
+    >
       <span>{label}</span>
       <strong>{value.toLocaleString("zh-CN")}</strong>
       <small>{hint}</small>
-    </article>
+    </Card>
   );
 }
 
@@ -1224,11 +1343,17 @@ function WorkspaceLoading() {
 
 function Empty({ title, description }: { title: string; description: string }) {
   return (
-    <div className="empty-state ddt-empty">
+    <EmptyState
+      className={cn(
+        "empty-state ddt-empty",
+        uiPatterns["empty-state"],
+        ddtManagementWorkspaceStyles["ddt-empty"],
+      )}
+    >
       <FileSpreadsheet size={28} />
       <strong>{title}</strong>
       <p>{description}</p>
-    </div>
+    </EmptyState>
   );
 }
 
@@ -1246,36 +1371,63 @@ function ImportJobs({
   onExportCaseIds(id: string): Promise<void>;
 }) {
   return (
-    <div className="ddt-section">
+    <div className={cn("ddt-section", ddtManagementWorkspaceStyles["ddt-section"])}>
       <header>
         <div>
           <strong>导入任务</strong>
           <span>预检、冲突策略和逐文件结果都可追溯</span>
         </div>
         {canManage ? (
-          <Button className="button button-primary" type="button" onClick={onOpen}>
+          <Button
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
+            type="button"
+            onClick={onOpen}
+          >
             <Plus size={15} /> 新建导入
           </Button>
         ) : null}
       </header>
       {jobs.length ? (
-        <div className="ddt-job-list">
+        <div className={cn("ddt-job-list", ddtManagementWorkspaceStyles["ddt-job-list"])}>
           {jobs.map((job) => (
-            <article className="card ddt-job" key={job.id}>
-              <div className="ddt-job-main">
-                <span className={`ddt-status ${job.status}`}>{statusLabel(job.status)}</span>
+            <Card
+              as="article"
+              className={cn(
+                "card ddt-job",
+                uiPatterns["card"],
+                ddtManagementWorkspaceStyles["ddt-job"],
+              )}
+              key={job.id}
+            >
+              <div className={cn("ddt-job-main", ddtManagementWorkspaceStyles["ddt-job-main"])}>
+                <span
+                  className={cn(
+                    ddtManagementWorkspaceStyles["ddt-status"],
+                    `ddt-status ${job.status}`,
+                  )}
+                >
+                  {statusLabel(job.status)}
+                </span>
                 <strong>
                   {job.totalFiles} 个表格 · {job.totalRows} 行
                 </strong>
                 <small>{formatDate(job.createdAt)}</small>
               </div>
-              <div className="ddt-job-progress">
+              <div
+                className={cn("ddt-job-progress", ddtManagementWorkspaceStyles["ddt-job-progress"])}
+              >
                 <div>
                   <i style={{ width: `${job.progressPercent}%` }} />
                 </div>
                 <span>{job.progressPercent}%</span>
               </div>
-              <div className="ddt-job-results">
+              <div
+                className={cn("ddt-job-results", ddtManagementWorkspaceStyles["ddt-job-results"])}
+              >
                 <span>
                   新增 <strong>{job.insertedCount}</strong>
                 </span>
@@ -1293,13 +1445,21 @@ function ImportJobs({
                 </span>
               </div>
               {job.errorSummary ? (
-                <div className="inline-notice error" role="alert">
+                <Notice
+                  tone="info"
+                  className={cn(
+                    "inline-notice error",
+                    uiPatterns["inline-notice"],
+                    uiPatterns["error"],
+                  )}
+                  role="alert"
+                >
                   {job.errorSummary}
-                </div>
+                </Notice>
               ) : null}
               {canManage && ["previewed", "queued", "running"].includes(job.status) ? (
                 <Button
-                  className="text-button danger"
+                  className={cn("text-button danger", uiPatterns["text-button"])}
                   type="button"
                   onClick={() => void onCancel(job.id)}
                 >
@@ -1308,25 +1468,27 @@ function ImportJobs({
               ) : null}
               {["succeeded", "partially_succeeded"].includes(job.status) ? (
                 <Button
-                  className="text-button"
+                  className={cn("text-button", uiPatterns["text-button"])}
                   type="button"
                   onClick={() => void onExportCaseIds(job.id)}
                 >
                   <Download size={14} /> 导出本任务 CaseID
                 </Button>
               ) : null}
-              <details>
-                <summary>逐文件结果</summary>
+              <Disclosure header={<>逐文件结果</>}>
                 {job.files.map((file) => (
-                  <div className="ddt-file-row" key={file.id}>
+                  <div
+                    className={cn("ddt-file-row", ddtManagementWorkspaceStyles["ddt-file-row"])}
+                    key={file.id}
+                  >
                     <strong>{file.archiveEntryName ?? file.fileName}</strong>
                     <span>{file.rowCount} 行</span>
                     <span>{statusLabel(file.status)}</span>
                     {file.errorSummary ? <small>{file.errorSummary}</small> : null}
                   </div>
                 ))}
-              </details>
-            </article>
+              </Disclosure>
+            </Card>
           ))}
         </div>
       ) : (
@@ -1351,28 +1513,48 @@ function Templates({
   onDelete(item: Template): Promise<void>;
 }) {
   return (
-    <div className="ddt-section">
+    <div className={cn("ddt-section", ddtManagementWorkspaceStyles["ddt-section"])}>
       <header>
         <div>
           <strong>字段模板</strong>
           <span>按 srNum 校验必填字段、数据类型和默认值</span>
         </div>
         {canManage ? (
-          <Button className="button button-primary" type="button" onClick={onCreate}>
+          <Button
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
+            type="button"
+            onClick={onCreate}
+          >
             <Plus size={15} /> 新建模板
           </Button>
         ) : null}
       </header>
       {templates.length ? (
-        <div className="ddt-template-grid">
+        <div className={cn("ddt-template-grid", ddtManagementWorkspaceStyles["ddt-template-grid"])}>
           {templates.map((item) => (
-            <article className="card ddt-template" key={item.id}>
+            <Card
+              as="article"
+              className={cn(
+                "card ddt-template",
+                uiPatterns["card"],
+                ddtManagementWorkspaceStyles["ddt-template"],
+              )}
+              key={item.id}
+            >
               <div>
-                <span className="ddt-group-tag">{item.srNum}</span>
+                <span
+                  className={cn("ddt-group-tag", ddtManagementWorkspaceStyles["ddt-group-tag"])}
+                >
+                  {item.srNum}
+                </span>
                 <strong>{item.name}</strong>
                 <p>{item.description || "未填写说明"}</p>
               </div>
-              <div className="ddt-rule-chips">
+              <div className={cn("ddt-rule-chips", ddtManagementWorkspaceStyles["ddt-rule-chips"])}>
                 {item.rules.map((rule) => (
                   <span key={rule.field}>
                     {rule.field}
@@ -1385,7 +1567,7 @@ function Templates({
               </div>
               {canManage ? (
                 <Button
-                  className="icon-button danger"
+                  className={cn("icon-button danger", uiPatterns["icon-button"])}
                   type="button"
                   aria-label={`删除模板 ${item.name}`}
                   onClick={() => void onDelete(item)}
@@ -1393,7 +1575,7 @@ function Templates({
                   <Trash2 size={16} />
                 </Button>
               ) : null}
-            </article>
+            </Card>
           ))}
         </div>
       ) : (
@@ -1418,7 +1600,7 @@ function Recycle({
   onPurge(id: string): Promise<void>;
 }) {
   return (
-    <div className="ddt-section">
+    <div className={cn("ddt-section", ddtManagementWorkspaceStyles["ddt-section"])}>
       <header>
         <div>
           <strong>回收站</strong>
@@ -1426,38 +1608,49 @@ function Recycle({
         </div>
       </header>
       {items.length ? (
-        <div className="ddt-table-shell">
-          <table className="data-table ddt-table">
-            <thead>
-              <tr>
-                <th>CaseID</th>
-                <th>srNum</th>
-                <th>来源</th>
-                <th>删除时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className={cn("ddt-table-shell", ddtManagementWorkspaceStyles["ddt-table-shell"])}>
+          <Table
+            className={cn(
+              "data-table ddt-table",
+              uiPatterns["data-table"],
+              ddtManagementWorkspaceStyles["ddt-table"],
+            )}
+          >
+            <TableHeader>
+              <TableRow>
+                <TableHead>CaseID</TableHead>
+                <TableHead>srNum</TableHead>
+                <TableHead>来源</TableHead>
+                <TableHead>删除时间</TableHead>
+                <TableHead>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td>
+                <TableRow key={item.id}>
+                  <TableCell>
                     <strong>{item.caseId}</strong>
-                  </td>
-                  <td>{item.srNum}</td>
-                  <td>{item.sourceName}</td>
-                  <td>{formatDate(item.deletedAt)}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell>{item.srNum}</TableCell>
+                  <TableCell>{item.sourceName}</TableCell>
+                  <TableCell>{formatDate(item.deletedAt)}</TableCell>
+                  <TableCell>
                     {canManage ? (
-                      <div className="table-actions">
+                      <div
+                        className={cn(
+                          "table-actions",
+                          ddtManagementWorkspaceStyles["table-actions"],
+                        )}
+                      >
                         <Button
-                          className="text-button"
+                          className={cn("text-button", uiPatterns["text-button"])}
                           type="button"
                           onClick={() => void onRestore(item.id)}
                         >
                           <RotateCcw size={14} /> 恢复
                         </Button>
                         <Button
-                          className="text-button danger"
+                          className={cn("text-button danger", uiPatterns["text-button"])}
                           type="button"
                           onClick={() => void onPurge(item.id)}
                         >
@@ -1467,11 +1660,11 @@ function Recycle({
                     ) : (
                       "—"
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       ) : (
         <Empty title="回收站为空" description="被删除的 DDT 用例会保留在这里，直到永久清除。" />
@@ -1659,12 +1852,26 @@ function ImportDialog({
         inactive={showColumnConflicts}
         closeDisabled={busy}
       >
-        <div className="ddt-import-dialog">
-          {error ? <div className="inline-notice error">{error}</div> : null}
+        <div className={cn("ddt-import-dialog", ddtManagementWorkspaceStyles["ddt-import-dialog"])}>
+          {error ? (
+            <Notice
+              tone="info"
+              className={cn(
+                "inline-notice error",
+                uiPatterns["inline-notice"],
+                uiPatterns["error"],
+              )}
+            >
+              {error}
+            </Notice>
+          ) : null}
           {!job ? (
             <>
               <Button
-                className={`ddt-dropzone${dragActive ? " drag-active" : ""}`}
+                className={cn(
+                  ddtManagementWorkspaceStyles["ddt-dropzone"],
+                  `ddt-dropzone${dragActive ? " drag-active" : ""}`,
+                )}
                 type="button"
                 aria-busy={busy}
                 aria-describedby="ddt-import-file-help"
@@ -1694,7 +1901,12 @@ function ImportDialog({
                 }}
               />
               {files.length ? (
-                <div className="ddt-picked-files">
+                <div
+                  className={cn(
+                    "ddt-picked-files",
+                    ddtManagementWorkspaceStyles["ddt-picked-files"],
+                  )}
+                >
                   {files.map((file) => (
                     <span key={`${file.name}-${file.size}`}>
                       <FileSpreadsheet size={14} /> {file.name}
@@ -1713,7 +1925,11 @@ function ImportDialog({
               ) : null}
               <footer>
                 <Button
-                  className="button button-secondary"
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
                   type="button"
                   data-dialog-dismiss
                   onClick={onClose}
@@ -1722,18 +1938,30 @@ function ImportDialog({
                   取消
                 </Button>
                 <Button
-                  className="button button-primary"
+                  className={cn(
+                    "button button-primary",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                  )}
                   type="button"
                   disabled={!files.length || busy}
                   onClick={() => void preview()}
                 >
-                  {busy ? <LoaderCircle className="spin" size={15} /> : null}开始预检
+                  {busy ? (
+                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                  ) : null}
+                  开始预检
                 </Button>
               </footer>
             </>
           ) : (
             <>
-              <div className="ddt-preview-summary">
+              <div
+                className={cn(
+                  "ddt-preview-summary",
+                  ddtManagementWorkspaceStyles["ddt-preview-summary"],
+                )}
+              >
                 <span>
                   <small>有效表格</small>
                   <strong>
@@ -1753,7 +1981,12 @@ function ImportDialog({
                   <strong>{job.files.reduce((sum, file) => sum + file.updatedCount, 0)}</strong>
                 </span>
               </div>
-              <div className="ddt-preview-files">
+              <div
+                className={cn(
+                  "ddt-preview-files",
+                  ddtManagementWorkspaceStyles["ddt-preview-files"],
+                )}
+              >
                 {job.files.map((file) => (
                   <div key={file.id}>
                     <strong>{file.archiveEntryName ?? file.fileName}</strong>
@@ -1763,7 +1996,13 @@ function ImportDialog({
                 ))}
               </div>
               {unresolvedColumnConflicts.length ? (
-                <div className="ddt-column-conflict-notice" role="alert">
+                <div
+                  className={cn(
+                    "ddt-column-conflict-notice",
+                    ddtManagementWorkspaceStyles["ddt-column-conflict-notice"],
+                  )}
+                  role="alert"
+                >
                   <AlertTriangle size={18} aria-hidden="true" />
                   <span>
                     <strong>发现重复列名</strong>
@@ -1772,7 +2011,11 @@ function ImportDialog({
                     </small>
                   </span>
                   <Button
-                    className="button button-secondary"
+                    className={cn(
+                      "button button-secondary",
+                      uiPatterns["button"],
+                      uiPatterns["button-secondary"],
+                    )}
                     type="button"
                     disabled={busy}
                     onClick={() => setShowColumnConflicts(true)}
@@ -1782,7 +2025,7 @@ function ImportDialog({
                 </div>
               ) : null}
               <fieldset
-                className="ddt-strategy"
+                className={cn("ddt-strategy", ddtManagementWorkspaceStyles["ddt-strategy"])}
                 disabled={busy || unresolvedColumnConflicts.length > 0}
               >
                 <legend>CaseID 冲突时</legend>
@@ -1809,7 +2052,11 @@ function ImportDialog({
               </fieldset>
               <footer>
                 <Button
-                  className="button button-secondary"
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
                   type="button"
                   disabled={busy}
                   onClick={() => setJob(undefined)}
@@ -1817,12 +2064,19 @@ function ImportDialog({
                   重新选择
                 </Button>
                 <Button
-                  className="button button-primary"
+                  className={cn(
+                    "button button-primary",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                  )}
                   type="button"
                   disabled={!job.validFiles || busy || unresolvedColumnConflicts.length > 0}
                   onClick={() => void confirm()}
                 >
-                  {busy ? <LoaderCircle className="spin" size={15} /> : null}确认并后台导入
+                  {busy ? (
+                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                  ) : null}
+                  确认并后台导入
                 </Button>
               </footer>
             </>
@@ -1912,10 +2166,23 @@ function ColumnConflictDialog({
       subtitle="对照两列内容后选择改名保留或删除，平台会使用已保存的原文件重新预检"
       onClose={onClose}
       closeDisabled={busy}
-      backdropClassName="ddt-column-conflict-backdrop"
+      backdropClassName={cn(
+        "ddt-column-conflict-backdrop",
+        ddtManagementWorkspaceStyles["ddt-column-conflict-backdrop"],
+      )}
     >
-      <div className="ddt-column-conflict-dialog">
-        <div className="ddt-column-conflict-guidance">
+      <div
+        className={cn(
+          "ddt-column-conflict-dialog",
+          ddtManagementWorkspaceStyles["ddt-column-conflict-dialog"],
+        )}
+      >
+        <div
+          className={cn(
+            "ddt-column-conflict-guidance",
+            ddtManagementWorkspaceStyles["ddt-column-conflict-guidance"],
+          )}
+        >
           <AlertTriangle size={18} />
           <p>
             <strong>
@@ -1924,7 +2191,11 @@ function ColumnConflictDialog({
             </strong>
           </p>
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             disabled={busy}
             size="compact"
             type="button"
@@ -1933,7 +2204,12 @@ function ColumnConflictDialog({
             全部按建议改名
           </Button>
         </div>
-        <div className="ddt-column-conflict-list">
+        <div
+          className={cn(
+            "ddt-column-conflict-list",
+            ddtManagementWorkspaceStyles["ddt-column-conflict-list"],
+          )}
+        >
           {conflicts.map((conflict, conflictIndex) => {
             const location = conflict.archiveEntryName
               ? `${conflict.uploadName} / ${conflict.archiveEntryName}`
@@ -1944,7 +2220,12 @@ function ColumnConflictDialog({
                 key={`${conflict.uploadIndex}-${location}-${conflict.sheetName}-${conflict.normalizedName}`}
               >
                 <header>
-                  <div className="ddt-column-conflict-location">
+                  <div
+                    className={cn(
+                      "ddt-column-conflict-location",
+                      ddtManagementWorkspaceStyles["ddt-column-conflict-location"],
+                    )}
+                  >
                     <span>
                       <FileSpreadsheet size={16} />
                       <strong title={location}>{location}</strong>
@@ -1953,12 +2234,21 @@ function ColumnConflictDialog({
                       {conflict.sheetName} Sheet · “{conflict.columns[0]?.currentName}”重复
                     </small>
                   </div>
-                  <div className="ddt-column-conflict-group-actions">
+                  <div
+                    className={cn(
+                      "ddt-column-conflict-group-actions",
+                      ddtManagementWorkspaceStyles["ddt-column-conflict-group-actions"],
+                    )}
+                  >
                     <small>
                       第 {conflictIndex + 1} / {conflicts.length} 组
                     </small>
                     <Button
-                      className="button button-secondary"
+                      className={cn(
+                        "button button-secondary",
+                        uiPatterns["button"],
+                        uiPatterns["button-secondary"],
+                      )}
                       disabled={busy}
                       size="compact"
                       type="button"
@@ -1986,15 +2276,28 @@ function ColumnConflictDialog({
                     const deleteColumn = resolution?.deleteColumn === true;
                     return (
                       <article
-                        className={`ddt-column-choice${deleteColumn ? " is-deleted" : ""}`}
+                        className={cn(
+                          ddtManagementWorkspaceStyles["ddt-column-choice"],
+                          `ddt-column-choice${deleteColumn ? " is-deleted" : ""}`,
+                        )}
                         key={key}
                       >
-                        <div className="ddt-column-choice-heading">
+                        <div
+                          className={cn(
+                            "ddt-column-choice-heading",
+                            ddtManagementWorkspaceStyles["ddt-column-choice-heading"],
+                          )}
+                        >
                           <span>
                             <small>第 {column.columnIndex + 1} 列</small>
                             <strong title={column.originalName}>{column.originalName}</strong>
                           </span>
-                          <label className="ddt-column-delete-option">
+                          <label
+                            className={cn(
+                              "ddt-column-delete-option",
+                              ddtManagementWorkspaceStyles["ddt-column-delete-option"],
+                            )}
+                          >
                             <Input
                               type="checkbox"
                               disabled={busy}
@@ -2014,7 +2317,12 @@ function ColumnConflictDialog({
                             删除此列
                           </label>
                         </div>
-                        <div className="ddt-column-samples">
+                        <div
+                          className={cn(
+                            "ddt-column-samples",
+                            ddtManagementWorkspaceStyles["ddt-column-samples"],
+                          )}
+                        >
                           <header>
                             <span>内容预览</span>
                             <small>{column.nonEmptyCount} 个非空单元格</small>
@@ -2033,7 +2341,12 @@ function ColumnConflictDialog({
                           )}
                         </div>
                         <Button
-                          className="ddt-column-keep-only button button-secondary"
+                          className={cn(
+                            "ddt-column-keep-only button button-secondary",
+                            ddtManagementWorkspaceStyles["ddt-column-keep-only"],
+                            uiPatterns["button"],
+                            uiPatterns["button-secondary"],
+                          )}
                           disabled={busy || (!deleteColumn && retainedColumnCount === 1)}
                           size="compact"
                           type="button"
@@ -2045,7 +2358,12 @@ function ColumnConflictDialog({
                         >
                           仅保留此列
                         </Button>
-                        <label className="ddt-column-name-field">
+                        <label
+                          className={cn(
+                            "ddt-column-name-field",
+                            ddtManagementWorkspaceStyles["ddt-column-name-field"],
+                          )}
+                        >
                           <span>{deleteColumn ? "该列将在导入时忽略" : "保留后的列名"}</span>
                           <Input
                             autoFocus={key === firstColumnKey}
@@ -2080,13 +2398,32 @@ function ColumnConflictDialog({
             value={uploadProgress.percent}
           />
         ) : null}
-        <div className="ddt-column-resolution-feedback">
+        <div
+          className={cn(
+            "ddt-column-resolution-feedback",
+            ddtManagementWorkspaceStyles["ddt-column-resolution-feedback"],
+          )}
+        >
           {error || validationError ? (
-            <div className="inline-notice error" role="alert">
+            <Notice
+              tone="info"
+              className={cn(
+                "inline-notice error",
+                uiPatterns["inline-notice"],
+                uiPatterns["error"],
+              )}
+              role="alert"
+            >
               {error || validationError}
-            </div>
+            </Notice>
           ) : (
-            <div className="ddt-column-resolution-summary" aria-live="polite">
+            <div
+              className={cn(
+                "ddt-column-resolution-summary",
+                ddtManagementWorkspaceStyles["ddt-column-resolution-summary"],
+              )}
+              aria-live="polite"
+            >
               <CheckCircle2 aria-hidden="true" size={16} />
               <span>
                 待应用的列名方案
@@ -2096,13 +2433,22 @@ function ColumnConflictDialog({
               </span>
             </div>
           )}
-          <p className="ddt-column-resolution-help">
+          <p
+            className={cn(
+              "ddt-column-resolution-help",
+              ddtManagementWorkspaceStyles["ddt-column-resolution-help"],
+            )}
+          >
             对照上方内容，改名可保留全部数据，也可仅保留指定列。应用后会重新预检，此时还不会导入用例。
           </p>
         </div>
         <footer>
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             disabled={busy}
             data-dialog-dismiss
@@ -2111,12 +2457,16 @@ function ColumnConflictDialog({
             暂不处理
           </Button>
           <Button
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             type="button"
             disabled={busy || conflicts.length === 0 || Boolean(validationError)}
             onClick={onConfirm}
           >
-            {busy ? <LoaderCircle className="spin" size={15} /> : null}
+            {busy ? <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} /> : null}
             应用并重新预检
           </Button>
         </footer>
@@ -2177,8 +2527,26 @@ function TemplateDialog({
       )}
       closeDisabled={saving}
     >
-      <div className="form-grid ddt-template-form">
-        {error ? <div className="inline-notice error full-span">{error}</div> : null}
+      <div
+        className={cn(
+          "form-grid ddt-template-form",
+          ddtManagementWorkspaceStyles["form-grid"],
+          ddtManagementWorkspaceStyles["ddt-template-form"],
+        )}
+      >
+        {error ? (
+          <Notice
+            tone="info"
+            className={cn(
+              "inline-notice error full-span",
+              uiPatterns["inline-notice"],
+              uiPatterns["error"],
+              uiPatterns["full-span"],
+            )}
+          >
+            {error}
+          </Notice>
+        ) : null}
         <label>
           <span>srNum</span>
           <Input
@@ -2195,15 +2563,21 @@ function TemplateDialog({
             placeholder="订单用例字段"
           />
         </label>
-        <label className="full-span">
+        <label className={cn("full-span", uiPatterns["full-span"])}>
           <span>说明</span>
           <Textarea value={description} onChange={(event) => setDescription(event.target.value)} />
         </label>
-        <div className="full-span ddt-rule-builder">
+        <div
+          className={cn(
+            "full-span ddt-rule-builder",
+            uiPatterns["full-span"],
+            ddtManagementWorkspaceStyles["ddt-rule-builder"],
+          )}
+        >
           <div>
             <strong>字段规则</strong>
             <Button
-              className="text-button"
+              className={cn("text-button", uiPatterns["text-button"])}
               type="button"
               onClick={() => setRules([...rules, { field: "", required: false, type: "string" }])}
             >
@@ -2248,7 +2622,7 @@ function TemplateDialog({
                 必填
               </label>
               <Button
-                className="icon-button danger"
+                className={cn("icon-button danger", uiPatterns["icon-button"])}
                 type="button"
                 aria-label={`删除字段 ${index + 1}`}
                 onClick={() => setRules(rules.filter((_, itemIndex) => itemIndex !== index))}
@@ -2258,9 +2632,13 @@ function TemplateDialog({
             </div>
           ))}
         </div>
-        <footer className="full-span">
+        <footer className={cn("full-span", uiPatterns["full-span"])}>
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             data-dialog-dismiss
             onClick={onClose}
@@ -2268,7 +2646,11 @@ function TemplateDialog({
             取消
           </Button>
           <Button
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             type="button"
             disabled={saving || !srNum.trim() || !name.trim()}
             onClick={() => void save()}
@@ -2316,8 +2698,26 @@ function BulkDialog({
       subtitle="普通用例直接修改字段；用户旅程可指定 step1…stepN"
       onClose={onClose}
     >
-      <div className="form-grid ddt-bulk-form">
-        {error ? <div className="inline-notice error full-span">{error}</div> : null}
+      <div
+        className={cn(
+          "form-grid ddt-bulk-form",
+          ddtManagementWorkspaceStyles["form-grid"],
+          ddtManagementWorkspaceStyles["ddt-bulk-form"],
+        )}
+      >
+        {error ? (
+          <Notice
+            tone="info"
+            className={cn(
+              "inline-notice error full-span",
+              uiPatterns["inline-notice"],
+              uiPatterns["error"],
+              uiPatterns["full-span"],
+            )}
+          >
+            {error}
+          </Notice>
+        ) : null}
         <label>
           <span>字段名</span>
           <Input
@@ -2330,7 +2730,7 @@ function BulkDialog({
           <span>新值</span>
           <Input value={value} onChange={(event) => setValue(event.target.value)} />
         </label>
-        <label className="full-span">
+        <label className={cn("full-span", uiPatterns["full-span"])}>
           <span>用户旅程 Step（可选）</span>
           <Input
             value={stepName}
@@ -2338,9 +2738,13 @@ function BulkDialog({
             placeholder="step1"
           />
         </label>
-        <footer className="full-span">
+        <footer className={cn("full-span", uiPatterns["full-span"])}>
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             data-dialog-dismiss
             onClick={onClose}
@@ -2348,7 +2752,11 @@ function BulkDialog({
             取消
           </Button>
           <Button
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             disabled={!field.trim()}
             type="button"
             onClick={() => void save()}
@@ -2423,9 +2831,27 @@ function AddDdtToSuiteDialog({
       onClose={onClose}
       closeDisabled={busy}
     >
-      <div className="form-grid ddt-add-suite-dialog">
-        {error ? <div className="inline-notice error full-span">{error}</div> : null}
-        <label className="full-span">
+      <div
+        className={cn(
+          "form-grid ddt-add-suite-dialog",
+          ddtManagementWorkspaceStyles["form-grid"],
+          ddtManagementWorkspaceStyles["ddt-add-suite-dialog"],
+        )}
+      >
+        {error ? (
+          <Notice
+            tone="info"
+            className={cn(
+              "inline-notice error full-span",
+              uiPatterns["inline-notice"],
+              uiPatterns["error"],
+              uiPatterns["full-span"],
+            )}
+          >
+            {error}
+          </Notice>
+        ) : null}
+        <label className={cn("full-span", uiPatterns["full-span"])}>
           <span>目标用例任务</span>
           <Select
             value={suiteId}
@@ -2441,7 +2867,7 @@ function AddDdtToSuiteDialog({
           </Select>
         </label>
         {suiteId === "new" ? (
-          <label className="full-span">
+          <label className={cn("full-span", uiPatterns["full-span"])}>
             <span>新任务名称</span>
             <Input
               value={createdSuite?.name ?? newSuiteName}
@@ -2453,13 +2879,17 @@ function AddDdtToSuiteDialog({
           </label>
         ) : null}
         {createdSuite ? (
-          <p className="muted full-span">
+          <p className={cn("muted full-span", uiPatterns["muted"], uiPatterns["full-span"])}>
             任务“{createdSuite.name}”已创建，重新点击加入任务可重试添加所选用例。
           </p>
         ) : null}
-        <footer className="full-span">
+        <footer className={cn("full-span", uiPatterns["full-span"])}>
           <Button
-            className="button button-secondary"
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
             type="button"
             disabled={busy}
             data-dialog-dismiss
@@ -2468,14 +2898,22 @@ function AddDdtToSuiteDialog({
             取消
           </Button>
           <Button
-            className="button button-primary"
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
             type="button"
             disabled={
               busy || (suiteId === "new" ? !newSuiteName.trim() && !createdSuite : !suiteId)
             }
             onClick={() => void save()}
           >
-            {busy ? <LoaderCircle className="spin" size={15} /> : <ListPlus size={15} />}
+            {busy ? (
+              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+            ) : (
+              <ListPlus size={15} />
+            )}
             加入任务
           </Button>
         </footer>
@@ -2509,7 +2947,7 @@ function Dialog({
       title={title}
       description={subtitle}
       onClose={onClose}
-      className="ddt-dialog"
+      className={cn("ddt-dialog", ddtManagementWorkspaceStyles["ddt-dialog"])}
       closeLabel="关闭弹窗"
       protectUnsavedChanges
       {...(dirty === undefined ? {} : { dirty })}
@@ -2801,3 +3239,110 @@ function downloadBlob(blob: Blob, fileName: string): void {
 function csvCell(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
+
+const ddtManagementWorkspaceStyles = {
+  "ddt-add-suite-dialog":
+    "p-5 [&_footer]:flex [&_footer]:justify-end [&_footer]:gap-2 [&_footer]:m-0",
+  "ddt-advanced-filter-fields":
+    "absolute z-10 top-full left-0 grid w-[calc(200%_+_8px)] max-h-[var(--ddt-case-filter-max-height)] overflow-y-auto gap-2 border border-solid border-border rounded-lg p-3 bg-card shadow-xs [&_.ui-select-list]:static [&_.ui-select-list]:mt-1",
+  "ddt-advanced-filters":
+    "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:text-info relative",
+  "ddt-bulk-form":
+    "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2 [&_>_label]:grid [&_>_label]:gap-[5px]",
+  "ddt-chart-card":
+    "[&_header]:flex [&_header]:items-center [&_header_>_div]:grid [&_header_>_div]:min-w-0 [&_header_>_div]:gap-[3px] [&_header_>_div]:mr-auto [&_header_span]:text-muted-foreground [&_header_span]:text-xs min-w-0 p-5",
+  "ddt-chart-empty": "m-auto text-muted-foreground",
+  "ddt-chart-grid":
+    "grid grid-cols-[minmax(0,_1.1fr)_minmax(0,_0.9fr)] gap-4 max-[1181px]:grid-cols-[1fr]",
+  "ddt-column-choice":
+    "grid min-w-0 [align-content:start] gap-2.5 border border-solid border-border rounded-lg p-[11px] bg-card transition-colors duration-150 motion-reduce:transition-none [&.is-deleted]:[border-color:color-mix(in_srgb,_var(--destructive)_32%,_var(--border))] [&.is-deleted]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--destructive)_10%,_transparent)_55%,_var(--card))] [&.is-deleted_.ddt-column-name-field_>_span]:text-destructive",
+  "ddt-column-choice-heading":
+    "flex min-w-0 items-center justify-between gap-2.5 [&_>_span]:grid [&_>_span]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small]:text-muted-foreground",
+  "ddt-column-conflict-backdrop":
+    "[&_.ddt-dialog]:w-[min(960px,_calc(100dvw_-_40px))] [&_.ddt-dialog]:overflow-hidden",
+  "ddt-column-conflict-dialog":
+    "flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5 [&_footer]:flex [&_footer]:shrink-0 [&_footer]:justify-end [&_footer]:gap-[9px]",
+  "ddt-column-conflict-group-actions":
+    "flex [flex:0_0_auto] items-center gap-[9px] [&_>_small]:text-muted-foreground [&_>_small]:whitespace-nowrap",
+  "ddt-column-conflict-guidance":
+    "flex items-start gap-2.5 rounded-lg py-[11px] px-3 bg-warning/10 text-warning [&_p]:grid [&_p]:min-w-0 [&_p]:flex-1 [&_p]:m-0 [&_p]:gap-0.5 [&_span]:text-muted-foreground [&_span]:text-xs",
+  "ddt-column-conflict-list":
+    "grid [grid-auto-rows:max-content] [align-content:start] min-h-0 [flex:1_1_auto] gap-2.5 overflow-auto [overscroll-behavior:contain] pr-[3px] [&_>_section]:overflow-hidden [&_>_section]:border [&_>_section]:border-solid [&_>_section]:border-border [&_>_section]:rounded-lg [&_>_section]:bg-card [&_>_section_>_header]:flex [&_>_section_>_header]:items-center [&_>_section_>_header]:justify-between [&_>_section_>_header]:gap-3 [&_>_section_>_header]:border-b [&_>_section_>_header]:border-solid [&_>_section_>_header]:border-border [&_>_section_>_header]:py-2.5 [&_>_section_>_header]:px-3 [&_>_section_>_header]:bg-muted [&_>_section_>_div]:grid [&_>_section_>_div]:grid-cols-2 [&_>_section_>_div]:gap-2 [&_>_section_>_div]:py-[11px] [&_>_section_>_div]:px-3",
+  "ddt-column-conflict-location":
+    "grid min-w-0 flex-1 gap-0.5 [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:items-center [&_>_span]:gap-[7px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_>_small]:text-destructive",
+  "ddt-column-conflict-notice":
+    "flex items-center gap-2.5 mt-3 border border-solid border-border rounded-lg py-[11px] px-3 bg-warning/10 text-warning [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:flex-1 [&_>_span]:gap-0.5 [&_small]:text-muted-foreground",
+  "ddt-column-delete-option":
+    'inline-flex [flex:0_0_auto] items-center gap-[5px] text-muted-foreground text-xs cursor-pointer [&:has(input:checked)]:text-destructive [&_.ui-input[type="checkbox"]]:w-4 [&_.ui-input[type="checkbox"]]:h-4 [&_.ui-input[type="checkbox"]]:[flex-basis:16px]',
+  "ddt-column-keep-only": "w-fit justify-self-end",
+  "ddt-column-name-field": "grid gap-[5px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+  "ddt-column-resolution-feedback": "grid shrink-0 gap-2",
+  "ddt-column-resolution-help": "m-0 text-muted-foreground text-xs",
+  "ddt-column-resolution-summary":
+    "flex items-center gap-2 border border-solid border-border rounded-lg py-2 px-2.5 bg-success/10 text-success [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:flex-1 [&_>_span]:items-center [&_>_span]:justify-between [&_>_span]:gap-3 [&_>_span]:text-xs [&_>_span]:font-semibold [&_small]:text-muted-foreground [&_small]:font-medium",
+  "ddt-column-samples":
+    "[&_header_small]:text-muted-foreground overflow-hidden border border-solid border-border rounded-lg bg-muted [&_>_header]:flex [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-[7px] [&_>_header]:px-[9px] [&_>_header]:text-xs [&_ul]:grid [&_ul]:max-h-[152px] [&_ul]:m-0 [&_ul]:py-1 [&_ul]:px-0 [&_ul]:overflow-auto [&_ul]:[list-style:none] [&_li]:grid [&_li]:grid-cols-[45px_minmax(0,_1fr)] [&_li]:items-center [&_li]:gap-[7px] [&_li]:py-[5px] [&_li]:px-[9px] [&_li_+_li]:border-t [&_li_+_li]:border-solid [&_li_+_li]:border-transparent [&_li_small]:text-muted-foreground [&_li_span]:overflow-hidden [&_li_span]:text-ellipsis [&_li_span]:whitespace-nowrap [&_>_p]:m-0 [&_>_p]:py-3.5 [&_>_p]:px-[9px] [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_p]:text-center",
+  "ddt-detail-error": "overflow-auto p-5",
+  "ddt-dialog":
+    "[&_>_header]:flex [&_>_header]:items-center [&_>_header]:[flex:0_0_auto] [&_>_header]:justify-between [&_>_header]:gap-4.5 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-4.5 [&_>_header]:px-5 flex w-[min(760px,_calc(100dvw_-_40px))] max-h-[calc(100dvh_-_40px)] flex-col overflow-auto border border-solid border-border rounded-xl bg-card shadow-lg [&_>_header_h2]:m-0 [&_>_header_p]:m-0 [&_>_header_p]:mt-1 [&_>_header_p]:text-muted-foreground [&_>_.action-dialog-body]:p-0 [&_.draft-discard-prompt]:m-3",
+  "ddt-dropzone":
+    "grid w-full min-h-[170px] place-items-center [align-content:center] gap-[7px] border border-dashed border-border rounded-lg bg-info/10 text-info transition-colors duration-150 motion-reduce:transition-none [&:hover:not(:disabled)]:border-info [&:hover:not(:disabled)]:shadow-xs [&:focus-visible]:border-info [&:focus-visible]:shadow-xs [&.drag-active]:border-info [&.drag-active]:shadow-xs [&.drag-active]:[border-style:solid] [&.drag-active]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_72%,_var(--card))] [&.drag-active]:[transform:translateY(-1px)] [&_span]:max-w-[520px] [&_span]:text-muted-foreground [&_span]:text-center",
+  "ddt-empty":
+    "grid min-h-[220px] place-items-center [align-content:center] gap-2 text-muted-foreground text-center [&_strong]:text-foreground [&_p]:m-0",
+  "ddt-file-row":
+    "grid grid-cols-[minmax(0,_1fr)_70px_80px] gap-2 pt-[9px] [&_small]:col-span-full [&_small]:text-destructive",
+  "ddt-group-ranking":
+    "grid gap-2 mt-[17px] [&_button]:grid [&_button]:grid-cols-[24px_minmax(90px,_0.7fr)_minmax(80px,_1fr)_32px] [&_button]:items-center [&_button]:gap-[9px] [&_button]:border-0 [&_button]:rounded-lg [&_button]:p-[7px] [&_button]:bg-transparent [&_button]:text-foreground [&_button]:text-left [&_button:hover]:bg-muted [&_button_>_span]:grid [&_button_>_span]:h-6 [&_button_>_span]:place-items-center [&_button_>_span]:rounded-md [&_button_>_span]:bg-info/10 [&_button_>_span]:text-info [&_button_>_span]:text-xs [&_i]:h-[7px] [&_i]:rounded-md [&_i]:bg-primary",
+  "ddt-group-tag":
+    "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap",
+  "ddt-import-dialog": "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2",
+  "ddt-job":
+    "relative grid gap-[13px] p-[17px] [&_.ui-disclosure]:border-t [&_.ui-disclosure]:border-solid [&_.ui-disclosure]:border-border [&_.ui-disclosure]:pt-2.5 [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:cursor-pointer",
+  "ddt-job-list": "grid gap-3",
+  "ddt-job-main":
+    "grid grid-cols-[auto_1fr_auto] items-center gap-2.5 [&_small]:text-muted-foreground",
+  "ddt-job-progress":
+    "grid grid-cols-[1fr_42px] items-center gap-[9px] [&_>_div]:h-[7px] [&_>_div]:overflow-hidden [&_>_div]:rounded-md [&_>_div]:bg-muted [&_i]:block [&_i]:h-full [&_i]:rounded-xl [&_i]:bg-info",
+  "ddt-job-results":
+    "flex flex-wrap gap-2 [&_span]:rounded-md [&_span]:py-1.5 [&_span]:px-[9px] [&_span]:bg-muted [&_span]:text-muted-foreground [&_span]:text-xs",
+  "ddt-metric":
+    "grid gap-[5px] p-4.5 [&_.ui-card-content_>_span]:text-muted-foreground [&_small]:text-muted-foreground [&_strong]:text-3xl [&_strong]:tabular-nums [&_strong]:tracking-normal",
+  "ddt-metrics": "grid grid-cols-4 gap-3 max-[1181px]:grid-cols-2",
+  "ddt-overview": "grid min-w-0 gap-4",
+  "ddt-picked-files":
+    "grid gap-[7px] mt-3 [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2 [&_>_span]:rounded-lg [&_>_span]:py-[9px] [&_>_span]:px-[11px] [&_>_span]:bg-muted [&_small]:ml-auto [&_small]:text-muted-foreground",
+  "ddt-preview-files":
+    "grid gap-[7px] mt-3 max-h-[min(320px,_35dvh)] overflow-auto [overscroll-behavior:contain] [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2 [&_>_div]:rounded-lg [&_>_div]:py-[9px] [&_>_div]:px-[11px] [&_>_div]:bg-muted [&_>_div]:flex-wrap [&_span]:ml-auto [&_span]:text-muted-foreground [&_small]:[flex-basis:100%] [&_small]:text-destructive [&_>_div_>_strong]:min-w-0 [&_>_div_>_strong]:[flex:1_1_50%] [&_>_div_>_strong]:[overflow-wrap:anywhere] [&_i]:text-success [&_i]:text-xs",
+  "ddt-preview-summary":
+    "grid grid-cols-[repeat(4,_1fr)] gap-2 [&_span]:grid [&_span]:gap-[3px] [&_span]:rounded-lg [&_span]:p-[11px] [&_span]:bg-muted [&_small]:text-muted-foreground [&_strong]:text-lg",
+  "ddt-rule-builder":
+    "grid gap-2 [&_>_div]:grid [&_>_div]:grid-cols-[minmax(0,_1fr)_130px_80px_36px] [&_>_div]:items-center [&_>_div]:gap-2 [&_>_div:first-child]:flex [&_>_div:first-child]:justify-between [&_>_div_>_label]:flex [&_>_div_>_label]:items-center [&_>_div_>_label]:gap-[5px]",
+  "ddt-rule-chips":
+    "flex col-span-full flex-wrap gap-1.5 [&_>_span]:grid [&_>_span]:gap-px [&_>_span]:rounded-md [&_>_span]:py-1.5 [&_>_span]:px-[9px] [&_>_span]:bg-muted [&_small]:text-muted-foreground",
+  "ddt-section":
+    "[&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-3 [&_>_header_>_div]:grid [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-[3px] [&_>_header_>_div]:mr-auto [&_>_header_>_div_>_span]:text-muted-foreground [&_>_header_>_div_>_span]:text-xs grid min-w-0 gap-4",
+  "ddt-selection-bar":
+    "flex items-center gap-[9px] border border-solid border-border rounded-lg py-[9px] px-3 bg-info/10 [&_strong]:mr-auto [&_strong]:text-info",
+  "ddt-status":
+    "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap [&.running]:bg-info/10 [&.running]:text-info [&.queued]:bg-info/10 [&.queued]:text-info [&.succeeded]:bg-success/10 [&.succeeded]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.previewed]:bg-warning/10 [&.previewed]:text-warning [&.partially\\_succeeded]:bg-warning/10 [&.partially\\_succeeded]:text-warning",
+  "ddt-strategy":
+    "flex gap-2 mt-[15px] border-0 p-0 [&_legend]:mb-[7px] [&_legend]:text-muted-foreground [&_legend]:text-xs [&_label]:flex [&_label]:flex-1 [&_label]:items-center [&_label]:gap-[7px] [&_label]:border [&_label]:border-solid [&_label]:border-border [&_label]:rounded-lg [&_label]:p-2.5",
+  "ddt-subtabs":
+    "flex items-center flex-wrap gap-[3px] border-b border-solid border-border pb-2 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_button]:border-0 [&_button]:rounded-lg [&_button]:py-[9px] [&_button]:px-3.5 [&_button]:bg-transparent [&_button]:text-muted-foreground [&_button]:font-semibold [&_button]:relative [&_button]:shadow-none [&_button.active]:bg-info/10 [&_button.active]:text-info [&_button.active]:shadow-none [&_small]:inline-grid [&_small]:min-w-4.5 [&_small]:h-4.5 [&_small]:place-items-center [&_small]:rounded-lg [&_small]:bg-destructive/10 [&_small]:text-destructive",
+  "ddt-table":
+    '[table-layout:fixed] [&_th:nth-child(1)]:w-11.5 [&_th:nth-child(2)]:w-[21%] [&_th:nth-child(3)]:w-[15%] [&_th:nth-child(4)]:w-[110px] [&_th:nth-child(5)]:w-[25%] [&_th:last-child]:w-12.5 [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap [&_input[type="checkbox"]]:w-4 [&_input[type="checkbox"]]:h-4',
+  "ddt-table-shell":
+    "min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs",
+  "ddt-template":
+    "relative grid gap-[13px] p-[17px] grid-cols-[minmax(0,_1fr)_auto] [&_.ui-card-content_>_div:first-child]:grid [&_.ui-card-content_>_div:first-child]:gap-[7px] [&_p]:m-0 [&_p]:text-muted-foreground",
+  "ddt-template-form":
+    "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2 [&_>_label]:grid [&_>_label]:gap-[5px]",
+  "ddt-template-grid": "grid gap-3 grid-cols-2 max-[1181px]:grid-cols-[1fr]",
+  "ddt-workspace":
+    "grid min-w-0 gap-4 [&_.inline-notice]:justify-between [&_.inline-notice.success]:border-success/10 [&_.inline-notice.success]:bg-success/10 [&_.inline-notice.success]:text-success [&_.inline-notice.error]:border-destructive/10 [&_.inline-notice.error]:bg-destructive/10 [&_.inline-notice.error]:text-destructive [&_.inline-notice_button]:grid [&_.inline-notice_button]:border-0 [&_.inline-notice_button]:bg-transparent [&_.inline-notice_button]:text-current [&_.text-button]:inline-flex [&_.text-button]:min-h-8 [&_.text-button]:items-center [&_.text-button]:gap-[5px] [&_.text-button]:border-0 [&_.text-button]:p-[3px] [&_.text-button]:bg-transparent [&_.text-button]:text-info [&_.text-button]:font-semibold [&_.text-button.danger]:text-destructive [&_.icon-button.danger]:text-destructive [&_.button-danger]:border-destructive/10 [&_.button-danger]:bg-destructive/10 [&_.button-danger]:text-destructive [&:has(.ddt-case-browser)]:grid-cols-[minmax(0,_1fr)_auto] [&:has(.ddt-case-browser)]:gap-3 [&:has(.ddt-case-browser)_>_.ddt-workspace-bar]:[grid-column:2] [&:has(.ddt-case-browser)_>_.ddt-workspace-bar]:[grid-row:1] [&:has(.ddt-case-browser)_>_.ddt-workspace-bar_>_div:first-child]:hidden [&:has(.ddt-case-browser)_>_.ddt-subtabs]:[grid-column:1] [&:has(.ddt-case-browser)_>_.ddt-subtabs]:[grid-row:1] [&:has(.ddt-case-browser)_>_.ddt-subtabs]:border-0 [&:has(.ddt-case-browser)_>_.ddt-subtabs]:p-0 [&:has(.ddt-case-browser)_>_:not(.ddt-workspace-bar,_.ddt-subtabs)]:col-span-full max-[1601px]:[&:has(.ddt-case-browser)]:grid-cols-[minmax(0,_1fr)] max-[1601px]:[&:has(.ddt-case-browser)_>_.ddt-workspace-bar]:[grid-column:1] max-[1601px]:[&:has(.ddt-case-browser)_>_.ddt-workspace-bar]:justify-end max-[1601px]:[&:has(.ddt-case-browser)_>_.ddt-subtabs]:[grid-column:1] max-[1601px]:[&:has(.ddt-case-browser)_>_.ddt-subtabs]:[grid-row:2]",
+  "ddt-workspace-bar":
+    "flex items-center gap-2 justify-end [&_>_div:first-child]:grid [&_>_div:first-child]:min-w-0 [&_>_div:first-child]:gap-[3px] [&_>_div:first-child]:mr-auto [&_>_div:first-child_>_span]:text-muted-foreground [&_>_div:first-child_>_span]:text-xs [&_>_div:first-child_>_strong]:hidden",
+  "form-grid":
+    "grid grid-cols-[minmax(0,_0.7fr)_minmax(0,_1.3fr)] gap-3.5 [&_.field-stack]:mt-0 [&.ddt-template-form]:grid [&.ddt-template-form]:grid-cols-2 [&.ddt-template-form]:gap-[13px] [&.ddt-bulk-form]:grid [&.ddt-bulk-form]:grid-cols-2 [&.ddt-bulk-form]:gap-[13px]",
+  "table-actions": "flex items-center gap-2",
+} as const;

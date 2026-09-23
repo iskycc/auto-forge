@@ -1,4 +1,12 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type {
   ProjectAdapterConfiguration,
@@ -299,16 +307,38 @@ export function ProjectStructureManager({
     updatedAt: "",
   };
   return (
-    <div className="settings-stack project-structure-manager">
+    <div
+      className={cn(
+        "settings-stack project-structure-manager",
+        uiPatterns["settings-stack"],
+        projectStructureManagerStyles["project-structure-manager"],
+      )}
+    >
       {error && !inheritDialogOpen ? (
-        <div className="auth-error" role="alert">
+        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
           {error}
-        </div>
+        </Notice>
       ) : null}
 
-      <div className="project-structure-workspace">
-        <aside className="project-version-navigation" aria-label="配置所属版本">
-          <div className="project-version-navigation-heading">
+      <div
+        className={cn(
+          "project-structure-workspace",
+          projectStructureManagerStyles["project-structure-workspace"],
+        )}
+      >
+        <aside
+          className={cn(
+            "project-version-navigation",
+            projectStructureManagerStyles["project-version-navigation"],
+          )}
+          aria-label="配置所属版本"
+        >
+          <div
+            className={cn(
+              "project-version-navigation-heading",
+              projectStructureManagerStyles["project-version-navigation-heading"],
+            )}
+          >
             <strong>项目版本</strong>
             <span>{structure.versions.length}</span>
           </div>
@@ -319,12 +349,21 @@ export function ProjectStructureManager({
             value={versionQuery}
             onChange={(event) => setVersionQuery(event.target.value)}
           />
-          <div className="project-version-options" ref={versionListRef}>
+          <div
+            className={cn(
+              "project-version-options",
+              projectStructureManagerStyles["project-version-options"],
+            )}
+            ref={versionListRef}
+          >
             {matchingVersions.map((version) => (
               <Button
                 key={version.id}
                 type="button"
-                className="project-version-option"
+                className={cn(
+                  "project-version-option",
+                  projectStructureManagerStyles["project-version-option"],
+                )}
                 aria-pressed={version.id === selectedVersionId}
                 disabled={pending}
                 onClick={() => {
@@ -341,21 +380,33 @@ export function ProjectStructureManager({
               </Button>
             ))}
             {!matchingVersions.length ? (
-              <p className="inline-empty">
+              <p className={cn("inline-empty", uiPatterns["inline-empty"])}>
                 {structure.versions.length ? "没有匹配的版本" : "暂无版本，请从顶栏新建"}
               </p>
             ) : null}
           </div>
         </aside>
-        <div className="project-version-detail">
-          <section className="content-card settings-section">
-            <div className="section-heading">
+        <div
+          className={cn(
+            "project-version-detail",
+            projectStructureManagerStyles["project-version-detail"],
+          )}
+        >
+          <Card
+            as="section"
+            className={cn(
+              "content-card settings-section",
+              uiPatterns["content-card"],
+              uiPatterns["settings-section"],
+            )}
+          >
+            <div className={cn("section-heading", uiPatterns["section-heading"])}>
               <div>
-                <p className="eyebrow">Project structure</p>
+                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Project structure</p>
                 <h2 title={selectedVersion?.name}>{selectedVersion?.name ?? "版本与测试阶段"}</h2>
                 <p>当前配置版本 · {selectedVersion?.stages.length ?? 0} 个测试阶段</p>
               </div>
-              <div className="button-row">
+              <div className={cn("button-row", uiPatterns["button-row"])}>
                 {canManage ? (
                   <>
                     <Button
@@ -376,11 +427,26 @@ export function ProjectStructureManager({
               open={inheritDialogOpen}
               title="从其他版本继承用例"
             >
-              <form className="settings-grid-form action-dialog-form" onSubmit={inheritCases}>
+              <form
+                className={cn(
+                  "settings-grid-form action-dialog-form",
+                  uiPatterns["settings-grid-form"],
+                  projectStructureManagerStyles["action-dialog-form"],
+                )}
+                onSubmit={inheritCases}
+              >
                 {error ? (
-                  <p className="auth-error settings-wide-field" role="alert">
+                  <Notice
+                    tone="error"
+                    className={cn(
+                      "auth-error settings-wide-field",
+                      uiPatterns["auth-error"],
+                      uiPatterns["settings-wide-field"],
+                    )}
+                    role="alert"
+                  >
                     {error}
-                  </p>
+                  </Notice>
                 ) : null}
                 <label>
                   来源版本 / 测试阶段
@@ -414,12 +480,12 @@ export function ProjectStructureManager({
                     )}
                   </Select>
                 </label>
-                <p className="settings-note">
+                <p className={cn("settings-note", uiPatterns["settings-note"])}>
                   继承会创建独立的目标用例定义，并共享不可变 JAR
                   来源；目标阶段已有的同类名用例会安全跳过。
                 </p>
                 <Button
-                  className="primary-button"
+                  className={cn("primary-button", uiPatterns["primary-button"])}
                   disabled={pending || !canManage || structure.versions.length < 2}
                   type="submit"
                 >
@@ -427,30 +493,52 @@ export function ProjectStructureManager({
                 </Button>
               </form>
             </ActionDialog>
-            <div className="project-stage-list" aria-label="当前版本测试阶段">
+            <div
+              className={cn(
+                "project-stage-list",
+                projectStructureManagerStyles["project-stage-list"],
+              )}
+              aria-label="当前版本测试阶段"
+            >
               {selectedVersion?.stages.length ? (
                 selectedVersion.stages.map((stage) => (
-                  <div className="project-stage-row" key={stage.id}>
+                  <div
+                    className={cn(
+                      "project-stage-row",
+                      projectStructureManagerStyles["project-stage-row"],
+                    )}
+                    key={stage.id}
+                  >
                     <strong title={stage.name}>{stage.name}</strong>
                     <span>{stage.description || "暂无阶段说明"}</span>
                   </div>
                 ))
               ) : (
-                <p className="inline-empty">当前版本尚无测试阶段。</p>
+                <p className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                  当前版本尚无测试阶段。
+                </p>
               )}
             </div>
-          </section>
+          </Card>
 
-          <section className="content-card settings-section" key={selectedVersionId}>
-            <div className="section-heading">
+          <Card
+            as="section"
+            className={cn(
+              "content-card settings-section",
+              uiPatterns["content-card"],
+              uiPatterns["settings-section"],
+            )}
+            key={selectedVersionId}
+          >
+            <div className={cn("section-heading", uiPatterns["section-heading"])}>
               <div>
-                <p className="eyebrow">Runtime assets</p>
+                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Runtime assets</p>
                 <h2>JDK 与依赖 JAR 压缩包</h2>
                 <p>资源仅应用于当前配置版本，支持上传、内网链接或从其他版本继承。</p>
               </div>
               <UploadCloud size={22} aria-hidden="true" />
             </div>
-            <p className="settings-note">
+            <p className={cn("settings-note", uiPatterns["settings-note"])}>
               {selectedVersion ? `${selectedVersion.name} · ` : ""}当前 JDK：
               {assetSummary(configuration.jdkAsset)}；当前依赖包：
               {assetSummary(configuration.jarBundleAsset)}
@@ -459,7 +547,12 @@ export function ProjectStructureManager({
                 : ""}
             </p>
             {configuration.jdkAsset || configuration.jarBundleAsset ? (
-              <div className="project-runtime-actions">
+              <div
+                className={cn(
+                  "project-runtime-actions",
+                  projectStructureManagerStyles["project-runtime-actions"],
+                )}
+              >
                 <Button
                   disabled={pending || !canManage || !configuration.jdkAsset}
                   onClick={() => deleteAsset("jdk")}
@@ -479,7 +572,13 @@ export function ProjectStructureManager({
               </div>
             ) : null}
             {runtimeSourceVersions.length ? (
-              <form className="project-runtime-inherit" onSubmit={inheritRuntime}>
+              <form
+                className={cn(
+                  "project-runtime-inherit",
+                  projectStructureManagerStyles["project-runtime-inherit"],
+                )}
+                onSubmit={inheritRuntime}
+              >
                 <label>
                   从其他版本继承资源
                   <Select name="sourceProjectVersionId" required disabled={!canManage || pending}>
@@ -495,11 +594,25 @@ export function ProjectStructureManager({
                 </Button>
               </form>
             ) : null}
-            <div className="settings-paired-forms">
-              <details className="management-disclosure">
-                <summary>上传本地压缩包</summary>
+            <div
+              className={cn(
+                "settings-paired-forms",
+                projectStructureManagerStyles["settings-paired-forms"],
+              )}
+            >
+              <Disclosure
+                header={<>上传本地压缩包</>}
+                className={cn(
+                  "management-disclosure",
+                  projectStructureManagerStyles["management-disclosure"],
+                )}
+              >
                 <form
-                  className="settings-grid-form settings-subform project-structure-subform"
+                  className={cn(
+                    "settings-grid-form settings-subform project-structure-subform",
+                    uiPatterns["settings-grid-form"],
+                    uiPatterns["settings-subform"],
+                  )}
                   onSubmit={uploadAsset}
                 >
                   <label>
@@ -528,14 +641,19 @@ export function ProjectStructureManager({
                     />
                   </label>
                   <Button
-                    className="primary-button"
+                    className={cn("primary-button", uiPatterns["primary-button"])}
                     disabled={pending || !canManage || !selectedVersionId}
                     type="submit"
                   >
                     上传并启用
                   </Button>
                   {runtimeUploadProgress ? (
-                    <div className="project-runtime-upload-progress">
+                    <div
+                      className={cn(
+                        "project-runtime-upload-progress",
+                        projectStructureManagerStyles["project-runtime-upload-progress"],
+                      )}
+                    >
                       <OperationProgress
                         detail={runtimeUploadProgress.detail}
                         label={runtimeUploadProgress.label}
@@ -544,11 +662,20 @@ export function ProjectStructureManager({
                     </div>
                   ) : null}
                 </form>
-              </details>
-              <details className="management-disclosure">
-                <summary>登记内网资源链接</summary>
+              </Disclosure>
+              <Disclosure
+                header={<>登记内网资源链接</>}
+                className={cn(
+                  "management-disclosure",
+                  projectStructureManagerStyles["management-disclosure"],
+                )}
+              >
                 <form
-                  className="settings-grid-form settings-subform project-structure-subform"
+                  className={cn(
+                    "settings-grid-form settings-subform project-structure-subform",
+                    uiPatterns["settings-grid-form"],
+                    uiPatterns["settings-subform"],
+                  )}
                   onSubmit={registerUrlAsset}
                 >
                   <label>
@@ -606,16 +733,16 @@ export function ProjectStructureManager({
                     />
                   </label>
                   <Button
-                    className="primary-button"
+                    className={cn("primary-button", uiPatterns["primary-button"])}
                     disabled={pending || !canManage || !selectedVersionId}
                     type="submit"
                   >
                     登记链接并启用
                   </Button>
                 </form>
-              </details>
+              </Disclosure>
             </div>
-          </section>
+          </Card>
         </div>
       </div>
     </div>
@@ -660,3 +787,32 @@ function formatBytes(value: number): string {
   if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`;
   return `${(value / 1_048_576).toFixed(1)} MiB`;
 }
+
+const projectStructureManagerStyles = {
+  "action-dialog-form": "mt-0",
+  "management-disclosure":
+    "min-w-0 p-3 border border-solid border-border rounded-lg [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&[data-open=true]_.ui-disclosure-label]:mb-3",
+  "project-runtime-actions": "flex min-w-0 items-end gap-2.5 mb-3.5",
+  "project-runtime-inherit":
+    "flex min-w-0 items-end gap-2.5 mb-3.5 border border-solid border-border rounded-lg p-3 bg-muted [&_label]:grid [&_label]:min-w-[240px] [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+  "project-runtime-upload-progress": "col-span-full",
+  "project-stage-list": "max-h-[208px] overflow-y-auto border-t border-solid border-border",
+  "project-stage-row":
+    "[&_strong]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap grid grid-cols-[minmax(100px,_1fr)_minmax(0,_2fr)] gap-3 py-2 px-0 border-b border-solid border-border text-sm [&_>_span]:text-muted-foreground [&_>_span]:[overflow-wrap:anywhere]",
+  "project-structure-manager":
+    "min-w-0 [&_.settings-section]:min-w-0 [&_.settings-section]:overflow-hidden [&_.settings-paired-forms]:items-start [&_.section-heading_>_div]:min-w-0 [&_.section-heading_.eyebrow]:[flex:0_0_auto] [&_.section-heading_.eyebrow]:whitespace-nowrap [&_.section-heading_h2]:[flex:0_0_auto] [&_.section-heading_h2]:whitespace-nowrap [&_.section-heading_p:last-child]:min-w-0 [&_.project-structure-subform]:grid-cols-[1fr] [&_.project-structure-subform]:[align-content:start] [&_.project-structure-subform]:m-0 [&_.project-structure-subform]:border [&_.project-structure-subform]:border-solid [&_.project-structure-subform]:border-border [&_.project-structure-subform]:p-4 [&_.project-structure-subform]:bg-muted [&_.project-structure-subform_>_label]:[grid-column:1] [&_.project-structure-subform_>_.ui-button]:[grid-column:1]",
+  "project-structure-workspace":
+    "grid grid-cols-[var(--project-version-navigation-width,224px)_minmax(0,_1fr)] gap-4 items-start max-[1280px]:[--project-version-navigation-width:184px] max-[1280px]:gap-3",
+  "project-version-detail":
+    "grid min-w-0 gap-4 [&_.settings-section]:p-4 [&_.settings-section]:gap-3 [&_.section-heading]:gap-3 [&_.section-heading]:flex-wrap [&_.section-heading_>_div:first-child]:min-w-0 [&_.section-heading_h2]:whitespace-normal [&_.section-heading_h2]:[overflow-wrap:anywhere] [&_.project-runtime-actions]:flex-wrap [&_.project-runtime-actions]:mb-0 [&_.project-runtime-inherit]:flex-wrap [&_.project-runtime-inherit]:mb-0 [&_.project-runtime-inherit_label]:flex-1 [&_.project-runtime-inherit_label]:min-w-0 [&_.settings-note]:[overflow-wrap:anywhere] max-[1280px]:[&_.settings-paired-forms]:grid-cols-[minmax(0,_1fr)]",
+  "project-version-navigation":
+    "grid min-w-0 gap-3 border border-solid border-border rounded-xl p-3 bg-card",
+  "project-version-navigation-heading":
+    "flex justify-between items-center text-sm [&_>_span]:rounded-full [&_>_span]:py-1 [&_>_span]:px-2 [&_>_span]:bg-muted [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+  "project-version-option":
+    "grid h-auto w-full min-w-0 grid-cols-[minmax(0,_1fr)] justify-items-start gap-1 px-3 py-2 text-left [&[aria-pressed=true]]:border-primary/30 [&[aria-pressed=true]]:bg-primary/10 [&_strong]:min-w-0 [&_strong]:max-w-full [&_strong]:truncate [&_>_span]:max-w-full [&_>_span]:truncate [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:font-normal",
+  "project-version-options":
+    "relative grid [align-content:start] gap-1 max-h-[clamp(192px,_calc(100dvh_-_416px),_480px)] overflow-y-auto",
+  "settings-paired-forms":
+    "grid grid-cols-2 gap-4 [&_>_*]:min-w-0 [&_.settings-subform]:mt-0 [&_.settings-subform]:pt-0 [&_.settings-subform]:border-t-0",
+} as const;

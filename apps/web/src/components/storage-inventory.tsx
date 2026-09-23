@@ -1,4 +1,12 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { storageInventoryPageSchema } from "@autoforge/contracts";
 import {
@@ -330,20 +338,34 @@ export function StorageInventory({
   }
 
   return (
-    <div className="settings-stack storage-inventory" aria-busy={loading}>
-      <section className="content-card settings-section">
-        <div className="section-heading">
+    <div
+      className={cn(
+        "settings-stack storage-inventory",
+        uiPatterns["settings-stack"],
+        storageInventoryStyles["storage-inventory"],
+      )}
+      aria-busy={loading}
+    >
+      <Card
+        as="section"
+        className={cn(
+          "content-card settings-section",
+          uiPatterns["content-card"],
+          uiPatterns["settings-section"],
+        )}
+      >
+        <div className={cn("section-heading", uiPatterns["section-heading"])}>
           <div>
-            <p className="eyebrow">Storage Overview</p>
+            <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Storage Overview</p>
             <h2>空间概览</h2>
             <p>统计数据目录、受管对象空间和外部运行时资源引用，不包含程序镜像与操作系统文件。</p>
           </div>
           <HardDrive size={22} aria-hidden="true" />
         </div>
         {error ? (
-          <p className="form-error" role="alert">
+          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
             {error}
-          </p>
+          </Notice>
         ) : null}
         <p role="status">
           {snapshotState === "pending"
@@ -356,7 +378,9 @@ export function StorageInventory({
         </p>
         {summary ? (
           <>
-            <div className="storage-summary-grid">
+            <div
+              className={cn("storage-summary-grid", storageInventoryStyles["storage-summary-grid"])}
+            >
               <StorageMetric label="平台实际占用" value={formatBytes(summary.allocatedBytes)} />
               <StorageMetric label="内容逻辑大小" value={formatBytes(summary.logicalBytes)} />
               <StorageMetric
@@ -368,9 +392,14 @@ export function StorageInventory({
                 value={`${summary.externalReferenceCount.toLocaleString()} 项 · ${formatBytes(summary.externalReferenceBytes)}`}
               />
             </div>
-            <details className="management-disclosure">
-              <summary>存储路径与统计口径 · {formatDate(summary.generatedAt, timeZone)}</summary>
-              <div className="storage-roots">
+            <Disclosure
+              header={<>存储路径与统计口径 · {formatDate(summary.generatedAt, timeZone)}</>}
+              className={cn(
+                "management-disclosure",
+                storageInventoryStyles["management-disclosure"],
+              )}
+            >
+              <div className={cn("storage-roots", storageInventoryStyles["storage-roots"])}>
                 <span>
                   <HardDrive size={15} /> 数据目录 <code>{summary.dataDirectory}</code>
                 </span>
@@ -382,15 +411,33 @@ export function StorageInventory({
                   不包含存储集群副本或纠删码开销。
                 </small>
               </div>
-            </details>
-            <div className="storage-category-grid" aria-label="文件分类占用">
+            </Disclosure>
+            <div
+              className={cn(
+                "storage-category-grid",
+                storageInventoryStyles["storage-category-grid"],
+              )}
+              aria-label="文件分类占用"
+            >
               {summary.categories.map((item) => (
-                <div className="storage-category-card" key={item.category}>
+                <div
+                  className={cn(
+                    "storage-category-card",
+                    storageInventoryStyles["storage-category-card"],
+                  )}
+                  key={item.category}
+                >
                   <span>
                     {CATEGORY_LABELS[item.category]} · {item.fileCount.toLocaleString()} 项
                   </span>
                   <strong>{formatBytes(item.allocatedBytes)}</strong>
-                  <div className="storage-category-track" aria-hidden="true">
+                  <div
+                    className={cn(
+                      "storage-category-track",
+                      storageInventoryStyles["storage-category-track"],
+                    )}
+                    aria-hidden="true"
+                  >
                     <i
                       style={{
                         width: `${Math.max(2, (item.allocatedBytes / maximumCategoryBytes) * 100)}%`,
@@ -410,12 +457,25 @@ export function StorageInventory({
             description="正在统计数据库、JDK、依赖包、日志与对象存储空间。"
           />
         ) : null}
-      </section>
+      </Card>
 
-      <section className="content-card settings-section">
-        <div className="section-heading storage-list-heading">
+      <Card
+        as="section"
+        className={cn(
+          "content-card settings-section",
+          uiPatterns["content-card"],
+          uiPatterns["settings-section"],
+        )}
+      >
+        <div
+          className={cn(
+            "section-heading storage-list-heading",
+            uiPatterns["section-heading"],
+            storageInventoryStyles["storage-list-heading"],
+          )}
+        >
           <div>
-            <p className="eyebrow">File Inventory</p>
+            <p className={cn("eyebrow", uiPatterns["eyebrow"])}>File Inventory</p>
             <h2>文件目录</h2>
             <p>
               按存储位置和逻辑路径逐级展示；文件显示创建与修改时间，SQLite
@@ -426,7 +486,13 @@ export function StorageInventory({
             <RefreshCw size={15} /> 重新扫描
           </Button>
         </div>
-        <form className="storage-inventory-filters" onSubmit={applyFilters}>
+        <form
+          className={cn(
+            "storage-inventory-filters",
+            storageInventoryStyles["storage-inventory-filters"],
+          )}
+          onSubmit={applyFilters}
+        >
           <label>
             <span>文件类型</span>
             <Select
@@ -442,7 +508,7 @@ export function StorageInventory({
               ))}
             </Select>
           </label>
-          <label className="storage-query-field">
+          <label className={"storage-query-field"}>
             <span>名称或路径</span>
             <Input
               aria-label="搜索文件名称或路径"
@@ -457,7 +523,12 @@ export function StorageInventory({
           </Button>
         </form>
         {selectableRuntimeAssets.length > 0 ? (
-          <div className="storage-bulk-selection">
+          <div
+            className={cn(
+              "storage-bulk-selection",
+              storageInventoryStyles["storage-bulk-selection"],
+            )}
+          >
             <label>
               <Input
                 aria-label="选择当前结果中的全部可删除资源"
@@ -474,8 +545,11 @@ export function StorageInventory({
           </div>
         ) : null}
         {loading && summary ? (
-          <div className="storage-tree-loading" role="status">
-            <LoaderCircle aria-hidden="true" className="spin" size={15} />
+          <div
+            className={cn("storage-tree-loading", storageInventoryStyles["storage-tree-loading"])}
+            role="status"
+          >
+            <LoaderCircle aria-hidden="true" className={cn("spin", uiPatterns["spin"])} size={15} />
             正在载入目录，已载入 {items.length.toLocaleString()} 个文件与引用…
           </div>
         ) : null}
@@ -496,13 +570,18 @@ export function StorageInventory({
             }}
           />
         ) : summary && !loading ? (
-          <div className="inline-empty">当前筛选条件下没有文件或资源引用。</div>
+          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            当前筛选条件下没有文件或资源引用。
+          </div>
         ) : null}
-      </section>
+      </Card>
       {selectedRuntimeAssetIds.size > 0 ? (
         <div
           aria-label="批量删除存储资源"
-          className="storage-deletion-floating-action"
+          className={cn(
+            "storage-deletion-floating-action",
+            storageInventoryStyles["storage-deletion-floating-action"],
+          )}
           role="region"
         >
           <span>
@@ -526,7 +605,11 @@ export function StorageInventory({
             variant="danger"
           >
             {pendingRuntimeAssetIds.size > 0 ? (
-              <LoaderCircle aria-hidden="true" className="spin" size={15} />
+              <LoaderCircle
+                aria-hidden="true"
+                className={cn("spin", uiPatterns["spin"])}
+                size={15}
+              />
             ) : (
               <Trash2 aria-hidden="true" size={15} />
             )}
@@ -679,3 +762,28 @@ async function fetchInventory(
   if (error) throw error;
   return storageInventoryPageSchema.parse(await response.json());
 }
+
+const storageInventoryStyles = {
+  "management-disclosure":
+    "min-w-0 p-3 border border-solid border-border rounded-lg [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&[data-open=true]_.ui-disclosure-label]:mb-3",
+  "storage-bulk-selection":
+    "flex min-h-9.5 items-center justify-between gap-3 [margin:calc(8px_*_-1)_0_12px] border border-solid border-border rounded-lg py-[7px] px-[11px] [background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_50%,_var(--card))] [&_label]:inline-flex [&_label]:items-center [&_label]:gap-2 [&_label]:text-foreground [&_label]:text-sm [&_label]:font-semibold [&_label]:cursor-pointer [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+  "storage-category-card":
+    "[&_span]:text-muted-foreground [&_span]:text-xs grid min-w-0 gap-1.5 p-3 border border-solid border-border rounded-lg [&_strong]:text-sm",
+  "storage-category-grid": "grid grid-cols-3 gap-2 mt-4 max-[1181px]:grid-cols-2",
+  "storage-category-track":
+    "h-[5px] overflow-hidden rounded-full bg-muted [&_i]:block [&_i]:h-full [&_i]:rounded-xl [&_i]:bg-primary",
+  "storage-deletion-floating-action":
+    "fixed z-40 right-8 bottom-7 flex items-center gap-2 border border-solid border-border rounded-full [padding:9px_10px_9px_16px] [background:color-mix(in_srgb,_var(--card)_94%,_transparent)] shadow-xs [&_>_span]:text-muted-foreground [&_>_span]:text-sm [&_>_span]:font-semibold [&_>_span]:whitespace-nowrap [&_>_span_strong]:text-destructive [&_>_span_strong]:tabular-nums max-[1181px]:right-5 max-[1181px]:bottom-5",
+  "storage-inventory":
+    'gap-4 [&_[role="status"]:empty]:hidden [&_.settings-section_>_.section-heading_p]:hidden [&_.settings-section_>_p:empty]:hidden [&_.storage-category-grid]:gap-2 [&_.storage-category-grid]:mt-3 [&_.storage-category-card]:py-2 [&_.storage-category-card]:px-3',
+  "storage-inventory-filters":
+    "grid grid-cols-[minmax(170px,_0.35fr)_minmax(280px,_1fr)_auto] items-end gap-3 my-4 mx-0 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs max-[1181px]:grid-cols-[minmax(160px,_0.45fr)_minmax(220px,_1fr)_auto]",
+  "storage-list-heading": "items-start",
+  "storage-roots":
+    "[&_small]:text-muted-foreground [&_small]:text-xs grid gap-2 mt-4 py-3 px-3.5 border border-solid border-border rounded-lg bg-info/10 [&_>_span]:grid [&_>_span]:grid-cols-[auto_auto_minmax(0,_1fr)] [&_>_span]:items-center [&_>_span]:gap-[7px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_code]:[overflow-wrap:anywhere] [&_code]:text-foreground",
+  "storage-summary-grid":
+    "grid grid-cols-4 gap-2 mt-4 [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-1.5 [&_>_div]:p-3.5 [&_>_div]:border [&_>_div]:border-solid [&_>_div]:border-border [&_>_div]:rounded-lg [&_>_div]:bg-muted [&_span]:text-muted-foreground [&_span]:text-xs [&_strong]:overflow-hidden [&_strong]:text-lg [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap max-[1181px]:grid-cols-2",
+  "storage-tree-loading":
+    "flex items-center gap-[7px] min-h-8.5 [margin:calc(8px_*_-1)_0_12px] rounded-lg py-0 px-2.5 bg-info/10 text-info text-xs",
+} as const;

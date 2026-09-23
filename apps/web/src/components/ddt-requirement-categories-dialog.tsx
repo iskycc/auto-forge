@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import type {
   DdtExecutionClassRangePage,
@@ -132,7 +136,10 @@ export function DdtRequirementCategoriesDialog({
           ? `此 SR 下 ${mapping.caseCount} 条用例及后续导入用例共享分类的执行类。`
           : "按当前项目版本和测试阶段维护分类，例如钱包、支付。更改分类执行类会影响所有使用该分类的 SR 的后续执行。"
       }
-      className="ddt-association-dialog"
+      className={cn(
+        "ddt-association-dialog",
+        ddtRequirementCategoriesDialogStyles["ddt-association-dialog"],
+      )}
       onClose={() => {
         if (!saving) onClose();
       }}
@@ -154,9 +161,14 @@ export function DdtRequirementCategoriesDialog({
         />
       ) : (
         <>
-          <div className="ddt-association-toolbar">
+          <div
+            className={cn(
+              "ddt-association-toolbar",
+              ddtRequirementCategoriesDialogStyles["ddt-association-toolbar"],
+            )}
+          >
             <form
-              className="search-field"
+              className={"search-field"}
               onSubmit={(event) => {
                 event.preventDefault();
                 setQuery(draft.trim());
@@ -171,7 +183,11 @@ export function DdtRequirementCategoriesDialog({
               />
               <Button
                 type="submit"
-                className="button button-secondary"
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 disabled={loading || saving}
               >
                 搜索
@@ -179,7 +195,11 @@ export function DdtRequirementCategoriesDialog({
             </form>
             {!mapping && canManage ? (
               <Button
-                className="button button-primary"
+                className={cn(
+                  "button button-primary",
+                  uiPatterns["button"],
+                  uiPatterns["button-primary"],
+                )}
                 disabled={saving}
                 onClick={() => setEditing("new")}
               >
@@ -188,24 +208,46 @@ export function DdtRequirementCategoriesDialog({
             ) : null}
           </div>
           {error ? (
-            <div className="inline-notice error" role="alert">
+            <Notice
+              tone="info"
+              className={cn(
+                "inline-notice error",
+                uiPatterns["inline-notice"],
+                uiPatterns["error"],
+              )}
+              role="alert"
+            >
               {error}
               <Button
-                className="button button-secondary"
+                className={cn(
+                  "button button-secondary",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                )}
                 disabled={saving || loading}
                 onClick={() => void load()}
               >
                 刷新分类
               </Button>
-            </div>
+            </Notice>
           ) : null}
           <div
-            className="ddt-association-class-list ddt-category-list"
+            className={cn(
+              "ddt-association-class-list ddt-category-list",
+              ddtRequirementCategoriesDialogStyles["ddt-association-class-list"],
+              ddtRequirementCategoriesDialogStyles["ddt-category-list"],
+            )}
             aria-label="需求分类列表"
             aria-busy={loading}
           >
             {page.items.map((category) => (
-              <div className="ddt-association-class-item" key={category.id}>
+              <div
+                className={cn(
+                  "ddt-association-class-item",
+                  ddtRequirementCategoriesDialogStyles["ddt-association-class-item"],
+                )}
+                key={category.id}
+              >
                 {mapping ? (
                   <label>
                     <Input
@@ -227,9 +269,18 @@ export function DdtRequirementCategoriesDialog({
                   <>
                     <CategoryLabel category={category} />
                     {canManage ? (
-                      <div className="ddt-sr-actions">
+                      <div
+                        className={cn(
+                          "ddt-sr-actions",
+                          ddtRequirementCategoriesDialogStyles["ddt-sr-actions"],
+                        )}
+                      >
                         <Button
-                          className="button button-secondary"
+                          className={cn(
+                            "button button-secondary",
+                            uiPatterns["button"],
+                            uiPatterns["button-secondary"],
+                          )}
                           aria-label={`编辑分类 ${category.name}`}
                           disabled={saving}
                           onClick={() => setEditing(category)}
@@ -237,7 +288,7 @@ export function DdtRequirementCategoriesDialog({
                           编辑
                         </Button>
                         <Button
-                          className="button button-ghost"
+                          className={cn("button button-ghost", uiPatterns["button"])}
                           aria-label={`删除分类 ${category.name}`}
                           disabled={saving}
                           onClick={() => void remove(category)}
@@ -252,7 +303,12 @@ export function DdtRequirementCategoriesDialog({
             ))}
           </div>
           {!loading && !page.items.length ? (
-            <p className="ddt-association-hint">
+            <p
+              className={cn(
+                "ddt-association-hint",
+                ddtRequirementCategoriesDialogStyles["ddt-association-hint"],
+              )}
+            >
               {query
                 ? "没有匹配的需求分类。"
                 : "暂无需求分类。点击上方“新建分类”，为分类选择一个候选测试类。"}
@@ -260,21 +316,42 @@ export function DdtRequirementCategoriesDialog({
           ) : null}
           {page.nextCursor ? (
             <Button
-              className="button button-secondary"
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
               disabled={loading || saving}
               onClick={() => void load(page.nextCursor)}
             >
               加载更多分类
             </Button>
           ) : null}
-          <footer className="ddt-association-footer">
+          <footer
+            className={cn(
+              "ddt-association-footer",
+              ddtRequirementCategoriesDialogStyles["ddt-association-footer"],
+            )}
+          >
             <span>{loading ? "正在读取分类…" : `已显示 ${page.items.length} 个分类`}</span>
-            <Button className="button button-secondary" disabled={saving} onClick={onClose}>
+            <Button
+              className={cn(
+                "button button-secondary",
+                uiPatterns["button"],
+                uiPatterns["button-secondary"],
+              )}
+              disabled={saving}
+              onClick={onClose}
+            >
               {mapping ? "取消" : "完成"}
             </Button>
             {mapping ? (
               <Button
-                className="button button-primary"
+                className={cn(
+                  "button button-primary",
+                  uiPatterns["button"],
+                  uiPatterns["button-primary"],
+                )}
                 disabled={loading || saving || !selected}
                 onClick={() => void assign()}
               >
@@ -290,7 +367,12 @@ export function DdtRequirementCategoriesDialog({
 
 function CategoryLabel({ category }: { category: DdtRequirementCategory }) {
   return (
-    <span className="ddt-association-class-label">
+    <span
+      className={cn(
+        "ddt-association-class-label",
+        ddtRequirementCategoriesDialogStyles["ddt-association-class-label"],
+      )}
+    >
       <strong>{category.name}</strong>
       <code>{category.executionClass?.className ?? "执行类已删除，请重新配置"}</code>
       {category.executionClass &&
@@ -382,8 +464,13 @@ function DdtCategoryEditor({
     }
   };
   return (
-    <div className="ddt-category-editor">
-      <label className="field-label">
+    <div
+      className={cn(
+        "ddt-category-editor",
+        ddtRequirementCategoriesDialogStyles["ddt-category-editor"],
+      )}
+    >
+      <label className={"field-label"}>
         分类名称
         <Input
           aria-label="分类名称"
@@ -395,7 +482,7 @@ function DdtCategoryEditor({
         />
       </label>
       <form
-        className="search-field"
+        className={"search-field"}
         onSubmit={(event) => {
           event.preventDefault();
           setQuery(draft.trim());
@@ -408,14 +495,42 @@ function DdtCategoryEditor({
           onChange={(event) => setDraft(event.target.value)}
           disabled={saving}
         />
-        <Button type="submit" className="button button-secondary" disabled={saving || loading}>
+        <Button
+          type="submit"
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          disabled={saving || loading}
+        >
           搜索
         </Button>
       </form>
-      <p className="ddt-association-hint">选择分类执行类。候选列表由“配置测试类范围”维护。</p>
-      <div className="ddt-association-class-list ddt-category-list" aria-label="分类执行类">
+      <p
+        className={cn(
+          "ddt-association-hint",
+          ddtRequirementCategoriesDialogStyles["ddt-association-hint"],
+        )}
+      >
+        选择分类执行类。候选列表由“配置测试类范围”维护。
+      </p>
+      <div
+        className={cn(
+          "ddt-association-class-list ddt-category-list",
+          ddtRequirementCategoriesDialogStyles["ddt-association-class-list"],
+          ddtRequirementCategoriesDialogStyles["ddt-category-list"],
+        )}
+        aria-label="分类执行类"
+      >
         {range.items.map((item) => (
-          <div className="ddt-association-class-item" key={item.caseDefinitionId}>
+          <div
+            className={cn(
+              "ddt-association-class-item",
+              ddtRequirementCategoriesDialogStyles["ddt-association-class-item"],
+            )}
+            key={item.caseDefinitionId}
+          >
             <label>
               <Input
                 type="radio"
@@ -425,7 +540,12 @@ function DdtCategoryEditor({
                 disabled={loading || saving || !item.enabled || item.archived}
                 onChange={() => setClassName(item.className)}
               />
-              <span className="ddt-association-class-label">
+              <span
+                className={cn(
+                  "ddt-association-class-label",
+                  ddtRequirementCategoriesDialogStyles["ddt-association-class-label"],
+                )}
+              >
                 <strong>{item.displayName}</strong>
                 <code>{item.className}</code>
                 {!item.enabled || item.archived ? <small>测试类已停用或归档</small> : null}
@@ -435,11 +555,22 @@ function DdtCategoryEditor({
         ))}
       </div>
       {!loading && !range.items.length ? (
-        <p className="ddt-association-hint">没有匹配的候选测试类，请先在“配置测试类范围”中添加。</p>
+        <p
+          className={cn(
+            "ddt-association-hint",
+            ddtRequirementCategoriesDialogStyles["ddt-association-hint"],
+          )}
+        >
+          没有匹配的候选测试类，请先在“配置测试类范围”中添加。
+        </p>
       ) : null}
       {range.nextCursor ? (
         <Button
-          className="button button-secondary"
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
           disabled={loading || saving}
           onClick={() => void load(range.nextCursor)}
         >
@@ -447,17 +578,38 @@ function DdtCategoryEditor({
         </Button>
       ) : null}
       {error ? (
-        <div className="inline-notice error" role="alert">
+        <Notice
+          tone="info"
+          className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
+          role="alert"
+        >
           {error}
-        </div>
+        </Notice>
       ) : null}
-      <footer className="ddt-association-footer">
+      <footer
+        className={cn(
+          "ddt-association-footer",
+          ddtRequirementCategoriesDialogStyles["ddt-association-footer"],
+        )}
+      >
         <span>{loading ? "正在读取测试类…" : `已选执行类：${className || "尚未选择"}`}</span>
-        <Button className="button button-secondary" disabled={saving} onClick={onCancel}>
+        <Button
+          className={cn(
+            "button button-secondary",
+            uiPatterns["button"],
+            uiPatterns["button-secondary"],
+          )}
+          disabled={saving}
+          onClick={onCancel}
+        >
           返回分类列表
         </Button>
         <Button
-          className="button button-primary"
+          className={cn(
+            "button button-primary",
+            uiPatterns["button"],
+            uiPatterns["button-primary"],
+          )}
           disabled={loading || saving || !name.trim() || !className}
           onClick={() => void save()}
         >
@@ -467,3 +619,22 @@ function DdtCategoryEditor({
     </div>
   );
 }
+
+const ddtRequirementCategoriesDialogStyles = {
+  "ddt-association-class-item":
+    "flex items-center gap-3 p-3 border-b border-solid border-border [&_>_.ddt-association-class-label]:flex-1 [&_label]:flex [&_label]:items-center [&_label]:gap-3 [&_label]:w-full [&_label]:cursor-pointer [&_strong]:text-sm [&_strong]:[overflow-wrap:anywhere] [&_.button]:shrink-0",
+  "ddt-association-class-label":
+    "flex flex-col gap-1 min-w-0 [&_code]:text-xs [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere]",
+  "ddt-association-class-list": "max-h-[360px] overflow-y-auto",
+  "ddt-association-dialog":
+    "w-[min(960px,_calc(100vw_-_20px))] max-w-none [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0 [&_.inline-notice]:mb-3",
+  "ddt-association-footer":
+    "flex items-center gap-3 mt-4 [&_>_span]:flex-1 [&_>_span]:text-muted-foreground [&_>_span]:text-sm",
+  "ddt-association-hint": "text-muted-foreground text-sm leading-[1.6] my-4 mx-0",
+  "ddt-association-toolbar":
+    "flex items-center gap-3 [&_.search-field]:flex-1 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0",
+  "ddt-category-editor":
+    "grid gap-4 min-w-0 [&_.ddt-association-footer_>_span]:[overflow-wrap:anywhere] [&_.ddt-association-footer_>_span]:min-w-0",
+  "ddt-category-list": "max-h-[min(42vh,_360px)] overflow-y-auto",
+  "ddt-sr-actions": "flex items-center gap-1 [&_.button]:px-2",
+} as const;

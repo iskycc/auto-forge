@@ -32,14 +32,14 @@ describe("BatchComparisonDetails", () => {
       }),
     );
 
-    expect(html.match(/<tbody>[\s\S]*<\/tbody>/u)?.[0].match(/<tr>/gu)).toHaveLength(50);
+    expect(html.match(/<tbody\b[^>]*>[\s\S]*<\/tbody>/u)?.[0].match(/<tr\b/gu)).toHaveLength(50);
     expect(html).toContain("第 1–50 项，共 120 项");
     expect(html).toContain("用例 50");
     expect(html).not.toContain("用例 51");
     expect(html).toContain("成功");
     expect(html).toContain("失败");
     expect(html).toContain("日志对比");
-    expect(html.match(/<tbody>[\s\S]*<\/tbody>/u)?.[0]).not.toContain("succeeded");
+    expect(html.match(/<tbody\b[^>]*>[\s\S]*<\/tbody>/u)?.[0]).not.toContain("succeeded");
   });
 
   it("filters result differences and explicit left-to-right transitions", () => {

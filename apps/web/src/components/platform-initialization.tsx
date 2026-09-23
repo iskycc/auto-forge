@@ -1,4 +1,5 @@
 "use client";
+import { cn } from "@/lib/utils";
 
 import {
   initializePlatformConfigurationInputSchema,
@@ -72,39 +73,84 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
 
   if (initial.configurationManaged) {
     return (
-      <div className="implementation-notice" role="status">
+      <div
+        className={cn(
+          "implementation-notice",
+          platformInitializationStyles["implementation-notice"],
+        )}
+        role="status"
+      >
         分布式平台已由部署文件配置。请在右侧创建首位管理员，随后在“平台节点”中填写节点 IP 和端口。
       </div>
     );
   }
 
   return (
-    <section className="setup-card setup-runtime-card" aria-labelledby="platform-setup-title">
-      <div className="setup-card-heading">
-        <span className="setup-step-number">01</span>
-        <span className="setup-heading-icon setup-heading-icon-blue" aria-hidden="true">
+    <section
+      className={cn("setup-card setup-runtime-card", platformInitializationStyles["setup-card"])}
+      aria-labelledby="platform-setup-title"
+    >
+      <div className={cn("setup-card-heading", platformInitializationStyles["setup-card-heading"])}>
+        <span
+          className={cn("setup-step-number", platformInitializationStyles["setup-step-number"])}
+        >
+          01
+        </span>
+        <span
+          className={cn(
+            "setup-heading-icon setup-heading-icon-blue",
+            platformInitializationStyles["setup-heading-icon"],
+            platformInitializationStyles["setup-heading-icon-blue"],
+          )}
+          aria-hidden="true"
+        >
           <Database size={20} />
         </span>
         <div>
-          <span className="setup-kicker">运行环境</span>
+          <span className={cn("setup-kicker", platformInitializationStyles["setup-kicker"])}>
+            运行环境
+          </span>
           <h2 id="platform-setup-title">配置部署模式</h2>
           <p>Lite 开箱即用；需要集群能力时再接入 Full 基础设施。</p>
         </div>
-        <span className="setup-optional-badge">可选</span>
+        <span
+          className={cn(
+            "setup-optional-badge",
+            platformInitializationStyles["setup-optional-badge"],
+          )}
+        >
+          可选
+        </span>
       </div>
       {completed ? (
-        <div className="inline-success setup-restart-message" role="status">
+        <div
+          className={cn(
+            "inline-success setup-restart-message",
+            platformInitializationStyles["inline-success"],
+            platformInitializationStyles["setup-restart-message"],
+          )}
+          role="status"
+        >
           <RotateCw size={18} />{" "}
           配置已安全写入。请重启主平台；重启后仍使用同一个一次性令牌创建管理员。
         </div>
       ) : (
-        <form className="setup-form" noValidate onSubmit={submit}>
-          <fieldset className="setup-mode-fieldset">
+        <form
+          className={cn("setup-form", platformInitializationStyles["setup-form"])}
+          noValidate
+          onSubmit={submit}
+        >
+          <fieldset
+            className={cn(
+              "setup-mode-fieldset",
+              platformInitializationStyles["setup-mode-fieldset"],
+            )}
+          >
             <legend>部署模式</legend>
-            <div className="setup-mode-grid">
+            <div className={cn("setup-mode-grid", platformInitializationStyles["setup-mode-grid"])}>
               <Button
                 aria-pressed={mode === "lite"}
-                className="setup-mode-option"
+                className={"setup-mode-option"}
                 onClick={() => setMode("lite")}
                 type="button"
                 variant="ghost"
@@ -117,7 +163,7 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
               </Button>
               <Button
                 aria-pressed={mode === "full"}
-                className="setup-mode-option"
+                className={"setup-mode-option"}
                 onClick={() => setMode("full")}
                 type="button"
                 variant="ghost"
@@ -130,7 +176,7 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
               </Button>
             </div>
           </fieldset>
-          <div className="setup-field-grid">
+          <div className={cn("setup-field-grid", platformInitializationStyles["setup-field-grid"])}>
             <label>
               <span>平台配置引导令牌</span>
               <Input
@@ -171,7 +217,10 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
             {pending ? "正在保存…" : "保存平台配置"}
           </Button>
           {error ? (
-            <p className="setup-form-error" role="alert">
+            <p
+              className={cn("setup-form-error", platformInitializationStyles["setup-form-error"])}
+              role="alert"
+            >
               {error}
             </p>
           ) : null}
@@ -185,7 +234,7 @@ function FullInfrastructureFields({ configured }: { configured: boolean }) {
   const placeholder = configured ? "已配置；留空保留" : "首次启用必填";
   const required = !configured;
   return (
-    <div className="setup-full-fields">
+    <div className={cn("setup-full-fields", platformInitializationStyles["setup-full-fields"])}>
       <label>
         PostgreSQL URL
         <Input
@@ -281,3 +330,32 @@ function fullConfiguration(form: FormData): Record<string, string | string[]> {
 function stringValue(form: FormData, name: string): string {
   return String(form.get(name) ?? "").trim();
 }
+
+const platformInitializationStyles = {
+  "implementation-notice":
+    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
+  "inline-success":
+    "py-3 px-3.5 border border-solid border-border rounded-lg text-success bg-success/10",
+  "setup-card":
+    "grid gap-5.5 mb-4 border border-solid border-border rounded-xl [padding:clamp(20px,_2.4vw,_28px)] bg-card shadow-xs",
+  "setup-card-heading":
+    "grid grid-cols-[30px_42px_minmax(0,_1fr)_auto] items-start gap-3 [&_h2]:[margin:3px_0_5px] [&_h2]:text-lg [&_h2]:tracking-tight [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-xs [&_p]:leading-[1.55] [&_code]:text-info [&_code]:text-xs",
+  "setup-field-grid": "grid gap-3.5 grid-cols-2 max-[1121px]:grid-cols-[1fr]",
+  "setup-form":
+    "grid gap-3.5 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-xs [&_label]:font-semibold [&_label_small]:text-muted-foreground [&_label_small]:text-xs [&_label_small]:font-medium [&_label_small]:leading-[1.45] [&_>_.ui-button]:w-fit",
+  "setup-form-error":
+    "m-0 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-destructive/10 text-destructive text-xs leading-[1.5]",
+  "setup-full-fields":
+    "grid gap-3.5 grid-cols-2 border-t border-solid border-border pt-4 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-xs [&_label]:font-semibold max-[1121px]:grid-cols-[1fr]",
+  "setup-heading-icon": "grid w-10 h-10 place-items-center rounded-lg",
+  "setup-heading-icon-blue": "bg-info/10 text-info",
+  "setup-kicker":
+    "text-muted-foreground text-xs font-semibold tracking-normal [text-transform:uppercase]",
+  "setup-mode-fieldset":
+    "min-w-0 m-0 border-0 p-0 [&_legend]:mb-2 [&_legend]:text-muted-foreground [&_legend]:text-xs [&_legend]:font-semibold",
+  "setup-mode-grid": "grid grid-cols-2 gap-2.5",
+  "setup-optional-badge":
+    "rounded-full py-[5px] px-2 text-xs font-semibold bg-muted text-muted-foreground",
+  "setup-restart-message": "flex items-start gap-[9px] leading-[1.6]",
+  "setup-step-number": "pt-1 text-muted-foreground font-mono text-xs font-semibold",
+} as const;

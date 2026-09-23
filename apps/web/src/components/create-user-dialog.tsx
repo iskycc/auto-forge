@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { createUserInputSchema } from "@autoforge/contracts";
 import { Plus } from "lucide-react";
@@ -142,7 +146,12 @@ export function CreateUserDialog({ onClose, onCreated }: { onClose(): void; onCr
     >
       <form
         id="create-local-user"
-        className="settings-grid-form action-dialog-form create-user-form"
+        className={cn(
+          "settings-grid-form action-dialog-form create-user-form",
+          uiPatterns["settings-grid-form"],
+          createUserDialogStyles["action-dialog-form"],
+          createUserDialogStyles["create-user-form"],
+        )}
         noValidate
         onSubmit={submit}
       >
@@ -150,7 +159,10 @@ export function CreateUserDialog({ onClose, onCreated }: { onClose(): void; onCr
           const invalid = failure?.fields.some(({ field }) => field === name) ?? false;
           const id = `create-user-${name}`;
           return (
-            <div className="create-user-field" key={name}>
+            <div
+              className={cn("create-user-field", createUserDialogStyles["create-user-field"])}
+              key={name}
+            >
               <label htmlFor={id}>{label}</label>
               <Input
                 {...inputProps}
@@ -160,14 +172,23 @@ export function CreateUserDialog({ onClose, onCreated }: { onClose(): void; onCr
                 name={name}
                 readOnly={pending}
               />
-              <p className="field-hint" id={`${id}-hint`}>
+              <p className={cn("field-hint", uiPatterns["field-hint"])} id={`${id}-hint`}>
                 {hint}
               </p>
             </div>
           );
         })}
         {failure ? (
-          <div className="auth-error settings-wide-field create-user-error" role="alert">
+          <Notice
+            tone="error"
+            className={cn(
+              "auth-error settings-wide-field create-user-error",
+              uiPatterns["auth-error"],
+              uiPatterns["settings-wide-field"],
+              createUserDialogStyles["create-user-error"],
+            )}
+            role="alert"
+          >
             <p>{failure.message}</p>
             {failure.fields.length ? (
               <ul>
@@ -178,9 +199,18 @@ export function CreateUserDialog({ onClose, onCreated }: { onClose(): void; onCr
                 ))}
               </ul>
             ) : null}
-          </div>
+          </Notice>
         ) : null}
       </form>
     </ActionDialog>
   );
 }
+
+const createUserDialogStyles = {
+  "action-dialog-form": "mt-0",
+  "create-user-error":
+    "[&_p]:m-0 [&_p]:leading-[1.5] [&_p]:[overflow-wrap:anywhere] [&_ul]:grid [&_ul]:gap-1 [&_ul]:[margin:8px_0_0] [&_ul]:pl-5 [&_ul]:[overflow-wrap:anywhere]",
+  "create-user-field":
+    "grid min-w-0 gap-2 [&_.field-hint]:m-0 [&_.field-hint]:leading-[1.5] [&_.field-hint]:[overflow-wrap:anywhere]",
+  "create-user-form": "items-start",
+} as const;

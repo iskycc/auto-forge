@@ -1,4 +1,10 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LinkButton } from "@/components/ui/link-button";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Check, Copy, ExternalLink, Link2, LoaderCircle } from "lucide-react";
 import { useState } from "react";
@@ -48,17 +54,20 @@ export function CasePermanentShare({ caseDefinitionId }: { caseDefinitionId: str
   }
 
   return (
-    <div className="case-share-control">
+    <div className={cn("case-share-control", casePermanentShareStyles["case-share-control"])}>
       <Button disabled={pending} onClick={() => void createShare()} type="button">
         {pending ? (
-          <LoaderCircle className="spin" size={16} aria-hidden="true" />
+          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} aria-hidden="true" />
         ) : (
           <Link2 size={16} aria-hidden="true" />
         )}
         {shareUrl ? "重新获取链接" : "匿名分享"}
       </Button>
       {shareUrl ? (
-        <div className="case-share-result" role="status">
+        <div
+          className={cn("case-share-result", casePermanentShareStyles["case-share-result"])}
+          role="status"
+        >
           <span>永久只读链接已生成{copied ? "并复制" : ""}</span>
           <Button
             aria-label="复制永久分享链接"
@@ -69,22 +78,38 @@ export function CasePermanentShare({ caseDefinitionId }: { caseDefinitionId: str
           >
             {copied ? <Check size={15} /> : <Copy size={15} />}
           </Button>
-          <a
+          <LinkButton
             aria-label="在新窗口打开永久分享链接"
-            className="ui-button ui-button-ghost ui-button-compact"
+            className={"ui-button ui-button-ghost ui-button-compact"}
             href={shareUrl}
             rel="noreferrer"
             target="_blank"
           >
             <ExternalLink size={15} />
-          </a>
+          </LinkButton>
         </div>
       ) : null}
       {error ? (
-        <span className="form-error case-share-error" role="alert">
+        <Notice
+          tone="error"
+          className={cn(
+            "form-error case-share-error",
+            uiPatterns["form-error"],
+            casePermanentShareStyles["case-share-error"],
+          )}
+          role="alert"
+        >
           {error}
-        </span>
+        </Notice>
       ) : null}
     </div>
   );
 }
+
+const casePermanentShareStyles = {
+  "case-share-control": "relative flex items-center gap-2",
+  "case-share-error":
+    "absolute top-[calc(100%_+_8px)] right-0 w-max max-w-[360px] border border-solid border-border rounded-lg py-2 px-2.5 bg-card shadow-xs",
+  "case-share-result":
+    "absolute z-12 top-[calc(100%_+_8px)] right-0 flex w-max max-w-[420px] items-center gap-1 border border-solid border-border rounded-lg [padding:7px_8px_7px_12px] bg-card shadow-xs text-muted-foreground text-xs",
+} as const;

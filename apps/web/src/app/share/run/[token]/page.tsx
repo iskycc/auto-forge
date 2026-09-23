@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 import { hasPermission } from "@autoforge/domain";
 import { Link2Off } from "lucide-react";
 import type { Metadata } from "next";
@@ -45,9 +47,15 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
     }));
 
   return (
-    <main className="shared-run-detail-page">
+    <main className={cn("shared-run-detail-page", pageStyles["shared-run-detail-page"])}>
       {!identity && <AuthenticatedRunRedirect batchId={batchId} />}
-      <div className="page-stack shared-run-detail-shell">
+      <div
+        className={cn(
+          "page-stack shared-run-detail-shell",
+          uiPatterns["page-stack"],
+          pageStyles["shared-run-detail-shell"],
+        )}
+      >
         <RunBatchDetailHero
           batchId={batch.id}
           sequenceNumber={batch.sequenceNumber}
@@ -74,8 +82,17 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
 
 function InvalidRunShare() {
   return (
-    <main className="shared-case-page shared-case-page-center">
-      <section className="shared-case-invalid" aria-label="执行结果永久分享链接不可用">
+    <main
+      className={cn(
+        "shared-case-page shared-case-page-center",
+        pageStyles["shared-case-page"],
+        pageStyles["shared-case-page-center"],
+      )}
+    >
+      <section
+        className={cn("shared-case-invalid", pageStyles["shared-case-invalid"])}
+        aria-label="执行结果永久分享链接不可用"
+      >
         <span aria-hidden="true">
           <Link2Off size={30} strokeWidth={1.8} />
         </span>
@@ -85,3 +102,14 @@ function InvalidRunShare() {
     </main>
   );
 }
+
+const pageStyles = {
+  "shared-case-invalid":
+    "border border-solid border-border [background:color-mix(in_srgb,_var(--card)_96%,_transparent)] shadow-xs grid justify-items-center gap-2.5 w-[min(420px,_100%)] rounded-xl py-11 px-9 text-center [&_>_span]:grid [&_>_span]:w-14 [&_>_span]:h-14 [&_>_span]:place-items-center [&_>_span]:rounded-full [&_>_span]:bg-warning/10 [&_>_span]:text-warning [&_h1]:m-0 [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-sm [&_p]:leading-[1.7]",
+  "shared-case-page":
+    "min-h-screen p-12 bg-card [&_.is-enabled]:text-success [&_.is-muted]:text-muted-foreground max-[1101px]:p-8",
+  "shared-case-page-center": "grid place-items-center",
+  "shared-run-detail-page":
+    "min-h-screen p-9 bg-card [&_.execution-case-table]:w-full [&_.execution-case-table]:min-w-0 [&_.execution-case-table_col:first-child]:w-[23%] [&_.execution-case-table_col:nth-last-child(4)]:w-[18%] [&_.execution-case-table_col:nth-last-child(3)]:w-[20%] [&_.execution-case-table_.case-column-duration]:w-[5rem] [&_.execution-case-table_.case-column-actions]:w-40 [&_.round-row-actions]:flex-nowrap [&_.round-row-actions_.compact-button]:gap-[3px] [&_.round-row-actions_.compact-button]:px-1 [&_.round-row-actions_.compact-button]:text-xs [&_.execution-case-table_th:nth-last-child(2)]:[overflow-wrap:normal] [&_.execution-case-table_th:nth-last-child(2)]:whitespace-nowrap [&_.execution-case-table_td:nth-last-child(2)]:[overflow-wrap:normal] [&_.execution-case-table_td:nth-last-child(2)]:whitespace-nowrap max-[1101px]:p-6",
+  "shared-run-detail-shell": "w-[min(1600px,_100%)] my-0 mx-auto",
+} as const;

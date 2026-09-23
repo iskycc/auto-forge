@@ -1,4 +1,12 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import { Card } from "@/components/ui/card";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input } from "@/components/ui";
 
@@ -236,21 +244,35 @@ export function CaseSuiteDetailsView({
   }
 
   return (
-    <section className="card suite-case-tree-card">
-      <div className="section-title-row">
+    <Card
+      as="section"
+      className={cn(
+        "card suite-case-tree-card",
+        uiPatterns["card"],
+        caseSuiteDetailsStyles["suite-case-tree-card"],
+      )}
+    >
+      <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
         <div>
-          <span className="eyebrow">任务内容 · v{suite.version}</span>
+          <span className={cn("eyebrow", uiPatterns["eyebrow"])}>任务内容 · v{suite.version}</span>
           <h2>{suite.caseCount} 个用例</h2>
           <p>
             普通用例按包路径、DDT 用例按 SR 展开。展开目录查看用例，勾选目录可选择其中全部用例。
           </p>
         </div>
-        <span className="soft-icon blue">
+        <span className={cn("soft-icon blue", caseSuiteDetailsStyles["soft-icon"])}>
           <FolderTree size={19} />
         </span>
       </div>
       {error ? (
-        <div className="inline-feedback error" role="alert">
+        <div
+          className={cn(
+            "inline-feedback error",
+            caseSuiteDetailsStyles["inline-feedback"],
+            uiPatterns["error"],
+          )}
+          role="alert"
+        >
           {error}
         </div>
       ) : null}
@@ -259,17 +281,23 @@ export function CaseSuiteDetailsView({
       {(!directoryTree || (!directoryTree.query && suite.caseCount === 0)) &&
       suite.items.length === 0 &&
       suite.ddtItems.length === 0 ? (
-        <div className="empty-state table-empty">
+        <EmptyState
+          className={cn(
+            "empty-state table-empty",
+            uiPatterns["empty-state"],
+            uiPatterns["table-empty"],
+          )}
+        >
           <strong>任务中还没有用例</strong>
           <p>
             可添加普通用例、DDT 用例或两者混合。执行前，所有用例都必须有可用的测试类；DDT 请先完成
             SR 测试类关联。
           </p>
-        </div>
+        </EmptyState>
       ) : (
         <>
-          <div className="suite-tree-toolbar">
-            <label className="suite-tree-search">
+          <div className={cn("suite-tree-toolbar", caseSuiteDetailsStyles["suite-tree-toolbar"])}>
+            <label className={cn("suite-tree-search", caseSuiteDetailsStyles["suite-tree-search"])}>
               <Search aria-hidden="true" size={16} />
               <Input
                 aria-label="搜索任务用例"
@@ -284,7 +312,9 @@ export function CaseSuiteDetailsView({
               />
             </label>
             {canManage && (groups.length > 0 || selectedIds.size > 0) ? (
-              <div className="suite-tree-actions">
+              <div
+                className={cn("suite-tree-actions", caseSuiteDetailsStyles["suite-tree-actions"])}
+              >
                 <Button
                   disabled={groups.length === 0 || removing || collecting || filtering}
                   onClick={() =>
@@ -306,30 +336,60 @@ export function CaseSuiteDetailsView({
                     : "选择可见"}
                 </Button>
                 <Button
-                  className="button button-danger-quiet"
+                  className={cn(
+                    "button button-danger-quiet",
+                    uiPatterns["button"],
+                    uiPatterns["button-danger-quiet"],
+                  )}
                   disabled={selectedIds.size === 0 || removing}
                   onClick={() => void removeCases([...selectedIds])}
                   type="button"
                 >
-                  {removing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                  {removing ? (
+                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                  ) : (
+                    <Trash2 size={15} />
+                  )}
                   批量移除（{selectedIds.size}）
                 </Button>
               </div>
             ) : null}
             {filtering ? (
-              <span className="list-filter-progress" role="status">
-                <LoaderCircle aria-hidden="true" className="spin" size={14} /> 正在筛选
+              <span
+                className={cn(
+                  "list-filter-progress",
+                  caseSuiteDetailsStyles["list-filter-progress"],
+                )}
+                role="status"
+              >
+                <LoaderCircle
+                  aria-hidden="true"
+                  className={cn("spin", uiPatterns["spin"])}
+                  size={14}
+                />{" "}
+                正在筛选
               </span>
             ) : null}
           </div>
           {directoryTree?.loading ? <p role="status">正在准备目录，任务配置可直接编辑。</p> : null}
           {directoryTree && !directoryTree.loading && !groups.length && !ddtGroups.length ? (
-            <p className="inline-empty">没有匹配的任务用例。</p>
+            <p className={cn("inline-empty", uiPatterns["inline-empty"])}>没有匹配的任务用例。</p>
           ) : null}
           {groups.length > 0 ? (
-            <section className="suite-ordinary-tree-section" aria-label="普通用例树">
-              <div className="suite-tree-type-heading">
-                <span className="soft-icon blue">
+            <section
+              className={cn(
+                "suite-ordinary-tree-section",
+                caseSuiteDetailsStyles["suite-ordinary-tree-section"],
+              )}
+              aria-label="普通用例树"
+            >
+              <div
+                className={cn(
+                  "suite-tree-type-heading",
+                  caseSuiteDetailsStyles["suite-tree-type-heading"],
+                )}
+              >
+                <span className={cn("soft-icon blue", caseSuiteDetailsStyles["soft-icon"])}>
                   <FolderTree size={17} />
                 </span>
                 <div>
@@ -341,12 +401,14 @@ export function CaseSuiteDetailsView({
                 </div>
               </div>
               {groups.length === 0 ? (
-                <div className="inline-empty">没有匹配的普通用例。</div>
+                <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                  没有匹配的普通用例。
+                </div>
               ) : (
                 <div
                   aria-busy={filtering}
                   aria-label="任务用例树"
-                  className="suite-case-tree"
+                  className={cn("suite-case-tree", caseSuiteDetailsStyles["suite-case-tree"])}
                   role="tree"
                 >
                   {groups.slice(0, visibleGroupCount).map(([packageName, items]) => (
@@ -379,9 +441,20 @@ export function CaseSuiteDetailsView({
             </section>
           ) : null}
           {ddtGroups.length > 0 || selectedDdtIds.size > 0 ? (
-            <section className="suite-ddt-tree-section" aria-label="DDT 用例树">
-              <div className="suite-tree-type-heading">
-                <span className="soft-icon violet">
+            <section
+              className={cn(
+                "suite-ddt-tree-section",
+                caseSuiteDetailsStyles["suite-ddt-tree-section"],
+              )}
+              aria-label="DDT 用例树"
+            >
+              <div
+                className={cn(
+                  "suite-tree-type-heading",
+                  caseSuiteDetailsStyles["suite-tree-type-heading"],
+                )}
+              >
+                <span className={cn("soft-icon violet", caseSuiteDetailsStyles["soft-icon"])}>
                   <DatabaseZap size={17} />
                 </span>
                 <div>
@@ -392,7 +465,12 @@ export function CaseSuiteDetailsView({
                   </small>
                 </div>
                 {canManage ? (
-                  <div className="suite-tree-actions">
+                  <div
+                    className={cn(
+                      "suite-tree-actions",
+                      caseSuiteDetailsStyles["suite-tree-actions"],
+                    )}
+                  >
                     <Button
                       disabled={ddtGroups.length === 0 || removing || collecting || filtering}
                       onClick={() =>
@@ -414,13 +492,17 @@ export function CaseSuiteDetailsView({
                         : "选择可见"}
                     </Button>
                     <Button
-                      className="button button-danger-quiet"
+                      className={cn(
+                        "button button-danger-quiet",
+                        uiPatterns["button"],
+                        uiPatterns["button-danger-quiet"],
+                      )}
                       disabled={selectedDdtIds.size === 0 || removing}
                       onClick={() => void removeDdtCases([...selectedDdtIds])}
                       type="button"
                     >
                       {removing ? (
-                        <LoaderCircle className="spin" size={15} />
+                        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
                       ) : (
                         <Trash2 size={15} />
                       )}
@@ -430,9 +512,15 @@ export function CaseSuiteDetailsView({
                 ) : null}
               </div>
               {ddtGroups.length === 0 ? (
-                <div className="inline-empty">没有匹配的 DDT 用例。</div>
+                <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                  没有匹配的 DDT 用例。
+                </div>
               ) : (
-                <div className="suite-case-tree" role="tree" aria-label="按 SR 分组的 DDT 用例">
+                <div
+                  className={cn("suite-case-tree", caseSuiteDetailsStyles["suite-case-tree"])}
+                  role="tree"
+                  aria-label="按 SR 分组的 DDT 用例"
+                >
                   {ddtGroups.map(([srNum, items]) => (
                     <SuiteDdtGroup
                       directory={groupSource("ddt", srNum)}
@@ -459,7 +547,7 @@ export function CaseSuiteDetailsView({
           ) : null}
         </>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -515,47 +603,53 @@ function SuitePackageGroup({
   const selectedCount = directory?.selectedCount ?? loadedSelectedCount;
   const visibleItems = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
   return (
-    <details
+    <Disclosure
+      showArrow={false}
+      header={
+        <>
+          <ChevronRight aria-hidden="true" size={15} />
+          {canManage ? (
+            <Input
+              aria-label={`选择包 ${packageName}`}
+              checked={selecting ?? (count > 0 && selectedCount === count)}
+              disabled={removing || directory?.collecting}
+              onChange={async () => {
+                if (!directory) return onToggleGroup(items);
+                setSelecting(selectedCount !== count);
+                try {
+                  await directory.select();
+                } finally {
+                  setSelecting(undefined);
+                }
+              }}
+              onClick={(event) => event.stopPropagation()}
+              indeterminate={selectedCount > 0 && selectedCount < count}
+              type="checkbox"
+            />
+          ) : null}
+          <span className={cn("suite-tree-folder", caseSuiteDetailsStyles["suite-tree-folder"])}>
+            {packageName}
+          </span>
+          <small>{count} 个用例</small>
+        </>
+      }
       aria-selected={count > 0 && selectedCount === count}
-      onToggle={(event) => {
-        directory?.setExpanded(expansionKey, event.currentTarget.open);
-        setOpen(event.currentTarget.open);
+      onOpenChange={(expanded) => {
+        directory?.setExpanded(expansionKey, expanded);
+        setOpen(expanded);
       }}
       open={open}
       role="treeitem"
     >
-      <summary>
-        <ChevronRight aria-hidden="true" size={15} />
-        {canManage ? (
-          <Input
-            aria-label={`选择包 ${packageName}`}
-            checked={selecting ?? (count > 0 && selectedCount === count)}
-            disabled={removing || directory?.collecting}
-            onChange={async () => {
-              if (!directory) return onToggleGroup(items);
-              setSelecting(selectedCount !== count);
-              try {
-                await directory.select();
-              } finally {
-                setSelecting(undefined);
-              }
-            }}
-            onClick={(event) => event.stopPropagation()}
-            ref={(input) => {
-              if (input) input.indeterminate = selectedCount > 0 && selectedCount < count;
-            }}
-            type="checkbox"
-          />
-        ) : null}
-        <span className="suite-tree-folder">{packageName}</span>
-        <small>{count} 个用例</small>
-      </summary>
       {open ? (
-        <div className="suite-tree-children" role="group">
+        <div
+          className={cn("suite-tree-children", caseSuiteDetailsStyles["suite-tree-children"])}
+          role="group"
+        >
           {visibleItems.map((item) => (
             <div
               aria-selected={selectedIds.has(item.caseDefinition.id)}
-              className="suite-tree-case"
+              className={cn("suite-tree-case", caseSuiteDetailsStyles["suite-tree-case"])}
               key={item.id}
               role="treeitem"
             >
@@ -571,12 +665,20 @@ function SuitePackageGroup({
                 <strong>{item.caseDefinition.displayName}</strong>
                 <code>{item.caseDefinition.className}</code>
               </span>
-              <span className="suite-case-type testng">普通用例</span>
+              <span
+                className={cn("suite-case-type testng", caseSuiteDetailsStyles["suite-case-type"])}
+              >
+                普通用例
+              </span>
               <small>{item.caseDefinition.methodCount} 个方法</small>
               {canManage ? (
                 <Button
                   aria-label={`移除 ${item.caseDefinition.displayName}`}
-                  className="button button-danger-quiet"
+                  className={cn(
+                    "button button-danger-quiet",
+                    uiPatterns["button"],
+                    uiPatterns["button-danger-quiet"],
+                  )}
                   disabled={removing}
                   onClick={() => void onRemoveCases([item.caseDefinition.id])}
                   type="button"
@@ -616,7 +718,7 @@ function SuitePackageGroup({
           ) : null}
         </div>
       ) : null}
-    </details>
+    </Disclosure>
   );
 }
 
@@ -658,47 +760,53 @@ function SuiteDdtGroup({
   const selectedCount = directory?.selectedCount ?? loadedSelectedCount;
   const visibleItems = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
   return (
-    <details
+    <Disclosure
+      showArrow={false}
+      header={
+        <>
+          <ChevronRight aria-hidden="true" size={15} />
+          {canManage ? (
+            <Input
+              aria-label={`选择 SR ${srNum}`}
+              checked={selecting ?? (count > 0 && selectedCount === count)}
+              disabled={removing || directory?.collecting}
+              onChange={async () => {
+                if (!directory) return onToggleGroup(items);
+                setSelecting(selectedCount !== count);
+                try {
+                  await directory.select();
+                } finally {
+                  setSelecting(undefined);
+                }
+              }}
+              onClick={(event) => event.stopPropagation()}
+              indeterminate={selectedCount > 0 && selectedCount < count}
+              type="checkbox"
+            />
+          ) : null}
+          <span className={cn("suite-tree-folder", caseSuiteDetailsStyles["suite-tree-folder"])}>
+            SR · {srNum}
+          </span>
+          <small>{count} 个 DDT 用例</small>
+        </>
+      }
       aria-selected={count > 0 && selectedCount === count}
-      onToggle={(event) => {
-        directory?.setExpanded(expansionKey, event.currentTarget.open);
-        setOpen(event.currentTarget.open);
+      onOpenChange={(expanded) => {
+        directory?.setExpanded(expansionKey, expanded);
+        setOpen(expanded);
       }}
       open={open}
       role="treeitem"
     >
-      <summary>
-        <ChevronRight aria-hidden="true" size={15} />
-        {canManage ? (
-          <Input
-            aria-label={`选择 SR ${srNum}`}
-            checked={selecting ?? (count > 0 && selectedCount === count)}
-            disabled={removing || directory?.collecting}
-            onChange={async () => {
-              if (!directory) return onToggleGroup(items);
-              setSelecting(selectedCount !== count);
-              try {
-                await directory.select();
-              } finally {
-                setSelecting(undefined);
-              }
-            }}
-            onClick={(event) => event.stopPropagation()}
-            ref={(input) => {
-              if (input) input.indeterminate = selectedCount > 0 && selectedCount < count;
-            }}
-            type="checkbox"
-          />
-        ) : null}
-        <span className="suite-tree-folder">SR · {srNum}</span>
-        <small>{count} 个 DDT 用例</small>
-      </summary>
       {open ? (
-        <div className="suite-tree-children" role="group">
+        <div
+          className={cn("suite-tree-children", caseSuiteDetailsStyles["suite-tree-children"])}
+          role="group"
+        >
           {visibleItems.map((item) => (
             <div
               aria-selected={selectedIds.has(item.ddtCase.id)}
-              className="suite-tree-case"
+              className={cn("suite-tree-case", caseSuiteDetailsStyles["suite-tree-case"])}
               key={item.id}
               role="treeitem"
             >
@@ -714,12 +822,20 @@ function SuiteDdtGroup({
                 <strong>{item.ddtCase.caseId}</strong>
                 <code>{item.ddtCase.executionClass?.className ?? "未设置执行类"}</code>
               </span>
-              <span className="suite-case-type ddt">DDT</span>
+              <span
+                className={cn("suite-case-type ddt", caseSuiteDetailsStyles["suite-case-type"])}
+              >
+                DDT
+              </span>
               <small>{item.ddtCase.kind === "journey" ? "用户旅程" : "数据用例"}</small>
               {canManage ? (
                 <Button
                   aria-label={`移除 ${item.ddtCase.caseId}`}
-                  className="button button-danger-quiet"
+                  className={cn(
+                    "button button-danger-quiet",
+                    uiPatterns["button"],
+                    uiPatterns["button-danger-quiet"],
+                  )}
                   disabled={removing}
                   onClick={() => void onRemoveCases([item.ddtCase.id])}
                   type="button"
@@ -759,7 +875,7 @@ function SuiteDdtGroup({
           ) : null}
         </div>
       ) : null}
-    </details>
+    </Disclosure>
   );
 }
 
@@ -842,3 +958,29 @@ function toggledSelection(current: ReadonlySet<string>, ids: string[]): Readonly
   }
   return next;
 }
+
+const caseSuiteDetailsStyles = {
+  "inline-feedback":
+    "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
+  "list-filter-progress": "inline-flex items-center gap-2 text-muted-foreground text-xs",
+  "soft-icon":
+    "inline-grid w-9.5 h-9.5 place-items-center rounded-lg [&.blue]:bg-info/10 [&.blue]:text-info [&.violet]:bg-muted [&.violet]:text-info [&.green]:bg-success/10 [&.green]:text-success [&.amber]:bg-warning/10 [&.amber]:text-warning",
+  "suite-case-tree":
+    'overflow-hidden border border-solid border-border rounded-xl bg-card [&_.ui-disclosure_+_.ui-disclosure]:border-t [&_.ui-disclosure_+_.ui-disclosure]:border-solid [&_.ui-disclosure_+_.ui-disclosure]:border-border [&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:min-h-11 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[9px] [&_.ui-disclosure-label]:py-0 [&_.ui-disclosure-label]:px-[13px] [&_.ui-disclosure-label]:bg-muted [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure[data-open=true]_.ui-disclosure-label_>_svg]:[transform:rotate(90deg)] [&_.ui-disclosure-label_small]:text-muted-foreground [&_.ui-disclosure-label_small]:text-xs [&_input[type="checkbox"]]:w-4 [&_input[type="checkbox"]]:h-4 [&_input[type="checkbox"]]:[accent-color:var(--info)]',
+  "suite-case-tree-card": "p-5",
+  "suite-case-type":
+    "[&.testng]:bg-info/10 [&.testng]:text-info [&.ddt]:bg-info/10 [&.ddt]:text-info",
+  "suite-ddt-tree-section": "grid gap-2.5 mt-4.5 border-t border-solid border-border pt-4",
+  "suite-ordinary-tree-section": "grid gap-2.5",
+  "suite-tree-actions": "flex items-center justify-between gap-3",
+  "suite-tree-case":
+    "[&_>_small]:text-muted-foreground [&_>_small]:text-xs grid min-h-14.5 grid-cols-[auto_minmax(0,_1fr)_auto_auto_auto] items-center gap-[11px] [padding:8px_12px_8px_36px] [&_+_.suite-tree-case]:border-t [&_+_.suite-tree-case]:border-solid [&_+_.suite-tree-case]:border-border [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-[3px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:text-muted-foreground [&_code]:text-xs [&_>_.suite-case-type]:inline-flex [&_>_.suite-case-type]:w-fit [&_>_.suite-case-type]:items-center [&_>_.suite-case-type]:rounded-full [&_>_.suite-case-type]:py-[3px] [&_>_.suite-case-type]:px-2 [&_>_.suite-case-type]:text-xs [&_>_.suite-case-type]:font-semibold",
+  "suite-tree-children": "grid",
+  "suite-tree-folder":
+    "min-w-0 [flex:1_1_auto] overflow-hidden font-mono text-sm font-semibold text-ellipsis whitespace-nowrap",
+  "suite-tree-search":
+    "flex w-[min(520px,_52%)] items-center gap-2 text-muted-foreground [&_.ui-input]:w-full max-[1181px]:w-[min(420px,_48%)]",
+  "suite-tree-toolbar": "flex items-center justify-between gap-3 [margin:17px_0_12px]",
+  "suite-tree-type-heading":
+    "flex items-center gap-2.5 [&_>_div:not(.suite-tree-actions)]:grid [&_>_div:not(.suite-tree-actions)]:gap-0.5 [&_small]:text-muted-foreground [&_.suite-tree-actions]:ml-auto",
+} as const;

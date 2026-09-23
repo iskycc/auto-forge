@@ -89,6 +89,8 @@ test("packages only the traced custom-server runtime", async () => {
 test("excludes development output and protects runtime packaging destinations", () => {
   for (const path of [
     "apps/web/.next/cache/turbopack.bin",
+    "apps/web/.next/dev/cache/turbopack.bin",
+    "apps/web/.next/dev/server/app/page.js",
     "apps/web/.next/server/page.js.map",
     "apps/web/data/db/autoforge.sqlite",
     "apps/web/src/page.test.ts",

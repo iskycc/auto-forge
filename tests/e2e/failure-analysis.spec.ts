@@ -574,7 +574,7 @@ test("terminal task failures support durable single and batch analysis with evid
       url.searchParams.get("direction") === "asc"
     );
   });
-  await page.getByRole("button", { name: "我的分析排序字段" }).click();
+  await page.getByRole("combobox", { name: "我的分析排序字段" }).click();
   await page.getByRole("option", { name: "失败堆栈", exact: true }).click();
   expect((await claimSortResponse).status()).toBe(200);
   const descendingClaimsResponse = page.waitForResponse((response) => {
@@ -719,8 +719,16 @@ test("terminal task failures support durable single and batch analysis with evid
   await page.goto(`/case-analysis/${fixture.batchId}?view=workbench`);
   await installClipboardCapture(page);
   expect((await rememberedPreferencesResponse).status()).toBe(200);
-  await expect(page.getByRole("button", { name: "我的分析排序字段" })).toContainText("失败堆栈");
-  await expect(page.getByRole("button", { name: "分析完成状态分组" })).toContainText("未完成在前");
+  await expect(
+    page.locator(".ui-select", {
+      has: page.getByRole("combobox", { name: "我的分析排序字段" }),
+    }),
+  ).toContainText("失败堆栈");
+  await expect(
+    page.locator(".ui-select", {
+      has: page.getByRole("combobox", { name: "分析完成状态分组" }),
+    }),
+  ).toContainText("未完成在前");
   await expect(page.getByLabel("显示已完成分析")).not.toBeChecked();
   await expect(page.getByRole("button", { name: "当前降序，点击切换为升序" })).toBeVisible();
   await expect
@@ -742,7 +750,7 @@ test("terminal task failures support durable single and batch analysis with evid
       url.searchParams.get("completionOrder") === "completed_first"
     );
   });
-  await page.getByRole("button", { name: "分析完成状态分组" }).click();
+  await page.getByRole("combobox", { name: "分析完成状态分组" }).click();
   await page.getByRole("option", { name: "已完成在前" }).click();
   expect((await completedFirstResponse).status()).toBe(200);
   await expect(page.locator(".failure-analysis-claim-group > h3").first()).toContainText(
@@ -1114,6 +1122,19 @@ test("terminal task failures support durable single and batch analysis with evid
     { width: 1024, height: 768 },
   ]) {
     await page.setViewportSize(viewport);
+    const metricLayout = await page
+      .getByRole("region", { name: "分析总览" })
+      .getByRole("article")
+      .first()
+      .evaluate((card) => {
+        const label = card.querySelector(".ant-statistic-title, span")!;
+        const value = card.querySelector(".ant-statistic-content, strong")!;
+        return value.getBoundingClientRect().top - label.getBoundingClientRect().bottom;
+      });
+    expect(
+      metricLayout,
+      "metric titles and values need separate rows with readable spacing",
+    ).toBeGreaterThanOrEqual(4);
     await expectUiIntegrity(page);
     await captureUi(page, `failure-analysis-statistics-${viewport.width}`, true);
   }

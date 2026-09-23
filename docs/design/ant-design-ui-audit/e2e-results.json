@@ -1,0 +1,664 @@
+{
+  "scenarios": 94,
+  "note": "Latest observed result per scenario across full run and explicit focused reruns; not a claim of a single clean full run.",
+  "results": [
+    {
+      "file": "tests/e2e/all-rounds.spec.ts",
+      "scenario": "all-rounds virtual round annotates every record and later rounds hide previously passed cases",
+      "passed": true,
+      "duration": "2.4m",
+      "lastRun": "final-focused-e2e.log"
+    },
+    {
+      "file": "tests/e2e/case-suite-lifecycle.spec.ts",
+      "scenario": "tasks and execution history follow the selected project version",
+      "passed": true,
+      "duration": "18.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/case-suite-lifecycle.spec.ts",
+      "scenario": "case metadata, immutable versions and suite policy survive lifecycle changes",
+      "passed": true,
+      "duration": "29.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/case-suite-lifecycle.spec.ts",
+      "scenario": "source comparison, promotion, archive recovery and guarded deletion are observable",
+      "passed": true,
+      "duration": "10.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT inheritance copies another version with pause, recovery and safe duplicate handling",
+      "passed": true,
+      "duration": "9.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT refreshes stale case summaries when observing a completed import",
+      "passed": true,
+      "duration": "6.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT template dialog keeps focus and protects unsaved edits",
+      "passed": true,
+      "duration": "6.2s",
+      "lastRun": "late-visual-after.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT candidate classes save selected items sequentially and report partial conflicts",
+      "passed": true,
+      "duration": "5.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "execution history finds ordinary and DDT cases only on explicit search",
+      "passed": true,
+      "duration": "5.7s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT overview shows seven-day execution snapshots without periodic dashboard requests",
+      "passed": true,
+      "duration": "5.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT import resolves duplicate column names before background import",
+      "passed": true,
+      "duration": "9.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT ZIP import resolves conflicts in multiple archive entries",
+      "passed": true,
+      "duration": "9.5s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT conflict resolution preserves identity choices when renaming reveals another conflict",
+      "passed": true,
+      "duration": "7.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT CaseID conflict strategies preserve existing data and report the outcome",
+      "passed": true,
+      "duration": "13.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT workspace imports, edits, validates and recovers version-scoped cases",
+      "passed": true,
+      "duration": "32.2s",
+      "lastRun": "retry-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT split workspace loads details on demand and keeps field edits and navigation consistent",
+      "passed": true,
+      "duration": "22.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "SR associations restrict candidates and automatically cover imported and moved DDT cases",
+      "passed": true,
+      "duration": "30.5s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "mixed and DDT-only tasks share execution and reject unbound members",
+      "passed": true,
+      "duration": "28.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT public API reads raw cases within URL scope and provides a responsive API tab",
+      "passed": true,
+      "duration": "14.2s",
+      "lastRun": "final-focused-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT full-scope export merges column aliases and can be imported again",
+      "passed": true,
+      "duration": "5.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT advanced search submits explicitly, searches only values and handles scoped results",
+      "passed": true,
+      "duration": "14.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT advanced search unions added conditions and preserves pagination and cached history",
+      "passed": true,
+      "duration": "10.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ddt-management.spec.ts",
+      "scenario": "DDT selects existing cases from Excel or text across unloaded pages and adds them to a task",
+      "passed": true,
+      "duration": "11.5s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/execution-recovery.spec.ts",
+      "scenario": "execution duration and countdown tolerate browser clock skew and wall clock steps",
+      "passed": true,
+      "duration": "8.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/execution-recovery.spec.ts",
+      "scenario": "authoritative execution recovery handles every timeout and idempotent race",
+      "passed": true,
+      "duration": "59.7s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis-assignment.spec.ts",
+      "scenario": "analysis starts from execution history and detail, and project administrators assign existing users",
+      "passed": true,
+      "duration": "19.0s",
+      "lastRun": "final-focused-e2e.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis-log-comparison.spec.ts",
+      "scenario": "single and bulk analysis show previous executions and compare real logs without losing drafts",
+      "passed": true,
+      "duration": "8.0s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis-log-comparison.spec.ts",
+      "scenario": "history and log failures are recoverable and missing executions do not become false matches",
+      "passed": true,
+      "duration": "4.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis-log-comparison.spec.ts",
+      "scenario": "quality insight comparison preserves scroll, can rerun, and compares both batch logs",
+      "passed": true,
+      "duration": "9.7s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis.spec.ts",
+      "scenario": "long case names keep single, bulk and completed analysis dialogs within their width",
+      "passed": true,
+      "duration": "14.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis.spec.ts",
+      "scenario": "terminal task failures support durable single and batch analysis with evidence",
+      "passed": true,
+      "duration": "30.3s",
+      "lastRun": "late-visual-after.log"
+    },
+    {
+      "file": "tests/e2e/failure-analysis.spec.ts",
+      "scenario": "task conclusion picker groups cases, loads older conclusions on demand and contains long text",
+      "passed": true,
+      "duration": "6.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "authenticated landing hand-off is an immediate HTTP redirect",
+      "passed": true,
+      "duration": "3.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "user creation keeps validation and server errors inside the dialog",
+      "passed": true,
+      "duration": "8.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "user creation API returns actionable validation without revealing passwords",
+      "passed": true,
+      "duration": "3.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "administrator assigns system and project roles directly from the user row",
+      "passed": true,
+      "duration": "12.0s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "user administration does not confer role assignment permission",
+      "passed": true,
+      "duration": "4.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "user role assignment offers only projects the operator can manage",
+      "passed": true,
+      "duration": "5.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "local user completes forced password change and self-service session lifecycle",
+      "passed": true,
+      "duration": "10.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "administrator can reset a user password and the last administrator binding is protected",
+      "passed": true,
+      "duration": "11.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "administrator unlocks and disables a locked user and manages a custom role",
+      "passed": true,
+      "duration": "19.0s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "project administrators use unified users and roles without global account access",
+      "passed": true,
+      "duration": "12.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/identity-rbac.spec.ts",
+      "scenario": "every built-in role receives only its authorized navigation and API surface",
+      "passed": true,
+      "duration": "22.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/jar-import.spec.ts",
+      "scenario": "inherits TestNG cases from the JAR import page without reuploading or overwriting",
+      "passed": true,
+      "duration": "10.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/jar-import.spec.ts",
+      "scenario": "imports TestNG methods from a JAR into the case library",
+      "passed": true,
+      "duration": "1.8m",
+      "lastRun": "jar-final-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "service account lifecycle immediately narrows token access and produces exportable audit",
+      "passed": true,
+      "duration": "10.0s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "task details manage their own plan and show execution history in a dialog",
+      "passed": true,
+      "duration": "9.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "task schedule dialog keeps read permissions separate from execution history and management",
+      "passed": true,
+      "duration": "9.5s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "project webhooks support custom POST bodies and task binding",
+      "passed": true,
+      "duration": "5.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "permission selection supports scoped bulk actions and project-only service accounts",
+      "passed": true,
+      "duration": "3.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "retention previews expire on policy edits and stale manual execution is rejected",
+      "passed": true,
+      "duration": "3.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/management-operations.spec.ts",
+      "scenario": "management drafts require confirmation and candidate search preserves project scope",
+      "passed": true,
+      "duration": "7.8s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/platform-operations.spec.ts",
+      "scenario": "system diagnostics shows build provenance, bounded snapshots and resilient desktop layouts",
+      "passed": true,
+      "duration": "5.4s",
+      "lastRun": "final-focused-e2e.log"
+    },
+    {
+      "file": "tests/e2e/platform-operations.spec.ts",
+      "scenario": "configuration conflicts, diagnostics and retention controls remain observable",
+      "passed": true,
+      "duration": "20.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/platform-operations.spec.ts",
+      "scenario": "platform save bar and file scope badge keep their rounded desktop layout",
+      "passed": true,
+      "duration": "9.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/platform-operations.spec.ts",
+      "scenario": "storage snapshot expiry restarts pagination without mixing files (single node)",
+      "passed": true,
+      "duration": "7.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/platform-operations.spec.ts",
+      "scenario": "storage snapshot expiry restarts pagination without mixing files (pinned owner)",
+      "passed": true,
+      "duration": "7.0s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/platform-operations.spec.ts",
+      "scenario": "storage snapshot expiry stops automatic retries and permits explicit recovery",
+      "passed": true,
+      "duration": "8.5s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/project-isolation.spec.ts",
+      "scenario": "project member cannot observe another project's assets through pages or direct IDs",
+      "passed": true,
+      "duration": "26.7s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "unauthenticated homepage presents the trusted control plane at desktop widths",
+      "passed": true,
+      "duration": "2.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "empty statistics do not show a misleading zero success rate",
+      "passed": true,
+      "duration": "2.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "populated statistics retain large counts and all result categories",
+      "passed": true,
+      "duration": "2.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "pending and failed snapshots do not masquerade as zeros and can recover",
+      "passed": true,
+      "duration": "3.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "refresh failure preserves the previous snapshot and supports keyboard retry",
+      "passed": true,
+      "duration": "2.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "stale snapshots retain counts and zero percent is valid with failed executions",
+      "passed": true,
+      "duration": "1.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "slow refresh is single flight, times out, and permits recovery",
+      "passed": true,
+      "duration": "1.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "hidden pages suspend polling and refresh when visible again",
+      "passed": true,
+      "duration": "1.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/public-dashboard.spec.ts",
+      "scenario": "an initialized platform offers login without exposing the authenticated shell",
+      "passed": true,
+      "duration": "3.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/read-model-cache.spec.ts",
+      "scenario": "large pages reuse browser and database snapshots and refresh after imports",
+      "passed": true,
+      "duration": "28.3s",
+      "lastRun": "final-focused-e2e.log"
+    },
+    {
+      "file": "tests/e2e/scheduling-refill.spec.ts",
+      "scenario": "completion immediately refills free runner slots without waiting for the whole wave",
+      "passed": true,
+      "duration": "14.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/security-audit.spec.ts",
+      "scenario": "security audit keeps Chinese CRUD, login failures and denied access through the real API",
+      "passed": true,
+      "duration": "3.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/security-audit.spec.ts",
+      "scenario": "historical audit has clean desktop layout, Chinese search, stable pagination and matching export",
+      "passed": true,
+      "duration": "9.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/single-case-run.spec.ts",
+      "scenario": "global execution dialog schedules one case through a runner group with Adapter IP",
+      "passed": true,
+      "duration": "11.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "native-backed filters keep accessible names, keyboard selection and form values",
+      "passed": true,
+      "duration": "6.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "layout guard distinguishes floating actions from overlapping controls on the same surface",
+      "passed": true,
+      "duration": "494ms",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "administration entries are exposed as four-character first-level navigation",
+      "passed": true,
+      "duration": "5.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "project member filters stay below stable section tabs",
+      "passed": true,
+      "duration": "9.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "many project versions stay compact and configure only the selected version",
+      "passed": true,
+      "duration": "8.9s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "project settings preserve long project names and slugs within the administration bar",
+      "passed": true,
+      "duration": "3.7s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "topbar hierarchy selectors support keyboard opening, searching and focus restoration",
+      "passed": true,
+      "duration": "4.3s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "unified role scope selector exposes both system and project filters",
+      "passed": true,
+      "duration": "4.0s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "audit findings use bounded, localized, and unambiguous controls",
+      "passed": true,
+      "duration": "8.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "top-bar project context persists across pages and removes local project switchers",
+      "passed": true,
+      "duration": "10.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "topbar creates project, version and stage and retries selection without duplicate creation",
+      "passed": true,
+      "duration": "11.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "homepage mirrors the designed six-card workspace and exposes global execution",
+      "passed": true,
+      "duration": "8.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "topbar tools remain separate from execution controls across desktop widths",
+      "passed": true,
+      "duration": "5.1s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "global execution dialog covers and centers within the whole viewport",
+      "passed": true,
+      "duration": "6.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "project and user creation stay in centered low-frequency dialogs",
+      "passed": true,
+      "duration": "10.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "remaining low-frequency management actions expose reviewable dialogs",
+      "passed": true,
+      "duration": "18.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "role cards keep long names and identifiers within desktop layout boundaries",
+      "passed": true,
+      "duration": "5.2s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "primary product and administration routes pass the shared layout guard",
+      "passed": true,
+      "duration": "53.4s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "specified dense pages expose stable product controls",
+      "passed": true,
+      "duration": "10.6s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "imported case selection keeps counts compact before adding to a task",
+      "passed": true,
+      "duration": "8.5s",
+      "lastRun": "complete-e2e.log"
+    },
+    {
+      "file": "tests/e2e/ui-layout.spec.ts",
+      "scenario": "execution dialog remembers the last chosen task across reopening, edits and project versions",
+      "passed": true,
+      "duration": "9.0s",
+      "lastRun": "complete-e2e.log"
+    }
+  ]
+}

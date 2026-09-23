@@ -1,4 +1,5 @@
 "use client";
+import { cn } from "@/lib/utils";
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./ui";
@@ -17,7 +18,10 @@ export function ExpandableText({ text, label = "内容" }: { text: string; label
     return () => observer.disconnect();
   }, [text, expanded]);
   return (
-    <span className="expandable-text" data-expanded={expanded}>
+    <span
+      className={cn("expandable-text", expandableTextStyles["expandable-text"])}
+      data-expanded={expanded}
+    >
       <span ref={textRef} title={text}>
         {text}
       </span>
@@ -36,3 +40,8 @@ export function ExpandableText({ text, label = "内容" }: { text: string; label
     </span>
   );
 }
+
+const expandableTextStyles = {
+  "expandable-text":
+    'block min-w-0 [overflow-wrap:anywhere] [&_>_span]:block [&_>_span]:min-w-0 [&_>_span]:[overflow-wrap:anywhere] [&[data-expanded="false"]_>_span]:[display:-webkit-box] [&[data-expanded="false"]_>_span]:[-webkit-box-orient:vertical] [&[data-expanded="false"]_>_span]:[-webkit-line-clamp:2] [&[data-expanded="false"]_>_span]:overflow-hidden [&_>_.ui-button]:mt-1',
+} as const;

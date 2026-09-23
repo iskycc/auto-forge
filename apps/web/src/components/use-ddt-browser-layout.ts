@@ -18,7 +18,7 @@ export function useDdtBrowserLayout() {
     const browser = browserRef.current;
     if (!browser) return;
     const filters = browser.querySelector(".ddt-case-filters");
-    const filterTrigger = filters?.querySelector(".ddt-advanced-filters > summary");
+    const filterTrigger = filters?.querySelector(".ddt-advanced-filters .ant-collapse-header");
     let frame = 0;
     const measure = () => {
       frame = 0;

@@ -1,4 +1,21 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { Badge } from "@/components/ui/badge";
+
+import { Disclosure } from "@/components/ui/disclosure";
+
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+
+import { cn } from "@/lib/utils";
+import { uiPatterns } from "@/components/ui/patterns";
 
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
@@ -10,6 +27,7 @@ import {
 import type { CaseVersion } from "@autoforge/domain";
 import { GitCompareArrows, History, LoaderCircle } from "lucide-react";
 import Link from "next/link";
+import { LinkButton } from "@/components/ui/link-button";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -95,21 +113,29 @@ export function CaseVersionHistory({
   }
 
   return (
-    <div className="settings-stack">
+    <div className={cn("settings-stack", uiPatterns["settings-stack"])}>
       {error ? (
-        <div className="inline-feedback" role="alert">
+        <div
+          className={cn("inline-feedback", caseVersionHistoryStyles["inline-feedback"])}
+          role="alert"
+        >
           {error}
         </div>
       ) : null}
-      <section className="version-comparison" aria-labelledby="version-comparison-title">
-        <div className="section-heading">
+      <section
+        className={cn("version-comparison", caseVersionHistoryStyles["version-comparison"])}
+        aria-labelledby="version-comparison-title"
+      >
+        <div className={cn("section-heading", uiPatterns["section-heading"])}>
           <div>
-            <span className="eyebrow">Diff</span>
+            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Diff</span>
             <h3 id="version-comparison-title">指定版本差异</h3>
           </div>
           <GitCompareArrows size={19} aria-hidden="true" />
         </div>
-        <div className="settings-inline-form">
+        <div
+          className={cn("settings-inline-form", caseVersionHistoryStyles["settings-inline-form"])}
+        >
           <label>
             基准版本
             <Select
@@ -130,51 +156,75 @@ export function CaseVersionHistory({
           </label>
         </div>
         {comparison.length > 0 ? (
-          <ul className="version-diff-list">
+          <ul className={cn("version-diff-list", caseVersionHistoryStyles["version-diff-list"])}>
             {comparison.map((change) => (
               <li key={change}>{change}</li>
             ))}
           </ul>
         ) : (
-          <p className="muted">两个版本的可执行快照一致。</p>
+          <p className={cn("muted", uiPatterns["muted"])}>两个版本的可执行快照一致。</p>
         )}
       </section>
 
-      <div className="table-scroll">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>版本</th>
-              <th>变更原因</th>
-              <th>操作人</th>
-              <th>创建时间</th>
-              <th>内容与引用</th>
-              {canManage ? <th>操作</th> : null}
-            </tr>
-          </thead>
-          <tbody>
+      <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+        <Table className={cn("data-table", uiPatterns["data-table"])}>
+          <TableHeader>
+            <TableRow>
+              <TableHead>版本</TableHead>
+              <TableHead>变更原因</TableHead>
+              <TableHead>操作人</TableHead>
+              <TableHead>创建时间</TableHead>
+              <TableHead>内容与引用</TableHead>
+              {canManage ? <TableHead>操作</TableHead> : null}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {orderedVersions.map((version) => {
               const snapshot = parseSnapshot(version.snapshot);
               const previous = snapshotFor(orderedVersions, version.version - 1);
               const adjacentChanges = compareSnapshots(previous, snapshot);
               return (
-                <tr key={version.id}>
-                  <td>
+                <TableRow key={version.id}>
+                  <TableCell>
                     <strong>v{version.version}</strong>
                     {version.version === currentVersion ? (
-                      <span className="tag current-version-tag">当前</span>
+                      <Badge
+                        className={cn(
+                          "tag current-version-tag",
+                          uiPatterns["tag"],
+                          caseVersionHistoryStyles["current-version-tag"],
+                        )}
+                      >
+                        当前
+                      </Badge>
                     ) : null}
-                  </td>
-                  <td>{CHANGE_REASON_LABELS[version.changeReason] ?? version.changeReason}</td>
-                  <td>{version.createdBy ?? <span className="muted">—</span>}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
+                    {CHANGE_REASON_LABELS[version.changeReason] ?? version.changeReason}
+                  </TableCell>
+                  <TableCell>
+                    {version.createdBy ?? (
+                      <span className={cn("muted", uiPatterns["muted"])}>—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     <time dateTime={version.createdAt}>{formatDate(version.createdAt)}</time>
-                  </td>
-                  <td>
-                    <details>
-                      <summary className="role-action-summary">查看快照与相邻差异</summary>
+                  </TableCell>
+                  <TableCell>
+                    <Disclosure
+                      header={<>查看快照与相邻差异</>}
+                      headerClassName={cn(
+                        "role-action-summary",
+                        caseVersionHistoryStyles["role-action-summary"],
+                      )}
+                    >
                       {snapshot ? (
-                        <div className="version-snapshot-details">
+                        <div
+                          className={cn(
+                            "version-snapshot-details",
+                            caseVersionHistoryStyles["version-snapshot-details"],
+                          )}
+                        >
                           <p>
                             <strong>JAR 来源：</strong>
                             {canReadSource ? (
@@ -201,49 +251,61 @@ export function CaseVersionHistory({
                               ? adjacentChanges.join("；") || "无可执行内容差异"
                               : "首个版本，无相邻基准"}
                           </p>
-                          <pre className="source-code-viewer" tabIndex={0}>
+                          <pre
+                            className={cn(
+                              "source-code-viewer",
+                              caseVersionHistoryStyles["source-code-viewer"],
+                            )}
+                            tabIndex={0}
+                          >
                             <code>
                               {JSON.stringify(snapshotForPresentation(snapshot), null, 2)}
                             </code>
                           </pre>
                         </div>
                       ) : (
-                        <p className="auth-error">该历史快照格式无效，不能展示或恢复。</p>
+                        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])}>
+                          该历史快照格式无效，不能展示或恢复。
+                        </Notice>
                       )}
-                      <Link
-                        className="button button-secondary"
+                      <LinkButton
+                        className={cn(
+                          "button button-secondary",
+                          uiPatterns["button"],
+                          uiPatterns["button-secondary"],
+                        )}
                         href={`/run-batches?caseDefinitionId=${encodeURIComponent(caseDefinitionId)}`}
                       >
                         查看该用例关联执行
-                      </Link>
-                    </details>
-                  </td>
+                      </LinkButton>
+                    </Disclosure>
+                  </TableCell>
                   {canManage ? (
-                    <td>
+                    <TableCell>
                       {version.version === currentVersion ? (
-                        <span className="muted">—</span>
+                        <span className={cn("muted", uiPatterns["muted"])}>—</span>
                       ) : (
                         <Button
-                          className="secondary-button"
+                          className={cn("secondary-button", uiPatterns["secondary-button"])}
                           disabled={pendingVersion !== null || !snapshot}
                           onClick={() => void restore(version.version)}
                           type="button"
                         >
                           {pendingVersion === version.version ? (
-                            <LoaderCircle className="spin" size={14} />
+                            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
                           ) : (
                             <History size={14} />
                           )}
                           从该版本创建
                         </Button>
                       )}
-                    </td>
+                    </TableCell>
                   ) : null}
-                </tr>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -367,3 +429,18 @@ function formatDate(value: string): string {
     minute: "2-digit",
   });
 }
+
+const caseVersionHistoryStyles = {
+  "current-version-tag": "ml-[7px] bg-success/10 text-success",
+  "inline-feedback":
+    "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
+  "role-action-summary": "w-fit text-muted-foreground cursor-pointer",
+  "settings-inline-form":
+    "inline-flex items-end gap-2 [&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.ui-button]:[flex:0_0_auto] [&_.ui-button]:whitespace-nowrap",
+  "source-code-viewer":
+    "max-h-[640px] overflow-auto m-0 p-4.5 border border-solid border-border rounded-lg bg-log-background text-log-foreground font-mono text-xs leading-[1.65] [tab-size:2] whitespace-pre",
+  "version-comparison": "grid gap-3.5 border border-solid border-border rounded-lg p-4 bg-muted",
+  "version-diff-list": "grid gap-[7px] m-0 pl-5 text-muted-foreground",
+  "version-snapshot-details":
+    "grid min-w-[min(680px,_75vw)] gap-2.5 my-3 mx-0 [&_p]:m-0 [&_p]:[overflow-wrap:anywhere]",
+} as const;
