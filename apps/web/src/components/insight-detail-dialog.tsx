@@ -35,7 +35,6 @@ export function InsightDetailDialog({
         查看明细
       </Button>
       <ActionDialog
-        backdropClassName="p-3"
         className={cn("insight-detail-dialog", insightDetailDialogStyles["insight-detail-dialog"])}
         description={description}
         onClose={() => setOpen(false)}

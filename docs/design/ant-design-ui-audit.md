@@ -155,3 +155,12 @@ Playwright 首先复现了 TestNG 切换到 DDT 后导航上移 20px。根因包
 - `pnpm exec playwright test tests/e2e/tab-navigation.spec.ts tests/e2e/ddt-management.spec.ts tests/e2e/failure-analysis.spec.ts tests/e2e/ui-layout.spec.ts tests/e2e/public-dashboard.spec.ts --grep 'case tabs keep|settings tabs retain|tab navigation protects|DDT split workspace|DDT template dialog|long case names keep|management actions wait for hydration|project member filters stay|legacy login and protected|an initialized platform offers login'`：10 项通过。覆盖 DDT 全部子 Tab、设置各模块、慢响应、滚动保持、浏览器返回、键盘和未保存确认、减少动态效果、字段保存与版本恢复、侧栏缩放、长名称分析弹窗、模板弹窗焦点及登录流程。
 
 已实际查看 1024×768／960、1536×960／1024 和 1920×960 的相关截图，导航层级、对齐、换行和滚动边界正常；浅色和深色下均保持可读。截图保存在本地忽略目录 `.local/ui-tab-transitions/screens`，不纳入提交。本次没有修改后端或适配器，未重跑 Full 基础设施与真实 Runner 执行验收。
+
+### v1.17.25 发布前补充验收
+
+CI 将 UI 场景独立运行后，补齐两个场景的项目层级夹具；页面与弹窗几何检查统一扣除原生滚动条空间。
+全新范围的质量洞察复现了宽弹窗被挤到视口下方的问题：宽度限制必须施加到 Ant Modal 面板，内部内容跟随面板收缩，洞察弹窗不再重复设置遮罩内边距。
+
+修复后生产构建、测试类型检查和相关 ESLint 通过；19 项组件检查、39 项发布脚本测试及 9 项浏览器回归通过。
+浏览器回归覆盖角色分配、DDT 与设置 Tab、未保存确认、登录、深色模式、执行及管理弹窗和空范围的质量洞察明细。
+已实际查看 1024×768 与 1536×1024 的洞察明细截图，弹窗居中、关闭按钮可见、边距与滚动边界正常；补充大屏截图的定向场景再次通过。截图保留在 `.local/release-1.17.25/dialog-final-screens`，不纳入提交。CI 中管理与 UI 验收拆分，中文截图使用文泉驿微米黑，避免大字体包下载占满预算。

@@ -114,8 +114,10 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /scenario: identity\n\s+specs: .*identity-rbac.*all-rounds/);
   assert.match(
     workflow,
-    /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill.*ui-layout/,
+    /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill/,
   );
+  assert.match(workflow, /scenario: ui\n\s+specs: .*ui-layout.*tab-navigation/);
+  assert.doesNotMatch(workflow, /scenario: operations\n\s+specs: .*ui-layout/);
   assert.doesNotMatch(workflow, /scenario:\n\s+- all-rounds/);
   assert.match(workflow, /test-full-business-recovery\.sh runtime-agent/);
   assert.match(workflow, /test-full-business-recovery\.sh runtime-recovery/);

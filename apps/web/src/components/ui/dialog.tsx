@@ -63,12 +63,12 @@ export function Dialog({
       keyboard={!inactive && !closeDisabled && !onEscape}
       mask={inactive ? false : { closable: !closeDisabled }}
       destroyOnHidden
+      style={{ maxWidth: "calc(100% - 24px)", padding: 0 }}
       classNames={{ wrapper: cn(backdropClassName, inactive && "pointer-events-none") }}
       styles={{
         header: { margin: 0, padding: 0, height: 0 },
         container: { padding: 0, overflow: "hidden" },
         body: { minWidth: 0 },
-        root: { maxWidth: "calc(100vw - 24px)", padding: 0 },
       }}
       afterOpenChange={(visible) => {
         if (visible) initialFocusRef?.current?.focus();
@@ -84,6 +84,8 @@ export function Dialog({
     >
       <div
         {...panelProps}
+        // Large content must fit the modal's actual width, including reserved scrollbar space.
+        style={{ ...panelProps?.style, maxWidth: "100%" }}
         ref={(element) => {
           // Ant Modal exposes one dialog element; preserve urgent confirmation semantics on it.
           element?.closest(".ant-modal")?.setAttribute("role", role);

@@ -166,8 +166,9 @@ jobs:
         if: matrix.screenshots
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          sudo apt-get install --yes --no-install-recommends fonts-wqy-microhei
           fc-cache --force
+          test -n "$(fc-list :lang=zh family)"
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"

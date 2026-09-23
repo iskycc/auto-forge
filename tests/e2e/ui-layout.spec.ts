@@ -1130,6 +1130,7 @@ test("project and user creation stay in centered low-frequency dialogs", async (
 
 test("remaining low-frequency management actions expose reviewable dialogs", async ({ page }) => {
   await ensureAdministrator(page);
+  await createUiProject(page);
   const viewport = { width: 1024, height: 768 };
   await page.setViewportSize(viewport);
 
@@ -1407,6 +1408,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "TestNG JAR" })).toBeVisible();
   await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
 
+  await createUiProject(page);
   await page.goto("/insights");
   await expect(page.locator(".insight-metric-success")).toContainText("方法通过率");
   await expect(page.locator(".insight-metric-danger")).toContainText("方法失败率");
@@ -1489,6 +1491,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
     overflowY: "auto",
     fitsHorizontally: true,
   });
+  await captureUi(page, "/insight-detail-desktop", 1536, false);
   await trendDialog.getByRole("button", { name: "关闭每日趋势明细" }).click();
   await expect(trendDialog).toHaveCount(0);
 
