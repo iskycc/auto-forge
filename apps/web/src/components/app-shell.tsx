@@ -33,6 +33,7 @@ import { GlobalRunDialog } from "./global-run-dialog";
 import { GlobalProjectSwitcher } from "./global-project-switcher";
 import { configurePlatformTimeZone } from "@/lib/platform-date-time";
 import { SessionKeepalive } from "./session-keepalive";
+import { ColorModeToggle } from "./color-mode-toggle";
 
 type NavigationItem = {
   label: string;
@@ -316,6 +317,7 @@ export function AppShell({
             </div>
           )}
           <div className={cn("topbar-actions", appShellStyles["topbar-actions"])}>
+            <ColorModeToggle />
             {!forcePasswordChange ? (
               <GlobalRunDialog
                 userId={userId ?? ""}

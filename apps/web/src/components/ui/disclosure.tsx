@@ -9,6 +9,7 @@ type DisclosureProps = Omit<ComponentProps<"div">, "onChange"> & {
   header: ReactNode;
   headerClassName?: string;
   headerTitle?: string;
+  density?: "default" | "compact";
   showArrow?: boolean;
   open?: boolean | undefined;
   defaultOpen?: boolean | undefined;
@@ -21,6 +22,7 @@ export function Disclosure({
   header,
   headerClassName,
   headerTitle,
+  density = "default",
   showArrow = true,
   open,
   defaultOpen = false,
@@ -53,7 +55,13 @@ export function Disclosure({
           title: "min-w-0",
           body: "ui-disclosure-body",
         }}
-        styles={{ header: { padding: "8px 0", alignItems: "center" }, body: { padding: 0 } }}
+        styles={{
+          header: { padding: density === "compact" ? 0 : "8px 0", alignItems: "center" },
+          // Ant's header-only trigger defaults to an intrinsic-width title. Keep
+          // nested grids and long filenames within the available header width.
+          title: { flex: "1 1 0%", minWidth: 0 },
+          body: { padding: 0 },
+        }}
         items={[
           {
             key: "content",

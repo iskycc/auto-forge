@@ -19,7 +19,7 @@ import { Button as DesignButton } from "./ui/button";
 import { Input as DesignInput } from "./ui/input";
 import { Textarea as DesignTextarea } from "./ui/textarea";
 import { ChoiceInput, type ChoiceInputProps } from "./ui/choice-input";
-import { Progress } from "./ui/progress";
+import { Progress, type ProgressTone } from "./ui/progress";
 import { cn } from "@/lib/utils";
 
 import { DatePicker } from "antd";
@@ -212,14 +212,17 @@ export function ProgressBar({
   max = 100,
   label,
   indeterminate = false,
+  tone = "info",
 }: {
   value: number;
   max?: number;
   label?: string;
   indeterminate?: boolean;
+  tone?: ProgressTone;
 }) {
   return (
     <Progress
+      tone={tone}
       aria-label={label}
       value={indeterminate ? null : value}
       max={max > 0 ? max : 100}

@@ -102,3 +102,56 @@ Full 专属节点配置使用真实前端组件和模拟接口完成双视口检
 跨环境 CI 暴露了首轮本地复验未出现的时序及多条通知布局问题：日期选择器在首屏使用主题控件最小高度，共享按钮和标签页在客户端事件绑定完成前保持禁用；多行通知改为内容自适应高度，已读与未读使用相同的独立内容布局，避免文本跨行覆盖相邻点击区域。新增多条长通知的双视口浏览器回归，保留内容边界检查与实际点击标记已读；SSR 回归检查初始禁用，并通过浏览器暂缓脚本下载验证就绪后首次点击能打开用户弹窗、关闭后能切换目录配置。修复后的管理及通知相关 4 项 E2E 通过，实际查看 1024px/1536px 用户弹窗与通知截图，无页面横向溢出。
 
 Runner 安装测试区分可见 Ant Design 选择器与隐藏表单字段；用户角色测试直接验证提交字段的完整项目候选值。Go 进程树超时测试将夹具启动与被测超时分离，慢启动夹具先复现失败，修复后连续 30 轮验证子进程清理。浏览器普通控件操作上限为 30 秒，让持续遮挡及时留下 trace，不使用整轮自动重试隐藏失败。
+
+## 全局明暗主题补充（2026-09-23）
+
+控制台、首页登录弹窗、初始化及公开页面共用 Ant Design 的浅色／深色配置。主题由浏览器 Cookie 保存，服务端首屏同步读取；切换不写业务数据库，也不新增远程资源。原日志阅读器保留局部明暗切换，默认跟随全局主题。
+
+本轮将文字强调色与按钮填充色分离，修正深色菜单、标签页、链接、错误摘要和 ANSI 颜色的对比度，并增强键盘焦点及输入提示。颜色测试覆盖两种主题的正文、辅助文字、状态、ANSI 文字在卡片、日志和浮层上的对比度，以及主按钮和焦点颜色；浏览器另检查菜单、标签页、角色操作和创建按钮的实际文字对比度。
+
+页面遍历覆盖 28 个页面／子页，在 1024×768 与 1536×1024 下分别检查浅色和深色；登录弹窗、项目选择浮层、带执行数据的图表与公开日志补充 1536×960 检查。已实际查看 Playwright 截图，检查文字层级、对齐、边界、状态和滚动区域。主题交互覆盖键盘切换、刷新保留、登录后保留、无 JavaScript 的深色首屏及公开页面外部资源请求拦截。
+
+本轮未修改数据库、调度或 Runner 协议；Lite 浏览器验证使用独立测试数据，未重跑 Full 基础设施矩阵、Docker 断网容器验收和双架构发布构建。截图仅保留在本地验收目录，不加入发布源码。
+
+验证结果：`pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更文件的 ESLint／Prettier 检查和 `pnpm test:e2e:matrix` 均通过。Vitest 定向运行主题、偏好、组件约束及日志颜色相关的 5 个测试文件，28 项通过；Playwright 的主题遍历、首屏与登录偏好、导入执行与日志、存储树、两项登录回归及用例树共 7 个场景复验通过。JAR 导入执行场景最后在空白数据目录完成复验，避免复用历史夹具造成同名来源定位冲突。
+
+## 任务进度条补充（2026-09-23）
+
+任务卡片的“近 7 天平均通过率”仍有原生 `<progress>` 的样式遗留：外层固定为 8px 并裁剪溢出，Ant Design 内层受行内基线影响下移 7px，实际 6px 的填充条有 5px 被裁掉。浏览器回归在修改前复现该问题。该指标表示已结束批次的平均通过率，统计口径和后台快照刷新机制保持不变。
+
+共享 Progress 改由 Ant Design 控制轨道和填充尺寸，使用语义颜色参数，并去除行内基线空隙。任务通过率、分析进度、分类统计、日志加载和系统诊断统一移除原生进度条选择器及外层定高裁剪；成功、信息、警告和异常颜色跟随全局明暗主题。以后不能再通过给外层固定高度或原生伪元素调整 Ant Design 的内部进度条。
+
+新增任务卡片浏览器回归：以独立项目的历史夹具触发真实后台统计和页面渲染，覆盖 0%、50%、100% 和无记录；检查文字数值、ARIA 数值、轨道完整边界和实际填充比例。夹具只服务于 UI 检查，不替代 Runner 执行协议验收。
+
+验证通过：生产 Web 构建、测试 TypeScript、变更文件 ESLint／Prettier、E2E 矩阵校验；主题、组件约束和 SQLite 任务统计定向测试共 24 项通过（未配置 PostgreSQL，6 项 Full 契约测试跳过；本次没有适配器变更）。Playwright 的任务进度、完整分析流程、系统诊断与日志对比共 4 个场景通过。已实际查看任务卡片在浅色／深色、1024×768 与 1536×1024 下的截图，以及分析列表、统计、诊断、日志对比的两种桌面视口截图；填充完整、比例与文字一致、颜色可区分，无横向溢出。截图仅存本地验收目录。
+
+## 工作概览圆环遮挡修复（2026-09-23）
+
+“失败洞察”的中心遮罩误用了矩形圆角，直径 66px 的内孔只有 14px 圆角，遮住了彩色圆环的四个斜角，视觉上像数字背景覆盖了颜色。恢复圆形内孔，同时修正“活动执行”中的相同样式；数据、分段比例和统计刷新逻辑不变。首页 E2E 增加内孔几何检查，修改前已复现失败。
+
+`pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更文件的 ESLint／Prettier 以及 `pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'homepage mirrors'` 均通过。首页布局回归覆盖 1024、1536、2560、3840px；另使用含实际失败方法统计的测试数据，在浅色／深色的 1024×768、1536×1024 下截图并实际查看，圆环连续、厚度均匀，中心文字清晰。没有修改数据库或执行逻辑，本轮未重跑 Full 基础设施验收。
+
+## 顶栏通知角标补充（2026-09-23）
+
+未读通知数字原先使用带 2px 边框的自绘角标，改为 Ant Design Badge，并通过其 indicator 样式关闭默认外阴影，保留纯色数字角标。角标底色使用 Ant Design 的 `colorErrorActive` 主题 token，保证两种主题下的小字号数字对比度至少 4.5:1。保留完整未读数（不缩写为 99+）、零未读时隐藏角标及按钮的可访问名称；键盘焦点仍由通知按钮呈现。浏览器回归先复现旧角标 2px 边框，再检查浅色／深色的无边框、无阴影、三位数和清零状态。
+
+`pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更文件 ESLint／Prettier 均通过；`pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'topbar tools remain|multiline notifications'` 两项通过，包括通知弹层与标记已读。已实际查看浅色／深色、1024×768 和 1536×1024 截图，角标无描边、文字清晰，与相邻按钮无重叠。本次仅变更共享前端展示，未重跑 Full 基础设施验收。
+
+## 子 Tab 稳定布局与过渡（2026-09-23）
+
+Playwright 首先复现了 TestNG 切换到 DDT 后导航上移 20px。根因包括 DDT 专用页头隐藏眉题、DDT 用例页通过 `:has()` 改变整个工作台的网格和工具栏位置，以及长短内容间滚动条占位变化。
+
+- 统一普通用例与 DDT 的页头几何尺寸，DDT 各子页共用固定的“Tab → 操作栏 → 内容”布局；保留已访问 TestNG/DDT 面板、目录加载与选择状态。
+- 平台设置、组织管理、用例类型、DDT 功能、用例分析步骤使用共享 `TabContent`；旅程 Step 复用同一过渡钩子。仅在切换时进行 180ms 透明度过渡，不动画修改高度、不改变数据加载规则，也不通过动态 key 重建表单。减少动态效果偏好会关闭动画。
+- 路由子 Tab 保留滚动位置，慢请求期间旧内容仍可见；等待标记有固定占位，键盘操作与鼠标共用链接入口，均保留未保存配置确认。
+- 根布局预留滚动条空间，并在最小 1024px 桌面宽度下扣除该占位。UI 溢出检查据实际可用宽度识别超宽，不将空滚动条槽误判成横向溢出。
+- 回归中另发现 URL 直接打开登录弹窗会产生 React hydration 错误。已让共享 Ant Modal 在浏览器接管首屏后挂载 Portal，补充旧登录地址和受保护页面入口的浏览器异常断言。
+
+验证使用生产构建与隔离 Lite 数据目录，不开启自动重试：
+
+- `pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更文件 ESLint／Prettier 通过。
+- `pnpm exec vitest run apps/web/src/components/ui/interaction-readiness.test.tsx apps/web/src/components/ui-usage.test.ts`：19 项通过。
+- `pnpm exec playwright test tests/e2e/ddt-management.spec.ts --grep 'DDT workspace imports, edits, validates'`：1 项通过，补充旅程 Step 切换、字段校验、保存和版本恢复。
+- `pnpm exec playwright test tests/e2e/tab-navigation.spec.ts tests/e2e/ddt-management.spec.ts tests/e2e/failure-analysis.spec.ts tests/e2e/ui-layout.spec.ts tests/e2e/public-dashboard.spec.ts --grep 'case tabs keep|settings tabs retain|tab navigation protects|DDT split workspace|DDT template dialog|long case names keep|management actions wait for hydration|project member filters stay|legacy login and protected|an initialized platform offers login'`：10 项通过。覆盖 DDT 全部子 Tab、设置各模块、慢响应、滚动保持、浏览器返回、键盘和未保存确认、减少动态效果、字段保存与版本恢复、侧栏缩放、长名称分析弹窗、模板弹窗焦点及登录流程。
+
+已实际查看 1024×768／960、1536×960／1024 和 1920×960 的相关截图，导航层级、对齐、换行和滚动边界正常；浅色和深色下均保持可读。截图保存在本地忽略目录 `.local/ui-tab-transitions/screens`，不纳入提交。本次没有修改后端或适配器，未重跑 Full 基础设施与真实 Runner 执行验收。

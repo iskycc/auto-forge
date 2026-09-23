@@ -19,6 +19,9 @@ import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 import { platformDateTimeInputToIso } from "@/lib/platform-date-time";
+import { useColorMode } from "./ant-design-provider";
+import type { ColorMode } from "@/lib/color-mode";
+import { lightLogVariables } from "@/lib/ant-design-theme";
 
 type LogStream = "stdout" | "stderr" | "agent";
 
@@ -85,7 +88,9 @@ export function AttemptLogViewer({
   const [recordedAfter, setRecordedAfter] = useState("");
   const [recordedBefore, setRecordedBefore] = useState("");
   const [activeTimeRange, setActiveTimeRange] = useState({ after: "", before: "" });
-  const [darkLogs, setDarkLogs] = useState(false);
+  const { colorMode } = useColorMode();
+  const [logColorMode, setLogColorMode] = useState<ColorMode>();
+  const darkLogs = (logColorMode ?? colorMode) === "dark";
   const [logs, setLogs] = useState<AttemptLogPage["items"]>([]);
   const [nextSequence, setNextSequence] = useState<number | undefined>();
   const [logsTruncated, setLogsTruncated] = useState(false);
@@ -306,7 +311,7 @@ export function AttemptLogViewer({
             uiPatterns["button-secondary"],
             uiPatterns["compact-button"],
           )}
-          onClick={() => setDarkLogs((current) => !current)}
+          onClick={() => setLogColorMode(darkLogs ? "light" : "dark")}
           type="button"
         >
           {darkLogs ? "浅色日志" : "深色日志"}
@@ -353,6 +358,7 @@ export function AttemptLogViewer({
       ) : null}
       {canReadLogs ? (
         <pre
+          style={logColorMode === "light" ? lightLogVariables : undefined}
           className={cn(
             attemptLogViewerStyles["execution-log"],
             `execution-log ${darkLogs ? cn("execution-log-dark", attemptLogViewerStyles["execution-log-dark"]) : ""}`,

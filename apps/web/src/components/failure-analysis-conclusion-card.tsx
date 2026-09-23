@@ -281,7 +281,7 @@ const failureAnalysisConclusionCardStyles = {
   "failure-analysis-conclusion-summary":
     "text-muted-foreground text-xs [display:-webkit-box] overflow-hidden [-webkit-box-orient:vertical] [-webkit-line-clamp:3]",
   "failure-analysis-conclusion-ticket":
-    "col-span-full min-w-0 [margin:4px_0_0] p-2 rounded-lg bg-muted text-sm [overflow-wrap:anywhere] whitespace-normal [&_a]:text-primary [&_a]:[text-decoration:underline]",
+    "col-span-full min-w-0 [margin:4px_0_0] p-2 rounded-lg bg-muted text-sm [overflow-wrap:anywhere] whitespace-normal [&_a]:text-primary-text [&_a]:[text-decoration:underline]",
   "failure-analysis-conclusion-toggle": "justify-self-start",
   "failure-analysis-history-state":
     "flex min-h-13.5 items-center justify-center gap-[7px] border border-dashed border-border rounded-lg text-muted-foreground text-sm [&.error]:[border-color:color-mix(in_srgb,_var(--destructive)_28%,_var(--border))] [&.error]:text-destructive",

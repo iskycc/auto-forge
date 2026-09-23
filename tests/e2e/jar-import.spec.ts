@@ -409,10 +409,10 @@ public class MixedVisibleTest {
   );
 
   await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
   await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
   await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
   await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
@@ -1306,6 +1306,13 @@ public class MixedVisibleTest {
     .poll(() => page.evaluate(() => document.documentElement.scrollHeight))
     .toBeLessThan(2_200);
   await captureUi(page, "quality-insights-charts-1024");
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `dark-quality-insights-${width}`);
+  }
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.locator(".insight-trend-card").getByRole("button", { name: "查看明细" }).click();
   const trendDialog = page.getByRole("dialog", { name: "每日趋势明细" });
@@ -1380,6 +1387,19 @@ public class MixedVisibleTest {
   );
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "查看日志", exact: true }).click();
+  await expect(page.locator(".execution-log")).toHaveClass(/(?:^|\s)execution-log-dark(?:\s|$)/);
+  await page.getByRole("button", { name: "浅色日志", exact: true }).click();
+  await expect(page.locator(".execution-log")).not.toHaveClass(
+    /(?:^|\s)execution-log-dark(?:\s|$)/,
+  );
+  const logBackground = await page
+    .locator(".execution-log")
+    .evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(logBackground).toBe("rgb(240, 244, 249)");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
   // 需求5后单用例不再自动展开，需显式点击详情才能看到产物列表。
   await page
     .getByRole("row", { name: taskCase.displayName })
@@ -1498,6 +1518,21 @@ public class MixedVisibleTest {
     await expect(anonymousPage.locator(".share-log-output")).not.toContainText(
       "TestCase Run Failed Stack Base64",
     );
+    await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(anonymousPage);
+      await expect(anonymousPage.locator("html")).toHaveCSS("color-scheme", "dark");
+      await expect(anonymousPage.locator(".share-log-output")).toHaveCSS(
+        "color",
+        "rgb(232, 237, 245)",
+      );
+      await captureUi(anonymousPage, `dark-public-log-${width}`);
+    }
+    await anonymousPage.reload();
+    await expect(
+      anonymousPage.getByRole("button", { name: "切换到浅色模式", exact: true }),
+    ).toBeVisible();
     const roundLogNavigation = anonymousPage.getByRole("navigation", {
       name: "同一用例的执行历史",
     });
@@ -1920,8 +1955,8 @@ public class MixedVisibleTest {
   }
 
   await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
+  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
   await expectUiConsistency(page);
 
   const loginUsername = page.getByLabel("用户名");
@@ -1938,7 +1973,7 @@ public class MixedVisibleTest {
 
   await loginUsername.fill(E2E_ADMIN_USERNAME);
   await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
   const authenticatedSession = await page.request.get("/api/v1/auth/session");
   expect(authenticatedSession.status()).toBe(200);

@@ -1,5 +1,5 @@
 "use client";
-import { Menu, Popover } from "antd";
+import { Badge, Menu, Popover } from "antd";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -381,9 +381,15 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
           >
             <Bell size={19} />
             {unreadCount > 0 ? (
-              <span className={cn("notification-count", topbarToolsStyles["notification-count"])}>
-                {unreadCount}
-              </span>
+              <Badge
+                count={unreadCount}
+                color="var(--ant-color-error-active)"
+                overflowCount={Number.MAX_SAFE_INTEGER}
+                size="small"
+                className="-top-0.5 -right-0.5"
+                classNames={{ indicator: "notification-count" }}
+                styles={{ root: { position: "absolute" }, indicator: { boxShadow: "none" } }}
+              />
             ) : null}
           </Button>
         </Popover>
@@ -431,8 +437,6 @@ const topbarToolsStyles = {
     "flex w-[min(420px,_42vw)] h-10 items-center gap-[9px] mr-auto [padding:0_10px_0_12px] border border-solid border-border rounded-lg bg-card text-muted-foreground shadow-xs [&:focus-within]:border-info/10 [&:focus-within]:shadow-xs [&_input]:min-w-0 [&_input]:flex-1 [&_input]:border-0 [&_input]:[outline:0] [&_input]:bg-transparent [&_input]:text-foreground [&_kbd]:py-0.5 [&_kbd]:px-1.5 [&_kbd]:border [&_kbd]:border-solid [&_kbd]:border-border [&_kbd]:rounded-md [&_kbd]:bg-muted [&_kbd]:text-muted-foreground [&_kbd]:text-xs max-[1181px]:[&_kbd]:hidden",
   "global-search-shell":
     "relative w-[min(620px,_100%)] min-w-0 [flex:1_1_620px] max-w-[620px] [&_.global-search]:w-full [&_.global-search]:overflow-hidden max-[1501px]:hidden max-[1181px]:max-w-[490px]",
-  "notification-count":
-    "absolute top-[-4px] right-[-4px] grid min-w-4.5 h-4.5 place-items-center py-0 px-1 border-2 border-solid border-border rounded-lg bg-destructive text-primary-foreground text-xs font-semibold",
   "notification-item":
     "flex h-auto items-center w-full whitespace-normal gap-3 p-2.5 border-0 rounded-lg bg-transparent text-foreground text-left [text-decoration:none] cursor-pointer [&:hover]:bg-muted [&:hover]:[outline:none] [&:focus-visible]:bg-muted [&:focus-visible]:[outline:none] [&_small]:text-muted-foreground [&_small]:[overflow-wrap:anywhere] [&_small]:whitespace-normal [&.read]:opacity-68 [&_time]:text-muted-foreground [&_time]:text-xs",
   "notification-load-more": "w-[calc(100%_-_24px)] [margin:8px_12px_12px]",

@@ -110,6 +110,7 @@ function StorageLocationBranch({
             className={cn(
               "storage-tree-chevron",
               storageInventoryTreeStyles["storage-tree-chevron"],
+              renderedOpen && "rotate-90",
             )}
             size={16}
           />
@@ -124,6 +125,7 @@ function StorageLocationBranch({
         </>
       }
       className={cn("storage-tree-location", storageInventoryTreeStyles["storage-tree-location"])}
+      headerClassName={storageInventoryTreeStyles["storage-tree-location-header"]}
       data-tree-node-id={root.id}
       aria-selected={false}
       onOpenChange={(expanded) => setOpen(expanded)}
@@ -165,6 +167,7 @@ function StorageDirectoryBranch({
             className={cn(
               "storage-tree-chevron",
               storageInventoryTreeStyles["storage-tree-chevron"],
+              renderedOpen && "rotate-90",
             )}
             size={15}
           />
@@ -179,7 +182,8 @@ function StorageDirectoryBranch({
         </>
       }
       headerTitle={directory.logicalPath}
-      className={cn("storage-tree-directory", storageInventoryTreeStyles["storage-tree-directory"])}
+      className="storage-tree-directory"
+      headerClassName={storageInventoryTreeStyles["storage-tree-directory-header"]}
       data-tree-node-id={directory.id}
       aria-selected={false}
       onOpenChange={(expanded) => setOpen(expanded)}
@@ -213,7 +217,13 @@ function StorageDirectoryChildren({
   const [visibleFileCount, setVisibleFileCount] = useState(TREE_RENDER_BATCH_SIZE);
   return (
     <div
-      className={cn("storage-tree-children", storageInventoryTreeStyles["storage-tree-children"])}
+      className={cn(
+        "storage-tree-children",
+        directory.depth === 0
+          ? "grid min-w-0 px-2 py-1.5"
+          : storageInventoryTreeStyles["storage-tree-children"],
+        directory.depth >= 4 && "ml-0 pl-1",
+      )}
       role="group"
     >
       {directory.directories.slice(0, visibleDirectoryCount).map((child) => (
@@ -260,9 +270,13 @@ function StorageFileBranch({
   deletion: RuntimeAssetDeletionControls;
 }) {
   const item = file.primary;
+  const [open, setOpen] = useState(false);
   return (
     <Disclosure
       showArrow={false}
+      open={open}
+      onOpenChange={setOpen}
+      headerClassName={storageInventoryTreeStyles["storage-tree-file-header"]}
       header={
         <>
           <ChevronRight
@@ -270,6 +284,7 @@ function StorageFileBranch({
             className={cn(
               "storage-tree-chevron",
               storageInventoryTreeStyles["storage-tree-chevron"],
+              open && "rotate-90",
             )}
             size={14}
           />
@@ -671,26 +686,28 @@ const storageInventoryTreeStyles = {
   "storage-tree-chevron":
     "[flex:0_0_auto] text-muted-foreground transition-colors duration-150 motion-reduce:transition-none",
   "storage-tree-children": "grid min-w-0 ml-3.5 border-l border-solid border-border pl-2",
-  "storage-tree-directory":
-    "[&_.ui-disclosure-label]:grid [&_.ui-disclosure-label]:min-w-0 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[9px] [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label]:min-h-10.5 [&_.ui-disclosure-label]:grid-cols-[auto_auto_minmax(0,_1fr)_auto] [&_.ui-disclosure-label]:rounded-lg [&_.ui-disclosure-label]:py-[5px] [&_.ui-disclosure-label]:px-[9px] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-label:hover]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_46%,_var(--card))] [&[data-open=true]_.ui-disclosure-label_>_.storage-tree-chevron]:[transform:rotate(90deg)] [&_.ui-disclosure-label_>_svg:not(.storage-tree-chevron)]:text-warning",
+  "storage-tree-directory-header":
+    "grid min-w-0 items-center gap-2 cursor-pointer min-h-10 grid-cols-[auto_auto_minmax(0,1fr)_auto] rounded-lg px-2 py-1 hover:bg-muted/50 [&_>_svg:not(.storage-tree-chevron)]:text-warning",
   "storage-tree-directory-metrics":
     "inline-flex items-center gap-3 text-muted-foreground text-xs whitespace-nowrap [&_strong]:min-w-18 [&_strong]:text-foreground [&_strong]:text-right",
-  "storage-tree-file":
-    "[&_.ui-disclosure-label]:grid [&_.ui-disclosure-label]:min-w-0 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[9px] [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label]:min-h-11.5 [&_.ui-disclosure-label]:grid-cols-[auto_22px_auto_minmax(120px,_1fr)_auto_minmax(72px,_auto)_minmax(92px,_auto)_minmax(164px,_auto)] [&_.ui-disclosure-label]:rounded-lg [&_.ui-disclosure-label]:py-1.5 [&_.ui-disclosure-label]:px-[9px] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-label:hover]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_46%,_var(--card))] [&[data-open=true]_.ui-disclosure-label_>_.storage-tree-chevron]:[transform:rotate(90deg)] min-w-0 [&_+_.storage-tree-file]:border-t [&_+_.storage-tree-file]:border-solid [&_+_.storage-tree-file]:border-transparent [&_.ui-disclosure-label_>_svg:not(.storage-tree-chevron)]:text-info max-[1181px]:[&_.ui-disclosure-label]:grid-cols-[auto_22px_auto_minmax(120px,_1fr)_auto_minmax(70px,_auto)_minmax(_164px,_auto_)]",
+  "storage-tree-file": "min-w-0 border-t border-border/50",
+  "storage-tree-file-header":
+    "grid min-w-0 items-center gap-2 cursor-pointer min-h-12 grid-cols-[auto_22px_auto_minmax(0,1fr)_auto_minmax(64px,auto)_minmax(84px,auto)_minmax(150px,auto)] rounded-lg px-2 py-1.5 hover:bg-muted/50 [&_>_svg:not(.storage-tree-chevron)]:text-info max-[1181px]:grid-cols-[auto_22px_auto_minmax(0,1fr)_auto_minmax(64px,auto)_minmax(150px,auto)]",
   "storage-tree-file-actions": "flex justify-end border-t border-solid border-border pt-2.5",
   "storage-tree-file-allocation":
     "text-muted-foreground text-xs text-right whitespace-nowrap max-[1181px]:hidden",
   "storage-tree-file-batch": "overflow-hidden text-info text-xs text-ellipsis whitespace-nowrap",
   "storage-tree-file-detail":
-    "grid gap-[9px] [margin:0_9px_9px_80px] border border-solid border-border rounded-lg py-[11px] px-[13px] bg-muted [&_dl]:grid [&_dl]:min-w-0 [&_dl]:gap-1 [&_dl]:grid-cols-3 [&_dl]:m-0 [&_dl_>_div]:grid [&_dl_>_div]:min-w-0 [&_dl_>_div]:gap-1 [&_dl_>_div]:[align-content:start] [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] [&_dd]:text-muted-foreground [&_dd]:text-xs [&_dd]:leading-[1.5]",
+    "grid min-w-0 gap-2 m-2 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-muted [&_dl]:grid [&_dl]:min-w-0 [&_dl]:gap-1 [&_dl]:grid-cols-3 [&_dl]:m-0 [&_dl_>_div]:grid [&_dl_>_div]:min-w-0 [&_dl_>_div]:gap-1 [&_dl_>_div]:[align-content:start] [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] [&_dd]:text-muted-foreground [&_dd]:text-xs [&_dd]:leading-[1.5]",
   "storage-tree-file-identity": "grid min-w-0 gap-0.5",
-  "storage-tree-file-name": "[overflow-wrap:anywhere] whitespace-normal text-sm",
+  "storage-tree-file-name": "block min-w-0 truncate text-sm",
   "storage-tree-file-selection": 'grid w-5.5 place-items-center [&_.ui-input[type="checkbox"]]:m-0',
   "storage-tree-file-size": "text-muted-foreground text-xs text-right whitespace-nowrap",
   "storage-tree-file-times":
     "text-muted-foreground text-xs text-right whitespace-nowrap grid min-w-0 gap-px [&_strong]:text-foreground [&_strong]:font-semibold",
-  "storage-tree-location":
-    "[&_+_.storage-tree-location]:border-t [&_+_.storage-tree-location]:border-solid [&_+_.storage-tree-location]:border-border [&_.ui-disclosure-label]:grid [&_.ui-disclosure-label]:min-w-0 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[9px] [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label]:min-h-13.5 [&_.ui-disclosure-label]:grid-cols-[auto_auto_minmax(0,_1fr)_auto] [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:px-3.5 [&_.ui-disclosure-label]:bg-muted [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-label:hover]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_46%,_var(--card))] [&[data-open=true]_.ui-disclosure-label_>_.storage-tree-chevron]:[transform:rotate(90deg)] [&_.ui-disclosure-body_>_.storage-tree-children]:m-0 [&_.ui-disclosure-body_>_.storage-tree-children]:border-l-0 [&_.ui-disclosure-body_>_.storage-tree-children]:[padding:6px_8px_9px]",
+  "storage-tree-location": "min-w-0 border-b border-border last:border-b-0",
+  "storage-tree-location-header":
+    "grid min-w-0 items-center gap-2 cursor-pointer min-h-14 grid-cols-[auto_auto_minmax(0,1fr)_auto] px-3 py-2 bg-muted hover:bg-muted/80",
   "storage-tree-name":
     "grid min-w-0 gap-0.5 [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal [&_code]:[overflow-wrap:anywhere] [&_code]:whitespace-normal [&_code]:text-muted-foreground [&_code]:text-xs",
   "storage-tree-path-detail":

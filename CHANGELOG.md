@@ -4,6 +4,31 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.17.25 - 2026-09-23
+
+### Changed and fixed
+
+- 增加全局 Ant Design 深色模式，覆盖控制台、公开首页、登录弹窗、分享页和日志；偏好保存在浏览器并用于服务端首屏，优化两种主题下的状态色、链接、提示和键盘焦点对比度。
+- 登录入口统一为公开首页弹窗，保留旧登录链接、受保护页面跳转和密码修改提示；修复 URL 直接打开弹窗时的服务端与浏览器首屏渲染不一致。
+- 修复存储空间文件树多层嵌套时的列错位、长路径溢出和样式扩散；压缩用例树目录与用例行间距，保留懒加载、勾选、预览与滚动边界。
+- 修复 Ant Design 进度条被旧外层高度裁剪的问题，统一任务通过率、分析统计、日志和诊断进度展示；恢复工作概览失败洞察与活动执行圆环的圆形内孔，移除顶栏通知数字的描边与外阴影。
+- 统一普通用例与 DDT 页头、DDT 子 Tab 和操作栏位置，预留滚动条空间，避免切换时上下或横向跳动；设置、DDT、用例分析与旅程步骤使用 180ms 内容过渡，支持减少动态效果，保留滚动位置、缓存和未保存确认。
+- 新增 Tab 导航回归接入常规 CI 与 Lite 断网验收；测试自行创建项目、版本、阶段，避免依赖前序场景留下的数据。
+- 发布资产下载按 Release ID 分页读取资产集合，避免新发布版本的内嵌资产列表暂时为空时误报缺少附件。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久部署配置、Runner Protocol 或 Adapter 协议变更。Lite/Full 共用前端与现有 API；更新主平台即可，Full 各平台节点应同步更新。
+- 无新增生产依赖。Ant Design 主题、图标、样式和语言资源继续随离线镜像交付；双架构后端、部署包、Jenkins 插件、SBOM 元数据和签名清单的资产类型不变。
+- 不提交截图、数据库、测试产物和本地构建文件。
+
+### Validation and known limitations
+
+- 变更分批通过生产构建、类型和定向组件／浏览器回归；最近一轮 19 项组件检查及 11 项 E2E 通过，覆盖 Tab 几何位置、慢响应、返回、未保存确认、DDT 编辑与恢复、长名称分析和登录首屏。
+- 发布整理阶段再次通过全仓格式、Lint、类型与 E2E 覆盖清单检查，24 项相关单元／组件测试、11 项发布脚本测试及全新 Lite 数据库上的 3 项 Tab 浏览器测试通过，生产构建成功。
+- 已实际查看 1024px、1536px 和 1920px 等桌面视口截图，包含浅色／深色、带执行数据的图表及公开日志；详细命令与分轮验证见 [Ant Design 复查报告](./docs/design/ant-design-ui-audit.md)。
+- 本地 UI 验证使用隔离 Lite 数据；Full、真实 Runner、双架构离线发布与已发布资产升级验收由 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.17.24 - 2026-09-23
 
 ### Changed and fixed

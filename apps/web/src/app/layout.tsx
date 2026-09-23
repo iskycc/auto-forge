@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { hasPermission, type Permission } from "@autoforge/domain";
 import { connection } from "next/server";
+import { cookies } from "next/headers";
+import { COLOR_MODE_COOKIE, parseColorMode } from "@/lib/color-mode";
 
 import { PlatformTimeProvider } from "@/components/platform-time";
 import { AppShell } from "@/components/app-shell";
@@ -30,6 +32,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // rendering before opening SQLite so parallel prerender workers never race
   // while configuring the same database.
   await connection();
+  const colorMode = parseColorMode((await cookies()).get(COLOR_MODE_COOKIE)?.value);
   const services = await getPlatformServices();
   const platformTimeZone = services.configurationStore.read().web.timeZone;
   const identity = await currentIdentity();
@@ -60,9 +63,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           .map(({ id, name }) => ({ id, name })),
       })) ?? [];
   return (
-    <html data-time-zone={platformTimeZone} lang="zh-CN">
+    <html data-time-zone={platformTimeZone} data-color-mode={colorMode} lang="zh-CN">
       <body>
-        <AntDesignProvider>
+        <AntDesignProvider initialColorMode={colorMode}>
           <PlatformTimeProvider serverTime={services.clock.now().toISOString()}>
             <UiFeedbackProvider>
               <AppShell

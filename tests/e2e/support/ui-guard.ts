@@ -247,7 +247,8 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
       documentWidth: document.documentElement.scrollWidth,
       fontViolations,
       overlapViolations,
-      viewportWidth: window.innerWidth,
+      // Exclude the native scrollbar gutter from the usable layout viewport.
+      viewportWidth: document.documentElement.clientWidth,
     };
   });
 }
@@ -258,5 +259,8 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
   expect(report.controlViolations, "visible controls shorter than 32px").toEqual([]);
   expect(report.overlapViolations, "interactive controls overlapping each other").toEqual([]);
   expect(report.cardOverflow, "card content escaping its layout boundary").toEqual([]);
-  expect(report.documentWidth, "page-level horizontal overflow").toBe(report.viewportWidth);
+  // Chromium can include a reserved, empty gutter in clientWidth; a narrower document is valid.
+  expect(report.documentWidth, "page-level horizontal overflow").toBeLessThanOrEqual(
+    report.viewportWidth,
+  );
 }

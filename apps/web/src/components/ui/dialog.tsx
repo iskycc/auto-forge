@@ -3,6 +3,7 @@
 import { Modal } from "antd";
 import { useEffect, useRef, type ComponentProps, type ReactNode, type RefObject } from "react";
 import { cn } from "@/lib/utils";
+import { useClientReadiness } from "./use-client-readiness";
 
 /** Shared modal lifecycle; callers keep ownership of drafts and close policies. */
 export function Dialog({
@@ -38,6 +39,7 @@ export function Dialog({
     "data-read-only"?: string | undefined;
   };
 }) {
+  const clientReady = useClientReadiness();
   const returnFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -50,7 +52,8 @@ export function Dialog({
   }, [open]);
   return (
     <Modal
-      open={open}
+      // Ant's portal has no server container; URL-opened dialogs must hydrate before mounting it.
+      open={open && clientReady}
       title={<span className="sr-only">{title}</span>}
       footer={null}
       closable={false}

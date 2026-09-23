@@ -10,6 +10,7 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-primary-text: var(--primary-text);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -53,6 +54,7 @@
   --popover: var(--card);
   --popover-foreground: var(--foreground);
   --primary: #1668dc;
+  --primary-text: #1668dc;
   --primary-foreground: #ffffff;
   --secondary: #e6f4ff;
   --secondary-foreground: var(--foreground);
@@ -67,7 +69,7 @@
   --ring: #91caff;
   --success: #237804;
   --info: #0958d9;
-  --warning: #ad6800;
+  --warning: #925400;
   --brand: oklch(0.57 0.21 28);
   --ansi-magenta: oklch(0.5 0.17 320);
   --ansi-cyan: oklch(0.45 0.09 205);
@@ -90,12 +92,30 @@
   --log-border: oklch(0.35 0 0);
 }
 
+:root[data-color-mode="dark"] {
+  color-scheme: dark;
+  --primary-text: #69b1ff;
+  --background: #101319;
+  --foreground: #e8edf5;
+  --card: #1b2029;
+  --popover: #252b36;
+  --muted: #252c38;
+  --muted-foreground: #adb8c9;
+  --border: #394557;
+  --input: #536176;
+  --log-background: #252c38;
+  --log-foreground: #e8edf5;
+}
+
 @layer base {
   * {
     @apply border-border;
   }
   html {
-    @apply min-w-[1024px] bg-background font-sans text-base text-foreground antialiased;
+    scrollbar-gutter: stable;
+    /* The desktop minimum includes the reserved scrollbar, even at exactly 1024px. */
+    min-width: calc(1024px - (100vw - 100%));
+    @apply bg-background font-sans text-base text-foreground antialiased;
   }
   body {
     @apply m-0 min-h-screen text-sm;

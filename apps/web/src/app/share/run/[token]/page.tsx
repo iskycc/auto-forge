@@ -13,6 +13,7 @@ import { currentIdentity } from "@/lib/auth";
 import { toExecutionBatchView } from "@/lib/execution-batch-view";
 import { readPermanentShareToken } from "@/lib/permanent-share-token";
 import { getPlatformServices } from "@/lib/services";
+import { ColorModeToggle } from "@/components/color-mode-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +98,7 @@ function InvalidRunShare() {
           <Link2Off size={30} strokeWidth={1.8} />
         </span>
         <h1>链接无效</h1>
+        <ColorModeToggle />
         <p>该执行结果永久分享链接无效，或对应的执行记录已经被删除。</p>
       </section>
     </main>

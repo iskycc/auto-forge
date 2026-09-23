@@ -8,6 +8,7 @@ import { PlatformInitialization } from "@/components/platform-initialization";
 import { currentIdentity } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
+import { ColorModeToggle } from "@/components/color-mode-toggle";
 
 export default async function SetupPage() {
   const services = await getPlatformServices();
@@ -70,9 +71,12 @@ export default async function SetupPage() {
               <h1 id="setup-page-title">初始化控制平面</h1>
               <p>先确认运行方式，再建立第一个具备完整管理权限的本地账号。</p>
             </div>
-            <span className={cn("setup-local-status", pageStyles["setup-local-status"])}>
-              <i /> 本地配置
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className={cn("setup-local-status", pageStyles["setup-local-status"])}>
+                <i /> 本地配置
+              </span>
+              <ColorModeToggle />
+            </div>
           </header>
 
           <PlatformInitialization

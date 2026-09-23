@@ -256,7 +256,7 @@ const pageStyles = {
   "failure-analysis-batch-grid": "grid grid-cols-2 gap-3 max-[1025px]:grid-cols-[1fr]",
   "failure-analysis-batch-heading": "flex items-center justify-between gap-2",
   "failure-analysis-batch-progress":
-    "grid gap-[7px] [&_>_span]:flex [&_>_span]:items-center [&_>_span]:justify-between [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_strong]:text-muted-foreground [&_.ui-progress]:w-full [&_.ui-progress]:h-[7px] [&_.ui-progress]:overflow-hidden [&_.ui-progress]:border-0 [&_.ui-progress]:rounded-full [&_.ui-progress]:bg-muted [&_.ui-progress]:[appearance:none] [&_progress::-webkit-progress-bar]:rounded-full [&_progress::-webkit-progress-bar]:bg-muted [&_progress::-webkit-progress-value]:rounded-full [&_progress::-webkit-progress-value]:bg-card [&_progress::-moz-progress-bar]:rounded-full [&_progress::-moz-progress-bar]:bg-card",
+    "grid gap-[7px] [&_>_span]:flex [&_>_span]:items-center [&_>_span]:justify-between [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_strong]:text-muted-foreground",
   "failure-analysis-empty":
     "grid min-h-[190px] place-items-center [align-content:center] gap-[9px] p-7 border border-dashed border-border rounded-lg bg-muted text-muted-foreground text-center [&_strong]:text-foreground",
   "failure-analysis-page": "gap-[clamp(14px,_1.5vw,_20px)]",

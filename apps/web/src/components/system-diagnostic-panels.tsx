@@ -379,7 +379,7 @@ function Meter({
         <small>{detail}</small>
       </div>
       <Progress
-        className={styles[tone]}
+        tone={tone}
         aria-label={label}
         max={100}
         value={Math.min(100, Math.max(0, value))}

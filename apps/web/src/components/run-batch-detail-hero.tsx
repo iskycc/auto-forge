@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { ArrowLeft, Clock3, Link2 } from "lucide-react";
 import Link from "next/link";
+import { ColorModeToggle } from "./color-mode-toggle";
 
 export function RunBatchDetailHero({
   batchId,
@@ -55,9 +56,13 @@ export function RunBatchDetailHero({
             {projectVersionName ? `「${projectVersionName}」` : "未关联"}
           </p>
         </div>
-        <span className={cn("hero-icon violet", runBatchDetailHeroStyles["hero-icon"])}>
-          <Clock3 size={24} />
-        </span>
+        {shared ? (
+          <ColorModeToggle />
+        ) : (
+          <span className={cn("hero-icon violet", runBatchDetailHeroStyles["hero-icon"])}>
+            <Clock3 size={24} />
+          </span>
+        )}
       </section>
     </>
   );

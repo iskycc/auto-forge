@@ -5,6 +5,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 import { DatabaseZap, FileArchive, Import } from "lucide-react";
 import { LinkButton } from "@/components/ui/link-button";
 import { Tabs } from "./ui/tabs";
+import { TabContent } from "./ui/tab-content";
 import { useState, type MouseEvent, type ReactNode } from "react";
 
 type CaseManagementTab = "testng" | "ddt";
@@ -44,25 +45,15 @@ export function CaseManagementTabs({
 
   return (
     <>
-      <section
-        className={cn(
-          uiPatterns["page-hero"],
-          "page-hero",
-          activeTab === "ddt" && cn("ddt-page-hero", caseManagementTabsStyles["ddt-page-hero"]),
-        )}
-      >
-        <div>
+      <section className={cn(uiPatterns["page-hero"], "page-hero flex-nowrap")}>
+        <div className="min-w-0 flex-1">
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>
             {activeTab === "ddt" ? "数据驱动测试" : "TestNG 资产"}
           </span>
           <h1>用例管理</h1>
-          <p>
-            {activeTab === "ddt"
-              ? "在当前项目版本与测试阶段内管理动态字段用例、用户旅程、模板和导入来源。"
-              : "一个 TestNG 测试类对应一个用例定义，测试方法作为可执行项保存在版本快照中。"}
-          </p>
+          <p>在当前项目版本与测试阶段内管理 TestNG 测试类与 DDT 数据驱动用例。</p>
         </div>
-        {canImport && activeTab === "testng" ? (
+        {canImport ? (
           <LinkButton
             variant="primary"
             className={cn(
@@ -70,6 +61,8 @@ export function CaseManagementTabs({
               uiPatterns["button"],
               uiPatterns["button-primary"],
               uiPatterns["button-large"],
+              "shrink-0",
+              activeTab !== "testng" && "invisible",
             )}
             href="/cases/import"
           >
@@ -117,18 +110,16 @@ export function CaseManagementTabs({
         />
       </nav>
 
-      {activeTab === "testng" ? scopeContent : null}
+      <TabContent activeKey={activeTab} className="gap-5">
+        {activeTab === "testng" ? scopeContent : null}
 
-      <section aria-label="TestNG 用例" hidden={activeTab !== "testng"} id="testng-case-panel">
-        {visitedTabs.has("testng") ? testngContent : null}
-      </section>
-      <section aria-label="DDT 管理" hidden={activeTab !== "ddt"} id="ddt-case-panel">
-        {visitedTabs.has("ddt") ? ddtContent : null}
-      </section>
+        <section aria-label="TestNG 用例" hidden={activeTab !== "testng"} id="testng-case-panel">
+          {visitedTabs.has("testng") ? testngContent : null}
+        </section>
+        <section aria-label="DDT 管理" hidden={activeTab !== "ddt"} id="ddt-case-panel">
+          {visitedTabs.has("ddt") ? ddtContent : null}
+        </section>
+      </TabContent>
     </>
   );
 }
-
-const caseManagementTabsStyles = {
-  "ddt-page-hero": "py-1 [&_.eyebrow]:hidden",
-} as const;

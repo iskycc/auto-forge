@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
+import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
 
 import {
   browserJson,
@@ -11,12 +12,17 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
-import { expectUiIntegrity, inspectUiIntegrity } from "./support/ui-guard";
+import { expectReadableText, expectUiIntegrity, inspectUiIntegrity } from "./support/ui-guard";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 
 const primaryRoutes = [
   "/",
   "/cases",
+  "/cases/import",
+  "/cases?tab=ddt&ddtView=cases",
+  "/cases?tab=ddt&ddtView=templates",
+  "/cases?tab=ddt&ddtView=search",
+  "/cases?tab=ddt&ddtView=api",
   "/case-suites",
   "/objects",
   "/execution-records",
@@ -916,6 +922,25 @@ test("homepage mirrors the designed six-card workspace and exposes global execut
     await expect(sidebarRegion).toBeVisible();
     await expect(page.locator(".dashboard-focus")).toBeVisible();
     await expect(page.locator('[aria-label="关键状态"] .dashboard-pulse')).toHaveCount(4);
+    for (const donut of await page.locator(".failure-donut, .active-run-donut").all()) {
+      const innerHole = await donut.evaluate((element) => {
+        const style = getComputedStyle(element, "::after");
+        const diameter = Math.min(parseFloat(style.width), parseFloat(style.height));
+        const cornerRadii = [
+          style.borderTopLeftRadius,
+          style.borderTopRightRadius,
+          style.borderBottomLeftRadius,
+          style.borderBottomRightRadius,
+        ].map((radius) =>
+          radius.endsWith("%") ? (parseFloat(radius) / 100) * diameter : parseFloat(radius),
+        );
+        return { diameter, minimumRadius: Math.min(...cornerRadii) };
+      });
+      expect(
+        innerHole.minimumRadius,
+        "中心数字背景应为圆形，不能挡住圆环的四个斜角",
+      ).toBeGreaterThanOrEqual(innerHole.diameter / 2);
+    }
     const dashboard = await dashboardPage.boundingBox();
     const sidebar = await sidebarRegion.boundingBox();
     expect(dashboard).not.toBeNull();
@@ -940,11 +965,16 @@ test("homepage mirrors the designed six-card workspace and exposes global execut
 test("topbar tools remain separate from execution controls across desktop widths", async ({
   page,
 }) => {
+  let unreadCount = 2;
   await page.route("**/api/v1/notifications/unread-count", (route) =>
-    route.fulfill({ json: { count: 2 } }),
+    route.fulfill({ json: { count: unreadCount } }),
   );
   await ensureAdministrator(page);
   await expect(page.getByRole("button", { name: "2 条未读通知" })).toBeVisible();
+  const unreadBadge = page.locator(".notification-count");
+  await expect(unreadBadge).toHaveCSS("border-width", "0px");
+  await expect(unreadBadge).toHaveCSS("box-shadow", "none");
+  await expectReadableText(unreadBadge);
   for (const width of [1024, 1180, 1181, 1280, 1500, 1501, 1536, 1024]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     const tools = page.locator(".topbar-tools");
@@ -980,6 +1010,27 @@ test("topbar tools remain separate from execution controls across desktop widths
     await expectUiIntegrity(page);
     await captureUi(page, "/topbar-controls", width, false);
   }
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expect(unreadBadge).toHaveText("2");
+    await expect(unreadBadge).toHaveCSS("border-width", "0px");
+    await expect(unreadBadge).toHaveCSS("box-shadow", "none");
+    await expectReadableText(unreadBadge);
+    await expectUiIntegrity(page);
+    await captureUi(page, "/topbar-controls-dark", width, false);
+  }
+  unreadCount = 128;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("button", { name: "128 条未读通知" })).toBeVisible();
+  await expect(unreadBadge).toHaveAttribute("title", "128");
+  await expect(unreadBadge).toHaveText("128");
+  await expectUiIntegrity(page);
+  await captureUi(page, "/topbar-controls-three-digit-count", 1536, false);
+  unreadCount = 0;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(unreadBadge).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "通知", exact: true })).toBeVisible();
 });
 
 test("global execution dialog covers and centers within the whole viewport", async ({ page }) => {
@@ -1225,21 +1276,123 @@ test("role cards keep long names and identifiers within desktop layout boundarie
 test("primary product and administration routes pass the shared layout guard", async ({ page }) => {
   test.setTimeout(300_000);
   await ensureAdministrator(page);
+  await createUiProject(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
 
-  for (const viewport of [
-    { width: 1536, height: 1024 },
-    { width: 1024, height: 768 },
-  ]) {
-    await page.setViewportSize(viewport);
-    for (const route of primaryRoutes) {
-      await page.goto(route);
-      await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-      await expectUiIntegrity(page);
-      await captureUi(page, route, viewport.width);
+  for (const colorMode of ["light", "dark"] as const) {
+    if (colorMode === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const viewport of [
+      { width: 1536, height: 1024 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      for (const route of primaryRoutes) {
+        await page.goto(route);
+        await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+        await expectUiIntegrity(page);
+        await expect(page.locator("html")).toHaveAttribute("data-color-mode", colorMode);
+        if (route === "/settings/access?section=users") {
+          await expectReadableText(page.locator(".ant-menu-item-selected a").first());
+          await expectReadableText(page.locator(".ant-tabs-tab-active .ant-tabs-tab-btn").first());
+          await expectReadableText(
+            page.getByRole("button", { name: "分配角色", exact: true }).first(),
+          );
+          await expectReadableText(page.getByRole("button", { name: "创建用户", exact: true }));
+        }
+        await captureUi(page, colorMode === "dark" ? `/dark${route}` : route, viewport.width);
+      }
     }
   }
 });
+
+test("global dark appearance persists in SSR, login dialogs and public pages without external resources", async ({
+  page,
+  context,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("about:blank");
+  await context.clearCookies();
+  await page.goto("/");
+  const appearanceToggle = page.getByRole("button", { name: "切换到深色模式", exact: true });
+  await expect(appearanceToggle).toBeEnabled();
+  await appearanceToggle.focus();
+  await appearanceToggle.press("Enter");
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "切换到浅色模式", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "登录控制台", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "登录控制台", exact: true });
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await expectDarkSurface(page.locator(".ant-modal-container"));
+    await expectDarkSurface(dialog.locator(".ant-input").first());
+    await captureUi(page, "/dark-login-dialog", viewport.width, false);
+  }
+  await dialog.getByRole("button", { name: "关闭登录控制台" }).click();
+  const offlineRequests: string[] = [];
+  await page.route("**/*", (route) => {
+    if (new URL(route.request().url()).origin !== new URL(page.url()).origin) {
+      offlineRequests.push(route.request().url());
+      return route.abort();
+    }
+    return route.continue();
+  });
+  for (const route of ["/share/case/invalid", "/share/run/invalid", "/share/attempt-log/invalid"]) {
+    await page.goto(route);
+    await expect(page.getByRole("heading", { name: "链接无效" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "切换到浅色模式" })).toBeVisible();
+  }
+  await page.getByRole("button", { name: "切换到浅色模式" }).click();
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "切换到深色模式" })).toBeVisible();
+  expect(offlineRequests).toEqual([]);
+
+  const serverRendered = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    await serverRendered.addCookies([
+      { name: "autoforge-color-mode", value: "dark", url: new URL(page.url()).origin },
+    ]);
+    const firstPaint = await serverRendered.newPage();
+    await firstPaint.goto(new URL("/", page.url()).href);
+    await expect(firstPaint.locator("html")).toHaveAttribute("data-color-mode", "dark");
+    await expect(firstPaint.locator("html")).toHaveCSS("color-scheme", "dark");
+    await expectDarkSurface(firstPaint.locator(".public-header").locator("..").first());
+  } finally {
+    await serverRendered.close();
+  }
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await ensureAdministrator(page);
+  await page.goto("/cases");
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(page.getByRole("button", { name: "切换到浅色模式", exact: true })).toBeVisible();
+  await page.locator(".project-picker-trigger").click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await expectDarkSurface(page.locator(".ant-popover-container"));
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, "/dark-project-picker", width, false);
+  }
+});
+
+async function expectDarkSurface(surface: Locator) {
+  const channels = await surface.evaluate((element) =>
+    getComputedStyle(element)
+      .backgroundColor.match(/[\d.]+/gu)
+      ?.map(Number),
+  );
+  expect(channels?.length).toBeGreaterThanOrEqual(3);
+  expect(channels?.[3] ?? 1).toBe(1);
+  expect(Math.max(...channels!.slice(0, 3))).toBeLessThan(100);
+}
 
 test("specified dense pages expose stable product controls", async ({ page }) => {
   await ensureAdministrator(page);
@@ -1399,7 +1552,8 @@ test("imported case selection keeps counts compact before adding to a task", asy
   const scope = await createUiProject(page);
   const classes = Array.from(
     { length: 8 },
-    (_, index) => `com.example.selection.Selection${index}Test`,
+    (_, index) =>
+      `com.example.selection.${index === 7 ? "LongCaseName".repeat(12) : `Selection${index}`}Test`,
   );
   const jar = zipSync(
     Object.fromEntries(
@@ -1434,6 +1588,38 @@ test("imported case selection keeps counts compact before adding to a task", asy
     { width: 1920, height: 1080 },
   ]) {
     await page.setViewportSize(viewport);
+    const rows = pane.locator(".case-tree-case");
+    await expect(rows).toHaveCount(8);
+    const rowBounds = await rows.evaluateAll((elements) =>
+      elements.map((element) => ({
+        height: element.getBoundingClientRect().height,
+        overflow: element.scrollWidth - element.clientWidth,
+      })),
+    );
+    const directoryHeights = await pane
+      .locator(".case-tree-directory > .ant-collapse > .ant-collapse-item > .ui-disclosure-header")
+      .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+    await pane.scrollIntoViewIfNeeded();
+    await captureUi(page, "/compact-case-tree", viewport.width, false);
+    expect(directoryHeights.length).toBeGreaterThan(0);
+    expect(Math.max(...directoryHeights)).toBeLessThanOrEqual(32);
+    expect(Math.max(...rowBounds.map((row) => row.height))).toBeLessThanOrEqual(40);
+    expect(Math.max(...rowBounds.map((row) => row.overflow))).toBeLessThanOrEqual(1);
+    await pane.getByRole("button", { name: "快速预览 Selection0Test", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page
+        .locator(".case-inspector-header")
+        .getByRole("heading", { name: "Selection0Test", exact: true }),
+    ).toBeVisible();
+    const folder = pane.locator(".case-tree-directory").first();
+    const folderCheckbox = folder.getByRole("checkbox", { name: /^选择文件夹 com（/ });
+    await folderCheckbox.check();
+    await expect(folder).toHaveAttribute("data-open", "true");
+    await expect(page.getByRole("status", { name: "已勾选用例的执行统计" })).toContainText(
+      "已勾选 8 个用例",
+    );
+    await folderCheckbox.uncheck();
     await page.getByRole("button", { name: "导入用例", exact: true }).click();
     const importDialog = page.getByRole("dialog", { name: "导入用例", exact: true });
     await importDialog.getByLabel("粘贴用例路径").fill(classes.join("\n"));
@@ -1468,6 +1654,17 @@ test("imported case selection keeps counts compact before adding to a task", asy
     (await browserJson<{ caseCount: number }>(page, `/api/v1/case-suites/${suite.id}`)).body
       .caseCount,
   ).toBe(0);
+  const folderHeader = pane
+    .locator(".case-tree-directory .ui-disclosure-header .ant-collapse-title[role='button']")
+    .first();
+  await folderHeader.focus();
+  await expect(folderHeader).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(pane.locator(".case-tree-case")).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(pane.locator(".case-tree-case")).toHaveCount(8);
+  await pane.getByRole("link", { name: "查看 Selection0Test 详情", exact: true }).click();
+  await expect(page).toHaveURL(/\/cases\/[^/?]+$/u);
 });
 
 test("execution dialog remembers the last chosen task across reopening, edits and project versions", async ({
@@ -1551,6 +1748,65 @@ test("execution dialog remembers the last chosen task across reopening, edits an
   await expect(select).toHaveValue("");
   await expect(dialog).toContainText("上次选择的任务当前不可用，请重新选择可执行任务");
   await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
+});
+
+test("task pass-rate bars keep their full track at zero, partial and complete values in both appearances", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const suites = [];
+  for (const passedRuns of [0, 1, 2]) {
+    const name = `通过率 ${passedRuns * 50}% 验证任务`;
+    const suite = await createUiSuite(page, scope, name);
+    suites.push({ ...suite, name, passedRuns });
+  }
+  await createUiSuite(page, scope, "暂无执行记录的任务");
+  insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
+  await page.goto("/case-suites");
+  const bars = page.getByRole("progressbar", { name: "近 7 天平均通过率", exact: true });
+  await expect(bars).toHaveCount(3, { timeout: 30_000 });
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark") {
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    }
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 1024 },
+    ]) {
+      await page.setViewportSize(viewport);
+      for (const suite of suites) {
+        const card = page.getByRole("article", { name: `任务 ${suite.name}`, exact: true });
+        const bar = card.getByRole("progressbar");
+        await expect(bar).toHaveAttribute("aria-valuenow", String(suite.passedRuns * 50));
+        await expect(card.locator(".suite-statistics dd").nth(1)).toHaveText(
+          `${suite.passedRuns * 50}%`,
+        );
+        const geometry = await bar.evaluate((element) => {
+          const root = element.getBoundingClientRect();
+          const rail = element.querySelector(".ant-progress-rail")!.getBoundingClientRect();
+          const track = element.querySelector(".ant-progress-track")!.getBoundingClientRect();
+          return {
+            topInset: rail.top - root.top,
+            bottomInset: root.bottom - rail.bottom,
+            height: track.height,
+            fraction: track.width / rail.width,
+          };
+        });
+        expect(geometry.topInset).toBeGreaterThanOrEqual(-0.5);
+        expect(geometry.bottomInset, "任务卡片不能裁掉 Ant Design 的进度条").toBeGreaterThanOrEqual(
+          -0.5,
+        );
+        expect(geometry.height).toBeGreaterThanOrEqual(6);
+        expect(geometry.fraction).toBeCloseTo(suite.passedRuns / 2, 2);
+      }
+      const emptyCard = page.getByRole("article", { name: "任务 暂无执行记录的任务", exact: true });
+      await expect(emptyCard).toContainText("暂无已结束执行，均值待统计");
+      await expect(emptyCard.getByRole("progressbar")).toHaveCount(0);
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-progress-${appearance}`, viewport.width);
+    }
+  }
 });
 
 async function createUiProject(page: Page, projectInput?: { name: string; slug: string }) {

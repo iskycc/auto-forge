@@ -1,3 +1,4 @@
+import { TabContent } from "@/components/ui/tab-content";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { AccessSettings, type AccessSection } from "@/components/access-settings";
@@ -137,43 +138,45 @@ export default async function AccessSettingsPage({
         </div>
       </header>
       <OrganizationTabs identity={identity} activeSection={activeSection} />
-      <AccessSettings
-        currentSessionId={identity.sessionId}
-        activeSection={accessSection}
-        capabilities={{
-          ...capabilities,
-          userRead: capabilities.userRead || capabilities.projectRead,
-          userManage: capabilities.userManage && !projectScope,
-          roleRead: capabilities.roleRead || capabilities.projectRead,
-          systemRoleAssign: capabilities.systemRoleAssign && !projectScope,
-        }}
-        canReadSystemRoles={capabilities.roleRead}
-        canReadAllUsers={capabilities.userRead}
-        projectScope={projectScope}
-        {...(currentProject ? { currentProject } : {})}
-        ldap={ldap}
-        projects={projects}
-        assignableProjectIds={projects
-          .filter(
-            (project) =>
-              !project.archived &&
-              hasPermission(identity, "project.manage", project.id) &&
-              (!projectScope || project.id === currentProject?.id),
-          )
-          .map((project) => project.id)}
-        projectMemberships={projectMemberships}
-        roles={roles}
-        sessions={sessions}
-        systemRoleBindings={systemRoleBindings}
-        users={userPage.items}
-        userQuery={query ?? ""}
-        userSource={source ?? ""}
-        nextUserCursor={bindingsPage?.nextCursor ?? userPage.nextCursor}
-        // Query-string Tab navigation preserves client component state. Include the LDAP
-        // configuration version so entering the lazily loaded directory tab and saving a new
-        // revision both remount controlled switches from the authoritative persisted values.
-        key={`${activeSection}:${projectScope ? currentProject?.id : "all"}:${ldap?.updatedAt ?? "none"}`}
-      />
+      <TabContent activeKey={activeSection} className="gap-5">
+        <AccessSettings
+          currentSessionId={identity.sessionId}
+          activeSection={accessSection}
+          capabilities={{
+            ...capabilities,
+            userRead: capabilities.userRead || capabilities.projectRead,
+            userManage: capabilities.userManage && !projectScope,
+            roleRead: capabilities.roleRead || capabilities.projectRead,
+            systemRoleAssign: capabilities.systemRoleAssign && !projectScope,
+          }}
+          canReadSystemRoles={capabilities.roleRead}
+          canReadAllUsers={capabilities.userRead}
+          projectScope={projectScope}
+          {...(currentProject ? { currentProject } : {})}
+          ldap={ldap}
+          projects={projects}
+          assignableProjectIds={projects
+            .filter(
+              (project) =>
+                !project.archived &&
+                hasPermission(identity, "project.manage", project.id) &&
+                (!projectScope || project.id === currentProject?.id),
+            )
+            .map((project) => project.id)}
+          projectMemberships={projectMemberships}
+          roles={roles}
+          sessions={sessions}
+          systemRoleBindings={systemRoleBindings}
+          users={userPage.items}
+          userQuery={query ?? ""}
+          userSource={source ?? ""}
+          nextUserCursor={bindingsPage?.nextCursor ?? userPage.nextCursor}
+          // Query-string Tab navigation preserves client component state. Include the LDAP
+          // configuration version so entering the lazily loaded directory tab and saving a new
+          // revision both remount controlled switches from the authoritative persisted values.
+          key={`${activeSection}:${projectScope ? currentProject?.id : "all"}:${ldap?.updatedAt ?? "none"}`}
+        />
+      </TabContent>
     </section>
   );
 }

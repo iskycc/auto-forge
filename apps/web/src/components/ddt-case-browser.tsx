@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Notice } from "@/components/ui/notice";
 
 import { Tabs } from "./ui/tabs";
+import { useTabTransition } from "./ui/tab-content";
 import { Disclosure } from "@/components/ui/disclosure";
 
 import { cn } from "@/lib/utils";
@@ -359,6 +360,7 @@ export function DdtCaseDetail({
   const stepNames = ddtStepNames(item.data);
   const resolvedStep = steps && steps[activeStep] ? activeStep : (stepNames[0] ?? "");
   const fields = Object.entries(steps?.[resolvedStep] ?? item.data);
+  const fieldsRef = useTabTransition(resolvedStep);
   const finishEditing = () => {
     setEditor(undefined);
     onStatusChange("idle");
@@ -572,7 +574,10 @@ export function DdtCaseDetail({
             />
           </label>
         ) : (
-          <div className={cn("ddt-field-cards", ddtCaseBrowserStyles["ddt-field-cards"])}>
+          <div
+            ref={fieldsRef}
+            className={cn("ddt-field-cards", ddtCaseBrowserStyles["ddt-field-cards"])}
+          >
             {fields.map(([field, value]) => (
               <article
                 className={cn("ddt-field-card", ddtCaseBrowserStyles["ddt-field-card"])}

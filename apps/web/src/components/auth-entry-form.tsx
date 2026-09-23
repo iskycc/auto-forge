@@ -13,13 +13,22 @@ import { authEntryValidationMessage } from "@/lib/auth-entry-validation";
 
 type AuthMode = "login" | "setup";
 
-export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: string | undefined }) {
+export function AuthEntryForm({
+  mode,
+  notice,
+  onPendingChange,
+}: {
+  mode: AuthMode;
+  notice?: string | undefined;
+  onPendingChange?: (pending: boolean) => void;
+}) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
+    onPendingChange?.(true);
     setError("");
     const form = new FormData(event.currentTarget);
     const payload =
@@ -69,6 +78,7 @@ export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: strin
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "请求未成功。");
       setPending(false);
+      onPendingChange?.(false);
     }
   }
 

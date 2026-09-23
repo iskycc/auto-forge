@@ -1276,7 +1276,7 @@ const caseSuiteEditorStyles = {
   "retry-rule-fields": "grid min-w-0 grid-cols-[repeat(auto-fit,_minmax(128px,_1fr))] gap-[9px]",
   "retry-rule-list": "grid min-w-0 gap-2.5",
   "retry-rule-order":
-    "grid self-stretch [align-content:space-between] justify-items-center gap-2 py-[5px] px-0 text-muted-foreground [&_>_strong]:grid [&_>_strong]:w-7 [&_>_strong]:h-7 [&_>_strong]:place-items-center [&_>_strong]:rounded-full [&_>_strong]:bg-info/10 [&_>_strong]:text-primary [&_>_span]:flex [&_>_span]:gap-1 [&_.ui-button]:min-w-6 [&_.ui-button]:px-[5px]",
+    "grid self-stretch [align-content:space-between] justify-items-center gap-2 py-[5px] px-0 text-muted-foreground [&_>_strong]:grid [&_>_strong]:w-7 [&_>_strong]:h-7 [&_>_strong]:place-items-center [&_>_strong]:rounded-full [&_>_strong]:bg-info/10 [&_>_strong]:text-primary-text [&_>_span]:flex [&_>_span]:gap-1 [&_.ui-button]:min-w-6 [&_.ui-button]:px-[5px]",
   "retry-rule-row":
     "min-w-0 p-3 border border-solid border-transparent rounded-lg bg-muted grid grid-cols-[52px_minmax(0,_1fr)_auto] items-end gap-2.5",
   "settings-form-actions":

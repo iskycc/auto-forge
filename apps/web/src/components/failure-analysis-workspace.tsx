@@ -5,6 +5,7 @@ import { Notice } from "@/components/ui/notice";
 
 import { Dialog } from "@/components/ui/dialog";
 import { Tabs } from "./ui/tabs";
+import { TabContent } from "./ui/tab-content";
 import { Card } from "@/components/ui/card";
 import {
   Table,
@@ -677,430 +678,436 @@ export function FailureAnalysisWorkspace({
           onChange={changeView}
         />
 
-        {error ? (
-          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
-            {error}
-          </Notice>
-        ) : null}
+        <TabContent activeKey={view}>
+          {error ? (
+            <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+              {error}
+            </Notice>
+          ) : null}
 
-        {view === "claim" ? (
-          <div
-            className={cn(
-              "failure-analysis-claim-view",
-              failureAnalysisWorkspaceStyles["failure-analysis-claim-view"],
-            )}
-            role="tabpanel"
-          >
-            <form
-              className={cn(
-                "failure-analysis-filter",
-                failureAnalysisWorkspaceStyles["failure-analysis-filter"],
-              )}
-              onSubmit={submitSearch}
-            >
-              <label>
-                类路径、用例名称或失败堆栈
-                <span
-                  className={cn(
-                    "failure-analysis-search-control",
-                    failureAnalysisWorkspaceStyles["failure-analysis-search-control"],
-                  )}
-                >
-                  <Search aria-hidden="true" size={15} />
-                  <Input
-                    aria-label="搜索待认领用例"
-                    maxLength={240}
-                    onChange={(event) => setQueryInput(event.target.value)}
-                    placeholder="输入关键字筛选"
-                    value={queryInput}
-                  />
-                </span>
-              </label>
-              <Button type="submit" variant="secondary">
-                筛选
-              </Button>
-            </form>
-            {loadingCandidates ? (
-              <LoadingState
-                label="正在读取最终失败用例"
-                description="正在按当前筛选与排序条件整理可认领用例。"
-              />
-            ) : candidates.length === 0 ? (
-              <div
-                className={cn(
-                  "failure-analysis-empty",
-                  failureAnalysisWorkspaceStyles["failure-analysis-empty"],
-                )}
-              >
-                <CheckCircle2 size={24} />
-                <strong>
-                  {query ? "没有匹配的待认领用例" : "当前任务没有可认领的最终失败用例"}
-                </strong>
-                {query ? (
-                  <Button onClick={clearCandidateSearch} type="button" variant="secondary">
-                    清除搜索条件
-                  </Button>
-                ) : (
-                  <span>只统计任务最后一轮仍然失败的用例。</span>
-                )}
-              </div>
-            ) : (
-              <CandidateTable
-                allAvailableSelected={allAvailableSelected}
-                canManage={canManage || canAssign}
-                candidates={candidates}
-                direction={direction}
-                onSelectAll={(checked) =>
-                  setSelectedRunIds(
-                    checked
-                      ? new Set(availableItems.map((item) => item.executionRunId))
-                      : new Set(),
-                  )
-                }
-                onSort={changeSort}
-                onToggle={(id, checked) => toggleSelection(setSelectedRunIds, id, checked)}
-                selectedRunIds={selectedRunIds}
-                sort={sort}
-              />
-            )}
-            <Pagination
-              count={candidates.length}
-              currentHistory={candidateCursorHistory}
-              loading={loadingCandidates}
-              nextCursor={candidateCursor}
-              onMove={moveCandidatePage}
-              unit="失败用例"
-            />
-          </div>
-        ) : (
-          <div
-            className={cn(
-              "failure-analysis-workbench",
-              failureAnalysisWorkspaceStyles["failure-analysis-workbench"],
-            )}
-            role="tabpanel"
-          >
+          {view === "claim" ? (
             <div
               className={cn(
-                "failure-analysis-workbench-heading",
-                failureAnalysisWorkspaceStyles["failure-analysis-workbench-heading"],
+                "failure-analysis-claim-view",
+                failureAnalysisWorkspaceStyles["failure-analysis-claim-view"],
               )}
+              role="tabpanel"
             >
-              <div>
-                <span className={cn("eyebrow", uiPatterns["eyebrow"])}>My analysis</span>
-                <h2>我的分析队列</h2>
-                <p>勾选多个用例可批量填写相同分析结论；所有状态与证明均由服务端持久化。</p>
-              </div>
-              <div
+              <form
                 className={cn(
-                  "failure-analysis-workbench-actions",
-                  failureAnalysisWorkspaceStyles["failure-analysis-workbench-actions"],
+                  "failure-analysis-filter",
+                  failureAnalysisWorkspaceStyles["failure-analysis-filter"],
                 )}
+                onSubmit={submitSearch}
               >
-                <label
-                  className={cn(
-                    "failure-analysis-order-control",
-                    failureAnalysisWorkspaceStyles["failure-analysis-order-control"],
-                  )}
-                >
-                  <span>排列方式</span>
-                  <Select
-                    aria-label="我的分析排序字段"
-                    disabled={loadingClaims}
-                    onChange={(event) => changeClaimSort(event.target.value as FailureAnalysisSort)}
-                    value={claimSort}
+                <label>
+                  类路径、用例名称或失败堆栈
+                  <span
+                    className={cn(
+                      "failure-analysis-search-control",
+                      failureAnalysisWorkspaceStyles["failure-analysis-search-control"],
+                    )}
                   >
-                    {CLAIM_SORT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
+                    <Search aria-hidden="true" size={15} />
+                    <Input
+                      aria-label="搜索待认领用例"
+                      maxLength={240}
+                      onChange={(event) => setQueryInput(event.target.value)}
+                      placeholder="输入关键字筛选"
+                      value={queryInput}
+                    />
+                  </span>
                 </label>
-                <label
+                <Button type="submit" variant="secondary">
+                  筛选
+                </Button>
+              </form>
+              {loadingCandidates ? (
+                <LoadingState
+                  label="正在读取最终失败用例"
+                  description="正在按当前筛选与排序条件整理可认领用例。"
+                />
+              ) : candidates.length === 0 ? (
+                <div
                   className={cn(
-                    "failure-analysis-order-control",
-                    failureAnalysisWorkspaceStyles["failure-analysis-order-control"],
+                    "failure-analysis-empty",
+                    failureAnalysisWorkspaceStyles["failure-analysis-empty"],
                   )}
                 >
-                  <span>状态分组</span>
-                  <Select
-                    aria-label="分析完成状态分组"
-                    disabled={loadingClaims}
-                    onChange={(event) =>
-                      changeCompletionOrder(event.target.value as FailureAnalysisCompletionOrder)
-                    }
-                    value={completionOrder}
-                  >
-                    <option value="pending_first">未完成在前</option>
-                    <option value="completed_first">已完成在前</option>
-                  </Select>
-                </label>
-                <label
-                  className={cn(
-                    "failure-analysis-completed-filter",
-                    failureAnalysisWorkspaceStyles["failure-analysis-completed-filter"],
-                  )}
-                >
-                  <Input
-                    checked={includeCompleted}
-                    disabled={loadingClaims}
-                    onChange={(event) => changeIncludeCompleted(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>显示已完成分析</span>
-                </label>
-                <Button
-                  aria-label={`当前${claimDirection === "asc" ? "升序" : "降序"}，点击切换为${claimDirection === "asc" ? "降序" : "升序"}`}
-                  disabled={loadingClaims}
-                  onClick={toggleClaimDirection}
-                  size="compact"
-                  title={claimDirection === "asc" ? "切换为降序" : "切换为升序"}
-                  type="button"
-                  variant="secondary"
-                >
-                  {claimDirection === "asc" ? (
-                    <ArrowUpAZ aria-hidden="true" size={15} />
+                  <CheckCircle2 size={24} />
+                  <strong>
+                    {query ? "没有匹配的待认领用例" : "当前任务没有可认领的最终失败用例"}
+                  </strong>
+                  {query ? (
+                    <Button onClick={clearCandidateSearch} type="button" variant="secondary">
+                      清除搜索条件
+                    </Button>
                   ) : (
-                    <ArrowDownAZ aria-hidden="true" size={15} />
+                    <span>只统计任务最后一轮仍然失败的用例。</span>
                   )}
-                  {claimDirection === "asc" ? "升序" : "降序"}
-                </Button>
-                <Button
-                  onClick={() => changeView("claim")}
-                  size="compact"
-                  type="button"
-                  variant="secondary"
-                >
-                  返回继续认领
-                </Button>
-              </div>
-            </div>
-            <form
-              className={cn(
-                "failure-analysis-filter",
-                failureAnalysisWorkspaceStyles["failure-analysis-filter"],
+                </div>
+              ) : (
+                <CandidateTable
+                  allAvailableSelected={allAvailableSelected}
+                  canManage={canManage || canAssign}
+                  candidates={candidates}
+                  direction={direction}
+                  onSelectAll={(checked) =>
+                    setSelectedRunIds(
+                      checked
+                        ? new Set(availableItems.map((item) => item.executionRunId))
+                        : new Set(),
+                    )
+                  }
+                  onSort={changeSort}
+                  onToggle={(id, checked) => toggleSelection(setSelectedRunIds, id, checked)}
+                  selectedRunIds={selectedRunIds}
+                  sort={sort}
+                />
               )}
-              onSubmit={submitAnalysisSearch}
-            >
-              <label>
-                用例名称、类路径或失败堆栈
-                <span
-                  className={cn(
-                    "failure-analysis-search-control",
-                    failureAnalysisWorkspaceStyles["failure-analysis-search-control"],
-                  )}
-                >
-                  <Search aria-hidden="true" size={15} />
-                  <Input
-                    aria-label="搜索我的分析"
-                    maxLength={240}
-                    onChange={(event) => setAnalysisQueryInput(event.target.value)}
-                    placeholder="输入关键字搜索已认领用例"
-                    value={analysisQueryInput}
-                  />
-                </span>
-              </label>
-              <Button type="submit" variant="secondary">
-                搜索
-              </Button>
-            </form>
-            {loadingClaims ? (
-              <LoadingState
-                label="正在读取分析队列"
-                description="正在恢复你的认领状态、分析结论和证明材料。"
+              <Pagination
+                count={candidates.length}
+                currentHistory={candidateCursorHistory}
+                loading={loadingCandidates}
+                nextCursor={candidateCursor}
+                onMove={moveCandidatePage}
+                unit="失败用例"
               />
-            ) : claims.length === 0 ? (
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "failure-analysis-workbench",
+                failureAnalysisWorkspaceStyles["failure-analysis-workbench"],
+              )}
+              role="tabpanel"
+            >
               <div
                 className={cn(
-                  "failure-analysis-empty",
-                  failureAnalysisWorkspaceStyles["failure-analysis-empty"],
+                  "failure-analysis-workbench-heading",
+                  failureAnalysisWorkspaceStyles["failure-analysis-workbench-heading"],
                 )}
               >
-                <ClipboardCheck size={25} />
-                <strong>
-                  {analysisQuery
-                    ? "没有匹配的已认领用例"
-                    : includeCompleted
-                      ? "当前任务还没有你认领的用例"
-                      : "当前没有未完成的分析"}
-                </strong>
-                {analysisQuery ? (
-                  <Button onClick={clearAnalysisSearch} type="button" variant="secondary">
-                    清除搜索条件
-                  </Button>
-                ) : includeCompleted ? (
-                  <Button onClick={() => changeView("claim")} type="button" variant="primary">
-                    去认领失败用例
-                  </Button>
-                ) : (
+                <div>
+                  <span className={cn("eyebrow", uiPatterns["eyebrow"])}>My analysis</span>
+                  <h2>我的分析队列</h2>
+                  <p>勾选多个用例可批量填写相同分析结论；所有状态与证明均由服务端持久化。</p>
+                </div>
+                <div
+                  className={cn(
+                    "failure-analysis-workbench-actions",
+                    failureAnalysisWorkspaceStyles["failure-analysis-workbench-actions"],
+                  )}
+                >
+                  <label
+                    className={cn(
+                      "failure-analysis-order-control",
+                      failureAnalysisWorkspaceStyles["failure-analysis-order-control"],
+                    )}
+                  >
+                    <span>排列方式</span>
+                    <Select
+                      aria-label="我的分析排序字段"
+                      disabled={loadingClaims}
+                      onChange={(event) =>
+                        changeClaimSort(event.target.value as FailureAnalysisSort)
+                      }
+                      value={claimSort}
+                    >
+                      {CLAIM_SORT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  <label
+                    className={cn(
+                      "failure-analysis-order-control",
+                      failureAnalysisWorkspaceStyles["failure-analysis-order-control"],
+                    )}
+                  >
+                    <span>状态分组</span>
+                    <Select
+                      aria-label="分析完成状态分组"
+                      disabled={loadingClaims}
+                      onChange={(event) =>
+                        changeCompletionOrder(event.target.value as FailureAnalysisCompletionOrder)
+                      }
+                      value={completionOrder}
+                    >
+                      <option value="pending_first">未完成在前</option>
+                      <option value="completed_first">已完成在前</option>
+                    </Select>
+                  </label>
+                  <label
+                    className={cn(
+                      "failure-analysis-completed-filter",
+                      failureAnalysisWorkspaceStyles["failure-analysis-completed-filter"],
+                    )}
+                  >
+                    <Input
+                      checked={includeCompleted}
+                      disabled={loadingClaims}
+                      onChange={(event) => changeIncludeCompleted(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>显示已完成分析</span>
+                  </label>
                   <Button
-                    onClick={() => changeIncludeCompleted(true)}
+                    aria-label={`当前${claimDirection === "asc" ? "升序" : "降序"}，点击切换为${claimDirection === "asc" ? "降序" : "升序"}`}
+                    disabled={loadingClaims}
+                    onClick={toggleClaimDirection}
+                    size="compact"
+                    title={claimDirection === "asc" ? "切换为降序" : "切换为升序"}
                     type="button"
                     variant="secondary"
                   >
-                    显示已完成分析
+                    {claimDirection === "asc" ? (
+                      <ArrowUpAZ aria-hidden="true" size={15} />
+                    ) : (
+                      <ArrowDownAZ aria-hidden="true" size={15} />
+                    )}
+                    {claimDirection === "asc" ? "升序" : "降序"}
                   </Button>
-                )}
+                  <Button
+                    onClick={() => changeView("claim")}
+                    size="compact"
+                    type="button"
+                    variant="secondary"
+                  >
+                    返回继续认领
+                  </Button>
+                </div>
               </div>
-            ) : (
-              <>
-                <label
-                  className={cn(
-                    "failure-analysis-select-all",
-                    failureAnalysisWorkspaceStyles["failure-analysis-select-all"],
-                  )}
-                >
-                  <Input
-                    checked={allClaimsSelected}
-                    disabled={!canManage || selectableClaims.length === 0}
-                    onChange={(event) =>
-                      setSelectedAnalysisIds(
-                        event.target.checked
-                          ? new Set(selectableClaims.map((claim) => claim.id))
-                          : new Set(),
-                      )
-                    }
-                    type="checkbox"
-                  />
-                  <span>
-                    选择本页全部未完成分析
-                    <small>{selectableClaims.length} 个可分析用例</small>
+              <form
+                className={cn(
+                  "failure-analysis-filter",
+                  failureAnalysisWorkspaceStyles["failure-analysis-filter"],
+                )}
+                onSubmit={submitAnalysisSearch}
+              >
+                <label>
+                  用例名称、类路径或失败堆栈
+                  <span
+                    className={cn(
+                      "failure-analysis-search-control",
+                      failureAnalysisWorkspaceStyles["failure-analysis-search-control"],
+                    )}
+                  >
+                    <Search aria-hidden="true" size={15} />
+                    <Input
+                      aria-label="搜索我的分析"
+                      maxLength={240}
+                      onChange={(event) => setAnalysisQueryInput(event.target.value)}
+                      placeholder="输入关键字搜索已认领用例"
+                      value={analysisQueryInput}
+                    />
                   </span>
                 </label>
+                <Button type="submit" variant="secondary">
+                  搜索
+                </Button>
+              </form>
+              {loadingClaims ? (
+                <LoadingState
+                  label="正在读取分析队列"
+                  description="正在恢复你的认领状态、分析结论和证明材料。"
+                />
+              ) : claims.length === 0 ? (
                 <div
                   className={cn(
-                    "failure-analysis-grouped-list",
-                    failureAnalysisWorkspaceStyles["failure-analysis-grouped-list"],
+                    "failure-analysis-empty",
+                    failureAnalysisWorkspaceStyles["failure-analysis-empty"],
                   )}
                 >
-                  {claimGroups.map((group) =>
-                    group.claims.length > 0 ? (
-                      <section
-                        className={cn(
-                          "failure-analysis-claim-group",
-                          failureAnalysisWorkspaceStyles["failure-analysis-claim-group"],
-                        )}
-                        key={group.key}
-                      >
-                        <h3>
-                          {group.label} <span>本页 {group.claims.length}</span>
-                        </h3>
-                        <div
-                          className={cn(
-                            "failure-analysis-card-list",
-                            failureAnalysisWorkspaceStyles["failure-analysis-card-list"],
-                          )}
-                        >
-                          {group.claims.map((claim) => (
-                            <article
-                              className={cn(
-                                "failure-analysis-card",
-                                failureAnalysisWorkspaceStyles["failure-analysis-card"],
-                              )}
-                              key={claim.id}
-                            >
-                              <Input
-                                aria-label={`选择分析 ${claim.caseName}`}
-                                checked={selectedAnalysisIds.has(claim.id)}
-                                disabled={!canManage || claim.status === "completed"}
-                                onChange={(event) =>
-                                  toggleSelection(
-                                    setSelectedAnalysisIds,
-                                    claim.id,
-                                    event.target.checked,
-                                  )
-                                }
-                                type="checkbox"
-                              />
-                              <div
-                                className={cn(
-                                  "failure-analysis-card-main",
-                                  failureAnalysisWorkspaceStyles["failure-analysis-card-main"],
-                                )}
-                              >
-                                <div
-                                  className={cn(
-                                    "failure-analysis-card-title",
-                                    failureAnalysisWorkspaceStyles["failure-analysis-card-title"],
-                                  )}
-                                >
-                                  <h3>{claim.caseName}</h3>
-                                  <RecentSuccessBadge execution={claim.recentSuccessfulExecution} />
-                                  <span
-                                    className={cn(
-                                      failureAnalysisWorkspaceStyles["analysis-status"],
-                                      `analysis-status ${claim.status}`,
-                                    )}
-                                  >
-                                    {statusLabel(claim.status)}
-                                  </span>
-                                </div>
-                                <code>{claim.className}</code>
-                                <p title={claim.failureSummary}>{claim.failureSummary}</p>
-                              </div>
-                              <dl>
-                                <div>
-                                  <dt>认领时间</dt>
-                                  <dd>{formatPlatformDateTime(claim.claimedAt)}</dd>
-                                </div>
-                                <div>
-                                  <dt>分析结论</dt>
-                                  <dd>{categoryLabel(claim.category) ?? "尚未选择"}</dd>
-                                </div>
-                              </dl>
-                              <div
-                                className={cn(
-                                  "failure-analysis-card-actions",
-                                  failureAnalysisWorkspaceStyles["failure-analysis-card-actions"],
-                                )}
-                              >
-                                <Button
-                                  disabled={!canManage}
-                                  onClick={() => setDialogClaims([claim])}
-                                  size="compact"
-                                  type="button"
-                                  variant="secondary"
-                                >
-                                  {claim.status === "completed" ? "查看分析详情" : "开始分析"}
-                                </Button>
-                                {claim.status !== "completed" ? (
-                                  <Button
-                                    className={cn(
-                                      "failure-analysis-release-trigger",
-                                      failureAnalysisWorkspaceStyles[
-                                        "failure-analysis-release-trigger"
-                                      ],
-                                    )}
-                                    disabled={!canManage}
-                                    onClick={() => setReleaseDialogClaim(claim)}
-                                    size="compact"
-                                    type="button"
-                                    variant="ghost"
-                                  >
-                                    <UserMinus aria-hidden="true" size={14} /> 取消认领
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      </section>
-                    ) : null,
+                  <ClipboardCheck size={25} />
+                  <strong>
+                    {analysisQuery
+                      ? "没有匹配的已认领用例"
+                      : includeCompleted
+                        ? "当前任务还没有你认领的用例"
+                        : "当前没有未完成的分析"}
+                  </strong>
+                  {analysisQuery ? (
+                    <Button onClick={clearAnalysisSearch} type="button" variant="secondary">
+                      清除搜索条件
+                    </Button>
+                  ) : includeCompleted ? (
+                    <Button onClick={() => changeView("claim")} type="button" variant="primary">
+                      去认领失败用例
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => changeIncludeCompleted(true)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      显示已完成分析
+                    </Button>
                   )}
                 </div>
-              </>
-            )}
-            <Pagination
-              count={claims.length}
-              currentHistory={claimsCursorHistory}
-              loading={loadingClaims}
-              nextCursor={claimsCursor}
-              onMove={moveClaimsPage}
-              unit="分析任务"
-            />
-          </div>
-        )}
+              ) : (
+                <>
+                  <label
+                    className={cn(
+                      "failure-analysis-select-all",
+                      failureAnalysisWorkspaceStyles["failure-analysis-select-all"],
+                    )}
+                  >
+                    <Input
+                      checked={allClaimsSelected}
+                      disabled={!canManage || selectableClaims.length === 0}
+                      onChange={(event) =>
+                        setSelectedAnalysisIds(
+                          event.target.checked
+                            ? new Set(selectableClaims.map((claim) => claim.id))
+                            : new Set(),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>
+                      选择本页全部未完成分析
+                      <small>{selectableClaims.length} 个可分析用例</small>
+                    </span>
+                  </label>
+                  <div
+                    className={cn(
+                      "failure-analysis-grouped-list",
+                      failureAnalysisWorkspaceStyles["failure-analysis-grouped-list"],
+                    )}
+                  >
+                    {claimGroups.map((group) =>
+                      group.claims.length > 0 ? (
+                        <section
+                          className={cn(
+                            "failure-analysis-claim-group",
+                            failureAnalysisWorkspaceStyles["failure-analysis-claim-group"],
+                          )}
+                          key={group.key}
+                        >
+                          <h3>
+                            {group.label} <span>本页 {group.claims.length}</span>
+                          </h3>
+                          <div
+                            className={cn(
+                              "failure-analysis-card-list",
+                              failureAnalysisWorkspaceStyles["failure-analysis-card-list"],
+                            )}
+                          >
+                            {group.claims.map((claim) => (
+                              <article
+                                className={cn(
+                                  "failure-analysis-card",
+                                  failureAnalysisWorkspaceStyles["failure-analysis-card"],
+                                )}
+                                key={claim.id}
+                              >
+                                <Input
+                                  aria-label={`选择分析 ${claim.caseName}`}
+                                  checked={selectedAnalysisIds.has(claim.id)}
+                                  disabled={!canManage || claim.status === "completed"}
+                                  onChange={(event) =>
+                                    toggleSelection(
+                                      setSelectedAnalysisIds,
+                                      claim.id,
+                                      event.target.checked,
+                                    )
+                                  }
+                                  type="checkbox"
+                                />
+                                <div
+                                  className={cn(
+                                    "failure-analysis-card-main",
+                                    failureAnalysisWorkspaceStyles["failure-analysis-card-main"],
+                                  )}
+                                >
+                                  <div
+                                    className={cn(
+                                      "failure-analysis-card-title",
+                                      failureAnalysisWorkspaceStyles["failure-analysis-card-title"],
+                                    )}
+                                  >
+                                    <h3>{claim.caseName}</h3>
+                                    <RecentSuccessBadge
+                                      execution={claim.recentSuccessfulExecution}
+                                    />
+                                    <span
+                                      className={cn(
+                                        failureAnalysisWorkspaceStyles["analysis-status"],
+                                        `analysis-status ${claim.status}`,
+                                      )}
+                                    >
+                                      {statusLabel(claim.status)}
+                                    </span>
+                                  </div>
+                                  <code>{claim.className}</code>
+                                  <p title={claim.failureSummary}>{claim.failureSummary}</p>
+                                </div>
+                                <dl>
+                                  <div>
+                                    <dt>认领时间</dt>
+                                    <dd>{formatPlatformDateTime(claim.claimedAt)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>分析结论</dt>
+                                    <dd>{categoryLabel(claim.category) ?? "尚未选择"}</dd>
+                                  </div>
+                                </dl>
+                                <div
+                                  className={cn(
+                                    "failure-analysis-card-actions",
+                                    failureAnalysisWorkspaceStyles["failure-analysis-card-actions"],
+                                  )}
+                                >
+                                  <Button
+                                    disabled={!canManage}
+                                    onClick={() => setDialogClaims([claim])}
+                                    size="compact"
+                                    type="button"
+                                    variant="secondary"
+                                  >
+                                    {claim.status === "completed" ? "查看分析详情" : "开始分析"}
+                                  </Button>
+                                  {claim.status !== "completed" ? (
+                                    <Button
+                                      className={cn(
+                                        "failure-analysis-release-trigger",
+                                        failureAnalysisWorkspaceStyles[
+                                          "failure-analysis-release-trigger"
+                                        ],
+                                      )}
+                                      disabled={!canManage}
+                                      onClick={() => setReleaseDialogClaim(claim)}
+                                      size="compact"
+                                      type="button"
+                                      variant="ghost"
+                                    >
+                                      <UserMinus aria-hidden="true" size={14} /> 取消认领
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null,
+                    )}
+                  </div>
+                </>
+              )}
+              <Pagination
+                count={claims.length}
+                currentHistory={claimsCursorHistory}
+                loading={loadingClaims}
+                nextCursor={claimsCursor}
+                onMove={moveClaimsPage}
+                unit="分析任务"
+              />
+            </div>
+          )}
+        </TabContent>
       </Card>
 
       {assignmentOpen ? (

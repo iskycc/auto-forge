@@ -1294,6 +1294,9 @@ function DirectoryNode({
     : selectionState(selected, selectableIds);
   return (
     <Disclosure
+      density="compact"
+      headerClassName={caseSelectionTableStyles["case-tree-directory-header"]}
+      headerTitle={node.path}
       header={
         <>
           <Input
@@ -1399,7 +1402,7 @@ const caseSelectionTableStyles = {
   "case-browser-summary":
     "flex min-h-9 items-center justify-between gap-3 py-0 px-3.5 text-muted-foreground text-xs [&_strong]:text-info",
   "case-directory-scroll": "min-h-0 overflow-auto [overscroll-behavior:contain]",
-  "case-directory-tree": "grid gap-[5px] [padding:8px_10px_16px]",
+  "case-directory-tree": "grid gap-0 px-2 py-1",
   "case-inspector-content":
     "grid gap-3 p-4 [&_>_*]:min-w-0 [&_.case-execution-history_.data-table]:min-w-[760px]",
   "case-inspector-delete-action":
@@ -1417,13 +1420,14 @@ const caseSelectionTableStyles = {
   "case-selection-toolbar":
     "flex flex-wrap items-center gap-2 [border-block:1px_solid_var(--border)] py-[9px] px-3 py-2 [&_.ui-select]:min-w-0 [&_.ui-select]:[flex:1_1_150px] [@media(min-height:_900px)]:[&_.ui-select]:[flex:1_1_260px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
   "case-tree-activate":
-    "grid min-w-0 min-h-11 grid-cols-[auto_minmax(0,_1fr)_auto_auto] items-center justify-stretch gap-2 py-1 px-1.5 rounded-md text-inherit text-left [text-decoration:none] [&:hover]:bg-info/10 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal [&_code]:[overflow-wrap:anywhere] [&_code]:whitespace-normal [&_code]:text-muted-foreground [&_code]:text-xs [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:whitespace-nowrap max-[1600px]:[&_small]:hidden max-[1440px]:grid-cols-[auto_minmax(96px,_1fr)] max-[1440px]:gap-1.5 max-[1440px]:[&_.batch-status]:hidden [&_.batch-status]:self-center",
+    "grid min-w-0 min-h-9 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-1.5 rounded-md px-1 py-0.5 text-sm text-inherit text-left no-underline hover:bg-info/10 [&_>_span]:grid [&_>_span]:min-w-0 [&_strong]:truncate [&_strong]:font-semibold [&_strong]:leading-4 [&_code]:truncate [&_code]:text-muted-foreground [&_code]:text-xs [&_code]:leading-4 [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:whitespace-nowrap max-[1600px]:[&_small]:hidden max-[1440px]:grid-cols-[auto_minmax(0,1fr)] max-[1440px]:[&_.batch-status]:hidden [&_.batch-status]:self-center",
   "case-tree-case":
-    "grid min-w-0 grid-cols-[auto_minmax(0,_1fr)_auto] items-center gap-[5px] border border-solid border-transparent rounded-lg py-[3px] px-1 [&:hover]:bg-muted [&.active-case]:border-muted [&.active-case]:bg-info/10",
-  "case-tree-children": "grid min-w-0 gap-1",
-  "case-tree-directory":
-    "min-w-0 border-l border-solid border-border ml-[7px] pl-[9px] [&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:min-w-0 [&_.ui-disclosure-label]:min-h-9 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[7px] [&_.ui-disclosure-label]:rounded-md [&_.ui-disclosure-label]:py-0 [&_.ui-disclosure-label]:px-1.5 [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label:hover]:bg-muted [&_.ui-disclosure-label:hover]:text-foreground [&_.ui-disclosure-label::marker]:text-muted-foreground [&_.ui-disclosure-label_strong]:overflow-hidden [&_.ui-disclosure-label_strong]:text-ellipsis [&_.ui-disclosure-label_strong]:whitespace-nowrap [&_.ui-disclosure-label_>_span:last-child]:ml-auto [&_.ui-disclosure-label_>_span:last-child]:text-xs [&_.ui-disclosure-label_>_span:last-child]:whitespace-nowrap max-[1440px]:ml-[3px] max-[1440px]:pl-1.5",
-  "case-tree-preview": "[&.ui-button]:w-8 [&.ui-button]:h-8 [&.ui-button]:p-0",
+    "grid min-w-0 min-h-10 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1 rounded-md border border-transparent px-1 hover:bg-muted [&.active-case]:border-muted [&.active-case]:bg-info/10",
+  "case-tree-children": "grid min-w-0 gap-0",
+  "case-tree-directory": "min-w-0 ml-1 border-l border-border pl-1.5",
+  "case-tree-directory-header":
+    "flex min-w-0 min-h-8 items-center gap-1.5 rounded-md px-1 text-sm text-muted-foreground cursor-pointer hover:bg-muted hover:text-foreground [&_>_svg]:shrink-0 [&_strong]:min-w-0 [&_strong]:truncate [&_strong]:font-semibold [&_>_span:last-child]:ml-auto [&_>_span:last-child]:text-xs [&_>_span:last-child]:whitespace-nowrap",
+  "case-tree-preview": "[&.ui-button]:size-8 [&.ui-button]:p-0",
   "inline-feedback":
     "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
   "list-filter-progress": "inline-flex items-center gap-2 text-muted-foreground text-xs",

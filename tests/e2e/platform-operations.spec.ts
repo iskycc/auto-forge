@@ -877,6 +877,86 @@ test("storage snapshot expiry stops automatic retries and permits explicit recov
   expect(requests).toBe(7);
 });
 
+test("nested storage file rows retain independent columns, disclosure state and bounded long paths", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const longName = `payment-dependencies-${"2026-release-".repeat(12)}.tar.gz`;
+  const fixture = inventoryPageFixture({
+    generation: INVENTORY_NEW_GENERATION,
+    name: longName,
+    more: false,
+  });
+  const deepDirectory = Array.from({ length: 16 }, (_, index) => `level-${index}`).join("/");
+  fixture.items = [
+    longName,
+    "runtime/nested/notes.txt",
+    "runtime/platform.sqlite",
+    `${deepDirectory}/deep-log.txt`,
+  ].map((path) => ({
+    ...fixture.items[0]!,
+    id: path,
+    name: path.split("/").at(-1)!,
+    logicalPath: path,
+    storagePath: `/data/${path}`,
+    sizeBytes: 8_192,
+    allocatedBytes: 12_288,
+    createdAt: "2026-09-22T01:00:00Z",
+    modifiedAt: "2026-09-22T02:00:00Z",
+  }));
+  fixture.summary.fileCount = fixture.items.length;
+  await page.route("**/api/v1/settings/storage?**", (route) => route.fulfill({ json: fixture }));
+  await page.goto("/settings/platform?section=storage");
+  const tree = page.getByRole("tree", { name: "存储文件目录" });
+  const nested = tree.locator('.ui-disclosure-label[title="runtime/nested"]');
+  await expect(tree.getByText("notes.txt", { exact: true })).toHaveCount(0);
+  await expect(nested.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
+  await nested.click();
+  await expect(tree.getByText("notes.txt", { exact: true })).toBeVisible();
+  const file = tree.locator(".storage-tree-file").filter({ hasText: longName });
+  const row = file.locator(".ui-disclosure-label").first();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expect(row.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
+    const geometry = await row.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const headerBounds = element.closest(".ui-disclosure-header")!.getBoundingClientRect();
+      return {
+        columns: getComputedStyle(element).gridTemplateColumns.split(" ").length,
+        height: bounds.height,
+        overflow: element.scrollWidth - element.clientWidth,
+        headerOverflow: bounds.right - headerBounds.right,
+        childrenContained: Array.from(element.children).every((child) => {
+          const box = child.getBoundingClientRect();
+          return !box.width || (box.left >= bounds.left && box.right <= bounds.right + 1);
+        }),
+      };
+    });
+    expect(geometry.columns).toBe(width === 1024 ? 7 : 8);
+    expect(geometry.height).toBeLessThanOrEqual(76);
+    expect(geometry.overflow).toBeLessThanOrEqual(1);
+    expect(geometry.headerOverflow).toBeLessThanOrEqual(1);
+    expect(geometry.childrenContained).toBe(true);
+    await row.click();
+    await expect(file.locator(".storage-tree-file-detail")).toContainText(`/data/${longName}`);
+    await expectUiIntegrity(page);
+    await row.scrollIntoViewIfNeeded();
+    await captureUi(page, `storage-nested-files-${width}`);
+    await row.click();
+  }
+  await nested.click();
+  await expect(tree.getByText("notes.txt", { exact: true })).toHaveCount(0);
+  await tree.locator(`.ui-disclosure-label[title="${deepDirectory}"]`).click();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  const deepFile = tree.locator(".storage-tree-file").filter({ hasText: "deep-log.txt" });
+  const deepOverflow = await deepFile.evaluate(
+    (element) => element.scrollWidth - element.clientWidth,
+  );
+  expect(deepOverflow).toBeLessThanOrEqual(1);
+  await deepFile.scrollIntoViewIfNeeded();
+  await captureUi(page, "storage-deep-file-1024");
+});
+
 const INVENTORY_OLD_GENERATION = "00000000-0000-7000-8000-000000000101";
 const INVENTORY_NEW_GENERATION = "00000000-0000-7000-8000-000000000102";
 const inventoryExpiredResponse = {

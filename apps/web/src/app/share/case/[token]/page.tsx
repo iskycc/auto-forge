@@ -7,6 +7,7 @@ import { formatMethodSignature } from "@/lib/jvm-signature";
 import { readPermanentShareToken } from "@/lib/permanent-share-token";
 import { getPlatformServices } from "@/lib/services";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { ColorModeToggle } from "@/components/color-mode-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -42,9 +43,12 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
             <h1>{definition.displayName}</h1>
             <code>{definition.className}</code>
           </div>
-          <span className={cn("shared-case-trust", pageStyles["shared-case-trust"])}>
-            <ShieldCheck size={18} aria-hidden="true" /> 永久只读链接
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className={cn("shared-case-trust", pageStyles["shared-case-trust"])}>
+              <ShieldCheck size={18} aria-hidden="true" /> 永久只读链接
+            </span>
+            <ColorModeToggle />
+          </div>
         </header>
 
         {definition.description ? (
@@ -174,6 +178,7 @@ function InvalidCaseShare() {
           <Link2Off size={30} strokeWidth={1.8} />
         </span>
         <h1>链接无效</h1>
+        <ColorModeToggle />
         <p>该用例永久分享链接无效，或对应的用例已经被删除。</p>
       </section>
     </main>

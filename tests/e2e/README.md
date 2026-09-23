@@ -13,6 +13,7 @@ The suite is divided by failure domain so each scenario can run alone with an is
 | `asset-lifecycle`         | `playwright test tests/e2e/jar-import.spec.ts`           | Current legacy asset/control-plane execution flow; split further as coverage grows                                     |
 | `single-case-run`         | `playwright test tests/e2e/single-case-run.spec.ts`      | Global execution dialog, Runner Group selection, single-case scheduling and Adapter address propagation                |
 | `ui-layout`               | `playwright test tests/e2e/ui-layout.spec.ts`            | 1024px+ layout guards, global project context, full-viewport dialogs and review screenshots                            |
+| `tab-navigation`          | `playwright test tests/e2e/tab-navigation.spec.ts`       | Stable tab geometry, slow navigation, history, unsaved drafts and reduced motion with an isolated project scope        |
 | `scheduling-refill`       | `playwright test tests/e2e/scheduling-refill.spec.ts`    | Immediate slot refill, overlapping retry and idempotent completion replay                                              |
 | `round-summary`           | `playwright test tests/e2e/all-rounds.spec.ts`           | Final summary, running-case filter, parallel Jenkins recovery timeline and fixed-layout geometry                       |
 | `runner-real-lite`        | `scripts/quality/test-real-agent.sh`                     | Release-built Go Agent, offline Java/TestNG and real PTY lifecycle in Lite                                             |

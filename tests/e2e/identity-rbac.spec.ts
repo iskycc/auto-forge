@@ -487,7 +487,7 @@ test("local user completes forced password change and self-service session lifec
   await page.getByLabel("新密码", { exact: true }).fill(replacementPassword);
   await page.getByLabel("确认新密码").fill(replacementPassword);
   await page.getByRole("button", { name: "修改密码并重新登录" }).click();
-  await expect(page).toHaveURL(/\/login\?passwordChanged=1$/);
+  await expect(page).toHaveURL(/\/(?:login\?|\?login=1&)passwordChanged=1$/);
 
   await login(page, username, replacementPassword);
   const mainNavigation = page.getByRole("navigation", { name: "主导航" });
@@ -501,7 +501,7 @@ test("local user completes forced password change and self-service session lifec
   await expect(page.getByText("当前会话", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "终止" }).click();
   await acceptSystemDialog(page, "终止登录会话", "终止会话");
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
 });
 
 test("administrator can reset a user password and the last administrator binding is protected", async ({
@@ -569,7 +569,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
   }
   await userPage.getByLabel("用户名").fill(username);
   await userPage.getByLabel("密码").fill(password);
-  await userPage.getByRole("button", { name: "登录" }).click();
+  await userPage.getByRole("button", { name: "登录", exact: true }).click();
   // Authentication failures stay deliberately generic to avoid disclosing
   // whether a username exists or has reached its lock threshold.
   await expect(appAlert(userPage)).toContainText("用户名或密码无效");
@@ -972,7 +972,7 @@ async function failedLogin(page: Page, username: string, password: string): Prom
   await page.goto("/login");
   await page.getByLabel("用户名").fill(username);
   await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(appAlert(page)).toBeVisible();
 }
 

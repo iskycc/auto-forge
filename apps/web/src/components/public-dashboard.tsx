@@ -20,7 +20,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
+import { Button } from "./ui";
+import { LoginDialog } from "./login-dialog";
+import { ColorModeToggle } from "./color-mode-toggle";
 import { PublicControlPreview, publicSnapshotPresentation } from "./public-control-preview";
 import { usePublicStatistics } from "./use-public-statistics";
 import styles from "./public-dashboard.styles";
@@ -42,8 +46,18 @@ export function PublicDashboard({
   const { statistics, synchronizing, syncFailed, refresh } = usePublicStatistics(initialStatistics);
   const { hasStatistics } = publicSnapshotPresentation(statistics, syncFailed);
   const count = (value: number) => (hasStatistics ? value.toLocaleString("zh-CN") : "—");
-  const entryHref = setupRequired ? "/setup" : "/login";
-  const entryLabel = setupRequired ? "初始化平台" : "登录控制台";
+  const searchParams = useSearchParams();
+  function openLogin() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("login", "1");
+    window.history.pushState(null, "", url);
+  }
+  function closeLogin() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("login");
+    url.searchParams.delete("passwordChanged");
+    window.history.replaceState(null, "", url);
+  }
 
   return (
     <main className={styles.page}>
@@ -62,11 +76,22 @@ export function PublicDashboard({
           <a href="#architecture">执行链路</a>
           <a href="#deployment">部署方式</a>
         </nav>
-        <LinkButton className={"button " + styles.headerEntry} href={entryHref}>
-          <LockKeyhole aria-hidden="true" size={15} />
-          {entryLabel}
-          <ArrowRight aria-hidden="true" size={15} />
-        </LinkButton>
+        <div className="flex shrink-0 items-center gap-2">
+          <ColorModeToggle />
+          {setupRequired ? (
+            <LinkButton className={"button " + styles.headerEntry} href="/setup">
+              <LockKeyhole aria-hidden="true" size={15} />
+              初始化平台
+              <ArrowRight aria-hidden="true" size={15} />
+            </LinkButton>
+          ) : (
+            <Button className={styles.headerEntry} onClick={openLogin} type="button">
+              <LockKeyhole aria-hidden="true" size={15} />
+              登录控制台
+              <ArrowRight aria-hidden="true" size={15} />
+            </Button>
+          )}
+        </div>
       </header>
 
       <section className={styles.hero + " public-hero"} aria-labelledby="public-heading">
@@ -87,14 +112,26 @@ export function PublicDashboard({
             统一资产、执行与分析，让团队专注于交付质量。
           </p>
           <div className={styles.heroActions}>
-            <LinkButton
-              variant="primary"
-              className={"button " + styles.primaryEntry}
-              href={entryHref}
-            >
-              {setupRequired ? "开始初始化" : "进入管理平台"}
-              <ArrowRight aria-hidden="true" size={17} />
-            </LinkButton>
+            {setupRequired ? (
+              <LinkButton
+                variant="primary"
+                className={"button " + styles.primaryEntry}
+                href="/setup"
+              >
+                开始初始化
+                <ArrowRight aria-hidden="true" size={17} />
+              </LinkButton>
+            ) : (
+              <Button
+                variant="primary"
+                className={styles.primaryEntry}
+                onClick={openLogin}
+                type="button"
+              >
+                进入管理平台
+                <ArrowRight aria-hidden="true" size={17} />
+              </Button>
+            )}
             <LinkButton className={"button " + styles.secondaryEntry} href="#capabilities">
               了解平台能力
               <ArrowRight aria-hidden="true" size={16} />
@@ -257,6 +294,11 @@ export function PublicDashboard({
           公开页面仅展示脱敏聚合数据
         </span>
       </footer>
+      <LoginDialog
+        open={!setupRequired && searchParams.get("login") === "1"}
+        passwordChanged={searchParams.get("passwordChanged") === "1"}
+        onClose={closeLogin}
+      />
     </main>
   );
 }

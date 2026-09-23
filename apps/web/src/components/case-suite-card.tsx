@@ -125,7 +125,7 @@ export function CaseSuiteCard({
                 : "暂无已结束执行，均值待统计"}
             </span>
             {passRate === null ? null : (
-              <Progress aria-label="近 7 天平均通过率" max={100} value={passRate} />
+              <Progress aria-label="近 7 天平均通过率" max={100} value={passRate} tone="success" />
             )}
           </div>
         </div>
@@ -210,7 +210,7 @@ const caseSuiteCardStyles = {
   "suite-statistics":
     "[margin:0_20px_16px] border border-solid border-border rounded-lg p-4 bg-muted [&_dl]:grid [&_dl]:grid-cols-3 [&_dl]:gap-3 [&_dl]:m-0 [&_dt]:text-muted-foreground [&_dt]:text-xs [&_dd]:[margin:8px_0_0] [&_dd]:text-2xl [&_dd]:font-semibold [&_dd]:tabular-nums [&_dd_small]:ml-2 [&_dd_small]:text-muted-foreground [&_dd_small]:text-xs [&_dd_small]:font-normal",
   "suite-statistics-caption":
-    "flex items-center gap-2 flex-wrap justify-between mt-3 text-muted-foreground text-xs [&_.ui-progress]:w-full [&_.ui-progress]:h-2 [&_.ui-progress]:overflow-hidden [&_.ui-progress]:border-0 [&_.ui-progress]:rounded-full [&_.ui-progress]:bg-border [&_.ui-progress]:[accent-color:var(--success)] [&_progress::-webkit-progress-bar]:rounded-full [&_progress::-webkit-progress-bar]:bg-border [&_progress::-webkit-progress-value]:rounded-full [&_progress::-webkit-progress-value]:bg-success",
+    "flex items-center gap-2 flex-wrap justify-between mt-3 text-muted-foreground text-xs",
   "suite-title-line":
     "flex min-w-0 items-center gap-2 [&_>_strong]:overflow-hidden [&_>_strong]:text-ellipsis [&_>_strong]:whitespace-nowrap",
 } as const;

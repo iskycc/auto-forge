@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { expectUiIntegrity } from "./support/ui-guard";
-import { ensureAdministrator } from "./support/session";
+import { E2E_ADMIN_PASSWORD, E2E_ADMIN_USERNAME, ensureAdministrator } from "./support/session";
 
 const populatedStatistics: PublicPlatformStatistics = {
   snapshotState: "ready",
@@ -59,9 +59,10 @@ test("unauthenticated homepage presents the trusted control plane at desktop wid
     "统一用例资产",
   );
   await expect(
-    page
-      .locator(".public-header")
-      .getByRole("link", { name: setupRequired ? "初始化平台" : "登录控制台", exact: true }),
+    page.locator(".public-header").getByRole(setupRequired ? "link" : "button", {
+      name: setupRequired ? "初始化平台" : "登录控制台",
+      exact: true,
+    }),
   ).toBeVisible();
 
   await reviewDesktopLayouts(page, "actual");
@@ -205,12 +206,81 @@ test("an initialized platform offers login without exposing the authenticated sh
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: "主导航" })).toHaveCount(0);
   await expect(
-    page.locator(".public-header").getByRole("link", { name: "登录控制台" }),
-  ).toHaveAttribute("href", "/login");
+    page.locator(".public-header").getByRole("button", { name: "登录控制台" }),
+  ).toBeVisible();
   await reviewDesktopLayouts(page, "login-entry");
-  await page.getByRole("link", { name: "进入管理平台" }).click();
-  await expect(page).toHaveURL(/\/login$/u);
-  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "进入管理平台" }).click();
+  await expect(page).toHaveURL(/\/\?login=1$/u);
+  const dialog = page.getByRole("dialog", { name: "登录控制台", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(page.locator(".public-hero")).toBeVisible();
+  await dialog.getByLabel("用户名", { exact: true }).fill("unsaved-user");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/$/u);
+  await page.locator(".public-header").getByRole("button", { name: "登录控制台" }).click();
+  await expect(dialog.getByLabel("用户名", { exact: true })).toHaveValue("");
+  await page.goBack();
+  await expect(dialog).toHaveCount(0);
+  await page.goForward();
+  await expect(dialog).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await capturePublicHomepage(page, width, "login-dialog");
+  }
+  // Validation stays inside the dialog, with no navigation or loss of the homepage.
+  await dialog.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await dialog.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+  await dialog.getByLabel("密码", { exact: true }).fill("Incorrect!Password123");
+  const rejection = page.waitForResponse("**/api/v1/auth/login");
+  await dialog.getByRole("button", { name: "登录", exact: true }).click();
+  expect((await rejection).ok()).toBe(false);
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByLabel("用户名", { exact: true })).toHaveValue(E2E_ADMIN_USERNAME);
+  await expect(dialog.getByRole("button", { name: "关闭登录控制台" })).toBeEnabled();
+  await dialog.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+  let releaseLogin: (() => void) | undefined;
+  const holdLogin = new Promise<void>((resolve) => {
+    releaseLogin = resolve;
+  });
+  await page.route("**/api/v1/auth/login", async (route) => {
+    await holdLogin;
+    await route.continue();
+  });
+  try {
+    await dialog.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "关闭登录控制台" })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+  } finally {
+    releaseLogin!();
+  }
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+});
+
+test("legacy login and protected links open the homepage dialog and retain password notices", async ({
+  page,
+  context,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await ensureAdministrator(page);
+  await page.goto("about:blank");
+  await context.clearCookies();
+  await page.goto("/login?passwordChanged=1");
+  await expect(page).toHaveURL(/\/\?login=1&passwordChanged=1$/u);
+  const dialog = page.getByRole("dialog", { name: "登录控制台", exact: true });
+  await expect(dialog).toContainText("密码已修改，请使用新密码重新登录。");
+  await dialog.getByRole("button", { name: "关闭登录控制台" }).click();
+  await expect(page).toHaveURL(/\/$/u);
+  await page.goto("/settings/platform");
+  await expect(page).toHaveURL(/\/\?login=1$/u);
+  await expect(dialog).toBeVisible();
+  await expect(dialog).not.toContainText("密码已修改");
+  await expect(page.getByRole("navigation", { name: "主导航" })).toHaveCount(0);
+  expect(pageErrors).toEqual([]);
 });
 
 async function setDocumentVisibility(page: Page, visibility: DocumentVisibilityState) {

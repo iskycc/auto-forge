@@ -1,3 +1,4 @@
+import { TabContent } from "@/components/ui/tab-content";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -135,62 +136,64 @@ export default async function PlatformSettingsPage({
           },
         ]}
       />
-      {activeSection === "nodes" ? (
-        <>
-          <PlatformNodes
-            nodes={nodePage.items}
-            currentNodeId={configuration.nodeId}
-            canManage={hasPermission(identity, "settings.manage")}
-          />
-          {nodePage.nextCursor ? (
-            <Link
-              href={`/settings/platform?section=nodes&nodeCursor=${encodeURIComponent(nodePage.nextCursor)}`}
-            >
-              下一页节点
-            </Link>
-          ) : null}
-        </>
-      ) : null}
-      {activeSection === "configuration" ? (
-        <PlatformSettings
-          canManage={hasPermission(identity, "settings.manage")}
-          initial={publicConfiguration}
-          {...(parameters.focus ? { initialFocus: parameters.focus.slice(0, 80) } : {})}
-        />
-      ) : null}
-      {activeSection === "accounts" || activeSection === "retention" ? (
-        <>
-          <OperationsSettings
-            key={`${activeSection}:${parameters.cursor ?? ""}:${parameters.query ?? ""}:${parameters.status ?? ""}`}
-            canManageSettings={hasPermission(identity, "settings.manage")}
-            canManageTokens={hasPermission(identity, "api_token.manage")}
-            initialAccounts={serviceAccounts.items}
-            accountFilter={{ query: parameters.query ?? "", status: parameters.status ?? "" }}
-            initialPolicies={retentionPolicies}
-            projects={projects.map((project) => ({ id: project.id, name: project.name }))}
-            visibleSection={activeSection}
-          />
-          {activeSection === "accounts" ? (
-            <CursorPagination
-              nextCursor={serviceAccounts.nextCursor}
-              count={serviceAccounts.items.length}
-              label="服务账号分页"
+      <TabContent activeKey={activeSection} className="gap-5">
+        {activeSection === "nodes" ? (
+          <>
+            <PlatformNodes
+              nodes={nodePage.items}
+              currentNodeId={configuration.nodeId}
+              canManage={hasPermission(identity, "settings.manage")}
             />
-          ) : null}
-        </>
-      ) : null}
-      {activeSection === "diagnostics" ? (
-        <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
-      ) : null}
-      {activeSection === "storage" ? (
-        <StorageInventory
-          canManage={hasPermission(identity, "settings.manage")}
-          {...(storageCategory ? { initialCategory: storageCategory } : {})}
-          initialQuery={parameters.query?.slice(0, 240) ?? ""}
-          key={`${storageCategory ?? "all"}:${parameters.query ?? ""}`}
-          timeZone={configuration.web.timeZone}
-        />
-      ) : null}
+            {nodePage.nextCursor ? (
+              <Link
+                href={`/settings/platform?section=nodes&nodeCursor=${encodeURIComponent(nodePage.nextCursor)}`}
+              >
+                下一页节点
+              </Link>
+            ) : null}
+          </>
+        ) : null}
+        {activeSection === "configuration" ? (
+          <PlatformSettings
+            canManage={hasPermission(identity, "settings.manage")}
+            initial={publicConfiguration}
+            {...(parameters.focus ? { initialFocus: parameters.focus.slice(0, 80) } : {})}
+          />
+        ) : null}
+        {activeSection === "accounts" || activeSection === "retention" ? (
+          <>
+            <OperationsSettings
+              key={`${activeSection}:${parameters.cursor ?? ""}:${parameters.query ?? ""}:${parameters.status ?? ""}`}
+              canManageSettings={hasPermission(identity, "settings.manage")}
+              canManageTokens={hasPermission(identity, "api_token.manage")}
+              initialAccounts={serviceAccounts.items}
+              accountFilter={{ query: parameters.query ?? "", status: parameters.status ?? "" }}
+              initialPolicies={retentionPolicies}
+              projects={projects.map((project) => ({ id: project.id, name: project.name }))}
+              visibleSection={activeSection}
+            />
+            {activeSection === "accounts" ? (
+              <CursorPagination
+                nextCursor={serviceAccounts.nextCursor}
+                count={serviceAccounts.items.length}
+                label="服务账号分页"
+              />
+            ) : null}
+          </>
+        ) : null}
+        {activeSection === "diagnostics" ? (
+          <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
+        ) : null}
+        {activeSection === "storage" ? (
+          <StorageInventory
+            canManage={hasPermission(identity, "settings.manage")}
+            {...(storageCategory ? { initialCategory: storageCategory } : {})}
+            initialQuery={parameters.query?.slice(0, 240) ?? ""}
+            key={`${storageCategory ?? "all"}:${parameters.query ?? ""}`}
+            timeZone={configuration.web.timeZone}
+          />
+        ) : null}
+      </TabContent>
     </section>
   );
 }

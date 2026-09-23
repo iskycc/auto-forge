@@ -149,8 +149,8 @@ async function loginWithLdap(
   await expect(page.getByRole("group", { name: "登录来源" })).toHaveCount(0);
   await page.getByLabel("用户名").fill(username);
   await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
-  await expect(page).not.toHaveURL(/\/login$/, { timeout: 20_000 });
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible({ timeout: 20_000 });
   return context;
 }
 

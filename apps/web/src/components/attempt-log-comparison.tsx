@@ -470,7 +470,7 @@ const attemptLogComparisonStyles = {
   "analysis-log-lines":
     'relative flex-1 min-h-0 overflow-auto [overscroll-behavior:contain] [&_>_p]:m-4 [&_>_p]:text-muted-foreground [&_>_p]:text-sm [&_[role="alert"]]:text-destructive',
   "analysis-log-load-progress":
-    "grid shrink-0 gap-2 [margin:0_16px_12px] p-3 border border-solid border-transparent rounded-lg bg-info/10 [&_>_div]:flex [&_>_div]:items-center [&_>_div]:justify-between [&_>_div]:gap-3 [&_strong]:text-xs [&_span]:text-xs [&_span]:text-muted-foreground [&_.ui-progress]:w-full [&_.ui-progress]:h-1.5 [&_.ui-progress]:[accent-color:var(--info)]",
+    "grid shrink-0 gap-2 [margin:0_16px_12px] p-3 border border-solid border-transparent rounded-lg bg-info/10 [&_>_div:first-child]:flex [&_>_div:first-child]:items-center [&_>_div:first-child]:justify-between [&_>_div:first-child]:gap-3 [&_strong]:text-xs [&_span]:text-xs [&_span]:text-muted-foreground",
   "analysis-log-window":
     "flex flex-col min-w-0 min-h-0 overflow-hidden border border-solid border-border rounded-lg bg-card shadow-xs [&_>_header]:grid [&_>_header]:gap-2 [&_>_header]:py-3 [&_>_header]:px-4 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:bg-muted [&_>_header_strong]:text-sm [&_>_header_small]:overflow-hidden [&_>_header_small]:text-ellipsis [&_>_header_small]:whitespace-nowrap [&_>_header_small]:text-muted-foreground [&_>_header_small]:text-xs",
   "analysis-log-windows":

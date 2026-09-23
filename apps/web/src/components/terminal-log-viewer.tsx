@@ -28,7 +28,7 @@ export function TerminalLogViewer({
     >
       <div className={cn("log-viewer-titlebar", terminalLogViewerStyles["log-viewer-titlebar"])}>
         <div className={cn("log-viewer-title", terminalLogViewerStyles["log-viewer-title"])}>
-          <TerminalSquare aria-hidden="true" size={17} className="shrink-0 text-primary" />
+          <TerminalSquare aria-hidden="true" size={17} className="shrink-0 text-primary-text" />
           <span className={"log-viewer-name"}>{title}</span>
         </div>
         <Button

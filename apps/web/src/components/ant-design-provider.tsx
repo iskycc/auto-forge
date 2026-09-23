@@ -1,74 +1,80 @@
 "use client";
 
-import { App, ConfigProvider, theme, type ThemeConfig } from "antd";
+import { App, ConfigProvider, theme } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
-import type { ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { colorModeCookie, readBrowserColorMode, type ColorMode } from "@/lib/color-mode";
+import { layoutThemeAliases, platformThemes } from "@/lib/ant-design-theme";
 
-const platformTheme: ThemeConfig = {
-  zeroRuntime: true,
-  cssVar: { key: "autoforge" },
-  token: {
-    colorPrimary: "#1668dc",
-    colorSuccess: "#389e0d",
-    colorWarning: "#d48806",
-    colorError: "#cf1322",
-    colorInfo: "#1668dc",
-    colorBgLayout: "#f5f7fb",
-    colorText: "#1f2937",
-    colorTextSecondary: "#596579",
-    colorFillAlter: "#f0f4f9",
-    colorBorder: "#cbd5e1",
-    colorBorderSecondary: "#e2e8f0",
-    colorSuccessText: "#237804",
-    colorWarningText: "#ad6800",
-    colorInfoText: "#0958d9",
-    colorErrorText: "#cf1322",
-    borderRadius: 8,
-    controlHeight: 36,
-    controlHeightSM: 32,
-    fontSize: 14,
-    fontFamily:
-      'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-    motion: false,
-  },
-};
+const ColorModeContext = createContext<{
+  colorMode: ColorMode;
+  setColorMode: (mode: ColorMode) => void;
+} | null>(null);
 
-export function AntDesignProvider({ children }: { children: ReactNode }) {
+export function useColorMode() {
+  const context = useContext(ColorModeContext);
+  if (!context) throw new Error("Color mode requires AntDesignProvider.");
+  return context;
+}
+
+export function AntDesignProvider({
+  children,
+  initialColorMode = "light",
+}: {
+  children: ReactNode;
+  initialColorMode?: ColorMode;
+}) {
+  const [colorMode, updateColorMode] = useState(initialColorMode);
+  const setColorMode = useCallback((mode: ColorMode) => {
+    document.cookie = colorModeCookie(mode, window.location.protocol === "https:");
+    document.documentElement.dataset.colorMode = mode;
+    updateColorMode(mode);
+  }, []);
+  useEffect(() => {
+    const synchronizePreference = () => {
+      const mode = readBrowserColorMode(document.cookie);
+      document.documentElement.dataset.colorMode = mode;
+      updateColorMode(mode);
+    };
+    window.addEventListener("focus", synchronizePreference);
+    window.addEventListener("pageshow", synchronizePreference);
+    return () => {
+      window.removeEventListener("focus", synchronizePreference);
+      window.removeEventListener("pageshow", synchronizePreference);
+    };
+  }, []);
+  const preference = useMemo(() => ({ colorMode, setColorMode }), [colorMode, setColorMode]);
   return (
-    <AntdRegistry>
-      <ConfigProvider locale={zhCN} theme={platformTheme} button={{ autoInsertSpace: false }}>
-        <LayoutThemeTokens />
-        <App component={false}>{children}</App>
-      </ConfigProvider>
-    </AntdRegistry>
+    <ColorModeContext value={preference}>
+      <AntdRegistry>
+        <ConfigProvider
+          locale={zhCN}
+          theme={platformThemes[colorMode]}
+          button={{ autoInsertSpace: false }}
+        >
+          <LayoutThemeTokens colorMode={colorMode} />
+          <App component={false}>{children}</App>
+        </ConfigProvider>
+      </AntdRegistry>
+    </ColorModeContext>
   );
 }
 
-/** Business charts and virtualized layouts consume aliases of the same Ant Design tokens. */
-function LayoutThemeTokens() {
+function LayoutThemeTokens({ colorMode }: { colorMode: ColorMode }) {
   const { token } = theme.useToken();
-  const aliases = {
-    background: token.colorBgLayout,
-    foreground: token.colorText,
-    card: token.colorBgContainer,
-    popover: token.colorBgElevated,
-    primary: token.colorPrimary,
-    "primary-foreground": token.colorTextLightSolid,
-    secondary: token.colorPrimaryBg,
-    muted: token.colorFillAlter,
-    "muted-foreground": token.colorTextSecondary,
-    accent: token.colorPrimaryBg,
-    border: token.colorBorderSecondary,
-    input: token.colorBorder,
-    ring: token.colorPrimaryBorder,
-    destructive: token.colorErrorText,
-    success: token.colorSuccessText,
-    info: token.colorInfoText,
-    warning: token.colorWarningText,
-  };
   return (
-    <style data-autoforge-theme="antd">{`:root {${Object.entries(aliases)
+    <style data-autoforge-theme="antd">{`:root[data-color-mode] {color-scheme:${colorMode};${Object.entries(
+      layoutThemeAliases(token),
+    )
       .map(([name, value]) => `--${name}:${value};`)
       .join("")}}`}</style>
   );

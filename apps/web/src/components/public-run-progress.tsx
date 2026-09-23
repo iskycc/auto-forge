@@ -11,6 +11,8 @@ import { useEffect, useState } from "react";
 
 import type { RunProgress } from "@/lib/run-progress";
 
+import { ColorModeToggle } from "./color-mode-toggle";
+
 export function PublicRunProgress({
   initial,
   accessToken,
@@ -81,6 +83,7 @@ export function PublicRunProgress({
             />
             {progress.statusLabel}
           </span>
+          <ColorModeToggle />
         </header>
 
         <div

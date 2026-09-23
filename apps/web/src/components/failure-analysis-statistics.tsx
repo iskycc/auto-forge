@@ -164,19 +164,19 @@ export function FailureAnalysisStatistics({
             count={summary.categories.rerunPassed}
             label="重跑通过"
             total={summary.completed}
-            tone="green"
+            tone="success"
           />
           <CategoryMetric
             count={summary.categories.caseFixed}
             label="用例修复"
             total={summary.completed}
-            tone="blue"
+            tone="info"
           />
           <CategoryMetric
             count={summary.categories.codeIssueFiled}
             label="代码问题提单"
             total={summary.completed}
-            tone="orange"
+            tone="warning"
           />
         </div>
       </Card>
@@ -353,21 +353,21 @@ function CategoryMetric({
   count: number;
   label: string;
   total: number;
-  tone: "green" | "blue" | "orange";
+  tone: "success" | "info" | "warning";
 }) {
   const ratio = percent(count, total);
   return (
     <article
       className={cn(
         failureAnalysisStatisticsStyles["failure-analysis-category-metric"],
-        `failure-analysis-category-metric ${tone}`,
+        "failure-analysis-category-metric",
       )}
     >
       <span>
         <strong>{label}</strong>
         <b>{ratio}%</b>
       </span>
-      <ProgressBar label={`${label}占比`} max={100} value={ratio} />
+      <ProgressBar label={`${label}占比`} max={100} value={ratio} tone={tone} />
       <small>{count.toLocaleString("zh-CN")} 条结论</small>
     </article>
   );
@@ -439,7 +439,7 @@ const failureAnalysisStatisticsStyles = {
     "grid gap-5 [&_.ui-card-content_>_header]:flex [&_.ui-card-content_>_header]:items-center [&_.ui-card-content_>_header]:justify-between [&_.ui-card-content_>_header]:gap-3 [&_.ui-card-content_>_header_h2]:m-0 [&_.ui-card-content_>_header_p]:m-0 [&_.ui-card-content_>_header_p]:text-muted-foreground",
   "failure-analysis-category-grid": "grid grid-cols-3 gap-4",
   "failure-analysis-category-metric":
-    "grid gap-3 p-4 border border-solid border-border rounded-lg bg-muted [&_>_span]:flex [&_>_span]:justify-between [&_.ui-progress]:w-full [&_.ui-progress]:h-2 [&_.ui-progress]:overflow-hidden [&_.ui-progress]:border-0 [&_.ui-progress]:rounded-full [&_.ui-progress-fill]:bg-info [&.green_.ui-progress-fill]:bg-success [&.orange_.ui-progress-fill]:bg-warning [&_small]:text-muted-foreground",
+    "grid gap-3 p-4 border border-solid border-border rounded-lg bg-muted [&_>_span]:flex [&_>_span]:justify-between [&_small]:text-muted-foreground",
   "failure-analysis-category-statistics":
     "grid gap-5 [&_.ui-card-content_>_header]:flex [&_.ui-card-content_>_header]:items-center [&_.ui-card-content_>_header]:justify-between [&_.ui-card-content_>_header]:gap-3 [&_.ui-card-content_>_header_>_span]:flex [&_.ui-card-content_>_header_>_span]:items-center [&_.ui-card-content_>_header_>_span]:justify-start [&_.ui-card-content_>_header_>_span]:gap-3 [&_time]:text-muted-foreground [&_time]:text-xs",
   "failure-analysis-conclusion-card":

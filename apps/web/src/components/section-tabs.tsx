@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 import Link from "next/link";
 import { useLinkStatus } from "next/link";
-import { useRouter } from "next/navigation";
+import { useRef } from "react";
 import { Tabs } from "./ui/tabs";
 
 export type SectionTab = {
@@ -13,9 +13,9 @@ export type SectionTab = {
 };
 
 export function SectionTabs({ label, tabs }: { label: string; tabs: SectionTab[] }) {
-  const router = useRouter();
+  const navigationRef = useRef<HTMLElement>(null);
   return (
-    <nav className="section-tabs min-w-0" aria-label={label}>
+    <nav ref={navigationRef} className="section-tabs min-w-0" aria-label={label}>
       <Tabs
         label={label}
         value={tabs.find((tab) => tab.active)?.href ?? tabs[0]?.href ?? ""}
@@ -23,15 +23,23 @@ export function SectionTabs({ label, tabs }: { label: string; tabs: SectionTab[]
           key: tab.href,
           label: (
             <Link
+              className="inline-flex items-center"
               onClick={(event) => event.stopPropagation()}
               aria-current={tab.active ? "page" : undefined}
               href={tab.href}
+              scroll={false}
             >
               <SectionTabLabel label={tab.label} />
             </Link>
           ),
         }))}
-        onChange={(href) => router.push(href)}
+        onChange={(href) => {
+          // Keyboard activation follows the same Link and unsaved-form guard as a mouse click.
+          const links = navigationRef.current?.querySelectorAll<HTMLAnchorElement>("a[href]");
+          Array.from(links ?? [])
+            .find((link) => link.getAttribute("href") === href)
+            ?.click();
+        }}
       />
     </nav>
   );
@@ -56,5 +64,5 @@ function SectionTabLabel({ label }: { label: string }) {
 
 const sectionTabsStyles = {
   "section-tab-pending":
-    "w-[5px] h-[5px] ml-[7px] rounded-full bg-current opacity-0 [transform:scale(0.5)] transition-colors duration-150 motion-reduce:transition-none [&.visible]:opacity-75 [&.visible]:[transform:scale(1)] [&.visible]:animate-pulse [&.visible]:motion-reduce:animate-none",
+    "inline-block size-1.5 shrink-0 ml-2 rounded-full bg-current opacity-0 transition-opacity duration-150 motion-reduce:transition-none [&.visible]:opacity-75 [&.visible]:animate-pulse [&.visible]:motion-reduce:animate-none",
 } as const;

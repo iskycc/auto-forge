@@ -108,8 +108,13 @@ async function waitForAuthenticatedRoute(page: Page): Promise<void> {
   await expect
     .poll(
       () => {
-        const pathname = new URL(page.url()).pathname;
-        return pathname !== "/setup" && pathname !== "/login" && pathname !== "/landing";
+        const { pathname, searchParams } = new URL(page.url());
+        return (
+          pathname !== "/setup" &&
+          pathname !== "/login" &&
+          pathname !== "/landing" &&
+          searchParams.get("login") !== "1"
+        );
       },
       { timeout: 20_000 },
     )
@@ -133,8 +138,10 @@ export async function login(page: Page, username: string, password: string): Pro
   await expect
     .poll(
       () => {
-        const pathname = new URL(page.url()).pathname;
-        return pathname !== "/login" && pathname !== "/landing";
+        const { pathname, searchParams } = new URL(page.url());
+        return (
+          pathname !== "/login" && pathname !== "/landing" && searchParams.get("login") !== "1"
+        );
       },
       { timeout: 20_000 },
     )
@@ -144,7 +151,8 @@ export async function login(page: Page, username: string, password: string): Pro
 
 export async function logout(page: Page): Promise<void> {
   await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  // Accept the standalone entry in older Releases used by upgrade acceptance.
+  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
 }
 
 export async function selectProjectContext(

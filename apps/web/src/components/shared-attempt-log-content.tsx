@@ -11,6 +11,7 @@ import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions
 import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
+import { ColorModeToggle } from "@/components/color-mode-toggle";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
@@ -149,7 +150,12 @@ export function SharedAttemptLogContent({
         <Card
           className={cn("share-log-main", sharedAttemptLogContentStyles["share-log-main"])}
           title="执行日志"
-          extra={<Tag color="blue">只读日志</Tag>}
+          extra={
+            <div className="flex items-center gap-2">
+              <Tag color="blue">只读日志</Tag>
+              <ColorModeToggle />
+            </div>
+          }
           role="region"
           aria-label="执行日志"
           styles={{
@@ -433,6 +439,7 @@ export function InvalidAttemptLogShareView() {
         </span>
         <h1>链接无效</h1>
         <p>该日志公开访问链接无效或已被撤销，请联系日志发布者重新生成。</p>
+        <ColorModeToggle />
       </section>
     </main>
   );
