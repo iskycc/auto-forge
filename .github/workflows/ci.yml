@@ -149,6 +149,12 @@ jobs:
             screenshots: true
           - scenario: ui
             specs: tests/e2e/ui-layout.spec.ts tests/e2e/tab-navigation.spec.ts
+            grep_invert: primary product and administration routes
+            project_maximum_concurrency: ""
+            screenshots: true
+          - scenario: ui-pages
+            specs: tests/e2e/ui-layout.spec.ts
+            grep: primary product and administration routes
             project_maximum_concurrency: ""
             screenshots: true
     steps:
@@ -183,9 +189,18 @@ jobs:
           AUTOFORGE_UI_SCREENSHOT_DIR: ${{ matrix.screenshots && format('{0}/autoforge-ui-screenshots', runner.temp) || '' }}
           E2E_PROJECT_MAXIMUM_CONCURRENCY: ${{ matrix.project_maximum_concurrency }}
           E2E_SCENARIO_SPECS: ${{ matrix.specs }}
+          E2E_SCENARIO_INCLUDE: ${{ matrix.grep }}
+          E2E_SCENARIO_EXCLUDE: ${{ matrix.grep_invert }}
         run: |
           read -r -a scenario_specs <<< "${E2E_SCENARIO_SPECS}"
-          pnpm exec playwright test "${scenario_specs[@]}"
+          scenario_filters=()
+          if [[ -n "${E2E_SCENARIO_INCLUDE}" ]]; then
+            scenario_filters+=(--grep "${E2E_SCENARIO_INCLUDE}")
+          fi
+          if [[ -n "${E2E_SCENARIO_EXCLUDE}" ]]; then
+            scenario_filters+=(--grep-invert "${E2E_SCENARIO_EXCLUDE}")
+          fi
+          pnpm exec playwright test "${scenario_specs[@]}" "${scenario_filters[@]}"
       - name: Upload serial UI screenshots
         if: always() && matrix.screenshots
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
