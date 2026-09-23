@@ -27,6 +27,7 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { useFormFieldValue } from "./ui/use-form-field-value";
 import { formControlLabel } from "./ui/form-control-label";
+import { useClientReadiness } from "./ui/use-client-readiness";
 
 type ButtonVariant = "neutral" | "primary" | "secondary" | "danger" | "ghost";
 type ButtonSize = "compact" | "regular" | "large";
@@ -88,6 +89,7 @@ type DatetimeInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & 
 
 export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
   function DatetimeInput({ className, value, defaultValue, onChange, ...props }, ref) {
+    const clientReady = useClientReadiness();
     const nativeInput = useRef<HTMLInputElement>(null);
     const picker = useRef<ComponentRef<typeof DatePicker>>(null);
     const [fieldLabel, setFieldLabel] = useState<string>();
@@ -111,6 +113,7 @@ export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
       <span className={cn("ui-datetime relative inline-flex w-full min-w-0", className)}>
         <input
           {...props}
+          disabled={props.disabled || !clientReady}
           ref={(input) => {
             nativeInput.current = input;
             if (typeof ref === "function") ref(input);
@@ -143,7 +146,7 @@ export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
           format="YYYY/MM/DD HH:mm"
           placeholder="选择日期与时间"
           value={displayed ? dayjs(displayed) : null}
-          disabled={props.disabled === true}
+          disabled={props.disabled === true || !clientReady}
           onChange={(next) => commit(next ? next.format("YYYY-MM-DDTHH:mm") : "")}
           aria-label={props["aria-label"] ?? fieldLabel ?? "日期与时间"}
           aria-required={props.required}

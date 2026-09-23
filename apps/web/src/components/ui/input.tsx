@@ -4,6 +4,7 @@ import { Input as AntInput, type InputRef } from "antd";
 import { useCallback, useImperativeHandle, useRef, type ComponentProps } from "react";
 import { cn, definedProps } from "@/lib/utils";
 import { useFormFieldValue } from "./use-form-field-value";
+import { useClientReadiness } from "./use-client-readiness";
 
 export function Input({
   className,
@@ -13,8 +14,10 @@ export function Input({
   value,
   defaultValue,
   onChange,
+  disabled,
   ...props
 }: ComponentProps<"input">) {
+  const clientReady = useClientReadiness();
   const control = useRef<InputRef>(null);
   const readControl = useCallback(() => control.current?.input ?? null, []);
   const field = useFormFieldValue(value, defaultValue, readControl);
@@ -29,6 +32,7 @@ export function Input({
         className,
       )}
       {...definedProps(props)}
+      disabled={disabled || !clientReady}
       value={field.value ?? ""}
       onChange={(event) => {
         field.setDraft(event.target.value);

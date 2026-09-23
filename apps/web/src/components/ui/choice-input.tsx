@@ -4,6 +4,7 @@ import { Checkbox, Radio, type CheckboxRef } from "antd";
 import { useImperativeHandle, useRef, type InputHTMLAttributes, type Ref } from "react";
 import { nativeInputEvent } from "./native-input-event";
 import { cn, definedProps } from "@/lib/utils";
+import { useClientReadiness } from "./use-client-readiness";
 
 export type ChoiceInputProps = InputHTMLAttributes<HTMLInputElement> & {
   indeterminate?: boolean;
@@ -22,8 +23,10 @@ export function ChoiceInput({
   onBlur,
   indeterminate,
   type,
+  disabled,
   ...props
 }: ChoiceInputProps) {
+  const clientReady = useClientReadiness();
   const control = useRef<CheckboxRef>(null);
   useImperativeHandle(ref, () => control.current!.input!);
   const Choice = type === "radio" ? Radio : Checkbox;
@@ -37,6 +40,7 @@ export function ChoiceInput({
     >
       <Choice
         {...definedProps(props)}
+        disabled={disabled || !clientReady}
         ref={control}
         {...(type === "checkbox" ? definedProps({ indeterminate }) : {})}
         className={cn("ui-input m-0", className)}

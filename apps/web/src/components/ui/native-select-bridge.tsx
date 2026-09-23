@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { Select as AntSelect, type RefSelectProps } from "antd";
 import { useFormFieldValue } from "./use-form-field-value";
 import { formControlLabel } from "./form-control-label";
+import { useClientReadiness } from "./use-client-readiness";
 
 type Option = { value: string; label: string; disabled: boolean };
 
@@ -53,6 +54,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
     { children, className, disabled, multiple, value, defaultValue, onChange, ...props },
     forwardedRef,
   ) {
+    const clientReady = useClientReadiness();
     const options = readOptions(children);
     const selectRef = useRef<HTMLSelectElement | null>(null);
     const triggerRef = useRef<RefSelectProps | null>(null);
@@ -102,7 +104,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
               : "ui-select-control-hidden sr-only pointer-events-none opacity-0",
             className,
           )}
-          disabled={disabled}
+          disabled={disabled || !clientReady}
           multiple={multiple}
           tabIndex={multiple ? 0 : -1}
           value={multiple ? field.value : currentValue}
@@ -136,7 +138,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
             aria-required={props.required}
             value={currentValue}
             onChange={chooseOption}
-            disabled={disabled || !options.length}
+            disabled={disabled || !clientReady || !options.length}
             options={options}
             placeholder={options.length ? "请选择" : "暂无可选项"}
             virtual={options.length > 200}

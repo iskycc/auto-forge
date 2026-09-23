@@ -95,7 +95,9 @@ test("security audit keeps Chinese CRUD, login failures and denied access throug
     .getByRole("button", { name: "查看事件详情：越权访问被拒绝" })
     .filter({ visible: true })
     .last();
+  await expect(toggle).toBeEnabled();
   await toggle.focus();
+  await expect(toggle).toBeFocused();
   await page.keyboard.press("Enter");
   const details = page.getByRole("region", { name: "越权访问被拒绝的事件详情" });
   await expect(details.getByText("请求的权限", { exact: true })).toBeVisible();

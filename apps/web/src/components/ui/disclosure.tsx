@@ -3,6 +3,7 @@
 import { Collapse } from "antd";
 import { useState, type ComponentProps, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { useClientReadiness } from "./use-client-readiness";
 
 type DisclosureProps = Omit<ComponentProps<"div">, "onChange"> & {
   header: ReactNode;
@@ -27,6 +28,7 @@ export function Disclosure({
   className,
   ...props
 }: DisclosureProps) {
+  const clientReady = useClientReadiness();
   const [expanded, setExpanded] = useState(defaultOpen);
   const [previousDefault, setPreviousDefault] = useState(defaultOpen);
   if (previousDefault !== defaultOpen) {
@@ -38,6 +40,7 @@ export function Disclosure({
     <div {...props} data-open={active} className={cn("ui-disclosure min-w-0", className)}>
       <Collapse
         ghost
+        collapsible={clientReady ? "header" : "disabled"}
         size="small"
         activeKey={active ? ["content"] : []}
         onChange={(keys) => {

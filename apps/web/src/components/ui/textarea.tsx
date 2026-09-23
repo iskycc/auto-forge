@@ -10,6 +10,7 @@ import {
 } from "react";
 import { cn, definedProps } from "@/lib/utils";
 import { useFormFieldValue } from "./use-form-field-value";
+import { useClientReadiness } from "./use-client-readiness";
 
 export function Textarea({
   className,
@@ -17,8 +18,10 @@ export function Textarea({
   value,
   defaultValue,
   onChange,
+  disabled,
   ...props
 }: ComponentProps<"textarea">) {
+  const clientReady = useClientReadiness();
   const control = useRef<ComponentRef<typeof Input.TextArea>>(null);
   const readControl = useCallback(() => control.current?.resizableTextArea?.textArea ?? null, []);
   const field = useFormFieldValue(value, defaultValue, readControl);
@@ -32,6 +35,7 @@ export function Textarea({
         className,
       )}
       {...definedProps(props)}
+      disabled={disabled || !clientReady}
       value={field.value ?? ""}
       onChange={(event) => {
         field.setDraft(event.target.value);

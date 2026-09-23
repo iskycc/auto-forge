@@ -74,6 +74,31 @@ test("management actions wait for hydration and respond to the first click", asy
   await expect(page.getByRole("heading", { name: "LDAP 目录", exact: true })).toBeVisible();
 });
 
+test("LDAP form waits for hydration before accepting the first checkbox change", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  let releaseScripts: () => void = () => undefined;
+  const scriptsReady = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  await page.route("**/_next/static/**/*.js", async (route) => {
+    await scriptsReady;
+    await route.continue();
+  });
+  const enabled = page.getByLabel("启用 LDAP 登录");
+  try {
+    await page.goto("/settings/access?section=ldap", { waitUntil: "commit" });
+    await expect(enabled).toBeVisible();
+    await expect(enabled).toBeDisabled();
+  } finally {
+    releaseScripts();
+  }
+  await enabled.check();
+  await expect(enabled).toBeChecked();
+  await expect(page.locator('input[name="url"]')).toBeEditable();
+});
+
 test("multiline notifications keep separate click targets at desktop widths", async ({ page }) => {
   await ensureAdministrator(page);
   const items = Array.from({ length: 3 }, (_, index) => ({
