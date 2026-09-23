@@ -346,7 +346,7 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
                         `notification-severity ${notification.severity}`,
                       )}
                     />
-                    <span>
+                    <span className="notification-content grid min-w-0 flex-1 gap-[3px]">
                       <strong>{notification.title}</strong>
                       <small>{notificationMessage(notification)}</small>
                       <time>{formatDate(notification.createdAt)}</time>
@@ -434,7 +434,7 @@ const topbarToolsStyles = {
   "notification-count":
     "absolute top-[-4px] right-[-4px] grid min-w-4.5 h-4.5 place-items-center py-0 px-1 border-2 border-solid border-border rounded-lg bg-destructive text-primary-foreground text-xs font-semibold",
   "notification-item":
-    "flex items-center w-full gap-3 p-2.5 border-0 rounded-lg bg-transparent text-foreground text-left [text-decoration:none] cursor-pointer [&:hover]:bg-muted [&:hover]:[outline:none] [&:focus-visible]:bg-muted [&:focus-visible]:[outline:none] [&_>_span:nth-child(2)]:grid [&_>_span:nth-child(2)]:min-w-0 [&_>_span:nth-child(2)]:gap-[3px] [&_>_span:nth-child(2)]:flex-1 [&_small]:text-muted-foreground [&_small]:[overflow-wrap:anywhere] [&_small]:whitespace-normal [&.read]:opacity-68 [&_time]:text-muted-foreground [&_time]:text-xs",
+    "flex h-auto items-center w-full whitespace-normal gap-3 p-2.5 border-0 rounded-lg bg-transparent text-foreground text-left [text-decoration:none] cursor-pointer [&:hover]:bg-muted [&:hover]:[outline:none] [&:focus-visible]:bg-muted [&:focus-visible]:[outline:none] [&_small]:text-muted-foreground [&_small]:[overflow-wrap:anywhere] [&_small]:whitespace-normal [&.read]:opacity-68 [&_time]:text-muted-foreground [&_time]:text-xs",
   "notification-load-more": "w-[calc(100%_-_24px)] [margin:8px_12px_12px]",
   "notification-panel": "right-0 w-[390px] max-h-[min(620px,_72vh)] overflow-auto",
   "notification-severity":

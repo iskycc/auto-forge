@@ -138,7 +138,7 @@ export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
           // A form reset also discards the picker's focused, unconfirmed text draft.
           key={field.resetVersion}
           ref={picker}
-          className="w-full min-w-0"
+          className="w-full min-w-0 min-h-[var(--ant-control-height)]"
           showTime={{ format: "HH:mm" }}
           format="YYYY/MM/DD HH:mm"
           placeholder="选择日期与时间"

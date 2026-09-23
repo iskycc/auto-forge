@@ -421,12 +421,9 @@ test("user role assignment offers only projects the operator can manage", async 
     await row.getByRole("button", { name: "分配角色", exact: true }).click();
     const dialog = operatorPage.getByRole("dialog", { name: "分配用户角色" });
     await expect(dialog.getByRole("button", { name: "分配系统角色" })).toHaveCount(0);
-    expect(
-      await dialog
-        .getByLabel("项目", { exact: true })
-        .locator("option")
-        .evaluateAll((options) => options.map((option) => option.getAttribute("value"))),
-    ).toEqual([project.body.id]);
+    const projectOptions = dialog.locator('select[name="projectId"] option');
+    await expect(projectOptions).toHaveCount(1);
+    await expect(projectOptions).toHaveAttribute("value", project.body.id);
     await dialog.locator(`input[name="roleId"][value="${VIEWER_ROLE_ID}"]`).check();
     await dialog.getByRole("button", { name: "分配项目角色" }).click();
     await expect(dialog).toHaveCount(0);

@@ -12,6 +12,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL,
+    actionTimeout: 30_000,
     trace: "retain-on-failure",
   },
   projects: [

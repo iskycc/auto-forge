@@ -35,7 +35,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useClientReadiness } from "./ui/use-client-readiness";
 
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
 import { formatMethodSignature } from "@/lib/jvm-signature";
@@ -51,18 +52,6 @@ type JarUploadProgress = {
   detail: string;
   percent: number;
 };
-
-function subscribeToClientReadiness(): () => void {
-  return () => undefined;
-}
-
-function clientIsReady(): boolean {
-  return true;
-}
-
-function serverIsNotReady(): boolean {
-  return false;
-}
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -100,11 +89,7 @@ export function JarImporter({
   const inputId = useId();
   const [inheriting, setInheriting] = useState(false);
   const router = useRouter();
-  const clientReady = useSyncExternalStore(
-    subscribeToClientReadiness,
-    clientIsReady,
-    serverIsNotReady,
-  );
+  const clientReady = useClientReadiness();
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [inspection, setInspection] = useState<JarInspection | null>(null);

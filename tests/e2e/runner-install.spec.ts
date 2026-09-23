@@ -175,8 +175,8 @@ async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): 
   );
   await page.goto("/runners");
   await page.getByRole("button", { name: "打开自动安装" }).click();
-  const savedConnections = page.getByLabel("已保存连接");
-  await expect(savedConnections).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "已保存连接", exact: true })).toBeVisible();
+  const savedConnections = page.getByLabel("已保存连接").and(page.locator("select"));
   const savedOption = savedConnections
     .locator("option")
     .filter({ hasText: "SSH Installed Runner" })

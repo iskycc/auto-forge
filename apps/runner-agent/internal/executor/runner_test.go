@@ -111,30 +111,39 @@ func TestRunTreatsShellMetacharactersAsLiteralArguments(t *testing.T) {
 }
 
 func TestRunTerminatesDescendantProcessTreeOnTimeout(t *testing.T) {
+	for _, mode := range []string{"tree", "delayed-tree"} {
+		t.Run(mode, func(t *testing.T) {
+			testDescendantProcessTreeTimeout(t, mode)
+		})
+	}
+}
+
+func testDescendantProcessTreeTimeout(t *testing.T, mode string) {
+	t.Helper()
 	executable := testExecutable(t)
 	pidPath := filepath.Join(t.TempDir(), "descendant.pid")
-	spec := helperSpec(executable, "tree")
+	spec := helperSpec(executable, mode)
 	spec.Command.Args = append(spec.Command.Args, pidPath)
 	spec.Limits.TimeoutMs = 100
 	spec.Limits.TerminationGraceMs = 10
+	var pid int
 
 	result, err := Run(context.Background(), spec, RunOptions{
 		DataDirectory: t.TempDir(),
 		Policy:        Policy{AllowedExecutables: []string{executable}},
+		// Start the execution timeout only after the fixture has a child. A busy
+		// host can otherwise expire 100ms while its PID file is still empty.
+		ProcessStarted: func(ProcessIdentity) error {
+			var err error
+			pid, err = waitForDescendantPID(pidPath)
+			return err
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Termination != "timeout" {
 		t.Fatalf("termination = %q, want timeout", result.Termination)
-	}
-	payload, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatalf("read descendant pid: %v", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(payload)))
-	if err != nil {
-		t.Fatalf("parse descendant pid: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
 	for processExists(pid) && time.Now().Before(deadline) {
@@ -143,6 +152,28 @@ func TestRunTerminatesDescendantProcessTreeOnTimeout(t *testing.T) {
 	if processExists(pid) {
 		t.Fatalf("descendant process %d survived timeout cleanup", pid)
 	}
+}
+
+func waitForDescendantPID(pidPath string) (int, error) {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		payload, err := os.ReadFile(pidPath)
+		if err != nil && !os.IsNotExist(err) {
+			return 0, fmt.Errorf("read descendant pid: %w", err)
+		}
+		if value := strings.TrimSpace(string(payload)); value != "" {
+			pid, err := strconv.Atoi(value)
+			if err != nil {
+				return 0, fmt.Errorf("parse descendant pid: %w", err)
+			}
+			if pid <= 0 {
+				return 0, fmt.Errorf("descendant pid must be positive: %d", pid)
+			}
+			return pid, nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return 0, fmt.Errorf("descendant pid was not ready within 5s: %s", pidPath)
 }
 
 func TestValidateRejectsShellAndEscapingWorkingDirectory(t *testing.T) {
@@ -207,7 +238,10 @@ func TestHelperProcess(t *testing.T) {
 		time.Sleep(5 * time.Second)
 	case "argument":
 		fmt.Fprint(os.Stdout, os.Args[len(os.Args)-1])
-	case "tree":
+	case "tree", "delayed-tree":
+		if mode == "delayed-tree" {
+			time.Sleep(150 * time.Millisecond)
+		}
 		pidPath := os.Args[len(os.Args)-1]
 		child := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "leaf")
 		child.Env = append(os.Environ(), "AUTOFORGE_TEST_HELPER=1")

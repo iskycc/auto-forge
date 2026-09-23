@@ -40,6 +40,48 @@ const primaryRoutes = [
   "/account/security",
 ] as const;
 
+test("multiline notifications keep separate click targets at desktop widths", async ({ page }) => {
+  await ensureAdministrator(page);
+  const items = Array.from({ length: 3 }, (_, index) => ({
+    id: `layout-notification-${index}`,
+    kind: "batch.completed",
+    severity: "info",
+    title: `执行批次已完成 ${index + 1}`,
+    message: "这是一条包含较长任务名称与执行说明的通知，用于检查多行内容是否挤压相邻通知。".repeat(
+      2,
+    ),
+    createdAt: "2026-09-23T00:00:00Z",
+    readAt: null,
+  }));
+  await page.route("**/api/v1/notifications?**", (route) =>
+    route.fulfill({ json: { items, nextCursor: null } }),
+  );
+  await page.route("**/api/v1/notifications/*/read", (route) => route.fulfill({ status: 204 }));
+  await page.goto("/runners");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.getByRole("button", { name: /^通知/u }).click();
+    const notifications = page.locator(".notification-item");
+    await expect(notifications).toHaveCount(3);
+    const overflow = await notifications.evaluateAll(
+      (buttons) =>
+        buttons.filter((button) => {
+          const bounds = button.getBoundingClientRect();
+          return Array.from(button.querySelectorAll("strong, small, time")).some((text) => {
+            const content = text.getBoundingClientRect();
+            return content.top < bounds.top - 1 || content.bottom > bounds.bottom + 1;
+          });
+        }).length,
+    );
+    expect(overflow, "notification text must stay inside its own click target").toBe(0);
+    await notifications.nth(1).click({ timeout: 5000 });
+    await expect(notifications.nth(1)).toHaveClass(/\bread\b/u);
+    await expectUiIntegrity(page);
+    await captureUi(page, "/multiline-notifications", width, false);
+    await page.getByRole("button", { name: "关闭通知", exact: true }).click();
+  }
+});
+
 test("native-backed filters keep accessible names, keyboard selection and form values", async ({
   page,
 }) => {

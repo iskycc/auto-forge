@@ -314,6 +314,9 @@ function typescriptReactFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) return typescriptReactFiles(path);
-    return entry.isFile() && extname(entry.name) === ".tsx" ? [path] : [];
+    // Assertions may contain HTML strings; only shipped components define the UI boundary.
+    return entry.isFile() && extname(entry.name) === ".tsx" && !entry.name.endsWith(".test.tsx")
+      ? [path]
+      : [];
   });
 }
