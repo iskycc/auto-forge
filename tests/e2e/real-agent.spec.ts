@@ -300,6 +300,8 @@ async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<vo
       async () => {
         const response = await page.request.get(
           "/api/v1/audit-events?action=terminal.session_finished&limit=20",
+          // A reused keep-alive socket can close between successive read-only probes.
+          { maxRetries: 1 },
         );
         if (!response.ok()) return 0;
         const body = (await response.json()) as { items: Array<{ action: string }> };
@@ -391,7 +393,7 @@ async function importTestJar(page: Page): Promise<void> {
   const fixtureClass = page.locator(".ui-disclosure.class-preview", {
     hasText: "com.autoforge.acceptance.RealAgentFixture",
   });
-  if ((await fixtureClass.getAttribute("open")) === null) {
+  if ((await fixtureClass.getAttribute("data-open")) !== "true") {
     await fixtureClass.locator(".ui-disclosure-label").click();
   }
   await expect(fixtureClass.getByText("executesThroughRealAgent", { exact: true })).toBeVisible();

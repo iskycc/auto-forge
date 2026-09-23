@@ -82,6 +82,7 @@ import {
   batchesOf,
   POSTGRES_WRITE_BATCH_SIZE,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
+  RELATIONAL_WRITE_BATCH_SIZE,
 } from "./database-batches";
 import { mapStoredRunner } from "./runner-mapper";
 import {
@@ -621,6 +622,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           definitionsByClass.set(row.className, matching);
         }
       }
+      const newCases: ImportCatalogRecord["cases"][number][] = [];
       for (const importedCase of record.cases) {
         const candidate = importedCase.candidate;
         const matchingDefinitions = definitionsByClass.get(candidate.className) ?? [];
@@ -698,46 +700,72 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           continue;
         }
 
-        await transaction.insert(pgCaseDefinitions).values({
-          id: importedCase.caseDefinitionId,
-          projectId,
-          projectVersionId: record.projectVersionId,
-          testStageId: record.testStageId,
-          directoryPath: candidate.packageName.replaceAll(".", "/"),
-          sourceId: record.sourceId,
-          className: candidate.className,
-          packageName: candidate.packageName,
-          displayName: candidate.simpleName,
-          description: "",
-          tagsJson: "[]",
-          parametersJson: JSON.stringify(candidate.parameters ?? {}),
-          enabled: candidate.enabled,
-          archived: false,
-          revision: 1,
-          ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
-          groupsJson: JSON.stringify(candidate.groups),
-          currentVersion: 1,
-          createdAt: record.importedAt,
-          updatedAt: record.importedAt,
-        });
-        await transaction.insert(pgCaseVersions).values({
-          id: importedCase.caseVersionId,
-          caseDefinitionId: importedCase.caseDefinitionId,
-          sourceId: record.sourceId,
-          version: 1,
-          snapshotJson: JSON.stringify(candidate),
-          ...(record.importedBy ? { createdBy: record.importedBy } : {}),
-          changeReason: "source.import",
-          createdAt: record.importedAt,
-        });
-        await this.insertPostgresImportedMethods(
-          transaction,
-          importedCase.caseDefinitionId,
-          importedCase,
-          record.importedAt,
-        );
+        newCases.push(importedCase);
+      }
+      // Each source remains atomic, but new classes share bounded statements instead
+      // of holding the scope lock across three database round trips per class.
+      for (const batch of batchesOf(newCases, RELATIONAL_WRITE_BATCH_SIZE)) {
+        await this.insertPostgresNewCases(transaction, record, batch);
       }
     });
+  }
+
+  private async insertPostgresNewCases(
+    transaction: Parameters<Parameters<PostgresDatabaseHandle["db"]["transaction"]>[0]>[0],
+    record: ImportCatalogRecord,
+    importedCases: ImportCatalogRecord["cases"],
+  ): Promise<void> {
+    await transaction.insert(pgCaseDefinitions).values(
+      importedCases.map(({ caseDefinitionId, candidate }) => ({
+        id: caseDefinitionId,
+        projectId: record.projectId ?? DEFAULT_PROJECT_ID,
+        projectVersionId: record.projectVersionId,
+        testStageId: record.testStageId,
+        directoryPath: candidate.packageName.replaceAll(".", "/"),
+        sourceId: record.sourceId,
+        className: candidate.className,
+        packageName: candidate.packageName,
+        displayName: candidate.simpleName,
+        description: "",
+        tagsJson: "[]",
+        parametersJson: JSON.stringify(candidate.parameters ?? {}),
+        enabled: candidate.enabled,
+        archived: false,
+        revision: 1,
+        ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
+        groupsJson: JSON.stringify(candidate.groups),
+        currentVersion: 1,
+        createdAt: record.importedAt,
+        updatedAt: record.importedAt,
+      })),
+    );
+    await transaction.insert(pgCaseVersions).values(
+      importedCases.map(({ caseDefinitionId, caseVersionId, candidate }) => ({
+        id: caseVersionId,
+        caseDefinitionId,
+        sourceId: record.sourceId,
+        version: 1,
+        snapshotJson: JSON.stringify(candidate),
+        ...(record.importedBy ? { createdBy: record.importedBy } : {}),
+        changeReason: "source.import",
+        createdAt: record.importedAt,
+      })),
+    );
+    const methods = importedCases.flatMap(({ caseDefinitionId, candidate, methods }) =>
+      methods.map(({ methodId, methodIndex }) => {
+        const method = candidate.methods[methodIndex];
+        if (!method) throw new Error(`Missing imported method at index ${methodIndex}.`);
+        return testMethodInsertValues({
+          id: methodId,
+          caseDefinitionId,
+          method,
+          createdAt: record.importedAt,
+        });
+      }),
+    );
+    for (const batch of batchesOf(methods, RELATIONAL_WRITE_BATCH_SIZE)) {
+      await transaction.insert(pgTestMethods).values(batch);
+    }
   }
 
   private async insertPostgresImportedMethods(

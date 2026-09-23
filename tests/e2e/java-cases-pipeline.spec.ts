@@ -388,7 +388,7 @@ async function importJavaCasesJar(page: Page): Promise<ProjectHierarchy> {
   const fixtureClass = page.locator(".ui-disclosure.class-preview", {
     hasText: "com.autoforge.javacases.JavaCasesFixture",
   });
-  if ((await fixtureClass.getAttribute("open")) === null) {
+  if ((await fixtureClass.getAttribute("data-open")) !== "true") {
     await fixtureClass.locator(".ui-disclosure-label").click();
   }
   await expect(

@@ -2,7 +2,6 @@
 import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
-import { useClientReadiness } from "./ui/use-client-readiness";
 
 import type { CaseDirectorySelection } from "@autoforge/contracts";
 import { Table2, X } from "lucide-react";
@@ -26,7 +25,6 @@ type CaseImportDialogProps = {
 };
 
 export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDialogProps) {
-  const clientReady = useClientReadiness();
   const [open, setOpen] = useState(false);
   const [filePaths, setFilePaths] = useState<string[] | null>(null);
   const [fileName, setFileName] = useState("");
@@ -139,7 +137,6 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
           uiPatterns["button-secondary"],
         )}
         onClick={() => setOpen(true)}
-        disabled={!clientReady}
         type="button"
       >
         <Table2 size={15} /> 导入用例

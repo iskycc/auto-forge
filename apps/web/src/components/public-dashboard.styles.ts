@@ -1,4 +1,4 @@
-import { buttonVariants } from "./ui/button";
+import { buttonVariants } from "./ui/button-variants";
 
 const container = "mx-auto w-[calc(100%-6rem)] max-w-[1400px] max-[1180px]:w-[calc(100%-3rem)]";
 const caption = "text-xs leading-5 text-muted-foreground";

@@ -66,6 +66,80 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     }
   });
 
+  it("imports concurrent large sources without exhausting the scope lock retry budget", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: isolatedConnectionString,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+      poolMax: 4,
+      lockTimeoutMs: 100,
+    });
+    const catalog = new PostgresCaseCatalogRepository(handle);
+    try {
+      await handle.ready;
+      // Model a bounded per-statement round trip. Per-class writes keep the scope
+      // locked beyond the retry budget; bounded bulk writes release it promptly.
+      await handle.pool.query(`
+        CREATE FUNCTION slow_import_statement() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM pg_sleep(0.005); RETURN NULL; END $$;
+        CREATE TRIGGER slow_import_statement AFTER INSERT ON case_definitions
+        FOR EACH STATEMENT EXECUTE FUNCTION slow_import_statement();
+      `);
+      const imports = [0, 1].map(() => {
+        const sourceId = randomUUID();
+        const candidates = Array.from({ length: 601 }, (_, index) =>
+          postgresClassCandidate(`bulk.p${sourceId.replaceAll("-", "")}.Case${index}`, ["bulk"]),
+        );
+        return {
+          sourceId,
+          objectKey: `jars/${sourceId}.jar`,
+          displayName: "Concurrent bulk import",
+          importedAt: "2026-09-23T00:00:00.000Z",
+          inspection: {
+            schemaVersion: 1 as const,
+            fileName: `${sourceId}.jar`,
+            sha256: sourceId.replaceAll("-", "").repeat(2),
+            sizeBytes: 128,
+            classFileCount: candidates.length,
+            testClassCount: candidates.length,
+            testMethodCount: candidates.length,
+            hasRootTestNgXml: false,
+            discoveryMode: "bytecode-annotations" as const,
+            warnings: [],
+            classes: candidates,
+          },
+          cases: candidates.map((candidate) => ({
+            caseDefinitionId: randomUUID(),
+            caseVersionId: randomUUID(),
+            candidate,
+            methods: [{ methodId: randomUUID(), methodIndex: 0 }],
+          })),
+        };
+      });
+      const outcomes = await Promise.allSettled(
+        imports.map((record) => catalog.importCatalog(record)),
+      );
+      expect(outcomes).toEqual([
+        { status: "fulfilled", value: undefined },
+        { status: "fulfilled", value: undefined },
+      ]);
+      for (const record of imports) {
+        const counts = await handle.pool.query(
+          `SELECT (SELECT count(*) FROM case_definitions WHERE source_id = $1)::int AS cases,
+                  (SELECT count(*) FROM case_versions WHERE source_id = $1)::int AS versions,
+                  (SELECT count(*) FROM test_methods m JOIN case_definitions c
+                    ON c.id = m.case_definition_id WHERE c.source_id = $1)::int AS methods`,
+          [record.sourceId],
+        );
+        expect(counts.rows).toEqual([{ cases: 601, versions: 601, methods: 601 }]);
+      }
+    } finally {
+      await handle.pool.query(
+        "DROP TRIGGER IF EXISTS slow_import_statement ON case_definitions; DROP FUNCTION IF EXISTS slow_import_statement()",
+      );
+      await handle.close();
+    }
+  }, 30_000);
+
   it("repairs a historical LDAP subject link by preferring the submitted username", async () => {
     const handle = createPostgresDatabase({
       connectionString: isolatedConnectionString,

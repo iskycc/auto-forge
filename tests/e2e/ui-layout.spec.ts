@@ -40,6 +40,40 @@ const primaryRoutes = [
   "/account/security",
 ] as const;
 
+test("management actions wait for hydration and respond to the first click", async ({ page }) => {
+  await ensureAdministrator(page);
+  let releaseScripts: () => void = () => undefined;
+  const scriptsReady = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  await page.route("**/_next/static/**/*.js", async (route) => {
+    await scriptsReady;
+    await route.continue();
+  });
+  const createUser = page.getByRole("button", { name: "创建用户", exact: true });
+  try {
+    await page.goto("/settings/access?section=users", { waitUntil: "commit" });
+    await expect(createUser).toBeVisible();
+    await expect(createUser).toBeDisabled();
+    await expect(page.getByRole("tab", { name: "目录配置" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  } finally {
+    releaseScripts();
+  }
+  await createUser.click();
+  await expect(page.getByRole("dialog", { name: "创建本地用户" })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, "/hydrated-user-dialog", width, false);
+  }
+  await page.getByRole("button", { name: "关闭创建本地用户", exact: true }).click();
+  await page.getByRole("link", { name: "目录配置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "LDAP 目录", exact: true })).toBeVisible();
+});
+
 test("multiline notifications keep separate click targets at desktop widths", async ({ page }) => {
   await ensureAdministrator(page);
   const items = Array.from({ length: 3 }, (_, index) => ({
@@ -60,7 +94,7 @@ test("multiline notifications keep separate click targets at desktop widths", as
   await page.goto("/runners");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 960 });
-    await page.getByRole("button", { name: /^通知/u }).click();
+    await page.getByRole("button", { name: /^(通知|\d+ 条未读通知)$/u }).click();
     const notifications = page.locator(".notification-item");
     await expect(notifications).toHaveCount(3);
     const overflow = await notifications.evaluateAll(

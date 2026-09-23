@@ -3,6 +3,7 @@
 import { Tabs as AntTabs } from "antd";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { useClientReadiness } from "./use-client-readiness";
 
 export type NavigationTab<Key extends string> = {
   key: Key;
@@ -24,6 +25,7 @@ export function Tabs<Key extends string>({
   onChange: (value: Key) => void;
   className?: string;
 }) {
+  const clientReady = useClientReadiness();
   return (
     <AntTabs
       ref={(tabs) => {
@@ -32,7 +34,7 @@ export function Tabs<Key extends string>({
       }}
       aria-label={label}
       activeKey={value}
-      items={items}
+      items={items.map((item) => ({ ...item, disabled: item.disabled || !clientReady }))}
       onChange={(key) => {
         const selected = items.find((item) => item.key === key);
         if (selected) onChange(selected.key);

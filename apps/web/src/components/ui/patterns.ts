@@ -1,4 +1,4 @@
-import { buttonVariants } from "./button";
+import { buttonVariants } from "./button-variants";
 import { badgeVariants } from "./badge";
 
 /** Shared Ant Design token-based compositions for business layouts. */
