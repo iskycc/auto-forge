@@ -1,5 +1,6 @@
 "use client";
 
+import { Flex } from "antd";
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
@@ -127,9 +128,16 @@ export function ActionDialog({
           {children}
         </div>
         {footer ? (
-          <footer className="action-dialog-footer shrink-0 border-t border-border bg-muted/30 px-6 py-4">
+          <Flex
+            component="footer"
+            align="center"
+            justify="end"
+            wrap
+            gap="small"
+            className="action-dialog-footer shrink-0 border-t border-border bg-muted/30 px-6 py-4"
+          >
             {footer}
-          </footer>
+          </Flex>
         ) : null}
       </section>
     </Dialog>

@@ -17,7 +17,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import type { AuthenticatedIdentity, UserSession } from "@autoforge/domain";
-import { KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import { KeyRound, LogOut } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
@@ -32,19 +32,21 @@ export function AccountSecurity({
 }) {
   const confirmAction = useConfirm();
   const [sessions, setSessions] = useState(initialSessions);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [pendingAction, setPendingAction] = useState<"password" | "session" | null>(null);
+  const pending = pendingAction !== null;
+  const [passwordError, setPasswordError] = useState("");
+  const [sessionError, setSessionError] = useState("");
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const newPassword = String(form.get("newPassword") ?? "");
     if (newPassword !== String(form.get("confirmPassword") ?? "")) {
-      setError("两次输入的新密码不一致。");
+      setPasswordError("两次输入的新密码不一致。");
       return;
     }
-    setPending(true);
-    setError("");
+    setPendingAction("password");
+    setPasswordError("");
     try {
       const response = await fetch("/api/v1/auth/password", {
         method: "PUT",
@@ -57,8 +59,8 @@ export function AccountSecurity({
       if (!response.ok) throw new Error(await responseMessage(response, "修改密码失败。"));
       window.location.replace("/login?passwordChanged=1");
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : "修改密码失败。");
-      setPending(false);
+      setPasswordError(problem instanceof Error ? problem.message : "修改密码失败。");
+      setPendingAction(null);
     }
   }
 
@@ -72,8 +74,8 @@ export function AccountSecurity({
       }))
     )
       return;
-    setPending(true);
-    setError("");
+    setPendingAction("session");
+    setSessionError("");
     try {
       const response = await fetch(`/api/v1/sessions/${encodeURIComponent(session.id)}`, {
         method: "DELETE",
@@ -85,26 +87,17 @@ export function AccountSecurity({
       }
       setSessions((current) => current.filter((item) => item.id !== session.id));
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : "终止会话失败。");
+      setSessionError(problem instanceof Error ? problem.message : "终止会话失败。");
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
   }
 
   return (
     <div className={cn("settings-stack", uiPatterns["settings-stack"])}>
       {identity.user.forcePasswordChange ? (
-        <div
-          className={cn("implementation-notice", accountSecurityStyles["implementation-notice"])}
-          role="status"
-        >
-          <ShieldCheck size={18} aria-hidden="true" />
+        <Notice tone="warning" showIcon role="status">
           管理员要求你先修改初始密码。完成前其他页面和业务 API 均不可使用。
-        </div>
-      ) : null}
-      {error ? (
-        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
-          {error}
         </Notice>
       ) : null}
 
@@ -128,7 +121,7 @@ export function AccountSecurity({
             className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}
             onSubmit={(event) => void changePassword(event)}
           >
-            <label>
+            <label className="col-span-full">
               当前密码
               <Input
                 autoComplete="current-password"
@@ -157,22 +150,27 @@ export function AccountSecurity({
                 type="password"
               />
             </label>
-            <Button
-              className={cn(
-                "button button-primary",
-                uiPatterns["button"],
-                uiPatterns["button-primary"],
-              )}
-              disabled={pending}
-              type="submit"
-            >
-              修改密码并重新登录
-            </Button>
+            {passwordError ? (
+              <Notice tone="error" showIcon className="col-span-full">
+                {passwordError}
+              </Notice>
+            ) : null}
+            <div className="col-span-full flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+              <p className="m-0 text-sm text-muted-foreground">
+                新密码至少 12 位，修改后需在所有设备重新登录。
+              </p>
+              <Button
+                variant="primary"
+                disabled={pending}
+                loading={pendingAction === "password"}
+                type="submit"
+              >
+                修改密码并重新登录
+              </Button>
+            </div>
           </form>
         ) : (
-          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
-            LDAP 账号密码由目录服务管理，AutoForge 不保存或修改目录密码。
-          </div>
+          <Notice showIcon>LDAP 账号密码由目录服务管理，AutoForge 不保存或修改目录密码。</Notice>
         )}
       </Card>
 
@@ -191,6 +189,11 @@ export function AccountSecurity({
           </div>
           <LogOut size={22} aria-hidden="true" />
         </div>
+        {sessionError ? (
+          <Notice tone="error" showIcon>
+            {sessionError}
+          </Notice>
+        ) : null}
         <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
           <Table className={cn("data-table", uiPatterns["data-table"])}>
             <TableHeader>
@@ -239,8 +242,3 @@ async function responseMessage(response: Response, fallback: string): Promise<st
 function formatDate(value: string): string {
   return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
 }
-
-const accountSecurityStyles = {
-  "implementation-notice":
-    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
-} as const;

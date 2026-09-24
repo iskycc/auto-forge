@@ -10,7 +10,8 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
-import { Button, Input, OperationProgress, ProgressBar } from "@/components/ui";
+import { Button, OperationProgress, ProgressBar } from "@/components/ui";
+import { Upload } from "antd";
 
 import {
   apiErrorSchema,
@@ -35,7 +36,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useClientReadiness } from "./ui/use-client-readiness";
 
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
@@ -86,7 +87,6 @@ export function JarImporter({
   testStageId?: string | undefined;
   testStageName?: string | undefined;
 }) {
-  const inputId = useId();
   const [inheriting, setInheriting] = useState(false);
   const router = useRouter();
   const clientReady = useClientReadiness();
@@ -126,6 +126,14 @@ export function JarImporter({
   );
 
   function chooseFile(nextFile: File | null): void {
+    if (nextFile && !nextFile.name.toLowerCase().endsWith(".jar")) {
+      setError("仅支持 .jar 文件，请选择普通测试 JAR 或 sources JAR。");
+      return;
+    }
+    if (nextFile && nextFile.size > maxJarBytes) {
+      setError(`文件超过 ${formatBytes(maxJarBytes)} 的导入限制。`);
+      return;
+    }
     setFile(nextFile);
     setInspection(null);
     setResult(null);
@@ -350,35 +358,44 @@ export function JarImporter({
           </Notice>
         ) : null}
 
-        <label
-          className={cn(
-            jarImporterStyles["file-dropzone"],
-            `file-dropzone ${file ? cn("file-dropzone-selected", jarImporterStyles["file-dropzone-selected"]) : ""}`,
-          )}
-          htmlFor={inputId}
+        <Upload.Dragger
+          className="file-dropzone"
+          classNames={{ root: "mt-5 block min-w-0 [&_.ant-upload-btn]:table-fixed" }}
+          aria-label="选择或拖入 JAR 文件"
+          // Let validation report rejected files instead of silently filtering a drop.
+          accept={{ format: ".jar", filter: "native" }}
+          multiple
+          fileList={[]}
+          showUploadList={false}
+          disabled={!clientReady || busy}
+          beforeUpload={(selected, selection) => {
+            if (!clientReady || busy) return Upload.LIST_IGNORE;
+            if (selection.length !== 1) {
+              setError("每次只能选择一个 JAR 文件，请分别扫描和导入。");
+              return Upload.LIST_IGNORE;
+            }
+            chooseFile(selected);
+            // Upload starts only when the user explicitly scans or confirms import.
+            return Upload.LIST_IGNORE;
+          }}
         >
-          <Input
-            id={inputId}
-            type="file"
-            accept=".jar,application/java-archive"
-            onChange={(event) => chooseFile(event.target.files?.item(0) ?? null)}
-            disabled={!clientReady || busy}
-          />
-          <span className={cn("upload-icon", jarImporterStyles["upload-icon"])}>
-            <UploadCloud size={26} aria-hidden="true" />
-          </span>
-          {file ? (
-            <span className={cn("file-summary", jarImporterStyles["file-summary"])}>
-              <strong>{file.name}</strong>
-              <small>{formatBytes(file.size)} · 点击更换文件</small>
+          <div className="flex min-w-0 items-center justify-center gap-4 px-4 py-3 text-start">
+            <span className="upload-icon shrink-0 text-primary">
+              <UploadCloud size={32} aria-hidden="true" />
             </span>
-          ) : (
-            <span className={cn("file-summary", jarImporterStyles["file-summary"])}>
-              <strong>点击选择普通 JAR 或 *-sources.jar</strong>
-              <small>最大 {formatBytes(maxJarBytes)}，仅接受 .jar</small>
-            </span>
-          )}
-        </label>
+            <div className="min-w-0 space-y-1" aria-live="polite">
+              <p className="truncate text-base font-semibold" title={file?.name}>
+                {file ? file.name : "点击选择或拖拽 JAR 文件到此处"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {file
+                  ? `${formatBytes(file.size)} · 点击或拖入文件以更换`
+                  : `普通 JAR 或 *-sources.jar · 每次一个 · 最大 ${formatBytes(maxJarBytes)}`}
+              </p>
+              <p className="text-sm text-muted-foreground">先扫描预览，再确认入库。</p>
+            </div>
+          </div>
+        </Upload.Dragger>
         <p className={cn("settings-note", uiPatterns["settings-note"])}>
           管理员可在<Link href="/settings/platform">平台配置</Link>调整 JAR 上传上限；修改后需重启
           Web 和 worker。
@@ -424,17 +441,9 @@ export function JarImporter({
       </Card>
 
       {error && (
-        <div
-          className={cn(
-            "alert alert-error",
-            jarImporterStyles["alert"],
-            jarImporterStyles["alert-error"],
-          )}
-          role="alert"
-        >
-          <AlertCircle size={18} aria-hidden="true" />
-          <span>{error}</span>
-        </div>
+        <Notice tone="error" showIcon>
+          {error}
+        </Notice>
       )}
 
       {uploadProgress && phase === "inspecting" ? (
@@ -763,7 +772,6 @@ function workerWaitWarning(job: JarImportJob): boolean {
 const jarImporterStyles = {
   alert:
     "flex items-start gap-[9px] border border-solid border-border rounded-lg py-[13px] px-[15px] leading-[1.45] [&_svg]:[flex:0_0_auto] [&_svg]:mt-px",
-  "alert-error": "border-destructive/10 bg-destructive/10 text-destructive",
   "alert-success":
     "border-success/10 bg-success/10 text-success [&_a]:ml-auto [&_a]:text-info [&_a]:font-semibold [&_a]:whitespace-nowrap",
   "class-icon": "grid w-8 h-8 place-items-center rounded-lg bg-muted text-info",
@@ -773,11 +781,6 @@ const jarImporterStyles = {
   "class-title":
     "flex min-w-0 flex-col gap-[3px] [&_strong]:text-sm [&_small]:overflow-hidden [&_small]:text-muted-foreground [&_small]:font-mono [&_small]:text-xs [&_small]:text-ellipsis [&_small]:whitespace-nowrap",
   "empty-inline": "my-2 mx-0 text-muted-foreground text-xs",
-  "file-dropzone":
-    "flex min-h-[132px] items-center justify-center gap-3.5 mt-5 border-1.5 border-dashed border-border rounded-lg bg-card cursor-pointer transition-colors duration-150 motion-reduce:transition-none [&:hover]:border-info [&:hover]:bg-info/10 [&_input]:absolute [&_input]:w-px [&_input]:h-px [&_input]:overflow-hidden [&_input]:[clip:rect(0,_0,_0,_0)]",
-  "file-dropzone-selected": "[border-style:solid] border-muted bg-success/10",
-  "file-summary":
-    "flex max-w-[min(70%,_560px)] flex-col gap-[5px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:text-base [&_small]:text-muted-foreground",
   "implementation-notice":
     "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
   "import-card": "p-5.5",
@@ -807,7 +810,6 @@ const jarImporterStyles = {
   "method-status": "w-[7px] h-[7px] [flex:0_0_auto] rounded-full",
   "summary-chevron":
     "text-muted-foreground transition-colors duration-150 motion-reduce:transition-none",
-  "upload-icon": "grid w-13 h-13 place-items-center rounded-lg bg-card text-info shadow-xs",
   "warning-list":
     "flex flex-col gap-[7px] mb-4 rounded-lg p-3 bg-warning/10 text-destructive text-xs [&_>_div]:flex [&_>_div]:items-start [&_>_div]:gap-[7px]",
 } as const;

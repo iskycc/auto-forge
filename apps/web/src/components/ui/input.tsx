@@ -22,8 +22,10 @@ export function Input({
   const readControl = useCallback(() => control.current?.input ?? null, []);
   const field = useFormFieldValue(value, defaultValue, readControl);
   useImperativeHandle(ref, () => control.current!.input!);
+  const InputControl = type === "password" ? AntInput.Password : AntInput;
   return (
-    <AntInput
+    <InputControl
+      key={type === "password" ? field.resetVersion : undefined}
       ref={control}
       {...definedProps({ type })}
       data-slot="input"

@@ -163,11 +163,11 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
       .map((element) => ({
         element: element.tagName.toLowerCase(),
         label: label(element),
-        // Measure real hit targets: select/picker wrappers and the clickable label of a Switch.
+        // Measure real hit targets, including affix input wrappers and clickable Switch labels.
         value:
           Math.round(
             (
-              element.closest(".ant-select, .ant-picker") ??
+              element.closest(".ant-select, .ant-picker, .ant-input-affix-wrapper") ??
               (element.matches('[role="switch"]') ? element.closest("label") : null) ??
               element
             ).getBoundingClientRect().height * 10,

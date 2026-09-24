@@ -1,15 +1,19 @@
 "use client";
+import { Checkbox } from "antd";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useClientReadiness } from "@/components/ui/use-client-readiness";
 
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import type { WebhookConfiguration } from "@autoforge/domain";
-import { BellRing, Check, LoaderCircle, Webhook } from "lucide-react";
+import { BellRing, Check, Webhook } from "lucide-react";
 import { LinkButton } from "@/components/ui/link-button";
 import { useState } from "react";
 
-import { Button, Input } from "./ui";
+import { Button } from "./ui";
 import { useToast } from "./ui-feedback";
 
 export function CaseSuiteWebhookBindings({
@@ -24,6 +28,7 @@ export function CaseSuiteWebhookBindings({
   canManage: boolean;
 }) {
   const toast = useToast();
+  const clientReady = useClientReadiness();
   const [selected, setSelected] = useState(new Set(initialWebhookIds));
   const [saved, setSaved] = useState(new Set(initialWebhookIds));
   const [pending, setPending] = useState(false);
@@ -76,18 +81,11 @@ export function CaseSuiteWebhookBindings({
         </LinkButton>
       </div>
       {configurations.length === 0 ? (
-        <div
-          className={cn(
-            "case-suite-webhooks-empty",
-            caseSuiteWebhookBindingsStyles["case-suite-webhooks-empty"],
-          )}
-        >
-          <BellRing size={22} />
-          <span>
-            <strong>暂无可绑定端点</strong>
-            <small>先在“回调通知”页面创建 GET 或 POST Webhook。</small>
-          </span>
-        </div>
+        <EmptyState className="mt-4 grid justify-items-center gap-2 rounded-lg border border-dashed border-border p-4 text-muted-foreground">
+          <BellRing size={22} aria-hidden="true" />
+          <strong>暂无可绑定端点</strong>
+          <p className="m-0 text-sm">先在“回调通知”页面创建 GET 或 POST Webhook。</p>
+        </EmptyState>
       ) : (
         <div
           className={cn(
@@ -96,32 +94,40 @@ export function CaseSuiteWebhookBindings({
           )}
         >
           {configurations.map((item) => (
-            <label className={selected.has(item.id) ? "selected" : ""} key={item.id}>
-              <Input
-                checked={selected.has(item.id)}
-                disabled={!canManage || (!item.enabled && !selected.has(item.id))}
-                onChange={(event) => {
-                  const next = new Set(selected);
-                  if (event.target.checked) next.add(item.id);
-                  else next.delete(item.id);
-                  setSelected(next);
-                }}
-                type="checkbox"
-              />
-              <span
-                className={cn(
-                  caseSuiteWebhookBindingsStyles["webhook-method"],
-                  `webhook-method webhook-method webhook-method-${item.method.toLowerCase()}`,
-                )}
-              >
-                {item.method}
+            <Checkbox
+              key={item.id}
+              aria-label={item.name}
+              className={cn(
+                "w-full min-w-0 rounded-lg border border-border p-3",
+                selected.has(item.id) && "border-primary bg-accent",
+              )}
+              styles={{ label: { minWidth: 0, flex: 1 } }}
+              checked={selected.has(item.id)}
+              disabled={
+                !clientReady || pending || !canManage || (!item.enabled && !selected.has(item.id))
+              }
+              onChange={(event) => {
+                const next = new Set(selected);
+                if (event.target.checked) next.add(item.id);
+                else next.delete(item.id);
+                setSelected(next);
+              }}
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <Badge variant={item.method === "GET" ? "success" : "info"} className="font-mono">
+                  {item.method}
+                </Badge>
+                <span className="grid min-w-0 flex-1 gap-1">
+                  <strong className="[overflow-wrap:anywhere]">{item.name}</strong>
+                  <small className="truncate text-xs text-muted-foreground" title={item.targetUrl}>
+                    {item.enabled ? item.targetUrl : "端点已停用"}
+                  </small>
+                </span>
+                {selected.has(item.id) ? (
+                  <Check className="shrink-0 text-primary" size={16} aria-hidden="true" />
+                ) : null}
               </span>
-              <span>
-                <strong>{item.name}</strong>
-                <small title={item.targetUrl}>{item.enabled ? item.targetUrl : "端点已停用"}</small>
-              </span>
-              {selected.has(item.id) ? <Check size={16} /> : null}
-            </label>
+            </Checkbox>
           ))}
         </div>
       )}
@@ -137,15 +143,12 @@ export function CaseSuiteWebhookBindings({
           </span>
           <Button
             disabled={!changed || pending}
+            loading={pending}
             onClick={() => void save()}
             type="button"
             variant="primary"
           >
-            {pending ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-            ) : (
-              <BellRing size={16} />
-            )}
+            {pending ? null : <BellRing size={16} />}
             保存通知绑定
           </Button>
         </div>
@@ -156,11 +159,6 @@ export function CaseSuiteWebhookBindings({
 
 const caseSuiteWebhookBindingsStyles = {
   "case-suite-webhook-footer": "flex items-center justify-between gap-2.5 min-h-9 mt-3.5",
-  "case-suite-webhook-options":
-    "[&_label_>_span:nth-of-type(2)]:grid [&_label_>_span:nth-of-type(2)]:min-w-0 [&_label_>_span:nth-of-type(2)]:gap-0.5 [&_small]:text-muted-foreground [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap grid grid-cols-2 gap-2.5 mt-4 [&_label]:grid [&_label]:min-w-0 [&_label]:grid-cols-[auto_auto_minmax(0,_1fr)_auto] [&_label]:items-center [&_label]:gap-2.5 [&_label]:border [&_label]:border-solid [&_label]:border-border [&_label]:rounded-lg [&_label]:p-3 [&_label]:cursor-pointer [&_label.selected]:border-muted [&_label.selected]:bg-muted max-[1181px]:grid-cols-[1fr]",
+  "case-suite-webhook-options": "mt-4 grid min-w-0 grid-cols-2 gap-3 max-[1181px]:grid-cols-1",
   "case-suite-webhooks-card": "p-5",
-  "case-suite-webhooks-empty":
-    "border border-solid border-border rounded-lg py-[13px] px-3.5 bg-info/10 flex items-center gap-[11px] mt-[15px] [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_small]:text-muted-foreground",
-  "webhook-method":
-    "inline-flex w-fit items-center rounded-md py-1 px-[7px] font-mono text-xs font-semibold tracking-normal [&.webhook-method-post]:bg-info/10 [&.webhook-method-post]:text-info [&.webhook-method-get]:bg-success/10 [&.webhook-method-get]:text-success",
 } as const;

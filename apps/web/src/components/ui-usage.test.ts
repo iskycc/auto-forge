@@ -72,6 +72,7 @@ describe("shared UI controls", () => {
 
     expect(violations).toEqual([]);
     for (const primitive of [
+      "input",
       "business-table",
       "dialog",
       "disclosure",
@@ -114,7 +115,6 @@ describe("shared UI controls", () => {
     const stylesheet = readFileSync(THEME, "utf8");
 
     expect(stylesheet).not.toContain("label:focus-within");
-    expect(readFileSync(join(DESIGN_PRIMITIVES, "input.tsx"), "utf8")).toContain("<AntInput");
   });
 
   it("exposes administrator capabilities as first-level navigation", () => {

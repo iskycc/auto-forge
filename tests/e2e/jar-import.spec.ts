@@ -81,6 +81,142 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+test("drops a JAR, validates selection and imports only after scan and confirmation", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: "JAR 拖拽导入验证", slug: `jar-drop-${randomUUID().slice(0, 8)}` },
+  });
+  expect(project.status).toBe(201);
+  const scope = await createAdditionalProjectHierarchy(page, project.body.id);
+  await selectProjectContext(page, project.body.id, scope.projectVersionId, scope.testStageId);
+  await page.goto("/cases/import");
+  const fileInput = page.locator('input[type="file"]');
+  await expect(fileInput).toBeEnabled();
+  const jar = zipSync({
+    "drag/CheckoutTest.class": buildClassFile({
+      className: "drag.CheckoutTest",
+      methods: [{ name: "checkout", annotations: [{ type: "Test" }] }],
+    }),
+  });
+  const jarName = `${"测试类导入-".repeat(12)}.jar`;
+  const dropzone = page.locator(".file-dropzone");
+  const scanButton = page.getByRole("button", { name: "扫描测试类", exact: true });
+  const uploadRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST") uploadRequests.push(new URL(request.url()).pathname);
+  });
+  async function dropFiles(names: string[], reportedSizeBytes?: number): Promise<void> {
+    const transfer = await page.evaluateHandle(
+      ({ names, bytes, reportedSizeBytes }) => {
+        const transfer = new DataTransfer();
+        for (const name of names) {
+          // Desktop file managers can omit the MIME type; the .jar extension is sufficient.
+          transfer.items.add(new File([new Uint8Array(bytes)], name, { type: "" }));
+        }
+        if (reportedSizeBytes !== undefined) {
+          // Exercise the pre-upload size boundary without allocating a 257 MiB fixture.
+          for (const file of Array.from(transfer.files)) {
+            Object.defineProperty(file, "size", { value: reportedSizeBytes });
+          }
+        }
+        return transfer;
+      },
+      { names, bytes: Array.from(jar), reportedSizeBytes },
+    );
+    try {
+      const target = dropzone.locator(".upload-icon");
+      await target.dispatchEvent("dragenter", { dataTransfer: transfer });
+      await target.dispatchEvent("dragover", { dataTransfer: transfer });
+      await target.dispatchEvent("drop", { dataTransfer: transfer });
+    } finally {
+      await transfer.dispose();
+    }
+  }
+
+  await dropFiles([jarName]);
+  await expect(scanButton).toBeEnabled();
+  await expect(dropzone).toContainText(jarName);
+  await dropFiles(["invalid.txt"]);
+  await expect(appAlert(page)).toContainText("仅支持 .jar 文件");
+  await expect(dropzone).toContainText(jarName);
+  await dropFiles(["first.jar", "second.jar"]);
+  await expect(appAlert(page)).toContainText("每次只能选择一个 JAR 文件");
+  await expect(dropzone).toContainText(jarName);
+  await dropFiles(["too-large.jar"], 257 * 1024 * 1024);
+  await expect(appAlert(page)).toContainText("的导入限制");
+  await expect(dropzone).toContainText(jarName);
+  expect(uploadRequests).toEqual([]);
+
+  await page.getByRole("button", { name: "重置", exact: true }).click();
+  await expect(scanButton).toBeDisabled();
+  await expect(appAlert(page)).toHaveCount(0);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureUi(page, `jar-drag-empty-${width}`);
+  }
+  await selectJarForInspection(page, {
+    name: "picker.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(jar),
+  });
+  await expect(dropzone).toContainText("picker.jar");
+  let releaseScan = () => {};
+  const scanGate = new Promise<void>((resolve) => {
+    releaseScan = resolve;
+  });
+  const scanUrl = "**/api/v1/case-sources/jar/inspect?*";
+  await page.route(scanUrl, async (route) => {
+    await scanGate;
+    await route.continue();
+  });
+  try {
+    await scanButton.click();
+    await expect(fileInput).toBeDisabled();
+    await dropFiles(["blocked-during-scan.jar"]);
+    await expect(dropzone).toContainText("picker.jar");
+  } finally {
+    releaseScan();
+  }
+  await expect(page.getByText("drag.CheckoutTest", { exact: true })).toBeVisible();
+  await page.unroute(scanUrl);
+  await dropFiles([jarName]);
+  await expect(page.getByRole("button", { name: "确认导入", exact: true })).toHaveCount(0);
+  expect(uploadRequests).toEqual(["/api/v1/case-sources/jar/inspect"]);
+
+  for (const mode of ["light", "dark"]) {
+    if (mode === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureUi(page, `jar-drag-selected-${mode}-${width}`);
+    }
+  }
+  await scanButton.click();
+  await expect(page.getByText("drag.CheckoutTest", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(page.locator(".alert-success")).toContainText("已导入", { timeout: 60_000 });
+  await expect(page.locator(".alert-success")).toContainText("1 个测试类");
+
+  const fileChooser = page.waitForEvent("filechooser");
+  await dropzone.getByRole("button").press("Enter");
+  await (
+    await fileChooser
+  ).setFiles({
+    name: "keyboard.JAR",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(jar),
+  });
+  await expect(dropzone).toContainText("keyboard.JAR");
+  await expect(scanButton).toBeEnabled();
+  await expect(page.locator(".alert-success")).toHaveCount(0);
+});
+
 test("inherits TestNG cases from the JAR import page without reuploading or overwriting", async ({
   page,
   playwright,

@@ -4,6 +4,29 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.7 - 2026-09-24
+
+### Changed and fixed
+
+- JAR 导入使用 Ant Design 拖拽上传区，支持拖入普通测试 JAR 或 sources JAR，并保留点击和键盘选择；校验文件格式、大小与单文件数量，选择错误时保留此前有效文件。继续按“扫描测试类 → 确认导入”操作，扫描和导入期间禁止更换文件。
+- 共享弹窗底部操作栏统一按钮间距、换行与右对齐，修复创建用户、服务账号、任务和跨版本继承等弹窗的按钮紧贴问题。
+- 共享密码输入使用 Ant Design Input.Password，支持鼠标和键盘显隐，保留表单值、自动填充与校验，重置表单后恢复隐藏。
+- 账号安全页重新排列密码字段、说明和提交按钮，密码与会话错误分别显示在对应区域，提交时显示加载状态，统一强制改密及 LDAP 提示。
+- 修复任务完成通知选项的长名称和 URL 撑宽页面、复选框额外边框及标签点击区域异常；使用 Ant Design Checkbox、Tag 和 Empty，保留权限、停用状态和保存后选择状态。
+- 补充带数据的全站 UI 复查报告，记录已修复问题和尚未实施的优化候选。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、API、Runner Protocol 或 Adapter 协议变更。Lite/Full 共用前端；从 v1.18.6 升级只需更新主平台，Full 各平台节点应同步更新，本次无需升级 Runner。
+- 无新增生产依赖，Ant Design 资源继续随离线包交付；双架构后端、部署包、Jenkins 插件、SBOM 与签名清单的资产类型不变。截图、测试数据库和本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- Web 生产构建、Web 与测试类型检查、变更文件格式和 lint 检查通过，23 项相关单元测试与 17 项 Lite Playwright 定向回归通过。
+- 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test:e2e:matrix` 通过。
+- 带数据遍历 35 个页面／子页，并补查长页面底部；实际查看 1024×768、1536×960 明暗主题截图。弹窗按钮、密码显隐、长通知选项与 JAR 文件名布局正常；真实拖拽、扫描、导入、错误校验、重置及键盘选取均已验证。
+- 本次为共享前端及导入入口优化，未在本地重跑 Full 基础设施与仓库全量验收；完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.6 - 2026-09-24
 
 ### Changed and fixed

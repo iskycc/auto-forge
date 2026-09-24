@@ -32,6 +32,7 @@ it("keeps form controls disabled while hydration could still discard their first
     <ChoiceInput key="checkbox" type="checkbox" />,
     <ChoiceInput key="radio" type="radio" />,
     <Input key="text" />,
+    <Input key="password" type="password" />,
     <Textarea key="textarea" />,
     <Select key="select">
       <option value="first">First</option>
@@ -40,4 +41,10 @@ it("keeps form controls disabled while hydration could still discard their first
     const html = renderToStaticMarkup(control);
     expect(html).toMatch(/<(?:input|textarea|select)[^>]+disabled=""/u);
   }
+});
+
+it("keeps passwords masked in the server response", () => {
+  const html = renderToStaticMarkup(<Input type="password" defaultValue="fixture-password" />);
+  expect(html).toMatch(/<input[^>]+type="password"/u);
+  expect(html).not.toMatch(/<input[^>]+type="text"/u);
 });

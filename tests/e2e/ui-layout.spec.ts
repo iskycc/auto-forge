@@ -1735,6 +1735,114 @@ test("project and user creation stay in centered low-frequency dialogs", async (
   }
 });
 
+test("shared action dialog footers keep separate actions aligned to the right", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await createUiProject(page);
+  const dialogs = [
+    { route: "/settings/access?section=users", trigger: "创建用户", title: "创建本地用户" },
+    { route: "/settings/platform?section=accounts", trigger: "创建账号", title: "创建服务账号" },
+    { route: "/case-suites", trigger: "创建任务", title: "创建用例任务" },
+    { route: "/cases?tab=ddt", trigger: "继承用例", title: "从其他版本继承 DDT 用例" },
+  ];
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const [index, scenario] of dialogs.entries()) {
+      await page.goto(scenario.route);
+      await page.getByRole("button", { name: scenario.trigger, exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: scenario.title, exact: true });
+      await expect(dialog).toBeVisible();
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await waitForUiTransitions(page);
+        const layout = await dialog.locator(".action-dialog-footer").evaluate((footer) => {
+          const buttons = Array.from(footer.querySelectorAll("button"));
+          const bounds = buttons.map((button) => button.getBoundingClientRect());
+          return {
+            gaps: bounds.slice(1).map((button, index) => button.left - bounds[index]!.right),
+            rightInset: footer.getBoundingClientRect().right - bounds.at(-1)!.right,
+            paddingRight: Number.parseFloat(getComputedStyle(footer).paddingRight),
+          };
+        });
+        expect(layout.gaps.length).toBeGreaterThan(0);
+        expect(layout.gaps.every((gap) => gap >= 7)).toBe(true);
+        expect(layout.rightInset).toBeCloseTo(layout.paddingRight, 0);
+        await expectUiIntegrity(page);
+        await captureUi(page, `action-footer-${index}-${appearance}`, viewport.width, false);
+      }
+      await dialog.getByRole("button", { name: `关闭${scenario.title}`, exact: true }).click();
+      await expect(dialog).toBeHidden();
+    }
+  }
+});
+
+test("password controls preserve form values and keep account actions below the fields", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("/account/security");
+  const form = page.locator("form", {
+    has: page.getByRole("button", { name: "修改密码并重新登录" }),
+  });
+  const currentPassword = form.getByLabel("当前密码", { exact: true });
+  const newPassword = form.getByLabel("新密码", { exact: true });
+  await currentPassword.fill("Current!Password123");
+  await newPassword.fill("Replacement!Password456");
+  await form.getByLabel("确认新密码", { exact: true }).fill("Mismatch!Password789");
+  const currentControl = currentPassword.locator("xpath=..");
+  const reveal = currentControl.getByRole("button", { name: "显示", exact: true });
+  await expect(reveal).toBeVisible();
+  await reveal.focus();
+  await page.keyboard.press("Enter");
+  await expect(currentPassword).toHaveAttribute("type", "text");
+  await expect(currentPassword).toHaveValue("Current!Password123");
+  await currentControl.getByRole("button", { name: "隐藏", exact: true }).press("Space");
+  await expect(currentPassword).toHaveAttribute("type", "password");
+  expect(
+    await form.evaluate((element) =>
+      new FormData(element as HTMLFormElement).get("currentPassword"),
+    ),
+  ).toBe("Current!Password123");
+  let passwordRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/auth/password") passwordRequests++;
+  });
+  await form.getByRole("button", { name: "修改密码并重新登录" }).click();
+  await expect(form.getByRole("alert")).toContainText("两次输入的新密码不一致");
+  expect(passwordRequests).toBe(0);
+  await expect(currentPassword).toHaveValue("Current!Password123");
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await waitForUiTransitions(page);
+      const fieldsBottom = await form
+        .locator("input")
+        .evaluateAll((fields) =>
+          Math.max(...fields.map((field) => field.getBoundingClientRect().bottom)),
+        );
+      const submit = await form.getByRole("button", { name: "修改密码并重新登录" }).boundingBox();
+      expect(submit!.y).toBeGreaterThan(fieldsBottom);
+      await expectUiIntegrity(page);
+      await captureUi(page, `password-layout-${appearance}`, viewport.width, false);
+    }
+  }
+  await reveal.click();
+  await expect(currentPassword).toHaveAttribute("type", "text");
+  await form.evaluate((element) => (element as HTMLFormElement).reset());
+  await expect(currentPassword).toHaveValue("");
+  await expect(currentPassword).toHaveAttribute("type", "password");
+});
+
 test("remaining low-frequency management actions expose reviewable dialogs", async ({ page }) => {
   await ensureAdministrator(page);
   await createUiProject(page);
@@ -2712,6 +2820,82 @@ test("populated webhook cards contain long names and keep adjacent actions reach
     await expect(dialog.getByRole("textbox", { name: "名称", exact: true })).toHaveValue(longName);
     await dialog.getByRole("button", { name: /^关闭/u }).click();
   }
+});
+
+test("task webhook choices contain long names and preserve saved selections", async ({ page }) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const suite = await createUiSuite(page, scope, uniqueName("webhook-choice-layout"));
+  await page.goto(`/case-suites/${suite.id}`);
+  const card = page.locator(".case-suite-webhooks-card");
+  await expect(card.getByText("暂无可绑定端点", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await card.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureUi(page, "task-webhooks-empty", width, false);
+  }
+  const longName = "WalletPaymentRegressionCompletionNotification".repeat(2);
+  const endpoint = await browserJson<{ id: string }>(page, "/api/v1/webhooks", {
+    method: "POST",
+    body: {
+      projectId: scope.projectId,
+      name: longName,
+      targetUrl: `http://127.0.0.1:9/${"completion-callback-without-spaces".repeat(8)}`,
+      method: "POST",
+      bodyTemplate: '{"status":"{{batch.displayStatus}}"}',
+      enabled: true,
+    },
+  });
+  expect(endpoint.status).toBe(201);
+  const disabledEndpoint = await browserJson(page, "/api/v1/webhooks", {
+    method: "POST",
+    body: {
+      projectId: scope.projectId,
+      name: "停用的通知端点",
+      targetUrl: "http://127.0.0.1:9/disabled",
+      method: "GET",
+      enabled: false,
+    },
+  });
+  expect(disabledEndpoint.status).toBe(201);
+  await page.reload();
+  const choice = card.getByRole("checkbox", { name: new RegExp(longName) });
+  await expect(card.getByRole("checkbox", { name: /停用的通知端点/ })).toBeDisabled();
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await card.scrollIntoViewIfNeeded();
+      await waitForUiTransitions(page);
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-webhooks-${appearance}`, viewport.width, false);
+    }
+  }
+  // The entire named option, not only the small checkbox, must toggle the binding.
+  await card.getByText(longName, { exact: true }).click();
+  await expect(choice).toBeChecked();
+  await card.getByRole("button", { name: "保存通知绑定" }).click();
+  await expect(page.getByText("Webhook 绑定已保存。", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(choice).toBeChecked();
+  const binding = await browserJson<{ webhookIds: string[] }>(
+    page,
+    `/api/v1/case-suites/${suite.id}/webhooks`,
+  );
+  expect(binding.body.webhookIds).toEqual([endpoint.body.id]);
+  await expect(choice).toBeEnabled();
+  await choice.focus();
+  await choice.press("Space");
+  await expect(choice).not.toBeChecked();
+  await card.getByRole("button", { name: "保存通知绑定" }).click();
+  await expect(card.getByText("当前配置已保存", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(choice).not.toBeChecked();
 });
 
 test("populated service accounts wrap long names without pushing token actions offscreen", async ({
