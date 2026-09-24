@@ -124,11 +124,13 @@
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    /* Zero suppresses transitionend and strands Ant notification exit states. */
-    transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
 }
+
+/* Ant transitions use the reduced ConfigProvider duration; layout utilities use
+   motion-reduce. A universal nonzero transition duration would animate default
+   `all` properties, breaking the synchronous measurements of popup positions. */
 
 @layer base {
   * {

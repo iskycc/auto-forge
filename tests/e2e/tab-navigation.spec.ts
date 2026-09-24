@@ -15,16 +15,37 @@ test("shared Ant motion follows browser preferences without resetting drafts", a
   const address = page.locator('input[name="publicBaseUrl"]');
   await address.fill("https://motion-draft.example.invalid");
   const motionDuration = () =>
-    address.evaluate((element) =>
-      parseFloat(getComputedStyle(element).getPropertyValue("--ant-motion-duration-mid")),
-    );
-  await expect.poll(motionDuration).toBeGreaterThan(0);
+    address.evaluate((element) => {
+      const duration = getComputedStyle(element)
+        .getPropertyValue("--ant-motion-duration-mid")
+        .trim();
+      return parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000);
+    });
+  await expect.poll(motionDuration).toBeGreaterThan(1);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect.poll(motionDuration).toBe(0);
+  await expect.poll(motionDuration).toBeLessThanOrEqual(0.01);
   await expect(address).toHaveValue("https://motion-draft.example.invalid");
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect.poll(motionDuration).toBeGreaterThan(0);
+  await expect.poll(motionDuration).toBeGreaterThan(1);
   await expect(address).toHaveValue("https://motion-draft.example.invalid");
+});
+
+test("reduced motion keeps the project popup positioned beside its trigger", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.goto("/case-suites");
+    const trigger = page.locator(".project-picker-trigger");
+    await trigger.click();
+    const selected = page.getByRole("option", { selected: true });
+    await expect(selected).toBeInViewport();
+    await expectUiIntegrity(page);
+    await capture(page, `project-popup-reduced-motion-${width}`);
+    await selected.click();
+    await expect(page.getByRole("listbox", { name: "项目列表" })).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  }
 });
 
 test("navigation and dialogs use bounded motion and restore keyboard focus", async ({ page }) => {

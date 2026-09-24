@@ -1670,8 +1670,13 @@ public class MixedVisibleTest {
   );
   expect(await searchKinds(page, "E2E Runner")).toContain("runner");
 
+  // The simulated Runner does not have a heartbeat loop. The preceding visual
+  // audit can outlast the online window, so renew liveness and the terminal ticket.
+  const terminalHeartbeat = await postHeartbeat(page, identity, 0);
+  expect(terminalHeartbeat.status()).toBe(200);
+  const terminalIdentity = (await terminalHeartbeat.json()) as { terminalConnectionToken: string };
   const agentSocket = new WebSocket(terminalStreamUrl(), "autoforge-runner-terminal-v1", {
-    headers: { authorization: `Bearer ${heartbeatResult.terminalConnectionToken}` },
+    headers: { authorization: `Bearer ${terminalIdentity.terminalConnectionToken}` },
   });
   await new Promise<void>((resolve, reject) => {
     agentSocket.once("open", resolve);
@@ -1714,6 +1719,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "还原终端窗口" }).click();
   await expect(terminalPanel).not.toHaveClass(/(?:^|\s)terminal-window-expanded(?:\s|$)/u);
 
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   const openCommand = new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error("Agent did not receive terminal open command")),
