@@ -1467,6 +1467,8 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   expect(trendBox?.y).toBe(failureBox?.y);
   expect(flakyBox!.y).toBeGreaterThan(Math.max(trendBox!.y, failureBox!.y));
   expect(flakyBox?.y).toBe(caseOutcomeBox?.y);
+  expect(Math.abs(trendBox!.height - failureBox!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(flakyBox!.height - caseOutcomeBox!.height)).toBeLessThanOrEqual(1);
   expect(metricsBox!.y).toBeLessThan(caseOutcomeBox!.y);
   expect(trendBox!.y).toBeLessThan(caseOutcomeBox!.y);
 
@@ -1809,6 +1811,164 @@ test("task pass-rate bars keep their full track at zero, partial and complete va
       await expect(emptyCard.getByRole("progressbar")).toHaveCount(0);
       await expectUiIntegrity(page);
       await captureUi(page, `task-progress-${appearance}`, viewport.width);
+    }
+  }
+});
+
+test("opening settings preserves page width, layout and scroll position", async ({
+  playwright,
+  baseURL,
+}) => {
+  // Headless Chromium normally hides native scrollbars, masking double compensation.
+  const browser = await playwright.chromium.launch({
+    ignoreDefaultArgs: ["--hide-scrollbars"],
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
+  try {
+    const page = await browser.newPage({ baseURL: baseURL!, reducedMotion: "reduce" });
+    page.setDefaultTimeout(30_000);
+    await ensureAdministrator(page);
+    const geometry = () =>
+      page.evaluate(() => {
+        const main = document.querySelector("main")!.getBoundingClientRect();
+        const topbar = document.querySelector(".topbar")!.getBoundingClientRect();
+        return { mainWidth: main.width, mainX: main.x, topbarWidth: topbar.width, scrollY };
+      });
+    for (const appearance of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
+        ]);
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await page.setViewportSize(viewport);
+        for (const route of ["/", "/insights", "/runners"]) {
+          await page.goto(route);
+          const trigger = page.getByRole("button", { name: "搜索配置", exact: true });
+          await expect(trigger).toBeEnabled();
+          await page.evaluate(() => window.scrollTo(0, 80));
+          const before = await geometry();
+          await trigger.click();
+          const dialog = page.getByRole("dialog", { name: "配置搜索", exact: true });
+          await expect(dialog).toBeVisible();
+          await expect.poll(geometry).toEqual(before);
+          await expect
+            .poll(() => page.evaluate(() => getComputedStyle(document.body).overflowY))
+            .toBe("hidden");
+          await dialog.getByRole("searchbox", { name: "搜索配置项" }).fill("并发");
+          await expect(dialog.getByRole("link").first()).toBeVisible();
+          await expectUiIntegrity(page);
+          await captureUi(page, `settings-stable-${route}-${appearance}`, viewport.width);
+          await page.keyboard.press("Escape");
+          await expect(dialog).toBeHidden();
+          await expect(trigger).toBeFocused();
+          await expect.poll(geometry).toEqual(before);
+          await expect
+            .poll(() => page.evaluate(() => getComputedStyle(document.body).overflowY))
+            .not.toBe("hidden");
+        }
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("populated tables keep page scrolling vertical and wide columns scrollable horizontally", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const suites = [];
+  for (let index = 0; index < 8; index++) {
+    const name = `滚动边界验证任务 ${index + 1}`;
+    const suite = await createUiSuite(page, scope, name);
+    suites.push({ ...suite, name, passedRuns: 2 });
+  }
+  insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
+  const jar = zipSync({
+    "com/example/ScrollBoundaryTest.class": buildClassFile({
+      className: "com.example.ScrollBoundaryTest",
+      methods: [{ name: "verify", annotations: [{ type: "Test", values: {} }] }],
+    }),
+  });
+  await page.goto("/cases/import");
+  await selectJarForInspection(page, {
+    name: "scroll-boundary.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(jar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText("com.example.ScrollBoundaryTest", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/u, {
+    timeout: 60_000,
+  });
+
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      for (const route of ["/execution-records", "/audit", "/objects"]) {
+        await page.goto(route);
+        const tables = page.locator(".table-scroll");
+        await expect(tables.first()).toBeVisible();
+        if (route === "/execution-records")
+          await expect(page.locator(".execution-records-table tbody tr")).toHaveCount(8);
+        if (route === "/objects")
+          await expect(
+            page.locator(".source-list-table").getByText("scroll-boundary.jar", { exact: true }),
+          ).toBeVisible();
+        if (route === "/objects") {
+          for (const card of await page.locator(".management-table-card").all()) {
+            const cardBox = (await card.boundingBox())!;
+            const tableBox = (await card.locator(".table-scroll").boundingBox())!;
+            const searchBox = (await card.locator("form").boundingBox())!;
+            expect(
+              tableBox.x - cardBox.x,
+              "table needs an inset from the card edge",
+            ).toBeGreaterThanOrEqual(16);
+            expect(cardBox.x + cardBox.width - tableBox.x - tableBox.width).toBeGreaterThanOrEqual(
+              16,
+            );
+            expect(Math.abs(searchBox.x - tableBox.x)).toBeLessThanOrEqual(1);
+          }
+        }
+        for (const table of await tables.all()) {
+          await expect
+            .poll(() => table.evaluate((element) => element.scrollHeight - element.clientHeight), {
+              message: `${route} must not have an inner vertical scrollbar`,
+            })
+            .toBe(0);
+        }
+        if (viewport.width === 1024 && route !== "/audit") {
+          const horizontalRange = await tables.first().evaluate((element) => {
+            element.scrollLeft = element.scrollWidth;
+            return element.scrollLeft;
+          });
+          expect(horizontalRange, "wide columns must remain reachable").toBeGreaterThan(0);
+          await tables.first().evaluate((element) => {
+            element.scrollLeft = 0;
+          });
+        }
+        await expectUiIntegrity(page);
+        await tables.first().scrollIntoViewIfNeeded();
+        await captureUi(page, `table-scroll-${route}-${appearance}`, viewport.width, false);
+        if (route !== "/objects") {
+          await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+          expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+          await expect(tables.first()).toHaveJSProperty("scrollTop", 0);
+        }
+      }
     }
   }
 });

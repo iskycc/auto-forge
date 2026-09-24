@@ -100,13 +100,17 @@ export function AntBusinessTable(parts: TableParts) {
   }));
   const columns: TableProps<BusinessRow>["columns"] = parts.headings.map((heading, index) => ({
     key: String(index),
-    title: heading,
+    // RSC can stream a heading as a lazy React node. Ant's cell renderer rejects
+    // raw non-element objects; a fragment lets React resolve it without losing the column.
+    title: <>{heading}</>,
   }));
+  // Ant's edge shadows extend 1px below the table by default. Keep them inside
+  // the surface so a horizontal scroll wrapper does not gain a vertical scrollbar.
   return (
     <PartsContext.Provider value={parts}>
       <RowsContext.Provider value={new Map(rows.map((row) => [row.key, row.content]))}>
         <AntTable<BusinessRow>
-          className="ui-business-table min-w-0"
+          className="ui-business-table min-w-0 [&_.ant-table-container]:before:bottom-0 [&_.ant-table-container]:after:bottom-0"
           size="small"
           pagination={false}
           columns={columns}

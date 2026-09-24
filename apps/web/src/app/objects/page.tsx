@@ -129,7 +129,7 @@ export default async function ObjectsPage({
           pageStyles["management-table-card"],
         )}
       >
-        <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
+        <div className={cn("section-title-row", pageStyles["section-title-row"])}>
           <div>
             <span className={cn("eyebrow", uiPatterns["eyebrow"])}>源码管理</span>
             <h2>TestNG JAR</h2>
@@ -172,7 +172,9 @@ export default async function ObjectsPage({
             <p>导入并预览 TestNG JAR 后，可在这里设置全量用例来源。</p>
           </EmptyState>
         ) : (
-          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+          <div
+            className={cn("table-scroll", uiPatterns["table-scroll"], pageStyles["table-scroll"])}
+          >
             <Table
               className={cn(
                 "data-table source-list-table",
@@ -260,7 +262,7 @@ export default async function ObjectsPage({
           pageStyles["management-table-card"],
         )}
       >
-        <div className={cn("section-title-row", uiPatterns["section-title-row"])}>
+        <div className={cn("section-title-row", pageStyles["section-title-row"])}>
           <div>
             <span className={cn("eyebrow", uiPatterns["eyebrow"])}>对象浏览器</span>
             <h2>纳管文件</h2>
@@ -293,7 +295,9 @@ export default async function ObjectsPage({
             <p>导入 JAR 后，内容寻址对象会显示在这里。</p>
           </EmptyState>
         ) : (
-          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+          <div
+            className={cn("table-scroll", uiPatterns["table-scroll"], pageStyles["table-scroll"])}
+          >
             <Table
               className={cn(
                 "data-table object-list-table",
@@ -361,7 +365,7 @@ const pageStyles = {
   digest: "text-muted-foreground text-xs",
   "management-scope-toolbar": "items-center",
   "management-table-card":
-    "[&_.ui-card-content_>_.management-toolbar]:mx-4 [&_.ui-card-content_>_.management-pagination]:mx-4 [&_.ui-card-content_>_.table-empty]:min-h-[240px]",
+    "flex flex-col gap-4 p-4 xl:p-5 [&_.management-toolbar]:my-0 [&_.management-pagination]:my-0 [&_.ui-card-content_>_.table-empty]:min-h-[240px]",
   "object-key": "block max-w-full overflow-hidden text-ellipsis whitespace-nowrap",
   "object-link": "text-info font-semibold [&:hover]:[text-decoration:underline]",
   "object-list-table":
@@ -371,7 +375,9 @@ const pageStyles = {
     "min-w-[1040px] [table-layout:fixed] [&_th:first-child]:w-[34%] [&_th:nth-child(2)]:w-[16%] [&_th:nth-child(3)]:w-[14%] [&_th:nth-child(4)]:w-[20%] [&_th:last-child]:w-[250px] [&_td]:min-w-0 [&_td]:[overflow-wrap:anywhere]",
   "storage-pill":
     "inline-flex items-center gap-2 border border-solid border-border rounded-full py-[9px] px-[13px] bg-card text-muted-foreground text-xs font-semibold shadow-xs",
-  "table-card":
-    "overflow-hidden [&_.ui-card-content_>_.card-heading]:min-h-17 [&_.ui-card-content_>_.card-heading]:items-center [&_.ui-card-content_>_.card-heading]:border-b [&_.ui-card-content_>_.card-heading]:border-solid [&_.ui-card-content_>_.card-heading]:border-border [&_.ui-card-content_>_.card-heading]:py-3.5 [&_.ui-card-content_>_.card-heading]:px-4.5",
+  "section-title-row":
+    "flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-4 [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-semibold",
+  "table-card": "overflow-hidden",
+  "table-scroll": "rounded-lg border border-border",
   "table-count": "text-muted-foreground text-xs whitespace-nowrap",
 } as const;

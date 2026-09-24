@@ -688,7 +688,7 @@ export function DdtManagementWorkspace({
       />
 
       <div className={cn("ddt-workspace-bar", ddtManagementWorkspaceStyles["ddt-workspace-bar"])}>
-        <div>
+        <div className={tab === "cases" ? "hidden 2xl:block" : undefined}>
           <strong>DDT 工作台</strong>
           <span>CaseID 在当前项目版本与测试阶段内唯一</span>
         </div>
@@ -932,6 +932,7 @@ export function DdtManagementWorkspace({
                   </Select>
                 </label>
                 <Disclosure
+                  density="compact"
                   showArrow={false}
                   header={
                     <>
@@ -3254,7 +3255,7 @@ const ddtManagementWorkspaceStyles = {
   "ddt-advanced-filter-fields":
     "absolute z-10 top-full left-0 grid w-[calc(200%_+_8px)] max-h-[var(--ddt-case-filter-max-height)] overflow-y-auto gap-2 border border-solid border-border rounded-lg p-3 bg-card shadow-xs [&_.ui-select-list]:static [&_.ui-select-list]:mt-1",
   "ddt-advanced-filters":
-    "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:text-info relative",
+    "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-1 [&_.ui-disclosure-label]:text-xs [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:text-primary-text relative",
   "ddt-bulk-form":
     "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2 [&_>_label]:grid [&_>_label]:gap-[5px]",
   "ddt-chart-card":

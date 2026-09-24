@@ -1604,6 +1604,10 @@ async function expectResponsiveDdtSidebar(page: Page): Promise<void> {
       bounds!.y + bounds!.height,
       "DDT workspace must fit the available viewport height",
     ).toBeLessThanOrEqual(viewport.height);
+    expect(
+      await navigation.locator(".ddt-case-list").evaluate((list) => list.clientHeight),
+      "Filters must leave room to browse several cases at the minimum desktop size",
+    ).toBeGreaterThanOrEqual(140);
     const sidebar = await navigation.boundingBox();
     sizes.push({ width: sidebar!.width, height: sidebar!.height });
   }
@@ -1784,6 +1788,19 @@ test("SR associations restrict candidates and automatically cover imported and m
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
     await captureDdtUi(page, `ddt-responsive-inspector-${viewport.width}`);
   }
+  await expect(inspector.getByRole("tab", { name: "执行与分析", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    inspector.getByRole("heading", { name: "全部执行历史", exact: true }),
+  ).toBeInViewport();
+  await expect(inspector.locator(".case-definition-summary")).toHaveCount(0);
+  await inspector.getByRole("tab", { name: "测试类详情", exact: true }).click();
+  await expect(inspector.locator(".case-definition-summary")).toBeVisible();
+  await expect(inspector).toContainText("executeUpdatedDdtCase");
+  await inspector.getByRole("tab", { name: "执行与分析", exact: true }).click();
+  await expect(inspector.locator(".case-execution-history")).toContainText("当前用例尚无执行记录");
   const readerToken = await issueDdtApiToken(page, hierarchy.projectId, ["case.read"]);
   const readerHeaders = { authorization: `Bearer ${readerToken}` };
   expect(
@@ -1879,6 +1896,27 @@ test("SR associations restrict candidates and automatically cover imported and m
   );
   expect(moved.status).toBe(200);
   expect((await getCase(newCaseId)).body.executionClass).toBeUndefined();
+  const unboundPreview = await page.request.get(
+    ddtPath(hierarchy, `cases/${encodeURIComponent(newCaseId)}/workspace`),
+    { headers: readerHeaders },
+  );
+  expect(unboundPreview.status()).toBe(200);
+  expect(await unboundPreview.json()).toMatchObject({
+    historyDetail: {
+      canRun: false,
+      canReadLogs: false,
+      canReadAnalysisEvidence: false,
+      executionHistory: { items: [] },
+      failureAnalysisHistory: { items: [] },
+    },
+  });
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: `快速预览 ${newCaseId}`, exact: true }).click();
+  await expect(inspector).toContainText("尚未关联执行类");
+  await expect(inspector.locator(".case-execution-history")).toContainText("当前用例尚无执行记录");
+  await expect(inspector.getByRole("button", { name: "立即执行", exact: true })).toHaveCount(0);
+  await expect(inspector.getByRole("tab", { name: "测试类详情", exact: true })).toBeDisabled();
+
   await page.goto("/cases/ddt-associations");
   const srRow = page.locator('.ddt-sr-row[data-sr="PAYMENTS"]');
   await expect(srRow).toContainText(className);

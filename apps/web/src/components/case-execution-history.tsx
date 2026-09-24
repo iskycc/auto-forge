@@ -47,6 +47,7 @@ export function CaseExecutionHistory({
   canCreateRuns,
   timeZone,
   historyUrl,
+  compact = false,
 }: {
   caseDefinitionId: string;
   initialPage: CaseExecutionHistoryPage;
@@ -54,6 +55,7 @@ export function CaseExecutionHistory({
   canCreateRuns: boolean;
   timeZone: string;
   historyUrl?: string;
+  compact?: boolean;
 }) {
   const [items, setItems] = useState(initialPage.items);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
@@ -95,6 +97,7 @@ export function CaseExecutionHistory({
         as="section"
         className={cn(
           "card table-card case-execution-history",
+          compact && "is-compact",
           uiPatterns["card"],
           caseExecutionHistoryStyles["table-card"],
           caseExecutionHistoryStyles["case-execution-history"],
@@ -102,11 +105,19 @@ export function CaseExecutionHistory({
       >
         <div className={cn("card-heading", uiPatterns["card-heading"])}>
           <div>
-            <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Execution history</span>
+            {!compact ? (
+              <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Execution history</span>
+            ) : null}
             <h2>全部执行历史</h2>
             <p>
-              每个任务仅展示总结结果：任一轮通过则记录通过轮次，否则记录最后一轮；已加载{" "}
-              {items.length} 条执行记录。
+              {compact ? (
+                `已加载 ${items.length} 条执行记录 · 每个任务展示总结结果`
+              ) : (
+                <>
+                  每个任务仅展示总结结果：任一轮通过则记录通过轮次，否则记录最后一轮；已加载{" "}
+                  {items.length} 条执行记录。
+                </>
+              )}
             </p>
           </div>
           <ListRestart size={22} aria-hidden="true" />
@@ -283,7 +294,7 @@ export function CaseExecutionHistory({
 
 const caseExecutionHistoryStyles = {
   "case-execution-history":
-    "[&_.card-heading_p]:[margin:4px_0_0] [&_.card-heading_p]:text-muted-foreground",
+    "[&_.card-heading_p]:[margin:4px_0_0] [&_.card-heading_p]:text-muted-foreground [&.is-compact_.ui-card-content_>_.card-heading]:min-h-0 [&.is-compact_.ui-card-content_>_.card-heading]:py-2 [&.is-compact_.card-heading_p]:text-xs",
   "case-history-actions": "flex items-center gap-2.5 whitespace-nowrap",
   "case-history-attempt-result": "block mt-[3px] text-muted-foreground text-xs",
   "case-history-batch-name": "block mt-[3px] text-muted-foreground text-xs",

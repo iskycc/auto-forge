@@ -18,7 +18,7 @@ export function useDdtBrowserLayout() {
     const browser = browserRef.current;
     if (!browser) return;
     const filters = browser.querySelector(".ddt-case-filters");
-    const filterTrigger = filters?.querySelector(".ddt-advanced-filters .ant-collapse-header");
+    const filterAnchor = filters?.querySelector(".ddt-advanced-filters");
     let frame = 0;
     const measure = () => {
       frame = 0;
@@ -34,13 +34,14 @@ export function useDdtBrowserLayout() {
         Math.floor(window.innerHeight - (bounds.top + window.scrollY) - bottomPadding),
       );
       const width = browser.clientWidth;
+      // The overlay is positioned from the full grid cell, which can be taller than its trigger.
       const filterHeight =
-        filterTrigger && filters
+        filterAnchor && filters
           ? Math.max(
               0,
               Math.floor(
                 height -
-                  (filterTrigger.getBoundingClientRect().bottom - bounds.top) -
+                  (filterAnchor.getBoundingClientRect().bottom - bounds.top) -
                   Number.parseFloat(getComputedStyle(filters).paddingBottom),
               ),
             )

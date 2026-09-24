@@ -21,7 +21,7 @@ import { DatetimeInput, Input, Select } from "@/components/ui";
 
 import type { AnalyticsFilter, AnalyticsSummary } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
-import { BarChart3, FlaskConical, SlidersHorizontal, TrendingUp } from "lucide-react";
+import { BarChart3, FlaskConical, SlidersHorizontal, Timer, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import type { CSSProperties } from "react";
 
@@ -205,118 +205,128 @@ export default async function InsightsPage({
         <AnalyticsExportControl filter={filter} />
       </section>
 
-      <ReadModelStatusBar snapshots={projections.map((entry) => entry.status)} />
-      <form
-        className={cn(
-          "content-card insight-filter",
-          uiPatterns["content-card"],
-          pageStyles["insight-filter"],
-        )}
-        method="get"
-      >
-        <div className={cn("insight-primary-filters", pageStyles["insight-primary-filters"])}>
-          <label>
-            用例任务
-            <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
-              <option value="">全部任务</option>
-              {suites.map((suite) => (
-                <option key={suite.id} value={suite.id}>
-                  {suite.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            执行节点
-            <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
-              <option value="">全部执行节点</option>
-              {runners.map((runner) => (
-                <option key={runner.id} value={runner.id}>
-                  {runner.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            结果
-            <Select defaultValue={filter.outcome ?? ""} name="outcome">
-              <option value="">全部结果</option>
-              <option value="succeeded">成功</option>
-              <option value="failed">失败</option>
-              <option value="timed_out">超时</option>
-              <option value="cancelled">取消</option>
-            </Select>
-          </label>
-          <NavigationSubmitButton
-            className={cn(
-              "button button-primary",
-              uiPatterns["button"],
-              uiPatterns["button-primary"],
-            )}
-            key={`primary-${JSON.stringify(filter)}`}
-            pendingLabel="正在筛选质量数据…"
-            type="submit"
-          >
-            应用筛选
-          </NavigationSubmitButton>
-        </div>
-        <Disclosure
-          header={
-            <>
-              <SlidersHorizontal aria-hidden="true" size={15} /> 更多筛选条件
-            </>
-          }
-          className={cn("insight-advanced-filters", pageStyles["insight-advanced-filters"])}
-        >
-          <div>
+      <Card className="insight-filter-card flex flex-col gap-3 p-4 xl:p-5">
+        <form className={cn("insight-filter", pageStyles["insight-filter"])} method="get">
+          <div className={cn("insight-primary-filters", pageStyles["insight-primary-filters"])}>
             <label>
-              用例 ID
-              <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
+              用例任务
+              <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
+                <option value="">全部任务</option>
+                {suites.map((suite) => (
+                  <option key={suite.id} value={suite.id}>
+                    {suite.name}
+                  </option>
+                ))}
+              </Select>
             </label>
             <label>
-              标签
-              <Input defaultValue={filter.tag ?? ""} name="tag" />
+              执行节点
+              <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
+                <option value="">全部执行节点</option>
+                {runners.map((runner) => (
+                  <option key={runner.id} value={runner.id}>
+                    {runner.name}
+                  </option>
+                ))}
+              </Select>
             </label>
             <label>
-              失败特征
-              <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
+              结果
+              <Select defaultValue={filter.outcome ?? ""} name="outcome">
+                <option value="">全部结果</option>
+                <option value="succeeded">成功</option>
+                <option value="failed">失败</option>
+                <option value="timed_out">超时</option>
+                <option value="cancelled">取消</option>
+              </Select>
             </label>
-            <label>
-              开始时间（平台时区）
-              <DatetimeInput
-                defaultValue={dateTimeLocal(filter.completedAfter, timeZone)}
-                name="completedAfter"
-              />
-            </label>
-            <label>
-              结束时间（平台时区）
-              <DatetimeInput
-                defaultValue={dateTimeLocal(filter.completedBefore, timeZone)}
-                name="completedBefore"
-              />
-            </label>
+            <NavigationSubmitButton
+              className={cn(
+                "button button-primary",
+                uiPatterns["button"],
+                uiPatterns["button-primary"],
+              )}
+              key={`primary-${JSON.stringify(filter)}`}
+              pendingLabel="正在筛选质量数据…"
+              type="submit"
+            >
+              应用筛选
+            </NavigationSubmitButton>
           </div>
-        </Disclosure>
-      </form>
+          <Disclosure
+            density="compact"
+            header={
+              <>
+                <SlidersHorizontal aria-hidden="true" size={15} /> 更多筛选条件
+              </>
+            }
+            className={cn("insight-advanced-filters", pageStyles["insight-advanced-filters"])}
+          >
+            <div>
+              <label>
+                用例 ID
+                <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
+              </label>
+              <label>
+                标签
+                <Input defaultValue={filter.tag ?? ""} name="tag" />
+              </label>
+              <label>
+                失败特征
+                <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
+              </label>
+              <label>
+                开始时间（平台时区）
+                <DatetimeInput
+                  defaultValue={dateTimeLocal(filter.completedAfter, timeZone)}
+                  name="completedAfter"
+                />
+              </label>
+              <label>
+                结束时间（平台时区）
+                <DatetimeInput
+                  defaultValue={dateTimeLocal(filter.completedBefore, timeZone)}
+                  name="completedBefore"
+                />
+              </label>
+            </div>
+          </Disclosure>
+        </form>
+        <div className="border-t border-border pt-3 [&_.read-model-status]:mb-0 [&_.read-model-status]:text-xs">
+          <ReadModelStatusBar snapshots={projections.map((entry) => entry.status)} />
+        </div>
+      </Card>
 
       <section
         className={cn("insight-metrics", pageStyles["insight-metrics"])}
         aria-label="质量指标"
       >
-        <Metric icon={FlaskConical} label="执行样本" value={String(summary.sampleCount)} />
+        <Metric
+          icon={FlaskConical}
+          label="执行样本"
+          value={String(summary.sampleCount)}
+          description="已确认的执行结果"
+        />
         <Metric
           icon={TrendingUp}
           label="方法通过率"
           tone="success"
           value={percent(summary.successRate)}
+          description={`通过 ${summary.passed} / 总计 ${methodSampleCount} 方法`}
         />
         <Metric
           icon={BarChart3}
           label="方法失败率"
           tone="danger"
           value={percent(summary.failureRate)}
+          description={`失败 ${summary.failed} · 跳过 ${summary.skipped} 方法`}
         />
-        <Metric icon={BarChart3} label="P95 耗时" value={duration(summary.durationP95Ms)} />
+        <Metric
+          icon={Timer}
+          label="P95 耗时"
+          value={duration(summary.durationP95Ms)}
+          description="95% 的样本耗时不超过此值"
+        />
       </section>
 
       <section className={cn("insight-grid", pageStyles["insight-grid"])}>
@@ -333,11 +343,11 @@ export default async function InsightsPage({
             <div>
               <span className={cn("eyebrow", uiPatterns["eyebrow"])}>TREND</span>
               <h2>每日趋势</h2>
+              <p className="insight-chart-description">
+                已确认方法结果 {methodSampleCount} 个 · 执行样本 {summary.sampleCount} 次
+              </p>
             </div>
             <div className={cn("insight-heading-actions", pageStyles["insight-heading-actions"])}>
-              <span className={cn("muted", uiPatterns["muted"])}>
-                已确认方法结果 {methodSampleCount} 个 · 执行样本 {summary.sampleCount} 次
-              </span>
               <InsightDetailDialog
                 description="逐日查看通过、失败与跳过的方法数量。表头固定，数据区域可独立滚动。"
                 title="每日趋势明细"
@@ -406,6 +416,7 @@ export default async function InsightsPage({
             <div>
               <span className={cn("eyebrow", uiPatterns["eyebrow"])}>FAILURES</span>
               <h2>失败原因</h2>
+              <p className="insight-chart-description">按出现次数聚合 · 完整错误见明细</p>
             </div>
             <InsightDetailDialog
               description="正常 TestNG 失败展示错误堆栈；调度、执行节点等异常执行同时展示错误码与错误信息。"
@@ -419,9 +430,10 @@ export default async function InsightsPage({
               >
                 <Table
                   className={cn(
-                    "data-table insight-detail-wide-table",
+                    "data-table insight-detail-wide-table insight-failure-details-table",
                     uiPatterns["data-table"],
                     pageStyles["insight-detail-wide-table"],
+                    "[&_th:first-child]:w-[52%] [&_th:nth-child(2)]:w-[16%] [&_th:nth-child(3)]:w-[8%] [&_th:last-child]:w-[24%]",
                   )}
                 >
                   <TableHeader>
@@ -444,7 +456,9 @@ export default async function InsightsPage({
                             )}
                             title={presentation.detail}
                           >
-                            {presentation.detail}
+                            <div className="min-w-0 whitespace-normal">
+                              <ExpandableText text={presentation.detail} label="失败原因" />
+                            </div>
                           </TableCell>
                           <TableCell
                             title={presentation.errorCode ?? "正常 TestNG 失败，无需错误码"}
@@ -493,6 +507,7 @@ export default async function InsightsPage({
             <div>
               <span className={cn("eyebrow", uiPatterns["eyebrow"])}>FLAKY</span>
               <h2>不稳定用例</h2>
+              <p className="insight-chart-description">成功与失败交替出现的执行样本</p>
             </div>
             <InsightDetailDialog
               description="查看当前分析返回的不稳定用例，以及用于判断的成功、失败样本和置信度。"
@@ -620,13 +635,18 @@ export default async function InsightsPage({
             <div>
               <span className={cn("eyebrow", uiPatterns["eyebrow"])}>CASE OUTCOMES</span>
               <h2>当前层级用例执行情况</h2>
+              {caseOutcomeReport ? (
+                <p
+                  className="insight-chart-description"
+                  title={`${caseOutcomeReport.versionName} / ${caseOutcomeReport.stageName}`}
+                >
+                  {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 本页{" "}
+                  {caseOutcomeReport.cases.length} 个用例
+                </p>
+              ) : null}
             </div>
             {caseOutcomeReport ? (
               <div className={cn("insight-heading-actions", pageStyles["insight-heading-actions"])}>
-                <span className={cn("muted", uiPatterns["muted"])}>
-                  {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 本页{" "}
-                  {caseOutcomeReport.cases.length} 个用例
-                </span>
                 <InsightDetailDialog
                   description="失败与阻塞用例优先排列；表格按当前项目层级有界分页。"
                   title="当前层级用例执行明细"
@@ -710,20 +730,22 @@ function Metric({
   icon: Icon,
   label,
   value,
+  description,
   tone = "neutral",
 }: {
   icon: typeof BarChart3;
   label: string;
   value: string;
+  description: string;
   tone?: "neutral" | "success" | "danger";
 }) {
   return (
     <Card
       as="article"
       className={cn(
-        pageStyles["insight-metric"],
         uiPatterns["card"],
-        `card insight-metric insight-metric insight-metric-${tone}`,
+        pageStyles["insight-metric"],
+        `card insight-metric insight-metric-${tone}`,
       )}
     >
       <span className={cn("insight-metric-icon", pageStyles["insight-metric-icon"])}>
@@ -731,18 +753,13 @@ function Metric({
       </span>
       <span className={"insight-metric-label"}>{label}</span>
       <strong>{value}</strong>
+      <small className="insight-metric-description">{description}</small>
     </Card>
   );
 }
 
 const INSIGHT_CHART_ITEM_LIMIT = 6;
-const FAILURE_CHART_COLORS = [
-  "var(--destructive)",
-  "var(--warning)",
-  "var(--warning)",
-  "var(--info)",
-  "var(--info)",
-] as const;
+const FAILURE_CHART_COLORS = ["var(--destructive)", "var(--warning)", "var(--info)"] as const;
 
 function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
   const width = 600;
@@ -894,7 +911,9 @@ function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures
         {visibleFailures.map((failure, index) => (
           <span key={failure.signature} title={failure.description}>
             <i style={{ background: FAILURE_CHART_COLORS[index] }} />
-            <ExpandableText text={failure.description} label="失败原因" />
+            <span className="line-clamp-2 min-w-0 leading-5 [overflow-wrap:anywhere]">
+              {failure.description}
+            </span>
             <em>{failure.count}</em>
           </span>
         ))}
@@ -1548,9 +1567,8 @@ const pageStyles = {
   "case-outcome-summary":
     "flex flex-wrap gap-2 [padding:4px_0_12px] text-muted-foreground text-xs [&_strong]:text-foreground",
   "insight-advanced-filters":
-    "[&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold border-t border-solid border-border pt-3 [&_.ui-disclosure-label]:inline-flex [&_.ui-disclosure-label]:min-h-8 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-[7px] [&_.ui-disclosure-label]:text-info [&_.ui-disclosure-label]:text-sm [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:[list-style:none] [&_.ui-disclosure-label::-webkit-details-marker]:hidden [&_.ui-disclosure-body_>_div]:grid [&_.ui-disclosure-body_>_div]:grid-cols-[repeat(3,_minmax(180px,_1fr))] [&_.ui-disclosure-body_>_div]:gap-3 [&_.ui-disclosure-body_>_div]:pt-2.5 max-[1281px]:[&_.ui-disclosure-body_>_div]:grid-cols-2",
-  "insight-case-outcome-chart":
-    "grid min-h-0 [flex:1_1_auto] items-center gap-7 grid-cols-[minmax(150px,_0.8fr)_minmax(260px,_1.4fr)] max-[1281px]:gap-4.5 [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-[110px_minmax(0,_1fr)] [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-3 [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.insight-donut]:w-[110px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.insight-donut_>_span]:w-18.5",
+    "[&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.ui-disclosure-label]:inline-flex [&_.ui-disclosure-label]:min-h-8 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:text-info [&_.ui-disclosure-label]:text-sm [&_.ui-disclosure-body_>_div]:grid [&_.ui-disclosure-body_>_div]:grid-cols-3 [&_.ui-disclosure-body_>_div]:gap-3 [&_.ui-disclosure-body_>_div]:pt-3",
+  "insight-case-outcome-chart": "flex min-h-0 flex-1 flex-wrap items-center justify-center gap-5",
   "insight-change-column":
     "[&_>_b]:text-muted-foreground [&_>_b]:text-xs [&_>_b]:tabular-nums [&_>_small]:overflow-hidden [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:text-ellipsis [&_>_small]:whitespace-nowrap grid min-w-0 [grid-template-rows:auto_140px_auto] items-end gap-1.5 text-center [&_>_span]:flex [&_>_span]:h-[140px] [&_>_span]:items-end [&_>_span]:justify-center [&_>_span_>_i]:block [&_>_span_>_i]:w-[min(44px,_70%)] [&_>_span_>_i]:min-h-0 [&_>_span_>_i]:rounded-lg [&_>_span_>_i]:shadow-xs",
   "insight-change-column-chart":
@@ -1558,10 +1576,10 @@ const pageStyles = {
   "insight-change-columns":
     "grid min-h-[180px] grid-cols-[repeat(4,_minmax(54px,_1fr))] items-end gap-[clamp(14px,_2vw,_30px)] px-3 border-b border-solid border-border",
   "insight-chart":
-    "[&.insight-chart-card]:flex [&.insight-chart-card]:min-h-[342px] [&.insight-chart-card]:flex-col [&.insight-chart-card]:overflow-hidden [&.insight-chart-card]:[&_>_.inline-empty]:flex [&.insight-chart-card]:[&_>_.inline-empty]:[flex:1_1_auto] [&.insight-chart-card]:[&_>_.inline-empty]:items-center [&.insight-chart-card]:[&_>_.inline-empty]:justify-center [&.insight-chart-card]:[@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading]:items-start [&.insight-chart-card]:[@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:grid [&.insight-chart-card]:[@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:gap-0.5 [&.insight-chart-caption]:[margin:4px_0_0] [&.insight-chart-caption]:text-muted-foreground [&.insight-chart-caption]:text-xs [&.insight-chart-caption]:text-right [&.insight-chart-legend]:flex [&.insight-chart-legend]:justify-end [&.insight-chart-legend]:gap-3.5 [&.insight-chart-legend]:text-muted-foreground [&.insight-chart-legend]:text-xs [&.insight-chart-legend]:[&_span]:inline-flex [&.insight-chart-legend]:[&_span]:items-center [&.insight-chart-legend]:[&_span]:gap-1.5 [&.insight-chart-legend]:[&_i]:w-2 [&.insight-chart-legend]:[&_i]:h-2 [&.insight-chart-legend]:[&_i]:[flex:0_0_auto] [&.insight-chart-legend]:[&_i]:rounded-md [&.insight-chart-success]:bg-success! [&.insight-chart-danger]:bg-destructive! [&.insight-chart-warning]:bg-warning! [&.insight-chart-info]:bg-info! [&.insight-chart-violet]:bg-info! [&.insight-chart-neutral]:bg-muted-foreground!",
+    "[&.insight-chart-success]:bg-success [&.insight-chart-danger]:bg-destructive [&.insight-chart-warning]:bg-warning [&.insight-chart-violet]:bg-info",
   "insight-chart-caption": "[margin:4px_0_0] text-muted-foreground text-xs text-right",
   "insight-chart-card":
-    "flex min-h-[342px] flex-col overflow-hidden [&_.ui-card-content_>_.inline-empty]:flex [&_.ui-card-content_>_.inline-empty]:[flex:1_1_auto] [&_.ui-card-content_>_.inline-empty]:items-center [&_.ui-card-content_>_.inline-empty]:justify-center [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading]:items-start [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:grid [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_.section-heading_>_div:first-child]:gap-0.5",
+    "flex min-h-96 min-w-0 flex-col overflow-hidden p-4 xl:p-5 [&_.ui-card-content_>_.inline-empty]:flex [&_.ui-card-content_>_.inline-empty]:flex-1 [&_.ui-card-content_>_.inline-empty]:items-center [&_.ui-card-content_>_.inline-empty]:justify-center [&_.section-heading]:flex-nowrap [&_.section-heading]:gap-2 [&_.section-heading_>_div:first-child]:min-w-0 [&_.section-heading_>_div:first-child]:flex-1 [&_.section-heading_.insight-chart-description]:mb-0 [&_.section-heading_.insight-chart-description]:text-xs [&_.section-heading_.insight-chart-description]:font-normal [&_.section-heading_.insight-chart-description]:leading-5 [&_.insight-chart-description]:line-clamp-2 [&_.insight-chart-description]:[overflow-wrap:anywhere]",
   "insight-chart-danger": "bg-destructive!",
   "insight-chart-info": "bg-info!",
   "insight-chart-legend":
@@ -1574,9 +1592,9 @@ const pageStyles = {
     "flex w-[min(34px,_70%)] min-h-1.5 overflow-hidden flex-col justify-end rounded-md bg-muted shadow-xs [&_>_i]:block [&_>_i]:w-full [&_>_i]:min-h-0.5",
   "insight-column-track":
     "flex w-full h-[150px] items-end justify-center [@media(min-width:_1024px)_and_(max-width:_1180px)]:h-[130px]",
-  "insight-comparison-card": "min-h-[410px] col-span-full",
+  "insight-comparison-card": "col-span-full min-h-72",
   "insight-comparison-overview":
-    "grid min-h-0 [flex:1_1_auto] items-center gap-7 grid-cols-[minmax(360px,_1fr)_minmax(320px,_1fr)] border-t border-solid border-border pt-3.5",
+    "grid min-h-0 flex-1 grid-cols-2 items-center gap-6 border-t border-border pt-4",
   "insight-data-table": "min-w-[620px]",
   "insight-detail-content": "flex w-full min-h-0 flex-col gap-3",
   "insight-detail-long-text": "w-[52%] min-w-0",
@@ -1589,9 +1607,9 @@ const pageStyles = {
   "insight-donut-legend":
     "[&_span]:inline-flex [&_span]:items-center [&_span]:gap-1.5 [&_i]:w-2 [&_i]:h-2 [&_i]:[flex:0_0_auto] [&_i]:rounded-md grid min-w-[110px] gap-[9px] text-muted-foreground text-xs",
   "insight-failure-pie-chart":
-    "grid min-h-0 [flex:1_1_auto] grid-cols-[minmax(120px,_168px)_minmax(0,_1fr)] items-start gap-5.5 pt-3 [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-[120px_minmax(0,_1fr)] [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-3",
+    "grid min-h-0 flex-1 grid-cols-[96px_minmax(0,1fr)] items-center gap-4 min-[1440px]:grid-cols-[128px_minmax(0,1fr)]",
   "insight-filter":
-    "grid grid-cols-[minmax(0,_1fr)] gap-3.5 items-end [&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+    "grid min-w-0 gap-2 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
   "insight-flaky-card": "[grid-column:auto] max-[1181px]:[grid-column:auto]",
   "insight-flaky-column":
     "grid min-w-0 [grid-template-rows:auto_150px_auto_auto] items-end gap-[5px] text-center [&_>_b]:text-muted-foreground [&_>_b]:text-xs [&_>_b]:tabular-nums [&_>_small]:overflow-hidden [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:text-ellipsis [&_>_small]:whitespace-nowrap [&_>_em]:text-muted-foreground [&_>_em]:text-xs [&_>_em]:[font-style:normal] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[grid-template-rows:auto_130px_auto_auto]",
@@ -1600,17 +1618,15 @@ const pageStyles = {
   "insight-flaky-columns":
     "grid min-h-[190px] grid-cols-[repeat(6,_minmax(42px,_1fr))] items-end gap-[clamp(8px,_1.4vw,_18px)] [padding:8px_8px_0] border-b border-solid border-border [background:repeating-linear-gradient(_to_bottom,_transparent_0,_transparent_49px,_var(--border)_50px_)] [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-[7px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:px-0.5",
   "insight-flaky-filter":
-    "grid grid-cols-2 gap-3 items-end p-3 border border-solid border-border rounded-lg bg-muted [&_label:first-child]:col-span-full [&_>_.ui-button]:w-fit [&_label]:grid [&_label]:gap-[calc(8px_/_2)] [&_label]:min-w-0 [&_label]:text-sm [&_label]:text-muted-foreground",
-  "insight-flaky-scope": "m-0",
+    "grid grid-cols-2 items-end gap-2 rounded-lg border border-border bg-muted/40 p-3 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_label]:text-xs [&_label]:text-muted-foreground [&_label:first-child]:col-span-full [&_>_.ui-button]:w-fit min-[1440px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] min-[1440px]:[&_>_.ui-button]:max-w-full",
+  "insight-flaky-scope": "mb-0 mt-2 text-xs [overflow-wrap:anywhere]",
   "insight-grid":
-    "grid grid-cols-[minmax(0,_3fr)_minmax(340px,_2fr)] items-start gap-4 max-[1181px]:grid-cols-[1fr] [&_>_.content-card]:overflow-hidden [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-2",
-  "insight-heading-actions":
-    "flex min-w-0 items-center justify-end gap-2.5 [&_>_.muted]:overflow-hidden [&_>_.muted]:text-ellipsis [&_>_.muted]:whitespace-nowrap [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_.muted]:hidden",
+    "grid grid-cols-2 items-stretch gap-4 min-[1440px]:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]",
+  "insight-heading-actions": "flex shrink-0 items-start justify-end",
   "insight-line-area": "[fill:url(#insight-trend-area)]",
   "insight-line-axis": "flex justify-between px-0.5 text-muted-foreground text-xs",
   "insight-line-axis-single": "justify-center",
-  "insight-line-chart":
-    "grid min-h-0 [flex:1_1_auto] [grid-template-rows:auto_minmax(0,_1fr)_auto] gap-1.5 pt-2.5",
+  "insight-line-chart": "flex min-h-0 flex-1 flex-col justify-center gap-2",
   "insight-line-failed":
     "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-destructive [stroke-width:2.2]",
   "insight-line-grid": "stroke-border [stroke-dasharray:3_6] [stroke-width:1]",
@@ -1618,29 +1634,28 @@ const pageStyles = {
     "fill-card stroke-info [stroke-width:2] [vector-effect:non-scaling-stroke]",
   "insight-line-passed":
     "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-success [stroke-width:2.7]",
-  "insight-line-plot": "block w-full h-[210px] overflow-visible",
+  "insight-line-plot": "block h-52 w-full overflow-visible",
   "insight-line-skipped":
     "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-warning [stroke-width:2.2]",
   "insight-line-summary":
-    "flex items-center gap-3.5 justify-end text-muted-foreground text-xs [&_span]:flex [&_span]:items-center [&_span]:gap-1.5 [&_i]:w-2 [&_i]:h-2 [&_i]:rounded-md [&_b]:text-foreground [&_b]:tabular-nums [&_small]:ml-0.5 [&_small]:text-muted-foreground",
+    "flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-muted-foreground text-xs [&_span]:flex [&_span]:items-center [&_span]:gap-1.5 [&_i]:size-2 [&_i]:rounded-sm [&_b]:text-foreground [&_b]:tabular-nums [&_small]:text-xs",
   "insight-line-total":
     "[fill:none] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke] stroke-info [stroke-opacity:0.42] [stroke-width:2]",
   "insight-metric":
-    "[&.insight-metric-icon]:grid [&.insight-metric-icon]:w-9.5 [&.insight-metric-icon]:h-9.5 [&.insight-metric-icon]:[grid-row:span_2] [&.insight-metric-icon]:place-items-center [&.insight-metric-icon]:rounded-lg [&.insight-metric-icon]:bg-info/10 [&.insight-metric-icon]:text-info [&.insight-metric-success]:[&_.insight-metric-icon]:bg-success/10 [&.insight-metric-success]:[&_.insight-metric-icon]:text-success [&.insight-metric-success]:[&_strong]:text-success [&.insight-metric-danger]:[&_.insight-metric-icon]:bg-destructive/10 [&.insight-metric-danger]:[&_.insight-metric-icon]:text-destructive [&.insight-metric-danger]:[&_strong]:text-destructive",
+    "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 p-4 [&_.insight-metric-label]:col-start-1 [&_.insight-metric-label]:row-start-1 [&_.insight-metric-label]:text-muted-foreground [&_.insight-metric-label]:text-sm [&_strong]:col-start-1 [&_strong]:row-start-2 [&_strong]:text-2xl [&_strong]:tabular-nums [&_strong]:leading-8 [&_.insight-metric-description]:col-span-full [&_.insight-metric-description]:mt-1 [&_.insight-metric-description]:text-xs [&_.insight-metric-description]:text-muted-foreground [&.insight-metric-success_.insight-metric-icon]:bg-success/10 [&.insight-metric-success_.insight-metric-icon]:text-success [&.insight-metric-success_strong]:text-success [&.insight-metric-danger_.insight-metric-icon]:bg-destructive/10 [&.insight-metric-danger_.insight-metric-icon]:text-destructive [&.insight-metric-danger_strong]:text-destructive",
   "insight-metric-icon":
-    "grid w-9.5 h-9.5 [grid-row:span_2] place-items-center rounded-lg bg-info/10 text-info",
-  "insight-metrics":
-    "grid grid-cols-4 gap-3.5 [&_.card]:grid [&_.card]:min-w-0 [&_.card]:min-h-[112px] [&_.card]:grid-cols-[auto_minmax(0,_1fr)] [&_.card]:gap-[8px_11px] [&_.card]:items-center [&_.card]:p-4.5 [&_.insight-metric-label]:text-muted-foreground [&_.insight-metric-label]:text-sm [&_.insight-metric-label]:font-semibold [&_.card_strong]:min-w-0 [&_.card_strong]:text-2xl [&_.card_strong]:tabular-nums [&_.card_strong]:leading-[1.05] [&_.card_strong]:whitespace-nowrap",
+    "col-start-2 row-span-2 row-start-1 grid size-9 place-items-center rounded-lg bg-info/10 text-info",
+  "insight-metrics": "grid grid-cols-4 gap-3",
   "insight-outcome-legend":
-    "[&_i]:w-2 [&_i]:h-2 [&_i]:[flex:0_0_auto] [&_i]:rounded-md grid grid-cols-[repeat(2,_minmax(110px,_1fr))] gap-2.5 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[auto_minmax(0,_1fr)_auto] [&_>_span]:items-center [&_>_span]:gap-1.5 [&_>_span]:border [&_>_span]:border-solid [&_>_span]:border-border [&_>_span]:rounded-lg [&_>_span]:py-2.5 [&_>_span]:px-3 [&_>_span]:bg-muted [&_small]:text-muted-foreground [&_strong]:text-base [&_strong]:tabular-nums [&_em]:[grid-column:2_/_-1] [&_em]:text-muted-foreground [&_em]:text-xs [&_em]:[font-style:normal] [@media(min-width:_1024px)_and_(max-width:_1180px)]:grid-cols-2 [@media(min-width:_1024px)_and_(max-width:_1180px)]:gap-[7px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_span]:py-[7px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_span]:px-2",
+    "grid min-w-0 flex-1 basis-40 grid-cols-2 gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[auto_minmax(0,1fr)] [&_>_span]:items-center [&_>_span]:gap-1.5 [&_>_span]:rounded-lg [&_>_span]:border [&_>_span]:border-border [&_>_span]:bg-muted/40 [&_>_span]:p-3 [&_i]:size-2 [&_i]:rounded-sm [&_small]:text-xs [&_small]:text-muted-foreground [&_strong]:col-span-full [&_strong]:text-xl [&_strong]:tabular-nums [&_em]:col-span-full [&_em]:text-muted-foreground [&_em]:text-xs [&_em]:not-italic",
   "insight-pie":
-    "grid w-[min(168px,_100%)] [aspect-ratio:1] [place-self:center] place-items-center border border-solid border-border rounded-full shadow-xs [&_>_span]:grid [&_>_span]:w-19 [&_>_span]:[aspect-ratio:1] [&_>_span]:[place-content:center] [&_>_span]:border [&_>_span]:border-solid [&_>_span]:border-border [&_>_span]:rounded-full [&_>_span]:bg-card [&_>_span]:shadow-xs [&_>_span]:text-center [&_strong]:text-2xl [&_strong]:tabular-nums [&_strong]:leading-[1] [&_small]:mt-[5px] [&_small]:text-muted-foreground [&_small]:text-xs [@media(min-width:_1024px)_and_(max-width:_1180px)]:w-[120px] [@media(min-width:_1024px)_and_(max-width:_1180px)]:[&_>_span]:w-15.5",
+    "grid w-full aspect-square place-items-center rounded-full [&_>_span]:grid [&_>_span]:w-2/3 [&_>_span]:aspect-square [&_>_span]:place-content-center [&_>_span]:rounded-full [&_>_span]:bg-card [&_>_span]:text-center [&_strong]:text-xl [&_strong]:tabular-nums [&_small]:mt-1 [&_small]:text-muted-foreground [&_small]:text-xs",
   "insight-pie-legend":
-    "grid min-w-0 gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[9px_minmax(0,_1fr)_auto] [&_>_span]:items-center [&_>_span]:gap-2 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_i]:w-[9px] [&_i]:h-[9px] [&_i]:rounded-md [&_b]:font-semibold [&_b]:[overflow-wrap:anywhere] [&_b]:whitespace-normal [&_em]:text-foreground [&_em]:[font-style:normal] [&_em]:tabular-nums [&_em]:font-semibold [&_.insight-chart-caption]:pt-[3px] [&_.insight-chart-caption]:border-t [&_.insight-chart-caption]:border-solid [&_.insight-chart-caption]:border-border [&_.expandable-text]:text-sm [&_.expandable-text]:leading-[1.5]",
+    "grid min-w-0 gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[8px_minmax(0,1fr)_auto] [&_>_span]:items-start [&_>_span]:gap-2 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:border-b [&_>_span]:border-border/60 [&_>_span]:pb-2 [&_i]:mt-1.5 [&_i]:size-2 [&_i]:rounded-sm [&_em]:text-foreground [&_em]:not-italic [&_em]:tabular-nums [&_em]:font-semibold [&_em]:leading-5",
   "insight-primary-filters":
-    "grid grid-cols-4 items-end gap-3 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold max-[1281px]:grid-cols-2 max-[1281px]:[&_>_.ui-button]:w-fit",
-  "insight-trend-card": "min-w-0 max-[1181px]:[grid-row:auto]",
-  "insights-page": "[&_.page-hero]:flex-wrap",
+    "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.8fr)_auto] items-end gap-3",
+  "insight-trend-card": "min-w-0",
+  "insights-page": "gap-4 [&_.page-hero]:flex-wrap",
   pagination: "flex justify-end py-3.5 px-4.5 border-t border-solid border-border",
   "status-warning":
     "[margin:0_0_10px] border border-solid border-transparent rounded-lg py-2 px-2.5 text-warning bg-warning/10 text-xs",

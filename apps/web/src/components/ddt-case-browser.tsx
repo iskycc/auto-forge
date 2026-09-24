@@ -109,9 +109,7 @@ export function DdtCaseBrowser({
           {!collapsed ? (
             <div>
               <strong>用例库</strong>
-              <small>
-                {cases.length} 条已加载{selected.size ? ` · 已选 ${selected.size} 条` : ""}
-              </small>
+              <small title="↑ / ↓ 或 J / K 切换用例">{cases.length} 条已加载</small>
             </div>
           ) : null}
           <Button
@@ -147,7 +145,7 @@ export function DdtCaseBrowser({
               checked={cases.length > 0 && cases.every((item) => selected.has(item.caseId))}
               onChange={(event) => onSelectAll(event.target.checked)}
             />
-            选择已加载用例
+            {selected.size ? `已选 ${selected.size} 条` : "选择已加载用例"}
           </label>
           <div
             className={cn("ddt-case-list", ddtCaseBrowserStyles["ddt-case-list"])}
@@ -190,6 +188,7 @@ export function DdtCaseBrowser({
                 />
                 <Button
                   type="button"
+                  variant="ghost"
                   className={cn("ddt-case-list-item", ddtCaseBrowserStyles["ddt-case-list-item"])}
                   aria-label={item.caseId}
                   aria-current={activeCaseId === item.caseId ? "true" : undefined}
@@ -213,12 +212,8 @@ export function DdtCaseBrowser({
                   variant="ghost"
                   size="compact"
                   aria-label={`快速预览 ${item.caseId}`}
-                  title={
-                    item.executionClass
-                      ? "在右侧查看执行、分析历史与测试类详情"
-                      : "请先设置 SR 测试类关联"
-                  }
-                  disabled={savingCase || !item.executionClass}
+                  title="查看执行记录、分析结论与测试类详情"
+                  disabled={savingCase}
                   onClick={() => onPreview(item.caseId)}
                 >
                   <Eye size={15} aria-hidden="true" />
@@ -254,9 +249,6 @@ export function DdtCaseBrowser({
               </Button>
             ) : null}
           </div>
-          <small className={cn("ddt-navigation-hint", ddtCaseBrowserStyles["ddt-navigation-hint"])}>
-            ↑ / ↓ 或 J / K 切换用例
-          </small>
         </div>
       </section>
       {!collapsed ? (
@@ -503,37 +495,35 @@ export function DdtCaseDetail({
             {item.executionClass?.className ??
               "请在“SR 测试类关联”页面配置当前 SR 的测试类；本 SR 下所有用例自动继承。"}
           </small>
-          {item.executionClass ? (
-            <div
-              className={cn(
-                "ddt-execution-class-actions",
-                ddtCaseBrowserStyles["ddt-execution-class-actions"],
-              )}
+          <div
+            className={cn(
+              "ddt-execution-class-actions",
+              ddtCaseBrowserStyles["ddt-execution-class-actions"],
+            )}
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={Boolean(editor) || saving}
+              onClick={onPreview}
             >
-              <Button
-                type="button"
-                variant="secondary"
+              <Eye size={15} /> 查看执行详情
+            </Button>
+            {canRun && item.executionClass?.enabled && !item.executionClass.archived ? (
+              <OpenRunDialogButton
+                ddtCase={item}
                 disabled={Boolean(editor) || saving}
-                onClick={onPreview}
+                className={cn(
+                  "button button-primary compact-button",
+                  uiPatterns["button"],
+                  uiPatterns["button-primary"],
+                  uiPatterns["compact-button"],
+                )}
               >
-                <Eye size={15} /> 查看执行详情
-              </Button>
-              {canRun && item.executionClass.enabled && !item.executionClass.archived ? (
-                <OpenRunDialogButton
-                  ddtCase={item}
-                  disabled={Boolean(editor) || saving}
-                  className={cn(
-                    "button button-primary compact-button",
-                    uiPatterns["button"],
-                    uiPatterns["button-primary"],
-                    uiPatterns["compact-button"],
-                  )}
-                >
-                  立即执行
-                </OpenRunDialogButton>
-              ) : null}
-            </div>
-          ) : null}
+                立即执行
+              </OpenRunDialogButton>
+            ) : null}
+          </div>
         </section>
         {steps ? (
           <div className={cn("ddt-journey-switcher", ddtCaseBrowserStyles["ddt-journey-switcher"])}>
@@ -765,20 +755,21 @@ const ddtCaseBrowserStyles = {
     "[--ddt-case-list-width:clamp(240px,_26%,_440px)] [--ddt-case-list-collapsed-width:52px] [--ddt-case-resizer-width:6px] [--ddt-case-browser-height:320px] [--ddt-case-filter-max-height:none] grid grid-cols-[min(var(--ddt-case-list-width),_40%)_var(--ddt-case-resizer-width)_minmax(_0,_1fr_)] h-[var(--ddt-case-browser-height)] min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs [&.is-collapsed]:grid-cols-[var(--ddt-case-list-collapsed-width)_minmax(0,_1fr)]",
   "ddt-case-detail-panel": "flex min-w-0 min-h-0 flex-col",
   "ddt-case-detail-scroll":
-    "min-h-0 flex-1 overflow-auto py-2 px-3 [container-type:inline-size] [&_.ddt-execution-class-summary]:grid-cols-[auto_minmax(0,_1fr)] [&_.ddt-execution-class-summary]:gap-[4px_8px] [&_.ddt-execution-class-summary]:mb-3 [&_.ddt-execution-class-summary]:py-2 [&_.ddt-execution-class-summary]:px-3 [&_.ddt-execution-class-summary_>_small]:col-span-full [&_.ddt-history]:block",
+    "min-h-0 flex-1 overflow-auto p-3 [container-type:inline-size] [&_.ddt-execution-class-summary]:grid-cols-[minmax(0,_1fr)] [&_.ddt-execution-class-summary]:gap-[4px_8px] [&_.ddt-execution-class-summary]:mb-3 [&_.ddt-execution-class-summary]:py-2 [&_.ddt-execution-class-summary]:px-3 [&_.ddt-execution-class-summary_>_small]:col-span-full [&_.ddt-history]:block",
   "ddt-case-filters":
     "m-0 border-0 grid grid-cols-2 [flex:0_0_auto] gap-2 overflow-visible py-2 px-3 [&_>_label]:col-span-full [&_>_label_>_span:not(.ui-select)]:hidden [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_.ui-input]:w-full [&_.ui-input]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-1 [&_.search-field_>_svg]:[flex:0_0_auto] [&_label_>_span]:text-muted-foreground [&_label_>_span]:text-xs",
   "ddt-case-list": "min-h-0 flex-1 overflow-auto p-1",
   "ddt-case-list-item":
-    "[&.ui-button]:shadow-none [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-1 [&_>_span]:flex-1 flex min-w-0 flex-1 items-center gap-2 border-0 py-3 px-1 bg-transparent text-foreground text-left [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small_>_span]:overflow-hidden [&_small_>_span]:text-ellipsis [&_small_>_span]:whitespace-nowrap [&_small]:flex [&_small]:min-w-0 [&_small]:items-center [&_small]:gap-2 [&_em]:[flex:0_0_auto] [&_em]:text-info [&_em]:[font-style:normal]",
+    "[&.ui-button]:shadow-none [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_>_span]:flex-1 flex min-w-0 flex-1 items-center gap-2 border-0 py-1 px-1 bg-transparent text-foreground text-left [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small_>_span]:overflow-hidden [&_small_>_span]:text-ellipsis [&_small_>_span]:whitespace-nowrap [&_small]:flex [&_small]:min-w-0 [&_small]:items-center [&_small]:gap-2 [&_em]:[flex:0_0_auto] [&_em]:text-info [&_em]:[font-style:normal]",
   "ddt-case-list-row":
-    "flex min-w-0 items-center gap-1 border border-solid border-transparent rounded-lg pl-2 [&.active]:border-ring [&.active]:bg-info/10 [&:hover]:bg-info/10",
+    "flex min-w-0 items-center gap-1 border border-solid border-transparent rounded-lg pl-2 [&.active]:border-primary/30 [&.active]:bg-accent [&.active_.ddt-case-list-item]:text-primary-text [&:hover]:bg-muted/60",
   "ddt-case-navigation":
-    "flex min-w-0 min-h-0 flex-col bg-muted [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:[flex:0_0_auto] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-2 [&_>_header]:px-3 [&_>_header_>_div]:grid [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-1 [&_small]:text-muted-foreground [&_small]:text-xs",
+    "flex min-w-0 min-h-0 flex-col bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:[flex:0_0_auto] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-1 [&_>_header]:px-3 [&_>_header_>_div]:flex [&_>_header_>_div]:items-baseline [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-2 [&_small]:text-muted-foreground [&_small]:text-xs",
   "ddt-case-navigation-content": "flex min-w-0 min-h-0 flex-col flex-1 [&[hidden]]:hidden",
-  "ddt-case-preview": "[flex:0_0_auto] mr-1",
+  "ddt-case-preview":
+    "[flex:0_0_auto] [&.ant-btn]:size-8 [&.ant-btn]:p-0 mr-1 text-muted-foreground",
   "ddt-case-resizer":
-    "bg-border cursor-col-resize [touch-action:none] [&:hover]:bg-info [&:focus-visible]:bg-info",
+    "bg-muted cursor-col-resize [touch-action:none] [&:hover]:bg-info [&:focus-visible]:bg-info",
   "ddt-detail-save":
     "sticky bottom-0 flex flex-wrap items-center justify-end gap-2 mt-3 border border-solid border-border rounded-lg p-3 bg-card shadow-xs [&_>_span]:flex-1 [&_>_span]:text-xs [&_>_span]:text-muted-foreground",
   "ddt-detail-summary":
@@ -789,9 +780,9 @@ const ddtCaseBrowserStyles = {
     "flex min-h-[calc(20px_*_2)] [flex:0_0_auto] items-center justify-between gap-2 border-b border-solid border-border py-2 px-3 flex-wrap [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:items-center [&_>_span]:gap-1 [&_>_span]:flex-1 [&_>_span]:whitespace-nowrap [&_>_div]:flex [&_>_div]:min-w-0 [&_>_div]:items-center [&_>_div]:gap-1 [&_>_span_>_strong]:max-w-[24ch] [&_>_span_>_strong]:overflow-hidden [&_>_span_>_strong]:text-ellipsis [&_>_span_>_strong]:whitespace-nowrap [&_>_span_>_svg]:[flex:0_0_auto]",
   "ddt-execution-class-actions": "col-span-full flex flex-wrap gap-2 mt-2",
   "ddt-execution-class-summary":
-    "grid gap-[3px] mb-3.5 border border-solid border-border rounded-lg py-3 px-3.5 bg-muted [&_>_span]:text-muted-foreground [&_>_small]:text-muted-foreground [&_>_small]:[overflow-wrap:anywhere]",
+    "grid min-w-0 gap-1 mb-3 border border-solid border-border rounded-lg p-3 bg-muted/40 [&_strong]:[overflow-wrap:anywhere] [&_>_span]:text-muted-foreground [&_>_small]:text-muted-foreground [&_>_small]:[overflow-wrap:anywhere]",
   "ddt-field-card":
-    "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-1 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-1 [&_>_header]:px-3 [&_>_header]:bg-muted [&_>_header_>_strong]:min-w-0 [&_>_header_>_strong]:[overflow-wrap:anywhere] [&_>_header_>_div]:flex [&_>_header_>_div]:[flex:0_0_auto] [&_pre]:max-h-[calc(20px_*_12)] [&_pre]:m-0 [&_pre]:overflow-auto [&_pre]:p-3 [&_pre]:font-mono [&_pre]:whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]",
+    "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-1 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-1 [&_>_header]:px-3 [&_>_header]:bg-muted/50 [&_>_header_>_strong]:min-w-0 [&_>_header_>_strong]:[overflow-wrap:anywhere] [&_>_header_>_div]:flex [&_>_header_>_div]:[flex:0_0_auto] [&_pre]:max-h-[calc(20px_*_12)] [&_pre]:m-0 [&_pre]:overflow-auto [&_pre]:p-3 [&_pre]:font-mono [&_pre]:whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]",
   "ddt-field-cards": "grid grid-cols-[minmax(0,_1fr)] items-start gap-3",
   "ddt-field-editor":
     "[&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_textarea]:w-full [&_textarea]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 grid gap-2 p-3",
@@ -807,7 +798,6 @@ const ddtCaseBrowserStyles = {
     "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap [&.journey]:bg-info/10 [&.journey]:text-info",
   "ddt-load-more": "w-fit m-auto",
   "ddt-loaded-selection":
-    "flex [flex:0_0_auto] items-center gap-2 [border-block:1px_solid_var(--border)] py-2 px-3 text-xs",
+    "flex [flex:0_0_auto] items-center gap-2 [border-block:1px_solid_var(--border)] py-1.5 px-3 text-xs text-muted-foreground",
   "ddt-navigation-empty": "p-3",
-  "ddt-navigation-hint": "p-3 border-t border-solid border-border py-1",
 } as const;

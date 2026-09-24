@@ -24,6 +24,7 @@ type Fixture = {
   repository: PlatformOperationsRepository;
   afterTotalsRead(operation: () => Promise<void> | void): () => void;
   replaceFact(): Promise<void> | void;
+  seedMixedOutcomes(): Promise<void> | void;
   close(): Promise<void> | void;
 };
 
@@ -35,6 +36,24 @@ for (const mode of ["sqlite", "postgres"] as const) {
     }, 30_000);
     afterEach(async () => {
       await fixture?.close();
+    });
+
+    it("finds mixed execution outcomes even when every individual attempt has only passed or failed methods", async () => {
+      await fixture.seedMixedOutcomes();
+      const summary = await fixture.repository.readAnalytics(analyticsQuery);
+      expect(summary.flakyCases).toEqual([
+        expect.objectContaining({
+          caseDefinitionId: "analytics-snapshot-case",
+          samples: 7,
+          passed: 4,
+          failed: 3,
+        }),
+      ]);
+      const failedOnly = await fixture.repository.readAnalytics({
+        ...analyticsQuery,
+        filter: { ...analyticsQuery.filter, outcome: "failed" },
+      });
+      expect(failedOnly.flakyCases).toEqual([]);
     });
 
     it.each(["overview", "complete"] as const)(
@@ -138,6 +157,9 @@ async function sqliteFixture(): Promise<Fixture> {
     replaceFact: () => {
       writer.exec(replaceFact);
     },
+    seedMixedOutcomes: () => {
+      writer.exec(mixedOutcomeSql());
+    },
     close() {
       writer.close();
       handle.close();
@@ -203,6 +225,9 @@ async function postgresFixture() {
     replaceFact: async () => {
       await writer.query(replaceFact);
     },
+    seedMixedOutcomes: async () => {
+      await writer.query(mixedOutcomeSql());
+    },
     async close() {
       reader.release();
       writer.release();
@@ -218,6 +243,29 @@ async function postgresFixture() {
 
 function isTotalsQuery(sql: string) {
   return sql.includes("SUM(passed),0") && sql.includes("sampleCount");
+}
+
+function mixedOutcomeSql(): string {
+  return Array.from({ length: 6 }, (_, index) => {
+    const failed = index % 2 === 0;
+    const outcome = failed ? "failed" : "succeeded";
+    const resultCode = failed ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED";
+    const report = JSON.stringify({
+      total: 1,
+      passed: failed ? 0 : 1,
+      failed: failed ? 1 : 0,
+      skipped: 0,
+      configurationFailures: 0,
+      detailsTruncated: true,
+      suites: [],
+    });
+    return `INSERT INTO run_attempts
+      (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at,finished_at,
+       outcome,result_code,result_summary,duration_ms,testng_result_json)
+      VALUES ('mixed-attempt-${index}','analytics-snapshot-run','analytics-snapshot-runner',${index + 2},
+        '${outcome}',1,'2026-09-22T00:00:00.000Z','2026-09-22T00:00:00.000Z',
+        '${outcome}','${resultCode}','${outcome}',100,'${report}');`;
+  }).join("\n");
 }
 
 function seedSql() {

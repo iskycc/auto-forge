@@ -4,6 +4,32 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.1 - 2026-09-24
+
+### Changed and fixed
+
+- 优化质量洞察的筛选、快照状态、指标说明及图表对齐；失败原因使用可区分的主题色，明细为长错误保留足够列宽并支持展开全文。
+- 文件来源的标题、搜索、表格及分页统一卡片内边距，保留必要的横向滚动；移除执行记录、安全审计等表格阴影引起的多余内层滚动条。
+- 修复打开顶栏设置弹窗时工作概览、质量洞察及执行节点页面横向跳动的问题，保留背景滚动锁定。
+- 调整 DDT 工作台的侧栏主题色、列表密度及可用高度；恢复眼睛按钮中的执行与分析记录，测试类详情按需加载，解除 SR 测试类关联后仍可查看该 DDT 用例的历史。
+- 修复服务端首屏流式渲染时普通用例详情表格丢失表头的问题。
+- 修复 SQLite 不稳定用例统计的聚合别名与明细字段冲突，避免混合成功、失败的用例被遗漏；后台快照与浏览器缓存机制保持不变。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、API 契约、Runner Protocol 或 Adapter 协议变更。Lite/Full 共用前端；从 v1.18.0 升级只需更新主平台，Full 各平台节点应同步更新。
+- 无新增生产依赖。Ant Design 资源继续随离线包交付；双架构后端、部署包、Jenkins 插件、SBOM 元数据及签名清单的资产类型不变。
+- 截图、测试数据库与本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- Web 生产构建、测试类型检查及变更文件格式和 lint 检查通过；DDT 详情、组件使用约束及失败展示单元测试通过。
+- 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test:e2e:matrix` 通过，28 项相关单元测试复测通过。
+- SQLite/PostgreSQL 对照集成测试及相关仓储测试共 21 项通过，无跳过；新增回归先复现混合执行结果被统计遗漏，再验证两种数据库行为一致。
+- 相关 Lite Playwright 回归通过，覆盖 DDT 关联及解除关联后的历史预览、JAR 导入执行、设置弹窗位置、表格滚动、带数据洞察与文件来源布局，以及批次日志对比。
+- 实际查看 1024×768、1536×960 的浅色／深色截图，检查带执行数据的图表、长错误明细、DDT 预览及来源表格；受影响页面未发现溢出、控件重叠或浏览器脚本错误。
+- 完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.0 - 2026-09-24
 
 ### Changed and fixed

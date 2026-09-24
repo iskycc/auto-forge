@@ -901,6 +901,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       ...ADAPTER_FAILURE_RESULT_CODES,
       ...parameters,
     ];
+    // Distinct aliases keep SQLite HAVING from resolving passed/failed to one fact's method counts.
     const flakyCases = this.handle.client
       .prepare(
         `SELECT fact.case_definition_id AS caseDefinitionId,
@@ -908,15 +909,15 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
                 COUNT(*) AS samples,
                 SUM(CASE WHEN fact.outcome='succeeded'
                               OR (fact.outcome='failed' AND fact.result_code IN (${successPlaceholders}))
-                         THEN 1 ELSE 0 END) AS passed,
+                         THEN 1 ELSE 0 END) AS passedSamples,
                 SUM(CASE WHEN fact.outcome='failed' AND fact.result_code IN (${failurePlaceholders})
-                         THEN 1 ELSE 0 END) AS failed
+                         THEN 1 ELSE 0 END) AS failedSamples
          FROM analytics_facts fact
          LEFT JOIN case_definitions case_definition ON case_definition.id=fact.case_definition_id
          ${qualifySqliteAnalyticsWhere(whereSql)}
            AND fact.outcome IN ('succeeded','failed')
          GROUP BY fact.case_definition_id,displayName
-         HAVING samples>=5 AND passed>0 AND failed>0
+         HAVING samples>=5 AND passedSamples>0 AND failedSamples>0
          ORDER BY samples DESC,fact.case_definition_id LIMIT 20`,
       )
       .all(...flakyParameters)
@@ -925,11 +926,15 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
           caseDefinitionId: string;
           displayName: string;
           samples: number;
-          passed: number;
-          failed: number;
+          passedSamples: number;
+          failedSamples: number;
         };
         return {
-          ...value,
+          caseDefinitionId: value.caseDefinitionId,
+          displayName: value.displayName,
+          samples: value.samples,
+          passed: value.passedSamples,
+          failed: value.failedSamples,
           confidence: Math.round((1 - 1 / Math.sqrt(value.samples)) * 10_000) / 10_000,
         };
       });

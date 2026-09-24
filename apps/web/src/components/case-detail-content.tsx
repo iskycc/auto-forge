@@ -21,7 +21,7 @@ import { CaseFailureAnalysisHistory } from "@/components/case-failure-analysis-h
 import { CaseVersionHistory } from "@/components/case-version-history";
 import { LazyCaseSource } from "@/components/lazy-case-source";
 import { StatusBadge } from "@/components/status-badge";
-import type { CaseDetailView } from "@/lib/case-detail-view";
+import type { CaseDetailView, CaseHistoryView } from "@/lib/case-detail-view";
 import { caseExecutionResultLabel } from "@/lib/case-execution-presentation";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
@@ -41,99 +41,213 @@ function formatDate(value: string, timeZone: string): string {
 export function CaseDetailContent({
   detail,
   presentation = "page",
+  section = "all",
   onDefinitionUpdated,
   onVersionsChanged,
   managementActions,
 }: {
   detail: CaseDetailView;
   presentation?: Presentation;
+  section?: "all" | "history" | "definition";
   onDefinitionUpdated?(definition: CaseDefinitionWithMethods): void;
   onVersionsChanged?(): void;
   managementActions?: ReactNode;
 }) {
-  const { definition, activity, timeZone } = detail;
+  const { definition, timeZone } = detail;
   const inspector = presentation === "inspector";
-  const historyCaseId = detail.historyContext?.caseDefinitionId ?? definition.id;
   return (
     <>
-      <Card
-        as="section"
-        className={`case-definition-summary ${inspector ? "" : cn("card source-summary-card", uiPatterns["card"], caseDetailContentStyles["source-summary-card"])}`}
-      >
-        <div
-          className={
-            inspector
-              ? cn("case-inspector-meta", caseDetailContentStyles["case-inspector-meta"])
-              : cn("source-meta-grid", caseDetailContentStyles["source-meta-grid"])
-          }
-        >
-          <div>
-            <span>状态</span>
-            <strong>
-              <StatusBadge enabled={definition.enabled} />
-              {definition.archived ? (
-                <Badge className={cn("tag", uiPatterns["tag"])}>已归档</Badge>
-              ) : null}
-            </strong>
-          </div>
-          <div>
-            <span>包名</span>
-            <strong>{definition.packageName || "—"}</strong>
-          </div>
-          <div>
-            <span>版本 / 测试阶段</span>
-            <strong>
-              {detail.projectVersionName} / {detail.testStageName}
-            </strong>
-          </div>
-          <div>
-            <span>分组</span>
-            <strong>{definition.groups.join("、") || "—"}</strong>
-          </div>
-          <div>
-            <span>标签</span>
-            <strong>{definition.tags.join("、") || "—"}</strong>
-          </div>
-          <div>
-            <span>测试方法</span>
-            <strong>{definition.methods.length}</strong>
-          </div>
-          <div>
-            <span>修订</span>
-            <strong>r{definition.revision}</strong>
-          </div>
-          <div>
-            <span>最近更新</span>
-            <strong>{formatDate(definition.updatedAt, timeZone)}</strong>
-          </div>
-          <div
-            className={
-              inspector
-                ? cn(
-                    "case-inspector-meta-wide",
-                    caseDetailContentStyles["case-inspector-meta-wide"],
-                  )
-                : "source-meta-wide"
-            }
+      {section !== "history" ? (
+        <>
+          <Card
+            as="section"
+            className={`case-definition-summary ${inspector ? "" : cn("card source-summary-card", uiPatterns["card"], caseDetailContentStyles["source-summary-card"])}`}
           >
-            <span>参数（只读）</span>
-            <strong>
-              {Object.entries(definition.parameters)
-                .map(([name, value]) => `${name}=${value}`)
-                .join("；") || "—"}
-            </strong>
-          </div>
-        </div>
-      </Card>
+            <div
+              className={
+                inspector
+                  ? cn("case-inspector-meta", caseDetailContentStyles["case-inspector-meta"])
+                  : cn("source-meta-grid", caseDetailContentStyles["source-meta-grid"])
+              }
+            >
+              <div>
+                <span>状态</span>
+                <strong>
+                  <StatusBadge enabled={definition.enabled} />
+                  {definition.archived ? (
+                    <Badge className={cn("tag", uiPatterns["tag"])}>已归档</Badge>
+                  ) : null}
+                </strong>
+              </div>
+              <div>
+                <span>包名</span>
+                <strong>{definition.packageName || "—"}</strong>
+              </div>
+              <div>
+                <span>版本 / 测试阶段</span>
+                <strong>
+                  {detail.projectVersionName} / {detail.testStageName}
+                </strong>
+              </div>
+              <div>
+                <span>分组</span>
+                <strong>{definition.groups.join("、") || "—"}</strong>
+              </div>
+              <div>
+                <span>标签</span>
+                <strong>{definition.tags.join("、") || "—"}</strong>
+              </div>
+              <div>
+                <span>测试方法</span>
+                <strong>{definition.methods.length}</strong>
+              </div>
+              <div>
+                <span>修订</span>
+                <strong>r{definition.revision}</strong>
+              </div>
+              <div>
+                <span>最近更新</span>
+                <strong>{formatDate(definition.updatedAt, timeZone)}</strong>
+              </div>
+              <div
+                className={
+                  inspector
+                    ? cn(
+                        "case-inspector-meta-wide",
+                        caseDetailContentStyles["case-inspector-meta-wide"],
+                      )
+                    : "source-meta-wide"
+                }
+              >
+                <span>参数（只读）</span>
+                <strong>
+                  {Object.entries(definition.parameters)
+                    .map(([name, value]) => `${name}=${value}`)
+                    .join("；") || "—"}
+                </strong>
+              </div>
+            </div>
+          </Card>
 
-      {!detail.executable ? (
-        <Notice className="implementation-notice min-w-0" tone="warning" showIcon role="status">
-          该用例来自 sources JAR，可查看和管理源码，但不能直接执行；执行时请导入包含 .class 的测试
-          JAR。
-        </Notice>
+          {!detail.executable ? (
+            <Notice className="implementation-notice min-w-0" tone="warning" showIcon role="status">
+              该用例来自 sources JAR，可查看和管理源码，但不能直接执行；执行时请导入包含 .class
+              的测试 JAR。
+            </Notice>
+          ) : null}
+        </>
       ) : null}
 
+      {section !== "definition" ? (
+        <CaseHistoryContent
+          detail={detail}
+          caseDefinitionId={definition.id}
+          projectId={definition.projectId}
+          presentation={presentation}
+        />
+      ) : null}
+
+      {section !== "history" ? (
+        <>
+          {detail.canReadSource ? (
+            <LazyCaseSource
+              key={definition.id}
+              caseDefinitionId={definition.id}
+              revision={definition.revision}
+            />
+          ) : null}
+
+          {detail.canManage ? (
+            <CaseDetailSection presentation={presentation} title="用例元数据">
+              <CaseDefinitionEditor
+                definition={definition}
+                {...(onDefinitionUpdated ? { onUpdated: onDefinitionUpdated } : {})}
+              />
+              {managementActions}
+            </CaseDetailSection>
+          ) : null}
+
+          <CaseDetailSection
+            presentation={presentation}
+            title={`测试方法（${definition.methods.length}）`}
+            open
+          >
+            <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+              <Table className={cn("data-table", uiPatterns["data-table"])}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>方法</TableHead>
+                    <TableHead>方法签名</TableHead>
+                    <TableHead>分组</TableHead>
+                    <TableHead>状态</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {definition.methods.map((method) => (
+                    <TableRow key={method.id}>
+                      <TableCell>
+                        <strong>{method.methodName}</strong>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={cn(
+                            "method-signature",
+                            caseDetailContentStyles["method-signature"],
+                          )}
+                        >
+                          {formatMethodSignature(method.descriptor)}
+                        </span>
+                      </TableCell>
+                      <TableCell>{method.groups.join("、") || "—"}</TableCell>
+                      <TableCell>
+                        <StatusBadge enabled={method.enabled} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CaseDetailSection>
+
+          <CaseDetailSection
+            presentation={presentation}
+            title={`版本历史（${detail.versions.length}）`}
+          >
+            <CaseVersionHistory
+              canManage={detail.canManage}
+              canReadSource={detail.canReadSource}
+              caseDefinitionId={definition.id}
+              currentVersion={definition.currentVersion}
+              {...(onVersionsChanged ? { onChanged: onVersionsChanged } : {})}
+              versions={detail.versions}
+            />
+          </CaseDetailSection>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+export function CaseHistoryContent({
+  detail,
+  caseDefinitionId,
+  projectId,
+  presentation = "page",
+  compact = false,
+}: {
+  detail: CaseHistoryView;
+  caseDefinitionId: string;
+  projectId: string;
+  presentation?: Presentation;
+  compact?: boolean;
+}) {
+  const { activity, timeZone } = detail;
+  const historyCaseId = detail.historyContext?.caseDefinitionId ?? caseDefinitionId;
+  const inspector = presentation === "inspector";
+  return (
+    <>
       <CaseExecutionHistory
+        compact={compact}
         key={`executions:${historyCaseId}`}
         caseDefinitionId={historyCaseId}
         {...(detail.historyContext
@@ -151,7 +265,7 @@ export function CaseDetailContent({
         {...(detail.historyContext ? { historyUrl: detail.historyContext.analysisHistoryUrl } : {})}
         compact={inspector}
         initialPage={detail.failureAnalysisHistory}
-        projectId={definition.projectId}
+        projectId={projectId}
         timeZone={timeZone}
       />
 
@@ -190,80 +304,6 @@ export function CaseDetailContent({
             </TableBody>
           </Table>
         </div>
-      </CaseDetailSection>
-
-      {detail.canReadSource ? (
-        <LazyCaseSource
-          key={definition.id}
-          caseDefinitionId={definition.id}
-          revision={definition.revision}
-        />
-      ) : null}
-
-      {detail.canManage ? (
-        <CaseDetailSection presentation={presentation} title="用例元数据">
-          <CaseDefinitionEditor
-            definition={definition}
-            {...(onDefinitionUpdated ? { onUpdated: onDefinitionUpdated } : {})}
-          />
-          {managementActions}
-        </CaseDetailSection>
-      ) : null}
-
-      <CaseDetailSection
-        presentation={presentation}
-        title={`测试方法（${definition.methods.length}）`}
-        open
-      >
-        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
-          <Table className={cn("data-table", uiPatterns["data-table"])}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>方法</TableHead>
-                <TableHead>方法签名</TableHead>
-                <TableHead>分组</TableHead>
-                <TableHead>状态</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {definition.methods.map((method) => (
-                <TableRow key={method.id}>
-                  <TableCell>
-                    <strong>{method.methodName}</strong>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        "method-signature",
-                        caseDetailContentStyles["method-signature"],
-                      )}
-                    >
-                      {formatMethodSignature(method.descriptor)}
-                    </span>
-                  </TableCell>
-                  <TableCell>{method.groups.join("、") || "—"}</TableCell>
-                  <TableCell>
-                    <StatusBadge enabled={method.enabled} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </CaseDetailSection>
-
-      <CaseDetailSection
-        presentation={presentation}
-        title={`版本历史（${detail.versions.length}）`}
-      >
-        <CaseVersionHistory
-          canManage={detail.canManage}
-          canReadSource={detail.canReadSource}
-          caseDefinitionId={definition.id}
-          currentVersion={definition.currentVersion}
-          {...(onVersionsChanged ? { onChanged: onVersionsChanged } : {})}
-          versions={detail.versions}
-        />
       </CaseDetailSection>
     </>
   );

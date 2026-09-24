@@ -1,5 +1,7 @@
 "use client";
-import { Notice } from "@/components/ui/notice";
+import { Tabs } from "@/components/ui/tabs";
+import { TabContent } from "@/components/ui/tab-content";
+import { Badge } from "@/components/ui/badge";
 
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -9,7 +11,7 @@ import type { DdtScope } from "@autoforge/domain";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import { Button } from "./ui";
 import { LoadingState } from "./loading-state";
-import { CaseDetailContent } from "./case-detail-content";
+import { CaseDetailContent, CaseHistoryContent } from "./case-detail-content";
 import { OpenRunDialogButton } from "./global-run-dialog";
 import { readApiError } from "@/lib/client-api";
 import type { DdtCaseDetailView } from "@/lib/ddt-case-detail-view";
@@ -23,6 +25,8 @@ export function DdtCaseInspector({
   caseId: string;
   onClose(): void;
 }) {
+  const [definitionOpened, setDefinitionOpened] = useState(false);
+  const [section, setSection] = useState<"history" | "definition">("history");
   const [detail, setDetail] = useState<DdtCaseDetailView>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -75,7 +79,7 @@ export function DdtCaseInspector({
               重试读取详情
             </Button>
           </div>
-        ) : detail && execution ? (
+        ) : detail ? (
           <div
             className={cn(
               "case-inspector-content",
@@ -93,14 +97,18 @@ export function DdtCaseInspector({
                   DDT 用例 · SR {detail.item.srNum}
                 </span>
                 <h2>{detail.item.caseId}</h2>
-                <span>执行类 · {execution.definition.displayName}</span>
-                <code>{execution.definition.className}</code>
+                <code title={execution?.definition.className}>
+                  {execution
+                    ? `执行类 · ${execution.definition.className}`
+                    : "尚未关联执行类 · 可查看历史，执行前请配置 SR 测试类关联"}
+                </code>
               </div>
               <div className={"case-inspector-header-actions"}>
-                <span className={cn("storage-pill", ddtCaseInspectorStyles["storage-pill"])}>
-                  DDT r{detail.item.revision} · 类 v{execution.definition.currentVersion}
-                </span>
-                {execution.canRun &&
+                <Badge variant="secondary">
+                  DDT r{detail.item.revision}
+                  {execution ? ` · 类 v${execution.definition.currentVersion}` : ""}
+                </Badge>
+                {execution?.canRun &&
                 execution.executable &&
                 execution.definition.enabled &&
                 !execution.definition.archived ? (
@@ -118,10 +126,46 @@ export function DdtCaseInspector({
                 ) : null}
               </div>
             </header>
-            <Notice tone="info" className={cn("inline-notice", uiPatterns["inline-notice"])}>
-              执行与分析历史仅属于当前 DDT 用例；源码、测试方法及类版本信息来自关联执行类。
-            </Notice>
-            <CaseDetailContent detail={execution} presentation="inspector" />
+            <Tabs
+              label="DDT 用例详情内容"
+              value={section}
+              onChange={(nextSection) => {
+                setSection(nextSection);
+                if (nextSection === "definition") setDefinitionOpened(true);
+              }}
+              items={[
+                { key: "history", label: "执行与分析" },
+                { key: "definition", label: "测试类详情", disabled: !execution },
+              ]}
+            />
+            <TabContent activeKey={section} className="gap-3">
+              {section === "definition" ? (
+                <p className="m-0 text-xs text-muted-foreground">
+                  源码、测试方法与类版本来自当前关联的执行类。
+                </p>
+              ) : null}
+              <div hidden={section !== "history"} className="grid min-w-0 gap-3 [&[hidden]]:hidden">
+                <CaseHistoryContent
+                  compact
+                  detail={(execution ?? detail.historyDetail)!}
+                  caseDefinitionId={detail.item.id}
+                  projectId={scope.projectId}
+                  presentation="inspector"
+                />
+              </div>
+              {execution && definitionOpened ? (
+                <div
+                  hidden={section !== "definition"}
+                  className="grid min-w-0 gap-3 [&[hidden]]:hidden"
+                >
+                  <CaseDetailContent
+                    detail={execution}
+                    presentation="inspector"
+                    section="definition"
+                  />
+                </div>
+              ) : null}
+            </TabContent>
           </div>
         ) : (
           <LoadingState
@@ -138,7 +182,7 @@ const ddtCaseInspectorStyles = {
   "case-inspector-content":
     "grid gap-3 p-4 [&_>_*]:min-w-0 [&_.case-execution-history_.data-table]:min-w-[760px]",
   "case-inspector-header":
-    "flex min-w-0 items-start justify-between gap-4 border-b border-solid border-border [padding:2px_2px_16px] [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-[5px] [&_h2]:m-0 [&_h2]:text-2xl [&_h2]:[overflow-wrap:anywhere] [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere] [&_.case-inspector-header-actions]:justify-items-end [&_.case-inspector-header-actions]:[flex:0_0_auto]",
+    "flex min-w-0 items-start justify-between gap-4 border-b border-solid border-border pb-3 [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-1 [&_h2]:m-0 [&_h2]:text-lg [&_h2]:[overflow-wrap:anywhere] [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere] [&_.case-inspector-header-actions]:justify-items-end [&_.case-inspector-header-actions]:[flex:0_0_auto]",
   "ddt-case-detail-scroll":
     "min-h-0 flex-1 overflow-auto py-2 px-3 [container-type:inline-size] [&_.ddt-execution-class-summary]:grid-cols-[auto_minmax(0,_1fr)] [&_.ddt-execution-class-summary]:gap-[4px_8px] [&_.ddt-execution-class-summary]:mb-3 [&_.ddt-execution-class-summary]:py-2 [&_.ddt-execution-class-summary]:px-3 [&_.ddt-execution-class-summary_>_small]:col-span-full [&_.ddt-history]:block",
   "ddt-detail-error": "overflow-auto p-5",
@@ -146,6 +190,4 @@ const ddtCaseInspectorStyles = {
     "flex min-h-[calc(20px_*_2)] [flex:0_0_auto] items-center justify-between gap-2 border-b border-solid border-border py-2 px-3 flex-wrap [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:items-center [&_>_span]:gap-1 [&_>_span]:flex-1 [&_>_span]:whitespace-nowrap [&_>_div]:flex [&_>_div]:min-w-0 [&_>_div]:items-center [&_>_div]:gap-1 [&_>_span_>_strong]:max-w-[24ch] [&_>_span_>_strong]:overflow-hidden [&_>_span_>_strong]:text-ellipsis [&_>_span_>_strong]:whitespace-nowrap [&_>_span_>_svg]:[flex:0_0_auto]",
   "ddt-execution-inspector":
     "[&_.case-inspector-content]:p-0 [&_.case-inspector-header]:flex-wrap [&_.case-inspector-header-actions]:justify-items-start",
-  "storage-pill":
-    "inline-flex items-center gap-2 border border-solid border-border rounded-full py-[9px] px-[13px] bg-card text-muted-foreground text-xs font-semibold shadow-xs",
 } as const;

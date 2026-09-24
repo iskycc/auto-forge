@@ -107,6 +107,15 @@
   --log-foreground: #e8edf5;
 }
 
+/* Ant portals lock body scrolling and subtract the scrollbar width. The root's
+   stable gutter already reserves it; applying both would shrink every page.
+   Keep this outside the base layer so it can override the portal's injected CSS. */
+@supports (scrollbar-gutter: stable) {
+  html:root > body {
+    width: 100%;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

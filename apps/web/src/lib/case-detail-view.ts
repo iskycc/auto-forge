@@ -23,3 +23,16 @@ export type CaseDetailView = {
     analysisHistoryUrl: string;
   };
 };
+
+/** Histories belong to the case identity, even after its execution class is unlinked. */
+export type CaseHistoryView = Pick<
+  CaseDetailView,
+  | "activity"
+  | "executionHistory"
+  | "failureAnalysisHistory"
+  | "canRun"
+  | "canReadLogs"
+  | "canReadAnalysisEvidence"
+  | "timeZone"
+  | "historyContext"
+>;
