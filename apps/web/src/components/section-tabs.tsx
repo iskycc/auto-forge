@@ -1,10 +1,8 @@
 "use client";
-import { cn } from "@/lib/utils";
-
 import Link from "next/link";
-import { useLinkStatus } from "next/link";
 import { useRef } from "react";
 import { Tabs } from "./ui/tabs";
+import { NavigationPendingIndicator } from "./navigation-pending-indicator";
 
 export type SectionTab = {
   href: string;
@@ -47,22 +45,10 @@ export function SectionTabs({ label, tabs }: { label: string; tabs: SectionTab[]
 
 /** Next 路由仍在服务端取数时给出即时反馈，避免点击后看起来像界面卡死。 */
 function SectionTabLabel({ label }: { label: string }) {
-  const { pending } = useLinkStatus();
   return (
     <>
       <span>{label}</span>
-      <span
-        aria-hidden="true"
-        className={cn(
-          sectionTabsStyles["section-tab-pending"],
-          `section-tab-pending${pending ? " visible" : ""}`,
-        )}
-      />
+      <NavigationPendingIndicator className="ml-2" />
     </>
   );
 }
-
-const sectionTabsStyles = {
-  "section-tab-pending":
-    "inline-block size-1.5 shrink-0 ml-2 rounded-full bg-current opacity-0 transition-opacity duration-150 motion-reduce:transition-none [&.visible]:opacity-75 [&.visible]:animate-pulse [&.visible]:motion-reduce:animate-none",
-} as const;

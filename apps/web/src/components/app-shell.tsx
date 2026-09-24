@@ -1,4 +1,5 @@
 "use client";
+import { BrandMark } from "./brand-mark";
 import { Menu } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -17,13 +18,14 @@ import {
   Layers3,
   ShieldCheck,
   SearchCheck,
-  Sparkles,
   Webhook,
 } from "lucide-react";
 import type { Permission } from "@autoforge/domain";
 import Link from "next/link";
 import { LinkButton } from "@/components/ui/link-button";
 import { usePathname, useSearchParams } from "next/navigation";
+import { useContentTransition } from "./ui/tab-content";
+import { NavigationPendingIndicator } from "./navigation-pending-indicator";
 import type { ReactNode } from "react";
 
 import { configureBrowserCacheScope } from "@/lib/browser-read-cache";
@@ -153,7 +155,9 @@ function navigationEntry(item: NavigationItem, active: boolean, granted: Readonl
         aria-current={active ? "page" : undefined}
         className={cn("nav-item flex items-center gap-3", active && "nav-item-active")}
       >
-        <Icon size={19} aria-hidden="true" />
+        <NavigationPendingIndicator className="size-5">
+          <Icon size={19} className="shrink-0" aria-hidden="true" />
+        </NavigationPendingIndicator>
         <span>{navigationLabel(item, granted)}</span>
       </Link>
     ),
@@ -203,6 +207,7 @@ export function AppShell({
       `${userId ?? "anonymous"}:${selectedProjectId ?? ""}:${selectedProjectVersionId ?? ""}:${selectedTestStageId ?? ""}:${permissions.join(",")}`,
     );
   const pathname = usePathname();
+  const pageContentRef = useContentTransition<HTMLElement>(pathname);
   const currentSection = useSearchParams().get("section");
   // 保留 /run-batches/[id] 详情路由，但所有批次入口统一归属“执行记录”。
   const batchDetailPath = pathname.startsWith("/run-batches/");
@@ -247,7 +252,7 @@ export function AppShell({
       <aside className={cn("sidebar", appShellStyles["sidebar"])}>
         <Link className={cn("brand", appShellStyles["brand"])} href="/" aria-label="AutoForge 首页">
           <span className={cn("brand-mark", appShellStyles["brand-mark"])} aria-hidden="true">
-            <Sparkles size={20} strokeWidth={2.2} />
+            <BrandMark />
           </span>
           <span>AutoForge</span>
         </Link>
@@ -364,7 +369,9 @@ export function AppShell({
             {userName ? <LogoutButton /> : null}
           </div>
         </header>
-        <main className={cn("main-content", appShellStyles["main-content"])}>{children}</main>
+        <main ref={pageContentRef} className={cn("main-content", appShellStyles["main-content"])}>
+          {children}
+        </main>
       </div>
     </div>
   );
@@ -378,8 +385,7 @@ const appShellStyles = {
     "inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground",
   brand:
     "flex h-16 shrink-0 items-center gap-3 border-b border-border px-5 text-xl font-semibold tracking-tight",
-  "brand-mark":
-    "inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-primary-foreground",
+  "brand-mark": "inline-flex size-8 shrink-0 items-center justify-center rounded-lg",
   "header-divider": "mx-1 h-5 w-px bg-border",
   "main-content": "min-w-0 p-6 max-[1279px]:p-4",
   "mode-card":

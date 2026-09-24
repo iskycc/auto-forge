@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 const MINIMUM_LIST_WIDTH = 200;
-const MAXIMUM_LIST_WIDTH = 440;
+const MAXIMUM_LIST_WIDTH = 640;
+const MINIMUM_DETAIL_WIDTH = 320;
+const RESIZER_WIDTH = 10;
 const DEFAULT_MINIMUM_LIST_WIDTH = 240;
 const DEFAULT_LIST_RATIO = 0.26;
-const MAXIMUM_LIST_RATIO = 0.4;
+const MAXIMUM_LIST_RATIO = 0.6;
 const MINIMUM_BROWSER_HEIGHT = 320;
 
 export function useDdtBrowserLayout() {
@@ -73,7 +75,14 @@ export function useDdtBrowserLayout() {
   }, []);
 
   const maximumListWidth = measurements.width
-    ? Math.min(MAXIMUM_LIST_WIDTH, Math.floor(measurements.width * MAXIMUM_LIST_RATIO))
+    ? Math.max(
+        MINIMUM_LIST_WIDTH,
+        Math.min(
+          MAXIMUM_LIST_WIDTH,
+          Math.floor(measurements.width * MAXIMUM_LIST_RATIO),
+          measurements.width - MINIMUM_DETAIL_WIDTH - RESIZER_WIDTH,
+        ),
+      )
     : MAXIMUM_LIST_WIDTH;
   const minimumListWidth = Math.min(MINIMUM_LIST_WIDTH, maximumListWidth);
   const clampWidth = (width: number, minimum = minimumListWidth) =>

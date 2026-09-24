@@ -218,6 +218,10 @@ export const changeDdtExecutionClassRangeInputSchema = z.object({
   expectedRevision: z.number().int().min(0),
 });
 export const ddtExecutionMappingListInputSchema = z.object({
+  onlyUnlinked: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
   query: z.string().trim().max(512).default(""),
   cursor: z.string().max(1_024).optional(),
   limit: z.number().int().min(1).max(100).default(60),

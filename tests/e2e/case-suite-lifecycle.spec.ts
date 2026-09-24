@@ -719,7 +719,8 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务" }).click();
   const copyDialog = page.getByRole("dialog", { name: "创建用例任务" });
-  await copyDialog.getByLabel("复制已有任务", { exact: false }).check();
+  await copyDialog.getByText("复制任务", { exact: true }).click();
+  await expect(copyDialog.getByRole("radio", { name: "复制任务", exact: true })).toBeChecked();
   await copyDialog.locator('select[aria-label="来源任务"]').selectOption(suite.body.id);
   await copyDialog.getByLabel("新任务名称").fill(copyName);
   await expect(copyDialog.getByText(/新任务使用独立 ID 和成员记录/u)).toBeVisible();
@@ -735,6 +736,14 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     await page.setViewportSize(viewport);
     await expect(copyDialog).toBeVisible();
     await expect(configurationOnly).toBeChecked();
+    expect(
+      await copyDialog
+        .locator(".suite-copy-scope")
+        .evaluate((element) => getComputedStyle(element).flexDirection),
+    ).toBe("row");
+    expect(
+      (await copyDialog.locator(".suite-copy-scope").boundingBox())!.height,
+    ).toBeLessThanOrEqual(40);
     await expectUiIntegrity(page);
     await captureUi(page, `case-suite-copy-dialog-${viewport.width}`);
   }

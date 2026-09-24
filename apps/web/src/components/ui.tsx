@@ -35,6 +35,7 @@ type ButtonSize = "compact" | "regular" | "large";
 type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "color"> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  loading?: boolean;
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(

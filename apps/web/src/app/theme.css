@@ -116,14 +116,28 @@
   }
 }
 
+/* Also cover the server-rendered frame and continuous Spin/Skeleton animations,
+   which do not all consume Ant's motion-duration tokens. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;
   }
   html {
     scrollbar-gutter: stable;
-    /* The desktop minimum includes the reserved scrollbar, even at exactly 1024px. */
-    min-width: calc(1024px - (100vw - 100%));
+    /* Viewport units can exclude the stable gutter. Do not subtract it twice
+       through a vw/percentage calculation at the minimum desktop width. */
+    min-width: min(1024px, 100%);
     @apply bg-background font-sans text-base text-foreground antialiased;
   }
   body {

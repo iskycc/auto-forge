@@ -9,7 +9,10 @@ const sharedTokens = {
   fontSize: 14,
   fontFamily:
     'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-  motion: false,
+  motion: true,
+  motionDurationFast: "0.12s",
+  motionDurationMid: "0.18s",
+  motionDurationSlow: "0.24s",
   colorPrimary: "#1668dc",
   colorInfo: "#1668dc",
 };

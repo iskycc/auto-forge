@@ -369,7 +369,7 @@ const pageStyles = {
   "object-key": "block max-w-full overflow-hidden text-ellipsis whitespace-nowrap",
   "object-link": "text-info font-semibold [&:hover]:[text-decoration:underline]",
   "object-list-table":
-    "[&_td]:min-w-0 [&_td]:[overflow-wrap:anywhere] min-w-[720px] [table-layout:fixed] [&_th:first-child]:w-[52%]",
+    "[&_td]:min-w-0 [&_td]:[overflow-wrap:anywhere] min-w-[720px] [table-layout:fixed] [&_th:nth-child(2)]:w-30 [&_th:nth-child(3)]:w-25 [&_th:last-child]:w-44",
   "row-actions": "inline-flex items-center gap-2",
   "source-list-table":
     "min-w-[1040px] [table-layout:fixed] [&_th:first-child]:w-[34%] [&_th:nth-child(2)]:w-[16%] [&_th:nth-child(3)]:w-[14%] [&_th:nth-child(4)]:w-[20%] [&_th:last-child]:w-[250px] [&_td]:min-w-0 [&_td]:[overflow-wrap:anywhere]",

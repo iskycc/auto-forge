@@ -82,11 +82,16 @@ export function RouteLoadingSkeleton({ label }: { label: string }) {
           className={cn("route-loading-rows", routeLoadingSkeletonStyles["route-loading-rows"])}
           aria-hidden="true"
         >
-          {Array.from({ length: 7 }, (_, index) => (
-            <Skeleton
-              className={cn("skeleton-row", routeLoadingSkeletonStyles["skeleton-row"])}
+          {Array.from({ length: 6 }, (_, index) => (
+            <div
+              className="grid h-12 grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))_5rem] items-center gap-4 border-b border-border last:border-0"
               key={index}
-            />
+            >
+              <Skeleton className={index % 2 === 0 ? "w-4/5" : "w-3/5"} />
+              <Skeleton className="w-3/4" />
+              <Skeleton className="w-2/3" />
+              <Skeleton className="h-6 rounded-md" />
+            </div>
           ))}
         </div>
       </Card>
@@ -100,13 +105,12 @@ const routeLoadingSkeletonStyles = {
   "route-loading-hero": "relative overflow-hidden",
   "route-loading-label":
     "inline-grid gap-[3px] mb-4 text-muted-foreground text-sm [&_strong]:text-foreground [&_strong]:text-sm [&_small]:text-muted-foreground",
-  "route-loading-rows": "grid gap-3",
+  "route-loading-rows": "grid",
   "route-loading-toolbar":
     "grid grid-cols-[minmax(12rem,_1fr)_minmax(10rem,_0.6fr)_8rem] gap-3 mb-4",
   "skeleton-block": "h-10",
   "skeleton-copy": "w-[min(36rem,_60vw)] h-[0.9rem]",
   "skeleton-eyebrow": "w-[7rem] h-[0.65rem] mb-3",
   "skeleton-line": "block",
-  "skeleton-row": "h-13",
   "skeleton-title": "w-[15rem] h-[2rem] mb-3",
 } as const;

@@ -92,6 +92,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     }
     if (matches(path, "sr-mappings") || matches(path, "execution-range")) {
       const query = ddtExecutionMappingListInputSchema.parse({
+        onlyUnlinked: url.searchParams.get("onlyUnlinked") ?? undefined,
         query: url.searchParams.get("query") ?? "",
         cursor: url.searchParams.get("cursor") ?? undefined,
         limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
@@ -99,6 +100,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       return NextResponse.json(
         matches(path, "sr-mappings")
           ? await services.ddtCases.srExecutionMappings(scope, {
+              onlyUnlinked: query.onlyUnlinked,
               query: query.query,
               limit: query.limit,
               ...(query.cursor ? { cursor: query.cursor } : {}),

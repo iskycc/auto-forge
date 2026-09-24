@@ -15,7 +15,8 @@ export function Button({
   type = "submit",
   disabled,
   ...props
-}: Omit<ComponentProps<"button">, "color"> & VariantProps<typeof buttonVariants>) {
+}: Omit<ComponentProps<"button">, "color"> &
+  VariantProps<typeof buttonVariants> & { loading?: boolean }) {
   const clientReady = useClientReadiness();
   return (
     <AntButton

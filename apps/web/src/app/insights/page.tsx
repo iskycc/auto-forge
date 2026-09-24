@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   Table,
   TableHeader,
@@ -36,6 +37,7 @@ import { CachedBatchComparison } from "@/components/cached-batch-comparison";
 import { InsightDetailDialog } from "@/components/insight-detail-dialog";
 import { NavigationSubmitButton } from "@/components/navigation-submit-button";
 import { presentAnalyticsFailure } from "@/lib/analytics-failure-presentation";
+import { summarizeInsightCaseOutcomes } from "@/lib/insight-case-outcomes";
 import {
   selectableProjectIds,
   selectedProjectHierarchy,
@@ -662,7 +664,7 @@ export default async function InsightsPage({
             ) : null}
           </div>
           {caseOutcomeReport ? (
-            <CaseOutcomeChart report={caseOutcomeReport} />
+            <CaseOutcomeOverview report={caseOutcomeReport} timeZone={timeZone} />
           ) : (
             <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
               请在顶栏选择项目，并确认该项目已配置可用版本。
@@ -1151,43 +1153,108 @@ function dateTimeLocal(value: string | undefined, timeZone: string): string {
   return platformDateTimeInputValue(value, timeZone);
 }
 
-type CaseOutcomeCounts = {
-  total: number;
-  succeeded: number;
-  failed: number;
-  blocked: number;
-  neverRun: number;
-};
-
-function caseOutcomeCounts(report: CaseOutcomeReport): CaseOutcomeCounts {
-  const total = report.cases.length;
-  let succeeded = 0;
-  let failed = 0;
-  let blocked = 0;
-  for (const item of report.cases) {
-    const run = report.outcomes.get(item.id);
-    if (!run) continue;
-    switch (classifyAttemptResult(run)) {
-      case "succeeded":
-        succeeded += 1;
-        break;
-      case "failed":
-        failed += 1;
-        break;
-      case "blocked":
-        blocked += 1;
-        break;
-    }
-  }
-  return { total, succeeded, failed, blocked, neverRun: total - succeeded - failed - blocked };
-}
-
-function CaseOutcomeChart({ report }: { report: CaseOutcomeReport }) {
-  const counts = caseOutcomeCounts(report);
+function CaseOutcomeOverview({
+  report,
+  timeZone,
+}: {
+  report: CaseOutcomeReport;
+  timeZone: string;
+}) {
+  const summary = summarizeInsightCaseOutcomes(report);
+  const { counts, executed, coveragePercent, passPercent, latestExecutedAt, attentionCases } =
+    summary;
   if (counts.total === 0)
     return (
       <div className={cn("inline-empty", uiPatterns["inline-empty"])}>该项目版本还没有用例。</div>
     );
+  const attentionCount = counts.failed + counts.blocked;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col justify-between gap-4">
+      <div className="grid grid-cols-2 gap-3" aria-label="本页执行概况">
+        <div className="grid min-w-0 gap-1.5 rounded-lg border border-border bg-muted/40 p-3">
+          <span className="text-xs text-muted-foreground">执行覆盖率</span>
+          <strong className="text-xl tabular-nums">{formatRate(executed, counts.total)}</strong>
+          <Progress aria-label="本页执行覆盖率" value={coveragePercent ?? 0} />
+          <span className="text-xs text-muted-foreground">
+            已执行 {executed} / {counts.total} 个
+          </span>
+        </div>
+        <div className="grid min-w-0 gap-1.5 rounded-lg border border-border bg-muted/40 p-3">
+          <span className="text-xs text-muted-foreground">已执行通过率</span>
+          <strong className="text-xl tabular-nums">
+            {passPercent === undefined ? "—" : `${passPercent.toFixed(1)}%`}
+          </strong>
+          <Progress aria-label="本页已执行通过率" value={passPercent ?? 0} tone="success" />
+          <span className="text-xs text-muted-foreground">
+            {executed > 0 ? `成功 ${counts.succeeded} / 已执行 ${executed} 个` : "暂无执行结果"}
+          </span>
+        </div>
+      </div>
+      <CaseOutcomeChart counts={counts} />
+      <section aria-label="本页优先关注用例" className="min-w-0 border-t border-border pt-3">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <strong>
+            优先关注 <span className="tabular-nums">{attentionCount}</span> 个
+          </strong>
+          <span className="text-muted-foreground">失败与阻塞 · 最多展示 3 项</span>
+        </div>
+        {attentionCases.length > 0 ? (
+          <ul className="m-0 list-none p-0">
+            {attentionCases.map((item) => (
+              <li
+                key={item.id}
+                className="flex min-w-0 items-center gap-2 border-b border-border/60 py-2 last:border-0"
+              >
+                <Badge
+                  variant={item.outcome === "failed" ? "destructive" : "warning"}
+                  className="shrink-0"
+                >
+                  {item.outcome === "failed" ? "失败" : "阻塞"}
+                </Badge>
+                <Link
+                  href={`/cases/${encodeURIComponent(item.id)}`}
+                  title={item.displayName}
+                  className="min-w-0 truncate text-sm"
+                >
+                  {item.displayName}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mb-0 mt-2 text-xs text-muted-foreground">
+            {executed === 0
+              ? "本页用例尚无执行结果，可前往用例任务安排执行。"
+              : "本页暂无失败或阻塞用例。"}
+          </p>
+        )}
+      </section>
+      <div className="grid gap-1 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">
+        <div className="flex flex-wrap justify-between gap-x-2">
+          <span>最近执行</span>
+          {latestExecutedAt ? (
+            <time
+              dateTime={latestExecutedAt}
+              title={`UTC：${latestExecutedAt}`}
+              className="tabular-nums"
+            >
+              {formatLocalDateTime(latestExecutedAt, timeZone)}
+            </time>
+          ) : (
+            <span>暂无执行记录</span>
+          )}
+        </div>
+        <span>按本页用例最近一次终态结果统计，独立于上方筛选；阻塞计入已执行。</span>
+      </div>
+    </div>
+  );
+}
+
+function CaseOutcomeChart({
+  counts,
+}: {
+  counts: ReturnType<typeof summarizeInsightCaseOutcomes>["counts"];
+}) {
   return (
     <div className={cn("insight-case-outcome-chart", pageStyles["insight-case-outcome-chart"])}>
       <div
@@ -1250,7 +1317,7 @@ function CaseOutcomeDetails({
   trail: readonly string[];
   timeZone: string;
 }) {
-  const counts = caseOutcomeCounts(report);
+  const { counts } = summarizeInsightCaseOutcomes(report);
   // 失败与阻塞优先展示：把尚未稳定的用例排在表格前面。
   const rows = [...report.cases].sort(
     (left, right) =>
@@ -1568,7 +1635,7 @@ const pageStyles = {
     "flex flex-wrap gap-2 [padding:4px_0_12px] text-muted-foreground text-xs [&_strong]:text-foreground",
   "insight-advanced-filters":
     "[&_label]:grid [&_label]:min-w-0 [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.ui-disclosure-label]:inline-flex [&_.ui-disclosure-label]:min-h-8 [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:text-info [&_.ui-disclosure-label]:text-sm [&_.ui-disclosure-body_>_div]:grid [&_.ui-disclosure-body_>_div]:grid-cols-3 [&_.ui-disclosure-body_>_div]:gap-3 [&_.ui-disclosure-body_>_div]:pt-3",
-  "insight-case-outcome-chart": "flex min-h-0 flex-1 flex-wrap items-center justify-center gap-5",
+  "insight-case-outcome-chart": "flex min-h-0 flex-wrap items-center justify-center gap-4",
   "insight-change-column":
     "[&_>_b]:text-muted-foreground [&_>_b]:text-xs [&_>_b]:tabular-nums [&_>_small]:overflow-hidden [&_>_small]:text-muted-foreground [&_>_small]:text-xs [&_>_small]:text-ellipsis [&_>_small]:whitespace-nowrap grid min-w-0 [grid-template-rows:auto_140px_auto] items-end gap-1.5 text-center [&_>_span]:flex [&_>_span]:h-[140px] [&_>_span]:items-end [&_>_span]:justify-center [&_>_span_>_i]:block [&_>_span_>_i]:w-[min(44px,_70%)] [&_>_span_>_i]:min-h-0 [&_>_span_>_i]:rounded-lg [&_>_span_>_i]:shadow-xs",
   "insight-change-column-chart":
@@ -1647,7 +1714,7 @@ const pageStyles = {
     "col-start-2 row-span-2 row-start-1 grid size-9 place-items-center rounded-lg bg-info/10 text-info",
   "insight-metrics": "grid grid-cols-4 gap-3",
   "insight-outcome-legend":
-    "grid min-w-0 flex-1 basis-40 grid-cols-2 gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[auto_minmax(0,1fr)] [&_>_span]:items-center [&_>_span]:gap-1.5 [&_>_span]:rounded-lg [&_>_span]:border [&_>_span]:border-border [&_>_span]:bg-muted/40 [&_>_span]:p-3 [&_i]:size-2 [&_i]:rounded-sm [&_small]:text-xs [&_small]:text-muted-foreground [&_strong]:col-span-full [&_strong]:text-xl [&_strong]:tabular-nums [&_em]:col-span-full [&_em]:text-muted-foreground [&_em]:text-xs [&_em]:not-italic",
+    "grid min-w-0 flex-1 basis-40 gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:grid-cols-[auto_minmax(0,1fr)_auto_auto] [&_>_span]:items-center [&_>_span]:gap-2 [&_>_span]:rounded-lg [&_>_span]:bg-muted/40 [&_>_span]:px-2 [&_>_span]:py-1.5 [&_i]:size-2 [&_i]:rounded-sm [&_small]:text-xs [&_small]:text-muted-foreground [&_strong]:text-sm [&_strong]:tabular-nums [&_em]:w-12 [&_em]:text-right [&_em]:text-muted-foreground [&_em]:text-xs [&_em]:tabular-nums [&_em]:not-italic",
   "insight-pie":
     "grid w-full aspect-square place-items-center rounded-full [&_>_span]:grid [&_>_span]:w-2/3 [&_>_span]:aspect-square [&_>_span]:place-content-center [&_>_span]:rounded-full [&_>_span]:bg-card [&_>_span]:text-center [&_strong]:text-xl [&_strong]:tabular-nums [&_small]:mt-1 [&_small]:text-muted-foreground [&_small]:text-xs",
   "insight-pie-legend":

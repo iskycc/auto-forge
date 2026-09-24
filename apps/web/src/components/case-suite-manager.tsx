@@ -1,4 +1,5 @@
 "use client";
+import { Radio } from "antd";
 import { Card } from "@/components/ui/card";
 
 import { cn } from "@/lib/utils";
@@ -240,39 +241,28 @@ export function CaseSuiteManager({
           )}
           onSubmit={createSuite}
         >
-          <fieldset
-            className={cn("suite-create-mode", caseSuiteManagerStyles["suite-create-mode"])}
-          >
-            <legend>创建方式</legend>
-            <label className={createMode === "blank" ? "selected" : ""}>
-              <Input
-                checked={createMode === "blank"}
-                name="createMode"
-                onChange={() => setCreateMode("blank")}
-                type="radio"
-                value="blank"
-              />
-              <span>
-                <strong>空白创建</strong>
-                <small>新建一个不包含用例的任务</small>
-              </span>
-            </label>
-            <label className={createMode === "copy" ? "selected" : ""}>
-              <Input
-                checked={createMode === "copy"}
-                disabled={suites.length === 0}
-                name="createMode"
-                onChange={() => setCreateMode("copy")}
-                type="radio"
-                value="copy"
-              />
-              <span>
-                <strong>复制已有任务</strong>
-                <small>复制成员和执行配置，随后直接编辑</small>
-              </span>
-            </label>
-          </fieldset>
-          <label>
+          <div className="grid gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">创建方式</span>
+            <Radio.Group
+              className="suite-create-mode"
+              aria-label="创建方式"
+              block
+              optionType="button"
+              buttonStyle="solid"
+              value={createMode}
+              onChange={(event) => setCreateMode(event.target.value as "blank" | "copy")}
+              options={[
+                { value: "blank", label: "新建任务" },
+                { value: "copy", label: "复制任务", disabled: suites.length === 0 },
+              ]}
+            />
+            <p className="m-0 text-xs text-muted-foreground">
+              {createMode === "copy"
+                ? "复制已有任务的配置，可选择是否包含用例。"
+                : "创建空白任务，随后添加用例和执行配置。"}
+            </p>
+          </div>
+          <label className={caseSuiteManagerStyles["form-field"]}>
             <span>{createMode === "copy" ? "新任务名称" : "任务名称"}</span>
             <Input
               value={name}
@@ -284,7 +274,7 @@ export function CaseSuiteManager({
           </label>
           {createMode === "copy" ? (
             <>
-              <label>
+              <label className={caseSuiteManagerStyles["form-field"]}>
                 <span>来源任务</span>
                 <Select
                   aria-label="来源任务"
@@ -330,7 +320,7 @@ export function CaseSuiteManager({
               </div>
             </>
           ) : (
-            <label>
+            <label className={caseSuiteManagerStyles["form-field"]}>
               <span>说明</span>
               <Textarea
                 value={description}
@@ -365,7 +355,7 @@ export function CaseSuiteManager({
               </label>
               {adapterEnabled ? (
                 <>
-                  <label>
+                  <label className={caseSuiteManagerStyles["form-field"]}>
                     <span>TestNG Suite Name</span>
                     <Input
                       value={adapterSuiteName}
@@ -373,7 +363,7 @@ export function CaseSuiteManager({
                       maxLength={512}
                     />
                   </label>
-                  <label>
+                  <label className={caseSuiteManagerStyles["form-field"]}>
                     <span>TestNG Test Name</span>
                     <Input
                       value={adapterTestName}
@@ -381,7 +371,7 @@ export function CaseSuiteManager({
                       maxLength={512}
                     />
                   </label>
-                  <label>
+                  <label className={caseSuiteManagerStyles["form-field"]}>
                     <span>环境 IP / 地址（每行一个）</span>
                     <Textarea
                       value={environmentAddresses}
@@ -481,14 +471,12 @@ const caseSuiteManagerStyles = {
   "inline-error": "text-destructive text-xs leading-[1.35]",
   "inline-feedback":
     "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
-  "stack-form":
-    'flex flex-col gap-3.5 mt-5 [&_label]:flex [&_label]:flex-col [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.button]:self-start [&_.suite-create-mode_input[type="radio"]]:w-4.5 [&_.suite-create-mode_input[type="radio"]]:[flex:0_0_18px] [&_.suite-create-mode_input[type="radio"]]:mt-0.5 [&_.suite-create-mode_input[type="radio"]]:p-0 [&_.suite-adapter-fields_.checkbox-field]:flex-row [&_.suite-adapter-fields_.checkbox-field]:items-center [&_.suite-adapter-fields_input[type="checkbox"]]:w-4.5 [&_.suite-adapter-fields_input[type="checkbox"]]:[flex:0_0_18px] [&_.suite-adapter-fields_input[type="checkbox"]]:p-0 [&_.suite-copy-scope]:flex-row [&_.suite-copy-scope]:items-center [&_.suite-copy-scope]:gap-2 [&_.suite-copy-scope_input]:w-5 [&_.suite-copy-scope_input]:[flex:0_0_20px] [&_.suite-copy-scope_input]:p-0',
+  "stack-form": "flex flex-col gap-3.5 mt-5 [&_.button]:self-start",
+  "form-field": "flex min-w-0 flex-col gap-2 text-xs font-semibold text-muted-foreground",
   "suite-adapter-fields":
     "grid gap-3 p-3.5 border border-solid border-border rounded-lg bg-muted [&_>_strong]:text-sm [&_>_p]:[margin:-6px_0_0] [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_p]:leading-[1.5]",
   "suite-copy-summary":
     "[&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-normal [&_small]:leading-[1.45]",
-  "suite-create-mode":
-    "grid grid-cols-2 gap-2.5 m-0 p-0 border-0 [&_legend]:col-span-full [&_legend]:mb-[-2px] [&_legend]:text-muted-foreground [&_legend]:text-xs [&_legend]:font-semibold [&_label]:flex [&_label]:min-w-0 [&_label]:items-start [&_label]:gap-2.5 [&_label]:p-3 [&_label]:border [&_label]:border-solid [&_label]:border-border [&_label]:rounded-lg [&_label]:bg-muted [&_label]:cursor-pointer [&_label.selected]:border-info [&_label.selected]:bg-info/10 [&_label.selected]:shadow-xs [&_label:has(input:disabled)]:cursor-not-allowed [&_label:has(input:disabled)]:opacity-57.99999999999999 [&_label_>_span]:grid [&_label_>_span]:min-w-0 [&_label_>_span]:gap-[3px] [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-normal [&_small]:leading-[1.45]",
   "suite-empty": "min-h-[280px]",
   "suite-list": "grid grid-cols-2 items-start gap-4 max-[1181px]:grid-cols-[1fr]",
   "suite-list-feedback": "col-span-full",

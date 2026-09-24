@@ -8,6 +8,19 @@ export type RunnerResourceSnapshot = {
   observedAt: string;
 };
 
+export type RunnerResourceSample = RunnerResourceSnapshot & {
+  busySlots: number;
+  maxConcurrency: number;
+};
+
+export type RunnerTelemetry = {
+  runner: Runner;
+  samples: RunnerResourceSample[];
+  since: string;
+  until: string;
+  sampleIntervalSeconds: number;
+};
+
 export type Runner = {
   id: string;
   name: string;

@@ -55,6 +55,43 @@ func TestManagerRunsInteractiveShellAndCleansWorkDirectory(t *testing.T) {
 	}
 }
 
+func TestTerminalStartsLoginShellWithoutInheritingAgentSecrets(t *testing.T) {
+	t.Setenv("AUTOFORGE_AGENT_CREDENTIAL", "must-not-reach-terminal")
+	manager := NewManager(context.Background(), Configuration{
+		Shell: "/bin/sh", WorkDirectory: t.TempDir(), MaxSessions: 1, MaximumDuration: time.Minute,
+	})
+	defer manager.CloseAll()
+	var output bytes.Buffer
+	var outputMu sync.Mutex
+	exited := make(chan Exit, 1)
+	if err := manager.Open("login-shell", 100, 30, Events{
+		Output: func(chunk []byte) error {
+			outputMu.Lock()
+			defer outputMu.Unlock()
+			_, err := output.Write(chunk)
+			return err
+		},
+		Exited: func(result Exit) { exited <- result },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A leading '-' in argv[0] is the login convention shared by sh/bash/ash/zsh;
+	// the shell itself reads its system and user profiles before accepting input.
+	if err := manager.Input("login-shell", []byte("printf 'shell=%s secret=%s\\n' \"$0\" \"${AUTOFORGE_AGENT_CREDENTIAL-unset}\"\nexit\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("login shell did not exit")
+	}
+	outputMu.Lock()
+	defer outputMu.Unlock()
+	if !strings.Contains(output.String(), "shell=-sh secret=unset") {
+		t.Fatalf("terminal did not start a sanitized login shell: %q", output.String())
+	}
+}
+
 func TestManagerEnforcesSessionLimit(t *testing.T) {
 	manager := NewManager(context.Background(), Configuration{
 		Shell:           "/bin/sh",

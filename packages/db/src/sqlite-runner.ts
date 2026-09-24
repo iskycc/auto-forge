@@ -1,3 +1,4 @@
+import type { RunnerResourceSample } from "@autoforge/domain";
 import {
   retrySqliteWriteTransaction,
   retrySqliteLockContention,
@@ -100,6 +101,23 @@ export class SqliteRunnerRepository implements RunnerRepository {
       )
       .get();
     return row ? mapStoredRunner(row) : null;
+  }
+
+  async resourceSamples(
+    runnerId: string,
+    since: string,
+    until: string,
+  ): Promise<RunnerResourceSample[]> {
+    return this.handle.client
+      .prepare(
+        `SELECT observed_at AS "observedAt", cpu_utilization_percent AS "cpuUtilizationPercent",
+        memory_utilization_percent AS "memoryUtilizationPercent", load_average_1m AS "loadAverage1m",
+        logical_cpu_count AS "logicalCpuCount", busy_slots AS "busySlots", max_concurrency AS "maxConcurrency"
+        FROM runner_resource_samples
+        WHERE runner_id = ? AND observed_at >= ? AND observed_at <= ?
+        ORDER BY observed_at LIMIT 360`,
+      )
+      .all(runnerId, since, until) as RunnerResourceSample[];
   }
 
   async heartbeat(input: {

@@ -362,7 +362,7 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async listSrExecutionMappings(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number },
+    query: { query: string; cursor?: string; limit: number; onlyUnlinked?: boolean },
   ) {
     const pattern = `${escapeLike(normalize(query.query))}%`;
     const rows = this.handle.client
@@ -379,15 +379,8 @@ export class SqliteDdtRepository implements DdtRepository {
          WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND sr_num_normalized > ? AND sr_num_normalized LIKE ? ESCAPE '\\'
 
          ORDER BY sr_num_normalized
-         LIMIT ?
- ) SELECT names.sr_num_normalized AS cursor,
- COALESCE(mapping.sr_num, (SELECT sr_num
-         FROM ddt_cases
-         WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND sr_num_normalized = names.sr_num_normalized
-         LIMIT 1)) AS "srNum",
- (SELECT COUNT(*)
-         FROM ddt_cases
-         WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND sr_num_normalized = names.sr_num_normalized) AS "caseCount",
+ ), sr_window AS (
+ SELECT names.sr_num_normalized AS cursor, mapping.sr_num AS "mappedSrNum",
  category.id AS "categoryId", category.name AS "categoryName", COALESCE(mapping.revision, 0) AS revision, COALESCE(mapping.legacy_conflict, 0) AS "legacyConflict", definition.id AS "caseDefinitionId", definition.class_name AS "className",
  definition.display_name AS "displayName", definition.source_id AS "sourceId",
  definition.current_version AS "currentVersion", CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled,
@@ -400,7 +393,17 @@ export class SqliteDdtRepository implements DdtRepository {
          LEFT JOIN ddt_requirement_categories category ON category.id = mapping.category_id
          LEFT JOIN case_definitions definition ON definition.id = CASE WHEN mapping.category_id IS NOT NULL THEN category.execution_case_definition_id ELSE mapping.execution_case_definition_id END
 
-         ORDER BY names.sr_num_normalized`,
+         ${query.onlyUnlinked ? "WHERE definition.id IS NULL OR mapping.legacy_conflict = 1" : ""}
+         ORDER BY names.sr_num_normalized LIMIT ?
+ ) SELECT selected.*,
+ COALESCE(selected."mappedSrNum", (SELECT sr_num
+         FROM ddt_cases
+         WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND sr_num_normalized = selected.cursor
+         LIMIT 1)) AS "srNum",
+ (SELECT COUNT(*)
+         FROM ddt_cases
+         WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ? AND sr_num_normalized = selected.cursor) AS "caseCount"
+ FROM sr_window selected ORDER BY selected.cursor`,
       )
       .all(
         ...scopeParameters(scope),
@@ -409,8 +412,8 @@ export class SqliteDdtRepository implements DdtRepository {
         ...scopeParameters(scope),
         query.cursor ?? "",
         pattern,
-        query.limit + 1,
         ...scopeParameters(scope),
+        query.limit + 1,
         ...scopeParameters(scope),
         ...scopeParameters(scope),
       ) as DdtSrMappingRow[];

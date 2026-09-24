@@ -12,6 +12,7 @@ import {
   type Runner,
 } from "@autoforge/domain";
 
+import { RunnerTelemetryButton } from "@/components/runner-telemetry-dialog";
 import { RunnerAdminActions } from "@/components/runner-admin-actions";
 import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
 import { RunnerTerminal } from "@/components/runner-terminal";
@@ -343,6 +344,7 @@ export default async function RunnersPage({
                         可更新至 {bundledAgentVersion}
                       </Badge>
                     ) : null}
+                    <RunnerTelemetryButton runnerId={runner.id} runnerName={runner.name} />
                     <RunnerTerminal
                       runnerId={runner.id}
                       runnerName={runner.name}

@@ -163,11 +163,14 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
       .map((element) => ({
         element: element.tagName.toLowerCase(),
         label: label(element),
-        // Ant Design exposes an inner combobox input; its enclosing select/picker is the hit target.
+        // Measure real hit targets: select/picker wrappers and the clickable label of a Switch.
         value:
           Math.round(
-            (element.closest(".ant-select, .ant-picker") ?? element).getBoundingClientRect()
-              .height * 10,
+            (
+              element.closest(".ant-select, .ant-picker") ??
+              (element.matches('[role="switch"]') ? element.closest("label") : null) ??
+              element
+            ).getBoundingClientRect().height * 10,
           ) / 10,
       }))
       .filter(({ value }) => value < minimumControlHeight)
@@ -267,6 +270,24 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
 }
 
 export async function expectUiIntegrity(page: Page): Promise<void> {
+  // Modal/popover entry scales controls. Measure settled geometry while leaving
+  // continuous loading indicators running; never disable product motion in tests.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            document
+              .getAnimations()
+              .filter(
+                (animation) =>
+                  (animation.pending || animation.playState === "running") &&
+                  animation.effect?.getTiming().iterations !== Infinity,
+              ).length,
+        ),
+      { message: "finite UI transitions should settle" },
+    )
+    .toBe(0);
   const report = await inspectUiIntegrity(page);
   expect(report.fontViolations, "visible text smaller than 12px").toEqual([]);
   expect(report.controlViolations, "visible controls shorter than 32px").toEqual([]);

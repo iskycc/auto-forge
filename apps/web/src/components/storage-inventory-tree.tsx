@@ -98,7 +98,7 @@ function StorageLocationBranch({
   timeZone: string;
   deletion: RuntimeAssetDeletionControls;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const renderedOpen = forceOpen || open;
   return (
     <Disclosure
@@ -155,7 +155,7 @@ function StorageDirectoryBranch({
   timeZone: string;
   deletion: RuntimeAssetDeletionControls;
 }) {
-  const [open, setOpen] = useState(() => shouldOpenByDefault(directory));
+  const [open, setOpen] = useState(false);
   const renderedOpen = forceOpen || open;
   return (
     <Disclosure
@@ -636,15 +636,6 @@ function FileTypeIcon({ category }: { category: StorageInventoryCategory }) {
     return <FileArchive aria-hidden="true" size={16} />;
   }
   return <File aria-hidden="true" size={16} />;
-}
-
-function shouldOpenByDefault(directory: StorageDirectoryNode): boolean {
-  return (
-    directory.depth === 1 ||
-    (directory.fileCount <= TREE_RENDER_BATCH_SIZE &&
-      directory.files.length === 0 &&
-      directory.directories.length === 1)
-  );
 }
 
 function formatBytes(value: number): string {

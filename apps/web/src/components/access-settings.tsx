@@ -1067,7 +1067,13 @@ export function AccessSettings({
                 void submitLdapForm(event.currentTarget, "save");
               }}
             >
-              <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
+              <label
+                className={cn(
+                  "checkbox-field",
+                  uiPatterns["checkbox-field"],
+                  uiPatterns["settings-wide-field"],
+                )}
+              >
                 <Input
                   checked={ldapEnabled}
                   name="enabled"
@@ -1077,7 +1083,13 @@ export function AccessSettings({
                 启用 LDAP 登录
               </label>
               {!ldapEnabled ? (
-                <p className={cn("settings-note", uiPatterns["settings-note"])}>
+                <p
+                  className={cn(
+                    "settings-note",
+                    uiPatterns["settings-note"],
+                    uiPatterns["settings-wide-field"],
+                  )}
+                >
                   LDAP 登录已关闭。启用后可编辑连接、用户检索与默认角色；关闭不会删除已保存的配置。
                 </p>
               ) : null}
@@ -1285,6 +1297,8 @@ export function AccessSettings({
                 </label>
               </fieldset>
               <div
+                role="group"
+                aria-label="LDAP 配置操作"
                 className={cn(
                   "settings-form-actions",
                   accessSettingsStyles["settings-form-actions"],
@@ -1538,7 +1552,7 @@ const accessSettingsStyles = {
     "[&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold mt-2 text-xs [&_.ui-disclosure-body_>_div]:grid [&_.ui-disclosure-body_>_div]:gap-2 [&_.ui-disclosure-body_>_div]:mt-2",
   "settings-directory-actions": "grid gap-2.5 mt-4",
   "settings-form-actions":
-    "flex justify-end gap-2.5 [&.management-sticky-actions]:bottom-3 [&.management-sticky-actions]:border [&.management-sticky-actions]:border-solid [&.management-sticky-actions]:border-border [&.management-sticky-actions]:rounded-xl [&.management-sticky-actions]:shadow-xs",
+    "col-span-full flex min-w-0 flex-wrap items-center justify-end gap-2 border-t border-border pt-4",
   "settings-form-fieldset":
     "contents min-w-0 m-0 border-0 p-0 [&:disabled]:opacity-78 [&[hidden]]:hidden",
   "settings-user-filter":

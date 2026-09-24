@@ -1,5 +1,10 @@
 import type { RunnerHeartbeatInput, RunnerRegistrationInput } from "@autoforge/contracts";
-import { DomainError, runnerAuthenticationBlock, type Runner } from "@autoforge/domain";
+import {
+  DomainError,
+  runnerAuthenticationBlock,
+  type Runner,
+  type RunnerTelemetry,
+} from "@autoforge/domain";
 
 import type {
   Clock,
@@ -157,6 +162,15 @@ export class RunnerControlService {
     const runner = await this.runners.get(runnerId, this.offlineBefore());
     if (!runner) throw new DomainError("RUNNER_NOT_FOUND", "指定的执行机不存在。");
     return runner;
+  }
+
+  async telemetry(runnerId: string): Promise<RunnerTelemetry> {
+    const runner = await this.get(runnerId);
+    if (runner.purgedAt) throw new DomainError("RUNNER_NOT_FOUND", "指定的执行机不存在。");
+    const until = this.clock.now().toISOString();
+    const since = new Date(Date.parse(until) - 6 * 60 * 60_000).toISOString();
+    const samples = await this.runners.resourceSamples(runnerId, since, until);
+    return { runner, samples, since, until, sampleIntervalSeconds: 60 };
   }
 
   async setLifecycleState(runnerId: string, state: "active" | "draining" | "disabled") {

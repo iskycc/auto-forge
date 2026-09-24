@@ -371,3 +371,33 @@ describe("RunnerControlService credentials", () => {
     });
   });
 });
+
+describe("Runner resource telemetry", () => {
+  it("uses the platform clock for the bounded six-hour query", async () => {
+    const resourceSamples = vi.fn().mockResolvedValue([]);
+    const runner = { id: "runner-1", state: "offline", lastSeenAt: "2026-08-08T00:00:00.000Z" };
+    const { service } = serviceWith({ get: vi.fn().mockResolvedValue(runner), resourceSamples });
+    await expect(service.telemetry("runner-1")).resolves.toMatchObject({
+      runner,
+      samples: [],
+      since: "2026-08-08T18:00:00.000Z",
+      until: now.toISOString(),
+      sampleIntervalSeconds: 60,
+    });
+    expect(resourceSamples).toHaveBeenCalledWith(
+      "runner-1",
+      "2026-08-08T18:00:00.000Z",
+      now.toISOString(),
+    );
+  });
+  it("rejects removed nodes before querying telemetry", async () => {
+    const resourceSamples = vi.fn();
+    for (const runner of [null, { id: "runner-1", purgedAt: now.toISOString() }]) {
+      const { service } = serviceWith({ get: vi.fn().mockResolvedValue(runner), resourceSamples });
+      await expect(service.telemetry("runner-1")).rejects.toMatchObject({
+        code: "RUNNER_NOT_FOUND",
+      });
+    }
+    expect(resourceSamples).not.toHaveBeenCalled();
+  });
+});

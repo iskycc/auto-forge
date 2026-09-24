@@ -1,4 +1,5 @@
 "use client";
+import { BrandMark } from "./brand-mark";
 import { LinkButton } from "@/components/ui/link-button";
 
 import type { PublicPlatformStatistics } from "@autoforge/contracts";
@@ -15,7 +16,6 @@ import {
   Network,
   Server,
   ShieldCheck,
-  Sparkles,
   Workflow,
   type LucideIcon,
 } from "lucide-react";
@@ -64,7 +64,7 @@ export function PublicDashboard({
       <header className={styles.header + " public-header"}>
         <Link className={styles.brand} href="/" aria-label="AutoForge 公开首页">
           <span className={styles.brandMark}>
-            <Sparkles aria-hidden="true" size={22} strokeWidth={2} />
+            <BrandMark size={40} />
           </span>
           <span>
             <strong>AutoForge</strong>

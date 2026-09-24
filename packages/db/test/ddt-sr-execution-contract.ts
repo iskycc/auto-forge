@@ -201,6 +201,26 @@ export async function expectDdtSrExecutionContract(
   };
   await repository.updateCases([edit]);
   expect((await repository.getCase(scope, second.caseId))?.executionClass).toBeUndefined();
+  await expect(
+    repository.listSrExecutionMappings(scope, {
+      query: "",
+      limit: 1,
+      onlyUnlinked: true,
+    }),
+  ).resolves.toMatchObject({ items: [{ srNum: "NEW-SR" }] });
+  const unlinkedPage = await repository.listSrExecutionMappings(scope, {
+    query: "",
+    limit: 1,
+    onlyUnlinked: true,
+  });
+  expect(unlinkedPage.nextCursor).toBeUndefined();
+  await expect(
+    repository.listSrExecutionMappings(scope, {
+      query: "ORDER",
+      limit: 1,
+      onlyUnlinked: true,
+    }),
+  ).resolves.toEqual({ items: [] });
   const firstPage = await repository.listSrExecutionMappings(scope, { query: "", limit: 1 });
   expect(firstPage.items[0]?.srNum).toBe("NEW-SR");
   expect(firstPage.nextCursor).toBeDefined();

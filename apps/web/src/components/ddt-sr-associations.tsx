@@ -1,4 +1,5 @@
 "use client";
+import { Switch } from "antd";
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Notice } from "@/components/ui/notice";
@@ -39,7 +40,11 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
   const [result, setResult] = useState<DdtSrExecutionMappingPage>({ items: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [refresh, setRefresh] = useState(0);
+  const onlyUnlinked = params.get("srAssociation") !== "all";
+  const resultRef = useRef(result);
+  useEffect(() => {
+    resultRef.current = result;
+  }, [result]);
   const [dialog, setDialog] = useState<DdtSrExecutionMapping | "range" | "categories" | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const endpoint: Endpoint = useCallback(
@@ -49,28 +54,42 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
   const toast = useToast();
   const confirm = useConfirm();
   const load = useCallback(
-    async (cursor?: string) => {
+    async (cursor?: string, preserveLoaded = false) => {
       activeRequest.current?.abort();
       const controller = new AbortController();
       activeRequest.current = controller;
       setLoading(true);
       setError("");
       try {
-        const page = await requestDdtJson<DdtSrExecutionMappingPage>(
-          endpoint("sr-mappings", { query, limit: "60", ...(cursor ? { cursor } : {}) }),
-          { signal: controller.signal },
-        );
-        if (!controller.signal.aborted)
-          setResult((previous) =>
-            cursor ? { ...page, items: [...previous.items, ...page.items] } : page,
+        const targetCount = preserveLoaded ? resultRef.current.items.length : 0;
+        let nextCursor = cursor;
+        let page: DdtSrExecutionMappingPage;
+        const items: DdtSrExecutionMapping[] = [];
+        do {
+          page = await requestDdtJson<DdtSrExecutionMappingPage>(
+            endpoint("sr-mappings", {
+              query,
+              limit: "60",
+              onlyUnlinked: String(onlyUnlinked),
+              ...(nextCursor ? { cursor: nextCursor } : {}),
+            }),
+            { signal: controller.signal, ...(preserveLoaded ? { cache: "reload" as const } : {}) },
           );
+          if (controller.signal.aborted) return;
+          items.push(...page.items);
+          nextCursor = page.nextCursor;
+        } while (preserveLoaded && nextCursor && items.length < targetCount);
+        setResult((previous) => ({
+          ...page,
+          items: cursor ? [...previous.items, ...items] : items,
+        }));
       } catch (failure) {
         if (!controller.signal.aborted) setError(errorMessage(failure));
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [endpoint, query],
+    [endpoint, query, onlyUnlinked],
   );
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -78,10 +97,10 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
       window.clearTimeout(timer);
       activeRequest.current?.abort();
     };
-  }, [load, refresh]);
+  }, [load]);
   const reload = () => {
     clearBrowserSnapshots();
-    setRefresh((value) => value + 1);
+    void load(undefined, true);
   };
   const unlink = async (mapping: DdtSrExecutionMapping) => {
     if (
@@ -159,6 +178,20 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
             搜索
           </Button>
         </form>
+        <label className="flex min-h-8 shrink-0 cursor-pointer items-center gap-2 text-sm">
+          <Switch
+            size="small"
+            aria-label="仅显示未关联 SR"
+            checked={onlyUnlinked}
+            onChange={(checked) => {
+              const url = new URL(window.location.href);
+              if (checked) url.searchParams.delete("srAssociation");
+              else url.searchParams.set("srAssociation", "all");
+              window.history.pushState(null, "", url);
+            }}
+          />
+          仅显示未关联 SR
+        </label>
         <Button
           className={cn(
             "button button-secondary",
@@ -321,8 +354,14 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
       {!loading && !error && !result.items.length ? (
         <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
           <Code2 size={24} />
-          <strong>{query ? "没有匹配的 SR" : "当前范围还没有 SR"}</strong>
-          <p>导入 DDT 用例后，其 srNum 会显示在这里。</p>
+          <strong>
+            {query ? "没有匹配的 SR" : onlyUnlinked ? "没有待关联的 SR" : "当前范围还没有 SR"}
+          </strong>
+          <p>
+            {onlyUnlinked
+              ? "可关闭“仅显示未关联 SR”查看已有映射，或导入新的 DDT 用例。"
+              : "导入 DDT 用例后，其 srNum 会显示在这里。"}
+          </p>
         </EmptyState>
       ) : null}
       <footer
@@ -359,7 +398,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
           canManage={canManage}
           onClose={() => {
             setDialog(null);
-            reload();
+            if (dialog === "categories") reload();
           }}
           onSaved={() => {
             setDialog(null);
@@ -387,7 +426,6 @@ function DdtExecutionClassesDialog({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [refresh, setRefresh] = useState(0);
   const [selectedAdds, setSelectedAdds] = useState<string[]>([]);
   const [selectedRemoves, setSelectedRemoves] = useState<string[]>([]);
   const [progress, setProgress] = useState("");
@@ -445,7 +483,7 @@ function DdtExecutionClassesDialog({
       window.clearTimeout(timer);
       activeRequest.current?.abort();
     };
-  }, [load, refresh]);
+  }, [load]);
   const changeRange = async (items: DdtExecutionClass[], included: boolean) => {
     if (saving || !items.length) return;
     setSaving(true);
@@ -518,7 +556,7 @@ function DdtExecutionClassesDialog({
             )}
             disabled={loading || saving}
             onClick={() => {
-              setRefresh((value) => value + 1);
+              void load();
             }}
           >
             刷新范围

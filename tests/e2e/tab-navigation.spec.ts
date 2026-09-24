@@ -9,6 +9,95 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("shared Ant motion follows browser preferences without resetting drafts", async ({ page }) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=configuration");
+  const address = page.locator('input[name="publicBaseUrl"]');
+  await address.fill("https://motion-draft.example.invalid");
+  const motionDuration = () =>
+    address.evaluate((element) =>
+      parseFloat(getComputedStyle(element).getPropertyValue("--ant-motion-duration-mid")),
+    );
+  await expect.poll(motionDuration).toBeGreaterThan(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect.poll(motionDuration).toBe(0);
+  await expect(address).toHaveValue("https://motion-draft.example.invalid");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect.poll(motionDuration).toBeGreaterThan(0);
+  await expect(address).toHaveValue("https://motion-draft.example.invalid");
+});
+
+test("navigation and dialogs use bounded motion and restore keyboard focus", async ({ page }) => {
+  await ensureAdministrator(page);
+  await page.addInitScript(() => {
+    const events: { name: string; duration: number }[] = [];
+    Object.assign(window, { motionAudit: events });
+    document.addEventListener("animationstart", (event) => {
+      if (event.target instanceof HTMLElement)
+        events.push({
+          name: event.animationName,
+          duration: parseFloat(getComputedStyle(event.target).animationDuration) * 1000,
+        });
+    });
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (...args: Parameters<Element["animate"]>) {
+      const animation = animate.apply(this, args);
+      if (animation.id === "autoforge-content-enter")
+        events.push({
+          name: animation.id,
+          duration: Number(animation.effect?.getTiming().duration),
+        });
+      return animation;
+    };
+  });
+  const recordedMotion = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as { motionAudit: { name: string; duration: number }[] }).motionAudit,
+    );
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.goto("/settings/access?section=users");
+    const navigationIcon = page
+      .getByRole("navigation", { name: "主导航", exact: true })
+      .locator("a svg")
+      .first();
+    expect((await navigationIcon.boundingBox())!.width).toBeGreaterThanOrEqual(18);
+    const trigger = page.getByRole("button", { name: "搜索配置", exact: true });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "配置搜索", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect
+      .poll(async () => (await recordedMotion()).some((event) => /zoom.*in/i.test(event.name)))
+      .toBe(true);
+    await dialog.getByRole("button", { name: "关闭配置搜索", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect
+      .poll(async () => (await recordedMotion()).some((event) => /zoom.*out/i.test(event.name)))
+      .toBe(true);
+    await page
+      .getByRole("navigation", { name: "主导航", exact: true })
+      .getByRole("link", { name: "执行记录", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/execution-records/);
+    await expect
+      .poll(async () =>
+        (await recordedMotion()).some((event) => event.name === "autoforge-content-enter"),
+      )
+      .toBe(true);
+    const transitions = (await recordedMotion()).filter((event) =>
+      /zoom|autoforge-content-enter/i.test(event.name),
+    );
+    for (const event of transitions) {
+      expect(event.duration).toBeGreaterThan(0);
+      expect(event.duration).toBeLessThanOrEqual(240);
+    }
+    await expectUiIntegrity(page);
+    await capture(page, `route-motion-${width}`);
+  }
+});
+
 test("case tabs keep their navigation in place across all DDT views", async ({ page }) => {
   await ensureAdministrator(page);
   await prepareCaseScope(page);

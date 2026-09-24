@@ -106,6 +106,67 @@ test("LDAP form waits for hydration before accepting the first checkbox change",
   await expect(page.locator('input[name="url"]')).toBeEditable();
 });
 
+test("LDAP actions span the form and remain below enabled and disabled configuration", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
+      ]);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/settings/access?section=ldap");
+      const enabled = page.getByLabel("启用 LDAP 登录");
+      const form = page.locator("#ldap form");
+      const actions = form.locator(".settings-form-actions");
+      const save = page.getByRole("button", { name: "保存 LDAP 配置", exact: true });
+      for (const state of [false, true]) {
+        await enabled.setChecked(state);
+        await actions.scrollIntoViewIfNeeded();
+        const [formBox, actionsBox, saveBox] = await Promise.all([
+          form.boundingBox(),
+          actions.boundingBox(),
+          save.boundingBox(),
+        ]);
+        expect(
+          Math.abs(actionsBox!.width - formBox!.width),
+          "actions must occupy the full form row",
+        ).toBeLessThanOrEqual(1);
+        expect(
+          Math.abs(saveBox!.x + saveBox!.width - formBox!.x - formBox!.width),
+          "save must align with the right edge of the form",
+        ).toBeLessThanOrEqual(1);
+        const lastField = state
+          ? page.getByLabel("用户 Group 属性").locator("..")
+          : form.locator(".settings-note");
+        const lastFieldBox = (await lastField.boundingBox())!;
+        expect(
+          actionsBox!.y - lastFieldBox.y - lastFieldBox.height,
+          "actions must follow the fields",
+        ).toBeGreaterThanOrEqual(12);
+        const testConnection = page.getByRole("button", { name: "测试连接", exact: true });
+        if (state) {
+          await expect(testConnection).toBeEnabled();
+          await save.click({ trial: true });
+        } else await expect(testConnection).toBeDisabled();
+        await expectUiIntegrity(page);
+        await captureUi(
+          page,
+          `ldap-actions-${appearance}-${state ? "enabled" : "disabled"}`,
+          viewport.width,
+          false,
+        );
+      }
+    }
+  }
+});
+
 test("multiline notifications keep separate click targets at desktop widths", async ({ page }) => {
   await ensureAdministrator(page);
   const items = Array.from({ length: 3 }, (_, index) => ({
@@ -535,6 +596,7 @@ test("topbar hierarchy selectors support keyboard opening, searching and focus r
     { width: 1536, height: 1024 },
   ]) {
     await page.setViewportSize(viewport);
+    await expect(trigger).toBeEnabled();
     await trigger.focus();
     await trigger.press("ArrowDown");
     await expect(listbox).toBeVisible();
@@ -1851,6 +1913,9 @@ test("opening settings preserves page width, layout and scroll position", async 
           await page.goto(route);
           const trigger = page.getByRole("button", { name: "搜索配置", exact: true });
           await expect(trigger).toBeEnabled();
+          expect(
+            await page.evaluate(() => document.documentElement.getBoundingClientRect().width),
+          ).toBe(await page.evaluate(() => document.documentElement.clientWidth));
           await page.evaluate(() => window.scrollTo(0, 80));
           const before = await geometry();
           await trigger.click();
@@ -1880,96 +1945,157 @@ test("opening settings preserves page width, layout and scroll position", async 
 });
 
 test("populated tables keep page scrolling vertical and wide columns scrollable horizontally", async ({
-  page,
+  playwright,
+  baseURL,
 }) => {
-  await ensureAdministrator(page);
-  const scope = await createUiProject(page);
-  const suites = [];
-  for (let index = 0; index < 8; index++) {
-    const name = `滚动边界验证任务 ${index + 1}`;
-    const suite = await createUiSuite(page, scope, name);
-    suites.push({ ...suite, name, passedRuns: 2 });
-  }
-  insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
-  const jar = zipSync({
-    "com/example/ScrollBoundaryTest.class": buildClassFile({
-      className: "com.example.ScrollBoundaryTest",
-      methods: [{ name: "verify", annotations: [{ type: "Test", values: {} }] }],
-    }),
+  const browser = await playwright.chromium.launch({
+    ignoreDefaultArgs: ["--hide-scrollbars"],
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
   });
-  await page.goto("/cases/import");
-  await selectJarForInspection(page, {
-    name: "scroll-boundary.jar",
-    mimeType: "application/java-archive",
-    buffer: Buffer.from(jar),
-  });
-  await page.getByRole("button", { name: "扫描测试类" }).click();
-  await expect(page.getByText("com.example.ScrollBoundaryTest", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/u, {
-    timeout: 60_000,
-  });
+  try {
+    const page = await browser.newPage({ baseURL: baseURL! });
+    page.setDefaultTimeout(30_000);
+    await ensureAdministrator(page);
+    const scope = await createUiProject(page);
+    const suites = [];
+    for (let index = 0; index < 8; index++) {
+      const name = `滚动边界验证任务 ${index + 1}`;
+      const suite = await createUiSuite(page, scope, name);
+      suites.push({ ...suite, name, passedRuns: 2 });
+    }
+    insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
+    const jar = zipSync({
+      "com/example/ScrollBoundaryTest.class": buildClassFile({
+        className: "com.example.ScrollBoundaryTest",
+        methods: [{ name: "verify", annotations: [{ type: "Test", values: {} }] }],
+      }),
+    });
+    await page.goto("/cases/import");
+    await selectJarForInspection(page, {
+      name: "scroll-boundary.jar",
+      mimeType: "application/java-archive",
+      buffer: Buffer.from(jar),
+    });
+    await page.getByRole("button", { name: "扫描测试类" }).click();
+    await expect(page.getByText("com.example.ScrollBoundaryTest", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "确认导入" }).click();
+    await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/u, {
+      timeout: 60_000,
+    });
 
-  for (const appearance of ["light", "dark"] as const) {
-    if (appearance === "dark")
-      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
-    for (const viewport of [
-      { width: 1024, height: 768 },
-      { width: 1536, height: 960 },
-    ]) {
-      await page.setViewportSize(viewport);
-      for (const route of ["/execution-records", "/audit", "/objects"]) {
-        await page.goto(route);
-        const tables = page.locator(".table-scroll");
-        await expect(tables.first()).toBeVisible();
-        if (route === "/execution-records")
-          await expect(page.locator(".execution-records-table tbody tr")).toHaveCount(8);
-        if (route === "/objects")
-          await expect(
-            page.locator(".source-list-table").getByText("scroll-boundary.jar", { exact: true }),
-          ).toBeVisible();
-        if (route === "/objects") {
-          for (const card of await page.locator(".management-table-card").all()) {
-            const cardBox = (await card.boundingBox())!;
-            const tableBox = (await card.locator(".table-scroll").boundingBox())!;
-            const searchBox = (await card.locator("form").boundingBox())!;
-            expect(
-              tableBox.x - cardBox.x,
-              "table needs an inset from the card edge",
-            ).toBeGreaterThanOrEqual(16);
-            expect(cardBox.x + cardBox.width - tableBox.x - tableBox.width).toBeGreaterThanOrEqual(
-              16,
-            );
-            expect(Math.abs(searchBox.x - tableBox.x)).toBeLessThanOrEqual(1);
+    for (const appearance of ["light", "dark"] as const) {
+      if (appearance === "dark")
+        await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+        { width: 1920, height: 1080 },
+      ]) {
+        await page.setViewportSize(viewport);
+        for (const route of ["/execution-records", "/audit", "/objects"]) {
+          await page.goto(route);
+          const tables = page.locator(".table-scroll");
+          await expect(tables.first()).toBeVisible();
+          if (route === "/execution-records")
+            await expect(page.locator(".execution-records-table tbody tr")).toHaveCount(8);
+          if (route === "/objects")
+            await expect(
+              page.locator(".source-list-table").getByText("scroll-boundary.jar", { exact: true }),
+            ).toBeVisible();
+          if (route === "/objects") {
+            for (const card of await page.locator(".management-table-card").all()) {
+              const cardBox = (await card.boundingBox())!;
+              const tableBox = (await card.locator(".table-scroll").boundingBox())!;
+              const searchBox = (await card.locator("form").boundingBox())!;
+              expect(
+                tableBox.x - cardBox.x,
+                "table needs an inset from the card edge",
+              ).toBeGreaterThanOrEqual(16);
+              expect(
+                cardBox.x + cardBox.width - tableBox.x - tableBox.width,
+              ).toBeGreaterThanOrEqual(16);
+              expect(Math.abs(searchBox.x - tableBox.x)).toBeLessThanOrEqual(1);
+            }
           }
-        }
-        for (const table of await tables.all()) {
-          await expect
-            .poll(() => table.evaluate((element) => element.scrollHeight - element.clientHeight), {
-              message: `${route} must not have an inner vertical scrollbar`,
-            })
-            .toBe(0);
-        }
-        if (viewport.width === 1024 && route !== "/audit") {
-          const horizontalRange = await tables.first().evaluate((element) => {
-            element.scrollLeft = element.scrollWidth;
-            return element.scrollLeft;
-          });
-          expect(horizontalRange, "wide columns must remain reachable").toBeGreaterThan(0);
-          await tables.first().evaluate((element) => {
-            element.scrollLeft = 0;
-          });
-        }
-        await expectUiIntegrity(page);
-        await tables.first().scrollIntoViewIfNeeded();
-        await captureUi(page, `table-scroll-${route}-${appearance}`, viewport.width, false);
-        if (route !== "/objects") {
-          await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-          expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-          await expect(tables.first()).toHaveJSProperty("scrollTop", 0);
+          for (const table of await tables.all()) {
+            const bounds = await table.evaluate((element: HTMLElement) => {
+              const content = element.querySelector("table")!;
+              const style = getComputedStyle(element);
+              return {
+                contentWidth: content.getBoundingClientRect().width,
+                availableWidth: element.clientWidth,
+                scrollWidth: element.scrollWidth,
+                scrollbarHeight:
+                  element.offsetHeight -
+                  element.clientHeight -
+                  parseFloat(style.borderTopWidth) -
+                  parseFloat(style.borderBottomWidth),
+              };
+            });
+            if (bounds.contentWidth <= bounds.availableWidth) {
+              expect(bounds.scrollWidth, `${route}: fitting content must not create overflow`).toBe(
+                bounds.availableWidth,
+              );
+              expect(bounds.scrollbarHeight, `${route}: no unnecessary horizontal scrollbar`).toBe(
+                0,
+              );
+            }
+            await expect
+              .poll(
+                () => table.evaluate((element) => element.scrollHeight - element.clientHeight),
+                {
+                  message: `${route} must not have an inner vertical scrollbar`,
+                },
+              )
+              .toBe(0);
+          }
+          if (viewport.width === 1024 && route !== "/audit") {
+            const horizontalRange = await tables.first().evaluate((element) => {
+              element.scrollLeft = element.scrollWidth;
+              return element.scrollLeft;
+            });
+            expect(horizontalRange, "wide columns must remain reachable").toBeGreaterThan(0);
+            await tables.first().evaluate((element) => {
+              element.scrollLeft = 0;
+            });
+          }
+          if (viewport.width === 1024 && route === "/execution-records") {
+            const handle = page.getByRole("separator", { name: "调整“操作”列宽" });
+            const initialWidth = Number(await handle.getAttribute("aria-valuenow"));
+            const minimumWidth = Number(await handle.getAttribute("aria-valuemin"));
+            const draggedWidth = Math.max(minimumWidth, initialWidth - 10);
+            await handle.press("ArrowRight");
+            await expect(handle).toHaveAttribute("aria-valuenow", String(initialWidth + 20));
+            const box = (await handle.boundingBox())!;
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            await page.mouse.down();
+            await page.mouse.move(box.x + box.width / 2 - 30, box.y + box.height / 2);
+            await page.mouse.up();
+            await expect(handle).toHaveAttribute("aria-valuenow", String(draggedWidth));
+            await page.reload();
+            await expect(handle).toHaveAttribute("aria-valuenow", String(draggedWidth));
+            await page.getByRole("button", { name: "重置列宽", exact: true }).click();
+            await expect(handle).toHaveAttribute("aria-valuenow", String(initialWidth));
+          }
+          await expectUiIntegrity(page);
+          await tables.first().scrollIntoViewIfNeeded();
+          await captureUi(page, `table-scroll-${route}-${appearance}`, viewport.width, false);
+          if (route !== "/objects") {
+            await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+            const pageScroll = await page.evaluate(() => ({
+              available: document.documentElement.scrollHeight - window.innerHeight,
+              actual: window.scrollY,
+            }));
+            if (pageScroll.available > 0) expect(pageScroll.actual).toBeGreaterThan(0);
+            await expect(tables.first()).toHaveJSProperty("scrollTop", 0);
+          }
         }
       }
     }
+  } finally {
+    await browser.close();
   }
 });
 
@@ -2187,16 +2313,19 @@ async function expectViewportDialog(
   dialog: Locator,
   viewport: { width: number; height: number },
 ): Promise<void> {
-  const [backdropBox, dialogBox, contentWidth] = await Promise.all([
-    backdrop.boundingBox(),
-    dialog.boundingBox(),
-    backdrop.page().evaluate(() => document.documentElement.getBoundingClientRect().width),
-  ]);
-  // A stable scrollbar gutter is outside the document's fixed-position containing block.
-  expect(backdropBox).toEqual({ x: 0, y: 0, width: contentWidth, height: viewport.height });
-  expect(dialogBox).not.toBeNull();
-  expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - contentWidth / 2)).toBeLessThanOrEqual(1);
-  expect(Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
-    1,
-  );
+  // Ant scales the dialog from its trigger during entry; verify the settled geometry.
+  await expect(async () => {
+    const [backdropBox, dialogBox, contentWidth] = await Promise.all([
+      backdrop.boundingBox(),
+      dialog.boundingBox(),
+      backdrop.page().evaluate(() => document.documentElement.getBoundingClientRect().width),
+    ]);
+    // A stable scrollbar gutter is outside the document's fixed-position containing block.
+    expect(backdropBox).toEqual({ x: 0, y: 0, width: contentWidth, height: viewport.height });
+    expect(dialogBox).not.toBeNull();
+    expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - contentWidth / 2)).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2),
+    ).toBeLessThanOrEqual(1);
+  }).toPass({ timeout: 3_000 });
 }

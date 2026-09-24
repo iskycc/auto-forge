@@ -819,6 +819,9 @@ for (const nodeId of [undefined, "00000000-0000-7000-8000-000000000123"]) {
     await expect(inventory).toHaveAttribute("aria-busy", "false");
     await expect(inventory.getByRole("alert")).toHaveCount(0);
     const tree = page.locator(".storage-inventory-tree");
+    await tree
+      .locator(".storage-tree-location > .ant-collapse > .ant-collapse-item > .ant-collapse-header")
+      .click();
     await expect(tree).toContainText("new-first.txt");
     await expect(tree).toContainText("new-last.txt");
     await expect(tree).not.toContainText("old-file.txt");
@@ -908,6 +911,16 @@ test("nested storage file rows retain independent columns, disclosure state and 
   await page.route("**/api/v1/settings/storage?**", (route) => route.fulfill({ json: fixture }));
   await page.goto("/settings/platform?section=storage");
   const tree = page.getByRole("tree", { name: "存储文件目录" });
+  const location = tree.locator(".storage-tree-location");
+  await expect(location).toHaveAttribute("data-open", "false");
+  await expect(tree.locator(".storage-tree-directory, .storage-tree-file")).toHaveCount(0);
+  await location
+    .locator(":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header")
+    .click();
+  const runtime = tree.locator('.ui-disclosure-label[title="runtime"]');
+  await expect(runtime.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
+  await expect(tree.locator('.ui-disclosure-label[title="runtime/nested"]')).toHaveCount(0);
+  await runtime.click();
   const nested = tree.locator('.ui-disclosure-label[title="runtime/nested"]');
   await expect(tree.getByText("notes.txt", { exact: true })).toHaveCount(0);
   await expect(nested.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
@@ -946,7 +959,12 @@ test("nested storage file rows retain independent columns, disclosure state and 
   }
   await nested.click();
   await expect(tree.getByText("notes.txt", { exact: true })).toHaveCount(0);
-  await tree.locator(`.ui-disclosure-label[title="${deepDirectory}"]`).click();
+  for (let depth = 0; depth < 16; depth++) {
+    const path = Array.from({ length: depth + 1 }, (_, index) => `level-${index}`).join("/");
+    const branch = tree.locator(`.ui-disclosure-label[title="${path}"]`);
+    await expect(branch.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
+    await branch.click();
+  }
   await page.setViewportSize({ width: 1024, height: 768 });
   const deepFile = tree.locator(".storage-tree-file").filter({ hasText: "deep-log.txt" });
   const deepOverflow = await deepFile.evaluate(
@@ -955,6 +973,12 @@ test("nested storage file rows retain independent columns, disclosure state and 
   expect(deepOverflow).toBeLessThanOrEqual(1);
   await deepFile.scrollIntoViewIfNeeded();
   await captureUi(page, "storage-deep-file-1024");
+  await page.reload();
+  await expect(location).toHaveAttribute("data-open", "false");
+  await expect(tree.locator(".storage-tree-directory, .storage-tree-file")).toHaveCount(0);
+  await page.getByLabel("搜索文件名称或路径").fill("deep-log");
+  await page.getByRole("button", { name: "应用筛选", exact: true }).click();
+  await expect(deepFile).toBeVisible();
 });
 
 const INVENTORY_OLD_GENERATION = "00000000-0000-7000-8000-000000000101";

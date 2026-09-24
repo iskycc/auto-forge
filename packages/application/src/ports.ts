@@ -74,6 +74,7 @@ import type {
   RunBatchRoundRecovery,
   RunBatchRoundSummary,
   Runner,
+  RunnerResourceSample,
   RunnerGroup,
   SchedulingCandidate,
   SchedulingDecision,
@@ -1125,7 +1126,7 @@ export interface DdtRepository {
   findExecutionClass(scope: DdtScope, className: string): Promise<DdtExecutionClass | null>;
   listSrExecutionMappings(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number },
+    query: { query: string; cursor?: string; limit: number; onlyUnlinked?: boolean },
   ): Promise<DdtSrExecutionMappingPage>;
   listExecutionClassRange(
     scope: DdtScope,
@@ -1395,6 +1396,7 @@ export type RegisterRunnerRecord = {
 };
 
 export interface RunnerRepository {
+  resourceSamples(runnerId: string, since: string, until: string): Promise<RunnerResourceSample[]>;
   register(record: RegisterRunnerRecord): Promise<Runner | null>;
   findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null>;
   heartbeat(input: {

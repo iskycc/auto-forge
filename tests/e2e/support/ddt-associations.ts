@@ -25,6 +25,7 @@ export async function associateDdtSr(page: Page, srNum: string, className: strin
   await mapping.getByRole("radio", { name: `${srNum} 分类`, exact: true }).check();
   await mapping.getByRole("button", { name: "保存 SR 分类", exact: true }).click();
   await expect(mapping).toHaveCount(0);
+  await page.getByRole("switch", { name: "仅显示未关联 SR" }).uncheck();
   await expect(
     page.locator(".ddt-sr-row").filter({ has: page.getByText(srNum, { exact: true }) }),
   ).toContainText(className);

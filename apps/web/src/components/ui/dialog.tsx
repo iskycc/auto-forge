@@ -1,7 +1,14 @@
 "use client";
 
 import { Modal } from "antd";
-import { useEffect, useRef, type ComponentProps, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { cn } from "@/lib/utils";
 import { useClientReadiness } from "./use-client-readiness";
 
@@ -40,6 +47,8 @@ export function Dialog({
   };
 }) {
   const clientReady = useClientReadiness();
+  const [rendered, setRendered] = useState(open);
+  if (open && !rendered) setRendered(true);
   const returnFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -50,6 +59,8 @@ export function Dialog({
       if (target?.isConnected) target.focus({ preventScroll: true });
     };
   }, [open]);
+  // Keep the portal through its exit animation, then release its DOM and scroll lock.
+  if (!open && !rendered) return null;
   return (
     <Modal
       // Ant's portal has no server container; URL-opened dialogs must hydrate before mounting it.
@@ -72,6 +83,7 @@ export function Dialog({
       }}
       afterOpenChange={(visible) => {
         if (visible) initialFocusRef?.current?.focus();
+        else if (!open) setRendered(false);
       }}
       onCancel={() => {
         if (!inactive && !closeDisabled) onClose();

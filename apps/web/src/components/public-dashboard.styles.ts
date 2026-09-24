@@ -16,7 +16,7 @@ const styles = {
   footer: `${container} flex items-center justify-between gap-4 py-8 text-xs text-muted-foreground [&_a]:underline-offset-4 [&_a:hover]:underline`,
   brand:
     "flex items-center gap-3 [&>span:last-child]:grid [&>span:last-child]:gap-1 [&_strong]:text-xl [&_strong]:font-semibold [&_small]:text-xs [&_small]:text-muted-foreground",
-  brandMark: "flex size-10 items-center justify-center rounded-lg bg-brand text-primary-foreground",
+  brandMark: "flex size-10 shrink-0 items-center justify-center",
   navigation:
     "ml-auto flex items-center gap-6 text-sm text-muted-foreground [&_a]:py-3 [&_a:hover]:text-foreground",
   headerEntry: buttonVariants({ variant: "outline" }),

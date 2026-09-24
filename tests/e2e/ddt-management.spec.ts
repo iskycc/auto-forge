@@ -1918,6 +1918,7 @@ test("SR associations restrict candidates and automatically cover imported and m
   await expect(inspector.getByRole("tab", { name: "测试类详情", exact: true })).toBeDisabled();
 
   await page.goto("/cases/ddt-associations");
+  await page.getByRole("switch", { name: "仅显示未关联 SR" }).uncheck();
   const srRow = page.locator('.ddt-sr-row[data-sr="PAYMENTS"]');
   await expect(srRow).toContainText(className);
   await page.getByLabel("搜索 SR", { exact: true }).fill("PAY");
@@ -3604,3 +3605,160 @@ async function uploadDdtTaskDependencies(page: Page, projectId: string): Promise
     uploadForm.getByRole("progressbar", { name: "运行时资源上传完成进度" }),
   ).toHaveAttribute("aria-valuenow", "100");
 }
+
+test("SR assignments retain expanded pages and default to unlinked requirements", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const className = `com.example.PagedSr${Date.now()}Test`;
+  const definition = await importExecutionClass(page, hierarchy, className);
+  await importDdtApiFixture(
+    page,
+    hierarchy,
+    "SR-CASE-000",
+    0,
+    Array.from({ length: 70 }, (_, index) => ({
+      CaseID: `SR-CASE-${String(index).padStart(3, "0")}`,
+      srNum: `SR-${String(index).padStart(3, "0")}`,
+      CaseName: "SR 分类分页保留验证",
+    })),
+  );
+  expect(
+    (
+      await browserJson(page, ddtPath(hierarchy, "execution-range"), {
+        method: "POST",
+        body: { caseDefinitionId: definition.id, className, included: true, expectedRevision: 0 },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await browserJson(page, ddtPath(hierarchy, "requirement-categories"), {
+        method: "POST",
+        body: { name: "钱包", className, expectedRevision: 0 },
+      })
+    ).status,
+  ).toBe(200);
+  await page.goto("/cases/ddt-associations");
+  const filter = page.getByRole("switch", { name: "仅显示未关联 SR" });
+  await expect(filter).toBeChecked();
+  const rows = page.locator(".ddt-sr-row[data-sr]");
+  await expect(rows).toHaveCount(60);
+  await page.getByRole("button", { name: "加载更多 SR", exact: true }).click();
+  await expect(rows).toHaveCount(70);
+  await page.getByRole("button", { name: "设置 SR-065 的分类", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "设置 SR SR-065 的分类", exact: true });
+  await dialog.getByRole("radio", { name: "钱包", exact: true }).check();
+  await dialog.getByRole("button", { name: "保存 SR 分类" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(rows).toHaveCount(69);
+  await expect(page.locator('.ddt-sr-row[data-sr="SR-069"]')).toBeVisible();
+  await expect(page.locator('.ddt-sr-row[data-sr="SR-065"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "设置 SR-069 的分类", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
+  await expect(rows).toHaveCount(69);
+  await filter.uncheck();
+  await expect(rows).toHaveCount(60);
+  await page.getByRole("button", { name: "加载更多 SR", exact: true }).click();
+  await expect(rows).toHaveCount(70);
+  await page.getByRole("button", { name: "设置 SR-066 的分类", exact: true }).click();
+  await page.getByRole("dialog").getByRole("radio", { name: "钱包", exact: true }).check();
+  await page.getByRole("dialog").getByRole("button", { name: "保存 SR 分类" }).click();
+  await expect(rows).toHaveCount(70);
+  await expect(page.locator('.ddt-sr-row[data-sr="SR-066"]')).toContainText(className);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-expanded-filter-${width}`);
+  }
+  await page.reload();
+  await expect(filter).not.toBeChecked();
+  await filter.check();
+  await expect(rows).toHaveCount(60);
+  await page.getByRole("button", { name: "加载更多 SR", exact: true }).click();
+  await expect(rows).toHaveCount(68);
+});
+
+test("DDT long CaseIDs remain readable and the sidebar expands in both directions", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const caseId = "CASE-000-ORDER-PAYMENT-REFUND-CONFIRMATION-跨版本支付回归测试-20260924";
+  const fields = Object.fromEntries(
+    Array.from({ length: 12 }, (_, index) => [`参数_${index + 1}`, `示例值 ${index + 1}`]),
+  );
+  await importDdtApiFixture(
+    page,
+    hierarchy,
+    caseId,
+    0,
+    Array.from({ length: 62 }, (_, index) => ({
+      CaseID: index === 0 ? caseId : `CASE-${String(index).padStart(3, "0")}`,
+      srNum: "PAYMENTS",
+      CaseName: "支付退款回归",
+      ...fields,
+    })),
+  );
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const workspace = page.locator(".ddt-case-browser");
+  const navigation = page.getByRole("region", { name: "DDT 用例导航" });
+  const details = page.getByRole("region", { name: "DDT 用例详情" });
+  await expect(details.getByRole("heading", { name: caseId, exact: true })).toBeVisible();
+  const resizer = workspace.getByRole("separator");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await resizer.press("Home");
+    await expect
+      .poll(() =>
+        details
+          .locator(".ddt-field-cards")
+          .evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length),
+      )
+      .toBe(3);
+    const title = details.locator(".ddt-detail-toolbar > span > strong");
+    await expect(title).toHaveText(caseId);
+    expect(await title.evaluate((element) => getComputedStyle(element).textOverflow)).not.toBe(
+      "ellipsis",
+    );
+    expect(
+      await title.evaluate((element) => element.scrollWidth - element.clientWidth),
+    ).toBeLessThanOrEqual(1);
+    const before = (await navigation.boundingBox())!.width;
+    let handle = (await resizer.boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 24);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 + 140, handle.y + 24, { steps: 8 });
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await navigation.boundingBox())!.width)
+      .toBeGreaterThan(before + 110);
+    const expanded = (await navigation.boundingBox())!.width;
+    handle = (await resizer.boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 24);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 - 80, handle.y + 24, { steps: 8 });
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await navigation.boundingBox())!.width)
+      .toBeLessThan(expanded - 60);
+    await resizer.press("Home");
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-long-id-${width}`);
+    await details.locator(".ddt-case-detail-scroll").evaluate((element) => {
+      element.scrollTop = 300;
+    });
+    await captureDdtUi(page, `ddt-three-column-fields-${width}`);
+    await navigation
+      .getByRole("button", { name: "加载更多", exact: true })
+      .scrollIntoViewIfNeeded();
+    await captureDdtUi(page, `ddt-load-more-${width}`);
+  }
+  await navigation.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(62);
+  await expect(navigation.getByRole("button", { name: "加载更多", exact: true })).toHaveCount(0);
+});

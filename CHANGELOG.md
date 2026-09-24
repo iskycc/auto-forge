@@ -4,6 +4,34 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.2 - 2026-09-24
+
+### Changed and fixed
+
+- 执行节点新增资源监控弹窗，展示近 6 小时的 CPU、内存、负载和执行槽位曲线，以及 Agent 版本、能力与资源信息；支持手动刷新、键盘查看样本、离线提示和读取失败重试，断线时段不补造数据。
+- Runner 直接终端改为交互登录 Shell，读取 `/etc/profile` 及用户登录配置；保留 Agent 凭据环境隔离，不改变普通用例执行环境。
+- SR 测试类关联默认显示未关联需求，可切换为全部；保存分类或关联后保留已加载的 SR 范围，修复“加载更多”被重置的问题。
+- 优化 DDT 分栏：支持侧栏双向拖拽、完整 CaseId 换行、按可用空间最多三列的紧凑字段卡片及统一的“加载更多”按钮；修复新建／复制任务弹窗的按钮与复选框变形。
+- 重新设计控制台、公开首页与浏览器共用的本地 SVG 标志；统一页面、Tab、加载与弹窗动效，支持减少动态效果且不丢失未保存内容。
+- 修复执行记录列宽手柄及文件来源列布局引起的无效横向滚动条，消除最小桌面视口下滚动条宽度导致的页面跳动；宽表仍保留必要滚动。
+- 质量洞察补充当前页用例的执行覆盖率、通过率、结果分布、最近执行时间和待关注用例，不增加数据库扫描或轮询；存储空间默认逐级收起，LDAP 表单操作区统一置于底部右侧。
+
+### Database, deployment and compatibility
+
+- 新增 SQLite `0071_runner_resource_samples.sql` 与 PostgreSQL `0069_runner_resource_samples.sql`，在已有心跳事务中每分钟保存一个资源样本，每个节点最多 360 个槽位；无额外采样写任务，历史查询有界，清除节点同步清除样本。
+- 从 v1.18.1 升级先备份数据库并更新主平台，Full 各节点同步更新。迁移不补造历史；采样从升级后心跳开始。终端登录环境修复需升级 Runner 并重新连接；Runner Protocol 和 Adapter 协议不变。
+- 新增需要 `runner.read` 权限的只读监控接口；SR 列表增加可选筛选参数，未传参数的既有调用行为保持兼容。无新增持久部署配置。
+- 无新增生产依赖，图标、Ant Design 资源与既有双架构内置 Agent 随离线镜像交付；后端、部署包、Jenkins 插件、SBOM 及签名清单资产类型不变。截图、测试数据及本地构建产物不纳入提交。
+- 迁移失败保持事务回滚，可修复原因后重启迁移；回退说明见 [Runner Agent 架构](./docs/architecture/runner-agent.md)。
+
+### Validation and known limitations
+
+- 本轮 Runner／DDT 改动通过 54 项相关单元／集成测试（包含真实 SQLite/PostgreSQL 采样、迁移升级与回滚、心跳竞争和 SR 筛选），6 项 Lite E2E 场景通过；Runner 全量 Go 测试、vet 及 Linux amd64/arm64 静态构建校验通过。
+- 前序 UI 改动已完成质量洞察、存储／LDAP、原生滚动条、Tab 导航、动效与表单草稿的定向回归；Web 生产构建、相关类型、格式及 lint 检查通过。
+- 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm test:e2e:matrix` 及 39 项发布脚本测试通过。
+- 使用带数据页面实际查看 1024×768、1536×960 明暗主题截图；最终 Runner／DDT／任务弹窗与公开首页共 30 个页面状态无脚本错误或控件溢出，表格另覆盖 1920px 原生滚动条。
+- 完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.1 - 2026-09-24
 
 ### Changed and fixed

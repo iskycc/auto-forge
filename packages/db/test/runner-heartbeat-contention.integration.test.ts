@@ -52,6 +52,13 @@ async function database() {
         agentVersion: "1.13.2",
         terminalEnabled: false,
         recordedAt: "2026-09-08T00:00:15.000Z",
+        resourceSnapshot: {
+          cpuUtilizationPercent: 15,
+          memoryUtilizationPercent: 30,
+          loadAverage1m: 1.2,
+          logicalCpuCount: 8,
+          observedAt: "2026-09-08T00:00:15.000Z",
+        },
       }),
     async close() {
       if (writer.inTransaction) writer.exec("ROLLBACK");

@@ -92,6 +92,9 @@ func (manager *Manager) Open(sessionID string, columns, rows uint16, events Even
 
 	sessionContext, cancel := context.WithTimeout(manager.rootContext, manager.configuration.MaximumDuration)
 	command := exec.Command(manager.configuration.Shell, "-i")
+	// Login mode lets the configured shell load /etc/profile and the user profile.
+	// Keep the sanitized inherited environment; this applies only to explicit PTY sessions.
+	command.Args[0] = "-" + filepath.Base(manager.configuration.Shell)
 	command.Dir = workDirectory
 	command.Env = safeEnvironment(os.Environ())
 	pseudoterminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: columns, Rows: rows})

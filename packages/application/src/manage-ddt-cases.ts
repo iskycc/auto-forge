@@ -56,7 +56,10 @@ export class DdtCaseService {
     return this.repository.listExecutionClasses(scope, query, limit);
   }
 
-  srExecutionMappings(scope: DdtScope, query: { query: string; cursor?: string; limit: number }) {
+  srExecutionMappings(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number; onlyUnlinked?: boolean },
+  ) {
     return this.repository.listSrExecutionMappings(scope, query);
   }
 

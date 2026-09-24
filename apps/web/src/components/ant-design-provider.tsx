@@ -14,6 +14,7 @@ import {
 } from "react";
 import { colorModeCookie, readBrowserColorMode, type ColorMode } from "@/lib/color-mode";
 import { layoutThemeAliases, platformThemes } from "@/lib/ant-design-theme";
+import { useReducedMotion } from "./ui/use-reduced-motion";
 
 const ColorModeContext = createContext<{
   colorMode: ColorMode;
@@ -34,6 +35,23 @@ export function AntDesignProvider({
   initialColorMode?: ColorMode;
 }) {
   const [colorMode, updateColorMode] = useState(initialColorMode);
+  const reducedMotion = useReducedMotion();
+  const componentTheme = useMemo(() => {
+    const baseTheme = platformThemes[colorMode];
+    return reducedMotion
+      ? {
+          ...baseTheme,
+          token: {
+            ...baseTheme.token,
+            // Switching Ant's motion boolean inserts a provider and remounts
+            // its children. Zero durations preserve forms, focus and caches.
+            motionDurationFast: "0s",
+            motionDurationMid: "0s",
+            motionDurationSlow: "0s",
+          },
+        }
+      : baseTheme;
+  }, [colorMode, reducedMotion]);
   const setColorMode = useCallback((mode: ColorMode) => {
     document.cookie = colorModeCookie(mode, window.location.protocol === "https:");
     document.documentElement.dataset.colorMode = mode;
@@ -56,11 +74,7 @@ export function AntDesignProvider({
   return (
     <ColorModeContext value={preference}>
       <AntdRegistry>
-        <ConfigProvider
-          locale={zhCN}
-          theme={platformThemes[colorMode]}
-          button={{ autoInsertSpace: false }}
-        >
+        <ConfigProvider locale={zhCN} theme={componentTheme} button={{ autoInsertSpace: false }}>
           <LayoutThemeTokens colorMode={colorMode} />
           <App component={false}>{children}</App>
         </ConfigProvider>

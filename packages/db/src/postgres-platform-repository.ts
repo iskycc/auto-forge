@@ -1,3 +1,4 @@
+import type { RunnerResourceSample } from "@autoforge/domain";
 import {
   runPostgresTransaction,
   runPostgresDrizzleTransaction,
@@ -3004,6 +3005,25 @@ export class PostgresRunnerRepository implements RunnerRepository {
       )
       .limit(1);
     return row ? mapStoredRunner(row) : null;
+  }
+
+  async resourceSamples(
+    runnerId: string,
+    since: string,
+    until: string,
+  ): Promise<RunnerResourceSample[]> {
+    await this.ready();
+    return (
+      await this.handle.pool.query<RunnerResourceSample>(
+        `SELECT observed_at AS "observedAt", cpu_utilization_percent AS "cpuUtilizationPercent",
+        memory_utilization_percent AS "memoryUtilizationPercent", load_average_1m AS "loadAverage1m",
+        logical_cpu_count AS "logicalCpuCount", busy_slots AS "busySlots", max_concurrency AS "maxConcurrency"
+        FROM runner_resource_samples
+        WHERE runner_id = $1 AND observed_at >= $2 AND observed_at <= $3
+        ORDER BY observed_at LIMIT 360`,
+        [runnerId, since, until],
+      )
+    ).rows;
   }
 
   async heartbeat(input: {

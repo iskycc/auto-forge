@@ -62,7 +62,8 @@ export function ActionDialog({
     setDirty(false);
     setConfirmDiscard(false);
   }
-  if (!open || typeof document === "undefined") return null;
+  // Keep the shared Modal mounted so Ant can finish its exit transition and
+  // restore focus. Dialog owns hydration and destroys hidden content afterwards.
   return (
     <Dialog
       open={open}

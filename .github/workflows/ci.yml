@@ -144,7 +144,7 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: false
           - scenario: operations
-            specs: tests/e2e/security-audit.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts
+            specs: tests/e2e/security-audit.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/runner-telemetry.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: ui

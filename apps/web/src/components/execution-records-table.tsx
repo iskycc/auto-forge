@@ -431,7 +431,7 @@ export function ExecutionRecordsTable({
 const executionRecordsTableStyles = {
   "batch-status": uiPatterns["batch-status"],
   "column-resize-handle":
-    "absolute top-0 right-[-3px] z-2 w-1.5 h-full cursor-col-resize bg-transparent transition-colors duration-150 motion-reduce:transition-none [&:hover]:bg-info [&:hover]:opacity-45 [&:active]:bg-info [&:active]:opacity-45 [&:focus-visible]:[outline:2px_solid_var(--info)]",
+    "absolute top-0 right-0 z-2 w-1.5 h-full cursor-col-resize bg-transparent transition-colors duration-150 motion-reduce:transition-none [&:hover]:bg-info [&:hover]:opacity-45 [&:active]:bg-info [&:active]:opacity-45 [&:focus-visible]:[outline:2px_solid_var(--info)]",
   "execution-record-row-actions": "inline-flex items-center gap-2 flex-wrap whitespace-normal",
   "execution-record-table-stack": "grid gap-3",
   "execution-records-table":

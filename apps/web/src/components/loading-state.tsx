@@ -6,6 +6,7 @@ export function LoadingGlyph({ compact = false }: { compact?: boolean }) {
     <Spin
       aria-hidden="true"
       size={compact ? "small" : "default"}
+      delay={150}
       className={cn("loading-glyph shrink-0", compact ? "loading-glyph-compact size-4" : "size-7")}
     />
   );

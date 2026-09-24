@@ -1,25 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient
-      id="autoforge-mark"
-      x1="8"
-      y1="4"
-      x2="56"
-      y2="60"
-      gradientUnits="userSpaceOnUse"
-    >
-      <stop stop-color="#ff655c" />
-      <stop offset="1" stop-color="#d92d20" />
+    <linearGradient id="forge" x1="8" y1="4" x2="58" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1677ff" />
+      <stop offset="1" stop-color="#153eab" />
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="18" fill="url(#autoforge-mark)" />
-  <path
-    d="M32 14.5c.9 8.9 3.6 11.6 12.5 12.5C35.6 27.9 32.9 30.6 32 39.5 31.1 30.6 28.4 27.9 19.5 27 28.4 26.1 31.1 23.4 32 14.5Z"
-    fill="none"
-    stroke="#fff"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    stroke-width="3.5"
-  />
-  <path d="M46.5 38.5c.5 5 2 6.5 7 7-5 .5-6.5 2-7 7-.5-5-2-6.5-7-7 5-.5 6.5-2 7-7Z" fill="#fff" />
+  <rect width="64" height="64" rx="16" fill="url(#forge)" />
+  <path d="M12 47 27 17h9L21 47Zm24-30 16 30H42L31 26Z" fill="#fff" />
+  <path d="m27 36 18-7-7 10H25Z" fill="#69e1e9" />
 </svg>
