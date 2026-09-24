@@ -119,7 +119,10 @@ async function createHarness(mode: "lite" | "full") {
       close: async () => {
         try {
           await handle.close();
-          await admin.pool.query(`DROP DATABASE ${databaseName} WITH (FORCE)`);
+          // pool.end() can resolve before PostgreSQL observes the socket close.
+          // A normal DROP waits for disconnection; FORCE can instead deliver a
+          // late FATAL to the ending client and fail an otherwise completed test.
+          await admin.pool.query(`DROP DATABASE ${databaseName}`);
         } finally {
           await admin.close();
         }
@@ -127,7 +130,7 @@ async function createHarness(mode: "lite" | "full") {
     };
   } catch (error) {
     try {
-      await admin.pool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+      await admin.pool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     } finally {
       await admin.close();
     }

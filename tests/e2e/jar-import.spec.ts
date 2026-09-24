@@ -517,47 +517,65 @@ public class MixedVisibleTest {
   });
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText(largeClassName)).toBeVisible({ timeout: 60_000 });
-  const largeImportResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/case-sources/jar/import",
-  );
-  await page.getByRole("button", { name: "确认导入" }).click();
-  expect((await largeImportResponse).status()).toBe(202);
-  const importProgress = page.locator(".import-progress");
-  await expect(importProgress).toBeVisible();
-  expect(
-    await page
-      .locator(".inspection-card, .import-progress")
-      .evaluateAll((elements) =>
-        elements.map((element) =>
-          element.classList.contains("inspection-card") ? "inspection" : "progress",
-        ),
-      ),
-  ).toEqual(["inspection", "progress"]);
-  await expect
-    .poll(() =>
-      importProgress.evaluate((element) => {
-        const bounds = element.getBoundingClientRect();
-        return bounds.top < window.innerHeight && bounds.bottom > 0;
-      }),
-    )
-    .toBe(true);
-  await captureUi(page, "jar-import-progress-1536", false);
-  const progressBounds = await importProgress.evaluate((element) => {
-    const card = element.getBoundingClientRect();
-    const bar = element.querySelector('[role="progressbar"]')?.getBoundingClientRect();
-    return {
-      cardLeft: card.left,
-      cardRight: card.right,
-      barLeft: bar?.left ?? card.left,
-      barRight: bar?.right ?? card.right,
-    };
+  // Keep the observed progress state stable while taking screenshots. The real
+  // worker may finish before the browser can click cancel; the cancellation
+  // response below still verifies either valid outcome of that race.
+  let releaseImportProgress = () => {};
+  const importProgressGate = new Promise<void>((resolve) => {
+    releaseImportProgress = resolve;
   });
-  expect(progressBounds.barLeft - progressBounds.cardLeft).toBeGreaterThanOrEqual(12);
-  expect(progressBounds.cardRight - progressBounds.barRight).toBeGreaterThanOrEqual(12);
-  await expectUiConsistency(page);
-  await page.getByRole("button", { name: "取消导入" }).click();
+  const importProgressRoute = "**/api/v1/case-sources/jar/imports/*";
+  const holdImportProgress = async (route: Route) => {
+    await importProgressGate;
+    await route.continue();
+  };
+  await page.route(importProgressRoute, holdImportProgress);
+  try {
+    const largeImportResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/case-sources/jar/import",
+    );
+    await page.getByRole("button", { name: "确认导入" }).click();
+    expect((await largeImportResponse).status()).toBe(202);
+    const importProgress = page.locator(".import-progress");
+    await expect(importProgress).toBeVisible();
+    expect(
+      await page
+        .locator(".inspection-card, .import-progress")
+        .evaluateAll((elements) =>
+          elements.map((element) =>
+            element.classList.contains("inspection-card") ? "inspection" : "progress",
+          ),
+        ),
+    ).toEqual(["inspection", "progress"]);
+    await expect
+      .poll(() =>
+        importProgress.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.top < window.innerHeight && bounds.bottom > 0;
+        }),
+      )
+      .toBe(true);
+    await captureUi(page, "jar-import-progress-1536", false);
+    const progressBounds = await importProgress.evaluate((element) => {
+      const card = element.getBoundingClientRect();
+      const bar = element.querySelector('[role="progressbar"]')?.getBoundingClientRect();
+      return {
+        cardLeft: card.left,
+        cardRight: card.right,
+        barLeft: bar?.left ?? card.left,
+        barRight: bar?.right ?? card.right,
+      };
+    });
+    expect(progressBounds.barLeft - progressBounds.cardLeft).toBeGreaterThanOrEqual(12);
+    expect(progressBounds.cardRight - progressBounds.barRight).toBeGreaterThanOrEqual(12);
+    await expectUiConsistency(page);
+    await page.getByRole("button", { name: "取消导入" }).click();
+  } finally {
+    releaseImportProgress();
+    await page.unroute(importProgressRoute, holdImportProgress);
+  }
   const retryLargeImport = page.getByRole("button", { name: "幂等重试" });
   await expect
     .poll(
