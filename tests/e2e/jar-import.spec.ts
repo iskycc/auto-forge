@@ -1595,7 +1595,7 @@ public class MixedVisibleTest {
   );
   await expect(
     page
-      .getByText("执行样本")
+      .getByText("执行样本", { exact: true })
       .locator("..")
       .getByText(String(expectedSampleCount), { exact: true }),
   ).toBeVisible();

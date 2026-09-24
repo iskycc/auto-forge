@@ -13,7 +13,12 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
-import { expectReadableText, expectUiIntegrity, inspectUiIntegrity } from "./support/ui-guard";
+import {
+  expectReadableText,
+  expectUiIntegrity,
+  inspectUiIntegrity,
+  waitForUiTransitions,
+} from "./support/ui-guard";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 
 const primaryRoutes = [
@@ -901,6 +906,7 @@ test("topbar creates project, version and stage and retries selection without du
       if (scope.kind === "stage") await expect(dialog).toContainText("1.0.0-topbar");
       await captureUi(page, `topbar-${scope.kind}-create`, viewport.width, false);
       await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
     }
     await switcher.locator(scope.trigger).click();
     await page.getByRole("button", { name: `新建${scope.label}`, exact: true }).click();
@@ -1892,6 +1898,15 @@ test("opening settings preserves page width, layout and scroll position", async 
     const page = await browser.newPage({ baseURL: baseURL!, reducedMotion: "reduce" });
     page.setDefaultTimeout(30_000);
     await ensureAdministrator(page);
+    const scrollbarWidth = await page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.cssText =
+        "position:absolute;top:-9999px;width:100px;height:100px;overflow:scroll";
+      document.body.append(probe);
+      const width = probe.offsetWidth - probe.clientWidth;
+      probe.remove();
+      return width;
+    });
     const geometry = () =>
       page.evaluate(() => {
         const main = document.querySelector("main")!.getBoundingClientRect();
@@ -1913,9 +1928,11 @@ test("opening settings preserves page width, layout and scroll position", async 
           await page.goto(route);
           const trigger = page.getByRole("button", { name: "搜索配置", exact: true });
           await expect(trigger).toBeEnabled();
-          expect(
-            await page.evaluate(() => document.documentElement.getBoundingClientRect().width),
-          ).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+          // A stable gutter exists even on short pages, where clientWidth still
+          // includes that empty space because there is no vertical scrollbar.
+          await expect
+            .poll(() => page.evaluate(() => document.documentElement.getBoundingClientRect().width))
+            .toBe(viewport.width - scrollbarWidth);
           await page.evaluate(() => window.scrollTo(0, 80));
           const before = await geometry();
           await trigger.click();
@@ -2314,6 +2331,7 @@ async function expectViewportDialog(
   viewport: { width: number; height: number },
 ): Promise<void> {
   // Ant scales the dialog from its trigger during entry; verify the settled geometry.
+  await waitForUiTransitions(dialog.page());
   await expect(async () => {
     const [backdropBox, dialogBox, contentWidth] = await Promise.all([
       backdrop.boundingBox(),
@@ -2328,4 +2346,9 @@ async function expectViewportDialog(
       Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2),
     ).toBeLessThanOrEqual(1);
   }).toPass({ timeout: 3_000 });
+  // A centered dialog can be painted before Ant transfers focus from its opener.
+  // Keyboard actions must target the active modal rather than a closing popover.
+  await expect
+    .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+    .toBe(true);
 }
