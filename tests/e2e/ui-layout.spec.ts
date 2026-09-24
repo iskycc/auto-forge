@@ -175,6 +175,150 @@ test("anonymous execution details keep tables and actions within the page", asyn
   }
 });
 
+test("anonymous execution columns share space with failure stacks", async ({ page, browser }) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("shared-columns");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const stack = [
+    "java.lang.AssertionError: 支付金额校验失败，expected balance <100.00> but actual <99.00>, transaction reference: payment-regression-wallet-transfer-20260924",
+    "    at com.autoforge.wallet.regression.TransferValidationTest.assertTransactionBalance(TransferValidationTest.java:128)",
+    "    at com.autoforge.wallet.regression.TransferValidationTest.verifyCrossAccountPayment(TransferValidationTest.java:96)",
+    "Caused by: java.lang.IllegalStateException: Account settlement has not completed; expected SETTLED but received PENDING",
+  ].join("\n");
+  const shares: string[] = [];
+  const scenarios = [
+    { summary: "断言失败", screenshot: "shared-short-status", singleFailure: false },
+    { summary: stack, screenshot: "shared-failure-stack", singleFailure: false },
+    { summary: stack, screenshot: "shared-single-failure-stack", singleFailure: true },
+  ];
+  for (const [index, scenario] of scenarios.entries()) {
+    const fixture = insertFailureAnalysisFixture(directory, version.body.id, `${suffix}-${index}`, {
+      caseNameSuffix: "支付金额校验",
+      classNamePrefix: "com.autoforge.wallet.regression",
+    });
+    const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+    try {
+      database.exec("PRAGMA busy_timeout = 5000");
+      database
+        .prepare("UPDATE run_batches SET scheduled_for = created_at WHERE id = ?")
+        .run(fixture.batchId);
+      database
+        .prepare(
+          `UPDATE run_attempts SET result_summary = ? WHERE outcome = 'failed' AND execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id = ?)`,
+        )
+        .run(scenario.summary, fixture.batchId);
+      if (scenario.singleFailure) {
+        const failedRunId = `run-failed-0-${suffix}-${index}`;
+        database
+          .prepare(
+            `UPDATE run_attempts SET status = 'succeeded', outcome = 'succeeded', result_summary = '通过'
+             WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id = ? AND id <> ?)`,
+          )
+          .run(fixture.batchId, failedRunId);
+        database
+          .prepare(
+            `UPDATE execution_runs SET status = 'succeeded', terminal_outcome = 'succeeded'
+             WHERE batch_id = ? AND id <> ?`,
+          )
+          .run(fixture.batchId, failedRunId);
+      }
+    } finally {
+      database.close();
+    }
+    const share = await browserJson<{ shareUrl: string }>(
+      page,
+      `/api/v1/run-batches/${fixture.batchId}/share`,
+      { method: "POST" },
+    );
+    expect(share.status).toBe(200);
+    shares.push(share.body.shareUrl);
+  }
+  const context = await browser.newContext();
+  try {
+    const anonymousPage = await context.newPage();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await anonymousPage.setViewportSize(viewport);
+      const widths: number[][] = [];
+      for (const [index, url] of shares.entries()) {
+        await anonymousPage.goto(url);
+        const rows = anonymousPage.locator(".execution-case-table tbody tr");
+        await expect(rows).toHaveCount(5);
+        await expect(rows.first().locator(".attempt-failure-line")).toHaveText(
+          scenarios[index]!.summary,
+        );
+        await waitForUiTransitions(anonymousPage);
+        await captureUi(anonymousPage, scenarios[index]!.screenshot, viewport.width);
+        await expectUiIntegrity(anonymousPage);
+        widths.push(
+          await rows
+            .first()
+            .locator("td")
+            .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width)),
+        );
+      }
+      expect(widths[1]![1], "long failure stacks need more space than case names").toBeGreaterThan(
+        widths[1]![0]!,
+      );
+      expect(widths[1]![0], "the case column yields space to longer failure details").toBeLessThan(
+        widths[0]![0]!,
+      );
+      expect(widths[1]![1], "the status column grows with its content").toBeGreaterThan(
+        widths[0]![1]!,
+      );
+      expect(
+        widths[2]![1],
+        "a single failure still gets enough space among successful cases",
+      ).toBeCloseTo(widths[1]![1]!, 0);
+      await anonymousPage.getByLabel("按名称搜索用例", { exact: true }).fill("通过用例");
+      const filteredRows = anonymousPage.locator(".execution-case-table tbody tr");
+      await expect(filteredRows).toHaveCount(1);
+      const passedWidths = await filteredRows
+        .first()
+        .locator("td")
+        .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+      expect(
+        passedWidths[0],
+        "filtering out failures releases space for case names",
+      ).toBeGreaterThan(widths[1]![0]!);
+      expect(
+        passedWidths[1],
+        "short success statuses do not retain the failure width",
+      ).toBeLessThan(widths[1]![1]!);
+      await expectUiIntegrity(anonymousPage);
+      await captureUi(anonymousPage, "shared-passed-filter", viewport.width);
+      await anonymousPage.getByLabel("按名称搜索用例", { exact: true }).fill("");
+      await expect(filteredRows).toHaveCount(5);
+      await anonymousPage.getByRole("button", { name: "全部轮次", exact: true }).click();
+      await expect(
+        anonymousPage
+          .locator(".execution-case-table")
+          .getByRole("columnheader", { name: "轮次", exact: true }),
+      ).toBeVisible();
+      await captureUi(anonymousPage, "shared-failure-stack-all-rounds", viewport.width);
+      await expectUiIntegrity(anonymousPage);
+    }
+    await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await waitForUiTransitions(anonymousPage);
+    await captureUi(anonymousPage, "shared-failure-stack-dark", 1536);
+    await expectUiIntegrity(anonymousPage);
+  } finally {
+    await context.close();
+  }
+});
+
 test("execution export dialog keeps choices readable and downloads the selected results", async ({
   page,
 }) => {

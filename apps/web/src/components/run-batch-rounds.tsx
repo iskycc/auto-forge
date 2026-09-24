@@ -69,6 +69,11 @@ import {
   formatLocalDateTime,
 } from "@/lib/run-batch-presentation";
 import { columnCharacterWidthAtCoverage, widestText } from "@/lib/table-column-width";
+import {
+  executionCaseColumnWidthsRem,
+  minimumCaseNameWidthCh,
+  sharedExecutionColumnLayout,
+} from "@/lib/shared-execution-column-layout";
 
 const DEFAULT_CASE_PAGE_SIZE = 50;
 const EMPTY_CASE_ROWS: RoundCaseRowModel[] = [];
@@ -1525,22 +1530,37 @@ function RoundCasesTable({
     return () => controller.abort();
   }, [casePageUrl, requestKey]);
 
-  const columnWidths = useMemo(
-    () => ({
+  const columnWidths = useMemo(() => {
+    // Successful rows have no failure text; they must not dilute a visible stack's width.
+    const sharedFailureLines = batch.accessToken
+      ? rows.flatMap(({ attempt }) => {
+          if (
+            !attempt ||
+            !isTerminalAttemptStatus(attempt.status) ||
+            attempt.status === "succeeded"
+          )
+            return [];
+          const hint = attemptFailureHint(attempt);
+          return hint ? [widestText(hint.split(/\r?\n/))] : [];
+        })
+      : [];
+    return {
       case: columnCharacterWidthAtCoverage(
         rows.map((row) => widestText([row.run.displayName, row.run.className])),
-        { minimum: 22, maximum: 42 },
+        { minimum: minimumCaseNameWidthCh, maximum: 42 },
       ),
       status: columnCharacterWidthAtCoverage(
-        rows.map((row) =>
-          widestText(
-            (row.attempt
-              ? `${attemptStatusLabel(row.attempt)} ${attemptFailureHint(row.attempt) ?? ""}`
-              : "未执行"
-            ).split(/\r?\n/),
-          ),
-        ),
-        { minimum: 12, maximum: 36 },
+        sharedFailureLines.length > 0
+          ? sharedFailureLines
+          : rows.map((row) =>
+              widestText(
+                (row.attempt
+                  ? `${attemptStatusLabel(row.attempt)} ${attemptFailureHint(row.attempt) ?? ""}`
+                  : "未执行"
+                ).split(/\r?\n/),
+              ),
+            ),
+        { minimum: 12, maximum: batch.accessToken ? 96 : 36 },
       ),
       runner: columnCharacterWidthAtCoverage(
         rows.map((row) => {
@@ -1549,9 +1569,11 @@ function RoundCasesTable({
         }),
         { minimum: 10, maximum: 24 },
       ),
-    }),
-    [rows, runnerDirectory],
-  );
+    };
+  }, [rows, runnerDirectory, batch.accessToken]);
+  const sharedLayout = batch.accessToken
+    ? sharedExecutionColumnLayout({ widths: columnWidths, showRoundColumn })
+    : undefined;
 
   const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -1617,23 +1639,37 @@ function RoundCasesTable({
           没有匹配当前筛选条件的用例。
         </div>
       ) : (
-        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+        <div
+          className={cn("table-scroll", uiPatterns["table-scroll"])}
+          style={sharedLayout ? { containerType: "inline-size" } : undefined}
+        >
           <Table
             className={cn(
               "data-table execution-case-table",
               uiPatterns["data-table"],
               runBatchRoundsStyles["execution-case-table"],
             )}
+            style={sharedLayout ? { minWidth: sharedLayout.minimumTableWidth } : undefined}
           >
             <colgroup>
-              {/* Read-only actions are narrower; give the case name the remaining space. */}
-              <col style={batch.accessToken ? undefined : { width: `${columnWidths.case}ch` }} />
-              {showRoundColumn ? <col className={"case-column-round"} /> : null}
-              <col style={{ width: batch.accessToken ? "20%" : `${columnWidths.status}ch` }} />
-              <col style={{ width: batch.accessToken ? "18%" : `${columnWidths.runner}ch` }} />
-              <col className={"case-column-duration"} />
+              <col style={{ width: sharedLayout?.caseWidth ?? `${columnWidths.case}ch` }} />
+              {showRoundColumn ? (
+                <col
+                  className="case-column-round"
+                  style={{ width: `${executionCaseColumnWidthsRem.round}rem` }}
+                />
+              ) : null}
+              <col style={sharedLayout ? undefined : { width: `${columnWidths.status}ch` }} />
+              <col style={{ width: `${columnWidths.runner}ch` }} />
               <col
-                className={cn("case-column-actions", batch.accessToken ? "w-48" : "w-[17rem]")}
+                className="case-column-duration"
+                style={{ width: `${executionCaseColumnWidthsRem.duration}rem` }}
+              />
+              <col
+                className="case-column-actions"
+                style={{
+                  width: `${batch.accessToken ? executionCaseColumnWidthsRem.sharedActions : executionCaseColumnWidthsRem.actions}rem`,
+                }}
               />
             </colgroup>
             <TableHeader>
@@ -2465,7 +2501,7 @@ const runBatchRoundsStyles = {
   "execution-case-heading":
     "flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 [&_>_strong]:min-w-0 [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal",
   "execution-case-table":
-    "min-w-[760px] [table-layout:fixed] [&_.case-column-round]:w-19.5 [&_.case-column-duration]:w-19 [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
+    "min-w-[760px] [table-layout:fixed] [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
   "execution-case-type":
     "[flex:0_0_auto] rounded-full py-0.5 px-[7px] bg-info/10 text-info text-xs font-semibold [&.ddt]:bg-info/10 [&.ddt]:text-info",
   "execution-round-table":

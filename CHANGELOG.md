@@ -4,6 +4,25 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.6 - 2026-09-24
+
+### Changed and fixed
+
+- 公开只读执行详情按当前页用例名称、类路径和状态文本动态分配列宽，限制用例列的多余留白，让长失败堆栈获得更多空间。
+- 失败文本单独估算宽度，避免大量通过用例挤窄少量失败堆栈；筛选、轮次切换与视口变化时自动调整，保留完整换行和公开日志、详情入口。
+- 修复固定布局表格列中的百分比混合计算失效，改为根据表格容器宽度计算；不新增接口请求或数据库查询。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、API、Runner Protocol 或 Adapter 协议变更。Lite/Full 共用前端；从 v1.18.5 升级只需更新主平台，Full 各平台节点应同步更新，本次无需升级 Runner。
+- 无新增生产依赖，Ant Design 资源继续随离线包交付；双架构后端、部署包、Jenkins 插件、SBOM 与签名清单的资产类型不变。截图、测试数据库和本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- Web 生产构建、Web 与测试类型检查、变更文件格式和 lint 检查通过，26 项相关单元测试与 2 项 Lite Playwright 回归通过。
+- 实际查看 1024×768、1536×960 的真实截图，覆盖短状态、长失败堆栈、超长名称、少量失败混合通过、筛选、全部轮次及深色主题；详情展开、公开日志跳转和登录态跳转控制台正常。
+- 本次为前端布局修复，未在本地重跑 Full 基础设施与仓库全量验收；完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.5 - 2026-09-24
 
 ### Changed and fixed
