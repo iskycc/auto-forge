@@ -1,4 +1,18 @@
 import {
+  closeSqliteAnalysisBatch,
+  archiveSqliteAnalysisBatch,
+  requireWritableSqliteAnalysisBatch,
+  requireWritableSqliteAnalysisClaims,
+  markSqliteAnalysisProgress,
+} from "./sqlite-failure-analysis-lifecycle";
+import { requireActiveFailureAnalysisBatch } from "@autoforge/domain";
+import {
+  analysisBatchVisibilitySql,
+  analysisLifecycleColumns,
+  analysisLifecycleView,
+  type FailureAnalysisBatchLifecycle,
+} from "./failure-analysis-lifecycle";
+import {
   retrySqliteWriteTransaction,
   retrySqliteLockContention,
   type SqliteDatabaseHandle,
@@ -45,7 +59,7 @@ import {
   type FailureAnalysisRecentSuccessRow,
 } from "./failure-analysis-executions";
 
-type BatchRow = {
+type BatchRow = FailureAnalysisBatchLifecycle & {
   id: string;
   sequenceNumber: number;
   suiteName: string;
@@ -103,9 +117,18 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     return rows.map(toFailureAnalysisRecentSuccess);
   }
 
+  closeBatch(input: Parameters<FailureAnalysisRepository["closeBatch"]>[0]) {
+    return closeSqliteAnalysisBatch(this.handle, input);
+  }
+
+  archiveBatch(input: Parameters<FailureAnalysisRepository["archiveBatch"]>[0]) {
+    return archiveSqliteAnalysisBatch(this.handle, input);
+  }
+
   async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {
     const batch = await this.readBatch(input, "eligible");
     if (!batch || batch.failedRuns === 0) return null;
+    requireActiveFailureAnalysisBatch(batch.archivedAt);
     // A terminal execution is immutable. The unique batch key makes concurrent starts idempotent.
     const inserted = await retrySqliteLockContention(() =>
       this.handle.client
@@ -174,7 +197,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async listBatches(input: {
     projectId: string;
-    view?: "started" | "available";
+    view?: "started" | "available" | "archived";
     projectVersionId?: string;
     cursor?: string;
     limit: number;
@@ -184,7 +207,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       "batch.project_id=?",
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
-      ` ${input.view === "available" ? "NOT " : ""}EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)`,
+      analysisBatchVisibilitySql(input.view),
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       `EXISTS (SELECT 1 FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
@@ -223,13 +246,13 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
                  WHERE claim.batch_id=batch.id) AS claimedRuns,
                 (SELECT COUNT(*) FROM failure_analysis_claims claim
                  WHERE claim.batch_id=batch.id AND claim.status='completed') AS completedRuns,
-                batch.created_at AS createdAt
-         FROM run_batches batch WHERE ${where.join(" AND ")}
+                batch.created_at AS createdAt, ${analysisLifecycleColumns}
+         FROM run_batches batch LEFT JOIN failure_analysis_batches analysis ON analysis.batch_id=batch.id WHERE ${where.join(" AND ")}
          ORDER BY batch.created_at DESC,batch.id DESC LIMIT ?`,
       )
       .all(...parameters) as BatchRow[];
     const hasMore = rows.length > input.limit;
-    const items = rows.slice(0, input.limit);
+    const items = rows.slice(0, input.limit).map(toFailureAnalysisBatch);
     const last = items.at(-1);
     return {
       items,
@@ -240,11 +263,23 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async readBatchProgress(projectId: string, batchId: string) {
-    return this.handle.client
+    const row = this.handle.client
       .prepare(
-        `SELECT COUNT(*) AS claimedRuns,COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) AS completedRuns FROM failure_analysis_claims WHERE project_id=? AND batch_id=?`,
+        `SELECT ${analysisLifecycleColumns},
+      (SELECT COUNT(*) FROM failure_analysis_claims WHERE batch_id=analysis.batch_id) AS claimedRuns,
+      (SELECT COUNT(*) FROM failure_analysis_claims WHERE batch_id=analysis.batch_id AND status='completed') AS completedRuns
+      FROM failure_analysis_batches analysis WHERE project_id=? AND batch_id=?`,
       )
-      .get(projectId, batchId) as { claimedRuns: number; completedRuns: number };
+      .get(projectId, batchId) as
+      (FailureAnalysisBatchLifecycle & { claimedRuns: number; completedRuns: number }) | undefined;
+    return row
+      ? {
+          exists: true,
+          claimedRuns: row.claimedRuns,
+          completedRuns: row.completedRuns,
+          ...analysisLifecycleView(row),
+        }
+      : { exists: false, claimedRuns: 0, completedRuns: 0 };
   }
 
   async getBatch(input: Parameters<FailureAnalysisRepository["getBatch"]>[0]) {
@@ -272,8 +307,8 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
                  WHERE claim.batch_id=batch.id) AS claimedRuns,
                 (SELECT COUNT(*) FROM failure_analysis_claims claim
                  WHERE claim.batch_id=batch.id AND claim.status='completed') AS completedRuns,
-                batch.created_at AS createdAt
-         FROM run_batches batch
+                batch.created_at AS createdAt, ${analysisLifecycleColumns}
+         FROM run_batches batch LEFT JOIN failure_analysis_batches analysis ON analysis.batch_id=batch.id
          WHERE batch.id=? AND batch.project_id=?
            AND json_extract(batch.policy_json, '$.projectVersionId')=?
            AND batch.status IN ('succeeded','failed','cancelled')
@@ -282,7 +317,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
            AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)`,
       )
       .get(input.batchId, input.projectId, input.projectVersionId) as BatchRow | undefined;
-    return row ?? null;
+    return row ? toFailureAnalysisBatch(row) : null;
   }
 
   async listCandidates(input: {
@@ -407,6 +442,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async claim(input: Parameters<FailureAnalysisRepository["claim"]>[0]) {
     return await retrySqliteWriteTransaction(this.handle, () => {
+      requireWritableSqliteAnalysisBatch(this.handle, input.projectId, input.batchId);
       const requestedIds = [...input.executionRunIds];
       const placeholders = requestedIds.map(() => "?").join(",");
       const eligibleRows = this.handle.client
@@ -492,6 +528,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async release(input: Parameters<FailureAnalysisRepository["release"]>[0]) {
     return await retrySqliteWriteTransaction(this.handle, () => {
+      requireWritableSqliteAnalysisClaims(this.handle, input.projectId, [input.analysisId]);
       const row = this.handle.client
         .prepare(
           `${claimSelectSql()} WHERE claim.id=? AND claim.project_id=? AND claim.claimant_id=?
@@ -823,12 +860,13 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
-    await retrySqliteLockContention(() =>
-      this.handle.client
+    return retrySqliteWriteTransaction(this.handle, () => {
+      requireWritableSqliteAnalysisClaims(this.handle, input.projectId, [input.analysisId]);
+      const result = this.handle.client
         .prepare(
           `UPDATE failure_analysis_claims
-         SET status='analyzing',category=?,analysis_started_at=COALESCE(analysis_started_at,?),updated_at=?
-         WHERE id=? AND project_id=? AND claimant_id=?`,
+        SET status='analyzing',category=?,analysis_started_at=COALESCE(analysis_started_at,?),updated_at=?
+        WHERE id=? AND project_id=? AND claimant_id=?`,
         )
         .run(
           input.category,
@@ -837,14 +875,16 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
           input.analysisId,
           input.projectId,
           input.claimantId,
-        ),
-    );
-    const row = this.handle.client
-      .prepare(
-        `${claimSelectSql()} WHERE claim.id=? AND claim.project_id=? AND claim.claimant_id=?`,
-      )
-      .get(input.analysisId, input.projectId, input.claimantId) as FailureAnalysisRow | undefined;
-    return row ? toFailureAnalysisClaim(row) : null;
+        );
+      if (!result.changes) return null;
+      markSqliteAnalysisProgress(this.handle, input.projectId, [input.analysisId], input.startedAt);
+      const row = this.handle.client
+        .prepare(
+          `${claimSelectSql()} WHERE claim.id=? AND claim.project_id=? AND claim.claimant_id=?`,
+        )
+        .get(input.analysisId, input.projectId, input.claimantId) as FailureAnalysisRow;
+      return toFailureAnalysisClaim(row);
+    });
   }
 
   async findOwnedClaims(input: Parameters<FailureAnalysisRepository["findOwnedClaims"]>[0]) {
@@ -901,8 +941,9 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async attachScreenshot(input: Parameters<FailureAnalysisRepository["attachScreenshot"]>[0]) {
     return await retrySqliteWriteTransaction(this.handle, () => {
+      requireWritableSqliteAnalysisClaims(this.handle, input.projectId, input.analysisIds);
       const placeholders = input.analysisIds.map(() => "?").join(",");
-      this.handle.client
+      const updated = this.handle.client
         .prepare(
           `UPDATE failure_analysis_claims
            SET screenshot_object_key=?,screenshot_file_name=?,screenshot_media_type=?,
@@ -920,13 +961,22 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
           input.claimantId,
           ...input.analysisIds,
         );
-      return this.selectOwnedClaims(input.analysisIds, input.projectId, input.claimantId);
+      requireCompletedAnalysisCount(Number(updated.changes), input.analysisIds.length);
+      const claims = this.selectOwnedClaims(input.analysisIds, input.projectId, input.claimantId);
+      markSqliteAnalysisProgress(
+        this.handle,
+        input.projectId,
+        claims.map((claim) => claim.id),
+        input.updatedAt,
+      );
+      return claims;
     });
   }
 
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
     const remarkImagesJson = serializeRemarkImages(input.remarkImages);
     return await retrySqliteWriteTransaction(this.handle, () => {
+      requireWritableSqliteAnalysisClaims(this.handle, input.projectId, input.analysisIds);
       if (input.inheritedFromAnalysisId) {
         const placeholders = input.analysisIds.map(() => "?").join(",");
         const matches = this.handle.client
@@ -975,7 +1025,14 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
         );
         requireCompletedAnalysisCount(Number(result.changes), 1);
       }
-      return this.selectOwnedClaims(input.analysisIds, input.projectId, input.claimantId);
+      const claims = this.selectOwnedClaims(input.analysisIds, input.projectId, input.claimantId);
+      markSqliteAnalysisProgress(
+        this.handle,
+        input.projectId,
+        claims.map((claim) => claim.id),
+        input.completedAt,
+      );
+      return claims;
     });
   }
 
@@ -1105,4 +1162,12 @@ function historyPage(rows: FailureAnalysisHistoryRow[], limit: number) {
 
 function escapeSqliteLike(value: string): string {
   return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
+}
+
+function toFailureAnalysisBatch(row: BatchRow) {
+  const { startedAt, progressStartedAt, archivedAt, archivedBy, ...batch } = row;
+  return {
+    ...batch,
+    ...analysisLifecycleView({ startedAt, progressStartedAt, archivedAt, archivedBy }),
+  };
 }

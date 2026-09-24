@@ -19,6 +19,333 @@ export function failureAnalysisContract(
   createHarness: () => Promise<FailureAnalysisHarness>,
 ): void {
   describe(name, () => {
+    it("closes untouched analyses, removes claims and allows an explicit fresh start", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, runIds } = harness;
+      const scope = { projectId, projectVersionId, batchId };
+      try {
+        await repository.startBatch({
+          ...scope,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        });
+        await repository.claim(lifecycleClaim(harness, runIds[0]));
+        await expect(
+          repository.archiveBatch({
+            ...scope,
+            archivedBy: "admin",
+            archivedAt: "2026-09-01T02:00:00.000Z",
+          }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_NO_PROGRESS_CONFLICT" });
+        await expect(
+          repository.closeBatch({ ...scope, projectVersionId: "wrong-version" }),
+        ).resolves.toBe(false);
+        await expect(repository.closeBatch(scope)).resolves.toBe(true);
+        await expect(repository.getBatch(scope)).resolves.toBeNull();
+        expect((await repository.listBatches({ ...scope, limit: 10 })).items).toEqual([]);
+        expect(
+          (await repository.listBatches({ ...scope, view: "available", limit: 10 })).items.map(
+            (batch) => batch.id,
+          ),
+        ).toContain(batchId);
+        await expect(repository.getClaim(`lifecycle-${runIds[0]}`, projectId)).resolves.toBeNull();
+        await expect(
+          repository.attachScreenshot({
+            projectId,
+            analysisIds: [`lifecycle-${runIds[0]}`],
+            claimantId: "analyst-a",
+            screenshot: {
+              objectKey: "late.png",
+              fileName: "late.png",
+              mediaType: "image/png",
+              sizeBytes: 10,
+              sha256: "a".repeat(64),
+            },
+            updatedAt: "2026-09-01T02:30:00.000Z",
+          }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_COMPLETION_CONFLICT" });
+        expect(
+          (
+            await repository.startBatch({
+              ...scope,
+              startedBy: "admin",
+              startedAt: "2026-09-01T03:00:00.000Z",
+            })
+          )?.created,
+        ).toBe(true);
+        expect(
+          (
+            await repository.listCandidates({
+              ...scope,
+              sort: "case_name",
+              direction: "asc",
+              limit: 10,
+            })
+          )?.items,
+        ).toHaveLength(3);
+      } finally {
+        await harness.dispose();
+      }
+    });
+
+    it("archives progressed analyses, retains conclusions and rejects stale writes", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, runIds } = harness;
+      const scope = { projectId, projectVersionId, batchId };
+      const analysisId = `lifecycle-${runIds[0]}`;
+      const complete = {
+        projectId,
+        analysisIds: [analysisId],
+        claimantId: "analyst-a",
+        category: "code_issue_filed" as const,
+        issueDescription: "实现错误",
+        ticketReference: "BUG-123",
+        completedAt: "2026-09-01T02:00:00.000Z",
+        rerunProofs: new Map<string, { attemptId: string; url: string }>(),
+      };
+      try {
+        await repository.startBatch({
+          ...scope,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        });
+        await repository.claim(lifecycleClaim(harness, runIds[0]));
+        await repository.claim(lifecycleClaim(harness, runIds[1]));
+        await repository.complete(complete);
+        await expect(repository.closeBatch(scope)).rejects.toMatchObject({
+          code: "FAILURE_ANALYSIS_HAS_PROGRESS_CONFLICT",
+        });
+        const archive = { ...scope, archivedBy: "admin", archivedAt: "2026-09-01T03:00:00.000Z" };
+        await expect(repository.archiveBatch(archive)).resolves.toBe(true);
+        await expect(repository.archiveBatch(archive)).resolves.toBe(false);
+        expect((await repository.listBatches({ ...scope, limit: 10 })).items).toEqual([]);
+        expect(
+          (await repository.listBatches({ ...scope, view: "archived", limit: 10 })).items,
+        ).toEqual([
+          expect.objectContaining({
+            id: batchId,
+            archivedAt: archive.archivedAt,
+            completedRuns: 1,
+          }),
+        ]);
+        expect(
+          (await repository.listBatches({ ...scope, view: "available", limit: 10 })).items,
+        ).toEqual([]);
+        expect((await repository.getBatch(scope))?.archivedAt).toBe(archive.archivedAt);
+        expect((await repository.getClaim(analysisId, projectId))?.ticketReference).toBe("BUG-123");
+        await expect(
+          repository.startBatch({ ...scope, startedBy: "admin", startedAt: archive.archivedAt }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT" });
+        await expect(repository.claim(lifecycleClaim(harness, runIds[2]))).rejects.toMatchObject({
+          code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT",
+        });
+        await expect(
+          repository.complete({ ...complete, analysisIds: [`lifecycle-${runIds[1]}`] }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT" });
+        await expect(
+          repository.start({
+            projectId,
+            analysisId,
+            claimantId: "analyst-a",
+            category: "case_fixed",
+            startedAt: archive.archivedAt,
+          }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT" });
+        await expect(
+          repository.release({
+            projectId,
+            analysisId: `lifecycle-${runIds[1]}`,
+            claimantId: "analyst-a",
+            id: `release-${batchId}`,
+            reason: "取消",
+            releasedAt: archive.archivedAt,
+          }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT" });
+      } finally {
+        await harness.dispose();
+      }
+    });
+
+    it("serializes closing against a concurrent conclusion without losing analysis work", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, runIds } = harness;
+      const scope = { projectId, projectVersionId, batchId };
+      const analysisId = `lifecycle-${runIds[0]}`;
+      try {
+        await repository.startBatch({
+          ...scope,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        });
+        await repository.claim(lifecycleClaim(harness, runIds[0]));
+        const [completion, closure] = await Promise.allSettled([
+          repository.complete({
+            projectId,
+            analysisIds: [analysisId],
+            claimantId: "analyst-a",
+            category: "code_issue_filed",
+            ticketReference: "BUG-RACE",
+            issueDescription: "并发保存",
+            completedAt: "2026-09-01T02:00:00.000Z",
+            rerunProofs: new Map(),
+          }),
+          repository.closeBatch(scope),
+        ]);
+        if (completion.status === "fulfilled") {
+          expect(closure.status).toBe("rejected");
+          expect((await repository.getClaim(analysisId, projectId))?.ticketReference).toBe(
+            "BUG-RACE",
+          );
+          expect((await repository.getBatch(scope))?.progressStartedAt).toBeTruthy();
+        } else {
+          expect(closure).toMatchObject({ status: "fulfilled", value: true });
+          expect(await repository.getClaim(analysisId, projectId)).toBeNull();
+          expect(await repository.getBatch(scope)).toBeNull();
+        }
+      } finally {
+        await harness.dispose();
+      }
+    });
+
+    it("treats uploaded evidence as progress and preserves it after archiving", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, runIds } = harness;
+      const scope = { projectId, projectVersionId, batchId };
+      const analysisId = `lifecycle-${runIds[0]}`;
+      try {
+        await repository.startBatch({
+          ...scope,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        });
+        await repository.claim(lifecycleClaim(harness, runIds[0]));
+        const screenshot = {
+          objectKey: "proof/test.png",
+          fileName: "test.png",
+          mediaType: "image/png" as const,
+          sizeBytes: 10,
+          sha256: "a".repeat(64),
+        };
+        await repository.attachScreenshot({
+          projectId,
+          analysisIds: [analysisId],
+          claimantId: "analyst-a",
+          screenshot,
+          updatedAt: "2026-09-01T02:00:00.000Z",
+        });
+        await expect(repository.closeBatch(scope)).rejects.toMatchObject({
+          code: "FAILURE_ANALYSIS_HAS_PROGRESS_CONFLICT",
+        });
+        await repository.archiveBatch({
+          ...scope,
+          archivedBy: "admin",
+          archivedAt: "2026-09-01T03:00:00.000Z",
+        });
+        await expect(
+          repository.attachScreenshot({
+            projectId,
+            analysisIds: [analysisId],
+            claimantId: "analyst-a",
+            screenshot: { ...screenshot, objectKey: "replacement.png" },
+            updatedAt: "2026-09-01T04:00:00.000Z",
+          }),
+        ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT" });
+        expect((await repository.getClaim(analysisId, projectId))?.screenshot).toEqual(screenshot);
+      } finally {
+        await harness.dispose();
+      }
+    });
+
+    it("does not erase analysis progress when its last in-progress claim is released", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, runIds } = harness;
+      const scope = { projectId, projectVersionId, batchId };
+      const analysisId = `lifecycle-${runIds[0]}`;
+      try {
+        await repository.startBatch({
+          ...scope,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        });
+        await repository.claim(lifecycleClaim(harness, runIds[0]));
+        await repository.start({
+          projectId,
+          analysisId,
+          claimantId: "analyst-a",
+          category: "case_fixed",
+          startedAt: "2026-09-01T02:00:00.000Z",
+        });
+        await repository.release({
+          projectId,
+          analysisId,
+          claimantId: "analyst-a",
+          id: `release-${batchId}`,
+          reason: "转交",
+          releasedAt: "2026-09-01T03:00:00.000Z",
+        });
+        await expect(repository.closeBatch(scope)).rejects.toMatchObject({
+          code: "FAILURE_ANALYSIS_HAS_PROGRESS_CONFLICT",
+        });
+        await expect(
+          repository.archiveBatch({
+            ...scope,
+            archivedBy: "admin",
+            archivedAt: "2026-09-01T04:00:00.000Z",
+          }),
+        ).resolves.toBe(true);
+        expect(await harness.readClaimReleaseReason(analysisId)).toBe("转交");
+      } finally {
+        await harness.dispose();
+      }
+    });
+
+    it("serializes archiving against an in-flight completion and preserves the final snapshot", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, runIds } = harness;
+      const scope = { projectId, projectVersionId, batchId };
+      const analysisId = `lifecycle-${runIds[0]}`;
+      try {
+        await repository.startBatch({
+          ...scope,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        });
+        await repository.claim(lifecycleClaim(harness, runIds[0]));
+        await repository.start({
+          projectId,
+          analysisId,
+          claimantId: "analyst-a",
+          category: "code_issue_filed",
+          startedAt: "2026-09-01T02:00:00.000Z",
+        });
+        const [archive, completion] = await Promise.allSettled([
+          repository.archiveBatch({
+            ...scope,
+            archivedBy: "admin",
+            archivedAt: "2026-09-01T03:00:00.000Z",
+          }),
+          repository.complete({
+            projectId,
+            analysisIds: [analysisId],
+            claimantId: "analyst-a",
+            category: "code_issue_filed",
+            ticketReference: "BUG-RACE",
+            issueDescription: "并发保存",
+            completedAt: "2026-09-01T03:00:00.000Z",
+            rerunProofs: new Map(),
+          }),
+        ]);
+        expect(archive).toMatchObject({ status: "fulfilled", value: true });
+        const claim = await repository.getClaim(analysisId, projectId);
+        expect(claim?.status).toBe(completion.status === "fulfilled" ? "completed" : "analyzing");
+        if (completion.status === "rejected")
+          expect(completion.reason).toMatchObject({ code: "FAILURE_ANALYSIS_ARCHIVED_CONFLICT" });
+        expect((await repository.getBatch(scope))?.archivedAt).toBeTruthy();
+      } finally {
+        await harness.dispose();
+      }
+    });
+
     it("only exposes explicitly started analyses and starts each batch once", async () => {
       const harness = await createHarness();
       const { repository, projectId, projectVersionId, batchId, activeBatchId } = harness;
@@ -771,4 +1098,18 @@ export function failureAnalysisContract(
       }
     });
   });
+}
+
+function lifecycleClaim(harness: FailureAnalysisHarness, executionRunId: string) {
+  return {
+    projectId: harness.projectId,
+    projectVersionId: harness.projectVersionId,
+    batchId: harness.batchId,
+    executionRunIds: [executionRunId],
+    claims: [{ id: `lifecycle-${executionRunId}`, executionRunId }],
+    claimantId: "analyst-a",
+    claimantUsername: "analyst-a",
+    claimantDisplayName: "分析员",
+    claimedAt: "2026-09-01T01:00:00.000Z",
+  };
 }

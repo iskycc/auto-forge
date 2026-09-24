@@ -1626,12 +1626,15 @@ function RoundCasesTable({
             )}
           >
             <colgroup>
+              {/* Read-only actions are narrower; give the case name the remaining space. */}
               <col style={batch.accessToken ? undefined : { width: `${columnWidths.case}ch` }} />
               {showRoundColumn ? <col className={"case-column-round"} /> : null}
-              <col style={batch.accessToken ? undefined : { width: `${columnWidths.status}ch` }} />
-              <col style={batch.accessToken ? undefined : { width: `${columnWidths.runner}ch` }} />
+              <col style={{ width: batch.accessToken ? "20%" : `${columnWidths.status}ch` }} />
+              <col style={{ width: batch.accessToken ? "18%" : `${columnWidths.runner}ch` }} />
               <col className={"case-column-duration"} />
-              <col className={"case-column-actions"} />
+              <col
+                className={cn("case-column-actions", batch.accessToken ? "w-48" : "w-[17rem]")}
+              />
             </colgroup>
             <TableHeader>
               <TableRow>
@@ -2460,9 +2463,9 @@ const runBatchRoundsStyles = {
   "batch-status-neutral": "bg-muted text-muted-foreground",
   "batch-status-succeeded": "bg-success/10 text-success",
   "execution-case-heading":
-    "flex min-w-0 items-center gap-[7px] [&_>_strong]:min-w-0 [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal",
+    "flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 [&_>_strong]:min-w-0 [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal",
   "execution-case-table":
-    "min-w-[760px] [table-layout:fixed] [&_.case-column-round]:w-19.5 [&_.case-column-duration]:w-19 [&_.case-column-actions]:w-[17rem] [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
+    "min-w-[760px] [table-layout:fixed] [&_.case-column-round]:w-19.5 [&_.case-column-duration]:w-19 [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
   "execution-case-type":
     "[flex:0_0_auto] rounded-full py-0.5 px-[7px] bg-info/10 text-info text-xs font-semibold [&.ddt]:bg-info/10 [&.ddt]:text-info",
   "execution-round-table":

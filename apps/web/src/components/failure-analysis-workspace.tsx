@@ -1062,7 +1062,7 @@ export function FailureAnalysisWorkspace({
                                   )}
                                 >
                                   <Button
-                                    disabled={!canManage}
+                                    disabled={!canManage && claim.status !== "completed"}
                                     onClick={() => setDialogClaims([claim])}
                                     size="compact"
                                     type="button"

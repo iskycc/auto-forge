@@ -41,6 +41,7 @@ export default async function FailureAnalysisStatisticsPage({
   if (!hierarchy.projectVersionId) notFound();
   const batchProjection = await services.readModels.read({
     kind: "analysis_batch",
+    lifecycleVersion: 2,
     projectId,
     projectVersionId: hierarchy.projectVersionId,
     batchId,

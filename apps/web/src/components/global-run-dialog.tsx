@@ -843,6 +843,7 @@ export function GlobalRunDialog({
                   >
                     <Segmented
                       label="开始方式"
+                      block
                       value={startMode}
                       onChange={setStartMode}
                       options={[
@@ -1172,7 +1173,6 @@ const globalRunDialogStyles = {
   "single-ddt-run-selection": "grid gap-2 [overflow-wrap:anywhere] [&_p]:m-0",
   "single-run-advanced":
     "mt-[13px] border border-solid border-border rounded-lg [padding:0_13px_13px] bg-muted",
-  "start-mode-control": "grid-cols-2",
   "start-mode-layout":
     "grid grid-cols-[210px_minmax(0,_1fr)] items-start gap-3.5 max-[1181px]:grid-cols-[1fr]",
 } as const;

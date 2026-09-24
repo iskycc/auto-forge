@@ -101,9 +101,10 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
   }),
   page.extend({
     kind: z.literal("analysis_batches"),
-    view: z.enum(["started", "available"]).default("started"),
+    lifecycleVersion: z.literal(2).optional(),
+    view: z.enum(["started", "available", "archived"]).default("started"),
   }),
-  batch.extend({ kind: z.literal("analysis_batch") }),
+  batch.extend({ kind: z.literal("analysis_batch"), lifecycleVersion: z.literal(2).optional() }),
   batch.extend({
     kind: z.literal("analysis_statistics"),
     cursor: z.string().max(1024).optional(),

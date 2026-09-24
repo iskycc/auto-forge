@@ -48,7 +48,7 @@ export function RunBatchDetailHero({
           runBatchDetailHeroStyles["execution-detail-hero"],
         )}
       >
-        <div>
+        <div className="min-w-0 flex-1">
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Execution Batch</span>
           <h1>{suiteName}</h1>
           <p title={batchId}>
@@ -71,7 +71,7 @@ export function RunBatchDetailHero({
 const runBatchDetailHeroStyles = {
   "back-link":
     "text-muted-foreground font-semibold inline-flex items-center gap-1.5 mb-[5px] text-sm w-fit [&:hover]:[text-decoration:underline]",
-  "execution-detail-hero": "[&_p]:[overflow-wrap:anywhere]",
+  "execution-detail-hero": "[&_h1]:[overflow-wrap:anywhere] [&_p]:[overflow-wrap:anywhere]",
   "hero-icon":
     "inline-flex items-center gap-2 border border-solid border-border rounded-lg p-0 bg-card text-muted-foreground text-xs font-semibold shadow-xs w-12 h-12 justify-center [&.violet]:bg-muted [&.violet]:text-info",
   "shared-run-detail-notice":

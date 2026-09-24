@@ -1,3 +1,30 @@
+import { DomainError } from "./errors";
+
+export function requireActiveFailureAnalysisBatch(archivedAt: string | null | undefined): void {
+  if (archivedAt)
+    throw new DomainError(
+      "FAILURE_ANALYSIS_ARCHIVED_CONFLICT",
+      "该分析任务已归档，仅支持查看，不能继续修改。",
+    );
+}
+
+export function requireFailureAnalysisBatchTransition(
+  action: "close" | "archive",
+  lifecycle: { progressStartedAt: string | null; archivedAt: string | null },
+): void {
+  requireActiveFailureAnalysisBatch(lifecycle.archivedAt);
+  if (action === "close" && lifecycle.progressStartedAt)
+    throw new DomainError(
+      "FAILURE_ANALYSIS_HAS_PROGRESS_CONFLICT",
+      "该任务已有分析进展，不能关闭，请使用归档。",
+    );
+  if (action === "archive" && !lifecycle.progressStartedAt)
+    throw new DomainError(
+      "FAILURE_ANALYSIS_NO_PROGRESS_CONFLICT",
+      "该任务尚无分析进展，请使用关闭分析任务。",
+    );
+}
+
 export const failureAnalysisCategories = [
   "rerun_passed",
   "case_fixed",

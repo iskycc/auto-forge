@@ -1739,6 +1739,19 @@ export type RunBatchListPage = {
 };
 
 export interface FailureAnalysisRepository {
+  closeBatch(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+  }): Promise<boolean>;
+  archiveBatch(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+    archivedAt: string;
+    archivedBy: string;
+  }): Promise<boolean>;
+
   listPreviousExecutions(input: {
     projectId: string;
     batchId: string;
@@ -1757,7 +1770,14 @@ export interface FailureAnalysisRepository {
   readBatchProgress(
     projectId: string,
     batchId: string,
-  ): Promise<{ claimedRuns: number; completedRuns: number }>;
+  ): Promise<{
+    claimedRuns: number;
+    completedRuns: number;
+    exists: boolean;
+    progressStartedAt?: string;
+    archivedAt?: string;
+    archivedBy?: string;
+  }>;
   startBatch(input: {
     projectId: string;
     projectVersionId: string;
@@ -1775,7 +1795,7 @@ export interface FailureAnalysisRepository {
   }): Promise<FailureAnalysisStatisticsPage>;
   listBatches(input: {
     projectId: string;
-    view?: "started" | "available";
+    view?: "started" | "available" | "archived";
     projectVersionId?: string;
     cursor?: string;
     limit: number;

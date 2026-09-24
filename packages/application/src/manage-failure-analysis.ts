@@ -66,7 +66,7 @@ export class FailureAnalysisService {
 
   listBatches(input: {
     projectId: string;
-    view?: "started" | "available";
+    view?: "started" | "available" | "archived";
     projectVersionId?: string;
     cursor?: string;
     limit?: number;
@@ -122,6 +122,19 @@ export class FailureAnalysisService {
 
   getBatch(input: { projectId: string; projectVersionId: string; batchId: string }) {
     return this.repository.getBatch(input);
+  }
+
+  closeBatch(input: { projectId: string; projectVersionId: string; batchId: string }) {
+    return this.repository.closeBatch(input);
+  }
+
+  archiveBatch(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+    archivedBy: string;
+  }) {
+    return this.repository.archiveBatch({ ...input, archivedAt: this.clock.now().toISOString() });
   }
 
   async startBatch(input: {

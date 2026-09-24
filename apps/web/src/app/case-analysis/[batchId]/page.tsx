@@ -56,6 +56,7 @@ export default async function CaseAnalysisDetailPage({
   } as const;
   const projection = await services.readModels.read({
     kind: "analysis_batch",
+    lifecycleVersion: 2,
     projectId,
     projectVersionId: hierarchy.projectVersionId,
     batchId,
@@ -72,6 +73,7 @@ export default async function CaseAnalysisDetailPage({
     }),
     services.failureAnalysis.readBatchProgress(projectId, batchId),
   ]);
+  if (!progress.exists) notFound();
   const initialView = requestedView ?? (initialMyClaimCount > 0 ? "workbench" : "claim");
   const [initialCandidatePage, initialClaimPage] = await Promise.all([
     initialView === "claim"
@@ -105,9 +107,9 @@ export default async function CaseAnalysisDetailPage({
     <FailureAnalysisDetail
       batch={{ ...batch, ...progress }}
       currentUserId={identity.user.id}
-      canAssign={hasPermission(identity, "analysis.assign", projectId)}
+      canAssign={!progress.archivedAt && hasPermission(identity, "analysis.assign", projectId)}
       canReadStatistics={hasPermission(identity, "audit.read", projectId)}
-      canManage={hasPermission(identity, "analysis.manage", projectId)}
+      canManage={!progress.archivedAt && hasPermission(identity, "analysis.manage", projectId)}
       initialCandidatePage={initialCandidatePage}
       initialClaimPage={
         initialClaimPage

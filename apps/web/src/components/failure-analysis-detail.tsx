@@ -1,4 +1,5 @@
 "use client";
+import { Alert, Tag } from "antd";
 import { LinkButton } from "@/components/ui/link-button";
 
 import { cn } from "@/lib/utils";
@@ -66,14 +67,15 @@ export function FailureAnalysisDetail({
         >
           <Link
             className={cn("text-link", failureAnalysisDetailStyles["text-link"])}
-            href="/case-analysis"
+            href={batch.archivedAt ? "/case-analysis?view=archived" : "/case-analysis"}
           >
-            <ArrowLeft size={14} /> 返回分析任务
+            <ArrowLeft size={14} /> {batch.archivedAt ? "返回已归档任务" : "返回分析任务"}
           </Link>
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>
             Failure Analysis · #{batch.sequenceNumber}
           </span>
           <h1>{batch.suiteName}</h1>
+          {batch.archivedAt ? <Tag className="m-0 w-fit">已归档 · 只读</Tag> : null}
           <div
             className={cn(
               "failure-analysis-detail-metrics",
@@ -123,6 +125,14 @@ export function FailureAnalysisDetail({
           </span>
         </div>
       </section>
+      {batch.archivedAt ? (
+        <Alert
+          showIcon
+          type="info"
+          title="该分析任务已归档"
+          description="分析结论和证明材料已保留，可查看历史、分析统计及导出；不再接受认领、分配或修改。"
+        />
+      ) : null}
       <FailureAnalysisWorkspace
         canManage={canManage}
         canAssign={canAssign}

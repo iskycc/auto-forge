@@ -1,10 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { zipSync } from "fflate";
+import { DatabaseSync } from "node:sqlite";
+import { unzipSync, zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
+import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
 import {
@@ -51,6 +53,268 @@ const primaryRoutes = [
   "/settings/platform?section=storage",
   "/account/security",
 ] as const;
+
+test("anonymous execution details keep tables and actions within the page", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("shared-layout");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix, {
+    caseNameSuffix: "支付订单_跨版本回归_".repeat(8),
+    classNamePrefix: "com.autoforge.regression.payment.integration",
+  });
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    database
+      .prepare("UPDATE run_batches SET scheduled_for = created_at, suite_name = ? WHERE id = ?")
+      .run(`支付回归_${"PaymentRegression".repeat(10)}`, fixture.batchId);
+    database
+      .prepare(
+        `UPDATE run_attempts SET started_at = created_at, duration_ms = 1500, testng_result_json = ?
+      WHERE id = ?`,
+      )
+      .run(
+        JSON.stringify({
+          total: 1,
+          passed: 0,
+          failed: 1,
+          skipped: 0,
+          configurationFailures: 0,
+          detailsTruncated: true,
+          suites: [],
+        }),
+        `attempt-run-failed-0-${suffix}`,
+      );
+  } finally {
+    database.close();
+  }
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${fixture.batchId}/share`,
+    {
+      method: "POST",
+    },
+  );
+  expect(share.status).toBe(200);
+  const context = await browser.newContext();
+  try {
+    const anonymousPage = await context.newPage();
+    await anonymousPage.goto(share.body.shareUrl);
+    await expect(anonymousPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+    await expect(anonymousPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await anonymousPage.setViewportSize(viewport);
+      await waitForUiTransitions(anonymousPage);
+      await captureUi(anonymousPage, "shared-execution-details", viewport.width);
+      const columnWidths = await anonymousPage
+        .locator(".execution-case-table tbody tr")
+        .first()
+        .locator("td")
+        .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+      expect(
+        columnWidths[0],
+        "case content must have more space than read-only actions",
+      ).toBeGreaterThan(columnWidths.at(-1)!);
+      await expectUiIntegrity(anonymousPage);
+      const actions = anonymousPage.locator(".round-row-actions").first();
+      await expect(actions.getByRole("button", { name: "详情", exact: true })).toBeVisible();
+      expect(
+        await actions.evaluate((element) => element.scrollWidth - element.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      await actions.getByRole("button", { name: "详情", exact: true }).click();
+      await expect(anonymousPage.locator(".testng-results")).toBeVisible();
+      await expectUiIntegrity(anonymousPage);
+      await captureUi(anonymousPage, "shared-execution-expanded", viewport.width);
+      await actions.getByRole("button", { name: "详情", exact: true }).click();
+      await anonymousPage.getByRole("button", { name: "全部轮次", exact: true }).click();
+      await expect(
+        anonymousPage
+          .locator(".execution-case-table")
+          .getByRole("columnheader", { name: "轮次", exact: true }),
+      ).toBeVisible();
+      await expectUiIntegrity(anonymousPage);
+      await captureUi(anonymousPage, "shared-execution-all-rounds", viewport.width);
+      await anonymousPage.getByRole("button", { name: "初始轮次", exact: true }).click();
+    }
+    await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await waitForUiTransitions(anonymousPage);
+    await expectUiIntegrity(anonymousPage);
+    await captureUi(anonymousPage, "shared-execution-dark", 1536);
+    await anonymousPage.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
+    await expect(anonymousPage.locator(".runner-card")).toHaveCount(1);
+    await expectUiIntegrity(anonymousPage);
+    await anonymousPage.locator(".round-tab-toolbar").getByText("用例", { exact: true }).click();
+    const publicLog = anonymousPage
+      .getByRole("link", { name: "查看公开日志", exact: true })
+      .first();
+    await publicLog.click();
+    await expect(anonymousPage).toHaveURL(/\/share\/run\/[^/]+\/attempt\//);
+    await expect(anonymousPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+    await page.goto(share.body.shareUrl);
+    await expect(page).toHaveURL(`/run-batches/${fixture.batchId}`);
+    await expect(page.getByRole("heading", { name: /^支付回归_/ })).toBeVisible();
+    await expectUiIntegrity(page);
+  } finally {
+    await context.close();
+  }
+});
+
+test("execution export dialog keeps choices readable and downloads the selected results", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("export-layout");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  await page.goto(`/run-batches/${fixture.batchId}?round=1`);
+  await page.getByRole("button", { name: "导出结果", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("radio", { name: /^当前轮次/ })).toBeChecked();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await waitForUiTransitions(page);
+    await page.screenshot({ path: test.info().outputPath(`export-results-${viewport.width}.png`) });
+    await expectUiIntegrity(page);
+    await expect(dialog.getByRole("button", { name: "导出 Excel", exact: true })).toBeInViewport({
+      ratio: 1,
+    });
+    for (const choice of await dialog
+      .locator('input[type="radio"], input[type="checkbox"]')
+      .all()) {
+      await expect(choice).toBeInViewport({ ratio: 1 });
+    }
+  }
+
+  await dialog.getByRole("checkbox", { name: "失败", exact: true }).uncheck();
+  await dialog.getByRole("checkbox", { name: "阻塞（异常结束）", exact: true }).uncheck();
+  await expect(dialog.getByRole("button", { name: "导出 Excel", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("status")).toContainText("请至少选择一种结果类型");
+  await dialog.getByRole("checkbox", { name: "成功", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "失败", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "阻塞（异常结束）", exact: true }).check();
+
+  const exportPath = `/api/v1/run-batches/${fixture.batchId}/export`;
+  await page.route(
+    `**${exportPath}?*`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "导出暂时繁忙，请稍后重试。",
+            requestId: "export-layout",
+          },
+        },
+      }),
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "导出 Excel", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("导出暂时繁忙");
+  await expect(dialog.getByRole("button", { name: "导出 Excel", exact: true })).toBeEnabled();
+  await page.setViewportSize({ width: 1024, height: 560 });
+  await waitForUiTransitions(page);
+  await expect(dialog.getByRole("button", { name: "导出 Excel", exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+  await page.screenshot({ path: test.info().outputPath("export-error-short-desktop.png") });
+  const [standardDownload, standardResponse] = await Promise.all([
+    page.waitForEvent("download"),
+    page.waitForResponse((response) => new URL(response.url()).pathname === exportPath),
+    dialog.getByRole("button", { name: "导出 Excel", exact: true }).click(),
+  ]);
+  expect(standardResponse.status()).toBe(200);
+  const standardQuery = new URL(standardResponse.url()).searchParams;
+  expect(Object.fromEntries(standardQuery)).toMatchObject({
+    template: "results",
+    scope: "round",
+    round: "1",
+    outcomes: "succeeded,failed,blocked",
+  });
+  const standardStrings = new TextDecoder().decode(
+    unzipSync(await readFile((await standardDownload.path())!))["xl/sharedStrings.xml"],
+  );
+  expect(standardStrings).toContain(fixture.passedName);
+  expect(standardStrings).toContain(fixture.failedNames[0]);
+  await expect(dialog).not.toBeVisible();
+
+  await page.setViewportSize({ width: 1536, height: 960 });
+  await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+  await expect(page).toHaveURL(/round=all/);
+  await expect(page.locator(".round-cases")).toBeVisible();
+  await page.getByRole("button", { name: "导出结果", exact: true }).click();
+  await expect(dialog.getByRole("radio", { name: /^全部轮次/ })).toBeChecked();
+  await expect(dialog.getByRole("radio", { name: /^当前轮次/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole("button", { name: "总结", exact: true }).click();
+  await expect(page).toHaveURL(/round=summary/);
+  await page.getByRole("button", { name: "导出结果", exact: true }).click();
+  await expect(dialog.getByRole("radio", { name: /^最终结果/ })).toBeChecked();
+  // Clicking the description must select the entire Ant Design radio card.
+  await dialog
+    .getByText("仅包含失败或异常结束的用例，附带可填写的分析字段", { exact: true })
+    .click();
+  await expect(dialog.getByRole("radio", { name: /^失败用例分析清单/ })).toBeChecked();
+  await expect(dialog.getByRole("checkbox")).toHaveCount(0);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await waitForUiTransitions(page);
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: test.info().outputPath(`export-analysis-${width}.png`) });
+  }
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "导出结果", exact: true }).click();
+  await waitForUiTransitions(page);
+  await page.screenshot({ path: test.info().outputPath("export-results-dark-1536.png") });
+  await dialog.getByRole("radio", { name: /^失败用例分析清单/ }).check();
+  const [analysisDownload, analysisResponse] = await Promise.all([
+    page.waitForEvent("download"),
+    page.waitForResponse((response) => new URL(response.url()).pathname === exportPath),
+    dialog.getByRole("button", { name: "导出分析清单", exact: true }).click(),
+  ]);
+  expect(analysisResponse.status()).toBe(200);
+  expect(new URL(analysisResponse.url()).searchParams.get("scope")).toBe("final");
+  expect(new URL(analysisResponse.url()).searchParams.get("template")).toBe("failure-analysis");
+  const analysisStrings = new TextDecoder().decode(
+    unzipSync(await readFile((await analysisDownload.path())!))["xl/sharedStrings.xml"],
+  );
+  expect(analysisStrings).toContain(fixture.failedNames[0]);
+  expect(analysisStrings).not.toContain(fixture.passedName);
+  await expect(dialog).not.toBeVisible();
+});
 
 test("management actions wait for hydration and respond to the first click", async ({ page }) => {
   await ensureAdministrator(page);
@@ -1209,6 +1473,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
     await expect(dialog.getByLabel("倒计时秒")).toBeVisible();
     await expect(dialog.locator(".delay-start-panel")).toBeInViewport();
     await captureUi(page, "/global-run-dialog-suite", viewport.width, false);
+    await expectStartModeChoicesFit(dialog);
 
     await dialog.getByRole("radio", { name: "单个用例", exact: true }).locator("..").click();
     const adapterToggle = dialog.getByLabel("使用 CoTest TestNG Adapter");
@@ -1221,11 +1486,62 @@ test("global execution dialog covers and centers within the whole viewport", asy
     await expect(adapterToggle).toBeInViewport();
     await expectViewportDialog(backdrop, dialog, viewport);
     await captureUi(page, "/global-run-dialog-single-case", viewport.width, false);
+    await expectStartModeChoicesFit(dialog);
 
     await page.keyboard.press("Escape");
     await expect(backdrop).toHaveCount(0);
   }
+  await page.setViewportSize({ width: 1536, height: 960 });
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "开始执行", exact: true }).click();
+  const darkDialog = page.getByRole("dialog", { name: "开始执行" });
+  await darkDialog.getByRole("radio", { name: "倒计时执行", exact: true }).locator("..").click();
+  await darkDialog.getByRole("button", { name: "10 分钟", exact: true }).click();
+  await expect(darkDialog.getByLabel("倒计时分钟")).toHaveValue("10");
+  await expect(darkDialog.getByLabel("倒计时秒")).toHaveValue("0");
+  await waitForUiTransitions(page);
+  await expectStartModeChoicesFit(darkDialog);
+  await captureUi(page, "/global-run-dialog-countdown-dark", 1536, false);
+  await darkDialog.getByRole("radio", { name: "立即执行", exact: true }).locator("..").click();
+  await expect(darkDialog.locator(".delay-start-panel")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(darkDialog).not.toBeVisible();
 });
+
+async function expectStartModeChoicesFit(dialog: Locator): Promise<void> {
+  const selector = dialog.getByRole("radiogroup", { name: "开始方式", exact: true });
+  const overflow = await selector.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const styles = getComputedStyle(element);
+    const paddingRight = Number.parseFloat(styles.paddingRight);
+    const choices = Array.from(element.querySelectorAll('input[type="radio"]'));
+    return choices.map((choice) => {
+      const label = choice.closest("label")!;
+      const choiceBounds = label.getBoundingClientRect();
+      return {
+        name: label.textContent,
+        left: bounds.left - choiceBounds.left,
+        right: choiceBounds.right - bounds.right,
+        endGap: bounds.right - paddingRight - choiceBounds.right,
+      };
+    });
+  });
+  expect(overflow).toHaveLength(2);
+  expect(
+    overflow.at(-1)!.endGap,
+    "last choice should fill the selector without a trailing background strip",
+  ).toBeLessThanOrEqual(1);
+  for (const choice of overflow) {
+    expect(
+      choice.left,
+      `${choice.name} should fit inside the start-mode selector`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      choice.right,
+      `${choice.name} should fit inside the start-mode selector`,
+    ).toBeLessThanOrEqual(1);
+  }
+}
 
 test("project and user creation stay in centered low-frequency dialogs", async ({ page }) => {
   await ensureAdministrator(page);

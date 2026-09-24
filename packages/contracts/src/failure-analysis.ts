@@ -70,6 +70,10 @@ export const failureAnalysisCandidatePageSchema = z.object({
 });
 
 export const failureAnalysisBatchSchema = z.object({
+  startedAt: z.string().datetime().optional(),
+  progressStartedAt: z.string().datetime().optional(),
+  archivedAt: z.string().datetime().optional(),
+  archivedBy: z.string().min(1).optional(),
   id: z.string().min(1),
   sequenceNumber: z.number().int().positive(),
   suiteName: z.string().min(1),
@@ -94,6 +98,10 @@ export const startFailureAnalysisBatchInputSchema = z.object({
 export const startFailureAnalysisBatchResultSchema = z.object({
   batch: failureAnalysisBatchSchema,
   created: z.boolean(),
+});
+
+export const changeFailureAnalysisBatchInputSchema = startFailureAnalysisBatchInputSchema.extend({
+  action: z.enum(["close", "archive"]),
 });
 
 export const failureAnalysisAssigneePageSchema = z.object({

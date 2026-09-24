@@ -109,6 +109,69 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   );
 }
 
+for (const dialect of ["sqlite", "postgres"] as const) {
+  it.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
+    `${dialect} analysis lifecycle upgrade preserves progress and rolls back atomically`,
+    { timeout: 30_000 },
+    async () => {
+      const database = await legacyDatabase(dialect);
+      const folder = resolve(
+        import.meta.dirname,
+        `../drizzle/${dialect === "sqlite" ? "sqlite" : "postgresql"}`,
+      );
+      const migrationName =
+        dialect === "sqlite"
+          ? "0072_failure_analysis_lifecycle.sql"
+          : "0070_failure_analysis_lifecycle.sql";
+      try {
+        for (const name of (await readdir(folder))
+          .filter((name) => name.endsWith(".sql") && name < migrationName)
+          .sort())
+          await database.execute(await readFile(resolve(folder, name), "utf8"));
+        await seedAnalysis(database, dialect);
+        await database.execute(`INSERT INTO failure_analysis_batches(batch_id,project_id,started_by,started_at) SELECT id,project_id,'admin','2026-09-01T01:00:00.000Z' FROM run_batches;
+          UPDATE failure_analysis_claims SET status='completed',completed_at='2026-09-01T02:00:00.000Z' WHERE id='analysis';`);
+        const migration = await readFile(resolve(folder, migrationName), "utf8");
+        await database.execute("BEGIN");
+        await database.execute(migration);
+        await expect(
+          database.execute("SELECT * FROM intentionally_missing_upgrade_table"),
+        ).rejects.toThrow();
+        await database.execute("ROLLBACK");
+        await expect(
+          database.query("SELECT archived_at FROM failure_analysis_batches"),
+        ).rejects.toThrow();
+        await database.execute("BEGIN");
+        await database.execute(migration);
+        await database.execute("COMMIT");
+        expect(
+          await database.query(
+            "SELECT batch_id,progress_started_at,archived_at,archived_by FROM failure_analysis_batches ORDER BY batch_id",
+          ),
+        ).toEqual([
+          {
+            batch_id: "untouched",
+            progress_started_at: null,
+            archived_at: null,
+            archived_by: null,
+          },
+          {
+            batch_id: "worked",
+            progress_started_at: "2026-09-01T02:00:00.000Z",
+            archived_at: null,
+            archived_by: null,
+          },
+        ]);
+        expect(
+          await database.query("SELECT status FROM failure_analysis_claims WHERE id='analysis'"),
+        ).toEqual([{ status: "completed" }]);
+      } finally {
+        await database.dispose();
+      }
+    },
+  );
+}
+
 async function seedAnalysis(
   database: Awaited<ReturnType<typeof legacyDatabase>>,
   dialect: "sqlite" | "postgres",

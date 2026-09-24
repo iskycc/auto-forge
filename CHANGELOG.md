@@ -4,6 +4,32 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.5 - 2026-09-24
+
+### Changed and fixed
+
+- 用例分析支持关闭尚无分析进展的任务，以及归档已有进展的任务；操作前显示确认弹窗，成功后以右上角横幅反馈。关闭只删除分析入口与未开始的认领，不删除执行记录和日志，并允许重新开始分析。
+- 用例分析增加“已归档”入口，保留历史结论、统计和证明供只读查看；服务端拒绝旧页面对归档任务的写入。关闭、归档与分析提交的并发操作由 SQLite/PostgreSQL 事务保护。
+- 修复执行结果导出弹窗的窄列、右侧空白和底部按钮裁切；统一模板、范围与结果筛选布局，导出失败后保留选项并支持重试。
+- 修复立即执行弹窗中倒计时选项右侧的多余空白，两个开始方式选项均匀填满控件。
+- 修复匿名只读执行详情的列宽失衡和长名称挤压，调整公开日志与详情按钮间距；长任务标题和用例类型可自然换行，页面背景与主题保持一致。
+
+### Database, deployment and compatibility
+
+- 新增 SQLite `0072_failure_analysis_lifecycle.sql` 与 PostgreSQL `0070_failure_analysis_lifecycle.sql`，保存分析进展与归档信息并回填既有进展；旧分析任务默认保持活动状态。升级前备份数据库，Full 所有主平台节点同步升级。
+- 迁移使用事务，失败可修复原因后重新启动；降级须恢复升级前数据库备份，不能只回退旧镜像后继续写入新状态。具体说明见用户手册的分析任务关闭与归档章节。
+- 分析列表与操作契约新增生命周期信息；无新持久部署配置、生产依赖或 Runner/Adapter 协议变更，本次无需更新 Runner。
+- Ant Design 资源继续随双架构离线镜像交付；部署包、Jenkins 插件、SBOM 与签名清单的资产类型不变。截图、测试数据库和本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- 分析业务完成 58 项应用、真实 SQLite/PostgreSQL 契约和迁移回归，覆盖关闭/归档竞争、权限拒绝、既有进展回填和失败回滚；现有分析及新增生命周期的 5 项 Lite E2E 场景通过，最终另行复测关闭后立即重建与归档只读。
+- 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test:e2e:matrix` 通过。
+- 导出弹窗、倒计时布局及匿名详情各自通过 Playwright 回归；真实 Excel 内容、失败重试、轮次切换、公开日志入口及已登录跳转均已验证。相关单元测试、Web 生产构建和类型检查通过。
+- 实际查看 1024×768、1536×960 明暗主题截图，覆盖长名称、归档列表与详情、确认/导出弹窗和匿名执行详情；导出弹窗另检查 1024×560 矮桌面。
+- 10 万条分析记录性能回归通过；PostgreSQL 首次在受限资源容器中未达到既有延迟门槛，解除 CPU 限制并停止并行构建后复测通过，未放宽门槛，不代表低资源部署的时延保证。
+- 完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.4 - 2026-09-24
 
 ### Changed and fixed

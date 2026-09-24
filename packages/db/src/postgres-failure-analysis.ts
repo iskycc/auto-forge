@@ -1,3 +1,17 @@
+import {
+  closePostgresAnalysisBatch,
+  archivePostgresAnalysisBatch,
+  lockWritablePostgresAnalysisBatch,
+  lockWritablePostgresAnalysisClaims,
+  markPostgresAnalysisProgress,
+} from "./postgres-failure-analysis-lifecycle";
+import { requireActiveFailureAnalysisBatch } from "@autoforge/domain";
+import {
+  analysisBatchVisibilitySql,
+  analysisLifecycleColumns,
+  analysisLifecycleView,
+  type FailureAnalysisBatchLifecycle,
+} from "./failure-analysis-lifecycle";
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { FailureAnalysisRepository } from "@autoforge/application";
 import type {
@@ -42,7 +56,7 @@ import {
   type FailureAnalysisRecentSuccessRow,
 } from "./failure-analysis-executions";
 
-type BatchRow = {
+type BatchRow = FailureAnalysisBatchLifecycle & {
   id: string;
   sequenceNumber: number;
   suiteName: string;
@@ -94,9 +108,18 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     return result.rows.map(toFailureAnalysisRecentSuccess);
   }
 
+  closeBatch(input: Parameters<FailureAnalysisRepository["closeBatch"]>[0]) {
+    return closePostgresAnalysisBatch(this.handle, input);
+  }
+
+  archiveBatch(input: Parameters<FailureAnalysisRepository["archiveBatch"]>[0]) {
+    return archivePostgresAnalysisBatch(this.handle, input);
+  }
+
   async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {
     const batch = await this.readBatch(input, "eligible");
     if (!batch || batch.failedRuns === 0) return null;
+    requireActiveFailureAnalysisBatch(batch.archivedAt);
     // A terminal execution is immutable. The unique batch key makes concurrent starts idempotent.
     const inserted = await retryPostgresWrite(() =>
       this.handle.pool.query(
@@ -170,7 +193,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async listBatches(input: {
     projectId: string;
-    view?: "started" | "available";
+    view?: "started" | "available" | "archived";
     projectVersionId?: string;
     cursor?: string;
     limit: number;
@@ -182,7 +205,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       "batch.project_id=$1",
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
-      ` ${input.view === "available" ? "NOT " : ""}EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)`,
+      analysisBatchVisibilitySql(input.view),
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       `EXISTS (SELECT 1 FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
@@ -221,8 +244,8 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
                WHERE claim.batch_id=batch.id) AS "claimedRuns",
               (SELECT COUNT(*) FROM failure_analysis_claims claim
                WHERE claim.batch_id=batch.id AND claim.status='completed') AS "completedRuns",
-              batch.created_at AS "createdAt"
-       FROM run_batches batch WHERE ${where.join(" AND ")}
+              batch.created_at AS "createdAt", ${analysisLifecycleColumns}
+       FROM run_batches batch LEFT JOIN failure_analysis_batches analysis ON analysis.batch_id=batch.id WHERE ${where.join(" AND ")}
        ORDER BY batch.created_at DESC,batch.id DESC LIMIT $${parameters.length}`,
       parameters,
     );
@@ -240,14 +263,24 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async readBatchProgress(projectId: string, batchId: string) {
     await this.handle.ready;
-    const result = await this.handle.pool.query<{ claimedRuns: string; completedRuns: string }>(
-      `SELECT COUNT(*) AS "claimedRuns",COUNT(*) FILTER (WHERE status='completed') AS "completedRuns" FROM failure_analysis_claims WHERE project_id=$1 AND batch_id=$2`,
+    const result = await this.handle.pool.query<
+      FailureAnalysisBatchLifecycle & { claimedRuns: string; completedRuns: string }
+    >(
+      `SELECT ${analysisLifecycleColumns},
+      (SELECT COUNT(*) FROM failure_analysis_claims WHERE batch_id=analysis.batch_id) AS "claimedRuns",
+      (SELECT COUNT(*) FROM failure_analysis_claims WHERE batch_id=analysis.batch_id AND status='completed') AS "completedRuns"
+      FROM failure_analysis_batches analysis WHERE project_id=$1 AND batch_id=$2`,
       [projectId, batchId],
     );
-    return {
-      claimedRuns: Number(result.rows[0]!.claimedRuns),
-      completedRuns: Number(result.rows[0]!.completedRuns),
-    };
+    const row = result.rows[0];
+    return row
+      ? {
+          exists: true,
+          claimedRuns: Number(row.claimedRuns),
+          completedRuns: Number(row.completedRuns),
+          ...analysisLifecycleView(row),
+        }
+      : { exists: false, claimedRuns: 0, completedRuns: 0 };
   }
 
   async getBatch(input: Parameters<FailureAnalysisRepository["getBatch"]>[0]) {
@@ -275,8 +308,8 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
                WHERE claim.batch_id=batch.id) AS "claimedRuns",
               (SELECT COUNT(*) FROM failure_analysis_claims claim
                WHERE claim.batch_id=batch.id AND claim.status='completed') AS "completedRuns",
-              batch.created_at AS "createdAt"
-       FROM run_batches batch
+              batch.created_at AS "createdAt", ${analysisLifecycleColumns}
+       FROM run_batches batch LEFT JOIN failure_analysis_batches analysis ON analysis.batch_id=batch.id
        WHERE batch.id=$1 AND batch.project_id=$2
          AND batch.policy_json::jsonb ->> 'projectVersionId'=$3
          AND batch.status IN ('succeeded','failed','cancelled')
@@ -403,6 +436,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
   async claim(input: Parameters<FailureAnalysisRepository["claim"]>[0]) {
     await this.handle.ready;
     return runPostgresTransaction(this.handle, async (client) => {
+      await lockWritablePostgresAnalysisBatch(client, input.projectId, input.batchId);
       await client.query(
         `WITH requested(id,execution_run_id) AS (
            SELECT * FROM UNNEST($4::text[],$5::text[])
@@ -470,6 +504,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
   async release(input: Parameters<FailureAnalysisRepository["release"]>[0]) {
     await this.handle.ready;
     return runPostgresTransaction(this.handle, async (client) => {
+      await lockWritablePostgresAnalysisClaims(client, input.projectId, [input.analysisId]);
       const selected = await client.query<FailureAnalysisRow>(
         `${claimSelectSql()} WHERE claim.id=$1 AND claim.project_id=$2 AND claim.claimant_id=$3
          AND claim.status IN ('claimed','analyzing') FOR UPDATE`,
@@ -800,20 +835,27 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
     await this.handle.ready;
-    const updated = await retryPostgresWrite(() =>
-      this.handle.pool.query(
+    return runPostgresTransaction(this.handle, async (client) => {
+      await lockWritablePostgresAnalysisClaims(client, input.projectId, [input.analysisId]);
+      const updated = await client.query(
         `UPDATE failure_analysis_claims
-       SET status='analyzing',category=$1,analysis_started_at=COALESCE(analysis_started_at,$2),updated_at=$2
-       WHERE id=$3 AND project_id=$4 AND claimant_id=$5 RETURNING id`,
+        SET status='analyzing',category=$1,analysis_started_at=COALESCE(analysis_started_at,$2),updated_at=$2
+        WHERE id=$3 AND project_id=$4 AND claimant_id=$5 RETURNING id`,
         [input.category, input.startedAt, input.analysisId, input.projectId, input.claimantId],
-      ),
-    );
-    if (updated.rowCount === 0) return null;
-    const result = await this.handle.pool.query<FailureAnalysisRow>(
-      `${claimSelectSql()} WHERE claim.id=$1 AND claim.project_id=$2 AND claim.claimant_id=$3`,
-      [input.analysisId, input.projectId, input.claimantId],
-    );
-    return result.rows[0] ? toFailureAnalysisClaim(result.rows[0]) : null;
+      );
+      if (!updated.rowCount) return null;
+      await markPostgresAnalysisProgress(
+        client,
+        input.projectId,
+        [input.analysisId],
+        input.startedAt,
+      );
+      const result = await client.query<FailureAnalysisRow>(
+        `${claimSelectSql()} WHERE claim.id=$1 AND claim.project_id=$2 AND claim.claimant_id=$3`,
+        [input.analysisId, input.projectId, input.claimantId],
+      );
+      return result.rows[0] ? toFailureAnalysisClaim(result.rows[0]) : null;
+    });
   }
 
   async findOwnedClaims(input: Parameters<FailureAnalysisRepository["findOwnedClaims"]>[0]) {
@@ -859,8 +901,9 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async attachScreenshot(input: Parameters<FailureAnalysisRepository["attachScreenshot"]>[0]) {
     await this.handle.ready;
-    await retryPostgresWrite(() =>
-      this.handle.pool.query(
+    return runPostgresTransaction(this.handle, async (client) => {
+      await lockWritablePostgresAnalysisClaims(client, input.projectId, input.analysisIds);
+      const updated = await client.query(
         `UPDATE failure_analysis_claims
        SET screenshot_object_key=$1,screenshot_file_name=$2,screenshot_media_type=$3,
            screenshot_size_bytes=$4,screenshot_sha256=$5,updated_at=$6
@@ -876,15 +919,28 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
           input.claimantId,
           [...input.analysisIds],
         ],
-      ),
-    );
-    return this.findOwnedClaims(input);
+      );
+      requireCompletedAnalysisCount(updated.rowCount ?? 0, input.analysisIds.length);
+      const result = await client.query<FailureAnalysisRow>(
+        `${claimSelectSql()} WHERE claim.project_id=$1 AND claim.claimant_id=$2 AND claim.id=ANY($3::text[])`,
+        [input.projectId, input.claimantId, [...input.analysisIds]],
+      );
+      const claims = result.rows.map(toFailureAnalysisClaim);
+      await markPostgresAnalysisProgress(
+        client,
+        input.projectId,
+        claims.map((claim) => claim.id),
+        input.updatedAt,
+      );
+      return claims;
+    });
   }
 
   async complete(input: Parameters<FailureAnalysisRepository["complete"]>[0]) {
     const remarkImagesJson = serializeRemarkImages(input.remarkImages);
     await this.handle.ready;
     return runPostgresTransaction(this.handle, async (client) => {
+      await lockWritablePostgresAnalysisClaims(client, input.projectId, input.analysisIds);
       const lockedIds = [
         ...input.analysisIds,
         ...(input.inheritedFromAnalysisId ? [input.inheritedFromAnalysisId] : []),
@@ -949,6 +1005,12 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
         ],
       );
       requireCompletedAnalysisCount(updated.rowCount ?? 0, input.analysisIds.length);
+      await markPostgresAnalysisProgress(
+        client,
+        input.projectId,
+        input.analysisIds,
+        input.completedAt,
+      );
       const result = await client.query<FailureAnalysisRow>(
         `${claimSelectSql()} WHERE claim.project_id=$1 AND claim.claimant_id=$2
          AND claim.id=ANY($3::text[])`,
@@ -1059,8 +1121,10 @@ function escapePostgresLike(value: string): string {
 }
 
 function toFailureAnalysisBatch(row: BatchRow) {
+  const { startedAt, progressStartedAt, archivedAt, archivedBy, ...batch } = row;
   return {
-    ...row,
+    ...batch,
+    ...analysisLifecycleView({ startedAt, progressStartedAt, archivedAt, archivedBy }),
     failedRuns: Number(row.failedRuns),
     claimedRuns: Number(row.claimedRuns),
     completedRuns: Number(row.completedRuns),

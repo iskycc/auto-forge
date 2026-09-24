@@ -111,7 +111,6 @@ const pageStyles = {
   "shared-case-page":
     "min-h-screen p-12 bg-card [&_.is-enabled]:text-success [&_.is-muted]:text-muted-foreground max-[1101px]:p-8",
   "shared-case-page-center": "grid place-items-center",
-  "shared-run-detail-page":
-    "min-h-screen p-9 bg-card [&_.execution-case-table]:w-full [&_.execution-case-table]:min-w-0 [&_.execution-case-table_col:first-child]:w-[23%] [&_.execution-case-table_col:nth-last-child(4)]:w-[18%] [&_.execution-case-table_col:nth-last-child(3)]:w-[20%] [&_.execution-case-table_.case-column-duration]:w-[5rem] [&_.execution-case-table_.case-column-actions]:w-40 [&_.round-row-actions]:flex-nowrap [&_.round-row-actions_.compact-button]:gap-[3px] [&_.round-row-actions_.compact-button]:px-1 [&_.round-row-actions_.compact-button]:text-xs [&_.execution-case-table_th:nth-last-child(2)]:[overflow-wrap:normal] [&_.execution-case-table_th:nth-last-child(2)]:whitespace-nowrap [&_.execution-case-table_td:nth-last-child(2)]:[overflow-wrap:normal] [&_.execution-case-table_td:nth-last-child(2)]:whitespace-nowrap max-[1101px]:p-6",
-  "shared-run-detail-shell": "w-[min(1600px,_100%)] my-0 mx-auto",
+  "shared-run-detail-page": "min-h-screen bg-background p-9 max-[1101px]:p-6",
+  "shared-run-detail-shell": "mx-auto my-0 w-full max-w-[1600px]",
 } as const;
