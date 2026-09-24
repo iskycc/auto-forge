@@ -1741,8 +1741,27 @@ test("SR associations restrict candidates and automatically cover imported and m
       ),
     });
     await dialog.getByRole("button", { name: "开始预检" }).click();
+    const confirmation = page.waitForResponse(
+      (response) => response.url().includes("/confirm?") && response.request().method() === "POST",
+    );
     await dialog.getByRole("button", { name: "确认并后台导入" }).click();
-    await expect(page.locator(".ddt-status.succeeded").first()).toBeVisible({ timeout: 30_000 });
+    const response = await confirmation;
+    expect(response.status()).toBe(200);
+    const job = (await response.json()) as { id: string };
+    // This helper imports twice; an older success card must not finish the newer import wait.
+    await expect
+      .poll(
+        async () => {
+          const result = await browserJson<{ status: string }>(
+            page,
+            ddtPath(hierarchy, `imports/${job.id}`),
+          );
+          expect(result.status).toBe(200);
+          return result.body.status;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe("succeeded");
   };
   await importRows(caseIds);
   const rejected = await browserJson<{ error: { code: string } }>(

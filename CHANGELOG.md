@@ -4,6 +4,24 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.9 - 2026-09-24
+
+### Changed and fixed
+
+- 修复 JAR 导入进度验收的网络拦截清理竞态：放行等待中的请求后，等待所有回调处理完成再移除拦截，避免 Playwright 将同一请求继续两次并报 `Route is already handled`；保留真实导入、取消、重试和结果断言。
+- DDT SR 关联验收按本次导入任务 ID 等待完成，避免第二次导入误读上一次的成功状态并提前检查尚未写入的用例；保留新用例自动关联和移动后解除关联的断言。
+- 包含 v1.18.7 的全部 UI 与 JAR 拖拽导入更新，以及 v1.18.8 的密码框尺寸和文件名验收修正。v1.18.8 因该竞态已停止发布，未公开 Release，既有 tag 保留。
+
+### Database, deployment and compatibility
+
+- 本轮补充修正仅涉及测试与发布说明，不改变产品运行逻辑，无数据库迁移、持久配置、API、Runner/Adapter 协议或生产依赖变更；从 v1.18.6 升级只需更新主平台，无需升级 Runner。
+- 双架构离线镜像、部署包、Jenkins 插件、SBOM 与签名清单的资产类型不变；截图、测试数据库和本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- Web 生产构建、测试类型及变更文件格式和 lint 检查通过；JAR 综合导入／执行／登录流程及 DDT SR 自动关联流程分别通过完整 Playwright 定向回归，未启用失败自动重试或降低业务断言。
+- 发布前先完成分支源码 CI，再从不可变版本标签构建。Full 分布式、标签源码检查和已发布资产验收均以对应 GitHub Actions 运行结果为准。
+
 ## 1.18.8 - 2026-09-24
 
 ### Changed and fixed

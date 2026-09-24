@@ -710,7 +710,9 @@ public class MixedVisibleTest {
     await page.getByRole("button", { name: "取消导入" }).click();
   } finally {
     releaseImportProgress();
-    await page.unroute(importProgressRoute, holdImportProgress);
+    // Removing interception before held callbacks finish can auto-continue their
+    // requests, making a later route.continue() fail as already handled.
+    await page.unrouteAll({ behavior: "wait" });
   }
   const retryLargeImport = page.getByRole("button", { name: "幂等重试" });
   await expect
