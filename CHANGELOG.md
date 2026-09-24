@@ -10,6 +10,7 @@ and known limitations.
 
 - 修复 JAR 导入进度验收的网络拦截清理竞态：放行等待中的请求后，等待所有回调处理完成再移除拦截，避免 Playwright 将同一请求继续两次并报 `Route is already handled`；保留真实导入、取消、重试和结果断言。
 - DDT SR 关联验收按本次导入任务 ID 等待完成，避免第二次导入误读上一次的成功状态并提前检查尚未写入的用例；保留新用例自动关联和移动后解除关联的断言。
+- PostgreSQL 历史迁移测试统一使用 30 秒有界预算，补齐仍使用默认 5 秒的场景，避免托管执行器较慢时过早触发清理并中断仍在执行的迁移；迁移 SQL 和数据校验不变。
 - 包含 v1.18.7 的全部 UI 与 JAR 拖拽导入更新，以及 v1.18.8 的密码框尺寸和文件名验收修正。v1.18.8 因该竞态已停止发布，未公开 Release，既有 tag 保留。
 
 ### Database, deployment and compatibility
@@ -20,6 +21,7 @@ and known limitations.
 ### Validation and known limitations
 
 - Web 生产构建、测试类型及变更文件格式和 lint 检查通过；JAR 综合导入／执行／登录流程及 DDT SR 自动关联流程分别通过完整 Playwright 定向回归，未启用失败自动重试或降低业务断言。
+- 17 项 PostgreSQL 迁移集成测试在独立真实数据库中通过，覆盖历史升级、既有状态保留和恢复路径；测试结束后清理专用数据库容器。
 - 发布前先完成分支源码 CI，再从不可变版本标签构建。Full 分布式、标签源码检查和已发布资产验收均以对应 GitHub Actions 运行结果为准。
 
 ## 1.18.8 - 2026-09-24

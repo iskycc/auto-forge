@@ -11,6 +11,7 @@ import { PostgresIdentityAccessRepository } from "../src/postgres-identity-acces
 
 const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const scratchDatabases: string[] = [];
+const postgresMigrationSuite = describe.skipIf(!connectionString);
 
 async function createScratchDatabase(admin: Client): Promise<string> {
   const name = `autoforge_mig_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -31,7 +32,8 @@ function connectionStringFor(database: string): string {
   return url.toString();
 }
 
-describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
+// Historical upgrades replay the growing migration chain, not a single query.
+postgresMigrationSuite("PostgreSQL migrations", { timeout: 30_000 }, () => {
   afterEach(async () => {
     const admin = new Client({ connectionString });
     await admin.connect();
