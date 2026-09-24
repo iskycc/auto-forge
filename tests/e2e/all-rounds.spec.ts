@@ -1565,6 +1565,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(page.getByRole("button", { name: "查看实时日志", exact: true })).toBeVisible({
     timeout: 10_000,
   });
+  const scheduledNotice = page.locator(".toast-viewport").getByRole("status");
+  await expect(scheduledNotice).toContainText("手动执行已经调度");
+  await page.getByRole("button", { name: "关闭通知", exact: true }).last().click();
+  await expect(scheduledNotice).toHaveCount(0);
   await page.getByRole("button", { name: "查看实时日志", exact: true }).click();
   const liveLogDialog = page.getByRole("dialog", { name: /执行日志/ });
   await expect(liveLogDialog).toContainText("返回原日志");

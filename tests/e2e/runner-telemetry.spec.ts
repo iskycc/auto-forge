@@ -5,6 +5,57 @@ import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("Runner terminal initializes after the modal mounts and can reopen", async ({ page }) => {
+  await ensureAdministrator(page);
+  const name = uniqueName("终端初始化节点");
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name,
+      labels: [],
+      capabilities: ["executor:process"],
+      maxConcurrency: 1,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "1.18.2",
+      protocolVersion: 1,
+      terminalEnabled: true,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  await page.route("**/api/v1/terminal-sessions", (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        error: {
+          code: "RUNNER_OFFLINE",
+          message: "测试终端网关暂时不可用，请重试。",
+          requestId: "terminal-mount-e2e",
+        },
+      },
+    }),
+  );
+  await page.goto(`/runners?query=${encodeURIComponent(name)}`);
+  const entry = page.getByRole("button", { name: "终端浮窗", exact: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await entry.click();
+    const dialog = page.getByRole("dialog", { name: `${name} 直连终端` });
+    await expect(dialog.locator(".xterm-screen")).toBeVisible();
+    await dialog.getByRole("button", { name: "连接终端", exact: true }).click();
+    await expect(dialog).toContainText("测试终端网关暂时不可用，请重试。");
+    await expectUiIntegrity(page);
+    const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      await page.screenshot({ path: resolve(directory, `runner-terminal-${width}.png`) });
+    }
+    await dialog.getByRole("button", { name: "关闭终端", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
 // Exercise real heartbeat storage and the read-only dialog, including recovery.
 test("Runner telemetry shows resource samples, handles empty history and retries read errors", async ({
   page,

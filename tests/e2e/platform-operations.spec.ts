@@ -180,6 +180,8 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   });
   await ddtImportFileLimit.fill(originalDdtImportFileLimit);
   await ddtImportZipSpreadsheetLimit.fill(originalDdtImportZipSpreadsheetLimit);
+  await page.getByRole("button", { name: "关闭通知", exact: true }).last().click();
+  await expect(page.getByText(/DDT 导入数量限制已立即生效.*无需重启/)).toHaveCount(0);
   await page.getByRole("button", { name: "保存平台配置" }).click();
   await expect(page.getByText(/DDT 导入数量限制已立即生效.*无需重启/)).toBeVisible();
 

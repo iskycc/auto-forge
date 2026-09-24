@@ -34,7 +34,8 @@ export function RunnerTerminal({
   const [expanded, setExpanded] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("authorization");
   const [error, setError] = useState<string | null>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  const [terminalReady, setTerminalReady] = useState(false);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -49,15 +50,16 @@ export function RunnerTerminal({
         : undefined;
 
   useEffect(() => {
-    if (!open || !viewportRef.current) return;
+    // Ant's portal mounts after the parent effect; initialize against the actual DOM node.
+    if (!open || !viewport) return;
     let disposed = false;
     let resizeObserver: ResizeObserver | undefined;
     let inputDisposable: { dispose(): void } | undefined;
 
-    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]).then(
-      ([{ Terminal: XtermTerminal }, { FitAddon: XtermFitAddon }]) => {
-        if (disposed || !viewportRef.current) return;
-        const tokens = getComputedStyle(viewportRef.current);
+    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
+      .then(([{ Terminal: XtermTerminal }, { FitAddon: XtermFitAddon }]) => {
+        if (disposed) return;
+        const tokens = getComputedStyle(viewport);
         const terminalColor = (name: string) =>
           tokens.getPropertyValue(`--terminal-${name}`).trim();
         const terminal = new XtermTerminal({
@@ -87,7 +89,7 @@ export function RunnerTerminal({
         });
         const fitAddon = new XtermFitAddon();
         terminal.loadAddon(fitAddon);
-        terminal.open(viewportRef.current);
+        terminal.open(viewport);
         fitAddon.fit();
         terminal.writeln("\x1b[38;5;110mAutoForge Runner Terminal\x1b[0m");
         terminal.writeln("终端仅在当前浮窗和 Agent 出站 WebSocket 存活期间保持连接。\r\n");
@@ -114,9 +116,13 @@ export function RunnerTerminal({
             );
           }
         });
-        resizeObserver.observe(viewportRef.current);
-      },
-    );
+        resizeObserver.observe(viewport);
+        setTerminalReady(true);
+      })
+      .catch((caught: unknown) => {
+        if (!disposed)
+          setError(caught instanceof Error ? caught.message : "终端组件加载失败，请关闭后重试。");
+      });
 
     return () => {
       disposed = true;
@@ -127,8 +133,9 @@ export function RunnerTerminal({
       terminalRef.current?.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      setTerminalReady(false);
     };
-  }, [open]);
+  }, [open, viewport]);
 
   async function connect(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -295,7 +302,7 @@ export function RunnerTerminal({
           <div className={cn("terminal-stage", runnerTerminalStyles["terminal-stage"])}>
             <div
               className={cn("terminal-viewport", runnerTerminalStyles["terminal-viewport"])}
-              ref={viewportRef}
+              ref={setViewport}
             />
             {(connectionState === "authorization" || connectionState === "connecting") && (
               <form
@@ -326,14 +333,19 @@ export function RunnerTerminal({
                     uiPatterns["button-primary"],
                   )}
                   type="submit"
-                  disabled={connectionState === "connecting"}
+                  disabled={!terminalReady || connectionState === "connecting"}
+                  loading={!terminalReady && !error}
                 >
                   {connectionState === "connecting" ? (
                     <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
                   ) : (
                     <TerminalSquare size={15} />
                   )}
-                  {connectionState === "connecting" ? "正在连接" : "连接终端"}
+                  {!terminalReady
+                    ? "初始化终端"
+                    : connectionState === "connecting"
+                      ? "正在连接"
+                      : "连接终端"}
                 </Button>
               </form>
             )}

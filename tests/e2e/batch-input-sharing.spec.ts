@@ -394,7 +394,16 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
   await uploadForm.getByLabel("压缩格式").and(uploadForm.locator("select")).selectOption("tar.gz");
   const jdkArchive = requiredEnvironment("E2E_BATCH_SHARE_JDK_ARCHIVE");
   await uploadForm.getByLabel("本地文件").setInputFiles(jdkArchive);
+  // The previous upload toast and the selected filename are already visible.
+  // Wait for this upload to persist before navigating away and aborting its request.
+  const jdkUploaded = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/runtime-assets/upload?kind=jdk&"),
+    { timeout: 120_000 },
+  );
   await uploadForm.getByRole("button", { name: "上传并启用" }).click();
+  expect((await jdkUploaded).status()).toBe(201);
   await expect(page.getByText("运行时资源已上传并设为当前配置。")).toBeVisible({
     timeout: 120_000,
   });

@@ -4,12 +4,13 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 1.18.2 - 2026-09-24
+## 1.18.3 - 2026-09-24
 
 ### Changed and fixed
 
 - 执行节点新增资源监控弹窗，展示近 6 小时的 CPU、内存、负载和执行槽位曲线，以及 Agent 版本、能力与资源信息；支持手动刷新、键盘查看样本、离线提示和读取失败重试，断线时段不补造数据。
 - Runner 直接终端改为交互登录 Shell，读取 `/etc/profile` 及用户登录配置；保留 Agent 凭据环境隔离，不改变普通用例执行环境。
+- 终端初始化跟随弹窗实际挂载，组件就绪前禁用连接，加载失败显示错误；修复弹窗延迟挂载时一直无法连接的问题。
 - SR 测试类关联默认显示未关联需求，可切换为全部；保存分类或关联后保留已加载的 SR 范围，修复“加载更多”被重置的问题。
 - 优化 DDT 分栏：支持侧栏双向拖拽、完整 CaseId 换行、按可用空间最多三列的紧凑字段卡片及统一的“加载更多”按钮；修复新建／复制任务弹窗的按钮与复选框变形。
 - 重新设计控制台、公开首页与浏览器共用的本地 SVG 标志；统一页面、Tab、加载与弹窗动效，支持减少动态效果且不丢失未保存内容。
@@ -31,6 +32,7 @@ and known limitations.
 - 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm test:e2e:matrix` 及 39 项发布脚本测试通过。
 - 使用带数据页面实际查看 1024×768、1536×960 明暗主题截图；最终 Runner／DDT／任务弹窗与公开首页共 30 个页面状态无脚本错误或控件溢出，表格另覆盖 1920px 原生滚动条。
 - 完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+- v1.18.2 构建发现终端初始化回归后已停止，未公开 Release；本版本包含其全部改动。浏览器验收补齐弹窗／下拉退出等待及通知关闭，JDK 上传验收等待本次请求持久化完成，避免提前跳页中断上传。
 
 ## 1.18.1 - 2026-09-24
 

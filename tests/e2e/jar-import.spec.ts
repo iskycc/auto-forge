@@ -819,6 +819,7 @@ public class MixedVisibleTest {
   const dailySuiteHref = await dailySuiteLink.getAttribute("href");
   expect(dailySuiteHref).toBeTruthy();
   const dailySuiteId = new URL(dailySuiteHref!, page.url()).pathname.split("/").at(-1)!;
+  await expect(createSuiteDialog).toHaveCount(0);
   await page.keyboard.press("Control+K");
   const globalSearch = page.getByLabel("全局搜索");
   await expect(globalSearch).toBeFocused();

@@ -86,6 +86,7 @@ test("single and bulk analysis show previous executions and compare real logs wi
   await expect(longLogWindows.first().locator('[data-diff-row="1999"]')).toHaveCount(1);
   await comparison.getByRole("combobox", { name: "对比日志流" }).click();
   await page.getByRole("option", { name: "错误输出" }).click();
+  await expect(page.getByRole("option", { name: "错误输出", exact: true })).toHaveCount(0);
   await expect(comparison).toContainText("两侧均暂无日志");
   await page.keyboard.press("Escape");
   await expect(comparison).toHaveCount(0);
@@ -203,6 +204,7 @@ test("quality insight comparison preserves scroll, can rerun, and compares both 
   const baselineOption = page.getByRole("option", { name: /^#980/u });
   await expect(baselineOption).toBeVisible({ timeout: 10_000 });
   await baselineOption.click();
+  await expect(baselineOption).toHaveCount(0);
   await comparisonCard.getByRole("combobox", { name: "选择对比批次" }).click();
   const candidateOption = page.getByRole("option", { name: /^#991/u });
   await expect(candidateOption).toBeVisible({ timeout: 10_000 });
