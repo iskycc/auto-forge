@@ -132,6 +132,8 @@ for (const dialect of ["sqlite", "postgres"] as const)
 for (const dialect of ["sqlite", "postgres"] as const)
   describe.skipIf(dialect === "postgres" && !postgresUrl)(
     `${dialect} resource history upgrade`,
+    // This covers the entire historical schema plus failed and successful upgrades.
+    { timeout: 30_000 },
     () => {
       it("upgrades an existing runner, rolls back a failed migration and starts with no invented samples", async () => {
         const database = await legacyDatabase(dialect);

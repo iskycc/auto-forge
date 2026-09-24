@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} SR mapping upgrade`,
+    // Replaying historical schemas includes disk I/O for every prior migration.
+    { timeout: 30_000 },
     () => {
       it("preserves uniform and recycled associations, marks ambiguity and rolls back failed upgrades", async () => {
         const database = await legacyDatabase(dialect);
