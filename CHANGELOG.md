@@ -4,6 +4,25 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.8 - 2026-09-24
+
+### Changed and fixed
+
+- 补齐 JAR 综合验收中的 Ant Design 密码框尺寸测量，按包含边框和内边距的实际点击区域检查，保留 32px 最小尺寸要求；原独立检查只测量内部输入元素，导致 Lite 与 Full 验收误报。
+- 执行轮次验收改为检查可见的 JAR 文件名，不再依赖拖拽组件迁移时移除的旧 `.file-summary` 样式类，继续验证文件选择和完整执行轮次结果。
+- 本版本包含 v1.18.7 的 JAR 拖拽导入、共享弹窗操作栏、密码显隐、账号安全表单及任务完成通知布局优化。
+
+### Database, deployment and compatibility
+
+- 相对 v1.18.7 仅调整验收脚本与发布说明，不改变产品运行逻辑，无数据库迁移、持久配置、API、Runner/Adapter 协议或生产依赖变更；更新主平台即可，无需升级 Runner。
+- 双架构离线镜像、部署包、Jenkins 插件、SBOM 与签名清单的资产类型不变；不提交截图、测试数据库或构建产物。
+
+### Validation and known limitations
+
+- v1.18.7 发布后的源码 CI 发现上述两处旧检查未同步更新，本版本修复后重新验收；保留已发布版本和标签，不改写历史 tag。
+- 本地 Web 生产构建、测试类型检查、相关文件格式与 lint 检查通过；完整 JAR 综合场景及全部轮次执行场景各 1 项 Playwright 回归通过，未降低业务断言或控件尺寸要求。
+- Full 基础设施、完整源码质量、双架构构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.7 - 2026-09-24
 
 ### Changed and fixed

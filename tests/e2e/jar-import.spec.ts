@@ -2619,7 +2619,7 @@ async function expectUiConsistency(page: Page): Promise<void> {
       .filter(isVisible)
       .map((element) => {
         const bounds = (
-          element.closest(".ant-select, .ant-picker") ?? element
+          element.closest(".ant-select, .ant-picker, .ant-input-affix-wrapper") ?? element
         ).getBoundingClientRect();
         return {
           element: element.tagName.toLowerCase(),

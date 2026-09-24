@@ -528,7 +528,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),
   });
-  await expect(page.locator(".file-summary")).toContainText("all-rounds-tests.jar");
+  await expect(page.getByText("all-rounds-tests.jar", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText("com.example.AllRoundsStableTest")).toBeVisible({
     timeout: 20_000,
