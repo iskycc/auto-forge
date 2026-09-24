@@ -13,7 +13,8 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
 } from "@autoforge/domain";
-import { FolderTree, Link2, Trash2, UploadCloud } from "lucide-react";
+import { CheckCircle2, FolderTree, Link2, Trash2, UploadCloud } from "lucide-react";
+import { Tag } from "antd";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
@@ -62,9 +63,10 @@ export function ProjectStructureManager({
     if (!list || !selected) return;
     // Scroll only the version rail; selecting or clearing a filter must not move the page.
     const top = selected.offsetTop;
-    if (top < list.scrollTop) list.scrollTop = top;
-    else if (top + selected.offsetHeight > list.scrollTop + list.clientHeight)
-      list.scrollTop = top + selected.offsetHeight - list.clientHeight;
+    const padding = Number.parseFloat(window.getComputedStyle(list).paddingTop) || 0;
+    if (top < list.scrollTop + padding) list.scrollTop = top - padding;
+    else if (top + selected.offsetHeight > list.scrollTop + list.clientHeight - padding)
+      list.scrollTop = top + selected.offsetHeight - list.clientHeight + padding;
   }, [selectedVersionId, versionQuery]);
 
   async function refresh(success: string): Promise<void> {
@@ -360,6 +362,8 @@ export function ProjectStructureManager({
               <Button
                 key={version.id}
                 type="button"
+                variant="ghost"
+                title={version.name}
                 className={cn(
                   "project-version-option",
                   projectStructureManagerStyles["project-version-option"],
@@ -372,10 +376,22 @@ export function ProjectStructureManager({
                   setError("");
                 }}
               >
-                <strong title={version.name}>{version.name}</strong>
-                <span>
-                  {version.stages.length} 个阶段 ·{" "}
-                  {version.adapterConfiguration.jarBundleAsset ? "依赖已配置" : "未配置依赖"}
+                <span className="grid w-full min-w-0 gap-1 text-left">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <strong className="min-w-0 flex-1 truncate font-medium">{version.name}</strong>
+                    <CheckCircle2
+                      size={14}
+                      aria-hidden="true"
+                      className={cn(
+                        "shrink-0 text-primary-text",
+                        version.id !== selectedVersionId && "invisible",
+                      )}
+                    />
+                  </span>
+                  <span className="truncate text-xs font-normal text-muted-foreground">
+                    {version.stages.length} 个阶段 ·{" "}
+                    {version.adapterConfiguration.jarBundleAsset ? "依赖已配置" : "未配置依赖"}
+                  </span>
                 </span>
               </Button>
             ))}
@@ -398,11 +414,18 @@ export function ProjectStructureManager({
               "content-card settings-section",
               uiPatterns["content-card"],
               uiPatterns["settings-section"],
+              "grid gap-4 p-4",
             )}
           >
-            <div className={cn("section-heading", uiPatterns["section-heading"])}>
+            <div
+              className={cn(
+                "section-heading",
+                uiPatterns["section-heading"],
+                "mb-0 [&_h2]:[overflow-wrap:anywhere]",
+              )}
+            >
               <div>
-                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Project structure</p>
+                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>版本配置</p>
                 <h2 title={selectedVersion?.name}>{selectedVersion?.name ?? "版本与测试阶段"}</h2>
                 <p>当前配置版本 · {selectedVersion?.stages.length ?? 0} 个测试阶段</p>
               </div>
@@ -527,49 +550,42 @@ export function ProjectStructureManager({
               "content-card settings-section",
               uiPatterns["content-card"],
               uiPatterns["settings-section"],
+              "grid gap-4 p-4",
             )}
             key={selectedVersionId}
           >
-            <div className={cn("section-heading", uiPatterns["section-heading"])}>
+            <div
+              className={cn(
+                "section-heading",
+                uiPatterns["section-heading"],
+                "mb-0 [&_h2]:[overflow-wrap:anywhere]",
+              )}
+            >
               <div>
-                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Runtime assets</p>
+                <p className={cn("eyebrow", uiPatterns["eyebrow"])}>运行时资源</p>
                 <h2>JDK 与依赖 JAR 压缩包</h2>
                 <p>资源仅应用于当前配置版本，支持上传、内网链接或从其他版本继承。</p>
               </div>
               <UploadCloud size={22} aria-hidden="true" />
             </div>
-            <p className={cn("settings-note", uiPatterns["settings-note"])}>
-              {selectedVersion ? `${selectedVersion.name} · ` : ""}当前 JDK：
-              {assetSummary(configuration.jdkAsset)}；当前依赖包：
-              {assetSummary(configuration.jarBundleAsset)}
-              {configuration.inheritedFromProjectVersionId
-                ? `；继承自 ${versionName(structure, configuration.inheritedFromProjectVersionId)}`
-                : ""}
-            </p>
-            {configuration.jdkAsset || configuration.jarBundleAsset ? (
-              <div
-                className={cn(
-                  "project-runtime-actions",
-                  projectStructureManagerStyles["project-runtime-actions"],
-                )}
-              >
-                <Button
-                  disabled={pending || !canManage || !configuration.jdkAsset}
-                  onClick={() => deleteAsset("jdk")}
-                  type="button"
-                  variant="danger"
-                >
-                  <Trash2 size={14} /> 删除当前 JDK
-                </Button>
-                <Button
-                  disabled={pending || !canManage || !configuration.jarBundleAsset}
-                  onClick={() => deleteAsset("jar-bundle")}
-                  type="button"
-                  variant="danger"
-                >
-                  <Trash2 size={14} /> 删除当前依赖包
-                </Button>
-              </div>
+            <div className="project-runtime-summary grid min-w-0 grid-cols-2 gap-3">
+              <RuntimeAssetSummary
+                label="JDK"
+                asset={configuration.jdkAsset}
+                disabled={pending || !canManage}
+                onDelete={() => void deleteAsset("jdk")}
+              />
+              <RuntimeAssetSummary
+                label="依赖包"
+                asset={configuration.jarBundleAsset}
+                disabled={pending || !canManage}
+                onDelete={() => void deleteAsset("jar-bundle")}
+              />
+            </div>
+            {configuration.inheritedFromProjectVersionId ? (
+              <p className={cn("settings-note", uiPatterns["settings-note"])}>
+                资源继承自 {versionName(structure, configuration.inheritedFromProjectVersionId)}
+              </p>
             ) : null}
             {runtimeSourceVersions.length ? (
               <form
@@ -611,7 +627,7 @@ export function ProjectStructureManager({
                   className={cn(
                     "settings-grid-form settings-subform project-structure-subform",
                     uiPatterns["settings-grid-form"],
-                    uiPatterns["settings-subform"],
+                    "content-start gap-3",
                   )}
                   onSubmit={uploadAsset}
                 >
@@ -632,7 +648,7 @@ export function ProjectStructureManager({
                       <option value="zip">zip</option>
                     </Select>
                   </label>
-                  <label>
+                  <label className="col-span-full">
                     本地文件
                     <FileInput
                       name="file"
@@ -640,13 +656,15 @@ export function ProjectStructureManager({
                       disabled={!canManage || pending || !selectedVersionId}
                     />
                   </label>
-                  <Button
-                    className={cn("primary-button", uiPatterns["primary-button"])}
-                    disabled={pending || !canManage || !selectedVersionId}
-                    type="submit"
-                  >
-                    上传并启用
-                  </Button>
+                  <div className="col-span-full flex justify-end border-t border-border pt-3">
+                    <Button
+                      variant="primary"
+                      disabled={pending || !canManage || !selectedVersionId}
+                      type="submit"
+                    >
+                      上传并启用
+                    </Button>
+                  </div>
                   {runtimeUploadProgress ? (
                     <div
                       className={cn(
@@ -674,7 +692,7 @@ export function ProjectStructureManager({
                   className={cn(
                     "settings-grid-form settings-subform project-structure-subform",
                     uiPatterns["settings-grid-form"],
-                    uiPatterns["settings-subform"],
+                    "content-start gap-3",
                   )}
                   onSubmit={registerUrlAsset}
                 >
@@ -695,7 +713,7 @@ export function ProjectStructureManager({
                       <option value="zip">zip</option>
                     </Select>
                   </label>
-                  <label>
+                  <label className="col-span-full">
                     HTTP(S) 链接
                     <Input
                       name="url"
@@ -713,16 +731,6 @@ export function ProjectStructureManager({
                     />
                   </label>
                   <label>
-                    SHA-256
-                    <Input
-                      name="sha256"
-                      minLength={64}
-                      maxLength={64}
-                      required
-                      disabled={!canManage || pending || !selectedVersionId}
-                    />
-                  </label>
-                  <label>
                     大小（字节）
                     <Input
                       name="sizeBytes"
@@ -732,13 +740,25 @@ export function ProjectStructureManager({
                       disabled={!canManage || pending || !selectedVersionId}
                     />
                   </label>
-                  <Button
-                    className={cn("primary-button", uiPatterns["primary-button"])}
-                    disabled={pending || !canManage || !selectedVersionId}
-                    type="submit"
-                  >
-                    登记链接并启用
-                  </Button>
+                  <label className="col-span-full">
+                    SHA-256
+                    <Input
+                      name="sha256"
+                      minLength={64}
+                      maxLength={64}
+                      required
+                      disabled={!canManage || pending || !selectedVersionId}
+                    />
+                  </label>
+                  <div className="col-span-full flex justify-end border-t border-border pt-3">
+                    <Button
+                      variant="primary"
+                      disabled={pending || !canManage || !selectedVersionId}
+                      type="submit"
+                    >
+                      登记链接并启用
+                    </Button>
+                  </div>
                 </form>
               </Disclosure>
             </div>
@@ -777,9 +797,50 @@ function withAsset(
     : { ...configuration, jarBundleAsset: asset };
 }
 
-function assetSummary(asset: ProjectRuntimeAsset | undefined): string {
-  if (!asset) return "未配置";
-  return `${asset.fileName}（${asset.sourceType === "upload" ? "已上传" : "链接"}）`;
+function RuntimeAssetSummary({
+  label,
+  asset,
+  disabled,
+  onDelete,
+}: {
+  label: string;
+  asset: ProjectRuntimeAsset | undefined;
+  disabled: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <section
+      aria-label={`当前${label}`}
+      className="grid min-w-0 content-start gap-2 rounded-lg border border-border bg-muted/30 p-3"
+    >
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <strong className="text-sm">{label}</strong>
+        {asset ? (
+          <Button
+            type="button"
+            variant="danger"
+            size="compact"
+            disabled={disabled}
+            onClick={onDelete}
+            aria-label={`删除当前${label === "JDK" ? " JDK" : label}`}
+          >
+            <Trash2 size={14} aria-hidden="true" /> 删除
+          </Button>
+        ) : (
+          <Tag className="m-0">未配置</Tag>
+        )}
+      </div>
+      <p className="m-0 min-w-0 text-sm [overflow-wrap:anywhere]" title={asset?.fileName}>
+        {asset?.fileName ?? (label === "JDK" ? "尚未设置 JDK 压缩包" : "尚未设置依赖 JAR 压缩包")}
+      </p>
+      {asset ? (
+        <p className="m-0 text-xs text-muted-foreground">
+          {asset.sourceType === "upload" ? "本地上传" : "内网链接"} · {asset.archiveFormat} ·{" "}
+          {formatBytes(asset.sizeBytes)}
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
 function formatBytes(value: number): string {
@@ -791,28 +852,23 @@ function formatBytes(value: number): string {
 const projectStructureManagerStyles = {
   "action-dialog-form": "mt-0",
   "management-disclosure":
-    "min-w-0 p-3 border border-solid border-border rounded-lg [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&[data-open=true]_.ui-disclosure-label]:mb-3",
-  "project-runtime-actions": "flex min-w-0 items-end gap-2.5 mb-3.5",
+    "min-w-0 rounded-lg border border-border p-3 [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-body]:pt-3",
   "project-runtime-inherit":
-    "flex min-w-0 items-end gap-2.5 mb-3.5 border border-solid border-border rounded-lg p-3 bg-muted [&_label]:grid [&_label]:min-w-[240px] [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+    "flex min-w-0 flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/30 p-3 [&_label]:grid [&_label]:min-w-0 [&_label]:flex-1 [&_label]:gap-2 [&_label]:text-sm [&_label]:font-medium",
   "project-runtime-upload-progress": "col-span-full",
-  "project-stage-list": "max-h-[208px] overflow-y-auto border-t border-solid border-border",
+  "project-stage-list": "max-h-52 overflow-y-auto border-t border-border",
   "project-stage-row":
-    "[&_strong]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap grid grid-cols-[minmax(100px,_1fr)_minmax(0,_2fr)] gap-3 py-2 px-0 border-b border-solid border-border text-sm [&_>_span]:text-muted-foreground [&_>_span]:[overflow-wrap:anywhere]",
-  "project-structure-manager":
-    "min-w-0 [&_.settings-section]:min-w-0 [&_.settings-section]:overflow-hidden [&_.settings-paired-forms]:items-start [&_.section-heading_>_div]:min-w-0 [&_.section-heading_.eyebrow]:[flex:0_0_auto] [&_.section-heading_.eyebrow]:whitespace-nowrap [&_.section-heading_h2]:[flex:0_0_auto] [&_.section-heading_h2]:whitespace-nowrap [&_.section-heading_p:last-child]:min-w-0 [&_.project-structure-subform]:grid-cols-[1fr] [&_.project-structure-subform]:[align-content:start] [&_.project-structure-subform]:m-0 [&_.project-structure-subform]:border [&_.project-structure-subform]:border-solid [&_.project-structure-subform]:border-border [&_.project-structure-subform]:p-4 [&_.project-structure-subform]:bg-muted [&_.project-structure-subform_>_label]:[grid-column:1] [&_.project-structure-subform_>_.ui-button]:[grid-column:1]",
+    "grid grid-cols-[minmax(100px,_1fr)_minmax(0,_2fr)] gap-3 border-b border-border py-2 text-sm [&_strong]:min-w-0 [&_strong]:truncate [&_>_span]:text-muted-foreground [&_>_span]:[overflow-wrap:anywhere]",
+  "project-structure-manager": "min-w-0",
   "project-structure-workspace":
-    "grid grid-cols-[var(--project-version-navigation-width,224px)_minmax(0,_1fr)] gap-4 items-start max-[1280px]:[--project-version-navigation-width:184px] max-[1280px]:gap-3",
-  "project-version-detail":
-    "grid min-w-0 gap-4 [&_.settings-section]:p-4 [&_.settings-section]:gap-3 [&_.section-heading]:gap-3 [&_.section-heading]:flex-wrap [&_.section-heading_>_div:first-child]:min-w-0 [&_.section-heading_h2]:whitespace-normal [&_.section-heading_h2]:[overflow-wrap:anywhere] [&_.project-runtime-actions]:flex-wrap [&_.project-runtime-actions]:mb-0 [&_.project-runtime-inherit]:flex-wrap [&_.project-runtime-inherit]:mb-0 [&_.project-runtime-inherit_label]:flex-1 [&_.project-runtime-inherit_label]:min-w-0 [&_.settings-note]:[overflow-wrap:anywhere] max-[1280px]:[&_.settings-paired-forms]:grid-cols-[minmax(0,_1fr)]",
-  "project-version-navigation":
-    "grid min-w-0 gap-3 border border-solid border-border rounded-xl p-3 bg-card",
+    "grid grid-cols-[224px_minmax(0,_1fr)] items-start gap-4 max-[1280px]:grid-cols-[184px_minmax(0,_1fr)] max-[1280px]:gap-3",
+  "project-version-detail": "grid min-w-0 gap-4",
+  "project-version-navigation": "grid min-w-0 gap-3 rounded-xl border border-border bg-card p-3",
   "project-version-navigation-heading":
-    "flex justify-between items-center text-sm [&_>_span]:rounded-full [&_>_span]:py-1 [&_>_span]:px-2 [&_>_span]:bg-muted [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+    "flex items-center justify-between text-sm [&_>_span]:rounded-full [&_>_span]:bg-muted [&_>_span]:px-2 [&_>_span]:py-1 [&_>_span]:text-xs [&_>_span]:text-muted-foreground",
   "project-version-option":
-    "grid h-auto w-full min-w-0 grid-cols-[minmax(0,_1fr)] justify-items-start gap-1 px-3 py-2 text-left [&[aria-pressed=true]]:border-primary/30 [&[aria-pressed=true]]:bg-primary/10 [&_strong]:min-w-0 [&_strong]:max-w-full [&_strong]:truncate [&_>_span]:max-w-full [&_>_span]:truncate [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:font-normal",
+    "h-auto w-full min-w-0 justify-start rounded-lg border border-transparent bg-muted/40 px-3 py-2.5 text-foreground shadow-none hover:border-border hover:bg-muted [&[aria-pressed=true]]:border-primary/30 [&[aria-pressed=true]]:bg-primary/10 [&[aria-pressed=true]_strong]:font-semibold [&[aria-pressed=true]_strong]:text-primary-text",
   "project-version-options":
-    "relative grid [align-content:start] gap-1 max-h-[clamp(192px,_calc(100dvh_-_416px),_480px)] overflow-y-auto",
-  "settings-paired-forms":
-    "grid grid-cols-2 gap-4 [&_>_*]:min-w-0 [&_.settings-subform]:mt-0 [&_.settings-subform]:pt-0 [&_.settings-subform]:border-t-0",
+    "relative grid max-h-[clamp(192px,_calc(100dvh_-_416px),_480px)] content-start gap-3 overflow-y-auto p-1",
+  "settings-paired-forms": "grid min-w-0 grid-cols-2 items-start gap-4 max-[1280px]:grid-cols-1",
 } as const;

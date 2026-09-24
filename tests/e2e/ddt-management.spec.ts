@@ -2272,6 +2272,28 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
       } finally {
         await anonymous.close();
       }
+      await page.goto(`/run-batches/${created.body.id}`);
+      const executionRows = page.locator(".execution-case-table tbody tr");
+      await expect(executionRows).toHaveCount(runCount);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await executionRows.first().scrollIntoViewIfNeeded();
+        await captureDdtUi(
+          page,
+          `ddt-execution-metadata-${suite.id === mixed.id ? "mixed" : "pure"}-${width}`,
+        );
+        for (const caseId of caseIds) {
+          const cell = executionRows
+            .filter({ has: page.getByText(caseId, { exact: true }) })
+            .locator("td")
+            .first();
+          const metadata = cell.locator("small");
+          await expect(metadata).toHaveCount(1);
+          await expect(metadata).toContainText(className);
+          await expect(cell).not.toContainText("SR · MIXED");
+        }
+        await expectUiIntegrity(page);
+      }
       await page.goto(`/case-suites/${suite.id}`);
       for (const width of [1024, 1536]) {
         await page.setViewportSize({ width, height: 960 });

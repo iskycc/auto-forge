@@ -99,7 +99,7 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
             }}
             type="button"
           >
-            转移负责
+            转移负责人
           </Button>
         ) : null}
       </div>

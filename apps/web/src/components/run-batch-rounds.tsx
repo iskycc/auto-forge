@@ -1872,11 +1872,6 @@ function RoundCaseRow({
           <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
             {run.className}
           </small>
-          {run.caseType === "ddt" && run.ddtSrNum ? (
-            <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
-              SR · {run.ddtSrNum}
-            </small>
-          ) : null}
         </TableCell>
         {showRoundColumn ? (
           <TableCell className={cn("round-cell-nowrap", runBatchRoundsStyles["round-cell-nowrap"])}>

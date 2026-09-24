@@ -470,6 +470,23 @@ test("many project versions stay compact and configure only the selected version
     await expect(page.getByRole("heading", { name: /版本 24/ })).toBeVisible();
     await expect(page.locator(".project-stage-row")).toContainText("专属阶段 24");
     await page.getByLabel("搜索项目版本").fill("");
+    const versionBounds = await versions.getByRole("button").evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const { top, bottom } = button.getBoundingClientRect();
+        return { top, bottom };
+      }),
+    );
+    for (let index = 1; index < versionBounds.length; index += 1) {
+      expect(
+        versionBounds[index]!.top - versionBounds[index - 1]!.bottom,
+        "adjacent versions need visible separation",
+      ).toBeGreaterThanOrEqual(8);
+    }
+    const selectedVersion = versions.getByRole("button", { pressed: true });
+    const railBox = (await page.locator(".project-version-options").boundingBox())!;
+    const selectedBox = (await selectedVersion.boundingBox())!;
+    expect(selectedBox.y).toBeGreaterThanOrEqual(railBox.y);
+    expect(selectedBox.y + selectedBox.height).toBeLessThanOrEqual(railBox.y + railBox.height);
     await expectUiIntegrity(page);
     await captureUi(page, "organization-many-versions", viewport.width);
     await page.getByLabel("搜索项目版本").fill("没有这个版本");
@@ -505,7 +522,9 @@ test("many project versions stay compact and configure only the selected version
     .selectOption("jar-bundle");
   await resourceForm.getByLabel("压缩格式").and(resourceForm.locator("select")).selectOption("zip");
   await resourceForm.getByLabel("HTTP(S) 链接").fill("http://runtime.invalid/dependencies.zip");
-  await resourceForm.getByLabel("文件名").fill("dependencies-for-version-23.zip");
+  await resourceForm
+    .getByLabel("文件名")
+    .fill("dependencies-for-version-23-wallet-payment-and-cross-border-settlement-regression.zip");
   await resourceForm.getByLabel("SHA-256").fill("a".repeat(64));
   await resourceForm.getByLabel("大小（字节）").fill("128");
   let releaseSave!: () => void;
@@ -531,18 +550,77 @@ test("many project versions stay compact and configure only the selected version
   ).toBeVisible();
   await page.unroute("**/adapter-configuration");
   await page.getByRole("button", { name: /版本 24.*个阶段/ }).click();
-  const runtimeSummary = page.locator(".project-version-detail .settings-note");
-  await expect(runtimeSummary).not.toContainText("dependencies-for-version-23.zip");
+  const runtimeSummary = page.locator(".project-runtime-summary");
+  await expect(runtimeSummary).not.toContainText(
+    "dependencies-for-version-23-wallet-payment-and-cross-border-settlement-regression.zip",
+  );
   await page.getByRole("button", { name: /版本 23.*个阶段/ }).click();
-  await expect(runtimeSummary).toContainText("dependencies-for-version-23.zip");
-  for (const viewport of [
-    { width: 1024, height: 768 },
-    { width: 1536, height: 1024 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await expectUiIntegrity(page);
-    await captureUi(page, "organization-configured-version", viewport.width);
+  await expect(runtimeSummary).toContainText(
+    "dependencies-for-version-23-wallet-payment-and-cross-border-settlement-regression.zip",
+  );
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
+      ]);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/settings/projects");
+      for (const disclosure of await page.locator(".management-disclosure").all()) {
+        if ((await disclosure.getAttribute("data-open")) !== "true")
+          await disclosure.getByRole("button").first().click();
+      }
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+      await waitForUiTransitions(page);
+      await captureUi(page, `organization-configured-version-${appearance}`, viewport.width);
+      await expectReadableText(page.locator('.project-version-option[aria-pressed="true"] strong'));
+      for (const form of await page.locator(".project-structure-subform").all()) {
+        const kind = (await form
+          .locator("label")
+          .filter({ has: page.locator('select[name="kind"]') })
+          .boundingBox())!;
+        const format = (await form
+          .locator("label")
+          .filter({ has: page.locator('select[name="archiveFormat"]') })
+          .boundingBox())!;
+        expect(
+          Math.abs(kind.y - format.y),
+          "resource type and format share a compact row",
+        ).toBeLessThanOrEqual(2);
+        expect(format.x).toBeGreaterThanOrEqual(kind.x + kind.width);
+        const submit = (await form
+          .getByRole("button", { name: /^(上传并启用|登记链接并启用)$/ })
+          .boundingBox())!;
+        expect(submit.height).toBeLessThanOrEqual(40);
+        expect(submit.width).toBeLessThan(200);
+      }
+      await expect(page.getByRole("button", { name: "转移负责人", exact: true })).toBeVisible();
+      await expectUiIntegrity(page);
+    }
   }
+  await page.getByRole("button", { name: /版本 24.*个阶段/ }).click();
+  await page.getByRole("button", { name: "继承共享资源", exact: true }).click();
+  await expect(page.locator(".project-runtime-summary")).toContainText(
+    "dependencies-for-version-23-wallet-payment-and-cross-border-settlement-regression.zip",
+  );
+  await page.getByRole("button", { name: "删除当前依赖包", exact: true }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "删除依赖 JAR 压缩包", exact: true });
+  await deleteDialog.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page.getByRole("region", { name: "当前依赖包", exact: true })).toContainText(
+    "未配置",
+  );
+  await page.getByRole("button", { name: /版本 23.*个阶段/ }).click();
+  await expect(page.locator(".project-runtime-summary")).toContainText(
+    "dependencies-for-version-23-wallet-payment-and-cross-border-settlement-regression.zip",
+  );
+  await page.getByRole("button", { name: "转移负责人", exact: true }).click();
+  const transferDialog = page.getByRole("dialog", { name: "转移项目负责人", exact: true });
+  await expect(transferDialog).toBeVisible();
+  await transferDialog.getByRole("button", { name: "关闭转移项目负责人", exact: true }).click();
 });
 
 test("project settings preserve long project names and slugs within the administration bar", async ({
@@ -1239,7 +1317,7 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
     },
     {
       route: "/settings/projects",
-      trigger: "转移负责",
+      trigger: "转移负责人",
       dialog: "转移项目负责人",
       screenshot: "project-owner-dialog",
     },

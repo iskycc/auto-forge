@@ -4,6 +4,29 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.4 - 2026-09-24
+
+### Changed and fixed
+
+- 重新整理项目设置的 JDK 与依赖 JAR 资源区，分别展示文件、来源、格式、大小及删除操作；上传和链接登记表单采用紧凑分栏，长输入独占整行，操作按钮统一右对齐。
+- 项目版本列表增加卡片间距和内边距，选中版本使用主题强调色及勾选标记；修复深色主题的选中文字对比度，切换和搜索时保持选中项完整可见，保留原有列表限高。
+- 将“转移负责”入口更名为“转移负责人”，原权限校验与确认流程不变。
+- 执行详情的 DDT 用例移除单独占行的 SR 信息，保留用例名称、类型和完整执行类路径，减少行高；DDT 管理中的 SR 信息及执行快照不变。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、API、Runner Protocol 或 Adapter 协议变更。Lite/Full 共用前端；从 v1.18.3 升级只需更新主平台，Full 各平台节点应同步更新，本次修复不要求升级 Runner。
+- 无新增生产依赖，Ant Design 资源继续随离线包交付；双架构后端、部署包、Jenkins 插件、SBOM 元数据及签名清单的资产类型不变。
+- 截图、测试数据与本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- Web 生产构建、测试类型检查及修改文件的格式和 lint 检查通过，16 项 UI 组件使用约束测试通过。
+- 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test:e2e:matrix` 通过。
+- 3 项 Lite Playwright 场景通过，覆盖多版本配置、长名称、资源上传与链接登记、继承和删除、负责人弹窗、混合与纯 DDT 任务、未绑定用例的执行拦截及公开日志；版本卡片最终调整后对应场景再次通过。
+- 实际查看 1024×768、1536×960 的明暗主题配置及执行详情截图，并检查 1536×1024 的多版本列表；版本间距、按钮尺寸、文本对比度和长内容布局正常，未发现额外横向溢出。
+- 完整源码质量、Full 分布式、双架构离线构建和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.18.3 - 2026-09-24
 
 ### Changed and fixed
