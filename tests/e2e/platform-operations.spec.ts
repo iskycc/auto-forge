@@ -696,13 +696,13 @@ async function verifyRuntimeAssetBatchDeletion(input: {
   const priorToastDismiss = input.page.getByRole("button", { name: "关闭通知" });
   if (await priorToastDismiss.isVisible()) await priorToastDismiss.click();
   await expectUiIntegrity(input.page);
-  await floatingAction.getByRole("button", { name: "批量删除" }).click();
+  await floatingAction.getByRole("button", { name: "批量删除", exact: true }).click();
   const confirmation = input.page.getByRole("dialog", { name: "批量删除存储资源" });
   await expect(confirmation).toContainText(`${input.fileNames.length} 项`);
   await confirmation.getByRole("button", { name: "取消" }).click();
   await expect(files).toHaveCount(input.fileNames.length);
 
-  await floatingAction.getByRole("button", { name: "批量删除" }).click();
+  await floatingAction.getByRole("button", { name: "批量删除", exact: true }).click();
   const inventoryGetRequests: string[] = [];
   const observeInventoryReads = (request: Request) => {
     if (request.url().includes("/api/v1/settings/storage?") && request.method() === "GET") {

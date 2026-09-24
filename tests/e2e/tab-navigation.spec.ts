@@ -228,6 +228,22 @@ test("settings tabs retain the current page while loading and support browser hi
   }
 });
 
+test("reduced motion notifications close automatically and can be dismissed", async ({ page }) => {
+  await ensureAdministrator(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/settings/platform?section=configuration");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await page.getByRole("button", { name: "保存平台配置", exact: true }).click();
+    const notice = page.locator(".toast-viewport").getByRole("status");
+    await expect(notice).toContainText("平台配置已保存");
+    await notice.hover();
+    await capture(page, `notification-reduced-motion-${width}`);
+    if (width === 1024) await notice.getByRole("button", { name: "关闭通知", exact: true }).click();
+    await expect(notice).toHaveCount(0, { timeout: 10_000 });
+  }
+});
+
 test("tab navigation protects configuration drafts and respects reduced motion", async ({
   page,
 }) => {

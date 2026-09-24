@@ -44,10 +44,11 @@ export function AntDesignProvider({
           token: {
             ...baseTheme.token,
             // Switching Ant's motion boolean inserts a provider and remounts
-            // its children. Zero durations preserve forms, focus and caches.
-            motionDurationFast: "0s",
-            motionDurationMid: "0s",
-            motionDurationSlow: "0s",
+            // its children. A near-zero duration preserves transitionend, which
+            // Ant uses to remove notices and popups after they close.
+            motionDurationFast: "0.01ms",
+            motionDurationMid: "0.01ms",
+            motionDurationSlow: "0.01ms",
           },
         }
       : baseTheme;

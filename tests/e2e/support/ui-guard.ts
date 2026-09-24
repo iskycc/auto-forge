@@ -269,9 +269,15 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
   });
 }
 
-export async function expectUiIntegrity(page: Page): Promise<void> {
+export async function waitForUiTransitions(page: Page): Promise<void> {
   // Modal/popover entry scales controls. Measure settled geometry while leaving
   // continuous loading indicators running; never disable product motion in tests.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await expect
     .poll(
       () =>
@@ -288,6 +294,10 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
       { message: "finite UI transitions should settle" },
     )
     .toBe(0);
+}
+
+export async function expectUiIntegrity(page: Page): Promise<void> {
+  await waitForUiTransitions(page);
   const report = await inspectUiIntegrity(page);
   expect(report.fontViolations, "visible text smaller than 12px").toEqual([]);
   expect(report.controlViolations, "visible controls shorter than 32px").toEqual([]);

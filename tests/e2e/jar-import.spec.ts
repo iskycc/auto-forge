@@ -11,7 +11,12 @@ import { createPostgresDatabase } from "@autoforge/db/postgres";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
-import { expectPageFitsViewport, expectReadableText, expectUiIntegrity } from "./support/ui-guard";
+import {
+  expectPageFitsViewport,
+  expectReadableText,
+  expectUiIntegrity,
+  waitForUiTransitions,
+} from "./support/ui-guard";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -2401,6 +2406,7 @@ async function expectCaseImportDialogFits(dialog: Locator): Promise<void> {
 }
 
 async function expectUiConsistency(page: Page): Promise<void> {
+  await waitForUiTransitions(page);
   const report = await page.evaluate(() => {
     const minimumFontSize = 12;
     const minimumControlSize = 32;
