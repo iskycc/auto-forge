@@ -1593,12 +1593,14 @@ public class MixedVisibleTest {
   await page.goto(
     `/insights?suiteId=${encodeURIComponent(dailySuiteId)}&caseDefinitionId=${encodeURIComponent(taskCase.id)}`,
   );
-  await expect(
-    page
-      .getByText("执行样本", { exact: true })
-      .locator("..")
-      .getByText(String(expectedSampleCount), { exact: true }),
-  ).toBeVisible();
+  // Streaming navigation can retain hidden markup; select the metric users see.
+  const executionSampleMetric = page
+    .getByRole("region", { name: "质量指标", exact: true })
+    .getByRole("article")
+    .filter({ has: page.getByText("执行样本", { exact: true }) })
+    .locator("strong");
+  await expect(executionSampleMetric).toHaveText(String(expectedSampleCount));
+  await expect(executionSampleMetric).toBeVisible();
   const filteredFailureReasons = page.locator(".insight-failure-card");
   await expect(filteredFailureReasons).toContainText("java.lang.AssertionError: 中文断言失败");
   await expect(filteredFailureReasons).not.toContainText("TEST_ASSERTION_FAILED");

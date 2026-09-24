@@ -1544,6 +1544,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   const trendDialog = page.getByRole("dialog", { name: "每日趋势明细" });
   await expect(trendDialog).toBeVisible();
   await expect(trendDialog.locator(".insight-data-table")).toBeVisible();
+  await waitForUiTransitions(page);
   const [dialogBox, tableScrollBox, tableOverflow] = await Promise.all([
     trendDialog.boundingBox(),
     trendDialog.locator(".insight-detail-table-scroll").boundingBox(),
@@ -1567,6 +1568,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(trendDialog).toHaveCount(0);
 
   await page.setViewportSize({ width: 1024, height: 768 });
+  await waitForUiTransitions(page);
   const [compactTrendBox, compactFailureBox, compactFlakyBox, compactCaseOutcomeBox, pageHeight] =
     await Promise.all([
       trendCard.boundingBox(),
@@ -1585,6 +1587,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
     await detailButtons.nth(index).click();
     const activeDialog = page.getByRole("dialog");
     await expect(activeDialog).toBeVisible();
+    await waitForUiTransitions(page);
     const activeDialogBox = await activeDialog.boundingBox();
     expect(activeDialogBox!.x).toBeGreaterThanOrEqual(12);
     expect(activeDialogBox!.x + activeDialogBox!.width).toBeLessThanOrEqual(1012);
