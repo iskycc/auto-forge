@@ -7,7 +7,10 @@ export function Notice({
   tone = "info",
   role,
   ...props
-}: Omit<ComponentProps<"div">, "ref"> & { tone?: "error" | "warning" | "info" | "success" }) {
+}: Omit<ComponentProps<"div">, "ref"> & {
+  tone?: "error" | "warning" | "info" | "success";
+  showIcon?: boolean;
+}) {
   return (
     <Alert
       {...definedProps(props)}

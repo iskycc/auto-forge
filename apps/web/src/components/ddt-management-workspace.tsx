@@ -1619,9 +1619,9 @@ function Recycle({
         <div className={cn("ddt-table-shell", ddtManagementWorkspaceStyles["ddt-table-shell"])}>
           <Table
             className={cn(
-              "data-table ddt-table",
+              "data-table ddt-recycle-table",
               uiPatterns["data-table"],
-              ddtManagementWorkspaceStyles["ddt-table"],
+              "table-fixed [&_td]:[overflow-wrap:anywhere]",
             )}
           >
             <TableHeader>
@@ -1629,8 +1629,8 @@ function Recycle({
                 <TableHead>CaseID</TableHead>
                 <TableHead>srNum</TableHead>
                 <TableHead>来源</TableHead>
-                <TableHead>删除时间</TableHead>
-                <TableHead>操作</TableHead>
+                <TableHead className="w-36">删除时间</TableHead>
+                <TableHead className="w-56">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -3337,8 +3337,6 @@ const ddtManagementWorkspaceStyles = {
     "flex gap-2 mt-[15px] border-0 p-0 [&_legend]:mb-[7px] [&_legend]:text-muted-foreground [&_legend]:text-xs [&_label]:flex [&_label]:flex-1 [&_label]:items-center [&_label]:gap-[7px] [&_label]:border [&_label]:border-solid [&_label]:border-border [&_label]:rounded-lg [&_label]:p-2.5",
   "ddt-subtabs":
     "flex items-center flex-wrap gap-[3px] border-b border-solid border-border pb-2 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_button]:border-0 [&_button]:rounded-lg [&_button]:py-[9px] [&_button]:px-3.5 [&_button]:bg-transparent [&_button]:text-muted-foreground [&_button]:font-semibold [&_button]:relative [&_button]:shadow-none [&_button.active]:bg-info/10 [&_button.active]:text-info [&_button.active]:shadow-none [&_small]:inline-grid [&_small]:min-w-4.5 [&_small]:h-4.5 [&_small]:place-items-center [&_small]:rounded-lg [&_small]:bg-destructive/10 [&_small]:text-destructive",
-  "ddt-table":
-    '[table-layout:fixed] [&_th:nth-child(1)]:w-11.5 [&_th:nth-child(2)]:w-[21%] [&_th:nth-child(3)]:w-[15%] [&_th:nth-child(4)]:w-[110px] [&_th:nth-child(5)]:w-[25%] [&_th:last-child]:w-12.5 [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap [&_input[type="checkbox"]]:w-4 [&_input[type="checkbox"]]:h-4',
   "ddt-table-shell":
     "min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs",
   "ddt-template":

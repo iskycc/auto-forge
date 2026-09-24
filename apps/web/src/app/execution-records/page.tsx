@@ -208,26 +208,12 @@ export default async function ExecutionRecordsPage({
             ))}
           </Select>
         </label>
-        <Button
-          className={cn(
-            "button button-secondary",
-            uiPatterns["button"],
-            uiPatterns["button-secondary"],
-          )}
-          type="submit"
-        >
-          筛选记录
-        </Button>
-        <LinkButton
-          className={cn(
-            "button button-secondary",
-            uiPatterns["button"],
-            uiPatterns["button-secondary"],
-          )}
-          href="/execution-records"
-        >
-          重置筛选
-        </LinkButton>
+        <div className="flex min-w-0 items-center gap-2 [&_>_*]:flex-1">
+          <Button type="submit" variant="primary">
+            筛选记录
+          </Button>
+          <LinkButton href="/execution-records">重置筛选</LinkButton>
+        </div>
       </form>
       {batchPage.statistics ? <ReadModelStatusBar snapshots={[batchPage.statistics]} /> : null}
       <Card

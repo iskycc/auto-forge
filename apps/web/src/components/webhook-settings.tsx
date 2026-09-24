@@ -800,8 +800,8 @@ const webhookSettingsStyles = {
   "management-sticky-actions":
     "sticky bottom-0 z-3 flex items-center justify-end gap-3 p-3 bg-card border-t border-solid border-border [&_>_span]:mr-auto",
   "table-count": "text-muted-foreground text-xs whitespace-nowrap",
-  "webhook-card-actions": "flex items-center justify-end gap-2.5",
-  "webhook-card-grid": "grid grid-cols-2 gap-3 mt-[17px] max-[1181px]:grid-cols-[1fr]",
+  "webhook-card-actions": "mt-auto flex min-w-0 flex-wrap items-center justify-end gap-2",
+  "webhook-card-grid": "grid grid-cols-2 gap-3 mt-4 max-[1181px]:grid-cols-1",
   "webhook-configurations-card": "p-5",
   "webhook-deliveries-card": "p-5",
   "webhook-delivery-empty": "min-h-0 p-5 gap-2 [&_.empty-icon]:hidden",
@@ -822,7 +822,7 @@ const webhookSettingsStyles = {
   "webhook-enabled-field":
     "flex items-center gap-2.5 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_small]:text-muted-foreground",
   "webhook-endpoint-card":
-    "grid min-w-0 gap-3.5 border border-solid border-border rounded-lg p-[17px] bg-card [&_h3]:m-0 [&_h3]:text-lg [&_p]:m-0 [&_p]:mt-[5px] [&_p]:text-muted-foreground [&_p]:text-sm [&_p]:leading-[1.5] [&_code]:overflow-hidden [&_code]:rounded-lg [&_code]:py-[9px] [&_code]:px-2.5 [&_code]:bg-muted [&_code]:text-info [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
+    "flex min-w-0 flex-col gap-3 border border-solid border-border rounded-lg p-4 bg-card [&_>_div]:min-w-0 [&_h3]:m-0 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:[overflow-wrap:anywhere] [&_p]:m-0 [&_p]:mt-1 [&_p]:text-muted-foreground [&_p]:text-sm [&_p]:leading-6 [&_p]:[overflow-wrap:anywhere] [&_code]:block [&_code]:min-w-0 [&_code]:overflow-hidden [&_code]:rounded-lg [&_code]:py-2 [&_code]:px-3 [&_code]:bg-muted [&_code]:text-info [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
   "webhook-endpoint-heading": "flex items-center justify-between gap-2.5",
   "webhook-get-preview":
     "border border-solid border-border rounded-lg py-[13px] px-3.5 bg-info/10 [&_p]:[margin:4px_0_0] [&_p]:text-muted-foreground [&_p]:text-sm",

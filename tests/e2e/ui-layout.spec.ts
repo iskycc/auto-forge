@@ -5,6 +5,7 @@ import { zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
 import {
   browserJson,
@@ -1809,6 +1810,160 @@ test("task pass-rate bars keep their full track at zero, partial and complete va
       await expectUiIntegrity(page);
       await captureUi(page, `task-progress-${appearance}`, viewport.width);
     }
+  }
+});
+
+test("populated webhook cards contain long names and keep adjacent actions reachable", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const longName = "WalletPaymentRegressionCompletionNotification".repeat(2);
+  for (const name of [longName, "每日回归完成通知"]) {
+    const response = await browserJson(page, "/api/v1/webhooks", {
+      method: "POST",
+      body: {
+        projectId: scope.projectId,
+        name,
+        description: "NotificationDescriptionWithoutSeparators".repeat(8),
+        targetUrl: "http://127.0.0.1:9/notifications/wallet-payment-regression-completed",
+        method: "POST",
+        bodyTemplate: '{"status":"{{batch.displayStatus}}"}',
+        enabled: false,
+      },
+    });
+    expect(response.status).toBe(201);
+  }
+  for (const appearance of ["light", "dark"] as const) {
+    await page.goto("/settings/webhooks");
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: 960 });
+      const cards = page.locator(".webhook-endpoint-card");
+      await expect(cards).toHaveCount(2);
+      for (const card of await cards.all()) {
+        const overflow = await card.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return Math.max(
+            ...Array.from(element.querySelectorAll("h3, p, code, button")).map(
+              (child) => child.getBoundingClientRect().right - bounds.right,
+            ),
+          );
+        });
+        expect(
+          overflow,
+          "card text and actions must stay inside their own card",
+        ).toBeLessThanOrEqual(0);
+      }
+      await expectUiIntegrity(page);
+      await captureUi(page, `webhooks-populated-${appearance}`, width);
+    }
+    await page
+      .locator(".webhook-endpoint-card")
+      .first()
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("textbox", { name: "名称", exact: true })).toHaveValue(longName);
+    await dialog.getByRole("button", { name: /^关闭/u }).click();
+  }
+});
+
+test("populated service accounts wrap long names without pushing token actions offscreen", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const name = uniqueName("ReleaseValidationServiceAccountWithoutBreak".repeat(2));
+  const response = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
+    method: "POST",
+    body: {
+      name,
+      description: "ServiceAccountDescriptionWithoutSeparators".repeat(8),
+      systemPermissions: ["case.read"],
+    },
+  });
+  expect(response.status).toBe(201);
+  const tokenName = "WalletRegressionTokenWithoutSeparators".repeat(3);
+  const issued = await browserJson(page, `/api/v1/service-accounts/${response.body.id}/tokens`, {
+    method: "POST",
+    body: {
+      name: tokenName,
+      scopes: ["case.read"],
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    },
+  });
+  expect(issued.status).toBe(201);
+  await page.goto("/settings/platform?section=accounts");
+  await page.getByRole("searchbox", { name: "搜索账号", exact: true }).fill(name);
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  const account = page.locator(".service-account-list > article").filter({ hasText: name });
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: 960 });
+      await expect(account).toBeVisible();
+      await expectUiIntegrity(page);
+      await account.getByRole("button", { name: "令牌", exact: true }).click();
+      await expect(account.locator(".token-row")).toContainText(tokenName);
+      await expectUiIntegrity(page);
+      await captureUi(page, `service-accounts-populated-${appearance}`, width);
+    }
+    await account.getByRole("button", { name: "编辑账号与权限", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.locator('input[name="name"]')).toHaveValue(name);
+    await dialog.getByRole("button", { name: /^关闭/u }).click();
+  }
+});
+
+test("runner facts align across different update actions and record filters keep actions together", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const prefix = uniqueName("aligned-runner");
+  for (const agentVersion of ["0.1.0", "999.0.0"]) {
+    const response = await page.request.post("/api/v1/runner-agents/register", {
+      headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+      data: {
+        schemaVersion: 1,
+        name: `${prefix}-${agentVersion}`,
+        labels: [],
+        capabilities: [],
+        maxConcurrency: 4,
+        os: "linux",
+        architecture: "amd64",
+        agentVersion,
+        protocolVersion: 1,
+        terminalEnabled: false,
+      },
+    });
+    expect(response.status()).toBe(201);
+  }
+  await page.goto(`/runners?query=${encodeURIComponent(prefix)}`);
+  const rows = page.locator(".runner-list-item").filter({ hasText: prefix });
+  await expect(rows).toHaveCount(2);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    const positions = await rows.locator(".runner-list-facts").evaluateAll((elements) =>
+      elements.map((element) => {
+        const { left, width } = element.getBoundingClientRect();
+        return { left, width };
+      }),
+    );
+    expect(Math.abs(positions[0]!.left - positions[1]!.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(positions[0]!.width - positions[1]!.width)).toBeLessThanOrEqual(1);
+    await expectUiIntegrity(page);
+    await captureUi(page, "runner-aligned-facts", width);
+  }
+  await page.goto("/execution-records");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    const submit = await page.getByRole("button", { name: "筛选记录", exact: true }).boundingBox();
+    const reset = await page.getByRole("link", { name: "重置筛选", exact: true }).boundingBox();
+    expect(Math.abs(submit!.y - reset!.y)).toBeLessThanOrEqual(1);
+    await expectUiIntegrity(page);
+    await captureUi(page, "record-filter-actions", width);
   }
 });
 

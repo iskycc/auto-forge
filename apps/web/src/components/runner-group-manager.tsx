@@ -324,8 +324,12 @@ export function RunnerGroupManager({
                       <UsersRound size={19} />
                     </span>
                     <span>
-                      <strong>{group.name}</strong>
-                      <small>{group.description || "未填写说明"}</small>
+                      <strong className="line-clamp-2" title={group.name}>
+                        {group.name}
+                      </strong>
+                      <small className="line-clamp-3" title={group.description || undefined}>
+                        {group.description || "未填写说明"}
+                      </small>
                     </span>
                     <b>{group.runnerIds.length} 台</b>
                   </header>

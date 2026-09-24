@@ -455,17 +455,18 @@ const pageStyles = {
   pagination: "flex justify-end py-3.5 px-4.5 border-t border-solid border-border",
   "runner-list": "grid gap-[7px] py-2.5 px-3",
   "runner-list-actions":
-    "flex min-w-0 items-center flex-wrap justify-end gap-1.5 border-l border-solid border-border pl-2.5 max-[1281px]:border-l-0 max-[1281px]:pl-0",
+    "flex min-w-0 items-center flex-wrap justify-end gap-2 border-l border-solid border-border pl-3 max-[1281px]:col-span-full max-[1281px]:border-l-0 max-[1281px]:pl-0",
   "runner-list-card": "overflow-visible",
   "runner-list-facts":
-    "[&_small]:text-muted-foreground [&_small]:text-xs [&_small]:min-w-0 [&_small]:[overflow-wrap:anywhere] grid grid-cols-3 gap-px overflow-hidden border border-solid border-border rounded-lg bg-border [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:[align-content:start] [&_>_div]:gap-[3px] [&_>_div]:py-[7px] [&_>_div]:px-[9px] [&_>_div]:bg-muted [&_>_div_>_span]:text-muted-foreground [&_>_div_>_span]:text-xs [&_strong]:min-w-0 [&_strong]:[overflow-wrap:anywhere] max-[1281px]:col-span-full max-[1281px]:grid-cols-3",
+    "[&_small]:text-muted-foreground [&_small]:text-xs [&_small]:min-w-0 [&_small]:[overflow-wrap:anywhere] grid min-w-0 grid-cols-3 gap-px overflow-hidden border border-solid border-border rounded-lg bg-border [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:content-start [&_>_div]:gap-1 [&_>_div]:p-2 [&_>_div]:bg-muted [&_>_div_>_span]:text-muted-foreground [&_>_div_>_span]:text-xs [&_strong]:min-w-0 [&_strong]:[overflow-wrap:anywhere] max-[1281px]:col-span-full",
   "runner-list-filter":
-    "grid grid-cols-[minmax(220px,_1fr)_minmax(160px,_220px)_auto] items-end gap-2.5 [padding:0_14px_14px] border-b border-solid border-border [&_>_label]:grid [&_>_label]:gap-1.5 [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold",
-  "runner-list-header": "flex min-w-0 items-center justify-between gap-3.5",
+    "grid grid-cols-[minmax(220px,_1fr)_minmax(160px,_220px)_auto] items-end gap-3 p-3 border-b border-solid border-border [&_>_label]:grid [&_>_label]:gap-1.5 [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold",
+  "runner-list-header":
+    "flex min-w-0 items-center justify-between gap-3 max-[1281px]:col-span-full",
   "runner-list-identity":
     "flex min-w-0 items-center gap-2 [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal [&_small]:[overflow-wrap:anywhere] [&_small]:whitespace-normal [&_small]:text-muted-foreground [&_small]:text-xs",
   "runner-list-item":
-    "grid min-w-0 grid-cols-[minmax(210px,_0.7fr)_minmax(460px,_1.5fr)_auto] items-center gap-2.5 border border-solid border-border rounded-lg py-[9px] px-[11px] bg-card shadow-xs max-[1281px]:grid-cols-[minmax(0,_1fr)_auto]",
+    "grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-3 border border-solid border-border rounded-lg p-3 bg-card shadow-xs max-[1281px]:grid-cols-1",
   "runner-metrics":
     "grid grid-cols-[repeat(3,_1fr)] gap-3.5 [&_.card]:grid [&_.card]:grid-cols-[38px_minmax(0,_1fr)_auto] [&_.card]:items-center [&_.card]:gap-2.5 [&_.card]:p-4 [&_.card]:text-muted-foreground [&_.card_svg]:p-2 [&_.card_svg]:rounded-lg [&_.card_svg]:bg-info/10 [&_.card_svg]:text-info [&_.card_svg]:[box-sizing:content-box] [&_strong]:text-foreground [&_strong]:text-2xl",
   "runner-state":

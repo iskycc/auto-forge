@@ -4,6 +4,29 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.18.0 - 2026-09-24
+
+### Changed and fixed
+
+- 修复 Webhook、服务账号及令牌的长名称和连续文本撑宽页面、侵入相邻卡片的问题；保持编辑入口与操作按钮可见，Webhook 卡片操作区底部对齐。
+- 统一执行机名称、资源和操作列宽，避免不同升级操作导致行间错位；压缩执行机组长名称与描述，保留完整文本提示及编辑内容。
+- 将执行记录的筛选与重置放入同一操作组，减少小桌面视口中的无效换行；源码用例提示统一使用 Ant Design Alert。
+- 移除 DDT 回收站沿用的旧勾选列宽，完整展示可换行的 CaseID、SR 和来源，为恢复与永久删除按钮保留足够空间。
+- 补充带数据 UI 遍历报告及长文本、列对齐、筛选操作和回收站边界的浏览器回归。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置、API、Runner Protocol 或 Adapter 协议变更。Lite/Full 共用前端；从 v1.17.25 升级只需更新主平台，Full 各平台节点应同步更新。
+- 无新增生产依赖。Ant Design 资源继续随离线包交付；双架构后端、部署包、Jenkins 插件、SBOM 元数据及签名清单的资产类型不变。
+- 截图、测试数据库与本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- 生产构建、测试类型检查及变更文件的格式与 lint 检查通过；18 项组件／主题测试、8 项 Lite E2E 通过，覆盖管理权限、令牌、Webhook、JAR 导入执行与日志，以及 DDT 导入、编辑、冲突处理、删除恢复。
+- 发布整理阶段全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck` 和 `pnpm test:e2e:matrix` 通过。
+- 遍历 35 个页面／子页，补查有数据的弹窗、长字段及存储文件；实际查看 1024px、1536px 的浅色／深色截图。范围与复现证据见[带数据 UI 复查报告](./docs/design/populated-ui-audit-2026-09-24.md)。
+- 本地验证使用隔离 Lite 数据；Full、双架构离线发布和已发布资产验收由本版本 GitHub Actions 执行，以对应运行结果为准。
+
 ## 1.17.25 - 2026-09-23
 
 ### Changed and fixed

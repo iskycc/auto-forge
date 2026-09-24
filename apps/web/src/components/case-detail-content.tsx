@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
-import { AlertCircle } from "lucide-react";
+import { Notice } from "@/components/ui/notice";
 import type { ReactNode } from "react";
 
 import { CaseDefinitionEditor } from "@/components/case-definition-editor";
@@ -127,14 +127,10 @@ export function CaseDetailContent({
       </Card>
 
       {!detail.executable ? (
-        <div
-          className={cn("implementation-notice", caseDetailContentStyles["implementation-notice"])}
-          role="status"
-        >
-          <AlertCircle size={17} aria-hidden="true" />
+        <Notice className="implementation-notice min-w-0" tone="warning" showIcon role="status">
           该用例来自 sources JAR，可查看和管理源码，但不能直接执行；执行时请导入包含 .class 的测试
           JAR。
-        </div>
+        </Notice>
       ) : null}
 
       <CaseExecutionHistory
@@ -314,8 +310,6 @@ const caseDetailContentStyles = {
   "case-inspector-meta-wide": "col-span-full",
   "case-inspector-section":
     "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_.ui-disclosure-label]:min-h-11 [&_.ui-disclosure-label]:py-3 [&_.ui-disclosure-label]:px-3.5 [&_.ui-disclosure-label]:text-foreground [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:border-b [&[data-open=true]_.ui-disclosure-label]:border-solid [&[data-open=true]_.ui-disclosure-label]:border-border [&_.ui-disclosure-body_>_:not(summary):not(.table-scroll)]:m-3.5 [&_.ui-disclosure-body_>_.settings-stack]:m-0 [&_.ui-disclosure-body_>_.settings-stack]:p-3.5",
-  "implementation-notice":
-    "mt-4 rounded-lg bg-warning/10 text-warning py-[11px] px-3 text-xs leading-[1.5]",
   "method-signature":
     "max-w-[340px] overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground text-xs",
   "source-meta-grid":

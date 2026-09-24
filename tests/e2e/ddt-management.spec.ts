@@ -1200,6 +1200,39 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await page.getByRole("tab", { name: /回收站/u }).click();
   const deletedRow = page.getByRole("row", { name: new RegExp(`LOGIN-${hierarchy.suffix}`) });
   await expect(deletedRow).toBeVisible();
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+      const caseIdFits = await deletedRow
+        .getByRole("cell")
+        .first()
+        .evaluate((cell) => {
+          const range = document.createRange();
+          range.selectNodeContents(cell.querySelector("strong")!);
+          const cellBounds = cell.getBoundingClientRect();
+          return Array.from(range.getClientRects()).every(
+            (line) => line.left >= cellBounds.left && line.right <= cellBounds.right,
+          );
+        });
+      expect(caseIdFits, "The recycled CaseID must remain fully readable").toBe(true);
+      const actionsFit = await deletedRow
+        .getByRole("cell")
+        .last()
+        .evaluate((cell) => {
+          const cellBounds = cell.getBoundingClientRect();
+          return Array.from(cell.querySelectorAll("button")).every(
+            (button) => button.getBoundingClientRect().right <= cellBounds.right,
+          );
+        });
+      expect(actionsFit, "Restore and permanent delete must both remain inside the table").toBe(
+        true,
+      );
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-recycle-populated-${appearance}-${width}`);
+    }
+  }
   await deletedRow.getByRole("button", { name: "恢复" }).click();
   await page.getByRole("tab", { name: "用例", exact: true }).click();
   await expect(
