@@ -1,4 +1,8 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Card } from "@/components/ui/card";
@@ -84,7 +88,8 @@ export function CachedCaseDirectory({
         onRefresh={result.refresh}
       />
       {result.error ? (
-        <div
+        <Notice
+          tone="error"
           className={cn(
             "inline-feedback error",
             cachedCaseDirectoryStyles["inline-feedback"],
@@ -94,10 +99,12 @@ export function CachedCaseDirectory({
         >
           {result.error}
           <Button onClick={result.refresh}>重试</Button>
-        </div>
+        </Notice>
       ) : null}
       {result.loading && !result.projection ? (
-        <p role="status">正在后台准备当前范围，完成后自动显示。</p>
+        <LoadingStateMessage role="status">
+          正在后台准备当前范围，完成后自动显示。
+        </LoadingStateMessage>
       ) : null}
       {progress ? <p role="status">{progress}</p> : null}
       {currentManifest?.caseCount === 0 &&

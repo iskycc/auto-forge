@@ -1,11 +1,15 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Card } from "@/components/ui/card";
 
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { caseSuiteScheduleSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
-import { CalendarClock, History, LoaderCircle, Pause, Play, Save, Trash2 } from "lucide-react";
+import { CalendarClock, History, Pause, Play, Save, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { CaseSuiteScheduleDialog } from "@/components/case-suite-schedule-dialog";
@@ -144,7 +148,8 @@ export function CaseSuiteSchedulePanel({
         </Button>
       </header>
       {error ? (
-        <p
+        <Notice
+          tone="error"
           className={cn(
             "suite-schedule-error",
             caseSuiteSchedulePanelStyles["suite-schedule-error"],
@@ -152,7 +157,7 @@ export function CaseSuiteSchedulePanel({
           role="alert"
         >
           {error}
-        </p>
+        </Notice>
       ) : null}
       {canManage ? (
         <form
@@ -228,12 +233,7 @@ export function CaseSuiteSchedulePanel({
               </>
             ) : null}
             <Button disabled={pending} type="submit" variant="primary">
-              {pending ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-              ) : (
-                <Save size={15} />
-              )}{" "}
-              保存计划
+              {pending ? <LoadingIcon size={15} /> : <Save size={15} />} 保存计划
             </Button>
           </div>
         </form>

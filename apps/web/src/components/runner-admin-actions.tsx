@@ -1,4 +1,6 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
 import { Disclosure } from "@/components/ui/disclosure";
 
 import { cn } from "@/lib/utils";
@@ -142,9 +144,13 @@ export function RunnerAdminActions({
             删除
           </Button>
           {error ? (
-            <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
+            <Notice
+              tone="error"
+              className={cn("form-error", uiPatterns["form-error"])}
+              role="alert"
+            >
               {error}
-            </small>
+            </Notice>
           ) : null}
         </div>
       </Disclosure>
@@ -244,9 +250,9 @@ export function RunnerAdminActions({
           注销
         </Button>
         {error ? (
-          <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
+          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
             {error}
-          </small>
+          </Notice>
         ) : null}
       </div>
     </Disclosure>

@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -209,7 +211,7 @@ export function DdtRequirementCategoriesDialog({
           </div>
           {error ? (
             <Notice
-              tone="info"
+              tone="error"
               className={cn(
                 "inline-notice error",
                 uiPatterns["inline-notice"],
@@ -555,14 +557,14 @@ function DdtCategoryEditor({
         ))}
       </div>
       {!loading && !range.items.length ? (
-        <p
+        <EmptyState
           className={cn(
             "ddt-association-hint",
             ddtRequirementCategoriesDialogStyles["ddt-association-hint"],
           )}
         >
           没有匹配的候选测试类，请先在“配置测试类范围”中添加。
-        </p>
+        </EmptyState>
       ) : null}
       {range.nextCursor ? (
         <Button
@@ -579,7 +581,7 @@ function DdtCategoryEditor({
       ) : null}
       {error ? (
         <Notice
-          tone="info"
+          tone="error"
           className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
           role="alert"
         >
@@ -627,12 +629,12 @@ const ddtRequirementCategoriesDialogStyles = {
     "flex flex-col gap-1 min-w-0 [&_code]:text-xs [&_code]:text-muted-foreground [&_code]:[overflow-wrap:anywhere]",
   "ddt-association-class-list": "max-h-[360px] overflow-y-auto",
   "ddt-association-dialog":
-    "w-[min(960px,_calc(100vw_-_20px))] max-w-none [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0 [&_.inline-notice]:mb-3",
+    "w-[min(960px,_calc(100vw_-_20px))] max-w-none [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_>.ui-field-feedback]:flex-1 [&_.search-field_>.ui-field-feedback]:w-0 [&_.search-field_input]:w-full [&_.search-field_input]:min-w-0 [&_.inline-notice]:mb-3",
   "ddt-association-footer":
     "flex items-center gap-3 mt-4 [&_>_span]:flex-1 [&_>_span]:text-muted-foreground [&_>_span]:text-sm",
   "ddt-association-hint": "text-muted-foreground text-sm leading-[1.6] my-4 mx-0",
   "ddt-association-toolbar":
-    "flex items-center gap-3 [&_.search-field]:flex-1 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0",
+    "flex items-center gap-3 [&_.search-field]:flex-1 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_>.ui-field-feedback]:flex-1 [&_.search-field_>.ui-field-feedback]:w-0 [&_.search-field_input]:w-full [&_.search-field_input]:min-w-0",
   "ddt-category-editor":
     "grid gap-4 min-w-0 [&_.ddt-association-footer_>_span]:[overflow-wrap:anywhere] [&_.ddt-association-footer_>_span]:min-w-0",
   "ddt-category-list": "max-h-[min(42vh,_360px)] overflow-y-auto",

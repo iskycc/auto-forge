@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Segmented } from "./ui/segmented";
 import { Notice } from "@/components/ui/notice";
 
@@ -18,7 +20,7 @@ import {
   type Runner,
   type RunnerGroup,
 } from "@autoforge/domain";
-import { Check, Clock3, LoaderCircle, Play, Server, UsersRound, X } from "lucide-react";
+import { Check, Clock3, Play, Server, UsersRound, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -992,11 +994,7 @@ export function GlobalRunDialog({
                   type="submit"
                   variant="primary"
                 >
-                  {submitting ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-                  ) : (
-                    <Play size={16} />
-                  )}
+                  {submitting ? <LoadingIcon size={16} /> : <Play size={16} />}
                   {submitting
                     ? "正在创建…"
                     : startMode === "delayed"
@@ -1146,8 +1144,9 @@ const globalRunDialogStyles = {
   "delay-time-fields": "grid grid-cols-2 gap-2 [&_.field-stack]:mt-0",
   "execution-config-summary":
     "grid grid-cols-2 gap-3 m-0 [&_>_div]:min-w-0 [&_>_div]:border [&_>_div]:border-solid [&_>_div]:border-border [&_>_div]:rounded-lg [&_>_div]:p-3 [&_>_div]:bg-muted [&_dt]:text-muted-foreground [&_dt]:text-sm [&_dd]:[margin:4px_0_0] [&_dd]:font-semibold [&_dd]:[overflow-wrap:anywhere]",
+  // The fixed frame must not scroll when focus moves; only the form body owns scrolling.
   "global-run-dialog":
-    'flex w-[min(900px,_calc(100dvw_-_36px))] h-[min(760px,_calc(100dvh_-_36px))] min-h-0 max-h-[calc(100dvh_-_36px)] flex-col overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg [&_.segmented-control_button[aria-pressed="true"]]:border-info/10 [&_.segmented-control_button[aria-pressed="true"]]:bg-card [&_.segmented-control_button[aria-pressed="true"]]:text-info [&_.segmented-control_button[aria-pressed="true"]]:shadow-lg [&_.delay-time-fields_.field-stack]:mt-0 [&_.field-stack]:mt-[11px]',
+    'flex w-[min(900px,_calc(100dvw_-_36px))] h-[min(760px,_calc(100dvh_-_36px))] min-h-0 max-h-[calc(100dvh_-_36px)] flex-col overflow-clip border border-solid border-border rounded-xl bg-card shadow-lg [&_.segmented-control_button[aria-pressed="true"]]:border-info/10 [&_.segmented-control_button[aria-pressed="true"]]:bg-card [&_.segmented-control_button[aria-pressed="true"]]:text-info [&_.segmented-control_button[aria-pressed="true"]]:shadow-lg [&_.delay-time-fields_.field-stack]:mt-0 [&_.field-stack]:mt-[11px]',
   "global-run-dialog-actions":
     "flex [flex:0_0_auto] justify-end gap-[9px] border-t border-solid border-border py-[13px] px-5.5 bg-card",
   "global-run-dialog-header":

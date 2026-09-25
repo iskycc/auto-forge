@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Segmented } from "./ui/segmented";
 import { Notice } from "@/components/ui/notice";
 
@@ -347,14 +349,22 @@ export function AttemptLogViewer({
         凭据格式执行安全保护。
       </p>
       {logsTruncated ? (
-        <p className={cn("status-warning", attemptLogViewerStyles["status-warning"])} role="status">
+        <Notice
+          tone="warning"
+          className={cn("status-warning", attemptLogViewerStyles["status-warning"])}
+          role="status"
+        >
           日志已达到保留上限，后续内容被明确截断。
-        </p>
+        </Notice>
       ) : null}
       {sequenceGaps.length > 0 ? (
-        <p className={cn("status-warning", attemptLogViewerStyles["status-warning"])} role="status">
+        <Notice
+          tone="warning"
+          className={cn("status-warning", attemptLogViewerStyles["status-warning"])}
+          role="status"
+        >
           检测到 {sequenceGaps.length} 个序号缺口；Agent 补传后刷新即可恢复连续内容。
-        </p>
+        </Notice>
       ) : null}
       {canReadLogs ? (
         <pre
@@ -376,9 +386,9 @@ export function AttemptLogViewer({
               : "当前日志流暂无内容。"}
         </pre>
       ) : (
-        <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+        <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
           当前账号没有读取执行日志的权限。
-        </div>
+        </EmptyState>
       )}
       {nextSequence !== undefined ? (
         <Button
@@ -404,9 +414,9 @@ const attemptLogViewerStyles = {
   "execution-log-dark": uiPatterns["execution-log-dark"],
   "log-output-policy-note": "[margin:0_16px_10px] text-muted-foreground text-xs",
   "log-search":
-    'flex [flex:1_1_620px] flex-wrap items-center gap-[7px] border border-solid border-border rounded-md bg-card gap-y-1.5 py-[7px] px-2.5 [&_input]:w-auto [&_input]:min-w-[150px] [&_input]:[flex:1_1_150px] [&_input]:min-h-8.5 [&_input]:border-0 [&_input]:p-0 [&_input]:[outline:0] [&_input]:bg-transparent [&_>_button[type="submit"]]:ml-auto [&_.log-time-filter]:min-w-0 [&_.ui-datetime]:w-auto [&_.ui-datetime]:min-w-0 [&_.ui-datetime-display]:min-w-0 [&_.ui-datetime-display]:max-w-full [&_.ui-datetime-display_>_span]:min-w-0',
+    'flex min-w-0 [flex:1_1_620px] flex-wrap items-center gap-[7px] border border-solid border-border rounded-md bg-card gap-y-1.5 py-[7px] px-2.5 [&>_.ui-field-feedback]:[flex:1_1_150px] [&>_.ui-field-feedback]:min-w-[150px] [&>_.ui-field-feedback_.ui-input]:min-h-8.5 [&>_.ui-field-feedback_.ui-input]:border-0 [&>_.ui-field-feedback_.ui-input]:p-0 [&>_.ui-field-feedback_.ui-input]:bg-transparent [&_>_button[type="submit"]]:ml-auto',
   "log-time-filter":
-    "flex items-center gap-[5px] text-muted-foreground text-xs [&_>_span]:[flex:0_0_auto]",
+    "flex min-w-0 basis-[240px] items-center gap-[5px] text-muted-foreground text-xs [&>span:first-child]:shrink-0 [&>_.ui-field-feedback]:flex-1",
   "log-toolbar": "flex items-start justify-between gap-3 mb-2.5",
 
   "status-warning":

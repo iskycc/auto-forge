@@ -1,3 +1,6 @@
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -327,14 +330,14 @@ export default async function DashboardPage() {
             {qualityDelta !== null && currentAnalytics && currentAnalytics.sampleCount > 0 ? (
               <b className={deltaToneClass(qualityDelta)}>{deltaLabel(qualityDelta)}</b>
             ) : null}
-            <em
+            <Badge
               className={cn(
                 pageStyles["quality-grade"],
                 `quality-grade quality-grade quality-grade-${qualityAssessment.tone}`,
               )}
             >
               {qualityAssessment.label}
-            </em>
+            </Badge>
           </div>
           <p className={cn("quality-caption", pageStyles["quality-caption"])}>
             {currentAnalytics?.sampleCount
@@ -455,9 +458,7 @@ export default async function DashboardPage() {
             <div>
               <small>方法可执行率</small>
               <strong>{enabledMethodPercent}%</strong>
-              <em aria-hidden="true">
-                <i style={{ width: `${enabledMethodPercent}%` }} />
-              </em>
+              <Progress value={enabledMethodPercent} aria-label="方法可执行率" />
               <p>
                 {catalogSummary.enabledMethodCount.toLocaleString("zh-CN")} 个启用，
                 {Math.max(
@@ -515,9 +516,10 @@ export default async function DashboardPage() {
                 </span>
                 <b>{runnerCapacity.utilizationPercent}% 已占用</b>
               </div>
-              <span aria-label={`执行槽位占用 ${runnerCapacity.utilizationPercent}%`}>
-                <i style={{ width: `${runnerCapacity.utilizationPercent}%` }} />
-              </span>
+              <Progress
+                value={runnerCapacity.utilizationPercent}
+                aria-label={`执行槽位占用 ${runnerCapacity.utilizationPercent}%`}
+              />
               <div className={cn("runner-resource-pills", pageStyles["runner-resource-pills"])}>
                 <span>
                   CPU 平均 <strong>{optionalPercent(runnerCapacity.averageCpuPercent)}</strong>
@@ -531,12 +533,14 @@ export default async function DashboardPage() {
               </div>
             </div>
             {runnerGroups.length === 0 && runners.length === 0 ? (
-              <div className={cn("design-empty-state compact", pageStyles["design-empty-state"])}>
+              <EmptyState
+                className={cn("design-empty-state compact", pageStyles["design-empty-state"])}
+              >
                 <ServerCog aria-hidden="true" size={25} />
                 <strong>尚未注册执行机</strong>
                 <p>安装 Runner Agent 后，容量和资源状态会显示在这里。</p>
                 <Link href="/runners">安装执行机</Link>
-              </div>
+              </EmptyState>
             ) : runnerGroups.length === 0 ? (
               <RunnerSnapshotList runners={runners} timeZone={timeZone} />
             ) : (
@@ -621,7 +625,9 @@ export default async function DashboardPage() {
                   </div>
                 ))}
                 {(currentAnalytics?.failures.length ?? 0) === 0 ? (
-                  <p className={cn("muted", uiPatterns["muted"])}>本周暂无可聚类失败。</p>
+                  <EmptyState className={cn("muted", uiPatterns["muted"])}>
+                    本周暂无可聚类失败。
+                  </EmptyState>
                 ) : null}
               </div>
             </div>
@@ -687,11 +693,13 @@ export default async function DashboardPage() {
             </span>
           </div>
           {recentActivity.length === 0 ? (
-            <div className={cn("design-empty-state compact", pageStyles["design-empty-state"])}>
+            <EmptyState
+              className={cn("design-empty-state compact", pageStyles["design-empty-state"])}
+            >
               <Clock3 size={25} />
               <strong>暂无最近动态</strong>
               <p>批次执行与用例导入会显示在这里。</p>
-            </div>
+            </EmptyState>
           ) : (
             <div className={cn("design-activity-list", pageStyles["design-activity-list"])}>
               {recentActivity.slice(0, 6).map((item) => (
@@ -881,11 +889,9 @@ function ActiveBatchSummary({ batch }: { batch: RunBatch }) {
           {batch.currentRound}轮
         </small>
       </span>
-      <span className={cn("active-batch-progress", pageStyles["active-batch-progress"])}>
-        <b>{completionPercent}%</b>
-        <i>
-          <em style={{ width: `${completionPercent}%` }} />
-        </i>
+      <span className="flex min-w-24 items-center gap-2">
+        <b className="text-xs tabular-nums">{completionPercent}%</b>
+        <Progress value={completionPercent} aria-label="批次进度" />
       </span>
     </Link>
   );
@@ -899,17 +905,25 @@ function IdleExecutionState({
   const latestBatchTone = batchTone(latestBatch?.status);
   return (
     <div className={cn("idle-execution-state", pageStyles["idle-execution-state"])}>
-      <div className={cn("design-empty-state compact", pageStyles["design-empty-state"])}>
+      <EmptyState className={cn("design-empty-state compact", pageStyles["design-empty-state"])}>
         <CircleDashed aria-hidden="true" size={28} />
         <strong>当前没有活动执行</strong>
         <p>点击顶栏“开始执行”，选择任务或单个用例。</p>
-      </div>
+      </EmptyState>
       {latestBatch ? (
         <Link
           className={cn("latest-batch-summary", pageStyles["latest-batch-summary"])}
           href={`/run-batches/${latestBatch.id}`}
         >
-          <span className={latestBatchTone}>
+          <Badge
+            variant={
+              latestBatch.status === "succeeded"
+                ? "success"
+                : latestBatch.status === "failed"
+                  ? "destructive"
+                  : "info"
+            }
+          >
             {latestBatch.status === "succeeded" ? (
               <CheckCircle2 aria-hidden="true" size={16} />
             ) : latestBatch.status === "failed" ? (
@@ -917,7 +931,7 @@ function IdleExecutionState({
             ) : (
               <TimerReset aria-hidden="true" size={16} />
             )}
-          </span>
+          </Badge>
           <span>
             <small>
               最近批次 · {runBatchStatusLabel(latestBatch.status)} · #{latestBatch.sequenceNumber}
@@ -939,9 +953,9 @@ function QualityTrend({ analytics }: { analytics: AnalyticsSummary | null }) {
   const trend = analytics?.trend ?? [];
   if (trend.length === 0)
     return (
-      <div className={cn("quality-chart-empty", pageStyles["quality-chart-empty"])}>
+      <EmptyState className={cn("quality-chart-empty", pageStyles["quality-chart-empty"])}>
         暂无趋势数据
-      </div>
+      </EmptyState>
     );
   const chartStartX = 52;
   const chartEndX = 580;
@@ -1075,14 +1089,16 @@ function RunnerGroupCard({ group, runners }: { group: RunnerGroup; runners: read
     <Link href="/runners?section=groups">
       <span>
         <strong>{group.name}</strong>
-        <i className={members.some((runner) => runner.state === "online") ? "online" : "offline"} />
+        <Badge
+          variant={members.some((runner) => runner.state === "online") ? "success" : "secondary"}
+        >
+          {members.some((runner) => runner.state === "online") ? "在线" : "离线"}
+        </Badge>
       </span>
       <span>
         {availableSlots} / {totalSlots} 槽位 <b>{availablePercent}%</b>
       </span>
-      <em>
-        <i style={{ width: `${availablePercent}%` }} />
-      </em>
+      <Progress value={availablePercent} tone="success" aria-label="可用槽位比例" />
     </Link>
   );
 }
@@ -1118,14 +1134,14 @@ function RunnerSnapshotList({
             runner.state === "online" ? Math.max(0, runner.maxConcurrency - runner.busySlots) : 0;
           return (
             <Link href="/runners" key={runner.id}>
-              <span
+              <Badge
                 className={cn(
                   pageStyles["runner-snapshot-state"],
                   `runner-snapshot-state runner-snapshot-state runner-snapshot-state-${runner.state}`,
                 )}
               >
                 <ServerCog aria-hidden="true" size={15} />
-              </span>
+              </Badge>
               <span>
                 <strong title={runner.name}>{runner.name}</strong>
                 <small>

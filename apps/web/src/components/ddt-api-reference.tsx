@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
@@ -6,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import type { DdtScope } from "@autoforge/domain";
-import { Copy, Globe2, LoaderCircle, Play } from "lucide-react";
+import { Copy, Globe2, Play } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
 import { Button, Input, Select } from "./ui";
@@ -156,11 +158,7 @@ export function DdtApiReference({ scope, labels }: { scope: DdtScope; labels: Dd
             type="submit"
             disabled={!origin || !caseId.trim() || querying}
           >
-            {querying ? (
-              <LoaderCircle size={16} className={cn("spin", uiPatterns["spin"])} />
-            ) : (
-              <Play size={16} />
-            )}{" "}
+            {querying ? <LoadingIcon size={16} /> : <Play size={16} />}{" "}
             {querying ? "查询中" : "查询用例"}
           </Button>
         </form>
@@ -316,7 +314,7 @@ const ddtApiReferenceStyles = {
   "ddt-api-endpoint":
     "grid min-w-0 gap-2 [&_>_code]:block [&_>_code]:min-w-0 [&_>_code]:max-h-[360px] [&_>_code]:overflow-auto [&_>_code]:[overflow-wrap:anywhere] [&_>_code]:whitespace-pre-wrap [&_>_code]:p-3 [&_>_code]:border [&_>_code]:border-solid [&_>_code]:border-border [&_>_code]:rounded-lg [&_>_code]:bg-muted [&_>_code]:font-mono [&_>_code]:text-xs [&_>_code]:leading-[1.6] [&_code_>_span]:text-success [&_code_>_span]:font-semibold",
   "ddt-api-endpoint-heading":
-    "flex items-center flex-wrap gap-3 [&_>_:first-child]:min-w-0 [&_>_:first-child]:mr-auto [&_>_.ui-select]:[flex:0_1_140px] [&_>_.ui-select]:w-[140px]",
+    "flex items-center flex-wrap gap-3 [&_>_:first-child]:min-w-0 [&_>_:first-child]:mr-auto [&_>_.ui-field-feedback]:[flex:0_1_140px] [&_>_.ui-field-feedback]:w-[140px]",
   "ddt-api-guide-grid":
     "grid min-w-0 grid-cols-[minmax(0,_1.2fr)_minmax(0,_1fr)] gap-4 max-[1181px]:grid-cols-[minmax(0,_1fr)]",
   "ddt-api-heading": "flex items-center flex-wrap gap-3 [&_>_div]:min-w-0 [&_>_div]:mr-auto",

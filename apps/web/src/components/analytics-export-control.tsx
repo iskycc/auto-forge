@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { LinkButton } from "@/components/ui/link-button";
 
 import { cn } from "@/lib/utils";
@@ -8,7 +12,7 @@ import { Button } from "@/components/ui";
 import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
 
 import type { AnalyticsExportJob, AnalyticsFilter } from "@autoforge/contracts";
-import { Download, LoaderCircle, X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 type Props = { filter: AnalyticsFilter };
@@ -96,7 +100,7 @@ export function AnalyticsExportControl({ filter }: Props) {
             analyticsExportControlStyles["analytics-export-progress"],
           )}
         >
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={17} aria-hidden="true" />
+          <LoadingIcon size={17} aria-hidden="true" />
           <span>正在生成 {job.progressPercent}%</span>
           <Button
             className={cn("icon-button", uiPatterns["icon-button"])}
@@ -121,23 +125,25 @@ export function AnalyticsExportControl({ filter }: Props) {
         </LinkButton>
       ) : null}
       {job?.status === "failed" ? (
-        <span
+        <Notice
+          tone="error"
           className={cn("field-error", analyticsExportControlStyles["field-error"])}
           role="alert"
         >
           {job.errorSummary ?? "导出生成失败。"}
-        </span>
+        </Notice>
       ) : null}
       {job?.status === "cancelled" ? (
         <span className={cn("muted", uiPatterns["muted"])}>导出已取消。</span>
       ) : null}
       {error ? (
-        <span
+        <Notice
+          tone="error"
           className={cn("field-error", analyticsExportControlStyles["field-error"])}
           role="alert"
         >
           {error}
-        </span>
+        </Notice>
       ) : null}
     </div>
   );

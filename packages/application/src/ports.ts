@@ -1097,7 +1097,7 @@ export interface DdtRepository {
   }): Promise<DdtInheritancePage>;
   listRequirementCategories(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number },
+    query: { query: string; cursor?: string; limit: number; exactName?: string },
   ): Promise<DdtRequirementCategoryPage>;
   saveRequirementCategory(input: {
     scope: DdtScope;
@@ -1282,6 +1282,7 @@ export interface CaseSuiteRepository {
     limit: number,
     projectIds?: readonly string[],
     projectVersionId?: string,
+    page?: { afterId?: string },
   ): Promise<CaseSuite[]>;
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
@@ -1364,6 +1365,9 @@ export type UpdateCaseSuiteRecord = {
 
 export type CopyCaseSuiteRecord = {
   id: string;
+  /** Initialization resumes the same disabled task without replacing edited configuration. */
+  ifAbsent?: boolean;
+  enabled?: boolean;
   projectId?: string;
   name: string;
   description?: string;

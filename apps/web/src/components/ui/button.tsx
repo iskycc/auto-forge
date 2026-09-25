@@ -1,6 +1,6 @@
 "use client";
 
-import { Button as AntButton } from "antd";
+import { Button as AntButton, Tooltip } from "antd";
 import type { VariantProps } from "class-variance-authority";
 import { buttonVariants } from "./button-variants";
 import type { ComponentProps } from "react";
@@ -14,11 +14,12 @@ export function Button({
   size = "default",
   type = "submit",
   disabled,
+  title,
   ...props
 }: Omit<ComponentProps<"button">, "color"> &
   VariantProps<typeof buttonVariants> & { loading?: boolean }) {
   const clientReady = useClientReadiness();
-  return (
+  const control = (
     <AntButton
       data-slot="button"
       data-variant={variant}
@@ -43,5 +44,18 @@ export function Button({
       disabled={disabled || !clientReady}
       {...definedProps(props)}
     />
+  );
+  return title ? (
+    <Tooltip
+      title={title}
+      trigger={["hover", "focus"]}
+      open={
+        props["aria-expanded"] === true || props["aria-expanded"] === "true" ? false : undefined
+      }
+    >
+      {control}
+    </Tooltip>
+  ) : (
+    control
   );
 }

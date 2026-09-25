@@ -1,11 +1,15 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { Notice } from "@/components/ui/notice";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, Textarea } from "@/components/ui";
 
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
-import { LoaderCircle, Save } from "lucide-react";
+import { Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { useToast } from "@/components/ui-feedback";
@@ -99,21 +103,16 @@ export function CaseDefinitionEditor({
         className={cn("settings-form-actions", caseDefinitionEditorStyles["settings-form-actions"])}
       >
         {error ? (
-          <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
+          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
             {error}
-          </small>
+          </Notice>
         ) : null}
         <Button
           className={cn("primary-button", uiPatterns["primary-button"])}
           disabled={pending}
           type="submit"
         >
-          {pending ? (
-            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-          ) : (
-            <Save size={15} />
-          )}{" "}
-          保存修改
+          {pending ? <LoadingIcon size={15} /> : <Save size={15} />} 保存修改
         </Button>
       </div>
     </form>

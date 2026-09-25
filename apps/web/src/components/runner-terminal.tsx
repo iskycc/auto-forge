@@ -1,4 +1,10 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Dialog } from "@/components/ui/dialog";
 
 import "@xterm/xterm/css/xterm.css";
@@ -10,7 +16,7 @@ import { Button } from "@/components/ui";
 import { apiErrorSchema, createTerminalSessionResultSchema } from "@autoforge/contracts";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import { LoaderCircle, Maximize2, Minimize2, ShieldCheck, TerminalSquare, X } from "lucide-react";
+import { Maximize2, Minimize2, ShieldCheck, TerminalSquare, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type ConnectionState = "authorization" | "connecting" | "connected" | "closed";
@@ -272,7 +278,7 @@ export function RunnerTerminal({
               <strong>{runnerName}</strong>
               <small>Agent WebSocket</small>
             </span>
-            <span
+            <Badge
               className={cn(
                 runnerTerminalStyles["terminal-connection"],
                 `terminal-connection terminal-connection terminal-connection-${connectionState}`,
@@ -280,7 +286,7 @@ export function RunnerTerminal({
             >
               <i />
               {connectionLabel(connectionState)}
-            </span>
+            </Badge>
             <Button
               aria-label={expanded ? "还原终端窗口" : "放大终端窗口"}
               aria-pressed={expanded}
@@ -317,14 +323,15 @@ export function RunnerTerminal({
                 <strong>打开受控终端</strong>
                 <p>将使用当前登录会话和独立终端权限换取一次性短时票据。</p>
                 {error && (
-                  <span
+                  <Notice
+                    tone="error"
                     className={cn(
                       "terminal-auth-error",
                       runnerTerminalStyles["terminal-auth-error"],
                     )}
                   >
                     {error}
-                  </span>
+                  </Notice>
                 )}
                 <Button
                   className={cn(
@@ -337,7 +344,7 @@ export function RunnerTerminal({
                   loading={!terminalReady && !error}
                 >
                   {connectionState === "connecting" ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                    <LoadingIcon size={15} />
                   ) : (
                     <TerminalSquare size={15} />
                   )}

@@ -1,4 +1,6 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
 import { Tabs } from "@/components/ui/tabs";
 import { TabContent } from "@/components/ui/tab-content";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +66,8 @@ export function DdtCaseInspector({
         aria-label="用例详情与操作"
       >
         {error ? (
-          <div
+          <Notice
+            tone="error"
             className={cn("ddt-detail-error", ddtCaseInspectorStyles["ddt-detail-error"])}
             role="alert"
           >
@@ -78,7 +81,7 @@ export function DdtCaseInspector({
             >
               重试读取详情
             </Button>
-          </div>
+          </Notice>
         ) : detail ? (
           <div
             className={cn(

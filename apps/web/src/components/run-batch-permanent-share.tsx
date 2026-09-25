@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Notice } from "@/components/ui/notice";
 
 import { LinkButton } from "@/components/ui/link-button";
@@ -6,7 +8,7 @@ import { LinkButton } from "@/components/ui/link-button";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
-import { Check, Copy, ExternalLink, Link2, LoaderCircle } from "lucide-react";
+import { Check, Copy, ExternalLink, Link2 } from "lucide-react";
 import { useState } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -69,11 +71,7 @@ export function RunBatchPermanentShare({
         type="button"
         variant="ghost"
       >
-        {pending ? (
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
-        ) : (
-          <Link2 size={14} />
-        )}
+        {pending ? <LoadingIcon size={14} /> : <Link2 size={14} />}
         {shareUrl ? "重新生成" : "分享"}
       </Button>
       {shareUrl ? (

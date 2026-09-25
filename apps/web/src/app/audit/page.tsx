@@ -401,12 +401,12 @@ const pageStyles = {
   "audit-filter-grid":
     "grid grid-cols-[minmax(0,_1.6fr)_repeat(3,_minmax(0,_1fr))] gap-3 items-end max-[1281px]:grid-cols-2",
   "audit-filter-panel":
-    "grid gap-4 p-5 border-b border-solid border-border [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.audit-search-field_>_input.ui-input[aria-label]]:[padding-left:calc(12px_*_3)]",
+    "grid gap-4 p-5 border-b border-solid border-border [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
   "audit-list-heading":
     "flex items-center justify-between gap-3 py-4 px-5 [&_>_span]:m-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_h2]:flex [&_h2]:items-center [&_h2]:gap-2 [&_h2]:m-0 [&_h2]:text-sm",
   "audit-pagination":
     "flex items-center justify-between gap-3 py-4 px-5 border-t border-solid border-border [&_>_span]:m-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2",
   "audit-search-field":
-    "relative block [&_>_svg]:absolute [&_>_svg]:left-3 [&_>_svg]:top-1/2 [&_>_svg]:[transform:translateY(-50%)] [&_>_svg]:pointer-events-none",
+    "relative block [&_.ui-input]:pl-9! [&_>_svg]:absolute [&_>_svg]:z-1 [&_>_svg]:left-3 [&_>_svg]:top-1/2 [&_>_svg]:[transform:translateY(-50%)] [&_>_svg]:pointer-events-none",
   "operations-page-header": "items-center",
 } as const;

@@ -1,4 +1,8 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Badge } from "@/components/ui/badge";
 
 import { Notice } from "@/components/ui/notice";
@@ -29,7 +33,6 @@ import {
   ChevronRight,
   CopyPlus,
   FileArchive,
-  LoaderCircle,
   RotateCcw,
   ScanSearch,
   UploadCloud,
@@ -413,11 +416,7 @@ export function JarImporter({
             disabled={!clientReady || !file || busy || !projectVersionId || !testStageId}
           >
             {phase === "inspecting" ? (
-              <LoaderCircle
-                className={cn("spin", uiPatterns["spin"])}
-                size={17}
-                aria-hidden="true"
-              />
+              <LoadingIcon size={17} aria-hidden="true" />
             ) : (
               <ScanSearch size={17} aria-hidden="true" />
             )}
@@ -496,23 +495,26 @@ export function JarImporter({
           </div>
 
           {inspection.executable === false ? (
-            <div
+            <Notice
+              tone="info"
               className={cn("implementation-notice", jarImporterStyles["implementation-notice"])}
               role="status"
             >
               这是 sources JAR。导入后可在用例详情查看源码，但不能直接交给 Agent 执行。
-            </div>
+            </Notice>
           ) : (inspection.javaSourceFileCount ?? 0) > 0 ? (
-            <div
+            <Notice
+              tone="info"
               className={cn("implementation-notice", jarImporterStyles["implementation-notice"])}
               role="status"
             >
               这是混合 JAR。class 用于 Agent 执行，匹配的 Java 源文件可在用例详情中查看。
-            </div>
+            </Notice>
           ) : null}
 
           {inspection.warnings.length > 0 && (
-            <div
+            <Notice
+              tone="warning"
               className={cn("warning-list", jarImporterStyles["warning-list"])}
               aria-label="扫描警告"
             >
@@ -525,17 +527,18 @@ export function JarImporter({
                   </span>
                 </div>
               ))}
-            </div>
+            </Notice>
           )}
 
           {inspection.classes.length > CLASS_PREVIEW_LIMIT ? (
-            <div
+            <Notice
+              tone="info"
               className={cn("implementation-notice", jarImporterStyles["implementation-notice"])}
               role="status"
             >
               共识别 {inspection.classes.length} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
               个不再逐条展示；导入进度见下方状态，识别异常见上方扫描警告。
-            </div>
+            </Notice>
           ) : (
             <div className={cn("class-preview-list", jarImporterStyles["class-preview-list"])}>
               {uniqueInspectionClasses(inspection.classes).map((candidate) => (
@@ -569,9 +572,9 @@ export function JarImporter({
                 >
                   <div className={cn("method-list", jarImporterStyles["method-list"])}>
                     {candidate.methods.length === 0 ? (
-                      <p className={cn("empty-inline", jarImporterStyles["empty-inline"])}>
+                      <EmptyState className={cn("empty-inline", jarImporterStyles["empty-inline"])}>
                         类带有 `@Test`，但未发现可导入的 public 方法。
-                      </p>
+                      </EmptyState>
                     ) : (
                       candidate.methods.map((method) => (
                         <div
@@ -633,11 +636,7 @@ export function JarImporter({
                 !testStageId
               }
             >
-              {phase === "importing" ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={17} />
-              ) : (
-                <Check size={17} />
-              )}
+              {phase === "importing" ? <LoadingIcon size={17} /> : <Check size={17} />}
               {phase === "importing" ? "正在导入" : "确认导入"}
             </Button>
           </div>
@@ -675,7 +674,8 @@ export function JarImporter({
               </div>
               <ProgressBar label="导入进度" max={100} value={job.progressPercent} />
               {workerWaitWarning(job) ? (
-                <div
+                <Notice
+                  tone="error"
                   className={cn(
                     "import-worker-warning",
                     jarImporterStyles["import-worker-warning"],
@@ -690,7 +690,7 @@ export function JarImporter({
                       与错误日志。工作器恢复后，当前积压任务会自动继续。
                     </small>
                   </span>
-                </div>
+                </Notice>
               ) : null}
               <div
                 className={cn(
@@ -731,7 +731,8 @@ export function JarImporter({
       ) : null}
 
       {result && (
-        <div
+        <Notice
+          tone="success"
           className={cn(
             "alert alert-success",
             jarImporterStyles["alert"],
@@ -746,7 +747,7 @@ export function JarImporter({
               : `已导入 ${result.importedClassCount} 个测试类、${result.importedMethodCount} 个测试方法。`}
           </span>
           <Link href="/cases">查看用例管理</Link>
-        </div>
+        </Notice>
       )}
     </div>
   );

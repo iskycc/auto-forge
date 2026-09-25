@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { isDomainError } from "@autoforge/domain";
@@ -81,9 +82,9 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
               )}
             />
           ) : null}
-          <span className={cn("storage-pill", pageStyles["storage-pill"])}>
+          <Badge className={cn("storage-pill", pageStyles["storage-pill"])}>
             <FileCode2 size={16} aria-hidden="true" /> 当前版本 v{definition.currentVersion}
-          </span>
+          </Badge>
         </div>
       </section>
 

@@ -22,6 +22,15 @@ const REQUIRED_COMPONENT_STYLES = [
   "segmented",
   "result",
   "statistic",
+  "tooltip",
+  "input-number",
+  "select-auto-complete",
+  "splitter",
+  "image",
+  "upload",
+  "avatar",
+  "timeline",
+  "steps",
 ];
 
 async function listAssets(directory, prefix = "") {

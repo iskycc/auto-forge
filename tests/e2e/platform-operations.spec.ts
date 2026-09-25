@@ -772,7 +772,9 @@ test("platform save bar and file scope badge keep their rounded desktop layout",
     // The fixed header/footer intentionally paint over scrolling fields, so
     // use hit testing for the actions and last field, plus actual screenshots.
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    await page.locator('input[name="workerShutdownGraceMs"]').click({ trial: true });
+    await page
+      .getByRole("spinbutton", { name: "后台工作排空期限（毫秒）", exact: true })
+      .click({ trial: true });
     await bar.getByRole("button", { name: "保存平台配置" }).click({ trial: true });
     await expectPageFitsViewport(page);
     await captureUi(page, `rounded-save-bar-bottom-${width}`);
@@ -919,11 +921,15 @@ test("nested storage file rows retain independent columns, disclosure state and 
   await location
     .locator(":scope > .ant-collapse > .ant-collapse-item > .ant-collapse-header")
     .click();
-  const runtime = tree.locator('.ui-disclosure-label[title="runtime"]');
+  const directoryHeader = (path: string) =>
+    tree.locator(".ui-disclosure-label").filter({
+      has: page.locator("code").and(page.getByText(path, { exact: true })),
+    });
+  const runtime = directoryHeader("runtime");
   await expect(runtime.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
-  await expect(tree.locator('.ui-disclosure-label[title="runtime/nested"]')).toHaveCount(0);
+  await expect(directoryHeader("runtime/nested")).toHaveCount(0);
   await runtime.click();
-  const nested = tree.locator('.ui-disclosure-label[title="runtime/nested"]');
+  const nested = directoryHeader("runtime/nested");
   await expect(tree.getByText("notes.txt", { exact: true })).toHaveCount(0);
   await expect(nested.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
   await nested.click();
@@ -963,7 +969,7 @@ test("nested storage file rows retain independent columns, disclosure state and 
   await expect(tree.getByText("notes.txt", { exact: true })).toHaveCount(0);
   for (let depth = 0; depth < 16; depth++) {
     const path = Array.from({ length: depth + 1 }, (_, index) => `level-${index}`).join("/");
-    const branch = tree.locator(`.ui-disclosure-label[title="${path}"]`);
+    const branch = directoryHeader(path);
     await expect(branch.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
     await branch.click();
   }

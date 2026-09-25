@@ -160,9 +160,9 @@ export function RunBatchExportDialog({
               options={EXPORT_OUTCOME_OPTIONS.map((option) => ({ ...option }))}
             />
             {!hasSelection ? (
-              <p className="m-0 mt-2 text-xs text-warning" role="status">
+              <Notice tone="warning" className="m-0 mt-2 text-xs text-warning" role="status">
                 请至少选择一种结果类型后再导出。
-              </p>
+              </Notice>
             ) : null}
           </fieldset>
         ) : (

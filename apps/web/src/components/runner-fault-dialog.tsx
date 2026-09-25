@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Dialog } from "@/components/ui/dialog";
 import {
   Table,
@@ -53,9 +55,9 @@ export function RunnerFaultDialog({
       </header>
       <div className={cn("runner-update-body", runnerFaultDialogStyles["runner-update-body"])}>
         {incidents.length === 0 ? (
-          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
             当前批次没有执行机异常事件。
-          </div>
+          </EmptyState>
         ) : (
           <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
             <Table

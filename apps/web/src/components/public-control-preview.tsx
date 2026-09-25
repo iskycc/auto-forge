@@ -1,5 +1,4 @@
-import { cn } from "@/lib/utils";
-import { uiPatterns } from "@/components/ui/patterns";
+import { Badge } from "./ui/badge";
 import type { PublicPlatformStatistics } from "@autoforge/contracts";
 import { Activity, CheckCircle2, Clock3, RefreshCw, Server } from "lucide-react";
 import type { CSSProperties } from "react";
@@ -62,25 +61,22 @@ export function PublicControlPreview({
           title="刷新公开统计"
           onClick={onRefresh}
           disabled={synchronizing}
+          loading={synchronizing}
         >
-          <RefreshCw
-            aria-hidden="true"
-            size={16}
-            className={synchronizing ? cn("spin", uiPatterns["spin"]) : undefined}
-          />
+          {synchronizing ? null : <RefreshCw aria-hidden="true" size={16} />}
         </Button>
       </header>
       <div className={styles.previewContent}>
-        <div
-          className={styles.snapshotStatus}
-          data-tone={status.tone}
+        <Badge
+          variant={
+            status.tone === "warning" ? "warning" : status.tone === "success" ? "success" : "info"
+          }
           role="status"
           aria-live="polite"
           aria-atomic="true"
         >
-          <i aria-hidden="true" />
           {synchronizing ? "正在同步公开统计" : status.label}
-        </div>
+        </Badge>
         <div className={styles.previewKpis}>
           <div>
             <span>

@@ -1,4 +1,12 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Badge } from "@/components/ui/badge";
 
 import { Disclosure } from "@/components/ui/disclosure";
@@ -27,7 +35,6 @@ import {
   Folder,
   Layers3,
   ListFilter,
-  LoaderCircle,
   Search,
   Trash2,
 } from "lucide-react";
@@ -595,9 +602,9 @@ export function CaseSelectionTable({
               )}
               role="status"
             >
-              <LoaderCircle
+              <LoadingIcon
                 aria-hidden="true"
-                className={cn("spin", uiPatterns["spin"])}
+
                 size={14}
               />
               {membershipPending ? "正在读取任务成员" : "正在筛选"}
@@ -665,11 +672,7 @@ export function CaseSelectionTable({
                 type="button"
                 variant="danger"
               >
-                {pending ? (
-                  <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                ) : (
-                  <Trash2 size={15} />
-                )}
+                {pending ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
                 批量删除
               </Button>
             ) : null}
@@ -726,11 +729,7 @@ export function CaseSelectionTable({
                   type="button"
                   variant={missingOnly ? "primary" : "secondary"}
                 >
-                  {membershipPending ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                  ) : (
-                    <ListFilter size={15} />
-                  )}
+                  {membershipPending ? <LoadingIcon size={15} /> : <ListFilter size={15} />}
                   {missingOnly ? "仅看未加入" : "筛选未加入"}
                 </Button>
                 <Button
@@ -749,11 +748,7 @@ export function CaseSelectionTable({
                   }
                   onClick={addToSuite}
                 >
-                  {pending ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                  ) : (
-                    <Check size={15} />
-                  )}
+                  {pending ? <LoadingIcon size={15} /> : <Check size={15} />}
                   加入任务
                 </Button>
               </>
@@ -761,19 +756,21 @@ export function CaseSelectionTable({
           </div>
         ) : null}
         {crossProjectSelection ? (
-          <div
+          <Notice
+            tone="error"
             className={cn("inline-feedback", caseSelectionTableStyles["inline-feedback"])}
             role="alert"
           >
             不能跨项目混选，请取消其他项目的勾选。
-          </div>
+          </Notice>
         ) : message ? (
-          <div
+          <Notice
+            tone="success"
             className={cn("inline-feedback", caseSelectionTableStyles["inline-feedback"])}
             role="status"
           >
             {message}
-          </div>
+          </Notice>
         ) : null}
 
         {deletionProgress ? (
@@ -842,11 +839,11 @@ export function CaseSelectionTable({
           className={cn("case-directory-scroll", caseSelectionTableStyles["case-directory-scroll"])}
         >
           {(directoryTree ? directoryTree.caseCount === 0 : visibleCases.length === 0) ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               {directoryTree && !directoryTree.ready
                 ? "目录尚未就绪，完成准备后自动显示。"
                 : "没有匹配的用例，尝试缩短搜索关键词。"}
-            </div>
+            </EmptyState>
           ) : (
             <div
               className={cn("case-directory-tree", caseSelectionTableStyles["case-directory-tree"])}
@@ -889,22 +886,23 @@ export function CaseSelectionTable({
         aria-label="用例详情与操作"
       >
         {!activeCaseId ? (
-          <div
+          <EmptyState
             className={cn("case-inspector-empty", caseSelectionTableStyles["case-inspector-empty"])}
           >
             <FileCode2 size={28} aria-hidden="true" />
             <strong>选择一个用例</strong>
             <p>详情、方法、执行与分析历史、源码及管理操作会显示在这里。</p>
-          </div>
+          </EmptyState>
         ) : activeDetailError ? (
-          <div
+          <Notice
+            tone="error"
             className={cn("case-inspector-empty", caseSelectionTableStyles["case-inspector-empty"])}
             role="alert"
           >
             <AlertCircle size={24} />
             <strong>详情加载失败</strong>
             <p>{activeDetailError}</p>
-          </div>
+          </Notice>
         ) : activeDetail ? (
           <CaseInspector
             key={activeDetail.definition.id}
@@ -957,9 +955,9 @@ function CaseInspector({
           <code>{definition.className}</code>
         </div>
         <div className={"case-inspector-header-actions"}>
-          <span className={cn("storage-pill", caseSelectionTableStyles["storage-pill"])}>
+          <Badge className={cn("storage-pill", caseSelectionTableStyles["storage-pill"])}>
             v{definition.currentVersion}
-          </span>
+          </Badge>
           {detail.canRun && definition.enabled && !definition.archived && detail.executable ? (
             <OpenRunDialogButton
               caseDefinitionId={definition.id}
@@ -1002,11 +1000,7 @@ function CaseInspector({
               <p>删除当前目录、版本和任务成员关系；既有执行记录仍保留。</p>
             </div>
             <Button disabled={pending} onClick={onDelete} type="button" variant="danger">
-              {pending ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-              ) : (
-                <Trash2 size={15} />
-              )}
+              {pending ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
               删除用例
             </Button>
           </div>
@@ -1259,12 +1253,14 @@ function DirectoryNode({
           加载更多用例（剩余 {branchCases.length - visibleCaseCount}）
         </Button>
       ) : null}
-      {loaded.loading && source ? <p role="status">正在加载目录…</p> : null}
+      {loaded.loading && source ? (
+        <LoadingStateMessage role="status">正在加载目录…</LoadingStateMessage>
+      ) : null}
       {loaded.error && source ? (
-        <div role="alert">
+        <Notice tone="error" role="alert">
           {loaded.error}
           <Button onClick={loaded.retry}>重试</Button>
-        </div>
+        </Notice>
       ) : null}
       {loaded.more && source ? (
         <Button
@@ -1418,7 +1414,7 @@ const caseSelectionTableStyles = {
   "case-selection-stats":
     "flex flex-wrap items-center [align-content:flex-start] gap-2 py-2 px-3 border-b border-solid border-border bg-muted text-muted-foreground text-xs [&_strong]:text-foreground [&_>_span]:[flex:0_0_auto] [&_>_span:first-child]:[flex-basis:100%]",
   "case-selection-toolbar":
-    "flex flex-wrap items-center gap-2 [border-block:1px_solid_var(--border)] py-[9px] px-3 py-2 [&_.ui-select]:min-w-0 [&_.ui-select]:[flex:1_1_150px] [@media(min-height:_900px)]:[&_.ui-select]:[flex:1_1_260px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
+    "flex flex-wrap items-center gap-2 [border-block:1px_solid_var(--border)] py-[9px] px-3 py-2 [&>_.ui-field-feedback]:min-w-0 [&>_.ui-field-feedback]:[flex:1_1_150px] [@media(min-height:_900px)]:[&>_.ui-field-feedback]:[flex:1_1_260px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
   "case-tree-activate":
     "grid min-w-0 min-h-9 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-1.5 rounded-md px-1 py-0.5 text-sm text-inherit text-left no-underline hover:bg-info/10 [&_>_span]:grid [&_>_span]:min-w-0 [&_strong]:truncate [&_strong]:font-semibold [&_strong]:leading-4 [&_code]:truncate [&_code]:text-muted-foreground [&_code]:text-xs [&_code]:leading-4 [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:whitespace-nowrap max-[1600px]:[&_small]:hidden max-[1440px]:grid-cols-[auto_minmax(0,1fr)] max-[1440px]:[&_.batch-status]:hidden [&_.batch-status]:self-center",
   "case-tree-case":

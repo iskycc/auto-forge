@@ -1,4 +1,8 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { Notice } from "@/components/ui/notice";
+
 import { cn } from "@/lib/utils";
 
 import {
@@ -73,7 +77,8 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
 
   if (initial.configurationManaged) {
     return (
-      <div
+      <Notice
+        tone="info"
         className={cn(
           "implementation-notice",
           platformInitializationStyles["implementation-notice"],
@@ -81,7 +86,7 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
         role="status"
       >
         分布式平台已由部署文件配置。请在右侧创建首位管理员，随后在“平台节点”中填写节点 IP 和端口。
-      </div>
+      </Notice>
     );
   }
 
@@ -113,17 +118,18 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
           <h2 id="platform-setup-title">配置部署模式</h2>
           <p>Lite 开箱即用；需要集群能力时再接入 Full 基础设施。</p>
         </div>
-        <span
+        <Badge
           className={cn(
             "setup-optional-badge",
             platformInitializationStyles["setup-optional-badge"],
           )}
         >
           可选
-        </span>
+        </Badge>
       </div>
       {completed ? (
-        <div
+        <Notice
+          tone="success"
           className={cn(
             "inline-success setup-restart-message",
             platformInitializationStyles["inline-success"],
@@ -133,7 +139,7 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
         >
           <RotateCw size={18} />{" "}
           配置已安全写入。请重启主平台；重启后仍使用同一个一次性令牌创建管理员。
-        </div>
+        </Notice>
       ) : (
         <form
           className={cn("setup-form", platformInitializationStyles["setup-form"])}
@@ -217,12 +223,13 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
             {pending ? "正在保存…" : "保存平台配置"}
           </Button>
           {error ? (
-            <p
+            <Notice
+              tone="error"
               className={cn("setup-form-error", platformInitializationStyles["setup-form-error"])}
               role="alert"
             >
               {error}
-            </p>
+            </Notice>
           ) : null}
         </form>
       )}

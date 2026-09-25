@@ -1,3 +1,4 @@
+import { Notice } from "@/components/ui/notice";
 import { Badge } from "@/components/ui/badge";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Card } from "@/components/ui/card";
@@ -167,7 +168,7 @@ export default async function CaseSourcePage({ params }: Props) {
         </Card>
       )}
       {inspection.warnings.length > 0 && (
-        <div className={cn("warning-list", pageStyles["warning-list"])}>
+        <Notice tone="warning" className={cn("warning-list", pageStyles["warning-list"])}>
           {inspection.warnings.map((warning, index) => (
             <div key={`${warning.code}-${index}`}>
               <AlertCircle size={15} />
@@ -177,7 +178,7 @@ export default async function CaseSourcePage({ params }: Props) {
               </span>
             </div>
           ))}
-        </div>
+        </Notice>
       )}
       <Card
         as="section"
@@ -191,13 +192,14 @@ export default async function CaseSourcePage({ params }: Props) {
           <Archive size={22} />
         </div>
         {inspection.testClassCount > CLASS_PREVIEW_LIMIT ? (
-          <div
+          <Notice
+            tone="info"
             className={cn("implementation-notice", pageStyles["implementation-notice"])}
             role="status"
           >
             共识别 {inspection.testClassCount} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
             个不再逐条展示；识别异常见上方扫描警告。
-          </div>
+          </Notice>
         ) : (
           <div className={cn("class-preview-list", pageStyles["class-preview-list"])}>
             {uniqueInspectionClasses(inspection.classes).map((candidate) => (

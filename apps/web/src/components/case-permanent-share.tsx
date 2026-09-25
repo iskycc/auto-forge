@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Notice } from "@/components/ui/notice";
 
 import { LinkButton } from "@/components/ui/link-button";
@@ -6,7 +8,7 @@ import { LinkButton } from "@/components/ui/link-button";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
-import { Check, Copy, ExternalLink, Link2, LoaderCircle } from "lucide-react";
+import { Check, Copy, ExternalLink, Link2 } from "lucide-react";
 import { useState } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -57,7 +59,7 @@ export function CasePermanentShare({ caseDefinitionId }: { caseDefinitionId: str
     <div className={cn("case-share-control", casePermanentShareStyles["case-share-control"])}>
       <Button disabled={pending} onClick={() => void createShare()} type="button">
         {pending ? (
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} aria-hidden="true" />
+          <LoadingIcon size={16} aria-hidden="true" />
         ) : (
           <Link2 size={16} aria-hidden="true" />
         )}

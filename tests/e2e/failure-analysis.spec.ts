@@ -855,7 +855,7 @@ test("terminal task failures support durable single and batch analysis with evid
     await captureUi(page, `analysis-remark-draft-${viewport.width}`, false);
   }
   await codeDialog.getByRole("button", { name: "查看备注图片 remark-context.png" }).click();
-  const remarkPreview = page.getByRole("dialog", { name: "图片预览 remark-context.png" });
+  const remarkPreview = page.getByRole("dialog", { name: "备注图片大图：remark-context.png" });
   await expect(remarkPreview.getByAltText("备注图片大图：remark-context.png")).toBeVisible();
   await remarkPreview.getByRole("button", { name: "放大图片" }).click();
   await expect(remarkPreview.getByLabel("当前图片缩放比例")).toHaveText("125%");
@@ -1054,13 +1054,24 @@ test("terminal task failures support durable single and batch analysis with evid
     )
     .toBeGreaterThan(0);
   await screenshotThumbnail.click();
-  const imagePreview = page.getByRole("dialog", { name: "图片预览 rerun-passed.png" });
+  const imagePreview = page.getByRole("dialog", { name: "重跑通过截图大图：rerun-passed.png" });
   await expect(imagePreview.getByAltText("重跑通过截图大图：rerun-passed.png")).toBeVisible();
   await expect(imagePreview.getByLabel("当前图片缩放比例")).toHaveText("100%");
   await imagePreview.getByRole("button", { name: "放大图片" }).click();
   await expect(imagePreview.getByLabel("当前图片缩放比例")).toHaveText("125%");
-  await expectDialogFitsViewport(page, imagePreview);
-  await captureUi(page, "failure-analysis-image-preview-125", false);
+  // Image uses Ant's full-screen preview, with controls inside the viewport.
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expect(imagePreview).toBeVisible();
+    await expect(imagePreview.getByRole("button", { name: "关闭图片预览" })).toBeInViewport();
+    await expect(imagePreview.getByRole("button", { name: "放大图片" })).toBeInViewport();
+    const bounds = (await imagePreview.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(960);
+    await captureUi(page, `failure-analysis-image-preview-125-${width}`, false);
+  }
   await imagePreview.getByRole("button", { name: "关闭图片预览" }).click();
   await completedRerunDialog.getByRole("button", { name: "关闭" }).last().click();
 

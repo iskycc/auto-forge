@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Notice } from "@/components/ui/notice";
 
 import { EmptyState } from "@/components/ui/empty-state";
@@ -7,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useRef, useState } from "react";
-import { CopyPlus, LoaderCircle, Pause } from "lucide-react";
+import { CopyPlus, Pause } from "lucide-react";
 import { ActionDialog } from "./action-dialog";
 import { Button, Select } from "./ui";
 import { useToast } from "./ui-feedback";
@@ -162,11 +164,7 @@ export function VersionCaseInheritanceDialog({
               disabled={pending || !versionId || !stageId}
               onClick={() => void run()}
             >
-              {pending ? (
-                <LoaderCircle size={15} className={cn("spin", uiPatterns["spin"])} />
-              ) : (
-                <CopyPlus size={15} />
-              )}
+              {pending ? <LoadingIcon size={15} /> : <CopyPlus size={15} />}
               {pending ? "正在继承…" : progress ? "继续继承" : "开始继承"}
             </Button>
           ) : null}
@@ -222,9 +220,9 @@ export function VersionCaseInheritanceDialog({
           </EmptyState>
         )}
         {sourceVersion && !sourceVersion.stages.length ? (
-          <p className={cn("settings-note", uiPatterns["settings-note"])}>
+          <EmptyState className={cn("settings-note", uiPatterns["settings-note"])}>
             所选版本暂无测试阶段，请选择其他版本。
-          </p>
+          </EmptyState>
         ) : null}
         <ul className={styles.rules}>
           {rules.map((rule) => (
@@ -239,7 +237,7 @@ export function VersionCaseInheritanceDialog({
               新增 {progress.inheritedCount} 条 · 跳过 {progress.skippedCount} 条已有用例
             </span>
             {progress.complete && progress.inheritedCount + progress.skippedCount === 0 ? (
-              <span>来源阶段没有可继承的 {caseType} 用例。</span>
+              <EmptyState>来源阶段没有可继承的 {caseType} 用例。</EmptyState>
             ) : null}
           </div>
         ) : null}

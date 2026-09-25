@@ -1,4 +1,11 @@
 "use client";
+import { LoadingIcon } from "./ui/loading-icon";
+import { Timeline } from "antd";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Segmented } from "./ui/segmented";
 import { Notice } from "@/components/ui/notice";
 
@@ -358,7 +365,9 @@ export function RunBatchRounds({
         className={cn("content-card", uiPatterns["content-card"])}
         aria-label="轮次列表"
       >
-        <p role="status">后台正在准备轮次统计，执行控制仍可使用。</p>
+        <LoadingStateMessage role="status">
+          后台正在准备轮次统计，执行控制仍可使用。
+        </LoadingStateMessage>
       </Card>
     );
   return (
@@ -1624,20 +1633,24 @@ function RoundCasesTable({
             className={cn("round-inline-refresh", runBatchRoundsStyles["round-inline-refresh"])}
             role="status"
           >
-            <RefreshCw className={cn("spin", uiPatterns["spin"])} size={14} /> 正在同步最新数据
+            <LoadingIcon size={14} /> 正在同步最新数据
           </span>
         ) : null}
       </div>
       {loadError && rows.length === 0 ? (
-        <div className={cn("inline-empty", uiPatterns["inline-empty"])} role="alert">
+        <Notice
+          tone="error"
+          className={cn("inline-empty", uiPatterns["inline-empty"])}
+          role="alert"
+        >
           {loadError}
-        </div>
+        </Notice>
       ) : loading && rows.length === 0 ? (
         <LoadingState compact label="正在读取当前页用例" />
       ) : rows.length === 0 ? (
-        <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+        <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
           没有匹配当前筛选条件的用例。
-        </div>
+        </EmptyState>
       ) : (
         <div
           className={cn("table-scroll", uiPatterns["table-scroll"])}
@@ -2154,15 +2167,17 @@ function AttemptInlineDetail({
         <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
           <h3>产物</h3>
           {!canReadArtifacts ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               当前账号没有读取执行产物的权限。
-            </div>
+            </EmptyState>
           ) : artifacts === undefined ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>正在读取产物...</div>
+            <LoadingStateMessage className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              正在读取产物...
+            </LoadingStateMessage>
           ) : artifacts.length === 0 ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               当前尝试没有已声明产物。
-            </div>
+            </EmptyState>
           ) : (
             <div className={cn("artifact-list", runBatchRoundsStyles["artifact-list"])}>
               {artifacts.map((artifact) => (
@@ -2219,21 +2234,19 @@ function AttemptInlineDetail({
         <div className={cn("attempt-inline-block", runBatchRoundsStyles["attempt-inline-block"])}>
           <h3>状态事件</h3>
           {events === undefined ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <LoadingStateMessage className={cn("inline-empty", uiPatterns["inline-empty"])}>
               正在读取状态事件...
-            </div>
+            </LoadingStateMessage>
           ) : events.length === 0 ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               当前尝试暂无状态事件。
-            </div>
+            </EmptyState>
           ) : (
-            <ol className={cn("execution-timeline", runBatchRoundsStyles["execution-timeline"])}>
-              {events.map((event) => (
-                <li key={event.eventId}>
-                  <span
-                    className={cn("timeline-marker", runBatchRoundsStyles["timeline-marker"])}
-                    aria-hidden="true"
-                  />
+            <Timeline
+              className="execution-timeline min-w-0"
+              items={events.map((event) => ({
+                key: event.eventId,
+                content: (
                   <div>
                     <strong>{eventLabel(event.eventType)}</strong>
                     <span>
@@ -2246,9 +2259,9 @@ function AttemptInlineDetail({
                       {event.reasonCode ? ` · ${event.reasonCode}` : ""}
                     </small>
                   </div>
-                </li>
-              ))}
-            </ol>
+                ),
+              }))}
+            />
           )}
         </div>
       ) : null}
@@ -2275,9 +2288,9 @@ function RoundRunnerCards({
 
   if (cards.length === 0) {
     return (
-      <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+      <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
         本轮还没有执行机参与执行。
-      </div>
+      </EmptyState>
     );
   }
   return (
@@ -2303,9 +2316,9 @@ function RoundRunnerCards({
                 {runnerResourceLabel(resourceSnapshot)}
               </small>
             ) : (
-              <small className={cn("muted runner-card-resources", uiPatterns["muted"])}>
+              <EmptyState className={cn("muted runner-card-resources", uiPatterns["muted"])}>
                 暂无资源快照
-              </small>
+              </EmptyState>
             )}
             <small className={cn("muted", uiPatterns["muted"])}>
               最后活动{" "}
@@ -2348,9 +2361,9 @@ function TestNgResults({ result }: { result: NonNullable<RunAttempt["testNg"]> }
         <TestNgCount label="配置失败" value={result.configurationFailures} />
       </div>
       {result.detailsTruncated ? (
-        <p className={cn("result-notice", runBatchRoundsStyles["result-notice"])}>
+        <Notice tone="info" className={cn("result-notice", runBatchRoundsStyles["result-notice"])}>
           明细已达到安全解析上限；汇总计数仍包含完整报告。
-        </p>
+        </Notice>
       ) : null}
       {result.suites.map((suite, suiteIndex) => (
         <Disclosure
@@ -2542,7 +2555,7 @@ const runBatchRoundsStyles = {
   "round-inline-refresh":
     "inline-flex [flex:0_0_100%] items-center gap-1.5 text-muted-foreground text-xs whitespace-nowrap",
   "round-page-size":
-    "inline-flex items-center gap-1.5 mr-auto text-muted-foreground [&_.ui-select]:w-auto [&_.ui-select]:min-w-18 [&_.ui-select]:py-1",
+    "inline-flex items-center gap-1.5 mr-auto text-muted-foreground whitespace-nowrap [&>_.ui-field-feedback]:w-auto [&_.ui-select]:w-auto [&_.ui-select]:min-w-18 [&_.ui-select]:py-1",
   "round-pagination": "flex items-center justify-end gap-3 text-muted-foreground text-xs",
   "round-row-actions": "flex flex-wrap items-center gap-1",
   "round-runner-name": "block min-w-0 [overflow-wrap:anywhere] whitespace-normal",

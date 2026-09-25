@@ -1,4 +1,5 @@
 "use client";
+import { Badge } from "./ui/badge";
 import { Switch } from "antd";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -238,7 +239,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
       ) : null}
       {error ? (
         <Notice
-          tone="info"
+          tone="error"
           className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
           role="alert"
         >
@@ -291,14 +292,16 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                     : "本 SR 下用例共享一个测试类")}
               </code>
             </div>
-            <span
-              className={
-                mapping.legacyConflict
-                  ? cn(
-                      "ddt-association-warning",
-                      ddtSrAssociationsStyles["ddt-association-warning"],
-                    )
-                  : ""
+            <Badge
+              variant={
+                mapping.legacyConflict ||
+                (mapping.category && !mapping.executionClass) ||
+                (mapping.executionClass &&
+                  (!mapping.executionClass.enabled || mapping.executionClass.archived))
+                  ? "warning"
+                  : mapping.executionClass
+                    ? "success"
+                    : "secondary"
               }
             >
               {mapping.legacyConflict
@@ -310,7 +313,7 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
                   : mapping.category
                     ? "测试类不可用"
                     : "未关联"}
-            </span>
+            </Badge>
             <div className={cn("ddt-sr-actions", ddtSrAssociationsStyles["ddt-sr-actions"])}>
               {canManage ? (
                 <>
@@ -543,7 +546,7 @@ function DdtExecutionClassesDialog({
     >
       {error ? (
         <Notice
-          tone="info"
+          tone="error"
           className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
           role="alert"
         >
@@ -692,14 +695,14 @@ function DdtExecutionClassesDialog({
             ))}
           </div>
           {!loading && !range.items.length ? (
-            <p
+            <EmptyState
               className={cn(
                 "ddt-association-hint",
                 ddtSrAssociationsStyles["ddt-association-hint"],
               )}
             >
               候选范围为空。从右侧加入需要执行 DDT 的测试类。
-            </p>
+            </EmptyState>
           ) : null}
           {range.nextCursor ? (
             <Button
@@ -810,14 +813,14 @@ function DdtExecutionClassesDialog({
               ))}
             </div>
             {!loading && !candidates.length ? (
-              <p
+              <EmptyState
                 className={cn(
                   "ddt-association-hint",
                   ddtSrAssociationsStyles["ddt-association-hint"],
                 )}
               >
                 没有匹配的测试类，请核对关键词及当前项目、版本和阶段，并确认 JAR 已导入且未归档。
-              </p>
+              </EmptyState>
             ) : null}
             {candidates.length === 50 ? (
               <p
@@ -898,12 +901,12 @@ const ddtSrAssociationsStyles = {
   "ddt-association-class-panels":
     "grid grid-cols-[minmax(0,_1fr)_minmax(0,_1fr)] gap-5 [&.single]:grid-cols-[minmax(0,_1fr)] [&_h3]:text-sm [&_h3]:[margin:16px_0_8px]",
   "ddt-association-dialog":
-    "w-[min(960px,_calc(100vw_-_20px))] max-w-none [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0 [&_.inline-notice]:mb-3",
+    "w-[min(960px,_calc(100vw_-_20px))] max-w-none [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_>.ui-field-feedback]:flex-1 [&_.search-field_>.ui-field-feedback]:w-0 [&_.search-field_input]:w-full [&_.search-field_input]:min-w-0 [&_.inline-notice]:mb-3",
   "ddt-association-footer":
     "flex items-center gap-3 mt-4 [&_>_span]:flex-1 [&_>_span]:text-muted-foreground [&_>_span]:text-sm",
   "ddt-association-hint": "text-muted-foreground text-sm leading-[1.6] my-4 mx-0",
   "ddt-association-toolbar":
-    "flex items-center gap-3 [&_.search-field]:flex-1 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_input]:flex-1 [&_.search-field_input]:w-0 [&_.search-field_input]:min-w-0",
+    "flex items-center gap-3 [&_.search-field]:flex-1 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-2 [&_.search-field]:min-w-0 [&_.search-field_>.ui-field-feedback]:flex-1 [&_.search-field_>.ui-field-feedback]:w-0 [&_.search-field_input]:w-full [&_.search-field_input]:min-w-0",
   "ddt-association-warning": "font-semibold",
   "ddt-sr-actions": "flex items-center gap-1 [&_.button]:px-2",
   "ddt-sr-associations": "p-5",

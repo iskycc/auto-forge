@@ -195,7 +195,7 @@ export function DdtCaseSelectionDialog({
       ) : null}
       {error ? (
         <Notice
-          tone="info"
+          tone="error"
           className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
           role="alert"
         >

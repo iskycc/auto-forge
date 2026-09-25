@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Notice } from "@/components/ui/notice";
@@ -9,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import type { Runner, RunnerGroup } from "@autoforge/domain";
-import { LoaderCircle, Pencil, Plus, Server, Trash2, UsersRound, X } from "lucide-react";
+import { Pencil, Plus, Server, Trash2, UsersRound, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, CheckboxGroup, Input, Textarea } from "./ui";
@@ -189,11 +191,7 @@ export function RunnerGroupManager({
           ) : null}
           <RunnerMemberPicker runners={runners} selectedRunnerIds={[]} />
           <Button disabled={pending} type="submit" variant="primary">
-            {pending ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-            ) : (
-              <Plus size={16} />
-            )}
+            {pending ? <LoadingIcon size={16} /> : <Plus size={16} />}
             创建执行机组
           </Button>
         </form>

@@ -103,10 +103,10 @@ export default async function ObjectsPage({
           <h1>文件与 JAR 来源</h1>
           <p>管理当前项目的来源资产和导入文件；空间占用与清理请前往存储空间。</p>
         </div>
-        <span className={cn("storage-pill", pageStyles["storage-pill"])}>
+        <Badge className={cn("storage-pill", pageStyles["storage-pill"])}>
           {objects.storage === "local" ? <HardDrive size={16} /> : <Database size={16} />}
           {objects.storage === "local" ? "本地对象存储" : "MinIO 对象存储"}
-        </span>
+        </Badge>
       </section>
       <div
         className={cn(

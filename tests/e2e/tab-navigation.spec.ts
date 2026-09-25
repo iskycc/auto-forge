@@ -33,18 +33,39 @@ test("shared Ant motion follows browser preferences without resetting drafts", a
 test("reduced motion keeps the project popup positioned beside its trigger", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
-  for (const width of [1024, 1536]) {
-    await page.setViewportSize({ width, height: 960 });
-    await page.goto("/case-suites");
-    const trigger = page.locator(".project-picker-trigger");
-    await trigger.click();
-    const selected = page.getByRole("option", { selected: true });
-    await expect(selected).toBeInViewport();
-    await expectUiIntegrity(page);
-    await capture(page, `project-popup-reduced-motion-${width}`);
-    await selected.click();
-    await expect(page.getByRole("listbox", { name: "项目列表" })).toHaveCount(0);
-    await expect(trigger).toBeFocused();
+  // Make the selected project fall outside the first visible menu window even
+  // when this scenario runs alone against a fresh database.
+  for (let index = 0; index < 12; index++) {
+    const slug = uniqueName(`popup-${index}`);
+    const created = await browserJson(page, "/api/v1/projects", {
+      method: "POST",
+      body: { name: slug, slug },
+    });
+    expect(created.status).toBe(201);
+  }
+  await page.goto("/case-suites");
+  await page.locator(".project-picker-trigger").click();
+  const lastOption = page.getByRole("option").last();
+  const selectedName = (await lastOption.innerText()).trim();
+  await lastOption.click();
+  await expect(page.locator(".project-picker-trigger")).toContainText(selectedName);
+  for (const motion of ["reduce", "no-preference"] as const) {
+    await page.emulateMedia({ reducedMotion: motion });
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.goto("/case-suites");
+      const trigger = page.locator(".project-picker-trigger");
+      const initialScroll = await page.evaluate(() => window.scrollY);
+      await trigger.click();
+      const selected = page.getByRole("option", { selected: true });
+      await expect(selected).toBeInViewport();
+      expect(await page.evaluate(() => window.scrollY)).toBe(initialScroll);
+      await expectUiIntegrity(page);
+      await capture(page, `project-popup-${motion}-${width}`);
+      await selected.click();
+      await expect(page.getByRole("listbox", { name: "项目列表" })).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
   }
 });
 

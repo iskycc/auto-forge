@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "antd";
+import { Button, Tooltip } from "antd";
 import { useRouter } from "next/navigation";
 import type { ComponentProps } from "react";
 
@@ -21,11 +21,12 @@ export function LinkButton({
   scroll = true,
   onClick,
   onMouseEnter,
+  title,
   ...props
 }: LinkButtonProps) {
   const router = useRouter();
   const internal = href.startsWith("/") && !href.startsWith("//") && !href.startsWith("/api/");
-  return (
+  const control = (
     <Button
       {...props}
       href={href}
@@ -53,5 +54,12 @@ export function LinkButton({
         else router.push(href, { scroll });
       }}
     />
+  );
+  return title ? (
+    <Tooltip title={title} trigger={["hover", "focus"]}>
+      {control}
+    </Tooltip>
+  ) : (
+    control
   );
 }

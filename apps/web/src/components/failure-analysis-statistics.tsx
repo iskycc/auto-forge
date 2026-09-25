@@ -1,4 +1,12 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Avatar } from "antd";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Notice } from "@/components/ui/notice";
 
 import { Card } from "@/components/ui/card";
@@ -12,7 +20,7 @@ import type {
   FailureAnalysisClaimView,
   FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
-import { BarChart3, ChevronRight, ClipboardCheck, LoaderCircle, X } from "lucide-react";
+import { BarChart3, ChevronRight, ClipboardCheck, X } from "lucide-react";
 import { useState } from "react";
 import { Statistic } from "antd";
 
@@ -202,7 +210,7 @@ export function FailureAnalysisStatistics({
           </Notice>
         ) : null}
         {analysts.length === 0 ? (
-          <div
+          <EmptyState
             className={cn(
               "failure-analysis-empty",
               failureAnalysisStatisticsStyles["failure-analysis-empty"],
@@ -210,7 +218,7 @@ export function FailureAnalysisStatistics({
           >
             <ClipboardCheck aria-hidden="true" size={24} />
             <strong>当前范围还没有认领记录</strong>
-          </div>
+          </EmptyState>
         ) : (
           <div
             className={cn(
@@ -228,7 +236,7 @@ export function FailureAnalysisStatistics({
                 onClick={() => void openAnalyst(analyst)}
                 type="button"
               >
-                <span
+                <Avatar
                   className={cn(
                     "failure-analysis-analyst-avatar",
                     failureAnalysisStatisticsStyles["failure-analysis-analyst-avatar"],
@@ -236,7 +244,7 @@ export function FailureAnalysisStatistics({
                   aria-hidden="true"
                 >
                   {analyst.claimantDisplayName.slice(0, 1).toLocaleUpperCase("zh-CN")}
-                </span>
+                </Avatar>
                 <span
                   className={cn(
                     "failure-analysis-analyst-identity",
@@ -269,9 +277,7 @@ export function FailureAnalysisStatistics({
         )}
         {nextCursor ? (
           <Button disabled={loadingMore} onClick={() => void loadMoreAnalysts()} type="button">
-            {loadingMore ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-            ) : null}
+            {loadingMore ? <LoadingIcon size={15} /> : null}
             {loadingMore ? "正在加载…" : "加载更多人员"}
           </Button>
         ) : null}
@@ -302,12 +308,13 @@ export function FailureAnalysisStatistics({
             </Notice>
           ) : null}
           {claimsLoading && claims.length === 0 ? (
-            <p className={"loading-inline"}>
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />{" "}
-              正在读取分析内容…
-            </p>
+            <LoadingStateMessage className={"loading-inline"}>
+              <LoadingIcon size={16} /> 正在读取分析内容…
+            </LoadingStateMessage>
           ) : claims.length === 0 ? (
-            <p className={cn("muted", uiPatterns["muted"])}>该人员当前没有可查看的分析内容。</p>
+            <EmptyState className={cn("muted", uiPatterns["muted"])}>
+              该人员当前没有可查看的分析内容。
+            </EmptyState>
           ) : (
             claims.map((claim) => <ClaimConclusion claim={claim} key={claim.id} />)
           )}

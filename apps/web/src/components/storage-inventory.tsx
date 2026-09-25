@@ -1,4 +1,8 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Notice } from "@/components/ui/notice";
 
 import { Disclosure } from "@/components/ui/disclosure";
@@ -24,7 +28,7 @@ import type {
   StorageInventoryPage,
   StorageInventorySummary,
 } from "@autoforge/contracts";
-import { Database, HardDrive, LoaderCircle, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Database, HardDrive, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -549,7 +553,7 @@ export function StorageInventory({
             className={cn("storage-tree-loading", storageInventoryStyles["storage-tree-loading"])}
             role="status"
           >
-            <LoaderCircle aria-hidden="true" className={cn("spin", uiPatterns["spin"])} size={15} />
+            <LoadingIcon aria-hidden="true" size={15} />
             正在载入目录，已载入 {items.length.toLocaleString()} 个文件与引用…
           </div>
         ) : null}
@@ -570,9 +574,9 @@ export function StorageInventory({
             }}
           />
         ) : summary && !loading ? (
-          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
             当前筛选条件下没有文件或资源引用。
-          </div>
+          </EmptyState>
         ) : null}
       </Card>
       {selectedRuntimeAssetIds.size > 0 ? (
@@ -605,9 +609,9 @@ export function StorageInventory({
             variant="danger"
           >
             {pendingRuntimeAssetIds.size > 0 ? (
-              <LoaderCircle
+              <LoadingIcon
                 aria-hidden="true"
-                className={cn("spin", uiPatterns["spin"])}
+
                 size={15}
               />
             ) : (

@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Badge, Menu, Popover } from "antd";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -204,9 +208,9 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
                 </Button>
               </div>
               {searchItems.length === 0 ? (
-                <p className={cn("popover-empty", topbarToolsStyles["popover-empty"])}>
+                <EmptyState className={cn("popover-empty", topbarToolsStyles["popover-empty"])}>
                   没有匹配的可访问资源。
-                </p>
+                </EmptyState>
               ) : (
                 <Menu
                   role="listbox"
@@ -325,9 +329,9 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
                 </Button>
               </div>
               {notifications.length === 0 ? (
-                <p className={cn("popover-empty", topbarToolsStyles["popover-empty"])}>
+                <EmptyState className={cn("popover-empty", topbarToolsStyles["popover-empty"])}>
                   暂时没有站内通知。
-                </p>
+                </EmptyState>
               ) : (
                 notifications.map((notification) => (
                   <Button
@@ -395,9 +399,13 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
         </Popover>
       </div>
       {error ? (
-        <span className={cn("topbar-error", topbarToolsStyles["topbar-error"])} role="alert">
+        <Notice
+          tone="error"
+          className={cn("topbar-error", topbarToolsStyles["topbar-error"])}
+          role="alert"
+        >
           {error}
-        </span>
+        </Notice>
       ) : null}
       <ConfigurationSearchDialog
         onClose={() => setConfigurationSearchOpen(false)}

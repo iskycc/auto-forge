@@ -381,14 +381,15 @@ export function RunnerUpdateDialog({
             ) : null}
 
             {result ? (
-              <div
+              <Notice
+                tone="success"
                 className={cn("form-success", runnerUpdateDialogStyles["form-success"])}
                 role="status"
               >
                 <CheckCircle2 size={18} />
                 Agent {result.agentVersion} 已更新到 {result.host}
                 ；服务已重启，执行机身份与历史记录保持不变。
-              </div>
+              </Notice>
             ) : null}
             {error ? (
               <div

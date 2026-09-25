@@ -1,4 +1,10 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Disclosure } from "@/components/ui/disclosure";
 
 import { cn } from "@/lib/utils";
@@ -69,14 +75,14 @@ export function LazyCaseSource({
       onOpenChange={(expanded) => setOpen(expanded)}
     >
       {error ? (
-        <div role="alert">
+        <Notice tone="error" role="alert">
           {error}
           <Button onClick={() => setRetry((value) => value + 1)}>重试</Button>
-        </div>
+        </Notice>
       ) : source === undefined ? (
-        <p role="status">正在读取源码…</p>
+        <LoadingStateMessage role="status">正在读取源码…</LoadingStateMessage>
       ) : source === null ? (
-        <p>该用例没有附带 Java 源码。</p>
+        <EmptyState>该用例没有附带 Java 源码。</EmptyState>
       ) : (
         <>
           <p className={cn("muted", uiPatterns["muted"])}>{source.reference.entryPath}</p>

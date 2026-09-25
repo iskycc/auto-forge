@@ -67,7 +67,7 @@ export const uiPatterns = {
   "table-scroll": "w-full min-w-0 overflow-x-auto",
   "data-table":
     "w-full border-collapse text-left text-sm [&_thead]:bg-muted/60 [&_th]:h-10 [&_th]:px-4 [&_th]:py-2 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground [&_td]:border-b [&_td]:border-border [&_td]:px-4 [&_td]:py-3 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-muted/40 [&_tbody_tr:last-child_td]:border-b-0 [&_time]:whitespace-nowrap [&_time]:text-xs [&_time]:text-muted-foreground",
-  "management-toolbar": `${toolbar} my-3 items-end [&>label]:grid [&>label]:min-w-0 [&>label]:flex-1 [&>label]:gap-2 [&>.ui-input]:min-w-40 [&>.ui-input]:max-w-[420px] [&>.ui-input]:flex-1 [&>.ui-select]:min-w-40 [&>.ui-select]:max-w-[420px] [&>.ui-select]:flex-1`,
+  "management-toolbar": `${toolbar} my-3 items-end [&>label]:grid [&>label]:min-w-0 [&>label]:flex-1 [&>label]:gap-2 [&>.ui-field-feedback]:min-w-40 [&>.ui-field-feedback]:max-w-[420px] [&>.ui-field-feedback]:flex-1`,
   "management-pagination":
     "mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-sm text-muted-foreground [&>div]:flex [&>div]:gap-2",
   "form-error":

@@ -1,11 +1,15 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button } from "@/components/ui";
 
 import { apiErrorSchema } from "@autoforge/contracts";
-import { Check, LoaderCircle } from "lucide-react";
+import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -58,15 +62,13 @@ export function SourceActions({
         disabled={authoritative || pending}
         onClick={makeAuthoritative}
       >
-        {pending ? (
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-        ) : (
-          <Check size={15} />
-        )}
+        {pending ? <LoadingIcon size={15} /> : <Check size={15} />}
         {authoritative ? "当前全量来源" : "设为全量来源"}
       </Button>
       {error && (
-        <small className={cn("inline-error", sourceActionsStyles["inline-error"])}>{error}</small>
+        <Notice tone="error" className={cn("inline-error", sourceActionsStyles["inline-error"])}>
+          {error}
+        </Notice>
       )}
     </span>
   );

@@ -638,23 +638,25 @@ export function RunnerAgentInstaller({
           ) : null}
 
           {result ? (
-            <div
+            <Notice
+              tone="success"
               className={cn("form-success", runnerAgentInstallerStyles["form-success"])}
               role="status"
             >
               <CheckCircle2 size={18} />
               Agent {result.agentVersion} 已安装到 {result.host}
               ；服务已启动，执行机将在注册后出现在下方列表。
-            </div>
+            </Notice>
           ) : null}
           {rollbackResult ? (
-            <div
+            <Notice
+              tone="success"
               className={cn("form-success", runnerAgentInstallerStyles["form-success"])}
               role="status"
             >
               <CheckCircle2 size={18} />
               Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
-            </div>
+            </Notice>
           ) : null}
           {error ? (
             <Notice

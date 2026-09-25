@@ -1,6 +1,9 @@
+import { Result } from "antd";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
-import { Braces, CheckCircle2, CircleOff, Layers3, Link2Off, ShieldCheck } from "lucide-react";
+import { Braces, CheckCircle2, CircleOff, Layers3, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 
 import { formatMethodSignature } from "@/lib/jvm-signature";
@@ -44,9 +47,9 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
             <code>{definition.className}</code>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <span className={cn("shared-case-trust", pageStyles["shared-case-trust"])}>
+            <Badge className={cn("shared-case-trust", pageStyles["shared-case-trust"])}>
               <ShieldCheck size={18} aria-hidden="true" /> 永久只读链接
-            </span>
+            </Badge>
             <ColorModeToggle />
           </div>
         </header>
@@ -60,13 +63,15 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
         <dl className={cn("shared-case-facts", pageStyles["shared-case-facts"])}>
           <div>
             <dt>状态</dt>
-            <dd className={definition.enabled && !definition.archived ? "is-enabled" : "is-muted"}>
-              {definition.enabled && !definition.archived ? (
-                <CheckCircle2 size={17} aria-hidden="true" />
-              ) : (
-                <CircleOff size={17} aria-hidden="true" />
-              )}
-              {definition.archived ? "已归档" : definition.enabled ? "已启用" : "已禁用"}
+            <dd>
+              <Badge variant={definition.enabled && !definition.archived ? "success" : "secondary"}>
+                {definition.enabled && !definition.archived ? (
+                  <CheckCircle2 size={17} aria-hidden="true" />
+                ) : (
+                  <CircleOff size={17} aria-hidden="true" />
+                )}
+                {definition.archived ? "已归档" : definition.enabled ? "已启用" : "已禁用"}
+              </Badge>
             </dd>
           </div>
           <div>
@@ -118,9 +123,9 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
               ))}
             </dl>
           ) : (
-            <p className={cn("shared-case-empty", pageStyles["shared-case-empty"])}>
+            <EmptyState className={cn("shared-case-empty", pageStyles["shared-case-empty"])}>
               当前用例没有参数。
-            </p>
+            </EmptyState>
           )}
         </section>
 
@@ -140,9 +145,9 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
               <article key={method.id}>
                 <div>
                   <strong>{method.methodName}</strong>
-                  <span className={method.enabled ? "is-enabled" : "is-muted"}>
+                  <Badge variant={method.enabled ? "success" : "secondary"}>
                     {method.enabled ? "已启用" : "已禁用"}
-                  </span>
+                  </Badge>
                 </div>
                 <code>{formatMethodSignature(method.descriptor)}</code>
                 <small>
@@ -170,17 +175,13 @@ function InvalidCaseShare() {
         pageStyles["shared-case-page-center"],
       )}
     >
-      <section
-        className={cn("shared-case-invalid", pageStyles["shared-case-invalid"])}
-        aria-label="用例永久分享链接不可用"
-      >
-        <span aria-hidden="true">
-          <Link2Off size={30} strokeWidth={1.8} />
-        </span>
-        <h1>链接无效</h1>
-        <ColorModeToggle />
-        <p>该用例永久分享链接无效，或对应的用例已经被删除。</p>
-      </section>
+      <Result
+        status="warning"
+        title={<h1 className="m-0 text-xl">链接无效</h1>}
+        subTitle={"该用例永久分享链接无效，或对应的用例已经被删除。"}
+        extra={<ColorModeToggle />}
+        className="w-full max-w-lg"
+      />
     </main>
   );
 }

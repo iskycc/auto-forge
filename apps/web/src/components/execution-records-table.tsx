@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Badge } from "@/components/ui/badge";
 
 import { Notice } from "@/components/ui/notice";
@@ -18,7 +20,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 import { StartFailureAnalysisButton } from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
-import { ExternalLink, LoaderCircle, OctagonX } from "lucide-react";
+import { ExternalLink, OctagonX } from "lucide-react";
 import { LinkButton } from "@/components/ui/link-button";
 import { useRouter } from "next/navigation";
 import {
@@ -406,11 +408,7 @@ export function ExecutionRecordsTable({
                         variant="danger"
                       >
                         {terminatingBatchId === row.id ? (
-                          <LoaderCircle
-                            className={cn("spin", uiPatterns["spin"])}
-                            size={14}
-                            aria-hidden="true"
-                          />
+                          <LoadingIcon size={14} aria-hidden="true" />
                         ) : (
                           <OctagonX size={14} aria-hidden="true" />
                         )}

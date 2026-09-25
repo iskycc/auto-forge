@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Notice } from "@/components/ui/notice";
 
 import { Disclosure } from "@/components/ui/disclosure";
@@ -396,9 +398,9 @@ export function ProjectStructureManager({
               </Button>
             ))}
             {!matchingVersions.length ? (
-              <p className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                 {structure.versions.length ? "没有匹配的版本" : "暂无版本，请从顶栏新建"}
-              </p>
+              </EmptyState>
             ) : null}
           </div>
         </aside>
@@ -537,9 +539,9 @@ export function ProjectStructureManager({
                   </div>
                 ))
               ) : (
-                <p className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                   当前版本尚无测试阶段。
-                </p>
+                </EmptyState>
               )}
             </div>
           </Card>

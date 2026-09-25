@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { cn } from "@/lib/utils";
 
 import type { Permission } from "@autoforge/domain";
@@ -251,9 +253,9 @@ export function ConfigurationSearchDialog({
         )}
       >
         {visibleItems.length === 0 ? (
-          <p className={cn("popover-empty", configurationSearchStyles["popover-empty"])}>
+          <EmptyState className={cn("popover-empty", configurationSearchStyles["popover-empty"])}>
             没有匹配的可访问配置。
-          </p>
+          </EmptyState>
         ) : (
           visibleItems.map((item) => (
             <Link href={item.href} key={item.href} onClick={onClose}>

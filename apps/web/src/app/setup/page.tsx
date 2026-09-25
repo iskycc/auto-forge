@@ -1,7 +1,9 @@
+import { Badge } from "@/components/ui/badge";
+import { Steps } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { redirect } from "next/navigation";
-import { Check, DatabaseZap, LockKeyhole, ShieldCheck, WifiOff } from "lucide-react";
+import { DatabaseZap, LockKeyhole, WifiOff } from "lucide-react";
 
 import { AuthEntryForm } from "@/components/auth-entry-form";
 import { PlatformInitialization } from "@/components/platform-initialization";
@@ -24,9 +26,9 @@ export default async function SetupPage() {
             <strong>AutoForge</strong>
           </div>
           <div className={cn("setup-showcase-copy", pageStyles["setup-showcase-copy"])}>
-            <span className={cn("setup-offline-badge", pageStyles["setup-offline-badge"])}>
+            <Badge className={cn("setup-offline-badge", pageStyles["setup-offline-badge"])}>
               <WifiOff size={14} /> 离线就绪
-            </span>
+            </Badge>
             <h1>
               <span>把自动化执行</span>
               <span>能力，安全地</span>
@@ -34,24 +36,28 @@ export default async function SetupPage() {
             </h1>
             <p>两步完成本地初始化。配置只写入数据目录，不连接遥测、CDN 或在线配置服务。</p>
           </div>
-          <ol className={cn("setup-progress-list", pageStyles["setup-progress-list"])}>
-            <li>
-              <span>01</span>
-              <div>
-                <strong>选择部署模式</strong>
-                <small>Lite 可直接使用，Full 接入外部基础设施</small>
-              </div>
-              <Check size={16} />
-            </li>
-            <li>
-              <span>02</span>
-              <div>
-                <strong>创建系统管理员</strong>
-                <small>令牌使用后立即失效并从磁盘删除</small>
-              </div>
-              <ShieldCheck size={16} />
-            </li>
-          </ol>
+          <Steps
+            className="setup-progress-list relative z-1"
+            orientation="vertical"
+            size="small"
+            current={-1}
+            items={[
+              {
+                title: <span className="text-foreground">选择部署模式</span>,
+                content: (
+                  <span className="text-muted-foreground">
+                    Lite 可直接使用，Full 接入外部基础设施
+                  </span>
+                ),
+              },
+              {
+                title: <span className="text-foreground">创建系统管理员</span>,
+                content: (
+                  <span className="text-muted-foreground">令牌使用后立即失效并从磁盘删除</span>
+                ),
+              },
+            ]}
+          />
           <div className={cn("setup-security-note", pageStyles["setup-security-note"])}>
             <LockKeyhole size={17} />
             <span>
@@ -72,9 +78,9 @@ export default async function SetupPage() {
               <p>先确认运行方式，再建立第一个具备完整管理权限的本地账号。</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <span className={cn("setup-local-status", pageStyles["setup-local-status"])}>
+              <Badge className={cn("setup-local-status", pageStyles["setup-local-status"])}>
                 <i /> 本地配置
-              </span>
+              </Badge>
               <ColorModeToggle />
             </div>
           </header>
@@ -113,9 +119,9 @@ export default async function SetupPage() {
                   令牌位于 <code>config/initial-admin-token</code>，创建成功后自动删除。
                 </p>
               </div>
-              <span className={cn("setup-required-badge", pageStyles["setup-required-badge"])}>
+              <Badge className={cn("setup-required-badge", pageStyles["setup-required-badge"])}>
                 必需
-              </span>
+              </Badge>
             </div>
             <AuthEntryForm mode="setup" />
           </section>
@@ -148,18 +154,16 @@ const pageStyles = {
   "setup-offline-badge":
     "flex items-center w-fit gap-[7px] border border-solid border-border rounded-full py-[7px] px-2.5 bg-success/10 text-success text-xs font-semibold",
   "setup-page": "min-h-screen p-5.5 bg-card",
-  "setup-progress-list":
-    "[&_li]:grid [&_li]:items-center [&_li]:grid-cols-[34px_minmax(0,_1fr)_20px] [&_li]:gap-3 [&_li]:border [&_li]:border-solid [&_li]:border-border [&_li]:rounded-lg [&_li]:py-[13px] [&_li]:px-3.5 [&_li]:bg-card relative z-1 grid gap-2.5 m-0 p-0 [list-style:none] [&_li_>_span]:grid [&_li_>_span]:w-8 [&_li_>_span]:h-8 [&_li_>_span]:place-items-center [&_li_>_span]:rounded-lg [&_li_>_span]:bg-card [&_li_>_span]:text-primary-foreground [&_li_>_span]:text-xs [&_li_>_span]:font-semibold [&_li_>_div]:grid [&_li_>_div]:gap-1 [&_strong]:text-xs [&_small]:text-primary-foreground [&_small]:text-xs [&_small]:leading-[1.45] [&_li_>_svg]:text-success",
   "setup-required-badge":
     "rounded-full py-[5px] px-2 text-xs font-semibold bg-destructive/10 text-destructive",
   "setup-security-note":
-    "flex items-center relative z-1 gap-[11px] mt-auto border-t border-solid border-border pt-5.5 text-primary-foreground [&_>_span]:grid [&_>_span]:gap-1 [&_strong]:text-xs [&_small]:text-primary-foreground [&_small]:text-xs [&_small]:leading-[1.45] [&_>_svg]:text-info",
+    "flex items-center relative z-1 gap-[11px] mt-auto border-t border-solid border-border pt-5.5 text-foreground [&_>_span]:grid [&_>_span]:gap-1 [&_strong]:text-xs [&_small]:text-muted-foreground [&_small]:text-xs [&_small]:leading-[1.45] [&_>_svg]:text-info",
   "setup-shell":
     "grid w-[min(100%,_1280px)] min-h-[calc(100vh_-_44px)] grid-cols-[minmax(300px,_0.72fr)_minmax(620px,_1.48fr)] my-0 mx-auto overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs max-[1121px]:grid-cols-[290px_minmax(0,_1fr)]",
   "setup-showcase":
-    'sticky top-5.5 flex h-[calc(100vh_-_44px)] min-h-[680px] flex-col overflow-hidden [padding:clamp(32px,_4vw,_54px)] bg-card text-primary-foreground [&::before]:absolute [&::before]:rounded-full [&::before]:[content:""] [&::before]:pointer-events-none [&::before]:top-[-120px] [&::before]:right-[-150px] [&::before]:w-[360px] [&::before]:h-[360px] [&::before]:border [&::before]:border-solid [&::before]:border-border [&::before]:bg-card [&::after]:absolute [&::after]:rounded-full [&::after]:[content:""] [&::after]:pointer-events-none [&::after]:right-[-100px] [&::after]:bottom-[-190px] [&::after]:w-[430px] [&::after]:h-[430px] [&::after]:bg-card max-[1121px]:py-8 max-[1121px]:px-6.5',
+    'sticky top-5.5 flex h-[calc(100vh_-_44px)] min-h-[680px] flex-col overflow-hidden [padding:clamp(32px,_4vw,_54px)] bg-card text-foreground [&::before]:absolute [&::before]:rounded-full [&::before]:[content:""] [&::before]:pointer-events-none [&::before]:top-[-120px] [&::before]:right-[-150px] [&::before]:w-[360px] [&::before]:h-[360px] [&::before]:border [&::before]:border-solid [&::before]:border-border [&::before]:bg-card [&::after]:absolute [&::after]:rounded-full [&::after]:[content:""] [&::after]:pointer-events-none [&::after]:right-[-100px] [&::after]:bottom-[-190px] [&::after]:w-[430px] [&::after]:h-[430px] [&::after]:bg-card max-[1121px]:py-8 max-[1121px]:px-6.5',
   "setup-showcase-copy":
-    "relative z-1 [margin:clamp(72px,_10vh,_118px)_0_50px] [&_h1]:max-w-[440px] [&_h1]:[margin:20px_0_16px] [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:tracking-tight [&_h1]:leading-[1.12] [&_h1]:[text-wrap:balance] [&_h1_span]:block [&_h1_span]:whitespace-nowrap [&_p]:max-w-[420px] [&_p]:m-0 [&_p]:text-primary-foreground [&_p]:text-sm [&_p]:leading-[1.8] max-[1121px]:mt-18 max-[1121px]:[&_h1]:text-3xl",
+    "relative z-1 [margin:clamp(72px,_10vh,_118px)_0_50px] [&_h1]:max-w-[440px] [&_h1]:[margin:20px_0_16px] [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:tracking-tight [&_h1]:leading-[1.12] [&_h1]:[text-wrap:balance] [&_h1_span]:block [&_h1_span]:whitespace-nowrap [&_p]:max-w-[420px] [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:text-sm [&_p]:leading-[1.8] max-[1121px]:mt-18 max-[1121px]:[&_h1]:text-3xl",
   "setup-step-number": "pt-1 text-muted-foreground font-mono text-xs font-semibold",
   "setup-workspace": "min-w-0 [padding:clamp(30px,_4vw,_56px)]",
   "setup-workspace-header":

@@ -143,6 +143,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     limit: number,
     projectIds?: readonly string[],
     projectVersionId?: string,
+    page?: { afterId?: string },
   ): Promise<CaseSuite[]> {
     if (projectIds?.length === 0) return [];
     const suiteRows = this.handle.db
@@ -150,6 +151,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .from(caseSuites)
       .where(
         and(
+          ...(page?.afterId ? [gt(caseSuites.id, page.afterId)] : []),
           ...(projectIds ? [inArray(caseSuites.projectId, [...projectIds])] : []),
           ...(projectVersionId
             ? [
@@ -158,7 +160,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
             : []),
         ),
       )
-      .orderBy(desc(caseSuites.updatedAt))
+      .orderBy(page ? asc(caseSuites.id) : desc(caseSuites.updatedAt))
       .limit(limit)
       .all();
     if (!suiteRows.length) return [];
@@ -693,6 +695,15 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
 
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      if (
+        input.ifAbsent &&
+        this.handle.db
+          .select({ id: caseSuites.id })
+          .from(caseSuites)
+          .where(eq(caseSuites.id, input.id))
+          .get()
+      )
+        return;
       this.handle.db
         .insert(caseSuites)
         .values({
@@ -702,7 +713,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
           description: input.description ?? null,
           version: 1,
           status: "active",
-          enabled: true,
+          enabled: input.enabled ?? true,
           revision: 1,
           policyJson: JSON.stringify(input.policy),
           ...(input.actorId ? { createdBy: input.actorId, updatedBy: input.actorId } : {}),

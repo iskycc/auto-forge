@@ -1,4 +1,6 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -48,7 +50,8 @@ export function CachedSuiteDirectory({
         onRefresh={result.refresh}
       />
       {result.error ? (
-        <div
+        <Notice
+          tone="error"
           role="alert"
           className={cn(
             "inline-feedback error",
@@ -58,7 +61,7 @@ export function CachedSuiteDirectory({
         >
           {result.error}
           <Button onClick={result.refresh}>重试</Button>
-        </div>
+        </Notice>
       ) : null}
       <SuiteTree
         suite={suite}
@@ -121,10 +124,10 @@ function SuiteTree({
         }}
       />
       {root.error ? (
-        <div role="alert">
+        <Notice tone="error" role="alert">
           {root.error}
           <Button onClick={root.retry}>重试</Button>
-        </div>
+        </Notice>
       ) : null}
       {root.more ? (
         <Button disabled={root.loading} onClick={root.loadMore}>

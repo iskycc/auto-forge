@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Radio } from "antd";
 import { Card } from "@/components/ui/card";
 
@@ -10,7 +14,7 @@ import { ActionDialog } from "@/components/action-dialog";
 
 import { apiErrorSchema, type CaseSuiteActivitySummary } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
-import { Copy, Layers3, LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { Copy, Layers3, Plus, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -167,8 +171,7 @@ export function CaseSuiteManager({
             type="button"
             variant="ghost"
           >
-            <RefreshCw className={refreshing ? cn("spin", uiPatterns["spin"]) : ""} size={15} />{" "}
-            刷新任务列表
+            {refreshing ? <LoadingIcon size={15} /> : <RefreshCw size={15} />} 刷新任务列表
           </Button>
           {canManage ? (
             <Button onClick={openCreateDialog} type="button" variant="primary">
@@ -221,7 +224,7 @@ export function CaseSuiteManager({
               }
             >
               {pending ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
+                <LoadingIcon size={16} />
               ) : createMode === "copy" ? (
                 <Copy size={16} />
               ) : (
@@ -385,12 +388,13 @@ export function CaseSuiteManager({
             </div>
           ) : null}
           {error && (
-            <span
+            <Notice
+              tone="error"
               className={cn("inline-error", caseSuiteManagerStyles["inline-error"])}
               role="alert"
             >
               {error}
-            </span>
+            </Notice>
           )}
         </form>
       </ActionDialog>
@@ -399,7 +403,8 @@ export function CaseSuiteManager({
         aria-label="用例任务列表"
       >
         {exportError ? (
-          <div
+          <Notice
+            tone="error"
             className={cn(
               "inline-feedback error suite-list-feedback",
               caseSuiteManagerStyles["inline-feedback"],
@@ -409,7 +414,7 @@ export function CaseSuiteManager({
             role="alert"
           >
             {exportError}
-          </div>
+          </Notice>
         ) : null}
         {suites.length === 0 ? (
           <Card

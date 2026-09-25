@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -203,9 +205,9 @@ export function CheckboxGroup({
           );
         })}
         {!visible.length ? (
-          <p className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
             没有匹配项。请调整搜索或关闭“仅看已选”。
-          </p>
+          </EmptyState>
         ) : null}
       </div>
     </fieldset>
@@ -220,7 +222,7 @@ const checkboxGroupStyles = {
   "choice-section":
     "[&_+_.choice-section]:border-t [&_+_.choice-section]:border-solid [&_+_.choice-section]:border-border",
   "choice-toolbar":
-    "flex flex-wrap items-center gap-2 mb-2 [&_>_.ui-input]:[flex:1_1_200px] [&_>_.ui-input]:min-w-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
+    "flex flex-wrap items-center gap-2 mb-2 [&_>_.ui-field-feedback]:[flex:1_1_200px] [&_>_.ui-field-feedback]:min-w-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap",
   "compact-choices":
     "[&_.choice-toolbar]:justify-end [&_.choice-toolbar_:is(input,_button:last-child)]:hidden [&_.choice-groups]:max-h-none [&_.choice-toolbar_>_span]:mr-auto",
   "ui-checkbox-group":

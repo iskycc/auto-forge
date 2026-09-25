@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -13,6 +15,7 @@ export function ProjectHierarchyPicker({
   items,
   label = "项目",
   onCreate,
+  onInitialize,
   settingsLink,
   value,
   onChange,
@@ -21,6 +24,7 @@ export function ProjectHierarchyPicker({
   items: Array<{ id: string; name: string }>;
   label?: "项目" | "项目版本" | "测试阶段";
   onCreate?: () => void;
+  onInitialize?: () => void;
   settingsLink?: { href: string; label: string };
   value: string;
   onChange: (selectedId: string) => void;
@@ -44,14 +48,24 @@ export function ProjectHierarchyPicker({
   }
 
   useEffect(() => {
-    if (!open || !focusSelectionOnOpen.current) return;
+    if (!open) return;
     const frame = requestAnimationFrame(() => {
-      focusSelectionOnOpen.current = false;
       const options = containerRef.current;
-      (
+      const selected =
         options?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]') ??
-        options?.querySelector<HTMLElement>('[role="option"]')
-      )?.focus();
+        options?.querySelector<HTMLElement>('[role="option"]');
+      const list = selected?.closest<HTMLElement>('[role="listbox"]');
+      if (!selected || !list) return;
+      // Reveal the selection as the portal mounts, before the opening animation
+      // finishes. Moving the menu afterOpenChange can replace a row under the
+      // pointer during a quick click. Offsets ignore the popup's entry scaling.
+      const top = selected.offsetTop;
+      const bottom = top + selected.offsetHeight;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (bottom > list.scrollTop + list.clientHeight)
+        list.scrollTop = bottom - list.clientHeight;
+      if (focusSelectionOnOpen.current) selected.focus({ preventScroll: true });
+      focusSelectionOnOpen.current = false;
     });
     return () => cancelAnimationFrame(frame);
   }, [open]);
@@ -72,7 +86,7 @@ export function ProjectHierarchyPicker({
         onChange={(event) => setQuery(event.target.value)}
       />
       <Menu
-        className={cn("project-picker-matches", "max-h-[260px] overflow-y-auto border-0")}
+        className={cn("project-picker-matches", "relative max-h-[260px] overflow-y-auto border-0")}
         id={listboxId}
         role="listbox"
         aria-label={`${label}列表`}
@@ -102,14 +116,14 @@ export function ProjectHierarchyPicker({
         })}
       />
       {!matchingItems.length ? (
-        <p className={cn("inline-empty", uiPatterns["inline-empty"])}>
+        <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
           {items.length ? `没有匹配的${label}` : `暂无${label}`}
-        </p>
+        </EmptyState>
       ) : null}
       <small className={cn("settings-note", uiPatterns["settings-note"])}>
         {matchingItems.length} / {items.length} 项
       </small>
-      {onCreate || settingsLink ? (
+      {onCreate || settingsLink || onInitialize ? (
         <div
           className={cn(
             "hierarchy-picker-actions",
@@ -130,6 +144,19 @@ export function ProjectHierarchyPicker({
             >
               <Plus size={15} />
               {`新建${label}`}
+            </Button>
+          ) : null}
+          {onInitialize ? (
+            <Button
+              type="button"
+              className={projectHierarchyPickerStyles["hierarchy-picker-action"]}
+              onClick={() => {
+                closeAndFocusTrigger();
+                onInitialize();
+              }}
+            >
+              <Settings2 size={15} />
+              初始化当前版本
             </Button>
           ) : null}
           {settingsLink ? (

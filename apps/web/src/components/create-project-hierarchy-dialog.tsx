@@ -11,6 +11,7 @@ import { readApiErrorMessage } from "@/lib/client-api";
 import { ActionDialog } from "./action-dialog";
 import { Button, Input } from "./ui";
 import { useToast } from "./ui-feedback";
+import { VersionInitializationDialog } from "./version-initialization-dialog";
 
 export type ProjectContext = {
   projectId: string;
@@ -43,6 +44,7 @@ export function CreateProjectHierarchyDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [createdContext, setCreatedContext] = useState<ProjectContext | null>(null);
+  const [createdVersionName, setCreatedVersionName] = useState("");
   const label =
     target.kind === "project" ? "项目" : target.kind === "version" ? "项目版本" : "测试阶段";
 
@@ -85,6 +87,11 @@ export function CreateProjectHierarchyDialog({
                 };
         // Creation and selection are separate requests. A selection retry must not create duplicates.
         setCreatedContext(context);
+        if (target.kind === "version") {
+          setCreatedVersionName(String(form.get("name") ?? ""));
+          toast.success("项目版本已创建，可以按需初始化或跳过全部步骤。");
+          return;
+        }
       }
       await onCreated(context);
       toast.success(`${label}已创建并切换。`);
@@ -101,6 +108,21 @@ export function CreateProjectHierarchyDialog({
     }
   }
 
+  if (target.kind === "version" && createdContext?.projectVersionId)
+    return (
+      <VersionInitializationDialog
+        projectId={target.projectId}
+        projectName={target.projectName}
+        versionId={createdContext.projectVersionId}
+        versionName={createdVersionName}
+        onFinish={onCreated}
+        onClose={() => {
+          onClose();
+          router.refresh();
+        }}
+      />
+    );
+
   return (
     <ActionDialog
       open
@@ -110,7 +132,7 @@ export function CreateProjectHierarchyDialog({
         target.kind === "project"
           ? "创建后由你担任项目负责人，并自动切换到新项目。"
           : target.kind === "version"
-            ? `所属项目：${target.projectName}`
+            ? `所属项目：${target.projectName}。创建后可按需初始化，所有初始化步骤均可跳过；支持从其他版本继承。`
             : `所属项目：${target.projectName} · 所属版本：${target.projectVersionName}`
       }
       onClose={() => {

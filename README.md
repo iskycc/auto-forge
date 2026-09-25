@@ -18,6 +18,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 - Next.js 16.3.3 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
 - UI 离线约束：Ant Design、图标与中文语言资源锁定版本并在构建时打包，完整组件 CSS 从本地 `antd/dist/antd.css` 编译；SSR 首屏样式使用本地 registry 提取。后端离线 Docker tar 必须包含 `.next/static` 的全部脚本、样式和其他静态资源及服务端运行依赖，禁止 CDN、在线字体、Iconfont 在线脚本或运行时下载。全平台支持 Ant Design 浅色/深色切换，包括首页、登录弹窗、控制台和公开分享页；当前浏览器的选择保存一年，并用于服务端首屏，刷新不依赖客户端再次切换。
+- 表单数字、时区候选、多选、字段校验、DDT 拖拽／分栏和分析图片预览统一使用 Ant Design 组件；隐藏字段保留浏览器表单提交语义。补齐的组件范围、保留的业务 DOM 与验证结果见[原生组件修复报告](./docs/design/ant-design-native-component-audit-2026-09-26.md)。
 - 未登录首页采用“可信控制面”浅色产品门户：首屏呈现初始化/登录入口、批次与 Runner 状态及真实执行结果分布，下方展示 TestNG 用例、测试方法、JAR 来源、累计执行和 Lite/Full 部署说明。无执行样本时成功率显示“—”，统计生成中或不可用时不以零值误导；支持手动刷新、单请求串行轮询、15 秒超时及同步失败后保留上次数据，隐藏页面暂停轮询、恢复可见时立即同步。不公开项目、用户或秘密详情。
 - 主平台首次启动自动生成 Lite 持久配置和不同用途的随机秘密；平台设置页管理模式、监听、Full 基础设施、容量和调度阈值，不读取应用配置环境变量。DDT 单次上传文件数和单个 ZIP 内表格数可分别配置，新安装默认均为 200，保存后对新导入立即生效。
 - 项目下使用可展开的“版本 → 多个测试阶段”树组织新用例；导入必须选择该层级，旧的未归属用例不进入新用例库。用例按 Java 包路径展示为可展开目录树，详情页集中展示执行历史、分析历史、源码、方法与版本，并可按 `case.read` 权限签发永久匿名只读详情链接；公开页不包含源码、执行控制或项目其他数据。指定来源/目标阶段可跨版本继承用例；JAR 导入页也可直接选择其他版本分批复制，支持暂停和继续，同名类自动跳过。目标定义和版本历史独立，底层 JAR 对象安全共享。
@@ -66,6 +67,14 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - GitHub Actions CI，以及amd64/arm64 双架构后端离线镜像和独立发布后 Gate E 检查流水线；耗时验收按独立状态分区并行执行，单个测试 Job 以五分钟内完成为目标。每个后端镜像均内置 Linux `amd64`/`arm64` Agent 与 Adapter。Release 不再构建 `toolchain-amd64/arm64`，JDK 和测试依赖由项目上传或登记内网链接。
 
 平台数据盘提供分级容量告警；Runner spool、工作目录和单项上传有严格上限。普通文件系统无法为整个工作目录提供无瞬时窗口的总量隔离，生产部署仍须按文档使用专用文件系统/项目配额；Full 对象存储总容量由 MinIO/S3 部署侧硬配额负责。Full 的调度消息使用 PostgreSQL outbox 与 JetStream，Redis 只承载可重建缓存和限流语义。
+
+## 新版本初始化
+
+在顶栏新建项目版本后，可选择同项目的其他版本，按步骤继承测试阶段、JDK/依赖 JAR、TestNG 用例、
+DDT 用例、SR 分类与测试类关联、用例任务。**每一步都可以跳过**，也可直接进入空版本；之后从版本
+下拉菜单“初始化当前版本”继续补充。已有目标配置和用例保留，任务成员映射到目标版本的用例，
+继承的任务默认停用。大批量继承在后台工作线程分段处理，支持暂停与失败后继续。
+详见[新版本初始化说明](./docs/manuals/version-initialization.md)。
 
 ## TestNG JAR 用例发现
 
@@ -129,7 +138,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `POST`           | `/api/v1/runner-agents/register`                                                                                | 使用 bootstrap token 注册 Agent                                                                        |
 | `POST`           | `/api/v1/runner-agents/{runnerId}/heartbeat`                                                                    | Agent 认证心跳与容量上报                                                                               |
 | `GET`            | `/api/v1/runners`                                                                                               | 查询执行机及在线状态                                                                                   |
-| `GET`            | `/api/v1/runners/{runnerId}/telemetry`                                                                           | 读取节点上报信息及近 6 小时有界资源趋势，需要 `runner.read` 权限                                       |
+| `GET`            | `/api/v1/runners/{runnerId}/telemetry`                                                                          | 读取节点上报信息及近 6 小时有界资源趋势，需要 `runner.read` 权限                                       |
 | `GET`            | `/api/v1/runners/installations/profiles`                                                                        | 查询已保存 SSH 连接的无密码摘要                                                                        |
 | `POST`           | `/api/v1/runners/updates`                                                                                       | 使用加密连接档案有界批量更新 Agent                                                                     |
 | `GET`            | `/api/v1/runner-groups`                                                                                         | 查询执行机组及成员                                                                                     |

@@ -1,4 +1,14 @@
 "use client";
+import { EvidenceImagePreview } from "./ui/evidence-image-preview";
+import { Image } from "antd";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Badge } from "@/components/ui/badge";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { LinkButton } from "@/components/ui/link-button";
 
 import { Notice } from "@/components/ui/notice";
@@ -48,11 +58,7 @@ import {
   ExternalLink,
   FileCheck2,
   History,
-  LoaderCircle,
   Maximize2,
-  Minus,
-  Plus,
-  RotateCcw,
   Search,
   SearchCheck,
   SquareActivity,
@@ -728,7 +734,7 @@ export function FailureAnalysisWorkspace({
                   description="正在按当前筛选与排序条件整理可认领用例。"
                 />
               ) : candidates.length === 0 ? (
-                <div
+                <EmptyState
                   className={cn(
                     "failure-analysis-empty",
                     failureAnalysisWorkspaceStyles["failure-analysis-empty"],
@@ -745,7 +751,7 @@ export function FailureAnalysisWorkspace({
                   ) : (
                     <span>只统计任务最后一轮仍然失败的用例。</span>
                   )}
-                </div>
+                </EmptyState>
               ) : (
                 <CandidateTable
                   allAvailableSelected={allAvailableSelected}
@@ -915,7 +921,7 @@ export function FailureAnalysisWorkspace({
                   description="正在恢复你的认领状态、分析结论和证明材料。"
                 />
               ) : claims.length === 0 ? (
-                <div
+                <EmptyState
                   className={cn(
                     "failure-analysis-empty",
                     failureAnalysisWorkspaceStyles["failure-analysis-empty"],
@@ -946,7 +952,7 @@ export function FailureAnalysisWorkspace({
                       显示已完成分析
                     </Button>
                   )}
-                </div>
+                </EmptyState>
               ) : (
                 <>
                   <label
@@ -1033,14 +1039,14 @@ export function FailureAnalysisWorkspace({
                                     <RecentSuccessBadge
                                       execution={claim.recentSuccessfulExecution}
                                     />
-                                    <span
+                                    <Badge
                                       className={cn(
                                         failureAnalysisWorkspaceStyles["analysis-status"],
                                         `analysis-status ${claim.status}`,
                                       )}
                                     >
                                       {statusLabel(claim.status)}
-                                    </span>
+                                    </Badge>
                                   </div>
                                   <code>{claim.className}</code>
                                   <p title={claim.failureSummary}>{claim.failureSummary}</p>
@@ -1304,11 +1310,7 @@ function ReleaseClaimDialog({
           type="button"
           variant="danger"
         >
-          {submitting ? (
-            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-          ) : (
-            <UserMinus aria-hidden="true" size={16} />
-          )}
+          {submitting ? <LoadingIcon size={16} /> : <UserMinus aria-hidden="true" size={16} />}
           确认取消认领
         </Button>
       </div>
@@ -1475,7 +1477,7 @@ function CandidateTable({
               </TableCell>
               <TableCell>
                 {candidate.claim ? (
-                  <span
+                  <Badge
                     className={cn(
                       failureAnalysisWorkspaceStyles["analysis-status"],
                       `analysis-status ${candidate.claim.status}`,
@@ -1483,16 +1485,16 @@ function CandidateTable({
                   >
                     {statusLabel(candidate.claim.status)}
                     <small>{candidate.claim.claimantDisplayName}</small>
-                  </span>
+                  </Badge>
                 ) : (
-                  <span
+                  <Badge
                     className={cn(
                       "analysis-status available",
                       failureAnalysisWorkspaceStyles["analysis-status"],
                     )}
                   >
                     待认领
-                  </span>
+                  </Badge>
                 )}
               </TableCell>
             </TableRow>
@@ -1512,7 +1514,7 @@ function RecentSuccessBadge({
 }) {
   if (!execution) return null;
   return (
-    <span
+    <Badge
       aria-label="同一任务近 5 批次执行有成功"
       className={cn(
         "failure-analysis-recent-success",
@@ -1521,7 +1523,7 @@ function RecentSuccessBadge({
       title={`同一任务最近 5 个更早批次中，批次 #${execution.batchSequenceNumber} 执行成功`}
     >
       <History aria-hidden="true" size={13} /> {compact ? "近 5 批成功" : "近 5 批次有成功"}
-    </span>
+    </Badge>
   );
 }
 
@@ -1590,11 +1592,7 @@ function FloatingAction({
     >
       <span>已选择 {count} 个用例</span>
       <Button disabled={loading} onClick={onClick} type="button" variant="primary">
-        {loading ? (
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-        ) : (
-          <ClipboardCheck size={16} />
-        )}
+        {loading ? <LoadingIcon size={16} /> : <ClipboardCheck size={16} />}
         {label}
       </Button>
     </div>
@@ -1668,7 +1666,6 @@ function CompleteAnalysisDialog({
   const [logComparison, setLogComparison] = useState<AnalysisLogComparison>();
   const closeLogComparison = useCallback(() => setLogComparison(undefined), []);
   const [previewImage, setPreviewImage] = useState<AnalysisImagePreview>();
-  const [imageZoomPercent, setImageZoomPercent] = useState(100);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [lookingUpRerunProofs, setLookingUpRerunProofs] = useState(false);
@@ -1684,7 +1681,6 @@ function CompleteAnalysisDialog({
   const [copying, setCopying] = useState(false);
   const publicLogUrls = useRef(new Map<string, string>());
   const [error, setError] = useState("");
-  const imageCloseButtonRef = useRef<HTMLButtonElement>(null);
   const imagePreviewTriggerRef = useRef<HTMLButtonElement>(null);
   const screenshotUploadInFlightRef = useRef(false);
   const screenshotClaims = uniqueScreenshotClaims(uploadedClaims);
@@ -1790,7 +1786,6 @@ function CompleteAnalysisDialog({
 
   function openImagePreview(image: AnalysisImagePreview, trigger: HTMLButtonElement): void {
     imagePreviewTriggerRef.current = trigger;
-    setImageZoomPercent(100);
     setPreviewImage(image);
   }
 
@@ -2114,11 +2109,7 @@ function CompleteAnalysisDialog({
               type="button"
               variant="secondary"
             >
-              {copying ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
-              ) : (
-                <Copy size={14} />
-              )}
+              {copying ? <LoadingIcon size={14} /> : <Copy size={14} />}
               复制用例信息
             </Button>
             <Button
@@ -2278,11 +2269,7 @@ function CompleteAnalysisDialog({
                     type="button"
                     variant="secondary"
                   >
-                    {lookingUpRerunProofs ? (
-                      <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                    ) : (
-                      <SearchCheck size={15} />
-                    )}
+                    {lookingUpRerunProofs ? <LoadingIcon size={15} /> : <SearchCheck size={15} />}
                     {lookingUpRerunProofs ? "正在查找…" : "查找重跑通过记录"}
                   </Button>
                   {!rerunProofLookup ? (
@@ -2361,8 +2348,8 @@ function CompleteAnalysisDialog({
                         type="button"
                         variant="ghost"
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
-                        <img
+                        <Image
+                          preview={false}
                           alt={`重跑通过截图：${claim.screenshot!.fileName}`}
                           loading="lazy"
                           src={failureAnalysisEvidenceUrl(claim, projectId)}
@@ -2522,11 +2509,7 @@ function CompleteAnalysisDialog({
               type="button"
               variant="primary"
             >
-              {submitting ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-              ) : (
-                <CheckCircle2 size={16} />
-              )}
+              {submitting ? <LoadingIcon size={16} /> : <CheckCircle2 size={16} />}
               提交分析
             </Button>
           ) : null}
@@ -2545,85 +2528,7 @@ function CompleteAnalysisDialog({
         <AttemptLogComparison comparison={logComparison} onClose={closeLogComparison} />
       ) : null}
       {previewImage ? (
-        <Dialog
-          open
-          title={`图片预览 ${previewImage.fileName}`}
-          onClose={closeScreenshotPreview}
-          initialFocusRef={imageCloseButtonRef}
-          className={cn(
-            "failure-analysis-image-dialog",
-            failureAnalysisWorkspaceStyles["failure-analysis-image-dialog"],
-          )}
-          backdropClassName="failure-analysis-image-overlay"
-        >
-          <header>
-            <span>
-              <strong>{previewImage.fileName}</strong>
-              <small>{formatFileSize(previewImage.sizeBytes)}</small>
-            </span>
-            <div
-              className={cn(
-                "failure-analysis-image-controls",
-                failureAnalysisWorkspaceStyles["failure-analysis-image-controls"],
-              )}
-              aria-label="图片缩放控制"
-            >
-              <Button
-                aria-label="缩小图片"
-                disabled={imageZoomPercent <= 50}
-                onClick={() => setImageZoomPercent((current) => Math.max(50, current - 25))}
-                size="compact"
-                type="button"
-                variant="secondary"
-              >
-                <Minus size={15} />
-              </Button>
-              <output aria-label="当前图片缩放比例">{imageZoomPercent}%</output>
-              <Button
-                aria-label="放大图片"
-                disabled={imageZoomPercent >= 300}
-                onClick={() => setImageZoomPercent((current) => Math.min(300, current + 25))}
-                size="compact"
-                type="button"
-                variant="secondary"
-              >
-                <Plus size={15} />
-              </Button>
-              <Button
-                aria-label="重置图片大小"
-                disabled={imageZoomPercent === 100}
-                onClick={() => setImageZoomPercent(100)}
-                size="compact"
-                type="button"
-                variant="secondary"
-              >
-                <RotateCcw size={15} />
-              </Button>
-              <Button
-                aria-label="关闭图片预览"
-                onClick={closeScreenshotPreview}
-                ref={imageCloseButtonRef}
-                size="compact"
-                type="button"
-              >
-                <X size={16} />
-              </Button>
-            </div>
-          </header>
-          <div
-            className={cn(
-              "failure-analysis-image-viewport",
-              failureAnalysisWorkspaceStyles["failure-analysis-image-viewport"],
-            )}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
-            <img
-              alt={previewImage.alt}
-              src={previewImage.src}
-              style={{ width: `${imageZoomPercent}%` }}
-            />
-          </div>
-        </Dialog>
+        <EvidenceImagePreview image={previewImage} onClose={closeScreenshotPreview} />
       ) : null}
       {showCaseConfirmation ? (
         <Dialog
@@ -2818,17 +2723,18 @@ function AnalysisHistoryPanel({
         </span>
       </header>
       {historyLoading ? (
-        <div
+        <LoadingStateMessage
           className={cn(
             "failure-analysis-history-state",
             failureAnalysisWorkspaceStyles["failure-analysis-history-state"],
           )}
           role="status"
         >
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在读取历史结论…
-        </div>
+          <LoadingIcon size={16} /> 正在读取历史结论…
+        </LoadingStateMessage>
       ) : historyError ? (
-        <div
+        <Notice
+          tone="error"
           className={cn(
             "failure-analysis-history-state error",
             failureAnalysisWorkspaceStyles["failure-analysis-history-state"],
@@ -2837,16 +2743,16 @@ function AnalysisHistoryPanel({
           role="alert"
         >
           {historyError}
-        </div>
+        </Notice>
       ) : historyItems.length === 0 ? (
-        <div
+        <EmptyState
           className={cn(
             "failure-analysis-history-state",
             failureAnalysisWorkspaceStyles["failure-analysis-history-state"],
           )}
         >
           同一任务下，该用例暂无已完成的历史分析结论。
-        </div>
+        </EmptyState>
       ) : (
         <div
           className={cn(
@@ -2862,14 +2768,14 @@ function AnalysisHistoryPanel({
                   failureAnalysisWorkspaceStyles["failure-analysis-history-heading"],
                 )}
               >
-                <span
+                <Badge
                   className={cn(
                     "analysis-status completed",
                     failureAnalysisWorkspaceStyles["analysis-status"],
                   )}
                 >
                   {categoryLabel(item.claim.category) ?? "已完成"}
-                </span>
+                </Badge>
                 <strong>{item.claim.caseName}</strong>
                 <small>
                   #{item.batchSequenceNumber} {item.batchName} ·{" "}

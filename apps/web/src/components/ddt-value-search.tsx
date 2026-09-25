@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Notice } from "@/components/ui/notice";
@@ -10,7 +12,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, Eye, LoaderCircle, Plus, X } from "lucide-react";
+import { Search, Eye, Plus, X } from "lucide-react";
 import {
   DDT_VALUE_SEARCH_MAX_KEYWORDS,
   DDT_VALUE_SEARCH_MAX_TEXT_LENGTH,
@@ -369,12 +371,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
               variant="primary"
               disabled={pending || !conditions.some((condition) => condition.keyword.trim())}
             >
-              {pending ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-              ) : (
-                <Search size={16} />
-              )}{" "}
-              搜索
+              {pending ? <LoadingIcon size={16} /> : <Search size={16} />} 搜索
             </Button>
             {pending ? (
               <Button type="button" onClick={() => controller.current?.abort()}>
@@ -397,7 +394,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
           </Disclosure>
           {formError ? (
             <Notice
-              tone="info"
+              tone="error"
               className={cn(
                 "inline-notice error",
                 uiPatterns["inline-notice"],
@@ -412,7 +409,7 @@ export function DdtValueSearch({ scope, labels }: { scope: DdtScope; labels: Ddt
       </div>
       {error ? (
         <Notice
-          tone="info"
+          tone="error"
           className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
           role="alert"
         >

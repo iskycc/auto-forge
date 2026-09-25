@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 import { expectUiIntegrity } from "./support/ui-guard";
+import {
+  createInitializationProject,
+  seedInitializationSource,
+  openNewVersionWizard,
+} from "./support/version-initialization";
 
 import {
   acceptSystemDialog,
@@ -10,6 +15,155 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
+
+test("version initialization allows every step to be skipped and can be reopened", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const project = await createInitializationProject(page);
+  await selectProjectContext(page, project.projectId);
+  await page.goto("/settings/projects");
+  const name = uniqueName("empty-version");
+  const wizard = await openNewVersionWizard(page, name);
+  await expect(wizard.getByText("暂无可继承版本", { exact: true })).toBeVisible();
+  await expect(page.locator(".toast-card")).toHaveCount(0);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: testInfo.outputPath(`empty-${viewport.width}.png`) });
+  }
+  for (let step = 0; step < 6; step++)
+    await wizard.getByRole("button", { name: "跳过此步", exact: true }).click();
+  await expect(wizard).toBeHidden();
+  const structure = await browserJson<{
+    versions: Array<{ id: string; name: string; stages: unknown[] }>;
+  }>(page, `/api/v1/projects/${project.projectId}/structure`);
+  const version = structure.body.versions.find((item) => item.name === name)!;
+  expect(version.stages).toHaveLength(0);
+  await page.getByRole("button", { name: "当前项目版本", exact: true }).click();
+  await page.getByRole("button", { name: "初始化当前版本", exact: true }).click();
+  await expect(wizard).toBeVisible();
+  await wizard.getByLabel("新测试阶段名称").fill("稍后补充阶段");
+  await wizard.getByRole("button", { name: "添加阶段", exact: true }).click();
+  await expect(wizard.getByText("稍后补充阶段", { exact: true })).toBeVisible();
+  await wizard.getByRole("button", { name: "稍后配置", exact: true }).click();
+  await expect(wizard).toBeHidden();
+  await expect(page.locator(".toast-card")).toHaveCount(0);
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "当前项目版本", exact: true }).click();
+  await page.getByRole("button", { name: "初始化当前版本", exact: true }).click();
+  await expect(wizard).toBeVisible();
+  await expectUiIntegrity(page);
+  await page.screenshot({ path: testInfo.outputPath("initialization-dark-1536.png") });
+  await wizard.getByRole("button", { name: "稍后配置", exact: true }).click();
+  await expect(wizard).toBeHidden();
+});
+
+test("version initialization inherits mapped cases and tasks and preserves progress on a failed request", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const project = await createInitializationProject(page);
+  const source = await seedInitializationSource(page, project.projectId);
+  await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
+  await page.goto("/settings/projects");
+  const name = uniqueName("initialized-version");
+  const wizard = await openNewVersionWizard(page, name);
+  await wizard.getByRole("combobox", { name: "继承来源（可选）", exact: true }).click();
+  await page.getByRole("option", { name: "来源版本_完整支付回归_".repeat(4), exact: true }).click();
+  const inherit = wizard.getByRole("button", { name: "继承所选内容", exact: true });
+  await inherit.click();
+  await expect(wizard.getByText(/本步已处理：新增或匹配/)).toBeVisible();
+  await wizard.getByRole("button", { name: "下一步", exact: true }).click();
+  await wizard.getByRole("button", { name: "跳过此步", exact: true }).click();
+  await page.route(
+    "**/versions/*/initialize",
+    async (route) => {
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "测试暂时繁忙，允许继续。",
+            requestId: "initialization-test",
+          },
+        },
+      });
+    },
+    { times: 1 },
+  );
+  await inherit.click();
+  await expect(wizard.getByText(/测试暂时繁忙，允许继续/)).toBeVisible();
+  await wizard.getByRole("button", { name: "继续继承", exact: true }).click();
+  await expect(wizard.getByText(/本步已处理：新增或匹配 1 项/)).toBeVisible();
+  await wizard.getByRole("button", { name: "下一步", exact: true }).click();
+  await inherit.click();
+  await expect(wizard.getByText(/本步已处理：新增或匹配 1 项/)).toBeVisible();
+  await wizard.getByRole("button", { name: "下一步", exact: true }).click();
+  await inherit.click();
+  await expect(wizard.getByText(/本步已处理：新增或匹配/)).toBeVisible();
+  await wizard.getByRole("button", { name: "下一步", exact: true }).click();
+  await wizard.getByRole("button", { name: "读取可继承任务", exact: true }).click();
+  await wizard.getByRole("checkbox", { name: new RegExp(source.suiteName) }).check();
+  await expect(page.locator(".toast-card")).toHaveCount(0);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    expect(await wizard.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
+      true,
+    );
+    await page.screenshot({ path: testInfo.outputPath(`task-inheritance-${viewport.width}.png`) });
+  }
+  await page.route(
+    "**/versions/*/initialize",
+    async (route) => {
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: {
+            code: "CASE_SUITE_REVISION_CONFLICT",
+            message: "来源任务已变更，请重新读取。",
+            requestId: "initialization-conflict",
+          },
+        },
+      });
+    },
+    { times: 1 },
+  );
+  await inherit.click();
+  const conflict = page.getByRole("dialog", { name: "用例任务已被其他人修改", exact: true });
+  await expect(conflict).toBeVisible();
+  await conflict.getByRole("button", { name: "暂不重新加载", exact: true }).click();
+  await wizard.getByRole("button", { name: "继续继承", exact: true }).click();
+  await expect(wizard.getByText(/本步已处理：新增或匹配 2 项/)).toBeVisible();
+  await wizard.getByRole("button", { name: "完成并进入版本", exact: true }).click();
+  await expect(wizard).toBeHidden();
+  const structure = await browserJson<{
+    versions: Array<{ id: string; name: string; stages: Array<{ id: string }> }>;
+  }>(page, `/api/v1/projects/${project.projectId}/structure`);
+  const target = structure.body.versions.find((item) => item.name === name)!;
+  const tasks = await browserJson<{
+    items: Array<{ id: string; enabled: boolean; caseCount: number }>;
+  }>(page, `/api/v1/case-suites?projectId=${project.projectId}&projectVersionId=${target.id}`);
+  expect(tasks.body.items).toHaveLength(1);
+  expect(tasks.body.items[0]).toMatchObject({ enabled: false, caseCount: 2 });
+  const scope = new URLSearchParams({
+    projectId: project.projectId,
+    projectVersionId: target.id,
+    testStageId: target.stages[0]!.id,
+  });
+  const mappings = await browserJson<{
+    items: Array<{ category?: { name: string }; executionClass?: { caseDefinitionId: string } }>;
+  }>(page, `/api/v1/ddt/sr-mappings?${scope}`);
+  expect(mappings.body.items[0]?.category?.name).toBe("支付");
+  expect(mappings.body.items[0]?.executionClass?.caseDefinitionId).not.toBe(source.classId);
+});
 
 const DEFAULT_PROJECT_ID = "00000000-0000-7000-8000-000000000001";
 

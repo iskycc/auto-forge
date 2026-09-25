@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { hasPermission } from "@autoforge/domain";
@@ -63,7 +64,9 @@ export default async function ProjectsPage({
           projectId={project.id}
         />
       ) : (
-        <p className={cn("inline-empty", uiPatterns["inline-empty"])}>当前账号没有可访问的项目。</p>
+        <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          当前账号没有可访问的项目。
+        </EmptyState>
       )}
     </section>
   );

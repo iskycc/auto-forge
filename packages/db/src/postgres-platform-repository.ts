@@ -2085,6 +2085,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     limit: number,
     projectIds?: readonly string[],
     projectVersionId?: string,
+    page?: { afterId?: string },
   ): Promise<CaseSuite[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
@@ -2093,6 +2094,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       .from(pgCaseSuites)
       .where(
         and(
+          ...(page?.afterId ? [gt(pgCaseSuites.id, page.afterId)] : []),
           ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
           ...(projectVersionId
             ? [
@@ -2101,7 +2103,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
             : []),
         ),
       )
-      .orderBy(desc(pgCaseSuites.updatedAt))
+      .orderBy(page ? asc(pgCaseSuites.id) : desc(pgCaseSuites.updatedAt))
       .limit(limit);
     if (!rows.length) return [];
     const suiteIds = rows.map((row) => row.id);
@@ -2696,6 +2698,17 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      if (input.ifAbsent) {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.id}, 0))`,
+        );
+        const [existing] = await transaction
+          .select({ id: pgCaseSuites.id })
+          .from(pgCaseSuites)
+          .where(eq(pgCaseSuites.id, input.id))
+          .limit(1);
+        if (existing) return;
+      }
       await transaction.insert(pgCaseSuites).values({
         id: input.id,
         projectId: input.projectId ?? DEFAULT_PROJECT_ID,
@@ -2703,7 +2716,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         description: input.description ?? null,
         version: 1,
         status: "active",
-        enabled: true,
+        enabled: input.enabled ?? true,
         revision: 1,
         policyJson: JSON.stringify(input.policy),
         ...(input.actorId ? { createdBy: input.actorId, updatedBy: input.actorId } : {}),

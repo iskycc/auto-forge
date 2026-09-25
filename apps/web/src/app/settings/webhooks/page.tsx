@@ -1,3 +1,4 @@
+import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { hasPermission } from "@autoforge/domain";
@@ -33,7 +34,7 @@ export default async function WebhookSettingsPage({
           <div>
             <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Webhook</p>
             <h1>任务完成通知</h1>
-            <p>当前账号没有可访问的项目。</p>
+            <Notice tone="info">当前账号没有可访问的项目。</Notice>
           </div>
         </header>
       </section>

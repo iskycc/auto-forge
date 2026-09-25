@@ -1,4 +1,9 @@
 "use client";
+import { Splitter } from "antd";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
 import { Badge } from "@/components/ui/badge";
 import { Notice } from "@/components/ui/notice";
 
@@ -31,7 +36,7 @@ import {
   PanelLeftOpen,
   PencilLine,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { useToast } from "@/components/ui-feedback";
@@ -92,7 +97,11 @@ export function DdtCaseBrowser({
     resizeList,
     resetListWidth,
   } = useDdtBrowserLayout();
-  const dragStart = useRef<{ x: number; width: number } | null>(null);
+  useEffect(() => {
+    const separator = browserRef.current?.querySelector('[role="separator"]');
+    separator?.setAttribute("aria-label", "调整 CaseID 列表宽度");
+    separator?.setAttribute("tabindex", "0");
+  }, [browserRef, collapsed]);
   return (
     <div
       className={cn(
@@ -101,219 +110,219 @@ export function DdtCaseBrowser({
       )}
       ref={browserRef}
       style={style}
+      onKeyDownCapture={(event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          event.target.getAttribute("role") !== "separator"
+        )
+          return;
+        if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Home") resetListWidth();
+        else resizeList(listWidth + (event.key === "ArrowLeft" ? -20 : 20));
+      }}
     >
-      <section
-        className={cn("ddt-case-navigation", ddtCaseBrowserStyles["ddt-case-navigation"])}
-        aria-label="DDT 用例导航"
+      <Splitter
+        classNames={{ dragger: { default: "ddt-case-resizer" } }}
+        className="h-full min-h-0"
+        onResize={(sizes) => {
+          if (!collapsed && sizes[0] !== undefined) resizeList(sizes[0]);
+        }}
+        onDraggerDoubleClick={resetListWidth}
       >
-        <header>
-          {!collapsed ? (
-            <div>
-              <strong>用例库</strong>
-              <small title="↑ / ↓ 或 J / K 切换用例">{cases.length} 条已加载</small>
-            </div>
-          ) : null}
-          <Button
-            type="button"
-            className={cn("icon-button", uiPatterns["icon-button"])}
-            aria-label={collapsed ? "展开 CaseID 列表" : "收起 CaseID 列表"}
-            title={collapsed ? "展开 CaseID 列表" : "收起 CaseID 列表"}
-            onClick={() => setCollapsed(!collapsed)}
-          >
-            {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-          </Button>
-        </header>
-        <div
-          className={cn(
-            "ddt-case-navigation-content",
-            ddtCaseBrowserStyles["ddt-case-navigation-content"],
-          )}
-          hidden={collapsed}
+        <Splitter.Panel
+          size={collapsed ? 52 : listWidth}
+          min={collapsed ? 52 : minimumListWidth}
+          max={collapsed ? 52 : maximumListWidth}
+          resizable={!collapsed}
+          className="min-h-0 [&>.ddt-case-navigation]:h-full"
         >
-          <fieldset
-            className={cn("ddt-case-filters", ddtCaseBrowserStyles["ddt-case-filters"])}
-            disabled={savingCase}
+          <section
+            className={cn("ddt-case-navigation", ddtCaseBrowserStyles["ddt-case-navigation"])}
+            aria-label="DDT 用例导航"
           >
-            {filters}
-          </fieldset>
-          <label
-            className={cn("ddt-loaded-selection", ddtCaseBrowserStyles["ddt-loaded-selection"])}
-          >
-            <Input
-              type="checkbox"
-              aria-label="选择已加载的全部 DDT 用例"
-              disabled={savingCase}
-              checked={cases.length > 0 && cases.every((item) => selected.has(item.caseId))}
-              onChange={(event) => onSelectAll(event.target.checked)}
-            />
-            {selected.size ? `已选 ${selected.size} 条` : "选择已加载用例"}
-          </label>
-          <div
-            className={cn("ddt-case-list", ddtCaseBrowserStyles["ddt-case-list"])}
-            aria-busy={refreshing}
-            onKeyDown={(event) => {
-              if (!(event.target instanceof HTMLButtonElement) || !event.target.dataset.caseId)
-                return;
-              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-              const direction = ["ArrowDown", "j"].includes(event.key)
-                ? 1
-                : ["ArrowUp", "k"].includes(event.key)
-                  ? -1
-                  : 0;
-              if (!direction) return;
-              const focusedCaseId = event.target.dataset.caseId;
-              const index = cases.findIndex((item) => item.caseId === focusedCaseId);
-              const next = cases[index + direction];
-              if (!next) return;
-              event.preventDefault();
-              onOpen(next.caseId);
-              const buttons =
-                event.currentTarget.querySelectorAll<HTMLButtonElement>("button[data-case-id]");
-              buttons[index + direction]?.focus();
-            }}
-          >
-            {cases.map((item) => (
-              <div
-                key={item.id}
-                className={cn(
-                  ddtCaseBrowserStyles["ddt-case-list-row"],
-                  `ddt-case-list-row${activeCaseId === item.caseId ? " active" : ""}`,
-                )}
+            <header>
+              {!collapsed ? (
+                <div>
+                  <strong>用例库</strong>
+                  <small title="↑ / ↓ 或 J / K 切换用例">{cases.length} 条已加载</small>
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                className={cn("icon-button", uiPatterns["icon-button"])}
+                aria-label={collapsed ? "展开 CaseID 列表" : "收起 CaseID 列表"}
+                title={collapsed ? "展开 CaseID 列表" : "收起 CaseID 列表"}
+                onClick={() => setCollapsed(!collapsed)}
+              >
+                {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+              </Button>
+            </header>
+            <div
+              className={cn(
+                "ddt-case-navigation-content",
+                ddtCaseBrowserStyles["ddt-case-navigation-content"],
+              )}
+              hidden={collapsed}
+            >
+              <fieldset
+                className={cn("ddt-case-filters", ddtCaseBrowserStyles["ddt-case-filters"])}
+                disabled={savingCase}
+              >
+                {filters}
+              </fieldset>
+              <label
+                className={cn("ddt-loaded-selection", ddtCaseBrowserStyles["ddt-loaded-selection"])}
               >
                 <Input
                   type="checkbox"
-                  aria-label={`选择 ${item.caseId}`}
+                  aria-label="选择已加载的全部 DDT 用例"
                   disabled={savingCase}
-                  checked={selected.has(item.caseId)}
-                  onChange={() => onSelect(item.caseId)}
+                  checked={cases.length > 0 && cases.every((item) => selected.has(item.caseId))}
+                  onChange={(event) => onSelectAll(event.target.checked)}
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={cn("ddt-case-list-item", ddtCaseBrowserStyles["ddt-case-list-item"])}
-                  aria-label={item.caseId}
-                  aria-current={activeCaseId === item.caseId ? "true" : undefined}
-                  data-case-id={item.caseId}
-                  disabled={savingCase}
-                  onClick={() => onOpen(item.caseId)}
-                >
-                  <FileSpreadsheet size={17} />
-                  <span>
-                    <strong title={item.caseId}>{item.caseId}</strong>
-                    <small>
-                      <span>{item.srNum}</span>
-                      {item.kind === "journey" ? <em>用户旅程</em> : null}
-                    </small>
-                  </span>
-                  <ChevronRight size={14} />
-                </Button>
-                <Button
-                  type="button"
-                  className={cn("ddt-case-preview", ddtCaseBrowserStyles["ddt-case-preview"])}
-                  variant="ghost"
-                  size="compact"
-                  aria-label={`快速预览 ${item.caseId}`}
-                  title="查看执行记录、分析结论与测试类详情"
-                  disabled={savingCase}
-                  onClick={() => onPreview(item.caseId)}
-                >
-                  <Eye size={15} aria-hidden="true" />
-                </Button>
-              </div>
-            ))}
-            {refreshing && !cases.length ? (
+                {selected.size ? `已选 ${selected.size} 条` : "选择已加载用例"}
+              </label>
               <div
-                className={cn("ddt-navigation-empty", ddtCaseBrowserStyles["ddt-navigation-empty"])}
-                role="status"
+                className={cn("ddt-case-list", ddtCaseBrowserStyles["ddt-case-list"])}
+                aria-busy={refreshing}
+                onKeyDown={(event) => {
+                  if (!(event.target instanceof HTMLButtonElement) || !event.target.dataset.caseId)
+                    return;
+                  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+                  const direction = ["ArrowDown", "j"].includes(event.key)
+                    ? 1
+                    : ["ArrowUp", "k"].includes(event.key)
+                      ? -1
+                      : 0;
+                  if (!direction) return;
+                  const focusedCaseId = event.target.dataset.caseId;
+                  const index = cases.findIndex((item) => item.caseId === focusedCaseId);
+                  const next = cases[index + direction];
+                  if (!next) return;
+                  event.preventDefault();
+                  onOpen(next.caseId);
+                  const buttons =
+                    event.currentTarget.querySelectorAll<HTMLButtonElement>("button[data-case-id]");
+                  buttons[index + direction]?.focus();
+                }}
               >
-                正在加载用例…
-              </div>
-            ) : !cases.length ? (
-              <div
-                className={cn("ddt-navigation-empty", ddtCaseBrowserStyles["ddt-navigation-empty"])}
-              >
-                没有符合条件的用例，试试调整筛选条件或导入表格。
-              </div>
-            ) : null}
-            {hasMore ? (
-              <Button
-                type="button"
-                className={cn("ddt-load-more", ddtCaseBrowserStyles["ddt-load-more"])}
-                loading={loadingMore}
-                disabled={loadingMore || savingCase}
-                variant="secondary"
-                size="compact"
-                onClick={onLoadMore}
-              >
-                <ChevronDown size={14} aria-hidden="true" />
-                {loadingMore ? "正在加载…" : "加载更多"}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </section>
-      {!collapsed ? (
-        <div
-          className={cn("ddt-case-resizer", ddtCaseBrowserStyles["ddt-case-resizer"])}
-          role="separator"
-          aria-label="调整 CaseID 列表宽度"
-          aria-orientation="vertical"
-          aria-valuemin={minimumListWidth}
-          aria-valuemax={maximumListWidth}
-          aria-valuenow={listWidth}
-          tabIndex={0}
-          onDoubleClick={resetListWidth}
-          onKeyDown={(event) => {
-            if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
-            event.preventDefault();
-            if (event.key === "Home") resetListWidth();
-            else resizeList(listWidth + (event.key === "ArrowLeft" ? -20 : 20));
-          }}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            event.currentTarget.focus();
-            dragStart.current = {
-              x: event.clientX,
-              width: event.currentTarget.previousElementSibling!.getBoundingClientRect().width,
-            };
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            if (dragStart.current)
-              resizeList(dragStart.current.width + event.clientX - dragStart.current.x);
-          }}
-          onPointerUp={(event) => {
-            dragStart.current = null;
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }}
-          onLostPointerCapture={() => {
-            dragStart.current = null;
-          }}
-        />
-      ) : null}
-      <section
-        className={cn("ddt-case-detail-panel", ddtCaseBrowserStyles["ddt-case-detail-panel"])}
-        aria-label="DDT 用例详情"
-      >
-        {selected.size ? (
-          <div className={cn("ddt-bulk-workspace", ddtCaseBrowserStyles["ddt-bulk-workspace"])}>
-            <header>
-              <FileSpreadsheet size={24} />
-              <div>
-                <h2>已选择 {selected.size} 条用例</h2>
-                <p>在左侧继续选择，在这里统一管理所选用例。</p>
-                {selected.size > cases.filter((item) => selected.has(item.caseId)).length ? (
-                  <p>包含当前列表尚未显示的用例，加入任务时会包含全部已选用例。</p>
+                {cases.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      ddtCaseBrowserStyles["ddt-case-list-row"],
+                      `ddt-case-list-row${activeCaseId === item.caseId ? " active" : ""}`,
+                    )}
+                  >
+                    <Input
+                      type="checkbox"
+                      aria-label={`选择 ${item.caseId}`}
+                      disabled={savingCase}
+                      checked={selected.has(item.caseId)}
+                      onChange={() => onSelect(item.caseId)}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className={cn(
+                        "ddt-case-list-item",
+                        ddtCaseBrowserStyles["ddt-case-list-item"],
+                      )}
+                      aria-label={item.caseId}
+                      aria-current={activeCaseId === item.caseId ? "true" : undefined}
+                      data-case-id={item.caseId}
+                      disabled={savingCase}
+                      onClick={() => onOpen(item.caseId)}
+                    >
+                      <FileSpreadsheet size={17} />
+                      <span>
+                        <strong title={item.caseId}>{item.caseId}</strong>
+                        <small>
+                          <span>{item.srNum}</span>
+                          {item.kind === "journey" ? <em>用户旅程</em> : null}
+                        </small>
+                      </span>
+                      <ChevronRight size={14} />
+                    </Button>
+                    <Button
+                      type="button"
+                      className={cn("ddt-case-preview", ddtCaseBrowserStyles["ddt-case-preview"])}
+                      variant="ghost"
+                      size="compact"
+                      aria-label={`快速预览 ${item.caseId}`}
+                      title="查看执行记录、分析结论与测试类详情"
+                      disabled={savingCase}
+                      onClick={() => onPreview(item.caseId)}
+                    >
+                      <Eye size={15} aria-hidden="true" />
+                    </Button>
+                  </div>
+                ))}
+                {refreshing && !cases.length ? (
+                  <LoadingStateMessage
+                    className={cn(
+                      "ddt-navigation-empty",
+                      ddtCaseBrowserStyles["ddt-navigation-empty"],
+                    )}
+                    role="status"
+                  >
+                    正在加载用例…
+                  </LoadingStateMessage>
+                ) : !cases.length ? (
+                  <EmptyState
+                    className={cn(
+                      "ddt-navigation-empty",
+                      ddtCaseBrowserStyles["ddt-navigation-empty"],
+                    )}
+                  >
+                    没有符合条件的用例，试试调整筛选条件或导入表格。
+                  </EmptyState>
+                ) : null}
+                {hasMore ? (
+                  <Button
+                    type="button"
+                    className={cn("ddt-load-more", ddtCaseBrowserStyles["ddt-load-more"])}
+                    loading={loadingMore}
+                    disabled={loadingMore || savingCase}
+                    variant="secondary"
+                    size="compact"
+                    onClick={onLoadMore}
+                  >
+                    <ChevronDown size={14} aria-hidden="true" />
+                    {loadingMore ? "正在加载…" : "加载更多"}
+                  </Button>
                 ) : null}
               </div>
-            </header>
-            {selectionActions}
-          </div>
-        ) : (
-          children
-        )}
-      </section>
+            </div>
+          </section>
+        </Splitter.Panel>
+        <Splitter.Panel min={320} className="min-h-0 [&>.ddt-case-detail-panel]:h-full">
+          <section
+            className={cn("ddt-case-detail-panel", ddtCaseBrowserStyles["ddt-case-detail-panel"])}
+            aria-label="DDT 用例详情"
+          >
+            {selected.size ? (
+              <div className={cn("ddt-bulk-workspace", ddtCaseBrowserStyles["ddt-bulk-workspace"])}>
+                <header>
+                  <FileSpreadsheet size={24} />
+                  <div>
+                    <h2>已选择 {selected.size} 条用例</h2>
+                    <p>在左侧继续选择，在这里统一管理所选用例。</p>
+                    {selected.size > cases.filter((item) => selected.has(item.caseId)).length ? (
+                      <p>包含当前列表尚未显示的用例，加入任务时会包含全部已选用例。</p>
+                    ) : null}
+                  </div>
+                </header>
+                {selectionActions}
+              </div>
+            ) : (
+              children
+            )}
+          </section>
+        </Splitter.Panel>
+      </Splitter>
     </div>
   );
 }
@@ -650,7 +659,7 @@ export function DdtCaseDetail({
         )}
         {error ? (
           <Notice
-            tone="info"
+            tone="error"
             className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
             role="alert"
           >
@@ -718,7 +727,7 @@ export function DdtCaseDetail({
               </article>
             ))
           ) : (
-            <p>暂无修改历史</p>
+            <EmptyState>暂无修改历史</EmptyState>
           )}
         </Disclosure>
       </div>
@@ -757,12 +766,12 @@ const ddtCaseBrowserStyles = {
   "ddt-bulk-workspace":
     "[&_p]:text-muted-foreground [&_p]:text-xs [&_p]:[margin:4px_0_0] [&_p]:[overflow-wrap:anywhere] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-3 [&_h2]:m-0 [&_h2]:text-lg [&_h2]:[overflow-wrap:anywhere] overflow-auto p-5 [&_.ddt-selection-bar]:flex-wrap [&_.ddt-selection-bar]:mt-5 [&_.ddt-selection-bar]:p-4",
   "ddt-case-browser":
-    "[--ddt-case-list-width:clamp(240px,_26%,_440px)] [--ddt-case-list-collapsed-width:52px] [--ddt-case-resizer-width:10px] [--ddt-case-browser-height:320px] [--ddt-case-filter-max-height:none] grid grid-cols-[var(--ddt-case-list-width)_var(--ddt-case-resizer-width)_minmax(_0,_1fr_)] h-[var(--ddt-case-browser-height)] min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs [&.is-collapsed]:grid-cols-[var(--ddt-case-list-collapsed-width)_minmax(0,_1fr)]",
+    "[--ddt-case-list-width:clamp(240px,_26%,_440px)] [--ddt-case-list-collapsed-width:52px] [--ddt-case-resizer-width:10px] [--ddt-case-browser-height:320px] [--ddt-case-filter-max-height:none] block h-[var(--ddt-case-browser-height)] min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs ",
   "ddt-case-detail-panel": "flex min-w-0 min-h-0 flex-col",
   "ddt-case-detail-scroll":
     "min-h-0 flex-1 overflow-auto p-3 [container-type:inline-size] [&_.ddt-execution-class-summary]:grid-cols-[minmax(0,_1fr)] [&_.ddt-execution-class-summary]:gap-[4px_8px] [&_.ddt-execution-class-summary]:mb-3 [&_.ddt-execution-class-summary]:py-2 [&_.ddt-execution-class-summary]:px-3 [&_.ddt-execution-class-summary_>_small]:col-span-full [&_.ddt-history]:block",
   "ddt-case-filters":
-    "m-0 border-0 grid grid-cols-2 [flex:0_0_auto] gap-2 overflow-visible py-2 px-3 [&_>_label]:col-span-full [&_>_label_>_span:not(.ui-select)]:hidden [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_.ui-input]:w-full [&_.ui-input]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-1 [&_.search-field_>_svg]:[flex:0_0_auto] [&_label_>_span]:text-muted-foreground [&_label_>_span]:text-xs",
+    "m-0 border-0 grid grid-cols-2 [flex:0_0_auto] gap-2 overflow-visible py-2 px-3 [&_>_label]:col-span-full [&_>_label_>_span:not(.ui-select):not(.ui-field-feedback)]:hidden [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_.ui-input]:w-full [&_.ui-input]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-1 [&_.search-field_>_svg]:[flex:0_0_auto] [&_label_>_span]:text-muted-foreground [&_label_>_span]:text-xs",
   "ddt-case-list": "min-h-0 flex-1 overflow-auto p-1",
   "ddt-case-list-item":
     "[&.ui-button]:shadow-none [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_>_span]:flex-1 flex min-w-0 flex-1 items-center gap-2 border-0 py-1 px-1 bg-transparent text-foreground text-left [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small_>_span]:overflow-hidden [&_small_>_span]:text-ellipsis [&_small_>_span]:whitespace-nowrap [&_small]:flex [&_small]:min-w-0 [&_small]:items-center [&_small]:gap-2 [&_em]:[flex:0_0_auto] [&_em]:text-info [&_em]:[font-style:normal]",

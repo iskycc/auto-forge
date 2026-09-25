@@ -1,4 +1,7 @@
 "use client";
+import { SectionTabs } from "./section-tabs";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Badge } from "@/components/ui/badge";
 
 import { Notice } from "@/components/ui/notice";
@@ -432,27 +435,29 @@ export function AccessSettings({
             </form>
           </ActionDialog>
           <div className={cn("access-scope-toolbar", accessSettingsStyles["access-scope-toolbar"])}>
-            <nav
-              aria-label="用户管理范围"
-              className={cn("access-scope-options", accessSettingsStyles["access-scope-options"])}
-            >
-              {canReadAllUsers ? (
-                <Link
-                  aria-current={!projectScope ? "page" : undefined}
-                  href="/settings/access?section=users"
-                >
-                  全平台用户
-                </Link>
-              ) : null}
-              {capabilities.projectRead ? (
-                <Link
-                  aria-current={projectScope ? "page" : undefined}
-                  href="/settings/access?section=users&scope=project"
-                >
-                  当前项目成员
-                </Link>
-              ) : null}
-            </nav>
+            <SectionTabs
+              label="用户管理范围"
+              tabs={[
+                ...(canReadAllUsers
+                  ? [
+                      {
+                        href: "/settings/access?section=users",
+                        label: "全平台用户",
+                        active: !projectScope,
+                      },
+                    ]
+                  : []),
+                ...(capabilities.projectRead
+                  ? [
+                      {
+                        href: "/settings/access?section=users&scope=project",
+                        label: "当前项目成员",
+                        active: Boolean(projectScope),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
             <span className={cn("settings-note", uiPatterns["settings-note"])}>
               {projectScope
                 ? `项目：${currentProject?.name ?? "暂无可访问项目"}`
@@ -509,10 +514,10 @@ export function AccessSettings({
                 {!users.length ? (
                   <TableRow>
                     <TableCell colSpan={6}>
-                      <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                      <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                         没有匹配的用户。请调整条件或
                         <Link href={userScopeUrl}>清空筛选</Link>。
-                      </div>
+                      </EmptyState>
                     </TableCell>
                   </TableRow>
                 ) : null}

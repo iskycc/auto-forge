@@ -1,8 +1,11 @@
 "use client";
-import { cn } from "@/lib/utils";
-import { uiPatterns } from "@/components/ui/patterns";
+import { Notice } from "@/components/ui/notice";
 
-import { Download, LoaderCircle } from "lucide-react";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { cn } from "@/lib/utils";
+
+import { Download } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui";
@@ -45,15 +48,12 @@ export function FailureAnalysisExportButton({ batchId }: { batchId: string }) {
         type="button"
         variant="secondary"
       >
-        {exporting ? (
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
-        ) : (
-          <Download size={14} />
-        )}
+        {exporting ? <LoadingIcon size={14} /> : <Download size={14} />}
         {exporting ? "正在导出" : "导出分析结果"}
       </Button>
       {error ? (
-        <span
+        <Notice
+          tone="error"
           className={cn(
             "failure-analysis-export-error",
             failureAnalysisExportButtonStyles["failure-analysis-export-error"],
@@ -61,7 +61,7 @@ export function FailureAnalysisExportButton({ batchId }: { batchId: string }) {
           role="alert"
         >
           {error}
-        </span>
+        </Notice>
       ) : null}
     </div>
   );

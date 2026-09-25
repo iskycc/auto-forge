@@ -145,7 +145,9 @@ function PlatformNodeForm({
         </p>
       </Disclosure>
       {!node.internalBaseUrl ? (
-        <p role="status">尚未配置内部地址，其他节点暂时无法读取本节点日志。</p>
+        <Notice tone="warning" role="status">
+          尚未配置内部地址，其他节点暂时无法读取本节点日志。
+        </Notice>
       ) : null}
       {check ? (
         <p className={cn("settings-note", uiPatterns["settings-note"])} role="status">

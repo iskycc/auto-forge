@@ -1,3 +1,5 @@
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -109,11 +111,11 @@ export function DdtExecutionChart({
             })}
           </div>
           {total === 0 ? (
-            <p
+            <EmptyState
               className={cn("ddt-execution-empty", ddtExecutionChartStyles["ddt-execution-empty"])}
             >
               近 7 日暂无 DDT 执行记录
-            </p>
+            </EmptyState>
           ) : null}
           <p
             className={cn(
@@ -128,9 +130,11 @@ export function DdtExecutionChart({
           </p>
         </>
       ) : (
-        <p className={cn("ddt-chart-empty", ddtExecutionChartStyles["ddt-chart-empty"])}>
+        <LoadingStateMessage
+          className={cn("ddt-chart-empty", ddtExecutionChartStyles["ddt-chart-empty"])}
+        >
           后台正在准备执行统计
-        </p>
+        </LoadingStateMessage>
       )}
     </Card>
   );

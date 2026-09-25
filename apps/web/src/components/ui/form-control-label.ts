@@ -5,7 +5,9 @@ export function formControlLabel(
   const labels = Array.from(control.labels ?? [], (label) => {
     const caption = label.cloneNode(true) as HTMLLabelElement;
     caption
-      .querySelectorAll(".ui-select, .ui-datetime, input, select, textarea, button")
+      .querySelectorAll(
+        ".ui-select, .ui-datetime, .ant-select, .ant-input-number, input, select, textarea, button",
+      )
       .forEach((element) => {
         element.remove();
       });

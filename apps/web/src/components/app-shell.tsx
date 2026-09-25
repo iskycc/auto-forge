@@ -1,4 +1,6 @@
 "use client";
+import { Avatar } from "antd";
+
 import { BrandMark } from "./brand-mark";
 import { Menu } from "antd";
 import { cn } from "@/lib/utils";
@@ -360,9 +362,9 @@ export function AppShell({
                 <KeyRound size={18} />
               </LinkButton>
             ) : null}
-            <span className={cn("avatar", appShellStyles["avatar"])} aria-hidden="true">
+            <Avatar className={cn("avatar", appShellStyles["avatar"])} aria-hidden="true">
               <Bot size={17} />
-            </span>
+            </Avatar>
             <span className={cn("admin-label", appShellStyles["admin-label"])}>
               {userName ?? "未登录"}
             </span>

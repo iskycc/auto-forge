@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Card } from "@/components/ui/card";
 
 import { cn } from "@/lib/utils";
@@ -10,7 +14,7 @@ import { useConfirm, useToast } from "@/components/ui-feedback";
 import { throwApiErrorResponse } from "@/lib/client-api";
 
 import type { CaseSourceComparisonResult } from "@autoforge/contracts";
-import { Archive, GitCompareArrows, LoaderCircle, RefreshCcw, Trash2 } from "lucide-react";
+import { Archive, GitCompareArrows, RefreshCcw, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -144,7 +148,7 @@ export function SourceLifecyclePanel({
             onClick={() => void compare()}
           >
             {pendingAction === "compare" ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+              <LoadingIcon size={15} />
             ) : (
               <GitCompareArrows size={15} />
             )}
@@ -162,11 +166,7 @@ export function SourceLifecyclePanel({
             disabled={pendingAction !== null}
             onClick={() => void setArchived(true)}
           >
-            {pendingAction === "archive" ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-            ) : (
-              <Archive size={15} />
-            )}
+            {pendingAction === "archive" ? <LoadingIcon size={15} /> : <Archive size={15} />}
             归档来源
           </Button>
         )}
@@ -181,11 +181,7 @@ export function SourceLifecyclePanel({
             disabled={pendingAction !== null}
             onClick={() => void setArchived(false)}
           >
-            {pendingAction === "restore" ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-            ) : (
-              <RefreshCcw size={15} />
-            )}
+            {pendingAction === "restore" ? <LoadingIcon size={15} /> : <RefreshCcw size={15} />}
             恢复为活跃
           </Button>
         )}
@@ -196,11 +192,7 @@ export function SourceLifecyclePanel({
             disabled={pendingAction !== null}
             onClick={() => void remove()}
           >
-            {pendingAction === "delete" ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-            ) : (
-              <Trash2 size={15} />
-            )}
+            {pendingAction === "delete" ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
             删除来源
           </Button>
         )}
@@ -242,7 +234,7 @@ export function SourceLifecyclePanel({
               onClick={() => void confirmSync()}
             >
               {pendingAction === "sync" ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
+                <LoadingIcon size={15} />
               ) : (
                 <GitCompareArrows size={15} />
               )}
@@ -252,7 +244,9 @@ export function SourceLifecyclePanel({
         </div>
       )}
       {error && (
-        <small className={cn("inline-error", sourceLifecycleStyles["inline-error"])}>{error}</small>
+        <Notice tone="error" className={cn("inline-error", sourceLifecycleStyles["inline-error"])}>
+          {error}
+        </Notice>
       )}
     </Card>
   );

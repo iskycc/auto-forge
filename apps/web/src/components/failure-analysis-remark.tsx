@@ -1,4 +1,5 @@
 "use client";
+import { Image } from "antd";
 import { cn } from "@/lib/utils";
 
 import {
@@ -157,8 +158,12 @@ export function FailureAnalysisRemark({
                 aria-label={`查看备注图片 ${image.fileName}`}
                 onClick={(event) => onPreview(image, event.currentTarget)}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element -- authenticated analysis images use the browser session */}
-                <img alt={`备注图片：${image.fileName}`} src={image.src} loading="lazy" />
+                <Image
+                  preview={false}
+                  alt={`备注图片：${image.fileName}`}
+                  src={image.src}
+                  loading="lazy"
+                />
               </Button>
               <figcaption>
                 <span title={image.fileName}>{image.fileName}</span>
@@ -183,8 +188,7 @@ export function FailureAnalysisRemark({
                   )
                 }
               >
-                {/* eslint-disable-next-line @next/next/no-img-element -- local clipboard previews are revoked on removal and unmount */}
-                <img alt={`备注图片：${image.file.name}`} src={image.url} />
+                <Image preview={false} alt={`备注图片：${image.file.name}`} src={image.url} />
               </Button>
               <figcaption>
                 <span title={image.file.name}>{image.file.name}</span>

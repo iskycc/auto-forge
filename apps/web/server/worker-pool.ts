@@ -197,6 +197,10 @@ export class WorkerPool implements WorkDispatcher {
     return (await this.nextSchedulingLane().dispatch({ kind: "trigger-schedules" })) as number;
   }
 
+  initializeVersion(input: unknown, signal: AbortSignal): Promise<unknown> {
+    return this.inheritCases({ kind: "initialize-version", input }, signal);
+  }
+
   inheritDdtCases(input: unknown, signal: AbortSignal): Promise<unknown> {
     return this.inheritCases({ kind: "inherit-ddt-cases", input }, signal);
   }
@@ -206,7 +210,10 @@ export class WorkerPool implements WorkDispatcher {
   }
 
   private inheritCases(
-    task: Extract<WorkTask, { kind: "inherit-ddt-cases" | "inherit-testng-cases" }>,
+    task: Extract<
+      WorkTask,
+      { kind: "inherit-ddt-cases" | "inherit-testng-cases" | "initialize-version" }
+    >,
     signal: AbortSignal,
   ): Promise<unknown> {
     const lane = this.maintenanceLanes.reduce((least, candidate) =>
@@ -427,6 +434,7 @@ class WorkerLane {
           task.kind === "search-ddt-values" ||
           task.kind === "inherit-ddt-cases" ||
           task.kind === "inherit-testng-cases" ||
+          task.kind === "initialize-version" ||
           task.kind === "parse-file"
             ? () => undefined
             : runtimePriority().beginForeground(),

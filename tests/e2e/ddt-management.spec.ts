@@ -978,12 +978,12 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: workbook,
   };
-  const dropzone = importDialog.locator(".ddt-dropzone");
-  await dispatchFileDrag(dropzone, "dragenter", workbookFile);
-  await expect(dropzone).toHaveClass(/(?:^|\s)drag-active(?:\s|$)/u);
-  await expect(dropzone.getByText("松开即可添加文件")).toBeVisible();
-  await dispatchFileDrag(dropzone, "drop", workbookFile);
-  await expect(dropzone).not.toHaveClass(/(?:^|\s)drag-active(?:\s|$)/u);
+  const dropzone = importDialog.locator(".ddt-dropzone .ant-upload-drag");
+  await dispatchFileDrag(dropzone, "dragover", workbookFile);
+  await expect(dropzone).toHaveClass(/ant-upload-drag-hover/u);
+  await expect(dropzone.getByText("选择或拖入表格、ZIP 压缩包")).toBeVisible();
+  await dispatchFileDrag(dropzone.locator(".ant-upload-btn"), "drop", workbookFile);
+  await expect(dropzone).not.toHaveClass(/ant-upload-drag-hover/u);
   await expect(importDialog.getByText(`ddt-${hierarchy.suffix}.xlsx`)).toBeVisible();
   const previewRoute = "**/api/v1/ddt/imports/preview?**";
   const delayPreview = async (route: Route) => {
@@ -1290,7 +1290,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
 
 async function dispatchFileDrag(
   dropzone: Locator,
-  eventType: "dragenter" | "drop",
+  eventType: "dragenter" | "dragover" | "drop",
   file: { name: string; mimeType: string; buffer: Buffer },
 ): Promise<void> {
   await dropzone.evaluate(
@@ -1560,9 +1560,11 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
     .click();
   const resizer = workspace.getByRole("separator", { name: "调整 CaseID 列表宽度" });
   await resizer.focus();
-  const previousWidth = Number(await resizer.getAttribute("aria-valuenow"));
+  const previousWidth = (await navigation.boundingBox())!.width;
   await resizer.press("ArrowRight");
-  await expect(resizer).toHaveAttribute("aria-valuenow", String(previousWidth + 20));
+  await expect
+    .poll(async () => (await navigation.boundingBox())!.width)
+    .toBeCloseTo(previousWidth + 20, 0);
   await navigation.getByRole("button", { name: "收起 CaseID 列表" }).click();
   await expect(navigation.locator(".ddt-case-navigation-content")).toBeHidden();
   await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
@@ -1579,6 +1581,19 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
   await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
+
+async function expectDdtSearchWidth(
+  page: Page,
+  input: Locator,
+  screenshotName: string,
+): Promise<void> {
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 1024 });
+    await expectUiIntegrity(page);
+    await expect.poll(async () => (await input.boundingBox())!.width).toBeGreaterThan(240);
+    await captureDdtUi(page, `${screenshotName}-${width}`);
+  }
+}
 
 async function selectDdtGroup(navigation: Locator, group: string): Promise<void> {
   await navigation.getByRole("combobox", { name: "DDT 业务分组", exact: true }).click();
@@ -1618,24 +1633,34 @@ async function expectResponsiveDdtSidebar(page: Page): Promise<void> {
   expect(sizes[1]!.height).toBeGreaterThan(sizes[0]!.height);
   await page.setViewportSize({ width: 1536, height: 1024 });
   const resizer = workspace.getByRole("separator", { name: "调整 CaseID 列表宽度" });
-  await expect(resizer).toHaveAttribute("aria-valuenow", String(Math.round(sizes[1]!.width)));
-  const beforeDrag = Number(await resizer.getAttribute("aria-valuenow"));
+  // Ant Splitter reports its accessible value as a percentage; verify pixel
+  // behavior from the visible panel, not the previous resizer implementation.
+  const sidebarWidth = async () => (await navigation.boundingBox())!.width;
+  await expect.poll(sidebarWidth).toBeCloseTo(sizes[1]!.width, 0);
+  await expect
+    .poll(async () => {
+      const splitWidth = await workspace
+        .locator(".ant-splitter")
+        .evaluate((split) => split.clientWidth);
+      return (
+        Number(await resizer.getAttribute("aria-valuenow")) -
+        Math.round(((await sidebarWidth()) / splitWidth) * 100)
+      );
+    })
+    .toBe(0);
+  const beforeDrag = await sidebarWidth();
   const handle = await resizer.boundingBox();
   await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 20);
   await page.mouse.down();
   await page.mouse.move(handle!.x + handle!.width / 2 + 60, handle!.y + 20);
   await page.mouse.up();
-  await expect
-    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
-    .toBeGreaterThan(beforeDrag + 40);
-  const expandedWidth = Number(await resizer.getAttribute("aria-valuenow"));
+  await expect.poll(sidebarWidth).toBeGreaterThan(beforeDrag + 40);
+  const expandedWidth = await sidebarWidth();
   const expandedWorkspaceWidth = await workspace.evaluate((element) => element.clientWidth);
   await page.setViewportSize({ width: 1024, height: 768 });
-  await expect
-    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
-    .toBeLessThan(expandedWidth);
+  await expect.poll(sidebarWidth).toBeLessThan(expandedWidth);
   const reducedWorkspaceWidth = await workspace.evaluate((element) => element.clientWidth);
-  const reducedWidth = Number(await resizer.getAttribute("aria-valuenow"));
+  const reducedWidth = await sidebarWidth();
   expect(reducedWidth / reducedWorkspaceWidth).toBeCloseTo(
     expandedWidth / expandedWorkspaceWidth,
     2,
@@ -1645,13 +1670,9 @@ async function expectResponsiveDdtSidebar(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1536, height: 1024 });
   await expect(navigation.locator(".ddt-case-navigation-content")).toBeHidden();
   await navigation.getByRole("button", { name: "展开 CaseID 列表" }).click();
-  await expect
-    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
-    .toBe(expandedWidth);
+  await expect.poll(sidebarWidth).toBe(expandedWidth);
   await resizer.press("Home");
-  await expect
-    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
-    .toBe(beforeDrag);
+  await expect.poll(sidebarWidth).toBe(beforeDrag);
   await page
     .getByRole("navigation", { name: "用例类型" })
     .getByRole("link", { name: "TestNG 用例" })
@@ -1714,6 +1735,7 @@ test("SR associations restrict candidates and automatically cover imported and m
   await page.goto("/cases/ddt-associations");
   await page.getByRole("button", { name: "配置测试类范围" }).click();
   const searchDialog = page.getByRole("dialog", { name: "测试类候选范围", exact: true });
+  await expectDdtSearchWidth(page, searchDialog.getByLabel("搜索测试类"), "ddt-class-search");
   await searchDialog.getByLabel("搜索测试类").fill("missing-class");
   await searchDialog.getByRole("button", { name: "搜索", exact: true }).click();
   await expect(searchDialog).toContainText("没有匹配的测试类");
@@ -1970,11 +1992,21 @@ test("SR associations restrict candidates and automatically cover imported and m
   }
   await page.getByRole("button", { name: "配置需求分类", exact: true }).click();
   const categoryDialog = page.getByRole("dialog", { name: "需求分类", exact: true });
+  await expectDdtSearchWidth(
+    page,
+    categoryDialog.getByLabel("搜索需求分类"),
+    "ddt-category-search",
+  );
   await categoryDialog.getByRole("button", { name: "删除分类 PAYMENTS 分类", exact: true }).click();
   await acceptSystemDialog(page, "删除分类“PAYMENTS 分类”", "删除分类");
   await expect(categoryDialog.getByRole("alert")).toContainText("仍使用此分类");
   await categoryDialog.getByRole("button", { name: "编辑分类 PAYMENTS 分类", exact: true }).click();
   await categoryDialog.getByLabel("分类名称", { exact: true }).fill("钱包与支付");
+  await expectDdtSearchWidth(
+    page,
+    categoryDialog.getByLabel("搜索分类执行类"),
+    "ddt-category-class-search",
+  );
   await categoryDialog.getByLabel("搜索分类执行类").fill("srexecution");
   await categoryDialog.getByRole("button", { name: "搜索", exact: true }).click();
   await expect(categoryDialog.getByRole("radio", { name: className, exact: true })).toBeChecked();
@@ -3769,6 +3801,7 @@ test("DDT long CaseIDs remain readable and the sidebar expands in both direction
     expect(
       await title.evaluate((element) => element.scrollWidth - element.clientWidth),
     ).toBeLessThanOrEqual(1);
+    await expect(navigation.getByRole("textbox", { name: "搜索 DDT 用例" })).toBeVisible();
     const before = (await navigation.boundingBox())!.width;
     let handle = (await resizer.boundingBox())!;
     await page.mouse.move(handle.x + handle.width / 2, handle.y + 24);

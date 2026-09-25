@@ -1,4 +1,12 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -7,7 +15,7 @@ import {
   failureAnalysisAssigneePageSchema,
   type ClaimFailureAnalysisResult,
 } from "@autoforge/contracts";
-import { LoaderCircle, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import { Button, Input } from "@/components/ui";
@@ -137,14 +145,14 @@ export function FailureAnalysisAssignmentDialog({
         </Button>
       </form>
       {loading ? (
-        <p role="status">
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在读取人员…
-        </p>
+        <LoadingStateMessage role="status">
+          <LoadingIcon size={16} /> 正在读取人员…
+        </LoadingStateMessage>
       ) : error ? (
-        <p role="alert">
+        <Notice tone="error" role="alert">
           {error}
           <Button onClick={() => void loadUsers(query)}>重试</Button>
-        </p>
+        </Notice>
       ) : (
         <form onSubmit={(event) => void assign(event)}>
           <div
@@ -181,7 +189,9 @@ export function FailureAnalysisAssignmentDialog({
                 </label>
               ))
             ) : (
-              <p>没有符合条件的人员，请检查搜索条件或在项目成员管理中配置分析权限。</p>
+              <EmptyState>
+                没有符合条件的人员，请检查搜索条件或在项目成员管理中配置分析权限。
+              </EmptyState>
             )}
           </div>
           <div className={cn("button-row", uiPatterns["button-row"])}>

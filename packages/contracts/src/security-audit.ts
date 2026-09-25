@@ -51,6 +51,7 @@ const actionsByCategory = {
     "project.archive": "归档项目",
     "project.transfer_owner": "转移项目负责人",
     "project_version.create": "创建项目版本",
+    "project_version.initialize": "初始化项目版本",
     "test_stage.create": "创建测试阶段",
     "project_version.runtime_update": "修改项目版本运行配置",
     "project_version.runtime_delete": "删除项目版本运行配置",

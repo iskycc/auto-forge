@@ -2,6 +2,7 @@
 
 import { Input as AntInput, type InputRef } from "antd";
 import { useCallback, useImperativeHandle, useRef, type ComponentProps } from "react";
+import { FieldFeedback } from "./field-feedback";
 import { cn, definedProps } from "@/lib/utils";
 import { useFormFieldValue } from "./use-form-field-value";
 import { useClientReadiness } from "./use-client-readiness";
@@ -24,23 +25,25 @@ export function Input({
   useImperativeHandle(ref, () => control.current!.input!);
   const InputControl = type === "password" ? AntInput.Password : AntInput;
   return (
-    <InputControl
-      key={type === "password" ? field.resetVersion : undefined}
-      ref={control}
-      {...definedProps({ type })}
-      data-slot="input"
-      className={cn(
-        "w-full min-w-0 disabled:opacity-50 aria-invalid:border-destructive",
-        className,
-      )}
-      {...definedProps(props)}
-      disabled={disabled || !clientReady}
-      value={field.value ?? ""}
-      onChange={(event) => {
-        field.setDraft(event.target.value);
-        onChange?.(event);
-      }}
-      {...(size ? { style: { width: `${size}ch`, ...props.style } } : {})}
-    />
+    <FieldFeedback>
+      <InputControl
+        key={type === "password" ? field.resetVersion : undefined}
+        ref={control}
+        {...definedProps({ type })}
+        data-slot="input"
+        className={cn(
+          "w-full min-w-0 disabled:opacity-50 aria-invalid:border-destructive",
+          className,
+        )}
+        {...definedProps(props)}
+        disabled={disabled || !clientReady}
+        value={field.value ?? ""}
+        onChange={(event) => {
+          field.setDraft(event.target.value);
+          onChange?.(event);
+        }}
+        {...(size ? { style: { width: `${size}ch`, ...props.style } } : {})}
+      />
+    </FieldFeedback>
   );
 }

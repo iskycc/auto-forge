@@ -1,6 +1,4 @@
 "use client";
-import { cn } from "@/lib/utils";
-import { uiPatterns } from "@/components/ui/patterns";
 
 import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -14,9 +12,10 @@ export function RefreshAuditButton() {
     <Button
       type="button"
       disabled={pending}
+      loading={pending}
       onClick={() => startTransition(() => router.refresh())}
     >
-      <RefreshCw size={16} className={pending ? cn("spin", uiPatterns["spin"]) : undefined} />
+      {pending ? null : <RefreshCw size={16} />}
       {pending ? "正在刷新" : "刷新日志"}
     </Button>
   );

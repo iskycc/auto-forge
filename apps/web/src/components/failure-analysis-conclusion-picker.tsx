@@ -1,14 +1,21 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   failureAnalysisCaseConclusionPageSchema,
   type FailureAnalysisCaseConclusionView,
   type FailureAnalysisHistoryItemView,
 } from "@autoforge/contracts";
-import { ClipboardPaste, LoaderCircle, Search, X } from "lucide-react";
+import { ClipboardPaste, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -174,7 +181,8 @@ export function FailureAnalysisConclusionPicker({
           </Button>
         </form>
         {error ? (
-          <div
+          <Notice
+            tone="error"
             className={cn(
               "failure-analysis-conclusion-load-error",
               failureAnalysisConclusionPickerStyles["failure-analysis-conclusion-load-error"],
@@ -185,17 +193,17 @@ export function FailureAnalysisConclusionPicker({
             <Button onClick={() => void load()} type="button">
               重试
             </Button>
-          </div>
+          </Notice>
         ) : null}
         {!loading && !error && items.length === 0 ? (
-          <div
+          <EmptyState
             className={cn(
               "failure-analysis-history-state",
               failureAnalysisConclusionPickerStyles["failure-analysis-history-state"],
             )}
           >
             没有找到可继承的已完成结论。
-          </div>
+          </EmptyState>
         ) : (
           <div
             className={cn(
@@ -213,16 +221,15 @@ export function FailureAnalysisConclusionPicker({
               />
             ))}
             {loading ? (
-              <div
+              <LoadingStateMessage
                 className={cn(
                   "failure-analysis-history-state",
                   failureAnalysisConclusionPickerStyles["failure-analysis-history-state"],
                 )}
                 role="status"
               >
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />{" "}
-                正在读取已分析用例…
-              </div>
+                <LoadingIcon size={16} /> 正在读取已分析用例…
+              </LoadingStateMessage>
             ) : null}
           </div>
         )}

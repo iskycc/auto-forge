@@ -1,7 +1,7 @@
+import { Result } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { hasPermission } from "@autoforge/domain";
-import { Link2Off } from "lucide-react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
@@ -90,17 +90,13 @@ function InvalidRunShare() {
         pageStyles["shared-case-page-center"],
       )}
     >
-      <section
-        className={cn("shared-case-invalid", pageStyles["shared-case-invalid"])}
-        aria-label="执行结果永久分享链接不可用"
-      >
-        <span aria-hidden="true">
-          <Link2Off size={30} strokeWidth={1.8} />
-        </span>
-        <h1>链接无效</h1>
-        <ColorModeToggle />
-        <p>该执行结果永久分享链接无效，或对应的执行记录已经被删除。</p>
-      </section>
+      <Result
+        status="warning"
+        title={<h1 className="m-0 text-xl">链接无效</h1>}
+        subTitle={"该执行结果永久分享链接无效，或对应的执行记录已经被删除。"}
+        extra={<ColorModeToggle />}
+        className="w-full max-w-lg"
+      />
     </main>
   );
 }

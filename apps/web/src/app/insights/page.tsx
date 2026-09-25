@@ -1,3 +1,6 @@
+import { LinkButton } from "@/components/ui/link-button";
+import { Notice } from "@/components/ui/notice";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Card } from "@/components/ui/card";
@@ -389,18 +392,18 @@ export default async function InsightsPage({
                     </TableBody>
                   </Table>
                   {summary.trend.length === 0 ? (
-                    <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                    <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                       当前筛选范围还没有已确认执行结果。
-                    </div>
+                    </EmptyState>
                   ) : null}
                 </div>
               </InsightDetailDialog>
             </div>
           </div>
           {summary.trend.length === 0 ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               当前筛选范围还没有已确认执行结果。
-            </div>
+            </EmptyState>
           ) : (
             <TrendLineChart trend={summary.trend} />
           )}
@@ -482,15 +485,17 @@ export default async function InsightsPage({
                   </TableBody>
                 </Table>
                 {summary.failures.length === 0 ? (
-                  <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                  <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                     暂无可聚类的失败。
-                  </div>
+                  </EmptyState>
                 ) : null}
               </div>
             </InsightDetailDialog>
           </div>
           {summary.failures.length === 0 ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>暂无可聚类的失败。</div>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              暂无可聚类的失败。
+            </EmptyState>
           ) : (
             <FailureReasonChart failures={summary.failures} />
           )}
@@ -554,9 +559,9 @@ export default async function InsightsPage({
                   </TableBody>
                 </Table>
                 {flakySummary.flakyCases.length === 0 ? (
-                  <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                  <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                     至少需要 5 个成功与失败混合样本。
-                  </div>
+                  </EmptyState>
                 ) : null}
               </div>
             </InsightDetailDialog>
@@ -616,9 +621,9 @@ export default async function InsightsPage({
               : " · 全部时间"}
           </p>
           {flakySummary.flakyCases.length === 0 ? (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               至少需要 5 个成功与失败混合样本。
-            </div>
+            </EmptyState>
           ) : (
             <FlakyCaseChart cases={flakySummary.flakyCases} />
           )}
@@ -666,9 +671,9 @@ export default async function InsightsPage({
           {caseOutcomeReport ? (
             <CaseOutcomeOverview report={caseOutcomeReport} timeZone={timeZone} />
           ) : (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               请在顶栏选择项目，并确认该项目已配置可用版本。
-            </div>
+            </EmptyState>
           )}
         </Card>
 
@@ -718,9 +723,9 @@ export default async function InsightsPage({
           {comparison ? (
             <BatchComparisonChart comparison={comparison} />
           ) : (
-            <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
               选择两个可访问批次，按相同用例范围比较版本、执行节点、结果和耗时。
-            </div>
+            </EmptyState>
           )}
         </Card>
       </section>
@@ -1067,7 +1072,8 @@ function BatchComparisonChart({ comparison }: { comparison: BatchComparisonManif
             </div>
           ))}
         </div>
-        <p
+        <Notice
+          tone="warning"
           className={
             comparison.comparableScope
               ? "status-success"
@@ -1077,7 +1083,7 @@ function BatchComparisonChart({ comparison }: { comparison: BatchComparisonManif
           {comparison.comparableScope
             ? "样本范围一致，可直接比较。"
             : "样本范围不同，不直接比较总体百分比。"}
-        </p>
+        </Notice>
       </div>
     </div>
   );
@@ -1165,7 +1171,9 @@ function CaseOutcomeOverview({
     summary;
   if (counts.total === 0)
     return (
-      <div className={cn("inline-empty", uiPatterns["inline-empty"])}>该项目版本还没有用例。</div>
+      <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
+        该项目版本还没有用例。
+      </EmptyState>
     );
   const attentionCount = counts.failed + counts.blocked;
   return (
@@ -1241,7 +1249,7 @@ function CaseOutcomeOverview({
               {formatLocalDateTime(latestExecutedAt, timeZone)}
             </time>
           ) : (
-            <span>暂无执行记录</span>
+            <EmptyState>暂无执行记录</EmptyState>
           )}
         </div>
         <span>按本页用例最近一次终态结果统计，独立于上方筛选；阻塞计入已执行。</span>
@@ -1369,7 +1377,9 @@ function CaseOutcomeDetails({
         </Badge>
       </div>
       {counts.total === 0 ? (
-        <div className={cn("inline-empty", uiPatterns["inline-empty"])}>该项目版本还没有用例。</div>
+        <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          该项目版本还没有用例。
+        </EmptyState>
       ) : (
         <div
           className={cn("insight-detail-table-scroll", pageStyles["insight-detail-table-scroll"])}
@@ -1432,14 +1442,18 @@ function CaseOutcomeDetails({
       {trail.length > 0 || report.nextCursor ? (
         <nav aria-label="用例执行情况分页" className={cn("pagination", pageStyles["pagination"])}>
           {trail.length > 0 ? (
-            <Link href={`/insights?${casePreviousParameters(parameters, trail)}`}>上一页</Link>
+            <LinkButton href={`/insights?${casePreviousParameters(parameters, trail)}`}>
+              上一页
+            </LinkButton>
           ) : (
             <span />
           )}
           {report.nextCursor ? (
-            <Link href={`/insights?${caseNextParameters(parameters, report.nextCursor, trail)}`}>
+            <LinkButton
+              href={`/insights?${caseNextParameters(parameters, report.nextCursor, trail)}`}
+            >
               下一页
-            </Link>
+            </LinkButton>
           ) : null}
         </nav>
       ) : null}

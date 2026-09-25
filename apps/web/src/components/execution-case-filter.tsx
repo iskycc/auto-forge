@@ -1,4 +1,8 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -151,7 +155,7 @@ export function ExecutionCaseFilter({
             {error}
           </Notice>
         ) : null}
-        {pending ? <p role="status">正在查找…</p> : null}
+        {pending ? <LoadingStateMessage role="status">正在查找…</LoadingStateMessage> : null}
         <div
           className={cn("case-lookup-results", executionCaseFilterStyles["case-lookup-results"])}
         >
@@ -171,7 +175,7 @@ export function ExecutionCaseFilter({
           ))}
         </div>
         {choices && !choices.items.length && !pending ? (
-          <p>没有匹配的用例，请检查关键词与当前项目范围。</p>
+          <EmptyState>没有匹配的用例，请检查关键词与当前项目范围。</EmptyState>
         ) : null}
         {choices?.nextCursor ? (
           <Button type="button" disabled={pending} onClick={() => void search(choices.nextCursor)}>

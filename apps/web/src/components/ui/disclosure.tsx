@@ -1,6 +1,6 @@
 "use client";
 
-import { Collapse } from "antd";
+import { Collapse, Tooltip } from "antd";
 import { useState, type ComponentProps, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useClientReadiness } from "./use-client-readiness";
@@ -67,19 +67,20 @@ export function Disclosure({
             key: "content",
             showArrow,
             label: (
-              <span
-                className={cn("ui-disclosure-label", headerClassName)}
-                title={headerTitle}
-                onClick={(event) => {
-                  if (
-                    event.target instanceof Element &&
-                    event.target.closest("a, button, input, label")
-                  )
-                    event.stopPropagation();
-                }}
-              >
-                {header}
-              </span>
+              <Tooltip title={headerTitle} trigger={["hover", "focus"]}>
+                <span
+                  className={cn("ui-disclosure-label", headerClassName)}
+                  onClick={(event) => {
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest("a, button, input, label")
+                    )
+                      event.stopPropagation();
+                  }}
+                >
+                  {header}
+                </span>
+              </Tooltip>
             ),
             children,
             forceRender: true,

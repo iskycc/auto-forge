@@ -1,4 +1,7 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
 
 import {
   batchComparisonPartSchema,
@@ -65,15 +68,15 @@ export function CachedBatchComparison({
   return (
     <>
       {error ? (
-        <p role="alert">
+        <Notice tone="error" role="alert">
           {error}
           <Button onClick={() => setRetry((value) => value + 1)}>重试</Button>
-        </p>
+        </Notice>
       ) : null}
       {cases ? (
         <BatchComparisonDetails cases={cases} left={left} right={right} />
       ) : (
-        <p aria-live="polite">正在载入对比明细…</p>
+        <LoadingStateMessage aria-live="polite">正在载入对比明细…</LoadingStateMessage>
       )}
     </>
   );

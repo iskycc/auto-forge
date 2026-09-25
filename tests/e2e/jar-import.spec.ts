@@ -1529,6 +1529,29 @@ public class MixedVisibleTest {
   await expect(page.locator(".scheduling-log")).toHaveCount(0);
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 1024 });
+    const search = page.getByRole("textbox", { name: "搜索日志", exact: true });
+    await expect(search).toBeVisible();
+    await expect.poll(async () => (await search.boundingBox())!.height).toBeLessThanOrEqual(40);
+    await expect.poll(async () => (await search.boundingBox())!.width).toBeGreaterThanOrEqual(150);
+    for (const label of ["日志开始时间", "日志结束时间"]) {
+      const picker = page.locator(".log-search .ant-picker").filter({
+        has: page.getByRole("textbox", { name: label, exact: true }),
+      });
+      await expect(picker).toBeVisible();
+      const pickerBounds = (await picker.boundingBox())!;
+      const formBounds = (await page.locator(".log-search").boundingBox())!;
+      expect(pickerBounds.x).toBeGreaterThanOrEqual(formBounds.x);
+      expect(pickerBounds.x + pickerBounds.width).toBeLessThanOrEqual(
+        formBounds.x + formBounds.width,
+      );
+      expect(pickerBounds.height).toBeLessThanOrEqual(40);
+    }
+    const pageSize = page.locator(".round-page-size");
+    await expect.poll(async () => (await pageSize.boundingBox())!.height).toBeLessThanOrEqual(44);
+    await page.screenshot({ path: test.info().outputPath(`log-search-layout-${width}.png`) });
+  }
   await expect(page.locator(".execution-log")).not.toHaveClass(
     /(?:^|\s)execution-log-dark(?:\s|$)/,
   );
@@ -1977,7 +2000,10 @@ public class MixedVisibleTest {
     )
     .toBe(true);
   await page.getByRole("button", { name: "通知" }).click();
-  await expect(page.getByText("通知中心")).toBeVisible();
+  await expect(page.locator(".notification-panel").getByText("通知中心")).toBeVisible();
+  await expect(
+    page.locator(".ant-tooltip").getByRole("tooltip", { name: "通知中心" }),
+  ).toBeHidden();
   const completionNotification = page
     .locator(".notification-item")
     .filter({ hasText: "执行批次已完成" })
@@ -1989,6 +2015,9 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "关闭通知" }).click();
   await page.reload();
   await page.getByRole("button", { name: "通知" }).click();
+  await expect(
+    page.locator(".ant-tooltip").getByRole("tooltip", { name: "通知中心" }),
+  ).toBeHidden();
   await expect(
     page.locator(".notification-item.read").filter({ hasText: "执行批次已完成" }).first(),
   ).toBeVisible();

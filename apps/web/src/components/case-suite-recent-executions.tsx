@@ -1,15 +1,22 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Badge } from "@/components/ui/badge";
 
 import { cn } from "@/lib/utils";
-import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   caseSuiteRecentExecutionsSchema,
   type CaseSuiteRecentExecution,
   type CaseSuiteRecentExecutions as ExecutionPage,
 } from "@autoforge/contracts";
-import { ArrowRight, History, LoaderCircle, RefreshCw } from "lucide-react";
+import { ArrowRight, History, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -112,18 +119,19 @@ export function CaseSuiteRecentExecutions({
         </span>
       </header>
       {state.status === "loading" ? (
-        <p
+        <LoadingStateMessage
           className={cn(
             "suite-history-feedback",
             caseSuiteRecentExecutionsStyles["suite-history-feedback"],
           )}
           role="status"
         >
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={17} /> 正在加载执行记录…
-        </p>
+          <LoadingIcon size={17} /> 正在加载执行记录…
+        </LoadingStateMessage>
       ) : null}
       {state.status === "error" ? (
-        <div
+        <Notice
+          tone="error"
           className={cn(
             "suite-history-feedback",
             caseSuiteRecentExecutionsStyles["suite-history-feedback"],
@@ -134,17 +142,17 @@ export function CaseSuiteRecentExecutions({
           <Button onClick={refresh} type="button">
             重试
           </Button>
-        </div>
+        </Notice>
       ) : null}
       {state.status === "ready" && state.items.length === 0 ? (
-        <p
+        <EmptyState
           className={cn(
             "suite-history-feedback",
             caseSuiteRecentExecutionsStyles["suite-history-feedback"],
           )}
         >
           <History size={18} /> 暂无执行记录，开始执行任务后将在这里展示。
-        </p>
+        </EmptyState>
       ) : null}
       {state.status === "ready" && state.items.length > 0 ? (
         <ol

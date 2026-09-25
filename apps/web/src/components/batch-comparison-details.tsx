@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import {
   Table,
   TableHeader,
@@ -240,9 +242,9 @@ export function BatchComparisonDetails({
           </TableBody>
         </Table>
         {filteredCases.length === 0 ? (
-          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
             {cases.length === 0 ? "两个批次没有可对比用例。" : "没有符合当前条件的用例。"}
-          </div>
+          </EmptyState>
         ) : null}
       </div>
       {filteredCases.length > 0 ? (

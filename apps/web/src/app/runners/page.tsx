@@ -1,3 +1,4 @@
+import { PagePagination } from "@/components/ui/page-pagination";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Card } from "@/components/ui/card";
@@ -28,7 +29,6 @@ import {
 } from "@/lib/selected-project";
 import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { Button, Input, Select } from "@/components/ui";
-import Link from "next/link";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { runnerControlPlaneUrl } from "@/lib/platform-configuration";
 
@@ -69,9 +69,9 @@ export default async function RunnersPage({
             <h1>执行机组</h1>
             <p>按机房、网络或能力组合执行机；发起任务批跑和单用例执行时可直接选择整组。</p>
           </div>
-          <span className={cn("storage-pill", pageStyles["storage-pill"])}>
+          <Badge className={cn("storage-pill", pageStyles["storage-pill"])}>
             {runnerGroups.length} 个资源组
-          </span>
+          </Badge>
         </section>
         <RunnerGroupManager canManage={canManage} initialGroups={runnerGroups} runners={runners} />
       </div>
@@ -165,10 +165,10 @@ export default async function RunnersPage({
               : "。"}
           </p>
         </div>
-        <span className={cn("storage-pill", pageStyles["storage-pill"])}>
+        <Badge className={cn("storage-pill", pageStyles["storage-pill"])}>
           <span className={cn("live-dot", pageStyles["live-dot"])} /> 在线 {onlineCount} /{" "}
           {runners.length}
-        </span>
+        </Badge>
       </section>
       {canManage ? (
         <RunnerAgentInstaller
@@ -262,9 +262,9 @@ export default async function RunnersPage({
             <p>点击上方“打开自动安装”，填写连接信息并完成安装后，Agent 会自动出现在这里。</p>
           </EmptyState>
         ) : visibleRunners.length === 0 ? (
-          <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+          <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
             没有匹配当前筛选条件的执行机。
-          </div>
+          </EmptyState>
         ) : (
           <div
             className={cn("runner-list", pageStyles["runner-list"])}
@@ -294,14 +294,14 @@ export default async function RunnersPage({
                         <small>{runner.labels.join(" · ") || "无标签"}</small>
                       </span>
                     </span>
-                    <span
+                    <Badge
                       className={cn(
                         pageStyles["runner-state"],
                         `runner-state runner-state runner-state-${runner.state}`,
                       )}
                     >
                       <i /> {runnerStateLabel(runner)}
-                    </span>
+                    </Badge>
                   </header>
 
                   <div className={cn("runner-list-facts", pageStyles["runner-list-facts"])}>
@@ -379,19 +379,13 @@ export default async function RunnersPage({
           </div>
         )}
         {pageCount > 1 ? (
-          <nav aria-label="执行机分页" className={cn("pagination", pageStyles["pagination"])}>
-            {currentPage > 1 ? (
-              <Link href={runnerPageHref(parameters, currentPage - 1)}>上一页</Link>
-            ) : (
-              <span />
-            )}
-            <span>
-              第 {currentPage} / {pageCount} 页
-            </span>
-            {currentPage < pageCount ? (
-              <Link href={runnerPageHref(parameters, currentPage + 1)}>下一页</Link>
-            ) : null}
-          </nav>
+          <PagePagination
+            label="执行机分页"
+            current={currentPage}
+            total={filteredRunners.length}
+            pageSize={pageSize}
+            href={runnerPageHref(parameters, currentPage)}
+          />
         ) : null}
       </Card>
     </div>

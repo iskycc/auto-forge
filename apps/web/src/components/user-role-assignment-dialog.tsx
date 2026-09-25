@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -178,7 +180,9 @@ export function UserRoleAssignmentDialog({
                 </div>
               ))
             ) : (
-              <p className={cn("settings-note", uiPatterns["settings-note"])}>尚未分配角色。</p>
+              <EmptyState className={cn("settings-note", uiPatterns["settings-note"])}>
+                尚未分配角色。
+              </EmptyState>
             )}
           </section>
         ) : null}
@@ -214,7 +218,7 @@ export function UserRoleAssignmentDialog({
                   }))}
               />
               {systemRoles.length === 0 ? (
-                <p
+                <EmptyState
                   className={cn(
                     "settings-wide-field field-hint",
                     uiPatterns["settings-wide-field"],
@@ -222,7 +226,7 @@ export function UserRoleAssignmentDialog({
                   )}
                 >
                   暂无可分配的系统角色。
-                </p>
+                </EmptyState>
               ) : null}
               <Button disabled={pending || systemRoles.length === 0} type="submit">
                 分配系统角色
@@ -284,7 +288,7 @@ export function UserRoleAssignmentDialog({
                   }))}
               />
               {projectRoles.length === 0 ? (
-                <p
+                <EmptyState
                   className={cn(
                     "settings-wide-field field-hint",
                     uiPatterns["settings-wide-field"],
@@ -292,16 +296,16 @@ export function UserRoleAssignmentDialog({
                   )}
                 >
                   暂无可分配的项目角色。
-                </p>
+                </EmptyState>
               ) : null}
               <Button disabled={pending || projectRoles.length === 0} type="submit">
                 分配项目角色
               </Button>
             </form>
           ) : (
-            <p className={cn("field-hint", uiPatterns["field-hint"])}>
+            <EmptyState className={cn("field-hint", uiPatterns["field-hint"])}>
               没有可分配角色的未归档项目。
-            </p>
+            </EmptyState>
           )}
         </div>
         {error ? (

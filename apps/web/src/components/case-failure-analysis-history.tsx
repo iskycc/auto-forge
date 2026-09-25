@@ -1,7 +1,13 @@
 "use client";
+import { EvidenceImagePreview } from "./ui/evidence-image-preview";
+import { Badge } from "@/components/ui/badge";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Notice } from "@/components/ui/notice";
 
-import { Dialog } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 
 import { Card } from "@/components/ui/card";
@@ -13,7 +19,7 @@ import type {
   FailureAnalysisHistoryItemView,
   FailureAnalysisHistoryPageView,
 } from "@autoforge/contracts";
-import { ClipboardCheck, ExternalLink, ImageIcon, LoaderCircle, Maximize2, X } from "lucide-react";
+import { ClipboardCheck, ExternalLink, ImageIcon, Maximize2 } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
@@ -99,14 +105,14 @@ export function CaseFailureAnalysisHistory({
         </div>
 
         {items.length === 0 ? (
-          <div
+          <EmptyState
             className={cn(
               "case-analysis-history-empty",
               caseFailureAnalysisHistoryStyles["case-analysis-history-empty"],
             )}
           >
             当前用例尚无已完成的失败分析结论。
-          </div>
+          </EmptyState>
         ) : (
           <div
             className={cn(
@@ -145,9 +151,7 @@ export function CaseFailureAnalysisHistory({
               type="button"
               variant="secondary"
             >
-              {loading ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-              ) : null}
+              {loading ? <LoadingIcon size={15} /> : null}
               {loading ? "正在加载…" : "加载更早的分析结论"}
             </Button>
           </div>
@@ -155,36 +159,14 @@ export function CaseFailureAnalysisHistory({
       </Card>
 
       {preview?.claim.screenshot ? (
-        <Dialog
-          open
-          title={`查看分析截图 ${preview.claim.screenshot.fileName}`}
+        <EvidenceImagePreview
+          image={{
+            src: evidenceUrl(preview, projectId),
+            alt: `分析证明截图：${preview.claim.screenshot.fileName}`,
+            fileName: preview.claim.screenshot.fileName,
+          }}
           onClose={() => setPreview(undefined)}
-          className={cn(
-            "case-analysis-evidence-dialog",
-            caseFailureAnalysisHistoryStyles["case-analysis-evidence-dialog"],
-          )}
-          backdropClassName="case-analysis-evidence-overlay"
-        >
-          <header>
-            <span>
-              <strong>{preview.claim.screenshot.fileName}</strong>
-              <small>分析证明截图</small>
-            </span>
-            <Button
-              aria-label="关闭分析截图"
-              onClick={() => setPreview(undefined)}
-              size="compact"
-              type="button"
-            >
-              <X size={16} />
-            </Button>
-          </header>
-          {/* eslint-disable-next-line @next/next/no-img-element -- evidence is authenticated application content */}
-          <img
-            alt={`分析证明截图：${preview.claim.screenshot.fileName}`}
-            src={evidenceUrl(preview, projectId)}
-          />
-        </Dialog>
+        />
       ) : null}
     </>
   );
@@ -208,14 +190,14 @@ function AnalysisHistoryItem({
     <Disclosure
       header={
         <>
-          <span
+          <Badge
             className={cn(
               caseFailureAnalysisHistoryStyles["analysis-status"],
               `analysis-status completed ${claim.category ?? ""}`,
             )}
           >
             {claim.category ? CATEGORY_LABELS[claim.category] : "已完成"}
-          </span>
+          </Badge>
           <strong>
             #{item.batchSequenceNumber} {item.batchName}
           </strong>

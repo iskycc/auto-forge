@@ -1419,7 +1419,15 @@ test("topbar creates project, version and stage and retries selection without du
       await dialog.getByRole("button", { name: "切换到新建项目", exact: true }).click();
     }
     await expect(dialog).toHaveCount(0);
-    await expect(page.locator(".toast-card")).toContainText(`${scope.label}已创建并切换。`);
+    if (scope.kind === "version") {
+      const initialization = page.getByRole("dialog", { name: "版本初始化", exact: true });
+      await expect(initialization).toBeVisible();
+      await initialization.getByRole("button", { name: "稍后配置", exact: true }).click();
+      await expect(initialization).toBeHidden();
+      await expect(page.locator(".toast-card").filter({ hasText: "已进入项目版本" })).toBeVisible();
+    } else {
+      await expect(page.locator(".toast-card")).toContainText(`${scope.label}已创建并切换。`);
+    }
     await expect(switcher.locator(scope.trigger)).toContainText(scope.name);
     if (scope.kind === "project") {
       expect(createProjectRequests).toBe(1);
@@ -1645,6 +1653,19 @@ test("global execution dialog covers and centers within the whole viewport", asy
   await expect(darkDialog.getByLabel("倒计时秒")).toHaveValue("0");
   await waitForUiTransitions(page);
   await expectStartModeChoicesFit(darkDialog);
+  expect(
+    await darkDialog.evaluate((root) =>
+      Array.from(root.querySelectorAll<HTMLElement>("*"))
+        .filter(
+          (element) => element.scrollTop && !element.classList.contains("global-run-form-content"),
+        )
+        .map((element) => ({ className: element.className, scrollTop: element.scrollTop })),
+    ),
+    "only the form body should scroll; the dialog header and footer must stay visible",
+  ).toEqual([]);
+  await expect(darkDialog.getByRole("button", { name: "关闭执行弹窗" })).toBeInViewport();
+  await expect(darkDialog.locator(".global-run-dialog-header")).toBeInViewport({ ratio: 1 });
+  await expect(darkDialog.locator(".global-run-dialog-actions")).toBeInViewport({ ratio: 1 });
   await captureUi(page, "/global-run-dialog-countdown-dark", 1536, false);
   await darkDialog.getByRole("radio", { name: "立即执行", exact: true }).locator("..").click();
   await expect(darkDialog.locator(".delay-start-panel")).toHaveCount(0);

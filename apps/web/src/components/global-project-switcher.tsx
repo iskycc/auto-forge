@@ -2,7 +2,7 @@
 import { cn } from "@/lib/utils";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
 import { ProjectHierarchyPicker } from "./project-hierarchy-picker";
@@ -12,6 +12,7 @@ import {
   type ProjectContext,
 } from "./create-project-hierarchy-dialog";
 import { useToast } from "./ui-feedback";
+import { VersionInitializationDialog } from "./version-initialization-dialog";
 
 const PROJECT_DEPENDENT_PARAMETERS = [
   "projectId",
@@ -57,7 +58,9 @@ export function GlobalProjectSwitcher({
     ...(selectedTestStageId ? { testStageId: selectedTestStageId } : {}),
   });
   const [pending, setPending] = useState(false);
+  const [navigating, startNavigation] = useTransition();
   const [creationTarget, setCreationTarget] = useState<HierarchyCreationTarget | null>(null);
+  const [initializing, setInitializing] = useState(false);
   const versions = context.projectId === selectedProjectId ? projectVersions : [];
   const project = projects.find((item) => item.id === context.projectId);
   const version = versions.find((item) => item.id === context.projectVersionId);
@@ -65,7 +68,7 @@ export function GlobalProjectSwitcher({
   // During a project transition the old project's permissions must not enable actions on the new one.
   const canManage = canManageSelectedProject && context.projectId === selectedProjectId;
   const canRead = canReadSelectedProject && context.projectId === selectedProjectId;
-  const disabled = pending || creationTarget !== null;
+  const disabled = pending || navigating || creationTarget !== null || initializing;
 
   async function activateContext(nextContext: ProjectContext): Promise<void> {
     const response = await fetch("/api/v1/selected-project", {
@@ -78,8 +81,10 @@ export function GlobalProjectSwitcher({
     setContext((await response.json()) as ProjectContext);
     const next = new URLSearchParams(searchParams.toString());
     for (const parameter of PROJECT_DEPENDENT_PARAMETERS) next.delete(parameter);
-    router.replace(next.size > 0 ? `${pathname}?${next}` : pathname);
-    router.refresh();
+    startNavigation(() => {
+      router.replace(next.size > 0 ? `${pathname}?${next}` : pathname);
+      router.refresh();
+    });
   }
 
   async function switchContext(nextContext: ProjectContext): Promise<void> {
@@ -97,7 +102,7 @@ export function GlobalProjectSwitcher({
   if (projects.length === 0 && !canCreateProject) return null;
   return (
     <div
-      aria-busy={pending}
+      aria-busy={pending || navigating}
       aria-label="当前项目层级"
       className={cn(
         "global-project-switcher",
@@ -126,6 +131,7 @@ export function GlobalProjectSwitcher({
         <span>版本</span>
         <ProjectHierarchyPicker
           label="项目版本"
+          {...(canManage && version ? { onInitialize: () => setInitializing(true) } : {})}
           items={versions}
           value={context.projectVersionId ?? ""}
           disabled={disabled || (!versions.length && !canManage)}
@@ -187,6 +193,19 @@ export function GlobalProjectSwitcher({
           target={creationTarget}
           onCreated={activateContext}
           onClose={() => setCreationTarget(null)}
+        />
+      ) : null}
+      {initializing && project && version ? (
+        <VersionInitializationDialog
+          projectId={project.id}
+          projectName={project.name}
+          versionId={version.id}
+          versionName={version.name}
+          onFinish={activateContext}
+          onClose={() => {
+            setInitializing(false);
+            startNavigation(() => router.refresh());
+          }}
         />
       ) : null}
     </div>

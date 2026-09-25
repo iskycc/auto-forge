@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import {
   Table,
   TableHeader,
@@ -27,11 +29,14 @@ export function SecurityAuditTable({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   if (!events.length)
     return (
-      <div className={cn("audit-empty", securityAuditTableStyles["audit-empty"])} role="status">
+      <EmptyState
+        className={cn("audit-empty", securityAuditTableStyles["audit-empty"])}
+        role="status"
+      >
         <ShieldCheck size={28} />
         <strong>没有符合条件的审计记录</strong>
         <p>可调整筛选条件，或清空筛选查看最近的安全事件。</p>
-      </div>
+      </EmptyState>
     );
   return (
     <div className={cn("table-scroll", uiPatterns["table-scroll"])}>

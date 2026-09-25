@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -231,7 +232,7 @@ export default async function ExecutionRecordsPage({
           </span>
         </div>
         {batchPage.items.length === 0 ? (
-          <div className={cn("table-empty", uiPatterns["table-empty"])}>
+          <EmptyState className={cn("table-empty", uiPatterns["table-empty"])}>
             <p>暂无符合条件的执行记录。</p>
             <LinkButton
               variant="primary"
@@ -244,7 +245,7 @@ export default async function ExecutionRecordsPage({
             >
               前往发起执行
             </LinkButton>
-          </div>
+          </EmptyState>
         ) : (
           <ExecutionRecordsTable
             canTerminate={hasPermission(identity, "run.cancel", projectId)}

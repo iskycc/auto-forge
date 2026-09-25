@@ -1,4 +1,6 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
 import { cn } from "@/lib/utils";
 
 import { useEffect, useRef } from "react";
@@ -16,7 +18,8 @@ export function DialogDiscardPrompt({
     continueRef.current?.focus();
   }, []);
   return (
-    <div
+    <Notice
+      tone="warning"
       className={cn("draft-discard-prompt", dialogDiscardPromptStyles["draft-discard-prompt"])}
       role="alert"
     >
@@ -28,7 +31,7 @@ export function DialogDiscardPrompt({
       <Button type="button" variant="danger" onClick={onDiscard}>
         放弃修改并关闭
       </Button>
-    </div>
+    </Notice>
   );
 }
 

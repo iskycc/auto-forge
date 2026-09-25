@@ -1,4 +1,8 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Badge } from "@/components/ui/badge";
 
 import { Progress } from "@/components/ui/progress";
@@ -10,7 +14,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import type { CaseSuiteExecutionStatistics } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
-import { ArrowRight, ChevronDown, Download, History, Layers3, LoaderCircle } from "lucide-react";
+import { ArrowRight, ChevronDown, Download, History, Layers3 } from "lucide-react";
 import Link from "next/link";
 import { useId, useState } from "react";
 
@@ -130,14 +134,15 @@ export function CaseSuiteCard({
           </div>
         </div>
       ) : (
-        <p
+        <Notice
+          tone="info"
           className={cn(
             "suite-activity-permission",
             caseSuiteCardStyles["suite-activity-permission"],
           )}
         >
           当前账号无执行记录查看权限
-        </p>
+        </Notice>
       )}
 
       <footer className={cn("suite-card-actions", caseSuiteCardStyles["suite-card-actions"])}>
@@ -166,11 +171,7 @@ export function CaseSuiteCard({
           type="button"
           variant="ghost"
         >
-          {exporting ? (
-            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-          ) : (
-            <Download size={15} />
-          )}
+          {exporting ? <LoadingIcon size={15} /> : <Download size={15} />}
           {exporting ? "导出中" : "导出用例"}
         </Button>
       </footer>

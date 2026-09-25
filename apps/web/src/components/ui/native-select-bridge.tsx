@@ -12,6 +12,7 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
+import { FieldFeedback } from "./field-feedback";
 import { cn } from "@/lib/utils";
 import { Select as AntSelect, type RefSelectProps } from "antd";
 import { useFormFieldValue } from "./use-form-field-value";
@@ -72,63 +73,75 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
       if (selectRef.current) setFieldLabel(formControlLabel(selectRef.current));
     }, [props.id]);
 
-    function chooseOption(nextValue: string) {
+    function chooseOption(nextValue: string | string[]) {
       const control = selectRef.current;
       if (!control) return;
-      control.value = nextValue;
+      if (Array.isArray(nextValue)) {
+        const selected = new Set(nextValue);
+        for (const option of control.options) option.selected = selected.has(option.value);
+      } else control.value = nextValue;
       control.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    const selectedValues = Array.isArray(field.value)
+      ? [...field.value]
+      : field.value
+        ? [String(field.value)]
+        : [];
     return (
-      <span
-        className={cn(
-          "ui-select relative inline-block w-full min-w-0 max-w-full align-middle [&>select[aria-hidden=true]]:opacity-0",
-          multiple && "ui-select-multiple",
-        )}
-        data-disabled={disabled ? "true" : undefined}
-        data-multiple={multiple ? "true" : undefined}
-        data-empty={options.length ? undefined : "true"}
-      >
-        <select
-          {...props}
-          ref={(element) => {
-            selectRef.current = element;
-            if (typeof forwardedRef === "function") forwardedRef(element);
-            else if (forwardedRef) forwardedRef.current = element;
-          }}
-          aria-hidden={!multiple}
+      <FieldFeedback>
+        <span
           className={cn(
-            "ui-select-control",
-            multiple
-              ? "w-full min-w-0 rounded-md border border-input bg-card p-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-              : "ui-select-control-hidden sr-only pointer-events-none opacity-0",
-            className,
+            "ui-select relative inline-block w-full min-w-0 max-w-full align-middle [&>select[aria-hidden=true]]:opacity-0",
+            multiple && "ui-select-multiple",
           )}
-          disabled={disabled || !clientReady}
-          multiple={multiple}
-          tabIndex={multiple ? 0 : -1}
-          value={multiple ? field.value : currentValue}
-          onChange={(event) => {
-            field.setDraft(
-              multiple
-                ? Array.from(event.target.selectedOptions, (option) => option.value)
-                : event.target.value,
-            );
-            onChange?.(event);
-          }}
-          onInvalid={(event) => {
-            props.onInvalid?.(event);
-            if (!multiple) triggerRef.current?.focus();
-          }}
-          onFocus={(event) => {
-            props.onFocus?.(event);
-            if (!multiple) triggerRef.current?.focus();
-          }}
+          data-disabled={disabled ? "true" : undefined}
+          data-multiple={multiple ? "true" : undefined}
+          data-empty={options.length ? undefined : "true"}
         >
-          {children}
-        </select>
-        {!multiple ? (
+          <select
+            {...props}
+            ref={(element) => {
+              selectRef.current = element;
+              if (typeof forwardedRef === "function") forwardedRef(element);
+              else if (forwardedRef) forwardedRef.current = element;
+            }}
+            aria-hidden="true"
+            className={cn(
+              "ui-select-control",
+              "ui-select-control-hidden sr-only pointer-events-none opacity-0",
+              className,
+            )}
+            disabled={disabled || !clientReady}
+            multiple={multiple}
+            tabIndex={-1}
+            value={multiple ? selectedValues : currentValue}
+            onChange={(event) => {
+              field.setDraft(
+                multiple
+                  ? Array.from(event.target.selectedOptions, (option) => option.value)
+                  : event.target.value,
+              );
+              onChange?.(event);
+            }}
+            onInvalid={(event) => {
+              props.onInvalid?.(event);
+              if (
+                event.currentTarget.form?.querySelector(
+                  "input:invalid, select:invalid, textarea:invalid",
+                ) === event.currentTarget
+              )
+                triggerRef.current?.focus();
+            }}
+            onFocus={(event) => {
+              props.onFocus?.(event);
+              triggerRef.current?.focus();
+            }}
+          >
+            {children}
+          </select>
           <AntSelect
+            {...(multiple ? { mode: "multiple" as const } : {})}
             ref={triggerRef}
             className="ui-select-trigger w-full"
             aria-label={props["aria-label"] ?? fieldLabel}
@@ -136,7 +149,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
             aria-describedby={props["aria-describedby"]}
             aria-invalid={props["aria-invalid"]}
             aria-required={props.required}
-            value={currentValue}
+            value={multiple ? selectedValues : currentValue}
             onChange={chooseOption}
             disabled={disabled || !clientReady || !options.length}
             options={options}
@@ -144,8 +157,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
             virtual={options.length > 200}
             getPopupContainer={(trigger) => trigger.closest("dialog") ?? document.body}
           />
-        ) : null}
-      </span>
+        </span>
+      </FieldFeedback>
     );
   },
 );

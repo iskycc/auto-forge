@@ -1,9 +1,15 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { caseSuiteScheduleSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
@@ -106,12 +112,13 @@ function ScheduleDialogContent({
         </Button>
       </div>
       {state.status === "loading" ? (
-        <p role="status">
-          <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在加载执行计划…
-        </p>
+        <LoadingStateMessage role="status">
+          <LoadingIcon size={16} /> 正在加载执行计划…
+        </LoadingStateMessage>
       ) : null}
       {state.status === "error" ? (
-        <div
+        <Notice
+          tone="error"
           className={cn(
             "suite-history-feedback",
             caseSuiteScheduleDialogStyles["suite-history-feedback"],
@@ -122,7 +129,7 @@ function ScheduleDialogContent({
           <Button onClick={refresh} type="button">
             重试
           </Button>
-        </div>
+        </Notice>
       ) : null}
       {state.status === "ready" ? (
         <CaseSuiteScheduleSummary

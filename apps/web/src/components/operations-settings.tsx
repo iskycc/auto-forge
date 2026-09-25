@@ -1,4 +1,6 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { Badge } from "@/components/ui/badge";
 
 import { Notice } from "@/components/ui/notice";
@@ -421,14 +423,15 @@ export function OperationsSettings({
             </form>
           </ActionDialog>
           {!canManageTokens ? (
-            <div
+            <Notice
+              tone="info"
               className={cn(
                 "implementation-notice",
                 operationsSettingsStyles["implementation-notice"],
               )}
             >
               当前身份没有服务账号管理权限。
-            </div>
+            </Notice>
           ) : null}
           <form className={cn("management-toolbar", uiPatterns["management-toolbar"])} method="get">
             <input type="hidden" name="section" value="accounts" />
@@ -460,9 +463,9 @@ export function OperationsSettings({
             className={cn("service-account-list", operationsSettingsStyles["service-account-list"])}
           >
             {visibleAccounts.length === 0 ? (
-              <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                 没有匹配的服务账号。可调整筛选或创建账号。
-              </div>
+              </EmptyState>
             ) : (
               visibleAccounts.map((account) => (
                 <article key={account.id}>

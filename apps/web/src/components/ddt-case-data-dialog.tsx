@@ -1,4 +1,6 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Notice } from "@/components/ui/notice";
@@ -75,7 +77,7 @@ export function DdtCaseDataDialog({
     >
       {error ? (
         <Notice
-          tone="info"
+          tone="error"
           className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
           role="alert"
         >
@@ -90,7 +92,7 @@ export function DdtCaseDataDialog({
           </Button>
         </Notice>
       ) : !data ? (
-        <p role="status">正在读取用例数据…</p>
+        <LoadingStateMessage role="status">正在读取用例数据…</LoadingStateMessage>
       ) : (
         <>
           {steps ? (

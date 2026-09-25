@@ -1,4 +1,12 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Segmented } from "./ui/segmented";
 import { Card } from "@/components/ui/card";
 
@@ -17,7 +25,6 @@ import {
   CircleAlert,
   CircleCheck,
   Copy,
-  LoaderCircle,
   Plus,
   Save,
   Server,
@@ -405,19 +412,23 @@ export function CaseSuiteEditor({
                 </Button>
               </div>
               {retryMode !== "round" && retryConcurrencyRules.length > 0 ? (
-                <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
+                <Notice
+                  tone="error"
+                  className={cn("form-error", uiPatterns["form-error"])}
+                  role="alert"
+                >
                   动态并发只适用于整轮轮次，请切换重跑方式或删除规则。
-                </small>
+                </Notice>
               ) : null}
               {retryConcurrencyRules.length === 0 ? (
-                <p
+                <EmptyState
                   className={cn(
                     "retry-orchestration-empty",
                     caseSuiteEditorStyles["retry-orchestration-empty"],
                   )}
                 >
                   暂无规则，所有轮次使用基础并发度。
-                </p>
+                </EmptyState>
               ) : (
                 <div className={cn("retry-rule-list", caseSuiteEditorStyles["retry-rule-list"])}>
                   {retryConcurrencyRules.map((rule, index) => (
@@ -615,19 +626,23 @@ export function CaseSuiteEditor({
                 </Button>
               </div>
               {retryMode !== "round" && roundRecoveryRules.length > 0 ? (
-                <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
+                <Notice
+                  tone="error"
+                  className={cn("form-error", uiPatterns["form-error"])}
+                  role="alert"
+                >
                   环境恢复只适用于整轮轮次，请切换重跑方式或删除恢复步骤。
-                </small>
+                </Notice>
               ) : null}
               {roundRecoveryRules.length === 0 ? (
-                <p
+                <EmptyState
                   className={cn(
                     "retry-orchestration-empty",
                     caseSuiteEditorStyles["retry-orchestration-empty"],
                   )}
                 >
                   暂无轮次间环境恢复。
-                </p>
+                </EmptyState>
               ) : (
                 <div className={cn("retry-rule-list", caseSuiteEditorStyles["retry-rule-list"])}>
                   {roundRecoveryRules.map((rule, index) => (
@@ -703,7 +718,7 @@ export function CaseSuiteEditor({
                           }
                         />
                       </label>
-                      <span
+                      <Badge
                         className={cn(
                           "recovery-rule-status",
                           caseSuiteEditorStyles["recovery-rule-status"],
@@ -714,7 +729,7 @@ export function CaseSuiteEditor({
                           : rule.apiKey
                             ? "保存后加密"
                             : "等待配置密钥"}
-                      </span>
+                      </Badge>
                       <span
                         className={cn(
                           "recovery-rule-actions",
@@ -733,7 +748,7 @@ export function CaseSuiteEditor({
                           onClick={() => void inspectRecoveryConfiguration(rule)}
                         >
                           {inspectingRecoveryRuleId === rule.id ? (
-                            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
+                            <LoadingIcon size={14} />
                           ) : (
                             <CircleCheck size={14} />
                           )}
@@ -991,21 +1006,20 @@ export function CaseSuiteEditor({
             >
               <span role="status">{dirty ? "任务配置有未保存的修改" : "任务配置已保存"}</span>
               {error ? (
-                <small className={cn("form-error", uiPatterns["form-error"])} role="alert">
+                <Notice
+                  tone="error"
+                  className={cn("form-error", uiPatterns["form-error"])}
+                  role="alert"
+                >
                   {error}
-                </small>
+                </Notice>
               ) : null}
               <Button
                 className={cn("primary-button", uiPatterns["primary-button"])}
                 disabled={pending}
                 type="submit"
               >
-                {pending ? (
-                  <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                ) : (
-                  <Save size={15} />
-                )}{" "}
-                保存修改
+                {pending ? <LoadingIcon size={15} /> : <Save size={15} />} 保存修改
               </Button>
             </div>
           </form>
@@ -1038,12 +1052,7 @@ export function CaseSuiteEditor({
                   取消
                 </Button>{" "}
                 <Button variant="primary" form="suite-copy-form" disabled={copying} type="submit">
-                  {copying ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                  ) : (
-                    <Copy size={15} />
-                  )}{" "}
-                  复制任务
+                  {copying ? <LoadingIcon size={15} /> : <Copy size={15} />} 复制任务
                 </Button>
               </>
             }
@@ -1077,12 +1086,13 @@ export function CaseSuiteEditor({
                 勾选后保留执行策略、Adapter 和恢复配置，新任务不包含普通或 DDT 用例。
               </p>
               {copyError ? (
-                <p
+                <Notice
+                  tone="error"
                   className={cn("inline-error", caseSuiteEditorStyles["inline-error"])}
                   role="alert"
                 >
                   {copyError}
-                </p>
+                </Notice>
               ) : null}
             </form>
           </ActionDialog>
@@ -1096,7 +1106,8 @@ function RecoveryInspectionResult({ state }: { state: RecoveryInspectionState | 
   if (!state) return null;
   if (state.status === "failed") {
     return (
-      <div
+      <Notice
+        tone="error"
         className={cn(
           "recovery-inspection-result is-error",
           caseSuiteEditorStyles["recovery-inspection-result"],
@@ -1108,12 +1119,13 @@ function RecoveryInspectionResult({ state }: { state: RecoveryInspectionState | 
           <strong>配置验证失败</strong>
           <small>{state.message}</small>
         </span>
-      </div>
+      </Notice>
     );
   }
   const { inspection } = state;
   return (
-    <div
+    <Notice
+      tone="success"
       aria-live="polite"
       className={cn(
         "recovery-inspection-result is-success",
@@ -1139,7 +1151,7 @@ function RecoveryInspectionResult({ state }: { state: RecoveryInspectionState | 
           </small>
         ) : null}
       </span>
-    </div>
+    </Notice>
   );
 }
 

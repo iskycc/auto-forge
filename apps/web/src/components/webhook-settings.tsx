@@ -1,4 +1,8 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Notice } from "@/components/ui/notice";
@@ -31,7 +35,6 @@ import {
   CheckCircle2,
   Clock3,
   Code2,
-  LoaderCircle,
   Pencil,
   Plus,
   Send,
@@ -278,15 +281,15 @@ export function WebhookSettings({
                     webhookSettingsStyles["webhook-endpoint-heading"],
                   )}
                 >
-                  <span
+                  <Badge
                     className={cn(
                       webhookSettingsStyles["webhook-method"],
                       `webhook-method webhook-method webhook-method-${configuration.method.toLowerCase()}`,
                     )}
                   >
                     {configuration.method}
-                  </span>
-                  <span
+                  </Badge>
+                  <Badge
                     className={cn(
                       webhookSettingsStyles["webhook-state"],
                       `webhook-state ${configuration.enabled ? "enabled" : "disabled"}`,
@@ -294,7 +297,7 @@ export function WebhookSettings({
                   >
                     <i aria-hidden="true" />
                     {configuration.enabled ? "已启用" : "已停用"}
-                  </span>
+                  </Badge>
                 </div>
                 <div>
                   <h3>{configuration.name}</h3>
@@ -316,7 +319,7 @@ export function WebhookSettings({
                       variant="secondary"
                     >
                       {testingId === configuration.id ? (
-                        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
+                        <LoadingIcon size={14} />
                       ) : (
                         <Send size={14} />
                       )}
@@ -659,11 +662,7 @@ export function WebhookSettings({
                 取消
               </Button>
               <Button disabled={pending} type="submit" variant="primary">
-                {pending ? (
-                  <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-                ) : (
-                  <Send size={16} />
-                )}
+                {pending ? <LoadingIcon size={16} /> : <Send size={16} />}
                 {editor.id ? "保存修改" : "创建端点"}
               </Button>
             </div>
@@ -691,11 +690,7 @@ export function WebhookSettings({
               取消
             </Button>
             <Button disabled={pending} onClick={() => void remove()} type="button" variant="danger">
-              {pending ? (
-                <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />
-              ) : (
-                <Trash2 size={16} />
-              )}
+              {pending ? <LoadingIcon size={16} /> : <Trash2 size={16} />}
               删除
             </Button>
           </div>
@@ -746,14 +741,14 @@ function DeliveryRow({ delivery }: { delivery: WebhookDelivery }) {
         <small title={delivery.suiteName}>{delivery.suiteName}</small>
       </TableCell>
       <TableCell>
-        <span
+        <Badge
           className={cn(
             webhookSettingsStyles["webhook-delivery-status"],
             `webhook-delivery-status ${delivery.status}`,
           )}
         >
           {labels[delivery.status]}
-        </span>
+        </Badge>
       </TableCell>
       <TableCell>
         {delivery.responseStatus ?? "—"}

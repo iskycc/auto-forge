@@ -17,6 +17,8 @@ import {
 
 import { Button as DesignButton } from "./ui/button";
 import { Input as DesignInput } from "./ui/input";
+import { NumberInput } from "./ui/number-input";
+import { FieldFeedback } from "./ui/field-feedback";
 import { Textarea as DesignTextarea } from "./ui/textarea";
 import { ChoiceInput, type ChoiceInputProps } from "./ui/choice-input";
 import { Progress, type ProgressTone } from "./ui/progress";
@@ -70,6 +72,7 @@ export const Input = forwardRef<HTMLInputElement, ChoiceInputProps>(function Inp
     return <input ref={ref} className={className} {...props} />;
   if (props.type === "checkbox" || props.type === "radio")
     return <ChoiceInput ref={ref} {...props} {...(className ? { className } : {})} />;
+  if (props.type === "number") return <NumberInput ref={ref} className={className} {...props} />;
   return <DesignInput ref={ref} className={classes("ui-input", className)} {...props} />;
 });
 
@@ -111,50 +114,57 @@ export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }
     return (
-      <span className={cn("ui-datetime relative inline-flex w-full min-w-0", className)}>
-        <input
-          {...props}
-          disabled={props.disabled || !clientReady}
-          ref={(input) => {
-            nativeInput.current = input;
-            if (typeof ref === "function") ref(input);
-            else if (ref) ref.current = input;
-          }}
-          type="datetime-local"
-          className="ui-datetime-control sr-only opacity-0"
-          tabIndex={-1}
-          aria-hidden="true"
-          value={displayed}
-          onFocus={(event) => {
-            props.onFocus?.(event);
-            picker.current?.focus();
-          }}
-          onInvalid={(event) => {
-            props.onInvalid?.(event);
-            picker.current?.focus();
-          }}
-          onChange={(event) => {
-            field.setDraft(event.target.value);
-            onChange?.(event);
-          }}
-        />
-        <DatePicker
-          // A form reset also discards the picker's focused, unconfirmed text draft.
-          key={field.resetVersion}
-          ref={picker}
-          className="w-full min-w-0 min-h-[var(--ant-control-height)]"
-          showTime={{ format: "HH:mm" }}
-          format="YYYY/MM/DD HH:mm"
-          placeholder="选择日期与时间"
-          value={displayed ? dayjs(displayed) : null}
-          disabled={props.disabled === true || !clientReady}
-          onChange={(next) => commit(next ? next.format("YYYY-MM-DDTHH:mm") : "")}
-          aria-label={props["aria-label"] ?? fieldLabel ?? "日期与时间"}
-          aria-required={props.required}
-          aria-invalid={props["aria-invalid"]}
-          aria-describedby={props["aria-describedby"]}
-        />
-      </span>
+      <FieldFeedback>
+        <span className={cn("ui-datetime relative inline-flex w-full min-w-0", className)}>
+          <input
+            {...props}
+            disabled={props.disabled || !clientReady}
+            ref={(input) => {
+              nativeInput.current = input;
+              if (typeof ref === "function") ref(input);
+              else if (ref) ref.current = input;
+            }}
+            type="datetime-local"
+            className="ui-datetime-control sr-only opacity-0"
+            tabIndex={-1}
+            aria-hidden="true"
+            value={displayed}
+            onFocus={(event) => {
+              props.onFocus?.(event);
+              picker.current?.focus();
+            }}
+            onInvalid={(event) => {
+              props.onInvalid?.(event);
+              if (
+                event.currentTarget.form?.querySelector(
+                  "input:invalid, select:invalid, textarea:invalid",
+                ) === event.currentTarget
+              )
+                picker.current?.focus();
+            }}
+            onChange={(event) => {
+              field.setDraft(event.target.value);
+              onChange?.(event);
+            }}
+          />
+          <DatePicker
+            // A form reset also discards the picker's focused, unconfirmed text draft.
+            key={field.resetVersion}
+            ref={picker}
+            className="w-full min-w-0 min-h-[var(--ant-control-height)]"
+            showTime={{ format: "HH:mm" }}
+            format="YYYY/MM/DD HH:mm"
+            placeholder="选择日期与时间"
+            value={displayed ? dayjs(displayed) : null}
+            disabled={props.disabled === true || !clientReady}
+            onChange={(next) => commit(next ? next.format("YYYY-MM-DDTHH:mm") : "")}
+            aria-label={props["aria-label"] ?? fieldLabel ?? "日期与时间"}
+            aria-required={props.required}
+            aria-invalid={props["aria-invalid"]}
+            aria-describedby={props["aria-describedby"]}
+          />
+        </span>
+      </FieldFeedback>
     );
   },
 );

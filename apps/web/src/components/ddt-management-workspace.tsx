@@ -1,4 +1,11 @@
 "use client";
+import { Upload as AntUpload } from "antd";
+import { Progress } from "@/components/ui/progress";
+
+import { Badge } from "@/components/ui/badge";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Notice } from "@/components/ui/notice";
 
 import { EmptyState } from "@/components/ui/empty-state";
@@ -48,7 +55,6 @@ import {
   AlertTriangle,
   BarChart3,
   Boxes,
-  CheckCircle2,
   Code2,
   CopyPlus,
   Download,
@@ -56,7 +62,6 @@ import {
   Filter,
   Globe2,
   Layers3,
-  LoaderCircle,
   ListPlus,
   PencilLine,
   Plus,
@@ -69,7 +74,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { DragEvent as ReactDragEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { Button, Input, OperationProgress, Select, Textarea } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
@@ -732,11 +737,7 @@ export function DdtManagementWorkspace({
               }}
               disabled={busy || refreshing || savingCase}
             >
-              <RefreshCw
-                size={15}
-                className={busy || refreshing ? cn("spin", uiPatterns["spin"]) : ""}
-              />{" "}
-              刷新
+              {busy || refreshing ? <LoadingIcon size={15} /> : <RefreshCw size={15} />} 刷新
             </Button>
           ) : null}
           {canManage ? (
@@ -771,7 +772,7 @@ export function DdtManagementWorkspace({
       <TabContent activeKey={tab}>
         {error ? (
           <Notice
-            tone="info"
+            tone="error"
             className={cn("inline-notice error", uiPatterns["inline-notice"], uiPatterns["error"])}
             role="alert"
           >
@@ -860,14 +861,14 @@ export function DdtManagementWorkspace({
                       </Button>
                     ))
                   ) : (
-                    <p
+                    <EmptyState
                       className={cn(
                         "ddt-chart-empty",
                         ddtManagementWorkspaceStyles["ddt-chart-empty"],
                       )}
                     >
                       导入后将在这里展示业务分组
-                    </p>
+                    </EmptyState>
                   )}
                 </div>
               </Card>
@@ -1044,12 +1045,7 @@ export function DdtManagementWorkspace({
                       disabled={Boolean(deleteProgress)}
                       onClick={() => void deleteSelected()}
                     >
-                      {deleteProgress ? (
-                        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                      ) : (
-                        <Trash2 size={15} />
-                      )}{" "}
-                      移入回收站
+                      {deleteProgress ? <LoadingIcon size={15} /> : <Trash2 size={15} />} 移入回收站
                     </Button>
                   </>
                 ) : null}
@@ -1090,7 +1086,7 @@ export function DdtManagementWorkspace({
                 className={cn("ddt-detail-error", ddtManagementWorkspaceStyles["ddt-detail-error"])}
               >
                 <Notice
-                  tone="info"
+                  tone="error"
                   className={cn(
                     "inline-notice error",
                     uiPatterns["inline-notice"],
@@ -1413,26 +1409,22 @@ function ImportJobs({
               key={job.id}
             >
               <div className={cn("ddt-job-main", ddtManagementWorkspaceStyles["ddt-job-main"])}>
-                <span
+                <Badge
                   className={cn(
                     ddtManagementWorkspaceStyles["ddt-status"],
                     `ddt-status ${job.status}`,
                   )}
                 >
                   {statusLabel(job.status)}
-                </span>
+                </Badge>
                 <strong>
                   {job.totalFiles} 个表格 · {job.totalRows} 行
                 </strong>
                 <small>{formatDate(job.createdAt)}</small>
               </div>
-              <div
-                className={cn("ddt-job-progress", ddtManagementWorkspaceStyles["ddt-job-progress"])}
-              >
-                <div>
-                  <i style={{ width: `${job.progressPercent}%` }} />
-                </div>
-                <span>{job.progressPercent}%</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <Progress value={job.progressPercent} aria-label="导入进度" />
+                <span className="shrink-0 text-xs tabular-nums">{job.progressPercent}%</span>
               </div>
               <div
                 className={cn("ddt-job-results", ddtManagementWorkspaceStyles["ddt-job-results"])}
@@ -1455,7 +1447,7 @@ function ImportJobs({
               </div>
               {job.errorSummary ? (
                 <Notice
-                  tone="info"
+                  tone="error"
                   className={cn(
                     "inline-notice error",
                     uiPatterns["inline-notice"],
@@ -1555,11 +1547,11 @@ function Templates({
               key={item.id}
             >
               <div>
-                <span
+                <Badge
                   className={cn("ddt-group-tag", ddtManagementWorkspaceStyles["ddt-group-tag"])}
                 >
                   {item.srNum}
-                </span>
+                </Badge>
                 <strong>{item.name}</strong>
                 <p>{item.description || "未填写说明"}</p>
               </div>
@@ -1691,10 +1683,7 @@ function ImportDialog({
   onClose(): void;
   onComplete(): Promise<void>;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const dragDepthRef = useRef(0);
   const [files, setFiles] = useState<File[]>([]);
-  const [dragActive, setDragActive] = useState(false);
   const [job, setJob] = useState<ImportJob>();
   const [strategy, setStrategy] = useState("overwrite");
   const [busy, setBusy] = useState(false);
@@ -1722,37 +1711,6 @@ function ImportDialog({
     setShowColumnConflicts(false);
     setColumnResolutions([]);
     setError("");
-  };
-  const handleDragEnter = (event: ReactDragEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (busy) return;
-    dragDepthRef.current += 1;
-    setDragActive(true);
-  };
-  const handleDragOver = (event: ReactDragEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!busy) event.dataTransfer.dropEffect = "copy";
-  };
-  const handleDragLeave = (event: ReactDragEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) setDragActive(false);
-  };
-  const handleDrop = (event: ReactDragEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current = 0;
-    setDragActive(false);
-    if (busy) return;
-    const droppedFiles = [...event.dataTransfer.files];
-    if (!droppedFiles.length) {
-      setError("没有检测到可上传文件，请直接拖入文件，不要拖入文件夹。");
-      return;
-    }
-    selectFiles(droppedFiles);
   };
   const acceptPreview = (
     nextJob: ImportJob,
@@ -1864,7 +1822,7 @@ function ImportDialog({
         <div className={cn("ddt-import-dialog", ddtManagementWorkspaceStyles["ddt-import-dialog"])}>
           {error ? (
             <Notice
-              tone="info"
+              tone="error"
               className={cn(
                 "inline-notice error",
                 uiPatterns["inline-notice"],
@@ -1876,39 +1834,43 @@ function ImportDialog({
           ) : null}
           {!job ? (
             <>
-              <Button
-                className={cn(
-                  ddtManagementWorkspaceStyles["ddt-dropzone"],
-                  `ddt-dropzone${dragActive ? " drag-active" : ""}`,
-                )}
-                type="button"
-                aria-busy={busy}
-                aria-describedby="ddt-import-file-help"
-                disabled={busy}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                onClick={() => inputRef.current?.click()}
-              >
-                <Upload size={28} />
-                <strong>{dragActive ? "松开即可添加文件" : "选择或拖入表格、ZIP 压缩包"}</strong>
-                <span id="ddt-import-file-help">
-                  支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录
-                </span>
-              </Button>
-              <Input
-                ref={inputRef}
-                hidden
-                multiple
-                type="file"
-                disabled={busy}
-                accept={DDT_IMPORT_FILE_ACCEPT}
-                onChange={(event) => {
-                  selectFiles([...(event.target.files ?? [])]);
-                  event.target.value = "";
+              <div
+                onDropCapture={(event) => {
+                  if (busy) return;
+                  const droppedFiles = Array.from(event.dataTransfer.files);
+                  if (
+                    !droppedFiles.length ||
+                    droppedFiles.some((file) => !isSupportedDdtImportFile(file))
+                  ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!droppedFiles.length)
+                      setError("没有检测到可上传文件，请直接拖入文件，不要拖入文件夹。");
+                    else selectFiles(droppedFiles);
+                  }
                 }}
-              />
+              >
+                <AntUpload.Dragger
+                  className="ddt-dropzone"
+                  multiple
+                  accept={DDT_IMPORT_FILE_ACCEPT}
+                  disabled={busy}
+                  showUploadList={false}
+                  fileList={[]}
+                  beforeUpload={(file, selection) => {
+                    if (file === selection[0]) selectFiles(selection);
+                    return false;
+                  }}
+                >
+                  <div className="flex flex-col items-center gap-2 px-3 py-4">
+                    <Upload size={28} aria-hidden="true" className="text-primary" />
+                    <strong>选择或拖入表格、ZIP 压缩包</strong>
+                    <span className="text-xs text-muted-foreground">
+                      支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录
+                    </span>
+                  </div>
+                </AntUpload.Dragger>
+              </div>
               {files.length ? (
                 <div
                   className={cn(
@@ -1956,9 +1918,7 @@ function ImportDialog({
                   disabled={!files.length || busy}
                   onClick={() => void preview()}
                 >
-                  {busy ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                  ) : null}
+                  {busy ? <LoadingIcon size={15} /> : null}
                   开始预检
                 </Button>
               </footer>
@@ -2005,15 +1965,16 @@ function ImportDialog({
                 ))}
               </div>
               {unresolvedColumnConflicts.length ? (
-                <div
+                <Notice
+                  tone="warning"
+                  showIcon
                   className={cn(
                     "ddt-column-conflict-notice",
                     ddtManagementWorkspaceStyles["ddt-column-conflict-notice"],
                   )}
                   role="alert"
                 >
-                  <AlertTriangle size={18} aria-hidden="true" />
-                  <span>
+                  <span className="grid min-w-0 flex-1 gap-1">
                     <strong>发现重复列名</strong>
                     <small>
                       请先处理上方文件中的重复列名，再确认导入。暂不处理会保留当前选择。
@@ -2031,7 +1992,7 @@ function ImportDialog({
                   >
                     处理重复列名
                   </Button>
-                </div>
+                </Notice>
               ) : null}
               <fieldset
                 className={cn("ddt-strategy", ddtManagementWorkspaceStyles["ddt-strategy"])}
@@ -2082,9 +2043,7 @@ function ImportDialog({
                   disabled={!job.validFiles || busy || unresolvedColumnConflicts.length > 0}
                   onClick={() => void confirm()}
                 >
-                  {busy ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                  ) : null}
+                  {busy ? <LoadingIcon size={15} /> : null}
                   确认并后台导入
                 </Button>
               </footer>
@@ -2346,7 +2305,7 @@ function ColumnConflictDialog({
                               ))}
                             </ul>
                           ) : (
-                            <p>该列没有非空内容</p>
+                            <EmptyState>该列没有非空内容</EmptyState>
                           )}
                         </div>
                         <Button
@@ -2415,7 +2374,7 @@ function ColumnConflictDialog({
         >
           {error || validationError ? (
             <Notice
-              tone="info"
+              tone="error"
               className={cn(
                 "inline-notice error",
                 uiPatterns["inline-notice"],
@@ -2426,21 +2385,22 @@ function ColumnConflictDialog({
               {error || validationError}
             </Notice>
           ) : (
-            <div
+            <Notice
+              tone="success"
+              showIcon
               className={cn(
                 "ddt-column-resolution-summary",
                 ddtManagementWorkspaceStyles["ddt-column-resolution-summary"],
               )}
               aria-live="polite"
             >
-              <CheckCircle2 aria-hidden="true" size={16} />
-              <span>
+              <span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2">
                 待应用的列名方案
                 <small>
                   保留 {conflictColumnCount - deletedColumnCount} 列 · 删除 {deletedColumnCount} 列
                 </small>
               </span>
-            </div>
+            </Notice>
           )}
           <p
             className={cn(
@@ -2475,7 +2435,7 @@ function ColumnConflictDialog({
             disabled={busy || conflicts.length === 0 || Boolean(validationError)}
             onClick={onConfirm}
           >
-            {busy ? <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} /> : null}
+            {busy ? <LoadingIcon size={15} /> : null}
             应用并重新预检
           </Button>
         </footer>
@@ -2545,7 +2505,7 @@ function TemplateDialog({
       >
         {error ? (
           <Notice
-            tone="info"
+            tone="error"
             className={cn(
               "inline-notice error full-span",
               uiPatterns["inline-notice"],
@@ -2716,7 +2676,7 @@ function BulkDialog({
       >
         {error ? (
           <Notice
-            tone="info"
+            tone="error"
             className={cn(
               "inline-notice error full-span",
               uiPatterns["inline-notice"],
@@ -2849,7 +2809,7 @@ function AddDdtToSuiteDialog({
       >
         {error ? (
           <Notice
-            tone="info"
+            tone="error"
             className={cn(
               "inline-notice error full-span",
               uiPatterns["inline-notice"],
@@ -2918,11 +2878,7 @@ function AddDdtToSuiteDialog({
             }
             onClick={() => void save()}
           >
-            {busy ? (
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-            ) : (
-              <ListPlus size={15} />
-            )}
+            {busy ? <LoadingIcon size={15} /> : <ListPlus size={15} />}
             加入任务
           </Button>
         </footer>
@@ -3280,15 +3236,14 @@ const ddtManagementWorkspaceStyles = {
   "ddt-column-conflict-location":
     "grid min-w-0 flex-1 gap-0.5 [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:items-center [&_>_span]:gap-[7px] [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_>_small]:text-destructive",
   "ddt-column-conflict-notice":
-    "flex items-center gap-2.5 mt-3 border border-solid border-border rounded-lg py-[11px] px-3 bg-warning/10 text-warning [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:flex-1 [&_>_span]:gap-0.5 [&_small]:text-muted-foreground",
+    "mt-3 [&_.ant-alert-title]:flex [&_.ant-alert-title]:items-center [&_.ant-alert-title]:gap-3 [&_small]:text-muted-foreground",
   "ddt-column-delete-option":
     'inline-flex [flex:0_0_auto] items-center gap-[5px] text-muted-foreground text-xs cursor-pointer [&:has(input:checked)]:text-destructive [&_.ui-input[type="checkbox"]]:w-4 [&_.ui-input[type="checkbox"]]:h-4 [&_.ui-input[type="checkbox"]]:[flex-basis:16px]',
   "ddt-column-keep-only": "w-fit justify-self-end",
   "ddt-column-name-field": "grid gap-[5px] [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
   "ddt-column-resolution-feedback": "grid shrink-0 gap-2",
   "ddt-column-resolution-help": "m-0 text-muted-foreground text-xs",
-  "ddt-column-resolution-summary":
-    "flex items-center gap-2 border border-solid border-border rounded-lg py-2 px-2.5 bg-success/10 text-success [&_>_span]:flex [&_>_span]:min-w-0 [&_>_span]:flex-1 [&_>_span]:items-center [&_>_span]:justify-between [&_>_span]:gap-3 [&_>_span]:text-xs [&_>_span]:font-semibold [&_small]:text-muted-foreground [&_small]:font-medium",
+  "ddt-column-resolution-summary": "[&_small]:text-muted-foreground [&_small]:font-medium",
   "ddt-column-samples":
     "[&_header_small]:text-muted-foreground overflow-hidden border border-solid border-border rounded-lg bg-muted [&_>_header]:flex [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-[7px] [&_>_header]:px-[9px] [&_>_header]:text-xs [&_ul]:grid [&_ul]:max-h-[152px] [&_ul]:m-0 [&_ul]:py-1 [&_ul]:px-0 [&_ul]:overflow-auto [&_ul]:[list-style:none] [&_li]:grid [&_li]:grid-cols-[45px_minmax(0,_1fr)] [&_li]:items-center [&_li]:gap-[7px] [&_li]:py-[5px] [&_li]:px-[9px] [&_li_+_li]:border-t [&_li_+_li]:border-solid [&_li_+_li]:border-transparent [&_li_small]:text-muted-foreground [&_li_span]:overflow-hidden [&_li_span]:text-ellipsis [&_li_span]:whitespace-nowrap [&_>_p]:m-0 [&_>_p]:py-3.5 [&_>_p]:px-[9px] [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_p]:text-center",
   "ddt-detail-error": "overflow-auto p-5",

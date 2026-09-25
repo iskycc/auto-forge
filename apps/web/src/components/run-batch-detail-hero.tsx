@@ -1,3 +1,4 @@
+import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { ArrowLeft, Clock3, Link2 } from "lucide-react";
@@ -30,7 +31,8 @@ export function RunBatchDetailHero({
         </Link>
       ) : null}
       {shared ? (
-        <div
+        <Notice
+          tone="info"
           className={cn(
             "shared-run-detail-notice",
             runBatchDetailHeroStyles["shared-run-detail-notice"],
@@ -39,7 +41,7 @@ export function RunBatchDetailHero({
         >
           <Link2 size={16} aria-hidden="true" />
           永久匿名只读执行详情
-        </div>
+        </Notice>
       ) : null}
       <section
         className={cn(

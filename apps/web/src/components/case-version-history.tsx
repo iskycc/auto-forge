@@ -1,4 +1,6 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { Notice } from "@/components/ui/notice";
 
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +27,7 @@ import {
   type TestNgClassCandidate,
 } from "@autoforge/contracts";
 import type { CaseVersion } from "@autoforge/domain";
-import { GitCompareArrows, History, LoaderCircle } from "lucide-react";
+import { GitCompareArrows, History } from "lucide-react";
 import Link from "next/link";
 import { LinkButton } from "@/components/ui/link-button";
 import { useRouter } from "next/navigation";
@@ -115,12 +117,13 @@ export function CaseVersionHistory({
   return (
     <div className={cn("settings-stack", uiPatterns["settings-stack"])}>
       {error ? (
-        <div
+        <Notice
+          tone="error"
           className={cn("inline-feedback", caseVersionHistoryStyles["inline-feedback"])}
           role="alert"
         >
           {error}
-        </div>
+        </Notice>
       ) : null}
       <section
         className={cn("version-comparison", caseVersionHistoryStyles["version-comparison"])}
@@ -292,7 +295,7 @@ export function CaseVersionHistory({
                           type="button"
                         >
                           {pendingVersion === version.version ? (
-                            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
+                            <LoadingIcon size={14} />
                           ) : (
                             <History size={14} />
                           )}

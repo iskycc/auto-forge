@@ -1,4 +1,10 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
+import { Notice } from "@/components/ui/notice";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Disclosure } from "@/components/ui/disclosure";
@@ -15,7 +21,7 @@ import type { DirectoryNode, SuiteDirectoryPart } from "@autoforge/contracts";
 type CaseSuiteItem = SuiteDirectoryPart["items"][number];
 type CaseSuiteDdtItem = SuiteDirectoryPart["ddtItems"][number];
 type CaseSuiteDetails = CaseSuite & SuiteDirectoryPart;
-import { ChevronRight, DatabaseZap, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
+import { ChevronRight, DatabaseZap, FolderTree, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { useConfirm } from "@/components/ui-feedback";
 import { useCaseSuiteRevision } from "@/components/case-suite-revision";
@@ -265,7 +271,8 @@ export function CaseSuiteDetailsView({
         </span>
       </div>
       {error ? (
-        <div
+        <Notice
+          tone="error"
           className={cn(
             "inline-feedback error",
             caseSuiteDetailsStyles["inline-feedback"],
@@ -274,7 +281,7 @@ export function CaseSuiteDetailsView({
           role="alert"
         >
           {error}
-        </div>
+        </Notice>
       ) : null}
       {/* Mutation responses already contain the authoritative count; an empty task must not wait
           for its background directory snapshot to catch up before showing the result. */}
@@ -345,11 +352,7 @@ export function CaseSuiteDetailsView({
                   onClick={() => void removeCases([...selectedIds])}
                   type="button"
                 >
-                  {removing ? (
-                    <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                  ) : (
-                    <Trash2 size={15} />
-                  )}
+                  {removing ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
                   批量移除（{selectedIds.size}）
                 </Button>
               </div>
@@ -362,18 +365,24 @@ export function CaseSuiteDetailsView({
                 )}
                 role="status"
               >
-                <LoaderCircle
+                <LoadingIcon
                   aria-hidden="true"
-                  className={cn("spin", uiPatterns["spin"])}
+
                   size={14}
                 />{" "}
                 正在筛选
               </span>
             ) : null}
           </div>
-          {directoryTree?.loading ? <p role="status">正在准备目录，任务配置可直接编辑。</p> : null}
+          {directoryTree?.loading ? (
+            <LoadingStateMessage role="status">
+              正在准备目录，任务配置可直接编辑。
+            </LoadingStateMessage>
+          ) : null}
           {directoryTree && !directoryTree.loading && !groups.length && !ddtGroups.length ? (
-            <p className={cn("inline-empty", uiPatterns["inline-empty"])}>没有匹配的任务用例。</p>
+            <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
+              没有匹配的任务用例。
+            </EmptyState>
           ) : null}
           {groups.length > 0 ? (
             <section
@@ -401,9 +410,9 @@ export function CaseSuiteDetailsView({
                 </div>
               </div>
               {groups.length === 0 ? (
-                <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                   没有匹配的普通用例。
-                </div>
+                </EmptyState>
               ) : (
                 <div
                   aria-busy={filtering}
@@ -501,20 +510,16 @@ export function CaseSuiteDetailsView({
                       onClick={() => void removeDdtCases([...selectedDdtIds])}
                       type="button"
                     >
-                      {removing ? (
-                        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={15} />
-                      ) : (
-                        <Trash2 size={15} />
-                      )}
+                      {removing ? <LoadingIcon size={15} /> : <Trash2 size={15} />}
                       批量移除（{selectedDdtIds.size}）
                     </Button>
                   </div>
                 ) : null}
               </div>
               {ddtGroups.length === 0 ? (
-                <div className={cn("inline-empty", uiPatterns["inline-empty"])}>
+                <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                   没有匹配的 DDT 用例。
-                </div>
+                </EmptyState>
               ) : (
                 <div
                   className={cn("suite-case-tree", caseSuiteDetailsStyles["suite-case-tree"])}
@@ -688,12 +693,14 @@ function SuitePackageGroup({
               ) : null}
             </div>
           ))}
-          {branch.loading && directory ? <p role="status">正在加载目录…</p> : null}
+          {branch.loading && directory ? (
+            <LoadingStateMessage role="status">正在加载目录…</LoadingStateMessage>
+          ) : null}
           {branch.error && directory ? (
-            <div role="alert">
+            <Notice tone="error" role="alert">
               {branch.error}
               <Button onClick={branch.retry}>重试</Button>
-            </div>
+            </Notice>
           ) : null}
           {branch.more && directory ? (
             <Button
@@ -845,12 +852,14 @@ function SuiteDdtGroup({
               ) : null}
             </div>
           ))}
-          {branch.loading && directory ? <p role="status">正在加载目录…</p> : null}
+          {branch.loading && directory ? (
+            <LoadingStateMessage role="status">正在加载目录…</LoadingStateMessage>
+          ) : null}
           {branch.error && directory ? (
-            <div role="alert">
+            <Notice tone="error" role="alert">
               {branch.error}
               <Button onClick={branch.retry}>重试</Button>
-            </div>
+            </Notice>
           ) : null}
           {branch.more && directory ? (
             <Button

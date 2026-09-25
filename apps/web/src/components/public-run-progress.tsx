@@ -1,4 +1,9 @@
 "use client";
+import { Progress } from "@/components/ui/progress";
+
+import { Card } from "./ui/card";
+import { Badge } from "./ui/badge";
+import { LoadingIcon } from "./ui/loading-icon";
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -6,7 +11,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
-import { CheckCircle2, CircleAlert, LoaderCircle, RotateCw } from "lucide-react";
+import { CheckCircle2, CircleAlert, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { RunProgress } from "@/lib/run-progress";
@@ -54,44 +59,37 @@ export function PublicRunProgress({
       ? 0
       : Math.min(100, Math.round((progress.completedCases / progress.totalCases) * 100));
   const StatusIcon = progress.active
-    ? LoaderCircle
+    ? LoadingIcon
     : progress.statusLabel === "执行完成"
       ? CheckCircle2
       : CircleAlert;
 
   return (
     <main className={cn("public-progress-page", publicRunProgressStyles["public-progress-page"])}>
-      <section
-        className={cn("public-progress-card", publicRunProgressStyles["public-progress-card"])}
-      >
+      <Card className={cn("public-progress-card", publicRunProgressStyles["public-progress-card"])}>
         <header>
           <div>
             <span className={cn("eyebrow", uiPatterns["eyebrow"])}>AUTOFORGE EXECUTION</span>
             <h1>{progress.suiteName}</h1>
             <p>{permanent ? "永久只读结果" : "只读执行进展"} · 每 30 秒自动刷新</p>
           </div>
-          <span
+          <Badge
             className={cn(
               publicRunProgressStyles["status"],
               publicRunProgressStyles["public-progress-status"],
               `public-progress-status status status-${progress.status}`,
             )}
           >
-            <StatusIcon
-              className={progress.active ? cn("spin", uiPatterns["spin"]) : ""}
-              size={20}
-            />
+            <StatusIcon size={20} />
             {progress.statusLabel}
-          </span>
+          </Badge>
           <ColorModeToggle />
         </header>
 
-        <div
-          className={cn("public-progress-bar", publicRunProgressStyles["public-progress-bar"])}
+        <Progress
+          value={pending ? null : completionPercent}
           aria-label={`完成 ${completionPercent}%`}
-        >
-          <span style={{ width: `${completionPercent}%` }} />
-        </div>
+        />
         <div
           className={cn(
             "public-progress-percent",
@@ -141,7 +139,7 @@ export function PublicRunProgress({
             {refreshError}
           </Notice>
         ) : null}
-      </section>
+      </Card>
     </main>
   );
 }

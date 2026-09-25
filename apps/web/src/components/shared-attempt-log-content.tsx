@@ -1,8 +1,9 @@
+import { Timeline } from "antd";
+import { Result } from "antd";
 import { Alert, Card, Descriptions, Tag } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import type { SharedAttemptLogView } from "@autoforge/contracts";
-import { Link2Off } from "lucide-react";
 import Link from "next/link";
 import { LinkButton } from "@/components/ui/link-button";
 import type { ReactNode } from "react";
@@ -292,22 +293,14 @@ function RoundLogNavigation({
         <h2>执行历史</h2>
         <span>{view.rounds.length} 个结果</span>
       </div>
-      <ol
-        className={cn(
-          "share-log-round-list",
-          sharedAttemptLogContentStyles["share-log-round-list"],
-        )}
-      >
-        {view.rounds.map((round) => {
+      <Timeline
+        className="share-log-round-list min-w-0"
+        items={view.rounds.map((round) => {
           const active = round.attemptId === view.attemptId;
-          return (
-            <li
-              className={cn(
-                "share-log-round-item",
-                sharedAttemptLogContentStyles["share-log-round-item"],
-              )}
-              key={round.attemptId}
-            >
+          return {
+            key: round.attemptId,
+            color: active ? "blue" : "gray",
+            content: (
               <Link
                 aria-current={active ? "page" : undefined}
                 className={cn(
@@ -366,10 +359,10 @@ function RoundLogNavigation({
                   ) : null}
                 </span>
               </Link>
-            </li>
-          );
+            ),
+          };
         })}
-      </ol>
+      />
     </nav>
   );
 }
@@ -424,23 +417,13 @@ export function InvalidAttemptLogShareView() {
         sharedAttemptLogContentStyles["share-log-page-center"],
       )}
     >
-      <section
-        className={cn("share-log-invalid", sharedAttemptLogContentStyles["share-log-invalid"])}
-        aria-label="日志公开访问链接不可用"
-      >
-        <span
-          className={cn(
-            "share-log-invalid-icon",
-            sharedAttemptLogContentStyles["share-log-invalid-icon"],
-          )}
-          aria-hidden="true"
-        >
-          <Link2Off size={30} strokeWidth={1.8} />
-        </span>
-        <h1>链接无效</h1>
-        <p>该日志公开访问链接无效或已被撤销，请联系日志发布者重新生成。</p>
-        <ColorModeToggle />
-      </section>
+      <Result
+        status="warning"
+        title={<h1 className="m-0 text-xl">链接无效</h1>}
+        subTitle={"该日志公开访问链接无效或已被撤销，请联系日志发布者重新生成。"}
+        extra={<ColorModeToggle />}
+        className="w-full max-w-lg"
+      />
     </main>
   );
 }

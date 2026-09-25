@@ -36,6 +36,15 @@ async function fixture(context) {
       "segmented",
       "result",
       "statistic",
+      "tooltip",
+      "input-number",
+      "select-auto-complete",
+      "splitter",
+      "image",
+      "upload",
+      "avatar",
+      "timeline",
+      "steps",
     ]
       .map((component) => `.ant-${component}{box-sizing:border-box}`)
       .join(""),
@@ -108,3 +117,30 @@ test("rejects partial component styles even when button and modal styles exist",
     /Ant Design component CSS is missing.*table/u,
   );
 });
+
+for (const component of [
+  "tooltip",
+  "input-number",
+  "select-auto-complete",
+  "splitter",
+  "image",
+  "upload",
+  "avatar",
+  "timeline",
+  "steps",
+]) {
+  test(`rejects missing ${component} styles in an otherwise complete offline frontend`, async (context) => {
+    const { source, packaged, manifest } = await fixture(context);
+    for (const directory of [source, packaged]) {
+      const path = join(directory, "chunks/antd.css");
+      await writeFile(
+        path,
+        (await readFile(path, "utf8")).replace(`.ant-${component}{box-sizing:border-box}`, ""),
+      );
+    }
+    await assert.rejects(
+      verifyAndRecordFrontendAssets(source, packaged, manifest),
+      new RegExp(`Ant Design component CSS is missing.*${component}`, "u"),
+    );
+  });
+}

@@ -7,6 +7,7 @@ export interface WorkDispatcher {
   createBatch?(input: unknown): Promise<unknown>;
   createSingleDdtCase?(input: unknown): Promise<unknown>;
   searchDdtValues?(input: unknown, signal: AbortSignal): Promise<unknown>;
+  initializeVersion?(input: unknown, signal: AbortSignal): Promise<unknown>;
   inheritTestNgCases?(input: unknown, signal: AbortSignal): Promise<unknown>;
   inheritDdtCases?(input: unknown, signal: AbortSignal): Promise<unknown>;
   triggerDueSchedules?(): Promise<number>;

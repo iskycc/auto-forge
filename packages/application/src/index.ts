@@ -49,3 +49,4 @@ export * from "./read-directory-branch";
 export * from "./runtime-notifications";
 export * from "./search-ddt-values";
 export * from "./inherit-ddt-cases";
+export * from "./initialize-project-version";

@@ -64,6 +64,16 @@ export class CaseSuiteService {
     return this.suites.list(limit, projectIds, projectVersionId);
   }
 
+  async listVersionPage(projectId: string, projectVersionId: string, cursor?: string) {
+    const rows = await this.suites.list(
+      51,
+      [projectId],
+      projectVersionId,
+      cursor ? { afterId: cursor } : {},
+    );
+    return { items: rows.slice(0, 50), ...(rows.length > 50 ? { nextCursor: rows[49]!.id } : {}) };
+  }
+
   async get(suiteId: string, projectIds?: readonly string[]) {
     const suite = await this.suites.get(suiteId, projectIds);
     if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
@@ -224,6 +234,57 @@ export class CaseSuiteService {
       ...(Object.keys(copiedRecovery.credentials).length > 0
         ? { roundRecoveryCredentials: copiedRecovery.credentials }
         : {}),
+    });
+  }
+
+  async inheritConfiguration(input: {
+    sourceSuiteId: string;
+    targetSuiteId: string;
+    projectId: string;
+    sourceProjectVersionId: string;
+    targetProjectVersionId: string;
+    sourceRevision: number;
+    actorId?: string;
+  }) {
+    const source = await this.getSummary(input.sourceSuiteId, [input.projectId]);
+    if (
+      source.policy.projectVersionId !== input.sourceProjectVersionId ||
+      source.revision !== input.sourceRevision
+    )
+      throw new DomainError(
+        "CASE_SUITE_REVISION_CONFLICT",
+        "来源任务已变更，请重新选择后继续初始化。",
+      );
+    await this.resolveActiveProjectVersion(input.projectId, input.targetProjectVersionId);
+    const existing = await this.suites.getSummary(input.targetSuiteId, [input.projectId]);
+    if (existing) return existing;
+    const credentials = await this.suites.getRoundRecoveryCredentials(
+      source.id,
+      source.policy.roundRecoveryRules.map((rule) => rule.id),
+    );
+    const recovery = this.copyRoundRecoveryRules(
+      source.id,
+      input.targetSuiteId,
+      source.policy.roundRecoveryRules,
+      credentials,
+    );
+    return this.suites.copySuite({
+      id: input.targetSuiteId,
+      ifAbsent: true,
+      enabled: false,
+      projectId: input.projectId,
+      name: source.name,
+      ...(source.description ? { description: source.description } : {}),
+      policy: mergeCaseSuiteExecutionPolicy(source.policy, {
+        projectVersionId: input.targetProjectVersionId,
+        roundRecoveryRules: recovery.rules,
+        adapter: { ...source.policy.adapter, suiteName: "", testName: "" },
+      }),
+      items: [],
+      versionId: this.ids.next(),
+      ...(input.actorId ? { actorId: input.actorId } : {}),
+      createdAt: this.clock.now().toISOString(),
+      roundRecoveryCredentials: recovery.credentials,
     });
   }
 

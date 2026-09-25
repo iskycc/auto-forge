@@ -1,4 +1,10 @@
 "use client";
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { cn } from "@/lib/utils";
@@ -8,7 +14,7 @@ import {
   failureAnalysisBatchPageSchema,
   type FailureAnalysisBatchPage,
 } from "@autoforge/contracts";
-import { LoaderCircle, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ActionDialog } from "@/components/action-dialog";
@@ -93,14 +99,14 @@ export function StartFailureAnalysisDialog({
         )}
       >
         {loading ? (
-          <p role="status">
-            <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} /> 正在读取最近执行…
-          </p>
+          <LoadingStateMessage role="status">
+            <LoadingIcon size={16} /> 正在读取最近执行…
+          </LoadingStateMessage>
         ) : error ? (
-          <div role="alert">
+          <Notice tone="error" role="alert">
             {error}
             <Button onClick={() => void load(cursorHistory.at(-1))}>重试</Button>
-          </div>
+          </Notice>
         ) : page.items.length === 0 ? (
           <EmptyState className={cn("empty-state", uiPatterns["empty-state"])}>
             <strong>没有可新增的分析任务</strong>

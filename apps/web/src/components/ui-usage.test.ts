@@ -3,6 +3,7 @@ import { dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 
 const SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const UI_PRIMITIVE = join(SOURCE_ROOT, "components", "ui.tsx");
@@ -41,7 +42,7 @@ const PROJECT_SWITCH_FREE_FILES = [
 // Hidden inputs only carry filter state inside GET forms and have no visual
 // styling, so the shared-component boundary applies to rendered controls only.
 const NATIVE_CONTROL =
-  /<(?:button|select|textarea|details|summary|progress)\b|<input\b(?![^>]*type="hidden")/;
+  /<(?:button|select|textarea|details|summary|progress|datalist)\b|<input\b(?![^>]*type="hidden")/;
 
 describe("shared UI controls", () => {
   it("keeps native form controls inside the shared component boundary", () => {
@@ -50,6 +51,40 @@ describe("shared UI controls", () => {
       .filter((file) => NATIVE_CONTROL.test(readFileSync(file, "utf8")))
       .map((file) => relative(SOURCE_ROOT, file));
 
+    expect(violations).toEqual([]);
+  });
+
+  it("uses Ant Design feedback for visible errors and empty states in every business branch", () => {
+    const violations: string[] = [];
+    for (const file of typescriptReactFiles(SOURCE_ROOT)) {
+      if (file.startsWith(`${DESIGN_PRIMITIVES}/`)) continue;
+      const source = ts.createSourceFile(
+        file,
+        readFileSync(file, "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX,
+      );
+      function inspect(node: ts.Node): void {
+        if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+          const tag = node.tagName.getText(source);
+          if (/^[a-z]/.test(tag)) {
+            const attributes = node.attributes.getText(source);
+            const rawAlert = /role="alert"/.test(attributes);
+            const rawPresentation =
+              /\["(?:inline-empty|table-empty|form-error|auth-error|inline-error|design-empty-state|failure-analysis-empty|analysis-status|ddt-status|webhook-state|webhook-method|runner-state|runner-snapshot-state|form-success|inline-success|alert-success|analysis-log-diff-notice|quality-grade|failure-analysis-recent-success|avatar|failure-analysis-analyst-avatar|ddt-import-job-progress|public-progress-track)"\]/.test(
+                attributes,
+              );
+            if (rawAlert || rawPresentation)
+              violations.push(
+                `${relative(SOURCE_ROOT, file)}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`,
+              );
+          }
+        }
+        ts.forEachChild(node, inspect);
+      }
+      inspect(source);
+    }
     expect(violations).toEqual([]);
   });
 

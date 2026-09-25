@@ -1,4 +1,10 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Badge } from "@/components/ui/badge";
 
 import {
@@ -116,10 +122,14 @@ function ExecutionHistoryResults({
     void loadHistory();
     return () => controller.abort();
   }, [claim.id, projectId, revision]);
-  if (loading) return <p role="status">正在读取该用例的前 5 次执行结果…</p>;
+  if (loading)
+    return (
+      <LoadingStateMessage role="status">正在读取该用例的前 5 次执行结果…</LoadingStateMessage>
+    );
   if (error)
     return (
-      <div
+      <Notice
+        tone="error"
         className={cn(
           "analysis-history-error",
           failureAnalysisExecutionHistoryStyles["analysis-history-error"],
@@ -138,9 +148,10 @@ function ExecutionHistoryResults({
         >
           <RefreshCw size={14} /> 重新加载历史
         </Button>
-      </div>
+      </Notice>
     );
-  if (!items.length) return <p role="status">该用例在此任务中暂无更早的执行结果。</p>;
+  if (!items.length)
+    return <EmptyState role="status">该用例在此任务中暂无更早的执行结果。</EmptyState>;
   return (
     <Table
       className={cn(

@@ -14,7 +14,7 @@ export function useFormFieldValue(
   const [previousDefault, setPreviousDefault] = useState(defaultValue);
   const [draft, setDraft] = useState<FieldValue>(defaultValue ?? "");
   const [resetVersion, setResetVersion] = useState(0);
-  if (previousDefault !== defaultValue) {
+  if (!sameFieldValue(previousDefault, defaultValue)) {
     setPreviousDefault(defaultValue);
     setDraft(defaultValue ?? "");
   }
@@ -39,4 +39,10 @@ export function useFormFieldValue(
   }, [defaultValue, readControl]);
 
   return { value: value ?? draft, setDraft, resetVersion };
+}
+
+function sameFieldValue(left: FieldValue, right: FieldValue): boolean {
+  if (Array.isArray(left) && Array.isArray(right))
+    return left.length === right.length && left.every((item, index) => item === right[index]);
+  return left === right;
 }

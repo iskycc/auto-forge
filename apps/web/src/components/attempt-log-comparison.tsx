@@ -1,4 +1,10 @@
 "use client";
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
 import { Progress } from "@/components/ui/progress";
 
 import { cn } from "@/lib/utils";
@@ -249,7 +255,8 @@ function LogComparisonContent({
         </div>
       ) : null}
       {limited || incomplete ? (
-        <p
+        <Notice
+          tone="warning"
           className={cn(
             "analysis-log-diff-notice",
             attemptLogComparisonStyles["analysis-log-diff-notice"],
@@ -260,7 +267,7 @@ function LogComparisonContent({
             ? "日志较长，本次仅对比各日志开头最多 2,000 行、约 13 万字符；未加载部分不纳入差异。"
             : null}
           {incomplete ? "日志存在缺失或截断，对比仅供已读取内容参考。" : null}
-        </p>
+        </Notice>
       ) : null}
       <div
         className={cn("analysis-log-windows", attemptLogComparisonStyles["analysis-log-windows"])}
@@ -372,13 +379,15 @@ function ComparisonWindow({
         }}
       >
         {!loaded ? (
-          <p role="status">正在读取日志…</p>
+          <LoadingStateMessage role="status">正在读取日志…</LoadingStateMessage>
         ) : "error" in loaded ? (
-          <p role="alert">{loaded.error}</p>
+          <Notice tone="error" role="alert">
+            {loaded.error}
+          </Notice>
         ) : !comparisonReady ? (
-          <p>另一侧日志读取失败，请重新加载后对比。</p>
+          <Notice tone="info">另一侧日志读取失败，请重新加载后对比。</Notice>
         ) : !rows.length ? (
-          <p>当前日志流暂无内容。</p>
+          <EmptyState>当前日志流暂无内容。</EmptyState>
         ) : (
           <div
             className={cn(

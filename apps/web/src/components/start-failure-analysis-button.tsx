@@ -1,9 +1,11 @@
 "use client";
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { startFailureAnalysisBatchResultSchema } from "@autoforge/contracts";
-import { LoaderCircle, SearchCheck } from "lucide-react";
+import { SearchCheck } from "lucide-react";
 import { LinkButton } from "@/components/ui/link-button";
 import { useState } from "react";
 import { Button } from "@/components/ui";
@@ -72,11 +74,7 @@ export function StartFailureAnalysisButton({
       onClick={() => void start()}
       type="button"
     >
-      {pending ? (
-        <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={14} />
-      ) : (
-        <SearchCheck size={14} />
-      )}
+      {pending ? <LoadingIcon size={14} /> : <SearchCheck size={14} />}
       开始分析
     </Button>
   );

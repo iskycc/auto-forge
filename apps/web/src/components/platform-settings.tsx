@@ -1,4 +1,5 @@
 "use client";
+import { SuggestionInput } from "@/components/ui/suggestion-input";
 import { Notice } from "@/components/ui/notice";
 
 import { Card } from "@/components/ui/card";
@@ -156,22 +157,24 @@ export function PlatformSettings({
       ) : null}
 
       {!canManage ? (
-        <div
+        <Notice
+          tone="info"
           className={cn("implementation-notice", platformSettingsStyles["implementation-notice"])}
           role="status"
         >
           当前账号只有平台配置查看权限；所有字段均为只读。
-        </div>
+        </Notice>
       ) : null}
 
       {initial.configurationManaged ? (
-        <div
+        <Notice
+          tone="info"
           className={cn("implementation-notice", platformSettingsStyles["implementation-notice"])}
           role="status"
         >
           分布式运行配置由部署文件统一管理。修改后请同步所有节点并重启；节点 IP
           和端口可在“平台节点”中单独更新。
-        </div>
+        </Notice>
       ) : null}
       <nav
         className={cn("management-section-nav", platformSettingsStyles["management-section-nav"])}
@@ -236,18 +239,13 @@ export function PlatformSettings({
             </label>
             <label>
               平台时区
-              <Input
+              <SuggestionInput
                 defaultValue={initial.web.timeZone}
-                list="platform-time-zone-options"
+                suggestions={COMMON_TIME_ZONES}
                 name="timeZone"
                 placeholder="Asia/Shanghai"
                 required
               />
-              <datalist id="platform-time-zone-options">
-                {COMMON_TIME_ZONES.map((timeZone) => (
-                  <option key={timeZone} value={timeZone} />
-                ))}
-              </datalist>
               <small>
                 使用 IANA 时区名称；默认
                 Asia/Shanghai（东八区）。保存后页面时间与时间筛选立即按此时区显示和解析。

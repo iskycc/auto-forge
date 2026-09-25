@@ -89,9 +89,13 @@ export function AuthEntryForm({
       onSubmit={submit}
     >
       {notice ? (
-        <p className={cn("auth-notice", authEntryFormStyles["auth-notice"])} role="status">
+        <Notice
+          tone="info"
+          className={cn("auth-notice", authEntryFormStyles["auth-notice"])}
+          role="status"
+        >
           {notice}
-        </p>
+        </Notice>
       ) : null}
       {mode === "setup" ? (
         <label>
@@ -169,7 +173,7 @@ function stringValue(form: FormData, name: string): string {
 
 const authEntryFormStyles = {
   "auth-form":
-    "grid gap-4 [&_label]:grid [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-sm [&_label]:font-semibold [&_input]:w-full [&_small]:text-muted-foreground [&_small]:font-normal",
+    "grid gap-4 [&_label]:grid [&_label]:content-start [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-sm [&_label]:font-semibold [&_input]:w-full [&_small]:text-muted-foreground [&_small]:font-normal",
   "auth-notice":
     "m-0 p-3 border border-solid border-border rounded-lg text-success bg-success/10 text-sm",
   "auth-submit": "w-full justify-center mt-1",

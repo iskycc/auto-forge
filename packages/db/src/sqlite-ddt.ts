@@ -733,16 +733,19 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async listRequirementCategories(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number },
+    query: { query: string; cursor?: string; limit: number; exactName?: string },
   ) {
-    const pattern = `%${escapeLike(normalize(query.query))}%`;
+    const pattern =
+      query.exactName === undefined
+        ? `%${escapeLike(normalize(query.query))}%`
+        : normalize(query.exactName);
     const rows = this.handle.client
       .prepare(
         `SELECT category.id, category.name, category.revision,
  definition.id AS "caseDefinitionId", definition.class_name AS "className", definition.display_name AS "displayName", definition.source_id AS "sourceId", definition.current_version AS "currentVersion",
  CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled, CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
  FROM ddt_requirement_categories category LEFT JOIN case_definitions definition ON definition.id = category.execution_case_definition_id
- WHERE category.project_id = ? AND category.project_version_id = ? AND category.test_stage_id = ? AND category.id > ? AND category.normalized_name LIKE ? ESCAPE '\\'
+ WHERE category.project_id = ? AND category.project_version_id = ? AND category.test_stage_id = ? AND category.id > ? AND category.normalized_name ${query.exactName === undefined ? "LIKE ? ESCAPE '\\'" : "= ?"}
  ORDER BY category.id LIMIT ?`,
       )
       .all(

@@ -1,13 +1,22 @@
 "use client";
+import { Badge } from "@/components/ui/badge";
+
+import { EmptyState } from "@/components/ui/empty-state";
+
+import { LoadingStateMessage } from "@/components/ui/loading-state-message";
+
+import { Notice } from "@/components/ui/notice";
+
+import { LoadingIcon } from "@/components/ui/loading-icon";
+
 import { cn } from "@/lib/utils";
-import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   failureAnalysisHistoryPageSchema,
   type FailureAnalysisCaseConclusionView,
   type FailureAnalysisHistoryItemView,
 } from "@autoforge/contracts";
-import { ChevronDown, ChevronUp, LoaderCircle } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -117,19 +126,19 @@ export function FailureAnalysisConclusionCard({
         >
           <small>近 5 次批跑中的其他分析结论</small>
           {loading ? (
-            <p
+            <LoadingStateMessage
               className={cn(
                 "failure-analysis-history-state",
                 failureAnalysisConclusionCardStyles["failure-analysis-history-state"],
               )}
               role="status"
             >
-              <LoaderCircle className={cn("spin", uiPatterns["spin"])} size={16} />{" "}
-              正在读取历史结论…
-            </p>
+              <LoadingIcon size={16} /> 正在读取历史结论…
+            </LoadingStateMessage>
           ) : null}
           {error ? (
-            <div
+            <Notice
+              tone="error"
               className={cn(
                 "failure-analysis-conclusion-load-error",
                 failureAnalysisConclusionCardStyles["failure-analysis-conclusion-load-error"],
@@ -144,10 +153,10 @@ export function FailureAnalysisConclusionCard({
               >
                 重试
               </Button>
-            </div>
+            </Notice>
           ) : null}
           {!loading && !error && history && olderConclusions.length === 0 ? (
-            <p>暂无其他可继承结论，请重新搜索以刷新列表。</p>
+            <EmptyState>暂无其他可继承结论，请重新搜索以刷新列表。</EmptyState>
           ) : null}
           {olderConclusions.map((item) => (
             <ConclusionDetails item={item} key={item.claim.id} onSelect={onSelect} />
@@ -195,14 +204,14 @@ function ConclusionDetails({
             failureAnalysisConclusionCardStyles["failure-analysis-conclusion-meta"],
           )}
         >
-          <span
+          <Badge
             className={cn(
               "analysis-status completed",
               failureAnalysisConclusionCardStyles["analysis-status"],
             )}
           >
             {category}
-          </span>
+          </Badge>
           <small>
             {latest ? "最近一次分析" : "历史分析"} · #{item.batchSequenceNumber} {item.batchName}
           </small>

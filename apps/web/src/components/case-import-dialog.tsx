@@ -1,4 +1,6 @@
 "use client";
+import { Notice } from "@/components/ui/notice";
+
 import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -220,9 +222,13 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
                   </small>
                 ) : null}
                 {fileError ? (
-                  <small className={cn("auth-error", uiPatterns["auth-error"])} role="alert">
+                  <Notice
+                    tone="error"
+                    className={cn("auth-error", uiPatterns["auth-error"])}
+                    role="alert"
+                  >
                     {fileError}
-                  </small>
+                  </Notice>
                 ) : null}
               </label>
               <label
