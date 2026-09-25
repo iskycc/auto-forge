@@ -8,7 +8,11 @@ import {
   ensureAdministrator,
   expandAdministrationGroup,
 } from "./support/session";
-import { expectPageFitsViewport, expectUiIntegrity } from "./support/ui-guard";
+import {
+  expectPageFitsViewport,
+  expectUiIntegrity,
+  waitForUiTransitions,
+} from "./support/ui-guard";
 import { systemDiagnosticSchema } from "@autoforge/contracts";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
@@ -970,8 +974,12 @@ test("nested storage file rows retain independent columns, disclosure state and 
   for (let depth = 0; depth < 16; depth++) {
     const path = Array.from({ length: depth + 1 }, (_, index) => `level-${index}`).join("/");
     const branch = directoryHeader(path);
+    // An ancestor's expanding height can scroll this row after its own box is
+    // stable. Finish that transition before clicking the next nested header.
+    await waitForUiTransitions(page);
     await expect(branch.locator(".storage-tree-chevron")).toHaveCSS("transform", "none");
     await branch.click();
+    await expect(branch.locator(".storage-tree-chevron")).toHaveClass(/\brotate-90\b/);
   }
   await page.setViewportSize({ width: 1024, height: 768 });
   const deepFile = tree.locator(".storage-tree-file").filter({ hasText: "deep-log.txt" });
