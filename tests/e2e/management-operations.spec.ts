@@ -72,8 +72,14 @@ test("version initialization inherits mapped cases and tasks and preserves progr
   await page.goto("/settings/projects");
   const name = uniqueName("initialized-version");
   const wizard = await openNewVersionWizard(page, name);
-  await wizard.getByRole("combobox", { name: "继承来源（可选）", exact: true }).click();
-  await page.getByRole("option", { name: "来源版本_完整支付回归_".repeat(4), exact: true }).click();
+  const sourcePicker = wizard.getByRole("combobox", { name: "继承来源（可选）", exact: true });
+  await sourcePicker.click();
+  const sourceListId = await sourcePicker.getAttribute("aria-controls");
+  expect(sourceListId).toBeTruthy();
+  await page
+    .locator(`[id="${sourceListId}"]`)
+    .getByRole("option", { name: "来源版本_完整支付回归_".repeat(4), exact: true })
+    .click();
   const inherit = wizard.getByRole("button", { name: "继承所选内容", exact: true });
   await inherit.click();
   await expect(wizard.getByText(/本步已处理：新增或匹配/)).toBeVisible();
