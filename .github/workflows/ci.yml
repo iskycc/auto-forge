@@ -523,7 +523,9 @@ jobs:
   system-acceptance:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    # Governance takes about six minutes of browser checks plus source build,
+    # infrastructure setup and cleanup; the whole job needs bounded headroom.
+    timeout-minutes: ${{ matrix.timeout_minutes || 8 }}
     strategy:
       fail-fast: false
       matrix:
@@ -540,6 +542,7 @@ jobs:
             command: pnpm test:distributed
           - name: Full · governance
             command: bash scripts/quality/test-full-business-recovery.sh browser-governance
+            timeout_minutes: 12
           - name: Network-blocked Lite · assets
             command: bash scripts/quality/test-offline.sh assets
           - name: Network-blocked Lite · governance
