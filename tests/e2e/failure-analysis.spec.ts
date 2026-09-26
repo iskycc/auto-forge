@@ -15,6 +15,91 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("analysis snapshots received during a modal refresh promptly after it closes", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("deferred-analysis");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: suffix } },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const fixture = insertFailureAnalysisFixture(
+    requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+    version.body.id,
+    suffix,
+  );
+  const firstStatus = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/read-models/status" &&
+      url.searchParams.get("ids")?.split(",").length === 1
+    );
+  });
+  await page.goto("/case-analysis");
+  const statusUrl = (await firstStatus).url();
+  type SnapshotStatus = { generation: string | null; state: string };
+  const readSnapshot = async (): Promise<SnapshotStatus> => {
+    const response = await page.request.get(statusUrl);
+    expect(response.ok()).toBe(true);
+    return (await response.json()).items[0];
+  };
+  await expect.poll(async () => (await readSnapshot()).state, { timeout: 30_000 }).toBe("ready");
+  const initialGeneration = (await readSnapshot()).generation;
+  await page.reload();
+  await page.getByRole("button", { name: "新建分析任务" }).click();
+  const dialog = page.getByRole("dialog", { name: "选择执行任务开始分析" });
+  await expect(dialog.locator("article").filter({ hasText: fixture.suiteName })).toBeVisible();
+
+  // Keep a real modal open while another client creates the task and publishes its snapshot.
+  const started = await browserJson(page, "/api/v1/failure-analysis/batches", {
+    method: "POST",
+    body: {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: version.body.id,
+      batchId: fixture.batchId,
+    },
+  });
+  expect(started.status).toBe(201);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readSnapshot();
+        return snapshot.state === "ready" && snapshot.generation !== initialGeneration;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  const receivedStatus = page.waitForResponse((response) => response.url() === statusUrl);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await receivedStatus;
+  await expectUiIntegrity(page);
+  let subsequentStatusReads = 0;
+  page.on("request", (request) => {
+    if (request.url() === statusUrl) subsequentStatusReads += 1;
+  });
+  const taskCard = page
+    .locator(".failure-analysis-batch-card")
+    .filter({ hasText: fixture.suiteName });
+  await expect(taskCard).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭选择执行任务开始分析", exact: true }).click();
+  // Applying an already received snapshot must not wait for the 30-second metadata poll.
+  await expect(taskCard).toContainText("最终失败", { timeout: 5_000 });
+  expect(subsequentStatusReads).toBeLessThanOrEqual(1);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`deferred-analysis-${width}.png`),
+      fullPage: true,
+    });
+  }
+});
+
 test("long case names keep single, bulk and completed analysis dialogs within their width", async ({
   page,
 }) => {

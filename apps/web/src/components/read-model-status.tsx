@@ -10,6 +10,8 @@ import { Button } from "./ui";
 import { useToast } from "./ui-feedback";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
+const deferredRefreshCheckMs = 250;
+
 export function ReadModelStatusBar({
   snapshots: initialSnapshots,
   onRefresh,
@@ -30,6 +32,9 @@ export function ReadModelStatusBar({
   const [refreshing, setRefreshing] = useState(false);
   const [offline, setOffline] = useState(false);
   const signature = initialSnapshots
+    .map((snapshot) => `${snapshot.id}:${snapshot.generation ?? ""}`)
+    .join(",");
+  const receivedSignature = snapshots
     .map((snapshot) => `${snapshot.id}:${snapshot.generation ?? ""}`)
     .join(",");
   const ids = snapshots.map((snapshot) => snapshot.id).join(",");
@@ -71,18 +76,6 @@ export function ReadModelStatusBar({
           .parse(((await response.json()) as { items: unknown }).items);
         setOffline(false);
         setSnapshots(received);
-        const nextSignature = received
-          .map((snapshot) => `${snapshot.id}:${snapshot.generation ?? ""}`)
-          .join(",");
-        if (
-          nextSignature !== signature &&
-          nextSignature !== notifiedSignature.current &&
-          !document.querySelector('[aria-modal="true"]:is([role="dialog"], [role="alertdialog"])')
-        ) {
-          notifiedSignature.current = nextSignature;
-          if (onRefresh) onRefresh();
-          else router.refresh();
-        }
       } catch {
         if (!controller.signal.aborted) setOffline(true);
       } finally {
@@ -101,7 +94,29 @@ export function ReadModelStatusBar({
       clearTimeout(initial);
       document.removeEventListener("visibilitychange", inspect);
     };
-  }, [ids, unsettled, failed, offline, router, signature, onRefresh]);
+  }, [ids, unsettled, failed, offline, router]);
+
+  useEffect(() => {
+    if (receivedSignature === signature || receivedSignature === notifiedSignature.current) return;
+    let deferredRefresh: ReturnType<typeof setTimeout> | undefined;
+    function applyReceivedSnapshot() {
+      if (
+        document.visibilityState !== "visible" ||
+        !container.current?.getClientRects().length ||
+        document.querySelector('[aria-modal="true"]:is([role="dialog"], [role="alertdialog"])')
+      ) {
+        // Modal exit motion can outlive the ready response. Retry only the local
+        // visibility check, without waiting for or increasing database polling.
+        deferredRefresh = setTimeout(applyReceivedSnapshot, deferredRefreshCheckMs);
+        return;
+      }
+      notifiedSignature.current = receivedSignature;
+      if (onRefresh) onRefresh();
+      else router.refresh();
+    }
+    applyReceivedSnapshot();
+    return () => clearTimeout(deferredRefresh);
+  }, [receivedSignature, signature, onRefresh, router]);
 
   async function refresh() {
     setRefreshing(true);
