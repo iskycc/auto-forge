@@ -31,6 +31,10 @@ HTTP(S) 链接、精确字节数和 SHA-256；上传没有固定业务大小上�
 JAR 并使用任务 JDK 执行内置 Adapter。组织仍可选择本机预置工具链作为兼容后备，基线见
 [Runner 工具链](../operations/runner-toolchain.md)。
 
+URL 资源先由主平台缓存并分发，Runner 对 JDK 和依赖压缩包维护可跨任务、跨重启复用的
+24 小时滑动缓存。升级时先更新主平台，再更新 Runner；缓存目录、容量边界和清理规则见
+[运行时压缩包缓存](../architecture/runtime-input-cache.md)。
+
 ## 生命周期与诊断
 
 安装后执行 `autoforge-agent health live` 检查进程，执行

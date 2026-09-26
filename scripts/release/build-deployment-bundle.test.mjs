@@ -83,6 +83,7 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       "docs/adr/0012-full-distributed-node-local-logs.md",
       "docs/adr/0013-platform-time-authority.md",
       "docs/architecture/runtime-resource-priority.md",
+      "docs/architecture/runtime-input-cache.md",
       "docs/architecture/read-model-snapshots.md",
     ])
       assert.ok(
