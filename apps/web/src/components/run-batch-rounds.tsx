@@ -61,6 +61,7 @@ import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { DonutChart, type DonutChartSegment } from "@/components/donut-chart";
 import { RunBatchExportDialog } from "@/components/run-batch-export-dialog";
 import { RunnerFaultDialog } from "@/components/runner-fault-dialog";
+import { RunBatchRunnerPanel } from "@/components/run-batch-runner-panel";
 import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
@@ -102,6 +103,7 @@ export type RunnerDirectoryEntry = {
   id: string;
   name: string;
   resourceSnapshot?: RunnerResourceSnapshot;
+  canReadTelemetry?: boolean;
 };
 
 type CaseStatusFilter = "all" | "pending" | RunAttempt["status"];
@@ -215,13 +217,6 @@ function runnerDisplayName(
   directory: ReadonlyMap<string, RunnerDirectoryEntry>,
 ): string {
   return directory.get(runnerId)?.name || shortId(runnerId);
-}
-
-// 资源快照展示与执行机页保持一致：负载按单核归一，便于跨机型比较。
-function runnerResourceLabel(snapshot: RunnerResourceSnapshot): string {
-  const loadPerCpu =
-    snapshot.logicalCpuCount > 0 ? snapshot.loadAverage1m / snapshot.logicalCpuCount : 0;
-  return `CPU ${snapshot.cpuUtilizationPercent}% · 内存 ${snapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
 }
 
 // 终态失败提示行：adapter 正常失败露出完整失败描述，blocked 露出原因码；
@@ -1312,8 +1307,45 @@ function RoundDetailPanel({
           {actionError}
         </Notice>
       ) : null}
-      <div className={cn("round-detail-body", runBatchRoundsStyles["round-detail-body"])}>
-        <div className={cn("round-donuts", runBatchRoundsStyles["round-donuts"])}>
+      <div className={cn("round-tab-toolbar", runBatchRoundsStyles["round-tab-toolbar"])}>
+        <Segmented
+          label="轮次详情视图"
+          value={activeTab}
+          options={[
+            { value: "cases", label: "用例" },
+            { value: "runners", label: "执行机" },
+          ]}
+          onChange={(value) => {
+            if (value === "runners") setRunnerTabMounted(true);
+            onTabChange(value);
+          }}
+        />
+        {activeTab === "runners" ? (
+          <Button
+            className={cn(
+              "button button-secondary compact-button",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+              uiPatterns["compact-button"],
+            )}
+            onClick={() => setFaultDialogOpen(true)}
+            type="button"
+          >
+            <AlertTriangle size={15} /> 执行机异常 {faultIncidents.length}
+          </Button>
+        ) : null}
+      </div>
+      <div
+        className={
+          activeTab === "cases"
+            ? cn("round-detail-body", runBatchRoundsStyles["round-detail-body"])
+            : "min-w-0"
+        }
+      >
+        <div
+          hidden={activeTab !== "cases"}
+          className={cn("round-donuts", "[&[hidden]]:hidden", runBatchRoundsStyles["round-donuts"])}
+        >
           <div className={cn("round-donut-block", runBatchRoundsStyles["round-donut-block"])}>
             <h3>本轮结果分布</h3>
             <DonutChart
@@ -1334,34 +1366,6 @@ function RoundDetailPanel({
           </div>
         </div>
         <div className={cn("round-tab-content", runBatchRoundsStyles["round-tab-content"])}>
-          <div className={cn("round-tab-toolbar", runBatchRoundsStyles["round-tab-toolbar"])}>
-            <Segmented
-              label="轮次详情视图"
-              value={activeTab}
-              options={[
-                { value: "cases", label: "用例" },
-                { value: "runners", label: "执行机" },
-              ]}
-              onChange={(value) => {
-                if (value === "runners") setRunnerTabMounted(true);
-                onTabChange(value);
-              }}
-            />
-            {activeTab === "runners" ? (
-              <Button
-                className={cn(
-                  "button button-secondary compact-button",
-                  uiPatterns["button"],
-                  uiPatterns["button-secondary"],
-                  uiPatterns["compact-button"],
-                )}
-                onClick={() => setFaultDialogOpen(true)}
-                type="button"
-              >
-                <AlertTriangle size={15} /> 执行机异常 {faultIncidents.length}
-              </Button>
-            ) : null}
-          </div>
           <div
             className={cn("round-tab-panel", runBatchRoundsStyles["round-tab-panel"])}
             hidden={activeTab !== "cases"}
@@ -1388,7 +1392,7 @@ function RoundDetailPanel({
               className={cn("round-tab-panel", runBatchRoundsStyles["round-tab-panel"])}
               hidden={activeTab !== "runners"}
             >
-              <RoundRunnerCards
+              <RunBatchRunnerPanel
                 batch={batch}
                 round={summary.round}
                 canReadLogs={canReadLogs}
@@ -2269,84 +2273,6 @@ function AttemptInlineDetail({
   );
 }
 
-function RoundRunnerCards({
-  batch,
-  round,
-  canReadLogs,
-  runnerDirectory,
-  onOpenScheduling,
-}: {
-  batch: ExecutionBatchView;
-  round: number;
-  canReadLogs: boolean;
-  runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
-  onOpenScheduling: (runnerId: string | undefined) => void;
-}) {
-  const cards = batch.runnerRoundSummaries
-    .filter((summary) => summary.round === round)
-    .map((summary) => [summary.runnerId, summary] as const);
-
-  if (cards.length === 0) {
-    return (
-      <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
-        本轮还没有执行机参与执行。
-      </EmptyState>
-    );
-  }
-  return (
-    <div className={cn("runner-card-grid", runBatchRoundsStyles["runner-card-grid"])}>
-      {cards.map(([runnerId, card]) => {
-        const directoryEntry = runnerDirectory.get(runnerId);
-        const resourceSnapshot = directoryEntry?.resourceSnapshot;
-        return (
-          <div className={cn("runner-card", runBatchRoundsStyles["runner-card"])} key={runnerId}>
-            <div className={cn("runner-card-heading", runBatchRoundsStyles["runner-card-heading"])}>
-              <strong title={runnerId}>{directoryEntry?.name || shortId(runnerId)}</strong>
-              <span className={cn("muted", uiPatterns["muted"])}>本轮执行 {card.executed} 个</span>
-            </div>
-            <div className={cn("runner-card-stats", runBatchRoundsStyles["runner-card-stats"])}>
-              <span>通过 {card.passed}</span>
-              <span>失败 {card.failed}</span>
-            </div>
-            {resourceSnapshot ? (
-              <small
-                className={cn("muted runner-card-resources", uiPatterns["muted"])}
-                title={`采集于 UTC ${resourceSnapshot.observedAt}`}
-              >
-                {runnerResourceLabel(resourceSnapshot)}
-              </small>
-            ) : (
-              <EmptyState className={cn("muted runner-card-resources", uiPatterns["muted"])}>
-                暂无资源快照
-              </EmptyState>
-            )}
-            <small className={cn("muted", uiPatterns["muted"])}>
-              最后活动{" "}
-              <time title={`UTC ${card.lastActivity}`}>
-                {formatLocalDateTime(card.lastActivity)}
-              </time>
-            </small>
-            {canReadLogs ? (
-              <Button
-                className={cn(
-                  "button button-secondary compact-button",
-                  uiPatterns["button"],
-                  uiPatterns["button-secondary"],
-                  uiPatterns["compact-button"],
-                )}
-                onClick={() => onOpenScheduling(runnerId)}
-                type="button"
-              >
-                <ScrollText size={15} /> 调度日志
-              </Button>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function TestNgResults({ result }: { result: NonNullable<RunAttempt["testNg"]> }) {
   return (
     <div className={cn("testng-results", runBatchRoundsStyles["testng-results"])}>
@@ -2566,12 +2492,6 @@ const runBatchRoundsStyles = {
   "round-tab-toolbar": "flex items-center justify-between gap-3 mb-3 [&_.segmented-control]:mb-0",
   "round-table-scroll":
     "border border-solid border-border rounded-lg bg-card [&_tbody_tr]:cursor-pointer",
-  "runner-card":
-    "grid gap-2 border border-solid border-border rounded-lg p-3.5 bg-card [&_>_small]:text-xs [&_>_.ui-button]:justify-self-start",
-  "runner-card-grid": "grid grid-cols-[repeat(auto-fill,_minmax(230px,_1fr))] gap-3",
-  "runner-card-heading":
-    "flex items-baseline justify-between gap-2 [&_strong]:font-mono [&_strong]:text-sm",
-  "runner-card-stats": "flex gap-3 text-muted-foreground text-xs",
 
   "sortable-th-button":
     "inline-flex items-center gap-[5px] min-h-8 py-0.5 px-1 border-0 rounded-md bg-transparent text-inherit [font:inherit] font-semibold cursor-pointer [&:hover]:text-foreground",

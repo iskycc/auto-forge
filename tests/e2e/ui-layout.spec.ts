@@ -7,6 +7,7 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { selectJarForInspection } from "./support/jar-import";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
+import { insertBatchRunnerFixture } from "./support/batch-runner-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
 import {
@@ -53,6 +54,110 @@ const primaryRoutes = [
   "/settings/platform?section=storage",
   "/account/security",
 ] as const;
+
+test("batch runner panel separates round attempts from resource snapshots and contains long names", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("runner-panel");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertBatchRunnerFixture(directory, version.body.id, suffix);
+  let telemetryRequests = 0;
+  page.on("request", (request) => {
+    if (/\/api\/v1\/runners\/[^/]+\/telemetry$/.test(request.url())) telemetryRequests += 1;
+  });
+  await page.goto(`/run-batches/${fixture.batchId}`);
+  const toolbar = page.locator(".round-tab-toolbar");
+  await toolbar.getByText("执行机", { exact: true }).click();
+  const panel = page.getByRole("region", { name: "本轮执行机状态" });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".runner-card")).toHaveCount(8);
+  await expect(panel.getByLabel("本轮尝试总数")).toHaveText("8");
+  await expect(panel.getByLabel("本轮失败或超时总数")).toHaveText("3");
+  await expect(panel.getByLabel("本轮其他状态总数")).toHaveText("2");
+  await expect(panel).toContainText("尚无资源快照");
+  const node = panel.locator(".runner-card").filter({ hasText: fixture.longName });
+  await expect(node.getByRole("progressbar", { name: "CPU 使用率" })).toHaveAttribute(
+    "aria-valuenow",
+    "12",
+  );
+  await expect(
+    node.getByRole("button", { name: `查看 ${fixture.longName} 的资源监控`, exact: true }),
+  ).toBeVisible();
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    await page.reload();
+    await toolbar.getByText("执行机", { exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await waitForUiTransitions(page);
+      await panel.scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      expect(
+        await panel
+          .locator(".runner-card")
+          .evaluateAll((cards) => cards.every((card) => card.scrollWidth <= card.clientWidth + 1)),
+      ).toBe(true);
+      await captureUi(page, `batch-runner-panel-${appearance}`, width);
+      const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+      if (screenshots) {
+        await panel.evaluate((element) => element.scrollIntoView({ block: "start" }));
+        await page.evaluate(() => window.scrollBy(0, -100));
+        await page.screenshot({
+          path: resolve(screenshots, `${width}-batch-runner-viewport-${appearance}.png`),
+        });
+      }
+      const tabPosition = (await toolbar.boundingBox())!;
+      await toolbar.getByText("用例", { exact: true }).click();
+      const caseTabPosition = (await toolbar.boundingBox())!;
+      expect(Math.abs(caseTabPosition.x - tabPosition.x)).toBeLessThanOrEqual(1);
+      await toolbar.getByText("执行机", { exact: true }).click();
+    }
+  }
+  expect(telemetryRequests).toBe(0);
+  await node
+    .getByRole("button", { name: `查看 ${fixture.longName} 的资源监控`, exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: `${fixture.longName} · 资源监控`, exact: true });
+  await expect(dialog).toContainText("暂无资源历史");
+  await expectUiIntegrity(page);
+  expect(telemetryRequests).toBeGreaterThan(0);
+  await dialog.getByRole("button", { name: /^关闭/ }).click();
+  await node.getByRole("button", { name: "调度日志", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: /调度日志/ })).toBeVisible();
+  await page.getByRole("button", { name: "关闭日志终端", exact: true }).click();
+  const overviewUrl = `/api/v1/run-batches/${fixture.batchId}/overview`;
+  const overview = await (await page.request.get(overviewUrl)).json();
+  await page.route(
+    `**${overviewUrl}`,
+    (route) =>
+      route.fulfill({
+        json: {
+          ...overview,
+          updatedAt: new Date().toISOString(),
+          runnerRoundSummaries: [],
+        },
+      }),
+    { times: 1 },
+  );
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(panel).toContainText("本轮还没有执行机参与执行");
+  await expect(panel.locator(".runner-card")).toHaveCount(0);
+});
 
 test("anonymous execution details keep tables and actions within the page", async ({
   page,
@@ -158,6 +263,7 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await captureUi(anonymousPage, "shared-execution-dark", 1536);
     await anonymousPage.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
     await expect(anonymousPage.locator(".runner-card")).toHaveCount(1);
+    await expect(anonymousPage.locator(".runner-card").getByRole("button")).toHaveCount(0);
     await expectUiIntegrity(anonymousPage);
     await anonymousPage.locator(".round-tab-toolbar").getByText("用例", { exact: true }).click();
     const publicLog = anonymousPage

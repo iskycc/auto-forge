@@ -37,9 +37,13 @@ export default async function RunBatchDetailsPage({
   let runnerDirectory: RunnerDirectoryEntry[] = [];
   if (hasPermissionInAnyScope(identity, "runner.read")) {
     const runners = await services.runnerControl.list(500);
+    const canReadTelemetry = canAuthorize(() =>
+      services.identityAccess.authorize(identity, "runner.read"),
+    );
     runnerDirectory = runners.map((runner) => ({
       id: runner.id,
       name: runner.name,
+      canReadTelemetry,
       ...(runner.resourceSnapshot ? { resourceSnapshot: runner.resourceSnapshot } : {}),
     }));
   }
