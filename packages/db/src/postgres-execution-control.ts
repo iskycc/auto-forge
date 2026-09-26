@@ -498,6 +498,19 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     if (!declaredInput) {
       throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入未在执行快照中声明。");
     }
+    if (
+      declaredInput.downloadUrl &&
+      (declaredInput.kind === "jdk-archive" || declaredInput.kind === "jar-bundle")
+    ) {
+      // Read the immutable, lease-authorized snapshot, never a mutable project URL.
+      return {
+        kind: "url",
+        url: declaredInput.downloadUrl,
+        sizeBytes: declaredInput.sizeBytes,
+        sha256: declaredInput.sha256,
+        mediaType: declaredInput.mediaType,
+      };
+    }
     if (declaredInput.kind === "class-data") {
       const result = await this.handle.pool.query<{
         class_data_json: string | null;

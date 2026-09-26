@@ -46,6 +46,7 @@ func downloadAttemptInputs(
 	claimed ClaimedAssignment,
 	inputs []ExecutionInput,
 	workspace string,
+	cache *runtimeInputCache,
 ) error {
 	var totalBytes int64
 	for _, input := range inputs {
@@ -65,7 +66,7 @@ func downloadAttemptInputs(
 		return &workspaceCapacityError{requiredBytes: totalBytes, availableBytes: available}
 	}
 	for _, input := range inputs {
-		if err := downloadAttemptInput(ctx, client, identity, claimed, input, workspace); err != nil {
+		if err := cache.materialize(ctx, client, identity, claimed, input, workspace); err != nil {
 			return fmt.Errorf("download execution input %s: %w", input.InputID, err)
 		}
 	}
@@ -111,24 +112,7 @@ func downloadAttemptInput(
 		return fmt.Errorf("secure temporary input: %w", err)
 	}
 	digest := sha256.New()
-	var downloadErr error
-	if input.DownloadURL != "" {
-		downloadErr = client.DownloadExternalResource(
-			ctx,
-			input.DownloadURL,
-			input.SizeBytes,
-			io.MultiWriter(temporary, digest),
-		)
-	} else {
-		downloadErr = client.DownloadInput(
-			ctx,
-			identity,
-			claimed.Assignment.AttemptID,
-			claimed.Lease,
-			input,
-			io.MultiWriter(temporary, digest),
-		)
-	}
+	downloadErr := client.DownloadInput(ctx, identity, claimed.Assignment.AttemptID, claimed.Lease, input, io.MultiWriter(temporary, digest))
 	if downloadErr != nil {
 		temporary.Close()
 		return downloadErr

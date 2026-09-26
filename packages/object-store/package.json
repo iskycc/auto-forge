@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./local": "./src/local.ts",
-    "./minio": "./src/minio.ts"
+    "./minio": "./src/minio.ts",
+    "./runtime-archive-cache": "./src/runtime-archive-cache.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

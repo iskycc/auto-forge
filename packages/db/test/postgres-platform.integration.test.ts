@@ -977,6 +977,16 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         sizeBytes: 64,
         sha256: "c".repeat(64),
       });
+      executionSpec.inputs.push({
+        inputId: `runtime-url-${runnerId}`,
+        kind: "jdk-archive",
+        targetPath: "inputs/runtime/jdk.zip",
+        mediaType: "application/zip",
+        archiveFormat: "zip",
+        sizeBytes: 512,
+        sha256: "d".repeat(64),
+        downloadUrl: "http://internal-artifacts.example/jdk.zip",
+      });
       await handle.pool.query("UPDATE assignments SET execution_spec_json = $1 WHERE id = $2", [
         JSON.stringify(executionSpec),
         `assignment-${runnerId}`,
@@ -999,6 +1009,31 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         leaseExpiresAt: "2026-08-09T00:01:47.000Z",
       });
       expect(claimed).toHaveLength(1);
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId,
+          attemptId: `attempt-${runnerId}`,
+          inputId: `runtime-url-${runnerId}`,
+          leaseTokenHash: `lease-token-${runnerId}`,
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).resolves.toEqual({
+        kind: "url",
+        url: "http://internal-artifacts.example/jdk.zip",
+        mediaType: "application/zip",
+        sizeBytes: 512,
+        sha256: "d".repeat(64),
+      });
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId,
+          attemptId: `attempt-${runnerId}`,
+          inputId: `runtime-url-${runnerId}`,
+          leaseTokenHash: "wrong-lease",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_FORBIDDEN" });
+
       await expect(
         executions.resolveAttemptInput({
           runnerId,

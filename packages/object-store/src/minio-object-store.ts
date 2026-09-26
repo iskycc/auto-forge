@@ -205,6 +205,15 @@ export class MinioObjectStore implements JarObjectStorePort {
     return result;
   }
 
+  async openRead(objectKey: string) {
+    validateObjectKey(objectKey);
+    const metadata = await this.client.statObject(this.bucket, objectKey);
+    return {
+      sizeBytes: metadata.size,
+      content: await this.client.getObject(this.bucket, objectKey),
+    };
+  }
+
   async read(objectKey: string): Promise<Uint8Array> {
     validateObjectKey(objectKey);
     const stream = await this.client.getObject(this.bucket, objectKey);

@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,6 +46,11 @@ describe("LocalObjectStore", () => {
       readFile(resolve(directory, "objects", results[0]?.objectKey ?? "missing")),
     ).resolves.toEqual(Buffer.from(content));
 
+    const streamed = await store.openRead(results[0]!.objectKey);
+    expect(streamed.sizeBytes).toBe(content.byteLength);
+    expect(Buffer.concat(await Readable.from(streamed.content).toArray())).toEqual(
+      Buffer.from(content),
+    );
     const page = await store.list({ limit: 20, prefix: "projects/project-1/jars/" });
     expect(page.items).toHaveLength(1);
     expect(page.items[0]).toMatchObject({

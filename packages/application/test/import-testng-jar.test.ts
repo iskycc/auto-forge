@@ -204,6 +204,7 @@ function objectStoreFake(): JarObjectStorePort & {
     exists: vi.fn().mockResolvedValue(true),
     list: vi.fn(),
     read: vi.fn(),
+    openRead: vi.fn(),
     ready: vi.fn(),
   };
 }

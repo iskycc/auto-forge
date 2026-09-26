@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ExecutionControlService, redactLogContent } from "../src/control-executions";
 import type {
+  ClaimedAssignmentRecord,
   ExecutionControlRepository,
   JarObjectStorePort,
   RunBatchRepository,
@@ -149,6 +150,41 @@ describe("Runner execution compatibility", () => {
     });
     expect(executions.claim).toHaveBeenCalledOnce();
     expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup", 1, 1);
+    const input = {
+      inputId: "runtime-1",
+      kind: "jar-bundle",
+      downloadUrl: "http://private.example/bundle.zip",
+      sha256: "a".repeat(64),
+      sizeBytes: 10,
+      targetPath: "runtime/bundle.zip",
+    };
+    const record = {
+      assignment: { attemptId: "attempt-1", executionSpec: { inputs: [input] } },
+      lease: {
+        id: "lease-1",
+        tokenEncrypted: "encrypted",
+        version: 1,
+        expiresAt: "2026-08-09T00:01:00.000Z",
+      },
+    } as unknown as ClaimedAssignmentRecord;
+    vi.mocked(executions.claim).mockResolvedValue([record]);
+    executions.resolveAttemptSchedulingContext = vi.fn().mockResolvedValue(null);
+    const response = await service.claim("runner-no-cgroup", "credential", {
+      schemaVersion: 1,
+      requestId: "request-with-url",
+      availableSlots: 1,
+      labels: [],
+      capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+      waitSeconds: 0,
+    });
+    expect(response.assignments[0]?.assignment.executionSpec.inputs[0]).not.toHaveProperty(
+      "downloadUrl",
+    );
+    expect(response.assignments[0]?.assignment.executionSpec.inputs[0]).toMatchObject({
+      inputId: input.inputId,
+      sha256: input.sha256,
+    });
+    expect(record.assignment.executionSpec.inputs[0]?.downloadUrl).toBe(input.downloadUrl);
   });
 
   it("writes scheduling events for attempts recovered before claiming", async () => {

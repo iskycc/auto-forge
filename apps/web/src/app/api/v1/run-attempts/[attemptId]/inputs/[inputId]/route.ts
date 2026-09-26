@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+
 import { DomainError } from "@autoforge/domain";
 
 import { apiErrorResponse, bearerToken, rejectRateLimited } from "@/lib/api-response";
@@ -23,14 +25,32 @@ export async function GET(request: Request, context: Context): Promise<Response>
       inputId,
       leaseToken,
     );
-    const content =
-      authorized.kind === "inline"
-        ? authorized.content
-        : await services.objectStore.read(authorized.objectKey);
-    if (content.byteLength !== authorized.sizeBytes) {
-      throw new DomainError("ATTEMPT_INPUT_CORRUPTED", "输入对象大小与登记信息不一致。");
+    let body: BodyInit;
+    if (authorized.kind === "inline") {
+      if (authorized.content.byteLength !== authorized.sizeBytes)
+        throw new DomainError("ATTEMPT_INPUT_CORRUPTED", "输入对象大小与登记信息不一致。");
+      body = Uint8Array.from(authorized.content).buffer;
+    } else {
+      const object =
+        authorized.kind === "url"
+          ? await services.runtimeArchiveCache
+              .open(authorized, request.signal)
+              .catch((cause: unknown) => {
+                throw new DomainError(
+                  "ATTEMPT_INPUT_DOWNLOAD_FAILED",
+                  "主平台下载或校验运行时压缩包失败，请检查 URL、SHA-256、文件大小及平台缓存磁盘空间。",
+                  { cause },
+                );
+              })
+          : await services.objectStore.openRead(authorized.objectKey);
+      if (object.sizeBytes !== authorized.sizeBytes) {
+        // Return the iterator even before the response starts, releasing its file/socket.
+        await object.content[Symbol.asyncIterator]().return?.();
+        throw new DomainError("ATTEMPT_INPUT_CORRUPTED", "输入对象大小与登记信息不一致。");
+      }
+      body = Readable.toWeb(Readable.from(object.content)) as ReadableStream<Uint8Array>;
     }
-    return new Response(Uint8Array.from(content).buffer, {
+    return new Response(body, {
       headers: {
         "Cache-Control": "no-store",
         "Content-Disposition":
@@ -39,7 +59,7 @@ export async function GET(request: Request, context: Context): Promise<Response>
             : authorized.mediaType === "application/java-archive"
               ? 'attachment; filename="tests.jar"'
               : 'attachment; filename="runtime-archive.bin"',
-        "Content-Length": String(content.byteLength),
+        "Content-Length": String(authorized.sizeBytes),
         "Content-Type": authorized.mediaType,
         "X-Content-Type-Options": "nosniff",
       },

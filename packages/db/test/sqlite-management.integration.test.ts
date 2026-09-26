@@ -1188,6 +1188,19 @@ describe("SQLite management repositories", () => {
         )
         .run(classDataJson, Buffer.byteLength(classDataJson), classDataSha256, "run-control");
 
+      executionSpec.inputs.push({
+        inputId: "runtime-url-control",
+        kind: "jar-bundle",
+        targetPath: "inputs/runtime/bundle.zip",
+        mediaType: "application/zip",
+        archiveFormat: "zip",
+        sizeBytes: 512,
+        sha256: "d".repeat(64),
+        downloadUrl: "http://internal-artifacts.example/bundle.zip",
+      });
+      handle.client
+        .prepare("UPDATE assignments SET execution_spec_json = ? WHERE id = ?")
+        .run(JSON.stringify(executionSpec), "assignment-control");
       const claimInput = {
         runnerId: "runner-control",
         requestId: "claim-control",
@@ -1221,6 +1234,30 @@ describe("SQLite management repositories", () => {
           },
         ]),
       );
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          inputId: "runtime-url-control",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).resolves.toEqual({
+        kind: "url",
+        url: "http://internal-artifacts.example/bundle.zip",
+        mediaType: "application/zip",
+        sizeBytes: 512,
+        sha256: "d".repeat(64),
+      });
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          inputId: "runtime-url-control",
+          leaseTokenHash: "wrong-lease",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_FORBIDDEN" });
       const schedulingEvents = await batches.listSchedulingEvents({
         batchId: "00000000-0000-4000-8000-0000000c0001",
         limit: 50,

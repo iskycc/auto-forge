@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 
 import { Client } from "minio";
@@ -35,6 +36,11 @@ describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () =>
         (await store.list({ limit: 10, prefix: "projects/project-1/jars/" })).items,
       ).toHaveLength(1);
       await expect(store.read(written.objectKey)).resolves.toEqual(Buffer.from(content));
+      const streamed = await store.openRead(written.objectKey);
+      expect(streamed.sizeBytes).toBe(content.byteLength);
+      expect(Buffer.concat(await Readable.from(streamed.content).toArray())).toEqual(
+        Buffer.from(content),
+      );
       await store.delete(written.objectKey);
       await expect(store.exists(written.objectKey)).resolves.toBe(false);
 

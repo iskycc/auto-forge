@@ -95,6 +95,7 @@ import {
 import { parseDdtUpload } from "@autoforge/ddt-import";
 import { isolatedJarDiscovery, isolatedDdtSpreadsheets } from "./isolated-file-parsing";
 import { LocalObjectStore } from "@autoforge/object-store/local";
+import { RuntimeArchiveCache } from "@autoforge/object-store/runtime-archive-cache";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
 import { RunnerProtocolController } from "@autoforge/runner-sdk";
@@ -852,6 +853,11 @@ async function createPlatformServices() {
       ),
   });
   return {
+    runtimeArchiveCache: new RuntimeArchiveCache({
+      dataDirectory: config.dataDirectory,
+      now: () => clock.now().getTime(),
+      fetch,
+    }),
     diagnostics,
     databaseReady,
     clock,

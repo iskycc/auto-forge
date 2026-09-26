@@ -102,6 +102,11 @@ func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
 	supervisor.waitGroup.Add(1)
 	go func() {
 		defer supervisor.waitGroup.Done()
+		supervisor.batches.inputCache.maintain(claimContext, supervisor.diagnostics)
+	}()
+	supervisor.waitGroup.Add(1)
+	go func() {
+		defer supervisor.waitGroup.Done()
 		supervisor.claimLoop(claimContext)
 	}()
 	return nil
@@ -481,7 +486,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 				if err := supervisor.prepareSharedBatchWorkspace(ctx, claimed, inputs, workspace, useAdapter); err != nil {
 					return err
 				}
-			} else if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace); err != nil {
+			} else if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace, supervisor.batches.inputCache); err != nil {
 				return err
 			}
 			if useAdapter && executionSpec.BatchID == "" {

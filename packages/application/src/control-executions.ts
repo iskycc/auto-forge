@@ -155,7 +155,18 @@ export class ExecutionControlService {
       schemaVersion: 1,
       requestId: input.requestId,
       assignments: claimed.map((record) => ({
-        assignment: record.assignment,
+        assignment: {
+          ...record.assignment,
+          executionSpec: {
+            ...record.assignment.executionSpec,
+            // Old Agents also use the authenticated input endpoint when no URL is sent.
+            inputs: record.assignment.executionSpec.inputs.map((input) => {
+              const controlledInput = { ...input };
+              delete controlledInput.downloadUrl;
+              return controlledInput;
+            }),
+          },
+        },
         lease: {
           leaseId: record.lease.id,
           token: this.credentialCipher.decrypt(

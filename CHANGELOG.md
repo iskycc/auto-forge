@@ -6,6 +6,27 @@ and known limitations.
 
 ## Unreleased
 
+## 1.18.13 - 2026-09-27
+
+### Changed
+
+- URL 配置的 JDK/依赖压缩包改为主平台先下载、校验并缓存，再经带 Runner 身份与租约鉴权的输入端点分发；外部 URL 不再下发给 Agent。上传型资源同样使用流式响应，避免整包占用 Web 内存。
+- Runner 对 JDK 与完整依赖 JAR 压缩包增加跨批次持久缓存，每次使用续期 24 小时，支持任务启动、公开日志重跑和重启后复用；自动清理过期缓存，并合并相同摘要的并发下载。
+- 缓存损坏会重新获取，工作目录使用独立副本，更新依赖仍完全替换旧包。缓存容量不足时退回普通下载，不因可选缓存容量不足拒绝执行。
+
+### Database, deployment and compatibility
+
+- 无数据库迁移、持久配置格式或生产依赖变更；新增主平台与 Runner 数据目录下的可重建文件缓存，不引入 SQLite/PostgreSQL 写入或 Full 基础设施隐性依赖。
+- 先升级主平台，再升级 Runner。新主平台兼容旧 Runner 的控制面下载路径；升级 Runner 后才启用跨批次缓存，新 Runner 的 URL 资源执行需要新主平台配合。Adapter 与用例参数无需修改。
+- Full 各平台节点分别维护本地 URL 缓存；Runner 缓存最多接纳 32 GiB、10,000 项，空间不足时退回当前工作目录下载。完整生命周期与容量边界见 `docs/architecture/runtime-input-cache.md`。
+- 双架构离线后端镜像、部署包、Jenkins 插件、SBOM 与签名清单的资产类型不变；图片、测试数据库与本地构建产物不纳入提交。
+
+### Validation and known limitations
+
+- 本地已通过 Runner 全量测试、控制面缓存并发竞态检查与 go vet，覆盖重启续期、过期回收、跨终态批次复用、并发合并、取消、损坏恢复、工作副本隔离和容量降级。
+- 相关 TypeScript 单元/HTTP 测试、SQLite/PostgreSQL 租约鉴权集成测试、本地/MinIO 流式读取测试、全仓类型检查、改动范围格式/lint、Web/Worker 生产构建与 amd64/arm64 内置 Agent 构建通过；完整源码与发布资产验收以本版本 GitHub Actions 结果为准。
+- 本次缓存压缩包文件，解压结果仍只在同批次内复用；URL 必须可被主平台访问，登记的 SHA-256 和大小必须与内容一致。本次没有界面修改，本地未重复执行全站 UI E2E。
+
 ## 1.18.12 - 2026-09-26
 
 ### Changed

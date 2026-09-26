@@ -26,10 +26,11 @@ const cotestRuntimeLayoutVersion = "complete-bundle-v1\n"
 // 同批次并发 attempt 通过硬链接或受控目录链接共享；批次进入终态且本机没有在途
 // attempt 后删除共享目录。
 type batchRegistry struct {
-	mutex     sync.Mutex
-	entries   map[string]*batchEntry
-	root      string // <数据目录>/work/batches
-	removeAll func(string) error
+	inputCache *runtimeInputCache
+	mutex      sync.Mutex
+	entries    map[string]*batchEntry
+	root       string // <数据目录>/work/batches
+	removeAll  func(string) error
 }
 
 // batchEntry 串行化同一批次的输入下载与运行时物化，并记录本机在途 attempt 数。
@@ -41,9 +42,10 @@ type batchEntry struct {
 
 func newBatchRegistry(dataDirectory string) *batchRegistry {
 	return &batchRegistry{
-		entries:   make(map[string]*batchEntry),
-		root:      filepath.Join(dataDirectory, "work", batchesDirectoryName),
-		removeAll: os.RemoveAll,
+		entries:    make(map[string]*batchEntry),
+		inputCache: newRuntimeInputCache(dataDirectory),
+		root:       filepath.Join(dataDirectory, "work", batchesDirectoryName),
+		removeAll:  os.RemoveAll,
 	}
 }
 
@@ -216,10 +218,13 @@ func (registry *batchRegistry) ensureBatchInputs(
 			return "", err
 		}
 		if matches {
+			if err := registry.inputCache.rememberUse(ctx, input); err != nil {
+				return "", err
+			}
 			continue
 		}
 		// 下载仍复用单输入实现：临时文件 + fsync + 原子 rename + 配额/校验值验证。
-		if err := downloadAttemptInput(ctx, client, identity, claimed, input, batchDir); err != nil {
+		if err := registry.inputCache.materialize(ctx, client, identity, claimed, input, batchDir); err != nil {
 			return "", fmt.Errorf("download shared batch input %s: %w", input.InputID, err)
 		}
 	}

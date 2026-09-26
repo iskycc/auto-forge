@@ -207,6 +207,17 @@ export class LocalObjectStore implements JarObjectStorePort {
     return result;
   }
 
+  async openRead(objectKey: string) {
+    const file = await open(this.resolveObjectKey(objectKey), "r");
+    try {
+      const metadata = await file.stat();
+      return { sizeBytes: metadata.size, content: file.createReadStream() };
+    } catch (error) {
+      await file.close();
+      throw error;
+    }
+  }
+
   async read(objectKey: string): Promise<Uint8Array> {
     return readFile(this.resolveObjectKey(objectKey));
   }

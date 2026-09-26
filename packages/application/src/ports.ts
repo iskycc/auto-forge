@@ -515,6 +515,7 @@ export interface ExecutionControlRepository {
   }): Promise<
     | { kind: "object"; objectKey: string; sizeBytes: number; sha256: string; mediaType: string }
     | { kind: "inline"; content: Uint8Array; sizeBytes: number; sha256: string; mediaType: string }
+    | { kind: "url"; url: string; sizeBytes: number; sha256: string; mediaType: string }
   >;
   appendLogChunks(input: {
     runnerId: string;
@@ -722,6 +723,7 @@ export interface JarObjectStorePort {
     nextCursor?: string;
   }>;
   read(objectKey: string): Promise<Uint8Array>;
+  openRead(objectKey: string): Promise<{ sizeBytes: number; content: AsyncIterable<Uint8Array> }>;
   ready(): Promise<void>;
   readonly storageKind: "local" | "minio";
 }

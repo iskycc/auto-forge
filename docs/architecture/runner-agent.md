@@ -187,6 +187,8 @@ CoTest Adapter assignment 另外允许一个 `jar-bundle` 和一个可选 `jdk-a
 暂存和对象写入，不设固定业务大小上限；Runner Protocol 的磁盘上限、按输入动态计算的展开预算、
 文件数预算和底层存储配额仍是不可绕过的安全边界。
 
+URL 型运行时输入不再下发外部下载地址。主平台从已授权的不可变 assignment 快照解析 URL，在节点本地流式缓存、校验后，通过同一输入端点分发；上传对象也改为流式读取，避免整包进入 Web 内存。Runner 对 `jdk-archive` 和 `jar-bundle` 使用独立于批次目录的持久缓存，按 SHA-256 和大小寻址，使用后从该时刻续期 24 小时；详见[缓存生命周期与升级说明](./runtime-input-cache.md)。
+
 资源隔离只在 cgroup v2 委派经过 doctor 验证后上报 `isolation:cgroup-v2` capability。Agent 为每个 attempt 创建子 cgroup，先写 `cpu.max`、`memory.max`、`memory.swap.max=0`、`memory.oom.group=1` 和 `pids.max`；内部包装进程再设置 `RLIMIT_FSIZE`、`RLIMIT_NOFILE`、`RLIMIT_CORE=0` 并加入 cgroup，完成父子握手后才 `execve` 用户 Java。超时、取消、资源超限和正常完成后的残留后代均通过 `cgroup.kill` 清理，旧内核回退为枚举 cgroup PID 后发送 `SIGKILL`。没有 cgroup v2 时，包装进程仍设置上述 rlimit，并使用进程组、超时和有界工作区扫描清理；CPU、内存和整个后代进程数量不具备 cgroup 等级的硬限制，因此仅适合可信执行负载。
 
 工作目录总字节数和条目数使用 100ms 有界扫描监督，超限映射为独立稳定结果码。`RLIMIT_FSIZE` 可硬限制单个文件，但普通目录无法仅靠 cgroup/rlimit 获得严格的总容量配额，因此最多存在一个采样周期的瞬时超写窗口；严格磁盘隔离需要部署方提供专用文件系统或项目配额。进程模式仍不是完整沙箱：它不隔离网络，也不能阻止测试读取 Agent 服务账号本来可读的主机路径。
