@@ -6,7 +6,7 @@ and known limitations.
 
 ## Unreleased
 
-## 1.18.14 - 2026-09-27
+## 1.18.15 - 2026-09-27
 
 ### Fixed
 
@@ -23,6 +23,7 @@ and known limitations.
 
 ### Validation and known limitations
 
+- `v1.18.14` 在验收阶段停止发布，未公开正式 Release；本版本增加对上传区展开动画和旧终端会话释放的可观察等待，避免真实 Agent 验收提前点击或重连，不重试业务操作、不放宽功能断言。
 - 本地通过 45 项相关单测、Web 生产构建及全仓格式、许可证、lint、Go vet 与类型检查。Playwright 覆盖完整 CaseID 的逐条/分组复制、超出预览的结果、原生手动复制、HTTP 兼容路径、拒绝复制反馈、清单导入、任务勾选、顶栏与弹窗焦点；实际查看 1024px/1536px 深浅色截图及 1920px 导入布局。
 - 完整 TestNG JAR 导入回归与真实 Runner/Bash 的命令、路径 Tab 补全已在本地验证；200% 缩放验收在有效 1536px 的受支持桌面宽度进行，搜索定位明确区分输入框与快捷键按钮。完整源码、Full 分布式与正式离线资产验收以本版本 GitHub Actions 结果为准。
 

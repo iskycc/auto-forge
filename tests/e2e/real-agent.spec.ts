@@ -1,7 +1,7 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
 
@@ -9,6 +9,7 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { appAlert, ensureAdministrator } from "./support/session";
 import { selectJarForInspection } from "./support/jar-import";
 import { expectTerminalTabCompletion, sendTerminalInput } from "./support/terminal-input";
+import { waitForUiTransitions } from "./support/ui-guard";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -287,6 +288,14 @@ async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<vo
 
   await page.reload();
   await expect.poll(() => isProcessAlive(childPID), { timeout: 10_000 }).toBe(false);
+  // Bash can outlive its background child during the bounded TERM/KILL grace period.
+  // The Agent removes this directory only after it releases the terminal session slot.
+  const terminalDirectory = join(
+    requiredEnvironment("E2E_REAL_AGENT_DATA_DIR"),
+    "work",
+    "terminal",
+  );
+  await expect.poll(() => readdir(terminalDirectory), { timeout: 10_000 }).toEqual([]);
   assertAgentRunning(agent);
 
   const refreshedRow = page.getByRole("row", { name: new RegExp(runnerName) });
@@ -438,6 +447,8 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
   await uploadForm
     .getByLabel("本地文件")
     .setInputFiles(requiredEnvironment("E2E_REAL_DEPENDENCY_ARCHIVE"));
+  // The mounted form has stable controls while Collapse still clips its opening panel.
+  await waitForUiTransitions(page);
   await uploadForm.getByRole("button", { name: "上传并启用" }).click();
   await expect(page.getByText("运行时资源已上传并设为当前配置。")).toBeVisible({
     timeout: 60_000,
