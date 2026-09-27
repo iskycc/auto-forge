@@ -93,6 +93,17 @@ export function insertBatchRunnerFixture(directory: string, versionId: string, s
           );
       }
     }
+    database
+      .prepare(
+        "UPDATE run_attempts SET result_code='EXECUTION_TIMEOUT',result_summary=?,started_at=?,finished_at=? WHERE id=?",
+      )
+      .run(
+        "执行超过平台设定的时间限制。已终止用例进程。\n" +
+          "com.example.payment.CheckPaymentStatus".repeat(12),
+        observedAt,
+        new Date().toISOString(),
+        `attempt-run-failed-1-${suffix}`,
+      );
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

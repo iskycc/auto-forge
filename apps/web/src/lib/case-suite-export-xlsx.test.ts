@@ -53,6 +53,9 @@ describe("case suite XLSX export", () => {
       "ORDER-1001",
     ]);
     expect(sheet?.actualRowCount).toBe(3);
+    expect(sheet?.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EEF5" } });
+    expect(sheet?.getCell("A2").fill).toMatchObject({ fgColor: { argb: "FFFFFFFF" } });
+    expect(sheet?.getCell("A3").fill).toMatchObject({ fgColor: { argb: "FFF8FAFC" } });
     expect(sheet?.getColumn(1).width).toBe(52);
     expect(sheet?.getColumn(2).width).toBe(36);
   });

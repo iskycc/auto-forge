@@ -18,6 +18,7 @@ export async function readExecutionOverview(
   const terminal = ["succeeded", "failed", "cancelled"].includes(metadata.status);
   const projection = await snapshots.read({
     kind: "execution_overview",
+    snapshotVersion: 2,
     projectId: metadata.projectId,
     batchId,
     ...(terminal ? { terminalVersion: metadata.version } : {}),

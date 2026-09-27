@@ -58,6 +58,7 @@ const primaryRoutes = [
 
 test("batch runner panel separates round attempts from resource snapshots and contains long names", async ({
   page,
+  browser,
 }) => {
   await ensureAdministrator(page);
   const suffix = uniqueName("runner-panel");
@@ -84,7 +85,8 @@ test("batch runner panel separates round attempts from resource snapshots and co
   await expect(panel).toBeVisible();
   await expect(panel.locator(".runner-card")).toHaveCount(8);
   await expect(panel.getByLabel("本轮尝试总数")).toHaveText("8");
-  await expect(panel.getByLabel("本轮失败或超时总数")).toHaveText("3");
+  await expect(panel.getByLabel("本轮失败总数")).toHaveText("2");
+  await expect(panel.getByLabel("本轮超时总数")).toHaveText("1");
   await expect(panel.getByLabel("本轮其他状态总数")).toHaveText("2");
   await expect(panel).toContainText("尚无资源快照");
   const node = panel.locator(".runner-card").filter({ hasText: fixture.longName });
@@ -122,6 +124,14 @@ test("batch runner panel separates round attempts from resource snapshots and co
           path: resolve(screenshots, `${width}-batch-runner-viewport-${appearance}.png`),
         });
       }
+      await panel.getByRole("button", { name: "超时记录 (1)", exact: true }).click();
+      const timeouts = page.getByRole("dialog", { name: "执行机超时记录", exact: true });
+      await expect(timeouts).toContainText("EXECUTION_TIMEOUT");
+      await expect(timeouts).toContainText("执行超过平台设定的时间限制");
+      await expect(timeouts).toContainText("共 1 次超时");
+      await expectUiIntegrity(page);
+      await captureUi(page, `runner-timeouts-${appearance}`, width);
+      await timeouts.getByRole("button", { name: /^关闭/ }).click();
       const tabPosition = (await toolbar.boundingBox())!;
       await toolbar.getByText("用例", { exact: true }).click();
       const caseTabPosition = (await toolbar.boundingBox())!;
@@ -129,6 +139,53 @@ test("batch runner panel separates round attempts from resource snapshots and co
       await toolbar.getByText("执行机", { exact: true }).click();
     }
   }
+  const timeoutQuery = new URLSearchParams({
+    cached: "1",
+    scope: "attempts",
+    status: "timed_out",
+    runnerId: `node-1-${suffix}`,
+    executionRound: "1",
+    pageSize: "1",
+  });
+  const casesUrl = `/api/v1/run-batches/${fixture.batchId}/cases`;
+  expect(await (await page.request.get(`${casesUrl}?${timeoutQuery}`)).json()).toMatchObject({
+    total: 1,
+    items: [{ attempt: { resultCode: "EXECUTION_TIMEOUT" } }],
+  });
+  for (const filter of [{ runnerId: `node-0-${suffix}` }, { executionRound: "2" }]) {
+    const emptyQuery = new URLSearchParams(timeoutQuery);
+    for (const [name, value] of Object.entries(filter)) emptyQuery.set(name, value);
+    expect(await (await page.request.get(`${casesUrl}?${emptyQuery}`)).json()).toMatchObject({
+      total: 0,
+      items: [],
+    });
+  }
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${fixture.batchId}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  const anonymous = await browser.newContext();
+  try {
+    expect(
+      (await anonymous.request.get(`http://127.0.0.1:3100${casesUrl}?${timeoutQuery}`)).status(),
+    ).toBe(401);
+    const token = new URL(share.body.shareUrl, "http://127.0.0.1:3100").pathname.split("/").at(-1)!;
+    const sharedQuery = new URLSearchParams(timeoutQuery);
+    sharedQuery.set("access_token", token);
+    const shared = await anonymous.request.get(`http://127.0.0.1:3100${casesUrl}?${sharedQuery}`);
+    expect(shared.status()).toBe(200);
+    expect(await shared.json()).toMatchObject({ total: 1 });
+  } finally {
+    await anonymous.close();
+  }
+  await panel.getByRole("button", { name: "超时记录 (1)", exact: true }).click();
+  const timeoutDialog = page.getByRole("dialog", { name: "执行机超时记录", exact: true });
+  await timeoutDialog.getByRole("button", { name: "查看用例日志", exact: true }).click();
+  await expect(timeoutDialog).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "关闭日志终端", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭日志终端", exact: true }).click();
   expect(telemetryRequests).toBe(0);
   await node
     .getByRole("button", { name: `查看 ${fixture.longName} 的资源监控`, exact: true })

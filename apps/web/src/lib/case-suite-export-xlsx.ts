@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CaseSuiteExportRow } from "@autoforge/application";
 import ExcelJS from "exceljs";
+import { exportWorksheetOptions, styleExportHeader, styleExportRow } from "./export-workbook-style";
 import { PassThrough } from "node:stream";
 
 const CASE_SUITE_EXPORT_HEADERS = ["用例编号（类路径）", "用例名称"] as const;
@@ -35,9 +36,7 @@ async function writeWorkbook(
     useStyles: true,
   });
   workbook.creator = "AutoForge";
-  const sheet = workbook.addWorksheet("任务用例", {
-    views: [{ state: "frozen", ySplit: 1 }],
-  });
+  const sheet = workbook.addWorksheet("任务用例", exportWorksheetOptions());
   sheet.columns = [
     { header: CASE_SUITE_EXPORT_HEADERS[0], key: "casePath", width: 52 },
     { header: CASE_SUITE_EXPORT_HEADERS[1], key: "displayName", width: 36 },
@@ -45,19 +44,12 @@ async function writeWorkbook(
   sheet.autoFilter = { from: "A1", to: "B1" };
 
   const header = sheet.getRow(1);
-  header.height = 28;
-  header.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF315B7D" } };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
-  });
+  styleExportHeader(header);
   header.commit();
 
   for await (const item of rows) {
     const row = sheet.addRow({ casePath: item.casePath, displayName: item.displayName });
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.alignment = { vertical: "top", wrapText: true };
-    });
+    styleExportRow(row, CASE_SUITE_EXPORT_HEADERS.length);
     row.commit();
   }
 

@@ -44,6 +44,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         services.readModels,
         {
           kind: "execution_overview",
+          snapshotVersion: 2,
           projectId: overview.batch.projectId,
           batchId,
           ...(["succeeded", "failed", "cancelled"].includes(overview.batch.status)

@@ -753,7 +753,8 @@ export class SqliteRunBatchRepository
         `SELECT attempt.execution_round AS round,attempt.runner_id AS runnerId,
                 COUNT(*) AS executed,
                 SUM(CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 1 ELSE 0 END) AS passed,
-                SUM(CASE WHEN COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out') THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN COALESCE(attempt.outcome,attempt.status)='failed' THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN COALESCE(attempt.outcome,attempt.status)='timed_out' THEN 1 ELSE 0 END) AS timedOut,
                 MAX(COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at)) AS lastActivity
          FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
          WHERE run.batch_id=? GROUP BY attempt.execution_round,attempt.runner_id
@@ -765,6 +766,7 @@ export class SqliteRunBatchRepository
       executed: number;
       passed: number;
       failed: number;
+      timedOut: number;
       lastActivity: string;
     }>;
     const runnerFaultIncidents = this.runnerFaultIncidents(batchId);
@@ -1858,7 +1860,12 @@ function sqliteCasePageQuery(input: RunBatchCasePageQuery): {
 } {
   const parameters: Array<string | number> = [input.batchId, input.batchId];
   let scopeCte: string;
-  if (input.scope === "summary") {
+  if (input.scope === "attempts") {
+    scopeCte = `, scope_rows AS (
+      SELECT attempt.execution_run_id,attempt.execution_round AS round,attempt.id AS attempt_id
+      FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+    )`;
+  } else if (input.scope === "summary") {
     scopeCte = `, ranked_attempts AS (
       SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,attempt.execution_round,
              ROW_NUMBER() OVER (
@@ -1884,9 +1891,21 @@ function sqliteCasePageQuery(input: RunBatchCasePageQuery): {
     if (input.scope !== "all") parameters.push(input.scope);
   }
   const where: string[] = [];
+  if (input.runnerId) {
+    where.push("attempt.runner_id=?");
+    parameters.push(input.runnerId);
+  }
+  if (input.executionRound) {
+    where.push("scope.round=?");
+    parameters.push(input.executionRound);
+  }
   if (input.status === "pending") where.push("scope.attempt_id IS NULL");
   else if (input.status) {
-    where.push("attempt.status=?");
+    where.push(
+      input.scope === "attempts"
+        ? "COALESCE(attempt.outcome,attempt.status)=?"
+        : "attempt.status=?",
+    );
     parameters.push(input.status);
   }
   if (input.query?.trim()) {
@@ -1915,7 +1934,7 @@ function sqliteCasePageQuery(input: RunBatchCasePageQuery): {
       FROM scope_rows scope JOIN batch_runs run ON run.id=scope.execution_run_id
       LEFT JOIN run_attempts attempt ON attempt.id=scope.attempt_id
       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY ${sortExpression} LIMIT ? OFFSET ?`,
+      ORDER BY ${sortExpression},attempt.attempt_number ASC LIMIT ? OFFSET ?`,
     parameters,
   };
 }

@@ -13,7 +13,14 @@ type Context = { params: Promise<{ batchId: string }> };
 
 const querySchema = z.object({
   cached: z.enum(["1"]).optional(),
-  scope: z.union([z.literal("all"), z.literal("summary"), z.coerce.number().int().positive()]),
+  runnerId: z.string().min(1).max(160).optional(),
+  executionRound: z.coerce.number().int().positive().optional(),
+  scope: z.union([
+    z.literal("all"),
+    z.literal("summary"),
+    z.literal("attempts"),
+    z.coerce.number().int().positive(),
+  ]),
   status: z
     .enum(["assigned", "running", "succeeded", "failed", "timed_out", "cancelled", "pending"])
     .optional(),
@@ -59,6 +66,8 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
               : {}),
             filter: {
               scope: input.scope,
+              ...(input.runnerId ? { runnerId: input.runnerId } : {}),
+              ...(input.executionRound ? { executionRound: input.executionRound } : {}),
               sort: input.sort,
               direction: input.direction,
               offset: (input.page - 1) * input.pageSize,
@@ -87,6 +96,8 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       batchId,
       ...(projectIds ? { projectIds } : {}),
       scope: input.scope,
+      ...(input.runnerId ? { runnerId: input.runnerId } : {}),
+      ...(input.executionRound ? { executionRound: input.executionRound } : {}),
       ...(input.status ? { status: input.status } : {}),
       ...(input.query ? { query: input.query } : {}),
       sort: input.sort,

@@ -542,6 +542,8 @@ export class RunBatchSchedulingService {
       batchId: input.batchId,
       ...(input.projectIds ? { projectIds: input.projectIds } : {}),
       scope: input.scope,
+      ...(input.runnerId ? { runnerId: input.runnerId } : {}),
+      ...(input.executionRound ? { executionRound: input.executionRound } : {}),
       ...(input.status ? { status: input.status } : {}),
       ...(input.query ? { query: input.query.slice(0, 240) } : {}),
       sort: input.sort,

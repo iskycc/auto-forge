@@ -91,6 +91,7 @@ export const executionOverviewSnapshotSchema = z.object({
     z.object({
       round: count,
       runnerId: z.string(),
+      timedOut: z.number().int().nonnegative(),
       executed: count,
       passed: count,
       failed: count,

@@ -88,11 +88,11 @@ describe("buildRunBatchExportWorkbook", () => {
     expect(sheet!.getRow(1).getCell(1).font).toMatchObject({
       name: "Microsoft YaHei UI",
       bold: true,
-      color: { argb: "FFFFFFFF" },
+      color: { argb: "FF334155" },
     });
     expect(sheet!.getRow(1).getCell(1).fill).toMatchObject({
       type: "pattern",
-      fgColor: { argb: "FF243B53" },
+      fgColor: { argb: "FFE8EEF5" },
     });
 
     const dataRow = sheet!.getRow(2);
@@ -121,7 +121,7 @@ describe("buildRunBatchExportWorkbook", () => {
     });
     expect(dataRow.getCell(5).fill).toMatchObject({
       type: "pattern",
-      fgColor: { argb: "FFFFF3E3" },
+      fgColor: { argb: "FFEFF6FF" },
     });
     expect(dataRow.getCell(3).alignment).toMatchObject({ vertical: "middle" });
     // OOXML 会省略 false 布尔属性；省略与 false 都表示禁用自动换行。
@@ -139,7 +139,13 @@ describe("buildRunBatchExportWorkbook", () => {
 
     expect(result.filename).toBe("run-batch-batch-12-round-2.xlsx");
     const workbook = await loadWorkbook(result.buffer);
-    expect(workbook.getWorksheet("执行结果")!.getRow(1).values).toContain("执行结果");
+    const sheet = workbook.getWorksheet("执行结果")!;
+    expect(sheet.getRow(1).values).toContain("执行结果");
+    expect(sheet.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EEF5" } });
+    expect(sheet.getCell("C2").fill).toMatchObject({ fgColor: { argb: "FFFEF2F2" } });
+    expect(sheet.getCell("G2").value).toBe(60);
+    expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1, showGridLines: false });
+    expect(sheet.autoFilter).toBe("A1:H1");
   });
 
   it("writes a completed rerun public log into the proof column", async () => {

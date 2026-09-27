@@ -75,6 +75,100 @@ async function createSqliteHarness(): Promise<SchedulingEventHarness> {
 }
 
 function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarness>): void {
+  it("keeps timeouts separate and exposes earlier attempts after a successful reschedule", async () => {
+    const harness = await createHarness();
+    try {
+      await harness.rawQuery(
+        "UPDATE run_attempts SET status='timed_out',outcome='timed_out',result_code='EXECUTION_TIMEOUT',result_summary='执行超过平台设定的 600 秒',finished_at=? WHERE id=?",
+        ["2026-08-10T00:10:00.000Z", harness.attemptId],
+      );
+      for (const [number, outcome, runnerId, round] of [
+        [2, "failed", harness.runnerIdA, 1],
+        [3, "succeeded", harness.runnerIdB, 1],
+        [4, "timed_out", harness.runnerIdA, 2],
+        [5, "timed_out", harness.runnerIdA, 1],
+      ] as const) {
+        await harness.rawQuery(
+          `INSERT INTO run_attempts
+          (id,execution_run_id,runner_id,attempt_number,execution_round,status,outcome,scheduling_score,created_at)
+          VALUES (?,?,?,?,?,?,?,1,?)`,
+          [
+            `${harness.eventPrefix}-${number}`,
+            harness.executionRunId,
+            runnerId,
+            number,
+            round,
+            outcome,
+            outcome,
+            "2026-08-10T00:12:00.000Z",
+          ],
+        );
+      }
+      const overview = await harness.batches.getDetailOverview(harness.batchIdA);
+      expect(overview?.runnerRoundSummaries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            round: 1,
+            runnerId: harness.runnerIdA,
+            executed: 3,
+            failed: 1,
+            timedOut: 2,
+            passed: 0,
+          }),
+          expect.objectContaining({
+            round: 1,
+            runnerId: harness.runnerIdB,
+            executed: 1,
+            failed: 0,
+            timedOut: 0,
+            passed: 1,
+          }),
+        ]),
+      );
+      const query = {
+        batchId: harness.batchIdA,
+        scope: "attempts" as const,
+        runnerId: harness.runnerIdA,
+        executionRound: 1,
+        status: "timed_out" as const,
+        sort: "none" as const,
+        direction: "asc" as const,
+        offset: 0,
+        limit: 1,
+      };
+      expect(await harness.batches.listCasePage(query)).toMatchObject({
+        total: 2,
+        items: [
+          {
+            round: 1,
+            attempt: {
+              id: harness.attemptId,
+              resultCode: "EXECUTION_TIMEOUT",
+              resultSummary: "执行超过平台设定的 600 秒",
+              finishedAt: "2026-08-10T00:10:00.000Z",
+            },
+          },
+        ],
+      });
+      expect(await harness.batches.listCasePage({ ...query, offset: 1 })).toMatchObject({
+        total: 2,
+        items: [{ attempt: { id: `${harness.eventPrefix}-5` } }],
+      });
+      expect(
+        await harness.batches.listCasePage({ ...query, projectIds: ["outside-project"] }),
+      ).toBeNull();
+      expect(
+        await harness.batches.listCasePage({ ...query, runnerId: harness.runnerIdB }),
+      ).toMatchObject({ total: 0, items: [] });
+      expect(
+        await harness.batches.listCasePage({ ...query, batchId: harness.batchIdB }),
+      ).toMatchObject({ total: 0, items: [] });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("loads a bounded detail overview and pages case rows in the database", async () => {
     const harness = await createHarness();
     const extraRunId = `${harness.eventPrefix}-case-page-run`;

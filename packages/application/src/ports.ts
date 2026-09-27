@@ -1952,7 +1952,7 @@ export type FailureAnalysisHistoryPage = {
   nextCursor?: string;
 };
 
-export type RunBatchCaseScope = number | "all" | "summary";
+export type RunBatchCaseScope = number | "all" | "summary" | "attempts";
 export type RunBatchCaseStatusFilter = RunAttempt["status"] | "pending";
 export type RunBatchCaseSort = "none" | "name" | "status" | "runner" | "duration";
 
@@ -1960,6 +1960,8 @@ export type RunBatchCasePageQuery = {
   batchId: string;
   projectIds?: readonly string[];
   scope: RunBatchCaseScope;
+  runnerId?: string;
+  executionRound?: number;
   status?: RunBatchCaseStatusFilter;
   query?: string;
   sort: RunBatchCaseSort;
@@ -1974,6 +1976,7 @@ export type RunBatchCasePage = {
 };
 
 export type RunBatchRoundRunnerSummary = {
+  timedOut: number;
   round: number;
   runnerId: string;
   executed: number;

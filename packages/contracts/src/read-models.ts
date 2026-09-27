@@ -21,7 +21,14 @@ export type CaseDirectoryFilter = z.infer<typeof caseDirectoryFilterSchema>;
 
 /** Only explicitly registered, read-only projections may be executed by the background worker. */
 export const executionCasePageFilterSchema = z.object({
-  scope: z.union([z.literal("all"), z.literal("summary"), z.number().int().positive()]),
+  runnerId: identifier.optional(),
+  executionRound: z.number().int().positive().optional(),
+  scope: z.union([
+    z.literal("all"),
+    z.literal("summary"),
+    z.literal("attempts"),
+    z.number().int().positive(),
+  ]),
   status: z
     .enum(["assigned", "running", "succeeded", "failed", "timed_out", "cancelled", "pending"])
     .optional(),
@@ -74,6 +81,7 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
   }),
   analysisScope.extend({
     kind: z.literal("execution_overview"),
+    snapshotVersion: z.literal(2).optional(),
     batchId: identifier,
     terminalVersion: z.number().int().nonnegative().optional(),
   }),

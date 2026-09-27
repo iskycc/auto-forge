@@ -732,12 +732,14 @@ export class PostgresRunBatchRepository
         executed: string;
         passed: string;
         failed: string;
+        timedOut: string;
         lastActivity: DatabaseTimestamp;
       }>(
         `SELECT attempt.execution_round AS round,attempt.runner_id AS "runnerId",
                   COUNT(*) AS executed,
                   COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='succeeded') AS passed,
-                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out')) AS failed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='failed') AS failed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='timed_out') AS "timedOut",
                   MAX(COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at)) AS "lastActivity"
            FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
            WHERE run.batch_id=$1 GROUP BY attempt.execution_round,attempt.runner_id
@@ -815,6 +817,7 @@ export class PostgresRunBatchRepository
         executed: Number(row.executed),
         passed: Number(row.passed),
         failed: Number(row.failed),
+        timedOut: Number(row.timedOut),
         lastActivity: isoTimestamp(row.lastActivity),
       })),
       runnerFaultIncidents: faultResult.rows.map((row) => ({
@@ -2033,7 +2036,12 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
 } {
   const parameters: unknown[] = [input.batchId];
   let scopeCte: string;
-  if (input.scope === "summary") {
+  if (input.scope === "attempts") {
+    scopeCte = `, scope_rows AS (
+      SELECT attempt.execution_run_id,attempt.execution_round AS round,attempt.id AS attempt_id
+      FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+    )`;
+  } else if (input.scope === "summary") {
     scopeCte = `, ranked_attempts AS (
       SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,attempt.execution_round,
              ROW_NUMBER() OVER (
@@ -2060,9 +2068,15 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
     )`;
   }
   const where: string[] = [];
+  if (input.runnerId)
+    where.push(`attempt.runner_id=${pushPostgresParameter(parameters, input.runnerId)}`);
+  if (input.executionRound)
+    where.push(`scope.round=${pushPostgresParameter(parameters, input.executionRound)}`);
   if (input.status === "pending") where.push("scope.attempt_id IS NULL");
   else if (input.status) {
-    where.push(`attempt.status=${pushPostgresParameter(parameters, input.status)}`);
+    where.push(
+      `${input.scope === "attempts" ? "COALESCE(attempt.outcome,attempt.status)" : "attempt.status"}=${pushPostgresParameter(parameters, input.status)}`,
+    );
   }
   if (input.query?.trim()) {
     where.push(
@@ -2092,7 +2106,7 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
       FROM scope_rows scope JOIN batch_runs run ON run.id=scope.execution_run_id
       LEFT JOIN run_attempts attempt ON attempt.id=scope.attempt_id
       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY ${sortExpression} LIMIT ${limit} OFFSET ${offset}`,
+      ORDER BY ${sortExpression},attempt.attempt_number ASC LIMIT ${limit} OFFSET ${offset}`,
     parameters,
   };
 }

@@ -24,7 +24,7 @@ import type { AuthenticatedIdentity, DdtScope, Permission } from "@autoforge/dom
 import { hasPermission } from "@autoforge/domain";
 import { loadDdtCaseDetail } from "@/lib/load-ddt-case-detail";
 import { DomainError } from "@autoforge/domain";
-import { buildExportWorkbook } from "@autoforge/ddt-import";
+import { buildStyledDdtExportWorkbook } from "@/lib/ddt-export-xlsx";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -232,7 +232,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         caseIds: url.searchParams.getAll("caseId"),
         srNum: url.searchParams.get("srNum") ?? undefined,
       });
-      return exportResponse(await services.ddtCases.export(scope, exportSelection(selection)));
+      return await exportResponse(
+        await services.ddtCases.export(scope, exportSelection(selection)),
+      );
     }
     throw routeNotFound();
   } catch (error) {
@@ -504,7 +506,9 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       }
       if (matches(path, "export")) {
         const selection = exportSchema.parse(await readJsonBody(request, 4 * 1_024 * 1_024));
-        return exportResponse(await services.ddtCases.export(scope, exportSelection(selection)));
+        return await exportResponse(
+          await services.ddtCases.export(scope, exportSelection(selection)),
+        );
       }
       throw routeNotFound();
     },
@@ -654,10 +658,10 @@ function assertJobScope(
     throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
 }
 
-function exportResponse(
+async function exportResponse(
   rows: Awaited<ReturnType<import("@autoforge/application").DdtCaseService["export"]>>,
-): NextResponse {
-  const workbook = buildExportWorkbook(rows);
+): Promise<NextResponse> {
+  const workbook = await buildStyledDdtExportWorkbook(rows);
   return new NextResponse(new Uint8Array(workbook), {
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

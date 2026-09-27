@@ -606,10 +606,14 @@ function exportSheetColumns(rows: readonly CaseStepData[]) {
   return { columns, headerByField };
 }
 
-export function buildExportWorkbook(rows: CaseData[]) {
+export function buildDdtExportSheets(rows: CaseData[]) {
   if (!rows.length) throw new Error("没有符合条件的用例可导出");
 
-  const workbook = XLSX.utils.book_new();
+  const sheets: Array<{
+    name: string;
+    columns: Array<{ name: string; width: number; hidden: boolean }>;
+    rows: CaseStepData[];
+  }> = [];
   const appendSheet = (sheetRows: CaseStepData[], sheetName: string) => {
     const { columns, headerByField } = exportSheetColumns(sheetRows);
     const normalizedRows = sheetRows.map((row) =>
@@ -617,13 +621,15 @@ export function buildExportWorkbook(rows: CaseData[]) {
         Object.entries(row).map(([field, value]) => [headerByField.get(field)!, value]),
       ),
     );
-    const sheet = XLSX.utils.json_to_sheet(normalizedRows, { header: columns });
-    sheet["!autofilter"] = { ref: sheet["!ref"] ?? "A1" };
-    sheet["!cols"] = columns.map((column) => ({
-      wch: Math.min(Math.max(column.length + 2, 14), 42),
-      ...(column === EXPORTED_STEP_PRESENT_COLUMN ? { hidden: true } : {}),
-    }));
-    XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+    sheets.push({
+      name: sheetName,
+      rows: normalizedRows,
+      columns: columns.map((column) => ({
+        name: column,
+        width: Math.min(Math.max(column.length + 2, 14), 42),
+        hidden: column === EXPORTED_STEP_PRESENT_COLUMN,
+      })),
+    });
   };
 
   const standardRows = rows.filter((row) => !isJourneyCase(row));
@@ -663,6 +669,22 @@ export function buildExportWorkbook(rows: CaseData[]) {
     );
   }
 
+  return sheets;
+}
+
+export function buildExportWorkbook(rows: CaseData[]) {
+  const workbook = XLSX.utils.book_new();
+  for (const definition of buildDdtExportSheets(rows)) {
+    const sheet = XLSX.utils.json_to_sheet(definition.rows, {
+      header: definition.columns.map((column) => column.name),
+    });
+    sheet["!autofilter"] = { ref: sheet["!ref"] ?? "A1" };
+    sheet["!cols"] = definition.columns.map((column) => ({
+      wch: column.width,
+      hidden: column.hidden,
+    }));
+    XLSX.utils.book_append_sheet(workbook, sheet, definition.name);
+  }
   return XLSX.write(workbook, {
     type: "buffer",
     bookType: "xlsx",

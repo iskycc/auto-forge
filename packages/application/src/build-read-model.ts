@@ -51,6 +51,8 @@ export function createReadModelBuilder(dependencies: {
           batchId: query.batchId,
           projectIds: [query.projectId],
           scope: query.filter.scope,
+          ...(query.filter.runnerId ? { runnerId: query.filter.runnerId } : {}),
+          ...(query.filter.executionRound ? { executionRound: query.filter.executionRound } : {}),
           sort: query.filter.sort,
           direction: query.filter.direction,
           offset: query.filter.offset,

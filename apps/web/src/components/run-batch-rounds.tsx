@@ -26,11 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
-import {
-  browserCacheEpoch,
-  readBrowserSnapshot,
-  writeBrowserSnapshot,
-} from "@/lib/browser-read-cache";
+import { loadExecutionCasePage } from "@/lib/execution-case-page-client";
 
 import type { AttemptArtifactList, AttemptEventPage } from "@autoforge/contracts";
 import type {
@@ -1395,6 +1391,7 @@ function RoundDetailPanel({
               <RunBatchRunnerPanel
                 batch={batch}
                 round={summary.round}
+                onOpenLogs={onOpenLogs}
                 canReadLogs={canReadLogs}
                 runnerDirectory={runnerDirectory}
                 onOpenScheduling={onOpenScheduling}
@@ -1506,26 +1503,17 @@ function RoundCasesTable({
 
   useEffect(() => {
     const controller = new AbortController();
-    const epoch = browserCacheEpoch();
-    const key = `batch-case-page:v1:${requestKey}`;
-    const cached = readBrowserSnapshot(key) as
-      { items: RoundCaseRowModel[]; total: number } | undefined;
-    const load = cached
-      ? Promise.resolve(cached)
-      : fetchCasePage(casePageUrl, controller.signal).then(async (response) => {
-          if (!response.ok) {
-            throw new Error((await readApiErrorMessage(response, "读取用例列表失败。"))!);
-          }
-          return response.json() as Promise<{ items: RoundCaseRowModel[]; total: number }>;
-        });
-    void load
+    void loadExecutionCasePage(
+      casePageUrl,
+      `${batch.updatedAt}\u0000${batch.statistics?.generation ?? ""}`,
+      controller.signal,
+    )
       .then((result) => {
         if (controller.signal.aborted) return;
-        writeBrowserSnapshot(key, result, epoch);
         setLoadedPage({
           requestKey,
           pageUrl: casePageUrl,
-          rows: result.items,
+          rows: result.items.map((item) => ({ ...item, attempt: item.attempt })),
           total: result.total,
           error: "",
         });
@@ -1541,7 +1529,7 @@ function RoundCasesTable({
         }));
       });
     return () => controller.abort();
-  }, [casePageUrl, requestKey]);
+  }, [casePageUrl, requestKey, batch.updatedAt, batch.statistics?.generation]);
 
   const columnWidths = useMemo(() => {
     // Successful rows have no failure text; they must not dilute a visible stack's width.
@@ -2412,17 +2400,6 @@ function eventLabel(eventType: string): string {
     "lease.expired": "租约已过期",
   };
   return labels[eventType] ?? eventType;
-}
-
-async function fetchCasePage(url: string, signal: AbortSignal): Promise<Response> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const response = await fetch(url, { signal, cache: "no-store" });
-    if (response.status !== 503 || attempt === 2) return response;
-    const failure = (await response.clone().json()) as { error?: { code?: string } };
-    if (failure.error?.code !== "READ_MODEL_PENDING") return response;
-    await response.body?.cancel();
-  }
-  throw new Error("后台正在准备当前用例页，请稍后重试。");
 }
 
 const runBatchRoundsStyles = {

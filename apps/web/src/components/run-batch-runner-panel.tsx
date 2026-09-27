@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { RunnerTimeoutDialog } from "./runner-timeout-dialog";
 import { Progress as AntProgress, Tooltip } from "antd";
 import { Cpu, ScrollText, Server } from "lucide-react";
-import type { RunnerResourceSnapshot } from "@autoforge/domain";
+import type { RunAttempt, RunnerResourceSnapshot } from "@autoforge/domain";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import type { RunnerDirectoryEntry } from "./run-batch-rounds";
@@ -21,35 +23,36 @@ export function RunBatchRunnerPanel({
   canReadLogs,
   runnerDirectory,
   onOpenScheduling,
+  onOpenLogs,
 }: {
   batch: ExecutionBatchView;
   round: number;
   canReadLogs: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   onOpenScheduling: (runnerId: string | undefined) => void;
+  onOpenLogs: (attempt: RunAttempt) => void;
 }) {
+  const [timeoutRunner, setTimeoutRunner] = useState<string>();
   const runners = batch.runnerRoundSummaries.filter((summary) => summary.round === round);
   const totals = runners.reduce(
     (result, runner) => ({
       executed: result.executed + runner.executed,
       passed: result.passed + runner.passed,
       failed: result.failed + runner.failed,
+      timedOut: result.timedOut + runner.timedOut,
       other: result.other + otherAttempts(runner),
     }),
-    { executed: 0, passed: 0, failed: 0, other: 0 },
+    { executed: 0, passed: 0, failed: 0, timedOut: 0, other: 0 },
   );
 
   return (
     <section className="grid min-w-0 gap-4" aria-label="本轮执行机状态">
-      <div className="grid grid-cols-5 gap-2 rounded-lg border border-border bg-muted/40 p-3">
+      <div className="grid grid-cols-6 gap-2 rounded-lg border border-border bg-muted/40 p-3">
         <OverviewMetric label="参与节点" value={runners.length} />
         <OverviewMetric label="本轮尝试" value={totals.executed} accessibleLabel="本轮尝试总数" />
         <OverviewMetric label="通过" value={totals.passed} accessibleLabel="本轮通过总数" />
-        <OverviewMetric
-          label="失败 / 超时"
-          value={totals.failed}
-          accessibleLabel="本轮失败或超时总数"
-        />
+        <OverviewMetric label="失败" value={totals.failed} accessibleLabel="本轮失败总数" />
+        <OverviewMetric label="超时" value={totals.timedOut} accessibleLabel="本轮超时总数" />
         <OverviewMetric label="其他状态" value={totals.other} accessibleLabel="本轮其他状态总数" />
       </div>
       <p className="m-0 text-xs leading-relaxed text-muted-foreground">
@@ -66,10 +69,25 @@ export function RunBatchRunnerPanel({
               entry={runnerDirectory.get(runner.runnerId)}
               canReadLogs={canReadLogs}
               onOpenScheduling={onOpenScheduling}
+              onOpenTimeouts={() => setTimeoutRunner(runner.runnerId)}
             />
           ))}
         </div>
       )}
+      {timeoutRunner ? (
+        <RunnerTimeoutDialog
+          batch={batch}
+          round={round}
+          runnerId={timeoutRunner}
+          runnerName={runnerDirectory.get(timeoutRunner)?.name || timeoutRunner.slice(0, 8)}
+          canReadLogs={canReadLogs}
+          onOpenLogs={(attempt) => {
+            setTimeoutRunner(undefined);
+            onOpenLogs(attempt);
+          }}
+          onClose={() => setTimeoutRunner(undefined)}
+        />
+      ) : null}
     </section>
   );
 }
@@ -99,7 +117,7 @@ function OverviewMetric({
 function otherAttempts(runner: RunnerRound): number {
   // The overview does not separate running, blocked and cancelled attempts;
   // treating this remainder as running would mislabel terminal history.
-  return Math.max(0, runner.executed - runner.passed - runner.failed);
+  return Math.max(0, runner.executed - runner.passed - runner.failed - runner.timedOut);
 }
 
 function RunnerRoundCard({
@@ -107,17 +125,16 @@ function RunnerRoundCard({
   entry,
   canReadLogs,
   onOpenScheduling,
+  onOpenTimeouts,
 }: {
   runner: RunnerRound;
   entry: RunnerDirectoryEntry | undefined;
   canReadLogs: boolean;
   onOpenScheduling: (runnerId: string | undefined) => void;
+  onOpenTimeouts: () => void;
 }) {
   const name = entry?.name || runner.runnerId.slice(0, 8);
   const other = otherAttempts(runner);
-  const passedPercent = runner.executed > 0 ? (runner.passed / runner.executed) * 100 : 0;
-  const finishedPercent =
-    runner.executed > 0 ? ((runner.passed + runner.failed) / runner.executed) * 100 : 0;
   return (
     <Card className="runner-card flex min-w-0 flex-col gap-3 p-3">
       <div className="flex min-w-0 items-start gap-2">
@@ -131,8 +148,24 @@ function RunnerRoundCard({
             </strong>
           </Tooltip>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={runner.failed > 0 ? "warning" : other > 0 ? "secondary" : "success"}>
-              {runner.failed > 0 ? "有失败 / 超时" : other > 0 ? "含其他状态" : "全部通过"}
+            <Badge
+              variant={
+                runner.failed > 0
+                  ? "destructive"
+                  : runner.timedOut > 0
+                    ? "warning"
+                    : other > 0
+                      ? "secondary"
+                      : "success"
+              }
+            >
+              {runner.failed > 0
+                ? "有失败"
+                : runner.timedOut > 0
+                  ? "有超时"
+                  : other > 0
+                    ? "含其他状态"
+                    : "全部通过"}
             </Badge>
             <span className="text-xs text-muted-foreground">
               {runner.executed.toLocaleString()} 次尝试
@@ -141,23 +174,41 @@ function RunnerRoundCard({
         </div>
       </div>
       <div className="grid gap-2">
-        <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="grid grid-cols-4 gap-2 text-xs">
           <ResultCount label="通过" value={runner.passed} className="text-success" />
-          <ResultCount label="失败 / 超时" value={runner.failed} className="text-destructive" />
+          <ResultCount label="失败" value={runner.failed} className="text-destructive" />
+          <ResultCount label="超时" value={runner.timedOut} className="text-warning" />
           <ResultCount label="其他状态" value={other} className="text-muted-foreground" />
         </div>
-        <AntProgress
-          className="m-0"
-          size="small"
-          percent={finishedPercent}
-          success={{ percent: passedPercent, strokeColor: "var(--success)" }}
-          strokeColor="var(--destructive)"
-          railColor="var(--border)"
-          status="normal"
-          showInfo={false}
-          styles={{ body: { display: "flex" } }}
-          aria-label={`本轮结果分布：通过 ${runner.passed}，失败或超时 ${runner.failed}，其他状态 ${other}`}
-        />
+        <div
+          className="flex min-w-0 overflow-hidden rounded-full"
+          role="img"
+          aria-label={`本轮结果分布：通过 ${runner.passed}，失败 ${runner.failed}，超时 ${runner.timedOut}，其他状态 ${other}`}
+        >
+          {(
+            [
+              [runner.passed, "var(--success)"],
+              [runner.failed, "var(--destructive)"],
+              [runner.timedOut, "var(--warning)"],
+              [other, "var(--border)"],
+            ] as const
+          ).map(([count, color]) =>
+            count > 0 ? (
+              <AntProgress
+                key={color}
+                className="m-0 min-w-0"
+                style={{ flex: count }}
+                size="small"
+                percent={100}
+                strokeColor={color}
+                strokeLinecap="butt"
+                status="normal"
+                showInfo={false}
+                styles={{ body: { display: "flex" } }}
+              />
+            ) : null,
+          )}
+        </div>
       </div>
       <div className="grid min-w-0 flex-1 content-start gap-2 rounded-lg bg-muted/40 p-3">
         <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -176,8 +227,13 @@ function RunnerRoundCard({
             {formatLocalDateTime(runner.lastActivity)}
           </time>
         </span>
-        {canReadLogs || entry?.canReadTelemetry ? (
+        {runner.timedOut > 0 || canReadLogs || entry?.canReadTelemetry ? (
           <div className="flex flex-wrap items-center gap-2">
+            {runner.timedOut > 0 ? (
+              <Button type="button" size="compact" variant="secondary" onClick={onOpenTimeouts}>
+                超时记录 ({runner.timedOut})
+              </Button>
+            ) : null}
             {canReadLogs ? (
               <Button
                 type="button"

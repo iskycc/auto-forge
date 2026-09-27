@@ -4,6 +4,13 @@ import type { RunBatchExportRow } from "@autoforge/application";
 import type { ExportOutcomeFilter, RunBatchExportTemplate } from "@autoforge/contracts";
 import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
 import ExcelJS from "exceljs";
+import {
+  exportWorksheetOptions,
+  styleExportHeader,
+  styleExportRow,
+  styleExportResult,
+  type ExportTone,
+} from "./export-workbook-style";
 
 /**
  * 执行结果导出 Excel 生成。列顺序即需求约定的固定顺序；
@@ -45,36 +52,20 @@ const FAILURE_ANALYSIS_RESULT_LABELS: Record<FailureAnalysisCategory, string> = 
 // 分析清单常有数百条失败记录，优先保证纵向浏览密度。长类名、堆栈和说明保留
 // 完整单元格值，但不通过超宽列或多行行高强制展示全部内容。
 const FAILURE_ANALYSIS_COLUMN_WIDTHS = [32, 24, 36, 14, 18, 24, 24, 18, 20, 32] as const;
-const ANALYSIS_INPUT_FIRST_COLUMN = 4;
-const ANALYSIS_INPUT_LAST_COLUMN = 9;
-const ANALYSIS_FONT_NAME = "Microsoft YaHei UI";
-const ANALYSIS_COLORS = {
-  header: "FF243B53",
-  headerAccent: "FF53B3AE",
-  headerBorder: "FF3B536A",
-  text: "FF243442",
-  mutedText: "FF526579",
-  identifier: "FF4E5FA8",
-  body: "FFFFFFFF",
-  alternateBody: "FFF8FAFC",
-  analysis: "FFF3F7FA",
-  alternateAnalysis: "FFECF3F7",
-  border: "FFDDE5EC",
-  link: "FF147D92",
-  rerunPassedFill: "FFE8F5EE",
-  rerunPassedText: "FF25704A",
-  caseFixedFill: "FFFFF3E3",
-  caseFixedText: "FF9A5A12",
-  codeIssueFill: "FFEDF1FF",
-  codeIssueText: "FF4E5FA8",
-} as const;
-
 const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
   succeeded: "成功",
   failed: "失败",
   timed_out: "超时",
   cancelled: "取消",
   blocked: "阻塞（异常结束）",
+};
+
+const OUTCOME_TONES: Record<ExportOutcomeFilter, ExportTone> = {
+  succeeded: "success",
+  failed: "error",
+  timed_out: "warning",
+  cancelled: "neutral",
+  blocked: "neutral",
 };
 
 export type RunBatchExportWorkbookInput = {
@@ -113,16 +104,14 @@ function buildExecutionResultsSheet(
   workbook: ExcelJS.Workbook,
   input: RunBatchExportWorkbookInput,
 ): void {
-  const sheet = workbook.addWorksheet("执行结果", {
-    views: [{ state: "frozen", ySplit: 1 }],
-  });
+  const sheet = workbook.addWorksheet("执行结果", exportWorksheetOptions());
   // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
   const includeRound = input.scope === "all";
   const headers: readonly string[] = includeRound ? ["轮次", ...EXPORT_HEADERS] : EXPORT_HEADERS;
   sheet.columns = headers.map((header) => ({ header, width: headerWidth(header) }));
 
-  const headerRow = sheet.getRow(1);
-  headerRow.font = { bold: true };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
+  styleExportHeader(sheet.getRow(1));
 
   for (const row of input.rows) {
     const shareLink = row.attemptId ? input.shareLinks.get(row.attemptId) : undefined;
@@ -137,7 +126,10 @@ function buildExecutionResultsSheet(
       row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
       shareLink ? { text: shareLink, hyperlink: shareLink } : "",
     ];
-    sheet.addRow(cells);
+    const exportedRow = sheet.addRow(cells);
+    styleExportRow(exportedRow, headers.length);
+    styleExportResult(exportedRow.getCell(includeRound ? 4 : 3), OUTCOME_TONES[row.outcome]);
+    exportedRow.getCell(includeRound ? 8 : 7).numFmt = "0.0";
   }
 }
 
@@ -145,17 +137,13 @@ function buildFailureAnalysisSheet(
   workbook: ExcelJS.Workbook,
   input: RunBatchExportWorkbookInput,
 ): void {
-  const sheet = workbook.addWorksheet("失败用例分析清单", {
-    views: [{ state: "frozen", xSplit: 2, ySplit: 1, showGridLines: false }],
-    properties: { defaultRowHeight: 20, tabColor: { argb: ANALYSIS_COLORS.headerAccent } },
-    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
-  });
+  const sheet = workbook.addWorksheet("失败用例分析清单", exportWorksheetOptions(2));
   sheet.columns = FAILURE_ANALYSIS_HEADERS.map((header, index) => ({
     header,
     width: FAILURE_ANALYSIS_COLUMN_WIDTHS[index]!,
   }));
   sheet.autoFilter = { from: "A1", to: "J1" };
-  styleFailureAnalysisHeader(sheet.getRow(1));
+  styleExportHeader(sheet.getRow(1));
 
   for (const item of input.rows) {
     const shareLink = item.attemptId ? input.shareLinks.get(item.attemptId) : undefined;
@@ -191,86 +179,20 @@ function buildFailureAnalysisSheet(
   }
 }
 
-function styleFailureAnalysisHeader(row: ExcelJS.Row): void {
-  row.height = 28;
-  row.eachCell((cell) => {
-    cell.font = {
-      name: ANALYSIS_FONT_NAME,
-      size: 10.5,
-      bold: true,
-      color: { argb: "FFFFFFFF" },
-    };
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: ANALYSIS_COLORS.header },
-    };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: false };
-    cell.border = {
-      bottom: { style: "medium", color: { argb: ANALYSIS_COLORS.headerAccent } },
-      left: { style: "thin", color: { argb: ANALYSIS_COLORS.headerBorder } },
-      right: { style: "thin", color: { argb: ANALYSIS_COLORS.headerBorder } },
-      top: { style: "thin", color: { argb: ANALYSIS_COLORS.headerBorder } },
-    };
-  });
-}
-
 function styleFailureAnalysisRow(
   row: ExcelJS.Row,
   category: FailureAnalysisCategory | undefined,
 ): void {
+  styleExportRow(row, FAILURE_ANALYSIS_HEADERS.length);
   row.height = 20;
-  const alternate = row.number % 2 === 0;
-  row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-    cell.font = {
-      name: ANALYSIS_FONT_NAME,
-      size: 10,
-      color: { argb: ANALYSIS_COLORS.text },
-    };
-    cell.alignment = { vertical: "middle", wrapText: false };
-    cell.border = {
-      bottom: { style: "thin", color: { argb: ANALYSIS_COLORS.border } },
-      right: { style: "hair", color: { argb: ANALYSIS_COLORS.border } },
-    };
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: alternate ? ANALYSIS_COLORS.alternateBody : ANALYSIS_COLORS.body },
-    };
-    if (columnNumber >= ANALYSIS_INPUT_FIRST_COLUMN && columnNumber <= ANALYSIS_INPUT_LAST_COLUMN) {
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: {
-          argb: alternate ? ANALYSIS_COLORS.alternateAnalysis : ANALYSIS_COLORS.analysis,
-        },
-      };
-    }
-  });
-  row.getCell(1).font = {
-    name: ANALYSIS_FONT_NAME,
-    size: 10,
-    color: { argb: ANALYSIS_COLORS.identifier },
-  };
-  row.getCell(2).font = {
-    name: ANALYSIS_FONT_NAME,
-    size: 10,
-    bold: true,
-    color: { argb: ANALYSIS_COLORS.text },
-  };
-  row.getCell(3).font = {
-    name: ANALYSIS_FONT_NAME,
-    size: 10,
-    color: { argb: ANALYSIS_COLORS.mutedText },
-  };
-  row.getCell(4).alignment = { horizontal: "center", vertical: "middle", wrapText: false };
+  row.getCell(2).font = { ...row.getCell(2).font, bold: true };
+  row.getCell(4).alignment = { horizontal: "center", vertical: "middle" };
   const analysisResultCell = row.getCell(5);
-  analysisResultCell.alignment = {
-    horizontal: "center",
-    vertical: "middle",
-    wrapText: false,
-  };
-  styleAnalysisResult(analysisResultCell, category);
+  if (category)
+    styleExportResult(
+      analysisResultCell,
+      category === "rerun_passed" ? "success" : category === "case_fixed" ? "info" : "warning",
+    );
   analysisResultCell.dataValidation = {
     type: "list",
     allowBlank: true,
@@ -279,46 +201,6 @@ function styleFailureAnalysisRow(
     errorTitle: "分析结果无效",
     error: "请从下拉列表中选择分析结果。",
     formulae: [`"${FAILURE_ANALYSIS_RESULTS.join(",")}"`],
-  };
-  for (const columnNumber of [7, 8, 10]) {
-    const cell = row.getCell(columnNumber);
-    if (typeof cell.value === "object" && cell.value && "hyperlink" in cell.value) {
-      cell.font = {
-        name: ANALYSIS_FONT_NAME,
-        size: 10,
-        bold: true,
-        color: { argb: ANALYSIS_COLORS.link },
-        underline: true,
-      };
-    }
-  }
-}
-
-function styleAnalysisResult(
-  cell: ExcelJS.Cell,
-  category: FailureAnalysisCategory | undefined,
-): void {
-  if (!category) return;
-  const palette = {
-    rerun_passed: {
-      fill: ANALYSIS_COLORS.rerunPassedFill,
-      text: ANALYSIS_COLORS.rerunPassedText,
-    },
-    case_fixed: {
-      fill: ANALYSIS_COLORS.caseFixedFill,
-      text: ANALYSIS_COLORS.caseFixedText,
-    },
-    code_issue_filed: {
-      fill: ANALYSIS_COLORS.codeIssueFill,
-      text: ANALYSIS_COLORS.codeIssueText,
-    },
-  }[category];
-  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: palette.fill } };
-  cell.font = {
-    name: ANALYSIS_FONT_NAME,
-    size: 10,
-    bold: true,
-    color: { argb: palette.text },
   };
 }
 
