@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { unzipSync, zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
+import { dropCaseListFiles } from "./support/case-list-upload";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { insertBatchRunnerFixture } from "./support/batch-runner-fixture";
@@ -1644,7 +1645,7 @@ test("topbar tools remain separate from execution controls across desktop widths
   await expect(unreadBadge).toHaveCSS("border-width", "0px");
   await expect(unreadBadge).toHaveCSS("box-shadow", "none");
   await expectReadableText(unreadBadge);
-  for (const width of [1024, 1180, 1181, 1280, 1500, 1501, 1536, 1024]) {
+  for (const width of [1024, 1180, 1181, 1280, 1500, 1501, 1536, 1920, 1024]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     const tools = page.locator(".topbar-tools");
     const actions = page.locator(".topbar-actions");
@@ -1653,6 +1654,23 @@ test("topbar tools remain separate from execution controls across desktop widths
     await expect(actions.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
     const search = tools.getByRole("search");
     if (await search.isVisible()) {
+      await captureUi(page, "/topbar-search-shortcut", width, false);
+      const shortcut = search.getByRole("button", { name: "聚焦全局搜索" });
+      const shortcutLayout = await shortcut.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return {
+          height: bounds.height,
+          textHeight: range.getBoundingClientRect().height,
+          overflows: element.scrollWidth > element.clientWidth + 1,
+        };
+      });
+      expect(shortcutLayout.height, "search shortcut must stay compact").toBeLessThanOrEqual(32);
+      expect(shortcutLayout.textHeight, "shortcut keys must stay on one line").toBeLessThanOrEqual(
+        20,
+      );
+      expect(shortcutLayout.overflows).toBe(false);
       const input = await search.getByRole("searchbox").boundingBox();
       expect(
         input?.width,
@@ -1700,6 +1718,36 @@ test("topbar tools remain separate from execution controls across desktop widths
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(unreadBadge).toHaveCount(0);
   await expect(page.getByRole("button", { name: "通知", exact: true })).toBeVisible();
+  const searchInput = page.getByRole("searchbox", { name: "全局搜索" });
+  const shortcut = page.getByRole("button", { name: "聚焦全局搜索" });
+  await shortcut.click();
+  await expect(searchInput).toBeFocused();
+  for (const modifier of ["Control", "Meta"]) {
+    await page.keyboard.press("Tab");
+    await expect(searchInput).not.toBeFocused();
+    await page.keyboard.press(`${modifier}+k`);
+    await expect(searchInput).toBeFocused();
+  }
+  const response = page.waitForResponse(
+    (result) => new URL(result.url()).pathname === "/api/v1/search",
+  );
+  await searchInput.fill(uniqueName("shortcut-search"));
+  expect((await response).ok()).toBe(true);
+  await expect(page.getByRole("listbox", { name: "搜索结果" })).toHaveCount(0);
+  await expect(page.getByText("没有匹配的可访问资源。", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("没有匹配的可访问资源。", { exact: true })).not.toBeVisible();
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+  });
+  await page.reload();
+  await expect(shortcut).toHaveText(/⌘\s*K/);
+  await shortcut.click();
+  await expect(searchInput).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Meta+k");
+  await expect(searchInput).toBeFocused();
+  await captureUi(page, "/topbar-search-shortcut-mac", 1536, false);
 });
 
 test("global execution dialog covers and centers within the whole viewport", async ({ page }) => {
@@ -1830,6 +1878,17 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     const projectDialog = page.getByRole("dialog", { name: "新建项目" });
     await expect(projectDialog.getByLabel("项目名称")).toBeVisible();
     await expect(projectDialog.getByLabel("Slug")).toBeVisible();
+    const submitProject = projectDialog.getByRole("button", { name: "新建项目", exact: true });
+    const closeProject = projectDialog.getByRole("button", { name: "关闭新建项目", exact: true });
+    await submitProject.focus();
+    await page.keyboard.press("Tab");
+    await expect(closeProject).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(projectDialog.getByLabel("项目名称")).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(closeProject).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(submitProject).toBeFocused();
     await expectViewportDialog(projectBackdrop, projectDialog, viewport);
     await captureUi(page, "/project-create-dialog", viewport.width, false);
     await page.keyboard.press("Escape");
@@ -2470,9 +2529,53 @@ test("imported case selection keeps counts compact before adding to a task", asy
       "已勾选 8 个用例",
     );
     await folderCheckbox.uncheck();
+    if (viewport.width === 1536)
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
     await page.getByRole("button", { name: "导入用例", exact: true }).click();
     const importDialog = page.getByRole("dialog", { name: "导入用例", exact: true });
-    await importDialog.getByLabel("粘贴用例路径").fill(classes.join("\n"));
+    await expect(importDialog).toBeVisible();
+    await waitForUiTransitions(page);
+    await captureUi(page, "/case-list-inputs-empty", viewport.width, false);
+    if (viewport.width < 1920) {
+      const file = {
+        name: `${"测试类路径清单-".repeat(12)}.csv`,
+        mimeType: "text/csv",
+        buffer: Buffer.from(`用例路径\n${classes.join("\n")}`),
+      };
+      if (viewport.width === 1024)
+        await dropCaseListFiles(page, importDialog.locator(".ant-upload-drag, .ui-file"), [file]);
+      else {
+        const chooser = page.waitForEvent("filechooser");
+        await importDialog.locator(".ant-upload-btn").focus();
+        await page.keyboard.press("Enter");
+        await (await chooser).setFiles(file);
+      }
+      await expect(importDialog.getByRole("status")).toContainText("共 8 条路径");
+      await expect(importDialog.locator(".ui-file-name")).toHaveAttribute("title", file.name);
+      if (viewport.width === 1024) {
+        await dropCaseListFiles(page, importDialog.locator(".ant-upload-drag"), [file, file]);
+        await expect(importDialog.getByRole("alert")).toContainText("每次只能选择一个用例清单文件");
+        await expect(importDialog.getByRole("status")).toContainText("共 8 条路径");
+        await dropCaseListFiles(page, importDialog.locator(".ant-upload-drag"), [
+          {
+            name: "unsupported.exe",
+            mimeType: "application/octet-stream",
+            buffer: Buffer.from("invalid"),
+          },
+        ]);
+        await expect(importDialog.getByRole("alert")).toContainText(
+          "仅支持 .xlsx、.csv、.tsv 或 .txt",
+        );
+        await expect(importDialog.getByRole("button", { name: "解析并预览" })).toBeDisabled();
+        await dropCaseListFiles(page, importDialog.locator(".ant-upload-drag"), [file]);
+        await expect(importDialog.getByRole("alert")).toBeHidden();
+        await expect(importDialog.getByRole("status")).toContainText("共 8 条路径");
+      }
+    } else {
+      await importDialog.getByLabel("粘贴用例路径").fill(classes.join("\n"));
+    }
+    await expectUiIntegrity(page);
+    await captureUi(page, "/case-list-inputs-selected", viewport.width, false);
     await importDialog.getByRole("button", { name: "解析并预览" }).click();
     await importDialog.getByRole("button", { name: "勾选匹配用例" }).click();
     const stats = page.getByRole("status", { name: "已勾选用例的执行统计" });

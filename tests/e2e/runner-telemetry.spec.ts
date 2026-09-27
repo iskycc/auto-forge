@@ -5,6 +5,84 @@ import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("Runner terminal keeps Tab input inside xterm while toolbar focus remains accessible", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const name = uniqueName("终端按键节点");
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name,
+      labels: [],
+      capabilities: ["executor:process"],
+      maxConcurrency: 1,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "1.18.13",
+      protocolVersion: 1,
+      terminalEnabled: true,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const receivedInput: string[] = [];
+  await page.routeWebSocket("**/api/v1/terminal-stream", (socket) => {
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as { type: string; data?: string };
+      if (message.type === "input" && message.data)
+        receivedInput.push(Buffer.from(message.data, "base64").toString());
+    });
+    socket.send(JSON.stringify({ schemaVersion: 1, type: "ready" }));
+  });
+  await page.goto(`/runners?query=${encodeURIComponent(name)}`);
+  const entry = page.getByRole("button", { name: "终端浮窗", exact: true });
+  const dialog = page.getByRole("dialog", { name: `${name} 直连终端` });
+  const input = dialog.locator(".xterm-helper-textarea");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await entry.click();
+    const connect = dialog.getByRole("button", { name: "连接终端", exact: true });
+    const expand = dialog.getByRole("button", { name: "放大终端窗口", exact: true });
+    await connect.focus();
+    await page.keyboard.press("Tab");
+    await expect(expand).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(connect).toBeFocused();
+    await connect.click();
+    await expect(dialog.getByText("已连接", { exact: true })).toBeVisible();
+    await expect(input).toBeFocused();
+    for (const expanded of [false, true]) {
+      if (expanded) {
+        await expand.click();
+        await input.focus();
+      }
+      for (let press = 0; press < 2; press += 1) {
+        const previousCount = receivedInput.length;
+        await page.keyboard.press("Tab");
+        await expect.poll(() => receivedInput.slice(previousCount)).toEqual(["\t"]);
+        await expect(input).toBeFocused();
+      }
+      await page.keyboard.type("echo tab-ready");
+      await page.keyboard.press("Enter");
+      await expect.poll(() => receivedInput.join("")).toContain("\t\techo tab-ready\r");
+      const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+      if (directory) {
+        await mkdir(directory, { recursive: true });
+        await page.screenshot({
+          path: resolve(directory, `terminal-tab-${width}-${expanded ? "expanded" : "window"}.png`),
+        });
+      }
+    }
+    await page.keyboard.press("Escape");
+    await expect(expand).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(entry).toBeFocused();
+  }
+});
+
 test("Runner terminal initializes after the modal mounts and can reopen", async ({ page }) => {
   await ensureAdministrator(page);
   const name = uniqueName("终端初始化节点");

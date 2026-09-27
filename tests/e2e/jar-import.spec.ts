@@ -982,7 +982,7 @@ public class MixedVisibleTest {
   const dailySuiteId = new URL(dailySuiteHref!, page.url()).pathname.split("/").at(-1)!;
   await expect(createSuiteDialog).toHaveCount(0);
   await page.keyboard.press("Control+K");
-  const globalSearch = page.getByLabel("全局搜索");
+  const globalSearch = page.getByRole("searchbox", { name: "全局搜索", exact: true });
   await expect(globalSearch).toBeFocused();
   await globalSearch.fill("每日冒烟");
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeVisible();
@@ -1067,8 +1067,8 @@ public class MixedVisibleTest {
       ]),
     ),
   });
-  const xlsxFileStatus = xlsxImportDialog.locator("label > small[role=status]");
-  await expect(xlsxFileStatus).toContainText(longCaseRangeFileName);
+  const xlsxFileStatus = xlsxImportDialog.locator(".case-import-file-status");
+  await expect(xlsxImportDialog.locator(".ui-file-name")).toHaveText(longCaseRangeFileName);
   await expect(xlsxFileStatus).toContainText("共 2 条路径");
   await expect(xlsxFileStatus).toHaveAttribute(
     "aria-label",
@@ -1975,15 +1975,17 @@ public class MixedVisibleTest {
   await expectDesktopLayoutFits(page, 1024, 768);
   await captureUi(page, "dashboard-data-1024");
   await expectDesktopLayoutFits(page, 1920, 1080);
-  await page.setViewportSize({ width: 1920, height: 1080 });
+  // At 200% zoom, keep 1536 CSS pixels so this remains a supported desktop viewport.
+  await page.setViewportSize({ width: 3072, height: 2160 });
   await page.evaluate(() => {
     document.documentElement.style.zoom = "2";
   });
   await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
-  await expect(page.getByLabel("全局搜索")).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "全局搜索", exact: true })).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.style.zoom = "";
   });
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await expectDesktopLayoutFits(page, 1920, 1080);
   await expectUiConsistency(page);
   await captureUi(page, "dashboard");

@@ -9,7 +9,8 @@ import type { CaseDirectorySelection } from "@autoforge/contracts";
 import { Table2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Button, FileInput, OperationProgress, Textarea } from "@/components/ui";
+import { Button, OperationProgress, Textarea } from "@/components/ui";
+import { CaseListFilePicker } from "./case-list-file-picker";
 import { parseCasePathFile } from "@/lib/case-path-file";
 import { readFileWithProgress } from "@/lib/read-file-with-progress";
 import {
@@ -55,11 +56,8 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
     setResult(null);
   }
 
-  async function readFile(input: HTMLInputElement): Promise<void> {
-    const file = input.files?.item(0);
+  async function readFile(file: File): Promise<void> {
     setResult(null);
-    // 用户取消系统文件选择框时 files 为空，保留已读内容避免误清空。
-    if (!file) return;
     const generation = fileReadGeneration.current + 1;
     fileReadGeneration.current = generation;
     setFilePaths(null);
@@ -183,7 +181,7 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
               和类名写法 com.example.CheckoutTest，与用例库精确匹配后批量勾选。
             </p>
             <div className={cn("runner-update-grid", caseImportDialogStyles["runner-update-grid"])}>
-              <label
+              <div
                 className={cn("case-import-source", caseImportDialogStyles["case-import-source"])}
               >
                 <span
@@ -194,10 +192,15 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
                 >
                   表格文件
                 </span>
-                <FileInput
-                  accept=".xlsx,.csv,.tsv,.txt"
-                  aria-label="选择用例表格文件"
-                  onChange={(event) => void readFile(event.currentTarget)}
+                <CaseListFilePicker
+                  label="选择用例表格文件"
+                  fileName={fileName}
+                  disabled={readingFile}
+                  onSelect={(file) => void readFile(file)}
+                  onError={(message) => {
+                    setResult(null);
+                    setFileError(message);
+                  }}
                 />
                 {fileStatus ? (
                   <small
@@ -209,16 +212,8 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
                     role="status"
                     title={`${fileStatus.prefix} ${fileName}${fileStatus.suffix}`}
                   >
-                    <span>{fileStatus.prefix}</span>
-                    <span
-                      className={cn(
-                        "case-import-file-name",
-                        caseImportDialogStyles["case-import-file-name"],
-                      )}
-                    >
-                      {fileName}
-                    </span>
-                    <span>{fileStatus.suffix}</span>
+                    {fileStatus.prefix}
+                    {fileStatus.suffix}
                   </small>
                 ) : null}
                 {fileError ? (
@@ -230,7 +225,7 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
                     {fileError}
                   </Notice>
                 ) : null}
-              </label>
+              </div>
               <label
                 className={cn("case-import-source", caseImportDialogStyles["case-import-source"])}
               >
@@ -244,6 +239,7 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
                 </span>
                 <Textarea
                   aria-label="粘贴用例路径"
+                  disabled={readingFile}
                   onChange={(event) => {
                     setPastedText(event.currentTarget.value);
                     setResult(null);
@@ -251,7 +247,7 @@ export function CaseImportDialog({ cases, onImport, resolvePaths }: CaseImportDi
                   placeholder={
                     "每行一个用例路径，可含表头，例如：\n用例路径\ncom/example/CheckoutTest"
                   }
-                  rows={4}
+                  rows={6}
                   value={pastedText}
                 />
               </label>
@@ -334,13 +330,10 @@ const caseImportDialogStyles = {
   "case-import-dialog":
     "w-[min(760px,_calc(100dvw_-_48px))] max-h-[calc(100dvh_-_48px)] [&_.runner-update-titlebar_>_span]:min-w-0 [&_.runner-update-titlebar_small]:min-w-0 [&_.runner-update-titlebar_small]:overflow-hidden [&_.runner-update-titlebar_small]:text-ellipsis [&_.runner-update-titlebar_small]:whitespace-nowrap",
   "case-import-field-label": "text-muted-foreground",
-  "case-import-file-name":
-    "min-w-0 [flex:1_1_auto] overflow-hidden text-foreground text-ellipsis whitespace-nowrap",
-  "case-import-file-status":
-    "flex min-w-0 items-center gap-1 [&_>_span:not(.case-import-file-name)]:[flex:0_0_auto] [&_>_span:not(.case-import-file-name)]:whitespace-nowrap",
+  "case-import-file-status": "text-xs text-muted-foreground",
   "case-import-result":
     "grid min-w-0 gap-3 border border-solid border-border rounded-lg p-3.5 bg-muted",
-  "case-import-source": "min-w-0",
+  "case-import-source": "grid min-w-0 content-start gap-2",
   "case-import-unmatched":
     "grid min-w-0 gap-1 m-0 pl-4.5 text-muted-foreground text-xs [&_code]:block [&_code]:min-w-0 [&_code]:max-w-full [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:font-mono [&_>_li]:min-w-0",
   "runner-installer-actions":
@@ -348,8 +341,7 @@ const caseImportDialogStyles = {
   "runner-update-body": "grid gap-4 p-4.5 overflow-y-auto",
   "runner-update-dialog":
     "grid w-[min(640px,_92vw)] max-h-[86vh] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg",
-  "runner-update-grid":
-    "grid grid-cols-2 gap-3.5 [&_.checkbox-row]:flex [&_.checkbox-row]:flex-row [&_.checkbox-row]:items-center [&_.checkbox-row]:self-end [&_.checkbox-row_input]:w-auto [&_label]:grid [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+  "runner-update-grid": "grid grid-cols-2 items-start gap-4",
   "runner-update-hint": "m-0 text-muted-foreground leading-[1.65]",
 
   "runner-update-titlebar":

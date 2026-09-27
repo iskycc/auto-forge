@@ -16,8 +16,10 @@ describe("copyTextToClipboard", () => {
   it("falls back to selection copy when Clipboard API is unavailable", async () => {
     const textarea = fakeTextarea();
     const append = vi.fn();
+    const restoreFocus = vi.fn();
     const execCommand = vi.fn().mockReturnValue(true);
     const document = {
+      activeElement: { focus: restoreFocus },
       body: { append },
       createElement: vi.fn().mockReturnValue(textarea),
       execCommand,
@@ -26,8 +28,31 @@ describe("copyTextToClipboard", () => {
     await copyTextToClipboard("http://10.0.0.8/share/run/token", { document });
 
     expect(textarea.value).toBe("http://10.0.0.8/share/run/token");
+    expect(textarea.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(textarea.focus.mock.invocationCallOrder[0]).toBeLessThan(
+      textarea.select.mock.invocationCallOrder[0]!,
+    );
     expect(textarea.select).toHaveBeenCalledOnce();
     expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(textarea.remove).toHaveBeenCalledOnce();
+    expect(restoreFocus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("keeps the temporary input inside the active dialog's focus boundary", async () => {
+    const textarea = fakeTextarea();
+    const dialog = { append: vi.fn() };
+    const document = {
+      activeElement: { closest: vi.fn().mockReturnValue(dialog), focus: vi.fn() },
+      body: { append: vi.fn() },
+      createElement: vi.fn().mockReturnValue(textarea),
+      execCommand: vi.fn().mockReturnValue(true),
+    } as unknown as Document;
+
+    await copyTextToClipboard("full-case-id", { document });
+
+    expect(dialog.append).toHaveBeenCalledWith(textarea);
+    expect(document.body.append).not.toHaveBeenCalled();
+    expect(textarea.focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(textarea.remove).toHaveBeenCalledOnce();
   });
 
@@ -53,7 +78,9 @@ describe("copyTextToClipboard", () => {
 
   it("reports an actionable error when neither copy method succeeds", async () => {
     const textarea = fakeTextarea();
+    const restoreFocus = vi.fn();
     const document = {
+      activeElement: { focus: restoreFocus },
       body: { append: vi.fn() },
       createElement: vi.fn().mockReturnValue(textarea),
       execCommand: vi.fn().mockReturnValue(false),
@@ -63,6 +90,7 @@ describe("copyTextToClipboard", () => {
       "浏览器未允许复制，请打开分享链接后从地址栏手动复制。",
     );
     expect(textarea.remove).toHaveBeenCalledOnce();
+    expect(restoreFocus).toHaveBeenCalledWith({ preventScroll: true });
   });
 });
 
@@ -110,6 +138,7 @@ function fakeTextarea() {
     readOnly: false,
     style: {} as CSSStyleDeclaration,
     setAttribute: vi.fn(),
+    focus: vi.fn(),
     select: vi.fn(),
     setSelectionRange: vi.fn(),
     remove: vi.fn(),

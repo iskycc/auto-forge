@@ -65,6 +65,7 @@ function browserClipboardEnvironment(): ClipboardEnvironment {
 
 function copyWithSelection(document: Document, text: string): boolean {
   if (typeof document.execCommand !== "function" || !document.body) return false;
+  const previousFocus = document.activeElement;
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.readOnly = true;
@@ -72,8 +73,14 @@ function copyWithSelection(document: Document, text: string): boolean {
   textarea.style.position = "fixed";
   textarea.style.inset = "0 auto auto -9999px";
   textarea.style.opacity = "0";
-  document.body.append(textarea);
+  // Modal focus guards reject inputs outside the active dialog.
+  const container =
+    previousFocus?.closest?.('dialog[open], [role="dialog"], [role="alertdialog"]') ??
+    document.body;
+  container.append(textarea);
   try {
+    // select() alone can leave focus and the document selection on previously selected text.
+    textarea.focus({ preventScroll: true });
     textarea.select();
     textarea.setSelectionRange(0, text.length);
     return document.execCommand("copy");
@@ -81,5 +88,7 @@ function copyWithSelection(document: Document, text: string): boolean {
     return false;
   } finally {
     textarea.remove();
+    if (previousFocus && "focus" in previousFocus && typeof previousFocus.focus === "function")
+      previousFocus.focus({ preventScroll: true });
   }
 }

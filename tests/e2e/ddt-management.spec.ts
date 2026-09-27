@@ -11,6 +11,7 @@ import { zipSync } from "fflate";
 import { buildExportWorkbook, parseSpreadsheet } from "../../packages/ddt-import/src";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
+import { dropCaseListFiles } from "./support/case-list-upload";
 import {
   acceptSystemDialog,
   browserJson,
@@ -18,7 +19,7 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
-import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
+import { expectReadableText, expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 import type { DdtExecutionStatistics } from "@autoforge/contracts";
 
 test("DDT inheritance copies another version with pause, recovery and safe duplicate handling", async ({
@@ -3250,9 +3251,23 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
   const dialog = page.getByRole("dialog", { name: "按清单选择 DDT 用例" });
   const search = dialog.getByRole("button", { name: "解析并预览" });
   const apply = dialog.getByRole("button", { name: "勾选匹配用例" });
+  await expect(dialog).toBeVisible();
+  await waitForUiTransitions(page);
+  await captureDdtUi(page, "ddt-case-list-input-method");
+  const inputMethod = dialog.locator(".segmented-control");
+  const emptyTrackWidth = await inputMethod.evaluate((element) => {
+    const choices = Array.from(element.querySelectorAll(".ant-segmented-item"));
+    const first = choices[0]!.getBoundingClientRect();
+    const last = choices.at(-1)!.getBoundingClientRect();
+    return element.getBoundingClientRect().width - (last.right - first.left);
+  });
+  expect(
+    emptyTrackWidth,
+    "input method selector must not leave an empty track",
+  ).toBeLessThanOrEqual(8);
   await dialog.getByRole("radio", { name: "上传表格", exact: true }).locator("..").click();
   const longMissing = `MISSING-${"超长用例编号".repeat(65)}`;
-  await dialog.getByLabel("选择 DDT 用例清单文件").setInputFiles({
+  const workbook = {
     name: `${"选择已有用例清单".repeat(10)}.xlsx`,
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: buildExportWorkbook(
@@ -3261,7 +3276,30 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
         srNum: "ignored-column",
       })),
     ),
-  });
+  };
+  await dropCaseListFiles(page, dialog.locator(".ant-upload-drag, .ui-file"), [workbook]);
+  await expect(dialog.locator(".ui-file-name")).toContainText(workbook.name);
+  await dropCaseListFiles(page, dialog.locator(".ant-upload-drag"), [
+    workbook,
+    { ...workbook, name: "second.xlsx" },
+  ]);
+  await expect(dialog.getByRole("alert")).toContainText("每次只能选择一个用例清单文件");
+  await expect(dialog.locator(".ui-file-name")).toHaveAttribute("title", workbook.name);
+  await expect(apply).toBeDisabled();
+  await dropCaseListFiles(page, dialog.locator(".ant-upload-drag"), [
+    {
+      name: "unsupported.exe",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from("LIST-203"),
+    },
+  ]);
+  await search.click();
+  await expect(dialog.getByRole("alert")).toContainText("仅支持 .xlsx、.csv、.tsv 或 .txt");
+  await expect(apply).toBeDisabled();
+  const chooser = page.waitForEvent("filechooser");
+  await dialog.locator(".ant-upload-btn").click();
+  await (await chooser).setFiles(workbook);
+  await expect(dialog.getByRole("alert")).toBeHidden();
   const searchRoute = "**/api/v1/ddt/cases/search?*";
   await page.route(
     searchRoute,
@@ -3357,8 +3395,15 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
     await expectUiIntegrity(page);
     await captureDdtUi(page, `ddt-case-list-selected-${width}`);
   }
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
   await page.getByRole("button", { name: "按清单选择", exact: true }).click();
-  await dialog.getByLabel("粘贴 DDT CaseID").fill("CaseID\nMISSING");
+  await dialog.getByRole("radio", { name: "上传表格", exact: true }).locator("..").click();
+  await dropCaseListFiles(page, dialog.locator(".ant-upload-drag"), [workbook]);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-list-file-dark-${width}`);
+  }
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -3373,13 +3418,107 @@ test("DDT selects existing cases from Excel or text across unloaded pages and ad
   );
   try {
     await search.click();
-    await expect(dialog.getByLabel("粘贴 DDT CaseID")).toBeDisabled();
+    await expect(dialog.getByLabel("选择 DDT 用例清单文件")).toBeDisabled();
+    await dropCaseListFiles(page, dialog.locator(".ant-upload-drag"), [
+      { ...workbook, name: "ignored-while-matching.xlsx" },
+    ]);
+    await expect(dialog.locator(".ui-file-name")).toHaveAttribute("title", workbook.name);
     await dialog.getByRole("button", { name: "取消匹配", exact: true }).click();
     await expect(dialog).toBeHidden();
   } finally {
     release();
   }
   await expect(page.getByRole("heading", { name: "已选择 205 条用例" })).toBeVisible();
+});
+
+test("DDT selection copies full matched and unmatched CaseIDs including results beyond the preview", async ({
+  page,
+  context,
+}) => {
+  await ensureAdministrator(page);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const hierarchy = await createHierarchy(page);
+  const matched = Array.from({ length: 12 }, (_, index) =>
+    index === 0 ? `PAY/0001-${"完整CaseId_".repeat(35)}-最后字符` : `MATCH-${index}`,
+  );
+  const unmatched = Array.from({ length: 12 }, (_, index) =>
+    index === 0 ? `MISSING/0001-${"未匹配CaseId_".repeat(30)}-最后字符` : `MISSING-${index}`,
+  );
+  await importDdtApiFixture(
+    page,
+    hierarchy,
+    matched[0]!,
+    0,
+    matched.map((CaseID) => ({
+      CaseID,
+      srNum: "COPY-SR",
+    })),
+  );
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const clipboard = await page.evaluateHandle(() => navigator.clipboard);
+  const readClipboard = () => clipboard.evaluate((clipboard) => clipboard.readText());
+  await page.getByRole("button", { name: "按清单选择", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "按清单选择 DDT 用例" });
+  await dialog.getByLabel("粘贴 DDT CaseID").fill([...matched, ...unmatched].join("\n"));
+  await dialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("匹配 12 个 · 未匹配 12 个");
+  const matchedPreview = dialog.getByRole("region", { name: "已匹配 CaseID", exact: true });
+  const unmatchedPreview = dialog.getByRole("region", { name: "未匹配 CaseID", exact: true });
+  // Ant keeps the previous notice mounted until its exit animation finishes.
+  const latestNotice = page.locator(".toast-card").last();
+  for (const [preview, ids] of [
+    [matchedPreview, matched],
+    [unmatchedPreview, unmatched],
+  ] as const) {
+    await expect(preview.locator("li")).toHaveCount(10);
+    await preview.getByRole("button", { name: `复制 CaseID ${ids[0]}`, exact: true }).click();
+    await expect.poll(readClipboard).toBe(ids[0]);
+    await expect(latestNotice).toContainText("已复制完整 CaseID");
+    await preview.getByRole("button", { name: /^复制全部/ }).click();
+    await expect.poll(readClipboard).toBe(ids.join("\n"));
+    await expect(latestNotice).toContainText("已复制 12 个");
+  }
+  await matchedPreview.locator("code").first().click();
+  await page.keyboard.press("Control+C");
+  await expect.poll(readClipboard).toBe(matched[0]);
+  // Plain HTTP deployments have no navigator.clipboard; exercise the selection fallback.
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    }),
+  );
+  await unmatchedPreview.getByRole("button", { name: /^复制全部/ }).click();
+  await expect.poll(readClipboard).toBe(unmatched.join("\n"));
+  await page.evaluate(() => {
+    document.execCommand = () => false;
+  });
+  await matchedPreview.getByRole("button", { name: /^复制全部/ }).click();
+  await expect(latestNotice).toContainText("复制失败");
+  await expect(dialog.getByRole("status")).toHaveText("匹配 12 个 · 未匹配 12 个");
+  await latestNotice.getByRole("button", { name: "关闭通知", exact: true }).click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await matchedPreview.scrollIntoViewIfNeeded();
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-list-copy-${width}`);
+  }
+  await dialog.getByLabel("粘贴 DDT CaseID").fill(unmatched[0]!);
+  await dialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(matchedPreview.getByRole("button", { name: /^复制全部/ })).toBeDisabled();
+  await expect(unmatchedPreview.getByRole("button", { name: /^复制全部/ })).toBeEnabled();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "按清单选择", exact: true }).click();
+  await dialog.getByLabel("粘贴 DDT CaseID").fill([matched[0], unmatched[0]].join("\n"));
+  await dialog.getByRole("button", { name: "解析并预览" }).click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-list-copy-dark-${width}`);
+  }
+  await clipboard.dispose();
 });
 
 async function importDdtApiFixture(

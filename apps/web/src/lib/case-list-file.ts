@@ -14,7 +14,7 @@ const TEXT_EXTENSIONS = new Set(["csv", "tsv", "txt"]);
 const XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export async function readCaseListFileColumn(file: CaseListFile): Promise<string[]> {
-  validateFileSize(file);
+  validateCaseListFileSize(file);
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.byteLength === 0) throw new Error("所选文件为空，请重新选择。");
 
@@ -34,7 +34,7 @@ export async function readCaseListFileColumn(file: CaseListFile): Promise<string
   return lines.map(firstColumnOf);
 }
 
-function validateFileSize(file: CaseListFile): void {
+export function validateCaseListFileSize(file: Pick<CaseListFile, "size">): void {
   if (file.size > MAX_CASE_LIST_FILE_BYTES) {
     throw new Error(`用例列表不能超过 ${MAX_CASE_LIST_FILE_BYTES / 1024 / 1024} MiB。`);
   }

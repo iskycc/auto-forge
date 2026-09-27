@@ -8,6 +8,7 @@ import { unzipSync, zipSync } from "fflate";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { appAlert, ensureAdministrator } from "./support/session";
 import { selectJarForInspection } from "./support/jar-import";
+import { expectTerminalTabCompletion, sendTerminalInput } from "./support/terminal-input";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -244,7 +245,7 @@ async function startAgent(): Promise<AgentProcess> {
       AUTOFORGE_AGENT_CLAIM_MAX_BACKOFF: "1s",
       AUTOFORGE_AGENT_SHUTDOWN_GRACE: "10s",
       AUTOFORGE_AGENT_TERMINAL_ENABLED: "true",
-      AUTOFORGE_AGENT_TERMINAL_SHELL: "/bin/sh",
+      AUTOFORGE_AGENT_TERMINAL_SHELL: "/bin/bash",
       AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS: "1",
       AUTOFORGE_AGENT_TERMINAL_MAX_DURATION: "2m",
     },
@@ -266,6 +267,7 @@ async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<vo
   await page.getByRole("button", { name: "连接终端" }).click();
   await expect(page.getByText("已连接", { exact: true })).toBeVisible({ timeout: 20_000 });
 
+  await expectTerminalTabCompletion(page);
   await sendTerminalInput(page, "printf 'REAL_PTY_INPUT=中文\\n'");
   await expect(page.locator(".terminal-viewport")).toContainText("REAL_PTY_INPUT=中文");
   await sendTerminalInput(page, "sleep 120 & printf 'REAL_PTY_CHILD=%s\\n' \"$!\"");
@@ -310,23 +312,6 @@ async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<vo
       { timeout: 20_000, intervals: [500, 1_000] },
     )
     .toBeGreaterThanOrEqual(2);
-}
-
-async function sendTerminalInput(page: Page, command: string): Promise<void> {
-  const input = page.locator(".terminal-window .xterm-helper-textarea");
-  await expect(input).toBeFocused();
-  await input.evaluate((textarea, text) => {
-    const clipboardData = new DataTransfer();
-    clipboardData.setData("text/plain", text);
-    textarea.dispatchEvent(
-      new ClipboardEvent("paste", {
-        bubbles: true,
-        cancelable: true,
-        clipboardData,
-      }),
-    );
-  }, command);
-  await input.press("Enter");
 }
 
 function isProcessAlive(processID: number): boolean {

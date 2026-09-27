@@ -108,9 +108,12 @@ export function Dialog({
             event.preventDefault();
             event.stopPropagation();
             onEscape();
-            return;
           }
-          if (inactive || event.key !== "Tab") return;
+        }}
+        onKeyDown={(event) => {
+          // Let editors such as xterm consume Tab before the dialog cycles focus.
+          panelProps?.onKeyDown?.(event);
+          if (inactive || event.defaultPrevented || event.key !== "Tab") return;
           const controls = Array.from(
             event.currentTarget.querySelectorAll<HTMLElement>(
               'button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]',

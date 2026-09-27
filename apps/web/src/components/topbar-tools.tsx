@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input } from "@/components/ui";
+import { useClientReadiness } from "@/components/ui/use-client-readiness";
 
 import type { GlobalSearchResult, Notification } from "@autoforge/contracts";
 import type { Permission } from "@autoforge/domain";
@@ -26,6 +27,8 @@ const NOTIFICATION_COUNT_REFRESH_INTERVAL_MS = 30_000;
 
 export function TopbarTools({ permissions = [] }: { permissions?: readonly Permission[] }) {
   const router = useRouter();
+  const clientReady = useClientReadiness();
+  const searchModifier = clientReady && /Mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
   const [query, setQuery] = useState("");
   const [searchItems, setSearchItems] = useState<GlobalSearchResult["items"]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -267,6 +270,7 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
             <Search size={17} aria-hidden="true" />
             <Input
               aria-label="全局搜索"
+              aria-keyshortcuts="Control+K Meta+K"
               onChange={(event) => updateQuery(event.target.value)}
               onFocus={() => query.trim().length >= 2 && setSearchOpen(true)}
               onKeyDown={(event) => {
@@ -281,7 +285,18 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
               type="search"
               value={query}
             />
-            <kbd>⌘ K</kbd>
+            <Button
+              aria-label="聚焦全局搜索"
+              className="global-search-shortcut h-8 gap-1 whitespace-nowrap rounded-md bg-muted px-1.5 text-xs font-medium text-muted-foreground"
+              onClick={() => searchInput.current?.focus()}
+              size="compact"
+              title={`搜索快捷键：${searchModifier} + K`}
+              type="button"
+              variant="ghost"
+            >
+              <span>{searchModifier}</span>
+              <span>K</span>
+            </Button>
           </div>
         </Popover>
       </div>
@@ -442,7 +457,7 @@ function formatDate(value: string): string {
 
 const topbarToolsStyles = {
   "global-search":
-    "flex w-[min(420px,_42vw)] h-10 items-center gap-[9px] mr-auto [padding:0_10px_0_12px] border border-solid border-border rounded-lg bg-card text-muted-foreground shadow-xs [&:focus-within]:border-info/10 [&:focus-within]:shadow-xs [&_input]:min-w-0 [&_input]:flex-1 [&_input]:border-0 [&_input]:[outline:0] [&_input]:bg-transparent [&_input]:text-foreground [&_kbd]:py-0.5 [&_kbd]:px-1.5 [&_kbd]:border [&_kbd]:border-solid [&_kbd]:border-border [&_kbd]:rounded-md [&_kbd]:bg-muted [&_kbd]:text-muted-foreground [&_kbd]:text-xs max-[1181px]:[&_kbd]:hidden",
+    "flex h-10 min-w-0 items-center gap-1.5 rounded-lg border border-solid border-border bg-card px-2 text-muted-foreground shadow-xs focus-within:border-ring [&>svg]:shrink-0 [&>.ui-field-feedback]:flex-1 [&_input]:border-0 [&_input]:bg-transparent [&_input]:px-0 [&_input]:text-foreground [&_input]:shadow-none [&_input]:outline-none",
   "global-search-shell":
     "relative w-[min(620px,_100%)] min-w-0 [flex:1_1_620px] max-w-[620px] [&_.global-search]:w-full [&_.global-search]:overflow-hidden max-[1501px]:hidden max-[1181px]:max-w-[490px]",
   "notification-item":

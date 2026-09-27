@@ -6,9 +6,13 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { useEffect, useRef, useState } from "react";
+import { Copy } from "lucide-react";
 import type { DdtScope } from "@autoforge/domain";
 import { ActionDialog } from "./action-dialog";
-import { Button, FileInput, OperationProgress, Textarea } from "./ui";
+import { Button, OperationProgress, Textarea } from "./ui";
+import { CaseListFilePicker } from "./case-list-file-picker";
+import { useToast } from "./ui-feedback";
+import { copyTextToClipboard } from "@/lib/client-clipboard";
 import { readApiError } from "@/lib/client-api";
 import { readCaseListFileColumn } from "@/lib/case-list-file";
 import {
@@ -122,6 +126,7 @@ export function DdtCaseSelectionDialog({
       }}
     >
       <Segmented
+        className="justify-self-start"
         label="清单输入方式"
         value={source}
         options={[
@@ -150,24 +155,25 @@ export function DdtCaseSelectionDialog({
           }}
         />
       </label>
-      <label
+      <div
         className={cn("case-import-source", ddtCaseSelectionDialogStyles["case-import-source"])}
         hidden={source !== "file"}
       >
         <span>用例清单文件</span>
-        <FileInput
-          aria-label="选择 DDT 用例清单文件"
-          accept=".xlsx,.csv,.tsv,.txt"
+        <CaseListFilePicker
+          label="选择 DDT 用例清单文件"
+          fileName={file?.name ?? ""}
           disabled={working}
-          onChange={(event) => {
-            const chosen = event.target.files?.item(0);
-            if (chosen) {
-              setFile(chosen);
-              invalidatePreview();
-            }
+          onSelect={(chosen) => {
+            setFile(chosen);
+            invalidatePreview();
+          }}
+          onError={(message) => {
+            setResult(undefined);
+            setError(message);
           }}
         />
-      </label>
+      </div>
       <p className={cn("muted", uiPatterns["muted"])}>
         支持 XLSX、CSV、TSV、TXT，读取首个工作表的第一列，表头可为 CaseID、用例ID
         或用例编号。忽略大小写与首尾空格，重复项自动合并；不会新建或覆盖用例数据。
@@ -251,9 +257,42 @@ export function DdtCaseSelectionDialog({
 }
 
 function CaseIdPreview({ title, caseIds }: { title: string; caseIds: string[] }) {
+  const toast = useToast();
+  const [copying, setCopying] = useState(false);
+
+  async function copyCaseIds(identifiers: string[]) {
+    if (copying || identifiers.length === 0) return;
+    setCopying(true);
+    try {
+      // Copy the complete values, including results outside the bounded preview.
+      await copyTextToClipboard(identifiers.join("\n"));
+      toast.success(
+        identifiers.length === 1
+          ? "已复制完整 CaseID。"
+          : `已复制 ${identifiers.length} 个${title} CaseID，每行一个。`,
+      );
+    } catch {
+      toast.error("复制失败，请重试，或选中 CaseID 后手动复制。");
+    } finally {
+      setCopying(false);
+    }
+  }
+
   return (
-    <div>
-      <strong>{title}</strong>
+    <section aria-label={`${title} CaseID`} className="grid min-w-0 gap-2">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <strong>{title}</strong>
+        <Button
+          variant="ghost"
+          size="compact"
+          aria-label={`复制全部${title} CaseID`}
+          disabled={copying || caseIds.length === 0}
+          onClick={() => void copyCaseIds(caseIds)}
+        >
+          <Copy size={14} aria-hidden="true" />
+          复制全部
+        </Button>
+      </div>
       {caseIds.length ? (
         <ul
           className={cn(
@@ -262,8 +301,21 @@ function CaseIdPreview({ title, caseIds }: { title: string; caseIds: string[] })
           )}
         >
           {caseIds.slice(0, PREVIEW_COUNT).map((caseId) => (
-            <li key={caseId}>
-              <code title={caseId}>{caseId}</code>
+            <li key={caseId} className="flex min-w-0 items-center gap-1">
+              <code className="min-w-0 flex-1 select-all" title={caseId}>
+                {caseId}
+              </code>
+              <Button
+                variant="ghost"
+                size="compact"
+                className="shrink-0"
+                aria-label={`复制 CaseID ${caseId}`}
+                title="复制完整 CaseID"
+                disabled={copying}
+                onClick={() => void copyCaseIds([caseId])}
+              >
+                <Copy size={14} aria-hidden="true" />
+              </Button>
             </li>
           ))}
         </ul>
@@ -272,10 +324,11 @@ function CaseIdPreview({ title, caseIds }: { title: string; caseIds: string[] })
       )}
       {caseIds.length > PREVIEW_COUNT ? (
         <small className={cn("muted", uiPatterns["muted"])}>
-          另有 {caseIds.length - PREVIEW_COUNT} 个，仅预览前 {PREVIEW_COUNT} 个
+          另有 {caseIds.length - PREVIEW_COUNT} 个，仅预览前 {PREVIEW_COUNT}{" "}
+          个；复制全部包含所有结果。
         </small>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -284,10 +337,9 @@ const ddtCaseSelectionDialogStyles = {
     "grid min-w-0 gap-3 border border-solid border-border rounded-lg p-3.5 bg-muted",
   "case-import-source": "min-w-0",
   "case-import-unmatched":
-    "grid min-w-0 gap-1 m-0 pl-4.5 text-muted-foreground text-xs [&_code]:block [&_code]:min-w-0 [&_code]:max-w-full [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:font-mono [&_>_li]:min-w-0",
+    "grid min-w-0 max-h-64 overflow-y-auto gap-1 m-0 p-0 text-muted-foreground text-xs [&_code]:block [&_code]:max-w-full [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:font-mono",
   "ddt-case-selection-actions": "flex flex-wrap gap-2 justify-end",
   "ddt-case-selection-dialog":
     "[&_.action-dialog-body]:grid [&_.action-dialog-body]:gap-3 [&_.action-dialog-body]:min-w-0 [&_.case-import-source]:grid [&_.case-import-source]:min-w-0 [&_.case-import-source]:gap-2 [&_.case-import-source[hidden]]:hidden [&_p]:[overflow-wrap:anywhere] [&_small]:[overflow-wrap:anywhere]",
-  "ddt-case-selection-preview":
-    "[&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-2 grid grid-cols-2 items-start gap-4",
+  "ddt-case-selection-preview": "grid grid-cols-2 items-start gap-4",
 } as const;
