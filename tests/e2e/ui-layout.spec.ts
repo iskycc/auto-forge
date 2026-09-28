@@ -9,6 +9,7 @@ import { dropCaseListFiles } from "./support/case-list-upload";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { insertBatchRunnerFixture } from "./support/batch-runner-fixture";
+import { insertRunnerInstallationProfileFixture } from "./support/runner-installation-profile-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
 import {
@@ -1296,6 +1297,152 @@ test("unified role scope selector exposes both system and project filters", asyn
   await page.getByRole("option", { name: "全部范围", exact: true }).click();
   await expect(systemRole).toBeVisible();
   await expect(projectRole).toBeVisible();
+});
+
+test("runner installer keeps connection and installation content inside the dialog", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertRunnerInstallationProfileFixture(directory);
+  let probeFails = false;
+  let releaseInstallation: (() => void) | undefined;
+  const installationRequests: Record<string, unknown>[] = [];
+  await page.route("**/api/v1/runners/installations/probe", async (route) => {
+    await route.fulfill({
+      status: probeFails ? 502 : 200,
+      json: probeFails
+        ? { error: { message: "无法连接目标主机，请检查 SSH 地址与端口。" } }
+        : {
+            hostKeySha256: fixture.fingerprint,
+            operatingSystemId: "ubuntu",
+            detectedOperatingSystemId: "ubuntu",
+            operatingSystemName: "Ubuntu 24.04 LTS",
+            architecture: "amd64",
+            initSystem: "systemd",
+            privilegeMode: "sudo",
+            cgroupV2Available: true,
+            bashPath: "/usr/bin/bash",
+            forcedInstallationMode: false,
+          },
+    });
+  });
+  await page.route("**/api/v1/runners/installations", async (route) => {
+    installationRequests.push(route.request().postDataJSON() as Record<string, unknown>);
+    await new Promise<void>((resolve) => {
+      releaseInstallation = resolve;
+    });
+    await route.fulfill({
+      json: {
+        installed: true,
+        host: fixture.host,
+        operatingSystemName: "Ubuntu 24.04 LTS",
+        architecture: "amd64",
+        agentVersion: "1.18.16",
+        serviceName: "autoforge-agent.service",
+        profileId: fixture.id,
+      },
+    });
+  });
+  try {
+    for (const appearance of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([{ name: "autoforge-color-mode", value: appearance, url: page.url() }]);
+      for (const width of [1536, 1024]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.goto("/runners");
+        await page.getByRole("button", { name: "打开自动安装" }).click();
+        const dialog = page.getByRole("dialog", { name: "自动安装执行机 Agent" });
+        const body = dialog.locator(".action-dialog-body");
+        const assertNoOverflow = async () => {
+          await waitForUiTransitions(page);
+          await expect
+            .poll(() => body.evaluate((element) => element.scrollWidth - element.clientWidth))
+            .toBeLessThanOrEqual(1);
+          await expect(
+            dialog.getByRole("heading", { name: "自动安装执行机 Agent" }),
+          ).toBeInViewport({ ratio: 1 });
+          await expect(
+            dialog.getByRole("button", { name: "关闭自动安装执行机 Agent" }),
+          ).toBeInViewport({ ratio: 1 });
+          const box = await dialog.boundingBox();
+          expect(box!.x).toBeGreaterThanOrEqual(0);
+          expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+        };
+        await dialog.getByLabel("已保存连接").and(page.locator("select")).selectOption(fixture.id);
+        await waitForUiTransitions(page);
+        await captureUi(page, `installer-initial-${appearance}`, width, false);
+        await assertNoOverflow();
+        await expect(dialog.getByLabel("执行机 IP / 主机名")).toHaveValue(fixture.host);
+        await expect(dialog.getByLabel("SSH / sudo 密码")).toHaveValue("");
+        await dialog.getByRole("button", { name: "载入连接并探测" }).click();
+        await expect(dialog.getByText(fixture.fingerprint, { exact: true })).toBeInViewport();
+        await assertNoOverflow();
+        await captureUi(page, `installer-probe-${appearance}`, width, false);
+        const install = dialog.getByRole("button", { name: "按上述配置重新安装 Agent" });
+        await expect(install).toBeDisabled();
+        await dialog.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
+        await dialog.getByLabel("允许管理员直连终端").check();
+        await dialog.getByLabel("以 root 身份运行 Agent").check();
+        await dialog.getByLabel("最大并发").fill("4");
+        await dialog.getByLabel("工作目录").fill("/srv/autoforge-agent");
+        await dialog
+          .getByLabel("私有 CA 证书（可选，PEM）")
+          .fill("-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----");
+        await body.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        await assertNoOverflow();
+        await captureUi(page, `installer-options-${appearance}`, width, false);
+        await install.click();
+        await expect(dialog.getByLabel("执行机名称")).toBeDisabled();
+        await expect(dialog.getByLabel("以 root 身份运行 Agent")).toBeDisabled();
+        await expect(
+          dialog.getByRole("button", { name: "关闭自动安装执行机 Agent" }),
+        ).toBeDisabled();
+        await page.keyboard.press("Escape");
+        await expect(dialog).toBeVisible();
+        await expect.poll(() => Boolean(releaseInstallation)).toBe(true);
+        releaseInstallation!();
+        releaseInstallation = undefined;
+        await expect(dialog.getByRole("status").filter({ hasText: "服务已启动" })).toBeInViewport({
+          ratio: 1,
+        });
+        expect(installationRequests.at(-1)).toMatchObject({
+          profileId: fixture.id,
+          expectedHostKeySha256: fixture.fingerprint,
+          name: fixture.name,
+          maxConcurrency: 4,
+          terminalEnabled: true,
+          runAsRoot: true,
+          dataDirectory: "/srv/autoforge-agent",
+        });
+        expect(installationRequests.at(-1)).not.toHaveProperty("connection");
+        await assertNoOverflow();
+        await captureUi(page, `installer-success-${appearance}`, width, false);
+        await dialog.getByLabel("执行机 IP / 主机名").fill("192.0.2.10");
+        await expect(dialog.getByText(fixture.fingerprint, { exact: true })).toHaveCount(0);
+        await dialog.getByLabel("SSH / sudo 密码").fill("Fixture!Password123");
+        probeFails = true;
+        await dialog.getByRole("button", { name: "探测并核验主机" }).click();
+        await expect(dialog.getByRole("alert")).toHaveText(
+          "无法连接目标主机，请检查 SSH 地址与端口。",
+        );
+        await expect(dialog.getByRole("alert")).toBeInViewport({ ratio: 1 });
+        await assertNoOverflow();
+        await captureUi(page, `installer-error-${appearance}`, width, false);
+        probeFails = false;
+        await page.keyboard.press("Escape");
+        await expect(dialog).toHaveCount(0);
+      }
+    }
+  } finally {
+    releaseInstallation?.();
+    await page.context().clearCookies({ name: "autoforge-color-mode" });
+    fixture.dispose();
+  }
 });
 
 test("audit findings use bounded, localized, and unambiguous controls", async ({ page }) => {

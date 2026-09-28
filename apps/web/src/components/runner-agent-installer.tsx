@@ -20,9 +20,9 @@ import {
   type RunnerHostProbeResult,
   type RunnerInstallationProfile,
 } from "@autoforge/contracts";
-import { CheckCircle2, Fingerprint, HardDriveDownload, Search, ShieldAlert } from "lucide-react";
+import { CheckCircle2, Fingerprint, HardDriveDownload, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type RunnerAgentInstallerProps = {
   controlPlaneUrl: string | undefined;
@@ -65,6 +65,17 @@ export function RunnerAgentInstaller({
   const [rollbackResult, setRollbackResult] = useState<RunnerAgentRollbackResult>();
   const [pending, setPending] = useState<"probe" | "install" | "rollback">();
   const [error, setError] = useState("");
+  const probeSummaryRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (probe) revealInstallationContent(probeSummaryRef.current, "start");
+  }, [probe]);
+
+  useEffect(() => {
+    if (result || rollbackResult || error)
+      revealInstallationContent(feedbackRef.current, "nearest");
+  }, [result, rollbackResult, error]);
 
   function closeDialog(): void {
     if (!pending) setOpen(false);
@@ -222,7 +233,8 @@ export function RunnerAgentInstaller({
         </div>
       </Card>
       <ActionDialog
-        className={"runner-installer-dialog"}
+        className="runner-installer-dialog w-[min(920px,calc(100vw-3rem))]"
+        closeDisabled={Boolean(pending)}
         description="填写 SSH 连接信息并完成主机探测后，再确认 Agent 的安装配置。"
         onClose={closeDialog}
         open={open}
@@ -237,6 +249,7 @@ export function RunnerAgentInstaller({
           {!controlPlaneUrl ? (
             <Notice
               tone="warning"
+              showIcon
               className={cn(
                 "inline-notice warning-notice",
                 uiPatterns["inline-notice"],
@@ -244,7 +257,6 @@ export function RunnerAgentInstaller({
               )}
               role="status"
             >
-              <ShieldAlert size={18} />
               <span>请先在“平台配置”中设置内部访问地址或外部访问地址。</span>
             </Notice>
           ) : (
@@ -258,6 +270,7 @@ export function RunnerAgentInstaller({
           {controlPlaneUrl?.startsWith("http:") ? (
             <Notice
               tone="warning"
+              showIcon
               className={cn(
                 "inline-notice warning-notice",
                 uiPatterns["inline-notice"],
@@ -265,7 +278,6 @@ export function RunnerAgentInstaller({
               )}
               role="status"
             >
-              <ShieldAlert size={18} />
               <span>
                 当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。
               </span>
@@ -274,6 +286,7 @@ export function RunnerAgentInstaller({
           {controlPlaneUrl && isLoopbackUrl(controlPlaneUrl) ? (
             <Notice
               tone="warning"
+              showIcon
               className={cn(
                 "inline-notice warning-notice",
                 uiPatterns["inline-notice"],
@@ -281,7 +294,6 @@ export function RunnerAgentInstaller({
               )}
               role="status"
             >
-              <ShieldAlert size={18} />
               <span>
                 当前控制面地址仅本机可达。安装到其他主机前，请在“平台配置”中设置 Runner
                 可访问的内部地址。
@@ -289,6 +301,7 @@ export function RunnerAgentInstaller({
             </Notice>
           ) : null}
 
+          <h3 className="m-0 text-sm font-semibold">SSH 连接</h3>
           {profiles.length > 0 ? (
             <div
               className={cn(
@@ -365,7 +378,7 @@ export function RunnerAgentInstaller({
               runnerAgentInstallerStyles["runner-installer-grid"],
             )}
           >
-            <label>
+            <label className="col-span-2">
               安装系统模式
               <Select
                 disabled={Boolean(pending)}
@@ -453,6 +466,7 @@ export function RunnerAgentInstaller({
               )}
             >
               <div
+                ref={probeSummaryRef}
                 className={cn(
                   "runner-probe-summary",
                   runnerAgentInstallerStyles["runner-probe-summary"],
@@ -471,6 +485,7 @@ export function RunnerAgentInstaller({
               probe.detectedOperatingSystemId !== probe.operatingSystemId ? (
                 <Notice
                   tone="warning"
+                  showIcon
                   className={cn(
                     "inline-notice warning-notice",
                     uiPatterns["inline-notice"],
@@ -478,7 +493,6 @@ export function RunnerAgentInstaller({
                   )}
                   role="status"
                 >
-                  <ShieldAlert size={18} />
                   <span>
                     系统报告为 {probe.detectedOperatingSystemId}，将按 {probe.operatingSystemId}
                     模式安装。请确认目标机确实兼容该模式。
@@ -505,6 +519,7 @@ export function RunnerAgentInstaller({
                 )}
               >
                 <Input
+                  disabled={Boolean(pending)}
                   checked={fingerprintConfirmed}
                   onChange={(event) => setFingerprintConfirmed(event.target.checked)}
                   type="checkbox"
@@ -512,6 +527,7 @@ export function RunnerAgentInstaller({
                 我已通过可信渠道核对并确认上述 SSH 主机指纹
               </label>
 
+              <h3 className="m-0 text-sm font-semibold">Agent 安装配置</h3>
               <div
                 className={cn(
                   "runner-installer-grid runner-install-options",
@@ -521,15 +537,24 @@ export function RunnerAgentInstaller({
               >
                 <label>
                   执行机名称
-                  <Input onChange={(event) => setName(event.target.value)} value={name} />
+                  <Input
+                    disabled={Boolean(pending)}
+                    onChange={(event) => setName(event.target.value)}
+                    value={name}
+                  />
                 </label>
                 <label>
                   标签（逗号分隔）
-                  <Input onChange={(event) => setLabels(event.target.value)} value={labels} />
+                  <Input
+                    disabled={Boolean(pending)}
+                    onChange={(event) => setLabels(event.target.value)}
+                    value={labels}
+                  />
                 </label>
                 <label>
                   最大并发
                   <Input
+                    disabled={Boolean(pending)}
                     max={64}
                     min={1}
                     onChange={(event) => setMaxConcurrency(Number(event.target.value))}
@@ -541,6 +566,7 @@ export function RunnerAgentInstaller({
                   工作目录
                   <Input
                     autoComplete="off"
+                    disabled={Boolean(pending)}
                     onChange={(event) => setDataDirectory(event.target.value)}
                     placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
                     value={dataDirectory}
@@ -549,6 +575,7 @@ export function RunnerAgentInstaller({
                 </label>
                 <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
                   <Input
+                    disabled={Boolean(pending)}
                     checked={terminalEnabled}
                     onChange={(event) => setTerminalEnabled(event.target.checked)}
                     type="checkbox"
@@ -557,6 +584,7 @@ export function RunnerAgentInstaller({
                 </label>
                 <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
                   <Input
+                    disabled={Boolean(pending)}
                     checked={runAsRoot}
                     onChange={(event) => setRunAsRoot(event.target.checked)}
                     type="checkbox"
@@ -567,6 +595,7 @@ export function RunnerAgentInstaller({
               {runAsRoot ? (
                 <Notice
                   tone="warning"
+                  showIcon
                   className={cn(
                     "inline-notice warning-notice",
                     uiPatterns["inline-notice"],
@@ -574,7 +603,6 @@ export function RunnerAgentInstaller({
                   )}
                   role="status"
                 >
-                  <ShieldAlert size={18} />
                   <span>
                     root 模式会扩大测试进程可访问的主机资源范围，仅建议用于受控内网执行机。
                   </span>
@@ -583,6 +611,7 @@ export function RunnerAgentInstaller({
               {!probe.cgroupV2Available ? (
                 <Notice
                   tone="warning"
+                  showIcon
                   className={cn(
                     "inline-notice warning-notice",
                     uiPatterns["inline-notice"],
@@ -590,7 +619,6 @@ export function RunnerAgentInstaller({
                   )}
                   role="status"
                 >
-                  <ShieldAlert size={18} />
                   <span>
                     无 cgroup v2 时不能硬性限制整个进程树的 CPU、内存和进程数，请只运行可信用例。
                   </span>
@@ -599,6 +627,7 @@ export function RunnerAgentInstaller({
               <label>
                 私有 CA 证书（可选，PEM）
                 <Textarea
+                  disabled={Boolean(pending)}
                   onChange={(event) => setCaCertificatePem(event.target.value)}
                   placeholder="控制面使用私有 CA 时粘贴；公有可信证书请留空。"
                   rows={4}
@@ -637,40 +666,57 @@ export function RunnerAgentInstaller({
             </div>
           ) : null}
 
-          {result ? (
-            <Notice
-              tone="success"
-              className={cn("form-success", runnerAgentInstallerStyles["form-success"])}
-              role="status"
-            >
-              <CheckCircle2 size={18} />
-              Agent {result.agentVersion} 已安装到 {result.host}
-              ；服务已启动，执行机将在注册后出现在下方列表。
-            </Notice>
-          ) : null}
-          {rollbackResult ? (
-            <Notice
-              tone="success"
-              className={cn("form-success", runnerAgentInstallerStyles["form-success"])}
-              role="status"
-            >
-              <CheckCircle2 size={18} />
-              Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
-            </Notice>
-          ) : null}
-          {error ? (
-            <Notice
-              tone="error"
-              className={cn("form-error", uiPatterns["form-error"])}
-              role="alert"
-            >
-              {error}
-            </Notice>
-          ) : null}
+          <div className="grid min-w-0 gap-3 empty:hidden" ref={feedbackRef}>
+            {result ? (
+              <Notice
+                tone="success"
+                showIcon
+                className="min-w-0 [overflow-wrap:anywhere]"
+                role="status"
+              >
+                Agent {result.agentVersion} 已安装到 {result.host}
+                ；服务已启动，执行机将在注册后出现在下方列表。
+              </Notice>
+            ) : null}
+            {rollbackResult ? (
+              <Notice
+                tone="success"
+                showIcon
+                className="min-w-0 [overflow-wrap:anywhere]"
+                role="status"
+              >
+                Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
+              </Notice>
+            ) : null}
+            {error ? (
+              <Notice
+                tone="error"
+                className={cn("form-error", uiPatterns["form-error"])}
+                role="alert"
+              >
+                {error}
+              </Notice>
+            ) : null}
+          </div>
         </div>
       </ActionDialog>
     </>
   );
+}
+
+function revealInstallationContent(target: HTMLElement | null, alignment: "start" | "nearest") {
+  const body = target?.closest<HTMLElement>(".action-dialog-body");
+  if (!target || !body) return;
+  const bounds = target.getBoundingClientRect();
+  const viewport = body.getBoundingClientRect();
+  const padding = Number.parseFloat(getComputedStyle(body).paddingTop);
+  // scrollIntoView also scrolls overflow-hidden Modal ancestors, hiding its fixed header.
+  // Only the shared dialog body owns the scroll position of installation content.
+  if (alignment === "start" || bounds.top < viewport.top + padding) {
+    body.scrollTop += bounds.top - viewport.top - padding;
+  } else if (bounds.bottom > viewport.bottom - padding) {
+    body.scrollTop += bounds.bottom - viewport.bottom + padding;
+  }
 }
 
 async function postJson(path: string, body: unknown): Promise<unknown> {
@@ -698,20 +744,18 @@ function isLoopbackUrl(value: string): boolean {
 }
 
 const runnerAgentInstallerStyles = {
-  "form-success":
-    "flex items-center gap-2.5 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-success/10 text-success leading-[1.5]",
   "runner-control-url":
-    "flex items-center gap-2.5 w-fit max-w-full border border-solid border-border rounded-lg py-[9px] px-3 bg-muted [&_span]:overflow-hidden [&_span]:text-ellipsis [&_span]:whitespace-nowrap [&_span]:[flex:0_0_auto] [&_span]:text-muted-foreground [&_span]:text-xs [&_code]:overflow-hidden [&_code]:text-ellipsis [&_code]:whitespace-nowrap [&_code]:text-info [&_code]:text-xs",
+    "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border border-border bg-muted px-3 py-2 [&_span]:text-xs [&_span]:text-muted-foreground [&_code]:min-w-0 [&_code]:break-all [&_code]:text-xs [&_code]:text-info",
   "runner-fingerprint":
-    "flex items-center gap-2.5 min-w-0 rounded-lg py-2.5 px-3 bg-muted [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground [&_svg]:[flex:0_0_auto] [&_svg]:text-info [&_code]:overflow-hidden [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
-  "runner-fingerprint-confirmation": "font-semibold",
+    "flex min-w-0 items-start gap-3 rounded-lg bg-muted p-3 [&_span]:grid [&_span]:min-w-0 [&_span]:gap-1 [&_small]:text-xs [&_small]:text-muted-foreground [&_svg]:shrink-0 [&_svg]:text-info [&_code]:break-all [&_code]:text-xs",
+  "runner-fingerprint-confirmation": "flex items-start gap-2 text-sm font-medium",
   "runner-install-options":
-    "grid-cols-[1.2fr_1.4fr_0.55fr_0.9fr] [&_.checkbox-field]:flex [&_.checkbox-field]:items-center [&_.checkbox-field]:self-end [&_.checkbox-field]:min-h-10.5 [&_.checkbox-field]:flex-row [&_.checkbox-field]:gap-2 [&_.checkbox-field]:border [&_.checkbox-field]:border-solid [&_.checkbox-field]:border-border [&_.checkbox-field]:rounded-lg [&_.checkbox-field]:py-0 [&_.checkbox-field]:px-3 [&_.checkbox-field]:bg-card [&_.checkbox-field]:text-foreground [&_.checkbox-field_input]:w-auto max-[1221px]:grid-cols-2",
+    "[&>.checkbox-field]:flex [&>.checkbox-field]:min-w-0 [&>.checkbox-field]:items-center [&>.checkbox-field]:gap-2 [&>.checkbox-field]:rounded-lg [&>.checkbox-field]:border [&>.checkbox-field]:border-border [&>.checkbox-field]:bg-muted/30 [&>.checkbox-field]:p-3 [&>.checkbox-field]:text-sm",
   "runner-installer-actions":
-    "flex items-center gap-3.5 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_small]:text-muted-foreground",
-  "runner-installer-form": "grid gap-5",
+    "flex min-w-0 flex-wrap items-center gap-3 [&_button]:shrink-0 [&_small]:text-xs [&_small]:text-muted-foreground",
+  "runner-installer-form": "grid min-w-0 grid-cols-1 gap-4",
   "runner-installer-grid":
-    "grid grid-cols-[minmax(220px,_1.5fr)_minmax(110px,_0.45fr)_minmax(180px,_1fr)_minmax(_220px,_1.15fr_)] gap-3.5 [&_label]:grid [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_input]:w-full max-[1221px]:grid-cols-2",
+    "grid min-w-0 grid-cols-2 items-start gap-4 [&>label:not(.checkbox-field)]:grid [&>label:not(.checkbox-field)]:min-w-0 [&>label:not(.checkbox-field)]:content-start [&>label:not(.checkbox-field)]:gap-2 [&>label:not(.checkbox-field)]:text-sm [&>label:not(.checkbox-field)]:font-medium [&_small]:text-xs [&_small]:font-normal [&_small]:leading-5 [&_small]:text-muted-foreground",
   "runner-installer-heading":
     "flex items-start gap-3.5 [&_h2]:[margin:3px_0_7px] [&_h2]:text-lg [&_p]:max-w-[860px] [&_p]:m-0 [&_p]:text-muted-foreground [&_p]:leading-[1.65]",
   "runner-installer-launcher":
@@ -719,11 +763,11 @@ const runnerAgentInstallerStyles = {
   "runner-installer-launcher-actions":
     "flex [flex:0_0_auto] items-center gap-3 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_span]:whitespace-nowrap max-[1221px]:[&_>_span]:hidden",
   "runner-probe-result":
-    "[&_>_label]:grid [&_>_label]:gap-[7px] [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold [&_textarea]:w-full grid gap-4 border border-solid border-border rounded-lg p-[17px] bg-success/10",
+    "grid min-w-0 grid-cols-1 gap-4 rounded-lg border border-border bg-card p-4 [&>label:not(.runner-fingerprint-confirmation)]:grid [&>label:not(.runner-fingerprint-confirmation)]:min-w-0 [&>label:not(.runner-fingerprint-confirmation)]:gap-2 [&>label:not(.runner-fingerprint-confirmation)]:text-sm",
   "runner-probe-summary":
-    "flex items-center gap-2.5 text-success [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground",
+    "flex min-w-0 items-start gap-3 text-success [&_svg]:shrink-0 [&_span]:grid [&_span]:min-w-0 [&_span]:gap-1 [&_small]:text-xs [&_small]:text-muted-foreground",
   "runner-saved-profile-row":
-    "grid grid-cols-[minmax(360px,_1fr)_auto] items-end gap-3 p-3.5 border border-solid border-border rounded-lg bg-muted [&_label]:grid [&_label]:gap-1.5",
+    "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-3 rounded-lg border border-border bg-muted/30 p-3 [&>label]:grid [&>label]:min-w-0 [&>label]:gap-2 [&>label]:text-sm",
   "settings-icon":
     "inline-grid w-10.5 h-10.5 [flex:0_0_auto] place-items-center rounded-lg bg-info/10 text-info",
 } as const;
