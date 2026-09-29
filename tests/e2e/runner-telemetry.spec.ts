@@ -44,7 +44,10 @@ test("Runner terminal keeps Tab input inside xterm while toolbar focus remains a
     await entry.click();
     const connect = dialog.getByRole("button", { name: "连接终端", exact: true });
     const expand = dialog.getByRole("button", { name: "放大终端窗口", exact: true });
+    // Keyboard events do not wait for Ant's opening motion and focus setup like clicks do.
+    await expect(dialog).not.toHaveClass(/\bant-zoom-(?:appear|enter)\b/);
     await connect.focus();
+    await expect(connect).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(expand).toBeFocused();
     await page.keyboard.press("Shift+Tab");

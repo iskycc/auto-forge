@@ -6,6 +6,10 @@ and known limitations.
 
 ## Unreleased
 
+### Validation
+
+- 终端键盘验收等待 Ant Design 开启动画与焦点初始化完成后再发送 Tab／Shift+Tab，避免窗口重开时的动画收尾抢占测试焦点；增加初始焦点断言，保留连接、Tab 传输、放大／还原和关闭后焦点恢复的验证。仅修改测试，不改变 v1.18.20 发布包。
+
 ## 1.18.20 - 2026-09-29
 
 ### Added
