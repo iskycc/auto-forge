@@ -20,6 +20,67 @@ afterEach(() => {
 });
 
 describe("AttemptLogStore", () => {
+  it.each(["cold", "warm"] as const)(
+    "recovers a competing writer during a %s log upload without losing chunks or watermarks",
+    async (connection) => {
+      const directory = temporaryDirectory();
+      let store = createAttemptLogStore(directory);
+      const input = {
+        batchId,
+        attemptId: "contended-attempt",
+        receivedAt: "2026-09-29T00:00:00.000Z",
+        chunks: [
+          {
+            stream: "stdout" as const,
+            sequence: 0,
+            content: "persist despite another writer",
+            recordedAt: "2026-09-29T00:00:00.000Z",
+          },
+        ],
+      };
+      await store.appendChunks({ ...input, chunks: [] });
+      if (connection === "cold") {
+        store.close();
+        store = createAttemptLogStore(directory);
+      }
+      const competing = new Database(join(directory, `${batchId}.sqlite`));
+      competing.exec("BEGIN IMMEDIATE");
+      // The writer releases only after the upload yields; synchronous lock waits cannot recover.
+      const released = new Promise<void>((resolve, reject) => {
+        setImmediate(() => {
+          try {
+            competing.exec("COMMIT");
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      try {
+        await expect(store.appendChunks(input)).resolves.toEqual({
+          stdout: 0,
+          stderr: -1,
+          agent: -1,
+        });
+        await released;
+        await store.appendChunks(input);
+        const page = await store.listChunks({
+          batchId,
+          attemptId: input.attemptId,
+          stream: "stdout",
+          afterSequence: -1,
+          limit: 10,
+        });
+        expect(page.items.map((chunk) => chunk.content)).toEqual([input.chunks[0]!.content]);
+        expect(store.acknowledgedSequence(batchId, input.attemptId, "stdout")).toBe(0);
+      } finally {
+        await released;
+        competing.close();
+        store.close();
+      }
+    },
+  );
+
   it("returns empty logs while a new batch file is being initialized, then reads the first upload", async () => {
     const directory = temporaryDirectory();
     const path = join(directory, `${batchId}.sqlite`);

@@ -6,6 +6,7 @@ import { constants as zlibConstants, gunzip, gzip, gunzipSync, gzipSync } from "
 
 import Database from "better-sqlite3";
 import { DomainError } from "@autoforge/domain";
+import { retrySqliteLockContention } from "./database";
 
 // 用例日志从主数据库剥离后，每个执行批次使用一个独立 SQLite 文件。
 // 这些文件是日志内容的唯一权威来源；批次删除或保留策略触发时整个文件被移除。
@@ -291,60 +292,64 @@ export function createAttemptLogStore(
       );
       // 压缩在取得 SQLite 句柄前完成；异步 zlib 运行期间 LRU 可能驱逐旧句柄，
       // 因此不能跨 await 持有可能已被关闭的数据库连接。
-      const handle = openBatch(input.batchId);
-      return handle.client
-        .transaction(() => {
-          for (const chunk of encodedChunks) {
-            const existing = prepared(
-              handle,
-              `SELECT content, content_encoding, size_bytes, content_sha256, recorded_at
+      // Several execution workers can append to the same batch file. Retry the whole
+      // atomic write after yielding, and reacquire the handle in case LRU evicted it.
+      return retrySqliteLockContention(() => {
+        const handle = openBatch(input.batchId);
+        return handle.client
+          .transaction(() => {
+            for (const chunk of encodedChunks) {
+              const existing = prepared(
+                handle,
+                `SELECT content, content_encoding, size_bytes, content_sha256, recorded_at
                FROM attempt_log_chunks
              WHERE attempt_id = ? AND stream = ? AND sequence = ?`,
-            ).get(input.attemptId, chunk.stream, chunk.sequence) as
-              | {
-                  content: string | Buffer;
-                  content_encoding: StoredContentEncoding;
-                  size_bytes: number;
-                  content_sha256: string | null;
-                  recorded_at: string;
+              ).get(input.attemptId, chunk.stream, chunk.sequence) as
+                | {
+                    content: string | Buffer;
+                    content_encoding: StoredContentEncoding;
+                    size_bytes: number;
+                    content_sha256: string | null;
+                    recorded_at: string;
+                  }
+                | undefined;
+              if (existing) {
+                const sameContent = existing.content_sha256
+                  ? existing.size_bytes === chunk.sizeBytes &&
+                    existing.content_sha256 === chunk.contentSha256
+                  : legacyContentEquals(existing.content, chunk.plainContent);
+                if (!sameContent || existing.recorded_at !== chunk.recordedAt) {
+                  throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
                 }
-              | undefined;
-            if (existing) {
-              const sameContent = existing.content_sha256
-                ? existing.size_bytes === chunk.sizeBytes &&
-                  existing.content_sha256 === chunk.contentSha256
-                : legacyContentEquals(existing.content, chunk.plainContent);
-              if (!sameContent || existing.recorded_at !== chunk.recordedAt) {
-                throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
+                continue;
               }
-              continue;
-            }
-            prepared(
-              handle,
-              `INSERT INTO attempt_log_chunks
+              prepared(
+                handle,
+                `INSERT INTO attempt_log_chunks
              (attempt_id, stream, sequence, content, content_encoding, size_bytes,
               stored_size_bytes, content_sha256, recorded_at, received_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            ).run(
-              input.attemptId,
-              chunk.stream,
-              chunk.sequence,
-              chunk.storedContent,
-              chunk.contentEncoding,
-              chunk.sizeBytes,
-              chunk.storedSizeBytes,
-              chunk.contentSha256,
-              chunk.recordedAt,
-              input.receivedAt,
-            );
-          }
-          return {
-            stdout: advanceWatermark(handle, input.attemptId, "stdout", input.receivedAt),
-            stderr: advanceWatermark(handle, input.attemptId, "stderr", input.receivedAt),
-            agent: advanceWatermark(handle, input.attemptId, "agent", input.receivedAt),
-          };
-        })
-        .immediate();
+              ).run(
+                input.attemptId,
+                chunk.stream,
+                chunk.sequence,
+                chunk.storedContent,
+                chunk.contentEncoding,
+                chunk.sizeBytes,
+                chunk.storedSizeBytes,
+                chunk.contentSha256,
+                chunk.recordedAt,
+                input.receivedAt,
+              );
+            }
+            return {
+              stdout: advanceWatermark(handle, input.attemptId, "stdout", input.receivedAt),
+              stderr: advanceWatermark(handle, input.attemptId, "stderr", input.receivedAt),
+              agent: advanceWatermark(handle, input.attemptId, "agent", input.receivedAt),
+            };
+          })
+          .immediate();
+      });
     },
 
     async listChunks(input) {
