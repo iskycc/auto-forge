@@ -215,6 +215,7 @@ async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): 
       maxConcurrency: 2,
       capabilities: expect.arrayContaining([
         "adapter:cotest-testng-v1",
+        "adapter:ddt-insight-url-v1",
         "runtime:project-assets-v1",
       ]),
     });

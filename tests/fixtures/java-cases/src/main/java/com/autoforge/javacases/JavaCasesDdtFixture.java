@@ -1,7 +1,6 @@
 package com.autoforge.javacases;
 
 import cotest.auto.dataproviders.MM2DataProvider;
-import com.huawei.cotest.util.ProjectFileUtil;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -14,13 +13,17 @@ public final class JavaCasesDdtFixture {
 
   @Test
   public void fetchesDdtDataUsingTheInjectedCaseId() throws Exception {
+    String ddtApiUrl = MM2DataProvider.getDdtInsightUrl();
+    if (ddtApiUrl == null || !ddtApiUrl.endsWith("/case") || ddtApiUrl.contains("?")) {
+      throw new AssertionError("DDT scoped API URL was not injected: " + ddtApiUrl);
+    }
     String caseId = MM2DataProvider.getClassDataProvider(getClass().getName());
     if (caseId == null || !caseId.startsWith("JAVA-CASES-DDT")) {
       throw new AssertionError("Raw DDT CaseID was not injected for " + getClass().getName());
     }
 
-    // The test itself owns API configuration and fetching. Runner/Adapter only pass CaseID.
-    URL endpoint = new URL(ProjectFileUtil.getEnvIP() + "/case?caseId="
+    // The platform injects scope; only the test provider performs the public API request.
+    URL endpoint = new URL(ddtApiUrl + "?caseId="
         + URLEncoder.encode(caseId, StandardCharsets.UTF_8.name()));
     HttpURLConnection connection = (HttpURLConnection) endpoint.openConnection();
     connection.setConnectTimeout(10_000);

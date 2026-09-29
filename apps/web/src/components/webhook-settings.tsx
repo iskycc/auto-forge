@@ -41,7 +41,7 @@ import {
   Trash2,
   Webhook,
 } from "lucide-react";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { ActionDialog } from "./action-dialog";
 import { useConcurrentModificationFeedback } from "./concurrent-modification-feedback";
@@ -83,6 +83,7 @@ export function WebhookSettings({
   deliveryFilter?: { status: string; webhookId: string };
 }) {
   const toast = useToast();
+  const editorFormId = useId();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [configurations, setConfigurations] = useState(initialConfigurations);
   const [deliveries] = useState(initialDeliveries);
@@ -449,9 +450,26 @@ export function WebhookSettings({
         onClose={() => !pending && setEditor(undefined)}
         open={Boolean(editor)}
         title={editor?.id ? "编辑 Webhook" : "新建 Webhook"}
+        footer={
+          <>
+            <Button
+              data-dialog-dismiss
+              disabled={pending}
+              onClick={() => setEditor(undefined)}
+              type="button"
+            >
+              取消
+            </Button>
+            <Button disabled={pending} type="submit" form={editorFormId} variant="primary">
+              {pending ? <LoadingIcon size={16} /> : <Send size={16} />}
+              {editor?.id ? "保存修改" : "创建端点"}
+            </Button>
+          </>
+        }
       >
         {editor ? (
           <form
+            id={editorFormId}
             className={cn(
               "action-dialog-form webhook-editor-form",
               webhookSettingsStyles["action-dialog-form"],
@@ -646,26 +664,6 @@ export function WebhookSettings({
                 {error}
               </Notice>
             ) : null}
-            <div
-              className={cn(
-                "webhook-editor-actions management-sticky-actions",
-                webhookSettingsStyles["webhook-editor-actions"],
-                webhookSettingsStyles["management-sticky-actions"],
-              )}
-            >
-              <Button
-                data-dialog-dismiss
-                disabled={pending}
-                onClick={() => setEditor(undefined)}
-                type="button"
-              >
-                取消
-              </Button>
-              <Button disabled={pending} type="submit" variant="primary">
-                {pending ? <LoadingIcon size={16} /> : <Send size={16} />}
-                {editor.id ? "保存修改" : "创建端点"}
-              </Button>
-            </div>
           </form>
         ) : null}
       </ActionDialog>
@@ -676,16 +674,8 @@ export function WebhookSettings({
         onClose={() => !pending && setDeleting(undefined)}
         open={Boolean(deleting)}
         title="删除 Webhook"
-      >
-        <div className={cn("action-dialog-form", webhookSettingsStyles["action-dialog-form"])}>
-          <p>确定删除「{deleting?.name}」？此操作不可恢复。</p>
-          <div
-            className={cn(
-              "webhook-editor-actions management-sticky-actions",
-              webhookSettingsStyles["webhook-editor-actions"],
-              webhookSettingsStyles["management-sticky-actions"],
-            )}
-          >
+        footer={
+          <>
             <Button disabled={pending} onClick={() => setDeleting(undefined)} type="button">
               取消
             </Button>
@@ -693,7 +683,11 @@ export function WebhookSettings({
               {pending ? <LoadingIcon size={16} /> : <Trash2 size={16} />}
               删除
             </Button>
-          </div>
+          </>
+        }
+      >
+        <div className={cn("action-dialog-form", webhookSettingsStyles["action-dialog-form"])}>
+          <p>确定删除「{deleting?.name}」？此操作不可恢复。</p>
         </div>
       </ActionDialog>
     </div>
@@ -792,8 +786,6 @@ async function requestJson<T>(
 
 const webhookSettingsStyles = {
   "action-dialog-form": "mt-0",
-  "management-sticky-actions":
-    "sticky bottom-0 z-3 flex items-center justify-end gap-3 p-3 bg-card border-t border-solid border-border [&_>_span]:mr-auto",
   "table-count": "text-muted-foreground text-xs whitespace-nowrap",
   "webhook-card-actions": "mt-auto flex min-w-0 flex-wrap items-center justify-end gap-2",
   "webhook-card-grid": "grid grid-cols-2 gap-3 mt-4 max-[1181px]:grid-cols-1",
@@ -806,7 +798,6 @@ const webhookSettingsStyles = {
     "w-full [table-layout:fixed] [&_td:first-child]:overflow-hidden [&_td:first-child]:text-ellipsis [&_td:nth-child(3)]:overflow-hidden [&_td:nth-child(3)]:text-ellipsis [&_td:first-child_small]:block [&_td:first-child_small]:overflow-hidden [&_td:first-child_small]:mt-[3px] [&_td:first-child_small]:text-muted-foreground [&_td:first-child_small]:text-xs [&_td:first-child_small]:text-ellipsis [&_td:first-child_small]:whitespace-nowrap [&_td:nth-child(3)_small]:block [&_td:nth-child(3)_small]:overflow-hidden [&_td:nth-child(3)_small]:mt-[3px] [&_td:nth-child(3)_small]:text-muted-foreground [&_td:nth-child(3)_small]:text-xs [&_td:nth-child(3)_small]:text-ellipsis [&_td:nth-child(3)_small]:whitespace-nowrap",
   "webhook-delivery-table-wrap":
     "overflow-hidden mt-4 border border-solid border-border rounded-xl",
-  "webhook-editor-actions": "flex items-center justify-end gap-2.5",
   "webhook-editor-dialog":
     "w-[min(860px,_calc(100dvw_-_32px))] max-h-[min(880px,_calc(100dvh_-_24px))]",
   "webhook-editor-form": "grid gap-3.5",

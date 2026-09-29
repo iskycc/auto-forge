@@ -32,6 +32,8 @@ test("analysis snapshots received during a modal refresh promptly after it close
     version.body.id,
     suffix,
   );
+  // Unmount the previous page's poller before observing the analysis snapshot request.
+  await page.goto("about:blank");
   const firstStatus = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (

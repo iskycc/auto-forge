@@ -7,6 +7,12 @@ import org.testng.annotations.Test;
 public final class AdapterCase {
   public static final String EXPECTED_ENVIRONMENT_ADDRESS = "10.0.0.8";
 
+  static {
+    if (!"http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case".equals(MM2DataProvider.getDdtInsightUrl())) {
+      throw new IllegalStateException("DDT API URL must be injected before test class initialization.");
+    }
+  }
+
   @Test
   public void receivesAdapterConfiguration() {
     if (!EXPECTED_ENVIRONMENT_ADDRESS.equals(ProjectFileUtil.getEnvIP())) {

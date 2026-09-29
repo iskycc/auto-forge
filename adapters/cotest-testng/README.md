@@ -45,6 +45,7 @@ Adapter 不会访问网络或自动补装缺失依赖。
   --class com.example.AdapterCase \
   --environment-address 10.0.0.8 \
   --case-id ORDER-001 \
+  --ddt-insight-url http://autoforge:3100/api/v1/public/ddt/projects/PROJECT/versions/VERSION/stages/STAGE/case \
   --output /var/lib/autoforge/attempt/reports/testng
 ```
 
@@ -54,7 +55,11 @@ Adapter 不会访问网络或自动补装缺失依赖。
 - `--suite-name NAME`、`--test-name NAME`：显式值优先于配置文件；
 - `--environment-address VALUE`：配置时才加载并调用 CoTest `ProjectFileUtil`；
 - `--case-id CASE_ID`：DDT 执行时将原始 CaseID 注入 `MM2DataProvider.setClassDataProvider(className, caseId)`；
-  普通用例不传入，也不会加载该数据提供器。测试类自行通过 DDT 公开 API 获取数据；
+  普通用例不传入 CaseID。测试类自行通过 DDT 公开 API 获取数据；
+- `--ddt-insight-url URL`：在测试类初始化及 TestNG 执行前调用同一隔离 ClassLoader 中的
+  `MM2DataProvider.setDdtInsightUrl(String)`，传入以 `/case` 结尾、不带查询参数的 HTTP(S) URL。
+  普通 Adapter 用例存在该提供器时同样配置；普通 TestNG 不依赖该类，缺失时明确记录不适用。
+  DDT 缺少提供器、或者现有提供器缺少 setter / setter 抛出异常时明确失败，不继续使用错误地址；
 - `--output DIR`：默认是当前目录下的 `reports/testng`。
 
 退出码 `0` 要求至少一个测试通过，且 Failed、Skipped、配置失败均为 0；任一失败或跳过都返回 `1`，
@@ -86,7 +91,15 @@ Runner 不把历史导入的用例 JAR 或单独声明的旧依赖复制到 `tes
 Runner 重建没有当前布局标记的旧共享运行时，清除旧版混合类路径；完成后继续复用，避免反复解压。
 正在运行的批次继续使用已经固化的依赖包；新任务和公开日志的单用例重跑选择当前项目版本的包。
 
-DDT 用例绑定同项目版本、同测试阶段的 TestNG 类。Runner 和 Adapter 仅传递 CaseID，
-不生成、下载或转换 JSON 数据文件。测试类负责公开 API 的作用域 URL 和取数；数据以 API 请求时
-为准。DDT 任务要求 `adapter:ddt-case-id-v1` 能力，旧 Runner 升级时会自动更新 Adapter。
+DDT 用例绑定同项目版本、同测试阶段的 TestNG 类。Runner 和 Adapter 传递 CaseID 与 API 地址，
+不生成、下载或转换 JSON 数据文件。控制面将执行类所属的项目、版本、阶段固化在 assignment
+的可选 `adapter.ddtScope` 字段中；使用跨版本继承的类时采用目标范围，不采用原 JAR 来源范围。
+Runner 使用当前身份连接控制面的地址（含反向代理路径前缀）生成 `/case` API URL，通过
+`--ddt-insight-url` 传给 Adapter，不携带 Runner 凭据或 `caseId` 查询参数。测试类负责实际取数；
+数据以 API 请求时为准。该链路统一覆盖调试、立即执行、批跑及重跑。
+
+Adapter 任务要求 `adapter:ddt-insight-url-v1` 能力，DDT 还要求 `adapter:ddt-case-id-v1`。
+旧 Runner 在预检中提示升级；升级 Runner 会安装配套 Adapter，无需单独部署。已有 assignment
+保持原始快照，缺失范围的历史规格继续按旧协议读取；需自动注入地址时重新发起执行。
+本次没有数据库迁移，Lite/Full 使用相同可选契约；未启用 Adapter 的原生 TestNG 执行不注入 CoTest 配置。
 旧 `--class-data` 参数已移除；升级前已分配的旧文件协议任务需结束或停止后重新发起。

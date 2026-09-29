@@ -30,6 +30,8 @@ const primaryRoutes = [
   "/",
   "/cases",
   "/cases/import",
+  "/case-debug",
+  "/case-debug?tab=ddt",
   "/cases?tab=ddt&ddtView=cases",
   "/cases?tab=ddt&ddtView=templates",
   "/cases?tab=ddt&ddtView=search",
@@ -56,6 +58,206 @@ const primaryRoutes = [
   "/settings/platform?section=storage",
   "/account/security",
 ] as const;
+
+test("global search popover wraps long result titles without losing keyboard navigation", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const title = `支付回归_${"PaymentRegression".repeat(12)}`;
+  const href = "/runners?query=dialog-audit-search";
+  await page.route("**/api/v1/search?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [{ kind: "runner", id: "dialog-audit-runner", title, subtitle: "linux", href }],
+      },
+    }),
+  );
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+    await page.goto("/");
+    await page.setViewportSize({ width: 1536, height: 960 });
+    const search = page.getByRole("searchbox", { name: "全局搜索", exact: true });
+    await search.fill("PaymentRegression");
+    const popup = page.locator(".search-results");
+    const resultTitle = popup.locator("strong").filter({ hasText: title });
+    await expect(resultTitle).toBeVisible();
+    for (const width of [1536, 1920]) {
+      await page.setViewportSize({ width, height: 960 });
+      await waitForUiTransitions(page);
+      expect(
+        await resultTitle.evaluate((element) => {
+          const titleBounds = element.getBoundingClientRect();
+          const containerBounds = element.parentElement!.getBoundingClientRect();
+          return titleBounds.right <= containerBounds.right + 1;
+        }),
+      ).toBe(true);
+      expect(
+        await resultTitle.evaluate((element) =>
+          Number.parseFloat(getComputedStyle(element).lineHeight),
+        ),
+      ).toBeLessThanOrEqual(24);
+      await expectUiIntegrity(page);
+      await captureUi(page, `search-long-result-${theme}`, width, false);
+    }
+    await page.keyboard.press("Escape");
+    await expect(popup).not.toBeVisible();
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(search).toBeHidden();
+    await expectUiIntegrity(page);
+    await captureUi(page, `search-compact-desktop-${theme}`, 1024, false);
+    await page.setViewportSize({ width: 1536, height: 960 });
+    await search.fill("PaymentRegression navigation");
+    await expect(popup).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    await expect(popup.locator(`a[href="${href}"]`)).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(new RegExp(`${href.replace("?", "\\?")}$`));
+  }
+});
+
+test("runner update contains long identities and preserves host verification and error recovery", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const profile = insertRunnerInstallationProfileFixture(directory);
+  const name = uniqueName(`节点_${"PaymentRegression_".repeat(5)}`);
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name,
+      labels: [],
+      capabilities: ["executor:process"],
+      maxConcurrency: 1,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "0.1.0",
+      protocolVersion: 1,
+      terminalEnabled: false,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const { runnerId } = (await registration.json()) as { runnerId: string };
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout=5000");
+    database
+      .prepare("UPDATE runner_installation_profiles SET runner_id=? WHERE id=?")
+      .run(runnerId, profile.id);
+  } finally {
+    database.close();
+  }
+  await page.route("**/api/v1/runners/installations/probe", (route) =>
+    route.fulfill({
+      json: {
+        hostKeySha256: profile.fingerprint,
+        operatingSystemId: "ubuntu",
+        detectedOperatingSystemId: "ubuntu",
+        operatingSystemName: "Ubuntu 24.04 LTS",
+        architecture: "amd64",
+        initSystem: "systemd",
+        privilegeMode: "sudo",
+        cgroupV2Available: true,
+        bashPath: "/usr/bin/bash",
+        forcedInstallationMode: false,
+      },
+    }),
+  );
+  await page.route(`**/api/v1/runners/${runnerId}/update`, (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        error: { message: "连接暂时不可用，请重试。" },
+      },
+    }),
+  );
+  try {
+    for (const theme of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+      await page.goto(`/runners?query=${encodeURIComponent(name)}`);
+      await page.getByRole("button", { name: "更新", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: `更新 ${name} 的 Agent` });
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await waitForUiTransitions(page);
+        const bounds = await dialog.boundingBox();
+        const close = await dialog.getByRole("button", { name: /^关闭/ }).boundingBox();
+        expect(close!.x + close!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
+        expect(
+          await dialog
+            .locator(".runner-update-body")
+            .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+        ).toBe(true);
+        await expectUiIntegrity(page);
+        await captureUi(page, `runner-update-${theme}`, width, false);
+      }
+      await dialog.getByLabel("SSH / sudo 密码").fill("Fixture!Password123");
+      await dialog.getByRole("button", { name: "探测并核验主机" }).click();
+      await expect(dialog.getByText(profile.fingerprint, { exact: true })).toBeVisible();
+      const update = dialog.getByRole("button", { name: /^更新到 / });
+      await expect(update).toBeDisabled();
+      await dialog.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
+      await update.click();
+      await expect(dialog.getByText("连接暂时不可用，请重试。", { exact: true })).toBeVisible();
+      await expect(update).toBeEnabled();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await dialog
+          .getByText("连接暂时不可用，请重试。", { exact: true })
+          .scrollIntoViewIfNeeded();
+        await captureUi(page, `runner-update-error-${theme}`, width, false);
+      }
+      await dialog.getByRole("button", { name: /^关闭/ }).click();
+      await expect(dialog).toHaveCount(0);
+      await page.getByRole("button", { name: "批量更新", exact: true }).click();
+      const batch = page.getByRole("dialog", { name: "批量更新执行机 Agent", exact: true });
+      for (const checkbox of await batch.getByRole("checkbox").all()) {
+        if (await checkbox.isChecked()) await checkbox.uncheck();
+      }
+      const target = batch
+        .locator(".batch-runner-update-row")
+        .filter({ hasText: name })
+        .getByRole("checkbox");
+      await target.check();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await waitForUiTransitions(page);
+        expect(
+          await batch
+            .locator(".batch-runner-update-list")
+            .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+        ).toBe(true);
+        await expect(
+          batch.locator(".action-dialog-footer").getByRole("button", { name: "更新 1 台" }),
+        ).toBeVisible();
+        await expectUiIntegrity(page);
+        await captureUi(page, `batch-runner-update-${theme}`, width, false);
+      }
+      await target.uncheck();
+      await expect(batch.getByRole("button", { name: "更新 0 台" })).toBeDisabled();
+      await target.check();
+      await page.route("**/api/v1/runners/updates", (route) => {
+        expect(route.request().postDataJSON()).toEqual({ runnerIds: [runnerId] });
+        return route.fulfill({
+          status: 503,
+          json: { error: { message: "批量更新暂时不可用，请重试。" } },
+        });
+      });
+      await batch.getByRole("button", { name: "更新 1 台" }).click();
+      await expect(batch.getByRole("alert")).toContainText("批量更新暂时不可用，请重试。");
+      await expect(batch.getByRole("button", { name: "更新 1 台" })).toBeEnabled();
+      await batch.getByRole("button", { name: /^关闭/ }).click();
+    }
+  } finally {
+    profile.dispose();
+  }
+});
 
 test("batch runner panel separates round attempts from resource snapshots and contains long names", async ({
   page,
@@ -198,6 +400,18 @@ test("batch runner panel separates round attempts from resource snapshots and co
   await dialog.getByRole("button", { name: /^关闭/ }).click();
   await node.getByRole("button", { name: "调度日志", exact: true }).click();
   await expect(page.getByRole("dialog", { name: /调度日志/ })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await waitForUiTransitions(page);
+    await expect(page.getByRole("button", { name: "关闭日志终端", exact: true })).toBeInViewport({
+      ratio: 1,
+    });
+    const titlebar = page.locator(".log-viewer-titlebar");
+    expect(
+      await titlebar.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    ).toBe(true);
+    await captureUi(page, "long-runner-scheduling-log", width, false);
+  }
   await page.getByRole("button", { name: "关闭日志终端", exact: true }).click();
   const overviewUrl = `/api/v1/run-batches/${fixture.batchId}/overview`;
   const overview = await (await page.request.get(overviewUrl)).json();
@@ -2330,6 +2544,16 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
     await expect(dialog).toBeVisible();
     await expectViewportDialog(backdrop, dialog, viewport);
     await captureUi(page, `/${state.screenshot}`, viewport.width, false);
+    if (state.dialog === "新建 Webhook") {
+      const content = (await dialog.locator(".action-dialog-body").boundingBox())!;
+      const actions = (await dialog
+        .getByRole("button", { name: "创建端点", exact: true })
+        .boundingBox())!;
+      expect(
+        content.y + content.height,
+        "footer must not cover scrollable fields",
+      ).toBeLessThanOrEqual(actions.y);
+    }
     if (state.bottomAction) {
       await dialog.locator(".action-dialog-body").evaluate((body) => {
         body.scrollTop = body.scrollHeight;

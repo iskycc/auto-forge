@@ -6,6 +6,15 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Minimal CoTest-compatible data-provider registry used by the real Runner acceptance fixture. */
 public final class MM2DataProvider {
   private static final Map<String, String> CLASS_DATA_FILES = new ConcurrentHashMap<>();
+  private static String ddtInsightUrl;
+
+  public static void setDdtInsightUrl(String value) {
+    ddtInsightUrl = value;
+  }
+
+  public static String getDdtInsightUrl() {
+    return ddtInsightUrl;
+  }
 
   private MM2DataProvider() {}
 

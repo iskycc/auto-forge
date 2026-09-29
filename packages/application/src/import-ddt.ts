@@ -20,6 +20,8 @@ import {
 } from "@autoforge/domain";
 
 import type { DdtImportJob, DdtImportPreviewFile, DdtUploadReference } from "./ddt-types";
+import type { DdtDebugRepository } from "./ddt-debug";
+import type { DdtImportFileResult } from "./ddt-types";
 import type { Clock, DdtRepository, IdGenerator, JarObjectStorePort } from "./ports";
 
 export type DdtUpload = {
@@ -63,9 +65,14 @@ export class DdtImportService {
     private readonly ids: IdGenerator,
     private readonly readModelInvalidation?: { invalidate(projectId: string): Promise<void> },
     private readonly importLimits: () => DdtImportLimits = defaultDdtImportLimits,
+    private readonly debugRepository?: DdtDebugRepository,
   ) {}
 
-  async preview(scope: DdtScope, uploads: DdtUpload[], actorId?: string): Promise<DdtImportJob> {
+  async preview(
+    scope: DdtScope & { debugOwnerId?: string },
+    uploads: DdtUpload[],
+    actorId?: string,
+  ): Promise<DdtImportJob> {
     if (uploads.length === 0) throw new DomainError("DDT_FILE_REQUIRED", "请选择 DDT 表格或 ZIP。");
     const limits = this.importLimits();
     if (uploads.length > limits.maximumUploadFiles) {
@@ -165,11 +172,17 @@ export class DdtImportService {
     conflictStrategy: "overwrite" | "skip" | "error",
     projectIds?: readonly string[],
   ): Promise<DdtImportJob> {
+    const current = await this.repository.getImportJob(jobId, projectIds);
+    if (!current) throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
     const now = this.clock.now().toISOString();
     return this.repository.confirmImport({
       jobId,
       conflictStrategy,
-      dispatchJob: this.jobEnvelope(jobId, now),
+      dispatchJob: this.jobEnvelope(
+        jobId,
+        now,
+        current.debugOwnerId ? "ddt-debug-import" : "ddt-import",
+      ),
       updatedAt: now,
       ...(projectIds ? { projectIds } : {}),
     });
@@ -302,6 +315,12 @@ export class DdtImportService {
       const job = await this.repository.claimImportJob(jobId, startedAt);
       if (!job) return;
       try {
+        if (Boolean(job.debugOwnerId) !== (envelope.kind === "ddt-debug-import")) {
+          throw new DomainError(
+            "DDT_IMPORT_TARGET_MISMATCH",
+            "导入任务的数据目标与工作器类型不一致，请升级全部平台与工作器后重试。",
+          );
+        }
         await this.executeClaimedJob(job, signal);
       } catch (error) {
         if (signal.aborted && !(error instanceof DdtImportCancellationError)) throw error;
@@ -334,13 +353,16 @@ export class DdtImportService {
       ]),
     );
     const parsedByFile = await this.parseJobUploads(job);
-    if (job.conflictStrategy === "error") {
+    const resumingPersonalImport =
+      job.debugOwnerId &&
+      job.files.some((file) => file.status === "importing" || file.status === "succeeded");
+    if (job.conflictStrategy === "error" && !resumingPersonalImport) {
       const allCaseIds = job.files.flatMap((file) =>
         ["valid", "importing"].includes(file.status)
           ? (parsedByFile.get(file.id)?.rows ?? []).map((row) => String(ddtCaseCell(row, "CaseID")))
           : [],
       );
-      if ((await this.repository.findCaseData(job, allCaseIds)).size > 0) {
+      if ((await this.findCaseData(job, allCaseIds)).size > 0) {
         throw new DomainError(
           "DDT_IMPORT_CONFLICT",
           "冲突策略为“遇到冲突终止”，当前范围已存在相同 CaseID。",
@@ -398,17 +420,21 @@ export class DdtImportService {
           status: "importing",
           updatedAt: this.clock.now().toISOString(),
         });
-        const result = await this.repository.importFile({
-          jobId: job.id,
-          fileId: file.id,
-          scope: job,
-          sourceName: file.fileName,
-          rows,
-          conflictStrategy: job.conflictStrategy,
-          ...(job.requestedBy ? { actorId: job.requestedBy } : {}),
-          importedAt: this.clock.now().toISOString(),
-          historyIds: rows.map(() => this.ids.next()),
-        });
+        const result = await this.importFile(
+          job,
+          {
+            jobId: job.id,
+            fileId: file.id,
+            scope: job,
+            sourceName: file.fileName,
+            rows,
+            conflictStrategy: job.conflictStrategy,
+            ...(job.requestedBy ? { actorId: job.requestedBy } : {}),
+            importedAt: this.clock.now().toISOString(),
+            historyIds: rows.map(() => this.ids.next()),
+          },
+          signal,
+        );
         insertedCount += result.insertedCount;
         updatedCount += result.updatedCount;
         unchangedCount += result.unchangedCount;
@@ -421,7 +447,7 @@ export class DdtImportService {
           updatedAt: this.clock.now().toISOString(),
         });
       } catch (error) {
-        if (signal.aborted) throw error;
+        if (signal.aborted || error instanceof DdtImportCancellationError) throw error;
         failedFiles += 1;
         await this.repository.updateImportFile({
           fileId: file.id,
@@ -449,7 +475,7 @@ export class DdtImportService {
         updatedAt: this.clock.now().toISOString(),
       });
     }
-    await this.readModelInvalidation?.invalidate(job.projectId);
+    if (!job.debugOwnerId) await this.readModelInvalidation?.invalidate(job.projectId);
     const finishedAt = this.clock.now().toISOString();
     await this.repository.updateImportJob({
       jobId: job.id,
@@ -469,8 +495,56 @@ export class DdtImportService {
     });
   }
 
+  private async findCaseData(scope: DdtScope & { debugOwnerId?: string }, caseIds: string[]) {
+    if (!scope.debugOwnerId) return this.repository.findCaseData(scope, caseIds);
+    return this.requireDebugRepository().findCaseData(
+      { ...scope, ownerUserId: scope.debugOwnerId },
+      caseIds,
+    );
+  }
+
+  private requireDebugRepository(): DdtDebugRepository {
+    if (!this.debugRepository) throw new Error("Personal DDT repository is not configured.");
+    return this.debugRepository;
+  }
+
+  private async importFile(
+    job: DdtImportJob,
+    input: Parameters<DdtRepository["importFile"]>[0],
+    signal: AbortSignal,
+  ): Promise<DdtImportFileResult> {
+    if (!job.debugOwnerId) return this.repository.importFile(input);
+    const repository = this.requireDebugRepository();
+    const result: DdtImportFileResult = {
+      insertedCount: 0,
+      updatedCount: 0,
+      unchangedCount: 0,
+      skippedCount: 0,
+      caseIds: [],
+    };
+    for (const [index, row] of input.rows.entries()) {
+      if (index % 64 === 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await this.throwIfCancelled(job.id, signal);
+      }
+      const outcome = await repository.write({
+        scope: { ...job, ownerUserId: job.debugOwnerId },
+        id: row.id,
+        caseId: row.caseId,
+        data: row.data,
+        sourceName: input.sourceName,
+        now: input.importedAt,
+        strategy: input.conflictStrategy,
+        importRowKey: `${job.id}:${input.fileId}:${row.caseId.toLocaleLowerCase("en-US")}`,
+      });
+      result[`${outcome}Count`] += 1;
+      result.caseIds.push({ caseId: row.caseId, outcome });
+    }
+    return result;
+  }
+
   private async previewParsedFile(
-    scope: DdtScope,
+    scope: DdtScope & { debugOwnerId?: string },
     uploadId: string,
     parsed: ParsedDdtFile,
     seenCaseIds: Set<string>,
@@ -502,7 +576,7 @@ export class DdtImportService {
           `CaseID“${String(ddtCaseCell(rows[normalizedIds.indexOf(duplicate)]!, "CaseID"))}”在多个表格中重复。`,
         );
       }
-      const existing = await this.repository.findCaseData(
+      const existing = await this.findCaseData(
         scope,
         rows.map((row) => String(ddtCaseCell(row, "CaseID"))),
       );
@@ -620,7 +694,11 @@ export class DdtImportService {
     };
   }
 
-  private jobEnvelope(jobId: string, createdAt: string): JobEnvelope {
+  private jobEnvelope(
+    jobId: string,
+    createdAt: string,
+    kind: "ddt-import" | "ddt-debug-import",
+  ): JobEnvelope {
     const messageId = this.ids.next();
     return {
       schemaVersion: 1,
@@ -630,7 +708,7 @@ export class DdtImportService {
       createdAt,
       priority: 0,
       deduplicationKey: `ddt-import:${jobId}:${messageId}`,
-      kind: "ddt-import",
+      kind,
       payload: { jobId },
     };
   }

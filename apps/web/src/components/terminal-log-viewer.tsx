@@ -29,7 +29,9 @@ export function TerminalLogViewer({
       <div className={cn("log-viewer-titlebar", terminalLogViewerStyles["log-viewer-titlebar"])}>
         <div className={cn("log-viewer-title", terminalLogViewerStyles["log-viewer-title"])}>
           <TerminalSquare aria-hidden="true" size={17} className="shrink-0 text-primary-text" />
-          <span className={"log-viewer-name"}>{title}</span>
+          <span className="log-viewer-name" title={title}>
+            {title}
+          </span>
         </div>
         <Button
           className={cn(
@@ -54,12 +56,12 @@ export function TerminalLogViewer({
 
 const terminalLogViewerStyles = {
   "log-viewer-body":
-    "flex min-h-0 flex-col overflow-hidden [&_.scheduling-log]:[margin:0_16px_16px] [&_.scheduling-log]:whitespace-pre [&_.scheduling-log]:[overflow-wrap:normal]",
-  "log-viewer-close": "text-muted-foreground",
+    "flex min-h-0 min-w-0 flex-col overflow-hidden [&_.scheduling-log]:[margin:0_16px_16px] [&_.scheduling-log]:whitespace-pre [&_.scheduling-log]:[overflow-wrap:normal]",
+  "log-viewer-close": "shrink-0 text-muted-foreground",
   "log-viewer-dialog":
-    "grid w-[min(1120px,92vw)] h-[min(820px,86vh)] min-h-[430px] grid-rows-[44px_minmax(0,1fr)] overflow-hidden rounded-xl bg-card text-foreground [&_.log-toolbar]:px-4 [&_.log-toolbar]:pt-3 [&_.execution-log]:flex-1 [&_.execution-log]:min-h-0 [&_.execution-log]:max-h-none [&_.execution-log]:mx-4 [&_.execution-log]:mb-4 [&_.inline-empty]:mx-4 [&_.form-error]:mx-4 [&_.status-warning]:mx-4 [&_.compact-button]:mx-4",
+    "grid w-[min(1120px,92vw)] h-[min(820px,86vh)] min-h-[430px] grid-cols-1 grid-rows-[44px_minmax(0,1fr)] overflow-hidden rounded-xl bg-card text-foreground [&_.log-toolbar]:px-4 [&_.log-toolbar]:pt-3 [&_.execution-log]:flex-1 [&_.execution-log]:min-h-0 [&_.execution-log]:max-h-none [&_.execution-log]:mx-4 [&_.execution-log]:mb-4 [&_.inline-empty]:mx-4 [&_.form-error]:mx-4 [&_.status-warning]:mx-4 [&_.compact-button]:mx-4",
   "log-viewer-title":
-    "flex min-w-0 items-center gap-2 text-foreground text-sm font-medium [&_.log-viewer-name]:truncate",
+    "flex min-w-0 flex-1 items-center gap-2 text-foreground text-sm font-medium [&_.log-viewer-name]:truncate",
   "log-viewer-titlebar":
-    "flex items-center justify-between gap-3 [padding:0_10px_0_16px] border-b border-solid border-border bg-muted/50",
+    "flex min-w-0 items-center justify-between gap-3 [padding:0_10px_0_16px] border-b border-solid border-border bg-muted/50",
 } as const;

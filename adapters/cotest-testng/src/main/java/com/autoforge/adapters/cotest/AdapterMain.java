@@ -54,6 +54,7 @@ public final class AdapterMain {
               suiteConfiguration,
               parsed.environmentAddress(),
               parsed.caseId(),
+              parsed.ddtInsightUrl(),
               parsed.outputDirectory());
       return executeWithCaseTimeout(request, parsed.caseTimeoutSeconds(), output, errorOutput);
     } catch (IllegalArgumentException error) {

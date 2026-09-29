@@ -1,0 +1,567 @@
+import { expect, test, type Page } from "@playwright/test";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { zipSync } from "fflate";
+import type { ClaimAssignmentsResponse } from "@autoforge/contracts";
+import { COTEST_ADAPTER_CAPABILITY, DDT_CASE_ID_CAPABILITY } from "@autoforge/domain";
+import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import {
+  ensureAdministrator,
+  browserJson,
+  selectProjectContext,
+  acceptSystemDialog,
+} from "./support/session";
+import {
+  createInitializationProject,
+  seedInitializationSource,
+} from "./support/version-initialization";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { expectUiIntegrity } from "./support/ui-guard";
+
+type ClaimedAssignment = ClaimAssignmentsResponse["assignments"][number];
+
+const capabilities = [
+  "executor:testng-v1",
+  "isolation:cgroup-v2",
+  "java:21.0.8",
+  "testng:7.11.0",
+  COTEST_ADAPTER_CAPABILITY,
+  "adapter:ddt-insight-url-v1",
+  DDT_CASE_ID_CAPABILITY,
+];
+const className = "com.example.InitializationPaymentTest";
+
+test("debug workspace imports JAR and personal DDT assets, executes existing and uploaded cases and preserves inline results", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const project = await createInitializationProject(page);
+  const source = await seedInitializationSource(page, project.projectId);
+  await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
+  const scope = {
+    projectId: source.projectId,
+    projectVersionId: source.projectVersionId,
+    testStageId: source.testStageId,
+  };
+  const query = new URLSearchParams(scope).toString();
+  const headers = { origin: new URL(page.url()).origin };
+  const jar = Buffer.from(
+    zipSync({
+      "com/example/InitializationPaymentTest.class": buildClassFile({
+        className,
+        methods: [{ name: "debugNewMethod", annotations: [{ type: "Test", values: {} }] }],
+      }),
+    }),
+  );
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name: `调试执行机_${randomUUID()}`,
+      labels: ["linux", "java", "testng"],
+      capabilities,
+      maxConcurrency: 1,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "0.7.2",
+      protocolVersion: 1,
+      terminalEnabled: false,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const runner = (await registration.json()) as { runnerId: string; credential: string };
+  await heartbeat(page, runner);
+  await page.goto("/case-debug");
+  await expect(page.getByRole("heading", { name: "用例调试", exact: true })).toBeVisible();
+  let panel = page.getByRole("region", { name: "普通用例调试配置" });
+  const classInput = panel.getByLabel("测试类输入", { exact: true });
+  await expect(classInput.locator(`option[value="${source.classId}"]`)).toHaveCount(1);
+  await classInput.locator('select[aria-label="调试测试类"]').selectOption(source.classId);
+  await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
+  await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
+  await panel.getByLabel("调试启用 Adapter").check();
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
+  await panel.getByLabel("调试启用 Adapter").uncheck();
+  await screenshotReview(page, "ordinary-existing");
+  await heartbeat(page, runner);
+  await panel.getByRole("button", { name: "开始调试", exact: true }).click();
+  await expect(page).toHaveURL(/testngBatch=/);
+  const existingClaim = await claim(page, runner);
+  expect(existingClaim.assignment.executionSpec.className).toBe(className);
+  await logAndComplete(page, runner, existingClaim);
+  await expect(page.getByLabel("调试执行结果")).toContainText("执行通过");
+
+  await classInput.getByRole("button", { name: "上传 JAR", exact: true }).click();
+  const jarDialog = page.getByRole("dialog", { name: "上传并导入测试 JAR", exact: true });
+  await expect(jarDialog.getByText("尚未配置", { exact: true })).toHaveCount(0);
+  await jarDialog.locator('input[type="file"]').setInputFiles({
+    name: `调试新版本_${"支付回归_".repeat(10)}.jar`,
+    mimeType: "application/java-archive",
+    buffer: jar,
+  });
+  await screenshotReview(page, "jar-import-selected");
+  await jarDialog.getByRole("button", { name: "扫描测试类", exact: true }).click();
+  await expect(jarDialog.getByRole("button", { name: "确认导入", exact: true })).toBeEnabled();
+  await screenshotReview(page, "jar-import-scanned");
+  await jarDialog.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(jarDialog).toHaveCount(0);
+  await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
+  await heartbeat(page, runner);
+  await panel.getByRole("button", { name: "再次执行", exact: true }).click();
+  const newClaim = await claim(page, runner);
+  const inputId = newClaim.assignment.executionSpec.inputs[0]!.inputId;
+  const download = await page.request.get(
+    `/api/v1/run-attempts/${newClaim.assignment.attemptId}/inputs/${inputId}`,
+    { headers: { ...runnerHeaders(runner), "x-autoforge-lease-token": newClaim.lease.token } },
+  );
+  expect(download.status()).toBe(200);
+  expect(
+    createHash("sha256")
+      .update(await download.body())
+      .digest("hex"),
+  ).toBe(createHash("sha256").update(jar).digest("hex"));
+  await logAndComplete(page, runner, newClaim);
+  await expect(page.getByLabel("调试日志内容")).toContainText("DEBUG_NEW_JAR_EXECUTED");
+  await expect(page.getByLabel("调试执行结果")).toContainText("执行通过");
+  const firstBatch = new URL(page.url()).searchParams.get("testngBatch");
+  const logPanel = page.getByLabel("调试执行结果");
+  await expect(page.getByLabel("调试日志内容")).toContainText("SECOND_DEBUG_LOG");
+  await logPanel.getByRole("checkbox", { name: "跟随最新" }).uncheck();
+  await expect(page.getByLabel("调试日志内容")).toContainText("DEBUG_NEW_JAR_EXECUTED");
+  await logPanel.getByRole("button", { name: "回到开头", exact: true }).click();
+  await expect(page.getByLabel("调试日志内容")).toContainText("DEBUG_NEW_JAR_EXECUTED");
+  await expect(page.getByLabel("调试日志内容")).not.toContainText("SECOND_DEBUG_LOG");
+  await logPanel.getByRole("button", { name: "下一段日志", exact: true }).click();
+  await expect(page.getByLabel("调试日志内容")).toContainText("SECOND_DEBUG_LOG");
+  await logPanel.getByRole("checkbox", { name: "跟随最新" }).check();
+  await screenshotReview(page, "ordinary-result");
+  await page.reload();
+  await expect(page.getByLabel("调试日志内容")).toContainText("DEBUG_NEW_JAR_EXECUTED");
+  expect(new URL(page.url()).searchParams.get("testngBatch")).toBe(firstBatch);
+  const formalClasses = await browserJson<{ items: Array<{ id: string; currentVersion: number }> }>(
+    page,
+    `/api/v1/case-definitions?${query}`,
+  );
+  expect(formalClasses.body.items).toHaveLength(1);
+  expect(formalClasses.body.items[0]).toMatchObject({ id: source.classId, currentVersion: 2 });
+
+  const asset = await page.request.post(
+    `/api/v1/projects/${scope.projectId}/runtime-assets/upload?kind=jar-bundle&archiveFormat=zip`,
+    {
+      headers: {
+        ...headers,
+        "content-type": "application/octet-stream",
+        "x-autoforge-file-name": encodeURIComponent("debug-runtime.zip"),
+      },
+      data: Buffer.from(zipSync({ "tests.jar": jar })),
+    },
+  );
+  expect(asset.status(), await asset.text()).toBe(201);
+  const assetId = ((await asset.json()) as { id: string }).id;
+  expect(
+    (
+      await browserJson(
+        page,
+        `/api/v1/projects/${scope.projectId}/versions/${scope.projectVersionId}/adapter-configuration`,
+        { method: "PUT", body: { jarBundleAssetId: assetId, expectedRevision: 0 } },
+      )
+    ).status,
+  ).toBe(200);
+  await page.getByRole("tab", { name: "DDT 调试", exact: true }).click();
+  panel = page.getByRole("region", { name: "DDT调试配置" });
+  const ddtInput = panel.getByLabel("DDT 用例输入", { exact: true });
+  await ddtInput.getByRole("radio", { name: "复制现有用例", exact: true }).locator("..").click();
+  await expect(ddtInput.locator('option[value="PAY-1"]')).toHaveCount(1);
+  await ddtInput.locator('select[aria-label="调试DDT 用例"]').selectOption("PAY-1");
+  await expect(panel.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
+  await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
+  await panel.getByLabel("调试环境地址").fill("127.0.0.1");
+  await screenshotReview(page, "ddt-existing");
+  const personalAccess = await browserJson<{ ownerUserId: string; accessKey: string }>(
+    page,
+    `/api/v1/case-debug/ddt/workspace?${query}`,
+  );
+  const personalApi = `/api/v1/public/ddt/projects/${scope.projectId}/versions/${scope.projectVersionId}/stages/${scope.testStageId}/users/${personalAccess.body.ownerUserId}/debug/${personalAccess.body.accessKey}/case`;
+  await expect(page.getByLabel("个人 DDT API", { exact: true })).toContainText(personalApi);
+  await ddtInput.getByRole("button", { name: "查看 / 编辑个人数据", exact: true }).click();
+  const personalEditor = page.getByRole("dialog", { name: "编辑个人调试数据", exact: true });
+  const original = JSON.parse(
+    await personalEditor.getByRole("textbox", { name: "个人 DDT JSON 数据" }).inputValue(),
+  ) as Record<string, unknown>;
+  await personalEditor
+    .getByRole("textbox", { name: "个人 DDT JSON 数据" })
+    .fill(JSON.stringify({ ...original, account: "only-my-debug-account" }, null, 2));
+  await screenshotReview(page, "ddt-personal-editor");
+  await personalEditor.getByRole("button", { name: "保存个人数据", exact: true }).click();
+  await expect(personalEditor).toHaveCount(0);
+  expect((await (await page.request.get(`${personalApi}?caseId=PAY-1`)).json()).account).toBe(
+    "only-my-debug-account",
+  );
+  await heartbeat(page, runner);
+  await panel.getByRole("button", { name: "开始调试", exact: true }).click();
+  const existingDdt = await claim(page, runner);
+  expect(existingDdt.assignment.executionSpec.adapter?.caseId).toBe("PAY-1");
+  await logAndComplete(page, runner, existingDdt);
+  await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行通过");
+  const normalApi = `/api/v1/public/ddt/projects/${scope.projectId}/versions/${scope.projectVersionId}/stages/${scope.testStageId}/case?caseId=PAY-1`;
+  const immediate = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/ddt/cases/PAY-1/execute?${query}`,
+    {
+      method: "POST",
+      body: {
+        runnerIds: [runner.runnerId],
+        adapter: {
+          enabled: true,
+          suiteName: "Immediate",
+          testName: "DDT",
+          environmentAddresses: ["127.0.0.1"],
+        },
+      },
+    },
+  );
+  expect(immediate.status, JSON.stringify(immediate.body)).toBe(201);
+  const immediateDdt = await claim(page, runner);
+  expect(immediateDdt.assignment.executionSpec.batchId).toBe(immediate.body.id);
+  expect(immediateDdt.assignment.executionSpec.adapter).toMatchObject({
+    caseId: "PAY-1",
+    ddtScope: scope,
+  });
+  await logAndComplete(page, runner, immediateDdt);
+  for (const [strategy, expectedAmount] of [
+    ["跳过已有用例", "12"],
+    ["覆盖个人数据", "99"],
+  ] as const) {
+    await ddtInput.getByRole("button", { name: "导入表格", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: `调试数据-${strategy}.csv`,
+      mimeType: "text/csv",
+      buffer: Buffer.from("CaseID,srNum,CaseName,amount\nPAY-1,PAY,支付调试,99\n"),
+    });
+    await dialog.getByRole("button", { name: "开始预检", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: /确认并后台导入$/ })).toBeEnabled();
+    await dialog.getByRole("radio", { name: strategy, exact: true }).check();
+    await screenshotReview(
+      page,
+      strategy === "跳过已有用例" ? "ddt-import-skip" : "ddt-import-overwrite",
+    );
+    await dialog.getByRole("button", { name: /确认并后台导入$/ }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByLabel("调试表格导入进度")).toContainText("导入完成");
+    const formalDdt = (await (await page.request.get(normalApi)).json()) as {
+      amount: number | string;
+    };
+    expect(String(formalDdt.amount)).toBe("12");
+    const personal = await (await page.request.get(`${personalApi}?caseId=PAY-1`)).json();
+    expect(String(personal.amount)).toBe(expectedAmount);
+  }
+  const username = `debug-peer-${randomUUID().slice(0, 8)}`;
+  const password = "DebugPeer!Password123";
+  const created = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName: "另一位调试用户", password, forcePasswordChange: false },
+  });
+  expect(created.status).toBe(201);
+  const role = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: username,
+      name: username,
+      scope: "project",
+      permissions: ["case.read", "run.create", "run.read"],
+    },
+  });
+  expect(role.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/users/${created.body.id}/project-roles`, {
+        method: "POST",
+        body: { projectId: scope.projectId, roleId: role.body.id },
+      })
+    ).status,
+  ).toBe(204);
+  const peer = await page
+    .context()
+    .browser()!
+    .newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    expect(
+      (
+        await peer.request.post("/api/v1/auth/login", { headers, data: { username, password } })
+      ).status(),
+    ).toBe(200);
+    const peerApi = `/api/v1/case-debug/ddt`;
+    expect((await peer.request.get(`${peerApi}/cases/PAY-1?${query}`)).status()).toBe(404);
+    expect(
+      (
+        await peer.request.post(`${peerApi}/copy?${query}`, { headers, data: { caseId: "PAY-1" } })
+      ).status(),
+    ).toBe(200);
+    const peerCase = await (await peer.request.get(`${peerApi}/cases/PAY-1?${query}`)).json();
+    expect(String(peerCase.data.amount)).toBe("12");
+    const peerAccess = await (await peer.request.get(`${peerApi}/workspace?${query}`)).json();
+    expect(peerAccess.accessKey).not.toBe(personalAccess.body.accessKey);
+    const tamperedApi = personalApi.replace(
+      personalAccess.body.ownerUserId,
+      peerAccess.ownerUserId,
+    );
+    expect((await peer.request.get(`${tamperedApi}?caseId=PAY-1`)).status()).toBe(404);
+    const jobPreview = await page.request.post(`/api/v1/case-debug/ddt/imports/preview?${query}`, {
+      headers,
+      multipart: {
+        files: {
+          name: "private.csv",
+          mimeType: "text/csv",
+          buffer: Buffer.from("CaseID,srNum,account\nPRIVATE-ONLY,SR,secret-test-account\n"),
+        },
+      },
+    });
+    expect(jobPreview.status()).toBe(200);
+    const privateJob = await jobPreview.json();
+    expect((await peer.request.get(`${peerApi}/imports/${privateJob.id}?${query}`)).status()).toBe(
+      404,
+    );
+    expect(
+      (
+        await peer.request.post(`${peerApi}/imports/${privateJob.id}/confirm?${query}`, {
+          headers,
+          data: { conflictStrategy: "overwrite" },
+        })
+      ).status(),
+    ).toBe(404);
+    expect((await page.request.get(`/api/v1/ddt/imports/${privateJob.id}?${query}`)).status()).toBe(
+      404,
+    );
+  } finally {
+    await peer.close();
+  }
+  await heartbeat(page, runner);
+  await panel.getByRole("button", { name: "再次执行", exact: true }).click();
+  const uploadedDdt = await claim(page, runner);
+  expect(uploadedDdt.assignment.executionSpec.adapter?.caseId).toBe("PAY-1");
+  expect(uploadedDdt.assignment.executionSpec.adapter?.ddtScope).toEqual({
+    ...scope,
+    debug: personalAccess.body,
+  });
+  expect(uploadedDdt.assignment.executionSpec.inputs.map((input) => input.kind)).toContain(
+    "jar-bundle",
+  );
+  expect(uploadedDdt.assignment.executionSpec.adapter).not.toHaveProperty("classDataFile");
+  await logAndComplete(page, runner, uploadedDdt, "failed");
+  await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行失败");
+  await screenshotReview(page, "ddt-failed-result");
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await screenshotReview(page, "ddt-dark-result");
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  const badScope = await browserJson(page, `/api/v1/case-debug/runs?${query}`, {
+    method: "POST",
+    body: {
+      ...scope,
+      testStageId: "other-stage",
+      kind: "testng",
+      caseDefinitionId: source.classId,
+      execution: { runnerIds: [runner.runnerId] },
+    },
+  });
+  expect(badScope.status).toBe(409);
+  const missingCase = await browserJson(page, `/api/v1/case-debug/runs?${query}`, {
+    method: "POST",
+    body: {
+      ...scope,
+      kind: "testng",
+      caseDefinitionId: "missing",
+      execution: { runnerIds: [runner.runnerId] },
+    },
+  });
+  expect(missingCase.status).toBe(404);
+  const group = await browserJson<{ id: string }>(page, "/api/v1/runner-groups", {
+    method: "POST",
+    body: { name: `debug-group-${randomUUID()}`, runnerIds: [runner.runnerId] },
+  });
+  expect(group.status).toBe(201);
+  await panel.getByRole("button", { name: "刷新资源", exact: true }).click();
+  await panel.getByRole("radio", { name: "执行机组", exact: true }).locator("..").click();
+  await expect(panel.locator(`option[value="${group.body.id}"]`)).toHaveCount(1);
+  await panel.locator('select[aria-label="调试执行机组"]').selectOption(group.body.id);
+  await panel.getByRole("button", { name: "再次执行", exact: true }).click();
+  await page
+    .getByRole("button", { name: "停止执行", exact: true })
+    .filter({ visible: true })
+    .click();
+  await acceptSystemDialog(page, "停止本次调试", "停止执行");
+  await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("已终止");
+  await page.getByRole("tab", { name: "普通用例调试", exact: true }).click();
+  await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行通过");
+  const anonymous = await page.context().browser()!.newContext();
+  try {
+    const unauthorized = await anonymous.request.post(
+      `${new URL(page.url()).origin}/api/v1/case-debug/runs?${query}`,
+      {
+        headers,
+        data: {
+          ...scope,
+          kind: "testng",
+          caseDefinitionId: source.classId,
+          execution: { runnerIds: [runner.runnerId] },
+        },
+      },
+    );
+    expect(unauthorized.status()).toBe(401);
+  } finally {
+    await anonymous.close();
+  }
+  const savedUrl = page.url();
+  const anotherStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${scope.projectId}/versions/${scope.projectVersionId}/stages`,
+    { method: "POST", body: { name: "另一个调试阶段", description: "范围隔离验证" } },
+  );
+  expect(anotherStage.status).toBe(201);
+  await selectProjectContext(page, scope.projectId, scope.projectVersionId, anotherStage.body.id);
+  await page.goto(savedUrl);
+  await expect(page.getByLabel("调试执行结果")).toHaveCount(0);
+  await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
+  await page.goto(savedUrl);
+  await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行通过");
+});
+
+async function heartbeat(page: Page, runner: { runnerId: string; credential: string }) {
+  const response = await page.request.post(`/api/v1/runner-agents/${runner.runnerId}/heartbeat`, {
+    headers: runnerHeaders(runner),
+    data: {
+      schemaVersion: 1,
+      busySlots: 0,
+      labels: ["linux", "java", "testng"],
+      capabilities,
+      maxConcurrency: 1,
+      agentVersion: "0.7.2",
+      terminalEnabled: false,
+      resourceSnapshot: {
+        cpuUtilizationPercent: 1,
+        memoryUtilizationPercent: 1,
+        loadAverage1m: 0.1,
+        logicalCpuCount: 4,
+        observedAt: new Date().toISOString(),
+      },
+    },
+  });
+  expect(response.status()).toBe(200);
+}
+function runnerHeaders(runner: { runnerId: string; credential: string }) {
+  return { authorization: `Bearer ${runner.credential}`, "x-autoforge-runner-id": runner.runnerId };
+}
+async function claim(
+  page: Page,
+  runner: { runnerId: string; credential: string },
+): Promise<ClaimedAssignment> {
+  let assignment: ClaimedAssignment | undefined;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.post(
+          `/api/v1/runner-agents/${runner.runnerId}/claims`,
+          {
+            headers: runnerHeaders(runner),
+            data: {
+              schemaVersion: 1,
+              requestId: randomUUID(),
+              availableSlots: 1,
+              labels: ["linux", "java", "testng"],
+              capabilities,
+              waitSeconds: 0,
+            },
+          },
+        );
+        expect(response.status()).toBe(200);
+        assignment = ((await response.json()) as { assignments: ClaimedAssignment[] })
+          .assignments[0];
+        return Boolean(assignment);
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  return assignment!;
+}
+async function logAndComplete(
+  page: Page,
+  runner: { runnerId: string; credential: string },
+  claim: ClaimedAssignment,
+  status: "succeeded" | "failed" = "succeeded",
+) {
+  const path = `/api/v1/run-attempts/${claim.assignment.attemptId}`;
+  const logged = await page.request.post(`${path}/logs`, {
+    headers: runnerHeaders(runner),
+    data: {
+      schemaVersion: 1,
+      requestId: randomUUID(),
+      leaseToken: claim.lease.token,
+      chunks: [
+        {
+          stream: "stdout",
+          sequence: 1,
+          content: "SECOND_DEBUG_LOG\n",
+          recordedAt: new Date().toISOString(),
+        },
+        {
+          stream: "stdout",
+          sequence: 0,
+          content: "INFO DEBUG_NEW_JAR_EXECUTED\n执行结果：通过\n",
+          recordedAt: new Date().toISOString(),
+        },
+      ],
+    },
+  });
+  expect(logged.status()).toBe(200);
+  const completed = await page.request.post(`${path}/complete`, {
+    headers: runnerHeaders(runner),
+    data: {
+      schemaVersion: 1,
+      completionId: randomUUID(),
+      leaseToken: claim.lease.token,
+      result: {
+        status,
+        resultCode: status === "succeeded" ? "TESTNG_OK" : "TESTNG_TEST_FAILED",
+        summary:
+          status === "succeeded"
+            ? "调试用例执行完成"
+            : "调试断言失败：" + "失败原因与调用堆栈".repeat(32),
+        testNg: {
+          total: 1,
+          passed: status === "succeeded" ? 1 : 0,
+          failed: 0,
+          skipped: status === "failed" ? 1 : 0,
+          configurationFailures: 0,
+          detailsTruncated: false,
+          suites: [],
+        },
+        durationMs: 100,
+        logWatermarks: { stdout: 1, stderr: -1, agent: -1 },
+        artifacts: [],
+      },
+    },
+  });
+  expect(completed.status()).toBe(200);
+}
+async function screenshotReview(page: Page, name: string) {
+  for (const close of await page.locator(".ant-notification-notice-close").all())
+    await close.click();
+  await expect(page.locator(".ant-notification-notice")).toHaveCount(0);
+  const directory = resolve(process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? ".local/case-debug-ui");
+  await mkdir(directory, { recursive: true });
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(directory, `${name}-${viewport.width}.png`),
+      fullPage: true,
+    });
+  }
+}

@@ -230,13 +230,31 @@ DDL 和转换在同一事务中；失败回滚后修复并重试。降级须恢�
 `executionCaseDefinitionId` 与 `caseVersion` 标识执行的 TestNG 类及版本。assignment 通过
 `adapter.caseId` 下发 CaseID，Runner 使用独立参数 `--case-id` 交给 Adapter，后者调用
 `MM2DataProvider.setClassDataProvider(className, caseId)`，不进行文件转换或数据下载。
-测试类负责配置项目、版本、阶段对应的公开 API URL，自行编码 CaseID 并获取数据；动态字段以 API
+执行规格同时保存 `adapter.ddtScope`（项目、版本、阶段）。Runner 使用当前身份的控制面入口
+生成以 `/case` 结尾的公开 API URL，Adapter 在测试类初始化前调用
+`MM2DataProvider.setDdtInsightUrl(String)`；不附带 CaseID 查询参数或 Runner 凭据。
+范围来自执行类所属版本与阶段，跨版本继承时采用目标范围，不能使用原 JAR 来源的范围。
+调试、用例管理立即执行、任务批跑和重跑共用此逻辑。测试类自行编码 CaseID 并获取数据；动态字段以 API
 请求时的当前值为准，不再是批次创建时的数据快照。诊断重跑仍沿用 CaseID 和执行类身份。
 
-DDT 批次要求 Runner 声明 `adapter:ddt-case-id-v1` 能力，预检和调度都会检查，普通用例不受影响。
+Adapter 批次要求 Runner 声明 `adapter:ddt-insight-url-v1`，DDT 额外要求 `adapter:ddt-case-id-v1`；
+预检和调度都会检查，旧 Runner 明确提示升级，升级同时安装配套 Adapter。普通 Adapter 用例包含
+MM2DataProvider 时也注入 URL；没有该类的普通用例保持可执行。DDT 缺少该类、或者存在该类但缺少
+setter 时明确失败并提示更新全量依赖包。未启用 Adapter 的原生 TestNG 执行不加载 CoTest 类。
+执行规格字段可选、持久于既有 assignment JSON；个人 DDT 数据另通过 SQLite 0073 / PostgreSQL 0071 迁移保存。历史 assignment 保留原规格。
 升级 Runner 自动更新受管 Adapter；升级前已分配的 `class-data` 文件协议任务在新 Runner 上明确
 拒绝，需结束或停止后重新发起。历史数据库列和输入读取契约保留以支持旧记录，新批次不写 JSON 正文。
-Lite/Full 分别持久化于 SQLite/PostgreSQL，共享业务与协议语义，无新迁移、外部服务或公网依赖。
+Lite/Full 分别持久化于 SQLite/PostgreSQL，共享业务与协议语义，无新外部服务或公网依赖。DDT 调试的 `ddtScope.debug` 保存用户及只读访问标识，调试 URL 在阶段路径后增加 `/users/{userId}/debug/{accessKey}/case`，读取个人库并验证全部范围；普通立即执行和批跑不携带此字段，读取正式库。见[调试工作台](../design/case-debug-workspace.md)。
+
+### DDT API 地址注入验证（2026-09-29）
+
+- `pnpm exec vitest run`：执行契约、单用例/DDT 调度、批跑调度与重跑的 71 项测试通过，包含旧 Runner 拒绝与明确升级提示。
+- `pnpm exec vitest run packages/db/test/case-debug.integration.test.ts packages/db/test/sqlite-case-suites.integration.test.ts packages/db/test/scheduling-refill.integration.test.ts`：设置本地测试 PostgreSQL 地址后，56 项通过；覆盖双数据库执行规格、混合批跑和真实跨版本继承后使用目标范围。
+- `go -C apps/runner-agent test ./...`、`go -C apps/runner-agent vet ./...`：通过。URL 测试覆盖反向代理前缀、范围编码、无查询参数、普通/DDT Adapter 参数与凭据拒绝。
+- `bash scripts/quality/test-cotest-adapter-java8.sh`：JDK 8 + TestNG 7.5.1 / 6.14.3 各 24 项通过，并验证 Java 8 字节码和打包后的跳过结果；JDK 21 + TestNG 7.11.0 的 `mvn -Dtestng.version=7.11.0 test` 24 项通过。真实 JVM 断言 URL 在测试类静态初始化前已经注入。
+- Lite 生产构建的 Playwright 回归验证调试页、单用例执行弹窗、普通/DDT 混合任务和纯 DDT 任务，检查实际领取规格的范围。浏览器测试使用协议模拟 Runner；真实 Runner 的 java-cases 验收夹具已改为使用注入 URL 取数，本轮未运行该 CI 专属验收或完整离线发布验收。
+
+没有新增运行依赖，Adapter 仍由本地 Java 资源和项目全量依赖包运行。
 
 ## API 概览
 

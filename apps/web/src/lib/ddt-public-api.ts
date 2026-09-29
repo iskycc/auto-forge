@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ddtCaseLookupSchema } from "@autoforge/contracts";
+import { ddtCaseLookupSchema, ddtDebugAccessSchema } from "@autoforge/contracts";
 import type { DdtScope } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
@@ -30,6 +30,7 @@ export async function readPublicDdtCase(
   request: Request,
   scope: DdtScope,
   caseId: string | null,
+  debugAccess?: { ownerUserId: string; accessKey: string },
 ): Promise<NextResponse> {
   const startedAt = performance.now();
   const currentRequestId = requestId(request);
@@ -39,14 +40,20 @@ export async function readPublicDdtCase(
     const services = await getPlatformServices();
     // Scope comes exclusively from the path. The indexed repository lookup includes
     // all three IDs; no global fallback, session lookup or per-read statistics write.
-    const payload = await services.ddtCases.getData(
-      {
-        projectId: input.projectId,
-        projectVersionId: input.projectVersionId,
-        testStageId: input.testStageId,
-      },
-      input.caseId,
-    );
+    const payload = debugAccess
+      ? await services.ddtDebug.readPublic(
+          { ...scope, ownerUserId: ddtDebugAccessSchema.parse(debugAccess).ownerUserId },
+          debugAccess.accessKey,
+          input.caseId,
+        )
+      : await services.ddtCases.getData(
+          {
+            projectId: input.projectId,
+            projectVersionId: input.projectVersionId,
+            testStageId: input.testStageId,
+          },
+          input.caseId,
+        );
     response = NextResponse.json(payload);
   } catch (error) {
     response = await apiErrorResponse(error, currentRequestId);

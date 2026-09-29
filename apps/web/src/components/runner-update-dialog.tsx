@@ -1,7 +1,7 @@
 "use client";
 import { Notice } from "@/components/ui/notice";
 
-import { Dialog } from "@/components/ui/dialog";
+import { ActionDialog } from "@/components/action-dialog";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -13,7 +13,7 @@ import {
   type RunnerHostProbeResult,
   type RunnerInstallationProfile,
 } from "@autoforge/contracts";
-import { CheckCircle2, Download, Fingerprint, Search, ShieldAlert, X } from "lucide-react";
+import { CheckCircle2, Download, Fingerprint, Search, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -140,30 +140,15 @@ export function RunnerUpdateDialog({
         <Download size={15} /> 更新
       </Button>
       {open ? (
-        <Dialog
+        <ActionDialog
           open
           title={`更新 ${runnerName} 的 Agent`}
+          description={`目标版本：${latestVersion}`}
           onClose={closeDialog}
-          className={cn("runner-update-dialog", runnerUpdateDialogStyles["runner-update-dialog"])}
+          closeDisabled={Boolean(pending)}
+          className="runner-update-dialog w-[min(760px,calc(100vw-3rem))]"
           backdropClassName="runner-update-overlay"
         >
-          <header
-            className={cn(
-              "runner-update-titlebar",
-              runnerUpdateDialogStyles["runner-update-titlebar"],
-            )}
-          >
-            <span>
-              <Download size={16} aria-hidden="true" />
-              <strong>更新执行机 Agent</strong>
-              <small>
-                {runnerName} → {latestVersion}
-              </small>
-            </span>
-            <Button aria-label="关闭" onClick={closeDialog} type="button">
-              <X size={16} />
-            </Button>
-          </header>
           <div className={cn("runner-update-body", runnerUpdateDialogStyles["runner-update-body"])}>
             <p className={cn("runner-update-hint", runnerUpdateDialogStyles["runner-update-hint"])}>
               原地更新会保留执行机身份、凭据与历史执行记录，仅替换 Agent
@@ -423,7 +408,7 @@ export function RunnerUpdateDialog({
               </div>
             ) : null}
           </div>
-        </Dialog>
+        </ActionDialog>
       ) : null}
     </>
   );
@@ -449,21 +434,16 @@ const runnerUpdateDialogStyles = {
     "flex items-center gap-2.5 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-success/10 text-success leading-[1.5]",
   "runner-fingerprint":
     "flex items-center gap-2.5 min-w-0 rounded-lg py-2.5 px-3 bg-muted [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground [&_svg]:[flex:0_0_auto] [&_svg]:text-info [&_code]:overflow-hidden [&_code]:text-xs [&_code]:text-ellipsis [&_code]:whitespace-nowrap",
-  "runner-fingerprint-confirmation": "font-semibold",
+  "runner-fingerprint-confirmation": "flex min-w-0 items-start gap-2 font-semibold",
   "runner-installer-actions":
     "flex items-center gap-3.5 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_small]:text-muted-foreground",
   "runner-probe-result":
-    "[&_>_label]:grid [&_>_label]:gap-[7px] [&_>_label]:text-muted-foreground [&_>_label]:text-xs [&_>_label]:font-semibold [&_textarea]:w-full grid gap-4 border border-solid border-border rounded-lg p-[17px] bg-success/10",
+    "grid min-w-0 gap-4 border border-solid border-border rounded-lg p-4 bg-success/10",
   "runner-probe-summary":
     "flex items-center gap-2.5 text-success [&_span]:grid [&_span]:min-w-0 [&_span]:gap-[3px] [&_small]:text-muted-foreground",
-  "runner-update-body": "grid gap-4 p-4.5 overflow-y-auto",
-  "runner-update-dialog":
-    "grid w-[min(640px,_92vw)] max-h-[86vh] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg",
+  "runner-update-body": "grid min-w-0 grid-cols-1 gap-4",
   "runner-update-error": "grid gap-2.5",
   "runner-update-grid":
-    "grid grid-cols-2 gap-3.5 [&_.checkbox-row]:flex [&_.checkbox-row]:flex-row [&_.checkbox-row]:items-center [&_.checkbox-row]:self-end [&_.checkbox-row_input]:w-auto [&_label]:grid [&_label]:gap-[7px] [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold",
+    "grid min-w-0 grid-cols-2 gap-4 [&>.checkbox-row]:flex [&>.checkbox-row]:items-center [&>.checkbox-row]:self-end [&>label]:min-w-0 [&>label:not(.checkbox-row)]:grid [&>label]:gap-2 [&>label]:text-muted-foreground [&>label]:text-sm [&>label]:font-medium",
   "runner-update-hint": "m-0 text-muted-foreground leading-[1.65]",
-
-  "runner-update-titlebar":
-    "flex items-center justify-between gap-3 py-3.5 px-4.5 border-b border-solid border-border [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2.5 [&_small]:text-muted-foreground",
 } as const;

@@ -24,3 +24,5 @@ export { createLocalClock } from "./local-clock";
 export * from "./sqlite-read-model-snapshots";
 
 export { isDatabaseLockContentionError } from "./lock-contention";
+
+export * from "./sqlite-ddt-debug";

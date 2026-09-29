@@ -265,6 +265,7 @@ const backgroundWorker = new JobWorker(
     "object-cleanup": handleBackgroundJob,
     "jar-import": handleBackgroundJob,
     "ddt-import": handleBackgroundJob,
+    "ddt-debug-import": handleBackgroundJob,
     "analytics-export": handleBackgroundJob,
   },
   clock,

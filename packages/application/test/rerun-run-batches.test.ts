@@ -14,6 +14,29 @@ import type {
 const now = "2026-08-26T02:00:00.000Z";
 
 describe("derived run batches", () => {
+  it("keeps the personal DDT API on both diagnostic and final-failure reruns", async () => {
+    const snapshot = rerunSnapshot();
+    const debug = {
+      ownerUserId: "personal-owner",
+      accessKey: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+    };
+    snapshot.adapterRuntime!.ddtDebug = debug;
+    const { batches, created } = rerunRepository(snapshot, {
+      batchId: snapshot.batch.id,
+      executionRunId: "run-failed",
+      attemptStatus: "failed",
+    });
+    const service = schedulingService(batches);
+    await service.rerunCaseFromAttempt("attempt-failed", { username: "owner", source: "local" });
+    expect(created[0]?.ddtDebug).toEqual(debug);
+    await service.rerunFinalFailures(
+      snapshot.batch.id,
+      { concurrency: 1, enableRetryConcurrencyRules: false, enableRoundRecovery: false },
+      { username: "owner", source: "local" },
+    );
+    expect(created[1]?.adapterRuntimeSnapshot?.ddtDebug).toEqual(debug);
+  });
+
   it("reruns a terminal case with current project-version runtime assets", async () => {
     const snapshot = rerunSnapshot();
     const { batches, created } = rerunRepository(snapshot, {

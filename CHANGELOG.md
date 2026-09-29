@@ -6,6 +6,34 @@ and known limitations.
 
 ## Unreleased
 
+## 1.18.18 - 2026-09-29
+
+### Added
+
+- 新增“用例调试”页面，普通 TestNG 与 DDT 分别配置、执行并在本页查看状态、日志、结果与终止反馈；支持执行机/机组、现有用例选择、JAR 扫描导入与 DDT 表格冲突处理。JAR 上传写入正式库，DDT 表格仅写入个人调试库，DDT 临时执行类不修改 SR 关联，执行仍仅传 CaseId。
+- DDT 调试新增个人数据副本、JSON 编辑与独立 API 展示/复制；按用户、项目、版本、阶段持久化，复制正式用例保留已有个人修改，调试与日志重跑使用个人 API。新增 SQLite `0073_ddt_debug` / PostgreSQL `0071_ddt_debug` 迁移；复用既有调度、租约、终止、日志与离线依赖。
+- 调试、立即执行、批跑及重跑的 Adapter 执行规格新增可选 `ddtScope`，Runner 使用可访问的控制面入口拼接当前范围 `/case` API 地址，Adapter 在测试类初始化前调用 `MM2DataProvider.setDdtInsightUrl`。跨版本继承使用目标范围，URL 不含 Runner 凭据或 CaseId 查询参数；旧 Runner 预检提示升级，配套 Adapter 随 Runner 更新。
+
+### Fixed
+
+- 修复 DDT“导入表格”弹窗的长文件名挤压文件大小、冲突策略双层边框及底部操作错位；统一使用 Ant Design 单选组和固定底部操作栏，完整显示文件名、行数、预检状态与错误说明。
+- 修复 DDT 字段模板、批量修改、加入任务和列名冲突弹窗的重复内边距与操作栏错位，内容滚动时底部按钮保持可见；草稿确认按钮保留清晰间距。
+- 修复单机及批量 Agent 更新、调度日志的长节点名称撑出弹窗问题，保持关闭按钮可见；更新入口复用统一弹窗，长主机地址、指纹与结果可读。
+- 修复 Webhook 编辑操作栏遮挡表单、服务账号令牌权限列表挤占半列的问题，提交与取消统一放到底部；修复长用例分析标题挤压图标，以及全局搜索浮层裁掉连续长名称的问题。
+
+### Database, deployment and compatibility
+
+- 新增 SQLite `0073_ddt_debug` / PostgreSQL `0071_ddt_debug` 迁移，保存个人 DDT 数据、只读访问标识与导入恢复回执，不改写正式用例。升级前备份数据库与对象目录；先排空后台工作，再更新全部平台节点和独立工作器，避免混用新旧导入处理器。
+- 新建 Adapter 执行需要 Runner 支持 `adapter:ddt-insight-url-v1`，旧节点会收到明确升级提示。更新平台后通过执行节点入口更新 Runner，其配套 Adapter 一并更新；普通用例管理和批跑使用正式 API，个人调试及其重跑使用个人 API。
+- 个人 API 无需登录，持有完整地址者可读取该个人范围的数据，请按测试数据权限分享。平台 HTTP 访问日志隐藏地址中的只读访问标识。
+- 无新增生产依赖或部署环境变量；Ant Design、双架构内置 Agent、Adapter 和迁移随离线镜像交付，发布资产类型不变，不提交截图、测试数据和构建产物。
+
+### Validation and known limitations
+
+- 通过 Web/Worker 生产构建、全仓格式与许可证、lint/Go vet、类型检查，以及 `pnpm test`（1,080 项 TypeScript 单测、Runner 全量测试、62 项脚本测试）。`pnpm test:integration` 本地通过 252 项，未连接外部服务的 178 项按条件跳过；SQLite/PostgreSQL 迁移与个人调试另已连接真实数据库验证，覆盖用户隔离、并发修改、锁竞争恢复、导入中断恢复与取消。Adapter 的 Java 8/21 兼容测试通过。
+- Playwright 在 Lite 生产构建完成两用户个人 DDT 导入、复制、编辑、API 访问隔离、调试执行、日志和终止流程；已实际检查 1024×768、1536×960 深浅色截图。新增调试浏览器场景和双数据库测试纳入 CI。
+- 本地调试浏览器场景使用协议模拟 Runner；真实 Agent、Full 整体部署和已发布离线资产的完整验收，以本版本 GitHub Actions 对标签源码与正式资产的结果为准。验证细节见 `docs/design/case-debug-workspace.md` 与 `docs/design/dialog-layout-audit.md`。
+
 ## 1.18.17 - 2026-09-28
 
 ### Fixed

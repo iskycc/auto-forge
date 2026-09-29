@@ -84,6 +84,7 @@ class AdapterMainTest {
                 "--class", "fixture.AdapterCase",
                 "--environment-address", "10.0.0.8",
                 "--case-id", "CASE/0001 中文?x=1",
+              "--ddt-insight-url", "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
                 "--output", temporaryDirectory.resolve("reports-ok").toString(),
                 "--case-timeout-seconds", "600"
               },

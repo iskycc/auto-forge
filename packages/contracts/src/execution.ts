@@ -1,4 +1,12 @@
 import { z } from "zod";
+import { ddtScopeSchema } from "./ddt";
+
+export const ddtDebugAccessSchema = z
+  .object({
+    ownerUserId: z.string().min(1).max(128),
+    accessKey: z.string().uuid(),
+  })
+  .strict();
 
 export const RUNNER_PROTOCOL_VERSION = 1 as const;
 
@@ -150,6 +158,8 @@ export const executionSpecSchema = z
         testName: z.string().max(512).default(""),
         environmentAddress: z.string().max(2_048).default(""),
         caseId: z.string().min(1).max(512).optional(),
+        // Immutable assignment scope; the Agent resolves its own reachable control-plane URL.
+        ddtScope: ddtScopeSchema.extend({ debug: ddtDebugAccessSchema.optional() }).optional(),
         // 用例执行超时（秒）：由 adapter 自身看门狗强制中断执行；可选新增字段，
         // 历史规格缺失时回落到平台默认值 600 秒。
         caseTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),

@@ -51,6 +51,7 @@ class CotestTestNgExecutorTest {
             new SuiteConfiguration("Adapter suite", "Adapter test"),
             "10.0.0.8",
             "CASE/0001 中文?x=1",
+            "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
             reports);
     int exitCode;
     try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
@@ -87,6 +88,7 @@ class CotestTestNgExecutorTest {
             new SuiteConfiguration("Adapter suite", "Adapter test"),
             "10.0.0.8",
             "CASE/0001 中文?x=1",
+            "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
             reports);
     int exitCode;
     try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
@@ -115,6 +117,7 @@ class CotestTestNgExecutorTest {
             new SuiteConfiguration("Adapter suite", "Adapter test"),
             "10.0.0.8",
             "CASE/0001 中文?x=1",
+            "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
             temporaryDirectory.resolve("reports-failure"));
 
     int exitCode;

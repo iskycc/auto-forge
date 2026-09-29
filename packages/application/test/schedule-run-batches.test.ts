@@ -1106,6 +1106,7 @@ describe("run batch creation with suite policy", () => {
         "java:21.0.8",
         "testng:7.11.0",
         "adapter:cotest-testng-v1",
+        "adapter:ddt-insight-url-v1",
       ]),
       { now: () => new Date(timestamp) },
       { next: () => "generated-id" },

@@ -157,7 +157,7 @@ func TestAdapterCanClaimProjectSuppliedRuntimeWithoutLocalToolchain(t *testing.T
 		t.Fatal("CanClaimExecutions() = false, want true for an installed Adapter")
 	}
 	capabilities := strings.Join(configuration.Capabilities(), " ")
-	for _, expected := range []string{"executor:testng-v1", "adapter:cotest-testng-v1", "runtime:project-assets-v1"} {
+	for _, expected := range []string{"executor:testng-v1", "adapter:cotest-testng-v1", "adapter:ddt-insight-url-v1", "runtime:project-assets-v1"} {
 		if !containsWord(capabilities, expected) {
 			t.Fatalf("Capabilities() = %#v, missing %q", configuration.Capabilities(), expected)
 		}

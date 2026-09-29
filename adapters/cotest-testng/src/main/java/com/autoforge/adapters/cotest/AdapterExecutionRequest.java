@@ -12,6 +12,7 @@ final class AdapterExecutionRequest {
   private final SuiteConfiguration suiteConfiguration;
   private final String environmentAddress;
   private final String caseId;
+  private final String ddtInsightUrl;
   private final Path outputDirectory;
 
   AdapterExecutionRequest(
@@ -20,12 +21,14 @@ final class AdapterExecutionRequest {
       SuiteConfiguration suiteConfiguration,
       String environmentAddress,
       String caseId,
+      String ddtInsightUrl,
       Path outputDirectory) {
     this.jarUrls = Collections.unmodifiableList(new ArrayList<URL>(jarUrls));
     this.className = className;
     this.suiteConfiguration = suiteConfiguration;
     this.environmentAddress = environmentAddress;
     this.caseId = caseId;
+    this.ddtInsightUrl = ddtInsightUrl;
     this.outputDirectory = outputDirectory.toAbsolutePath().normalize();
   }
 
@@ -47,6 +50,10 @@ final class AdapterExecutionRequest {
 
   String caseId() {
     return caseId;
+  }
+
+  String ddtInsightUrl() {
+    return ddtInsightUrl;
   }
 
   Path outputDirectory() {

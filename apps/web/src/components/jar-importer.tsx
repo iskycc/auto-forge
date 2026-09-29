@@ -71,6 +71,8 @@ async function errorMessage(response: Response): Promise<string> {
 
 export function JarImporter({
   maxJarBytes,
+  onImported,
+  presentation = "page",
   versions,
   canInherit,
   projectId: initialProjectId,
@@ -81,6 +83,8 @@ export function JarImporter({
   testStageName,
 }: {
   maxJarBytes: number;
+  onImported?: (result: JarImportResult) => void;
+  presentation?: "page" | "embedded";
   versions: InheritanceVersion[];
   canInherit: boolean;
   projectId?: string | undefined;
@@ -109,7 +113,9 @@ export function JarImporter({
       setJob(updated);
       if (updated.status === "succeeded") {
         if (updated.result) {
-          setResult(jarImportResultSchema.parse(updated.result));
+          const imported = jarImportResultSchema.parse(updated.result);
+          setResult(imported);
+          onImported?.(imported);
           setError(null);
           setPhase("done");
           router.refresh();
@@ -125,7 +131,7 @@ export function JarImporter({
         setPhase("ready");
       }
     },
-    [router],
+    [router, onImported],
   );
 
   function chooseFile(nextFile: File | null): void {
@@ -286,29 +292,31 @@ export function JarImporter({
 
   return (
     <div className={cn("import-workspace", jarImporterStyles["import-workspace"])}>
-      <Card
-        as="section"
-        className={cn("card import-card", uiPatterns["card"], jarImporterStyles["import-card"])}
-      >
-        <div className={cn("card-heading", uiPatterns["card-heading"])}>
-          <div>
-            <h2>复用已有版本</h2>
-            <p>从同项目的其他版本复制 TestNG 用例，无需重新上传 JAR。</p>
+      {presentation === "page" ? (
+        <Card
+          as="section"
+          className={cn("card import-card", uiPatterns["card"], jarImporterStyles["import-card"])}
+        >
+          <div className={cn("card-heading", uiPatterns["card-heading"])}>
+            <div>
+              <h2>复用已有版本</h2>
+              <p>从同项目的其他版本复制 TestNG 用例，无需重新上传 JAR。</p>
+            </div>
+            <Button
+              type="button"
+              disabled={!clientReady || busy || !projectVersionId || !testStageId || !canInherit}
+              onClick={() => setInheriting(true)}
+            >
+              <CopyPlus size={17} aria-hidden="true" /> 从其他版本继承
+            </Button>
           </div>
-          <Button
-            type="button"
-            disabled={!clientReady || busy || !projectVersionId || !testStageId || !canInherit}
-            onClick={() => setInheriting(true)}
-          >
-            <CopyPlus size={17} aria-hidden="true" /> 从其他版本继承
-          </Button>
-        </div>
-        {!canInherit ? (
-          <p className={cn("settings-note", uiPatterns["settings-note"])}>
-            继承还需要当前项目的用例查看权限。
-          </p>
-        ) : null}
-      </Card>
+          {!canInherit ? (
+            <p className={cn("settings-note", uiPatterns["settings-note"])}>
+              继承还需要当前项目的用例查看权限。
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
       {inheriting && projectVersionId && testStageId ? (
         <TestNgInheritanceDialog
           key={`${projectId}:${projectVersionId}:${testStageId}`}

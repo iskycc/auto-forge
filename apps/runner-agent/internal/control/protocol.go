@@ -12,11 +12,24 @@ type ExecutionInput struct {
 	DownloadURL string `json:"downloadUrl,omitempty"`
 }
 
+type DdtDebugAccess struct {
+	OwnerUserID string `json:"ownerUserId"`
+	AccessKey   string `json:"accessKey"`
+}
+
+type DdtScope struct {
+	Debug            *DdtDebugAccess `json:"debug,omitempty"`
+	ProjectID        string          `json:"projectId"`
+	ProjectVersionID string          `json:"projectVersionId"`
+	TestStageID      string          `json:"testStageId"`
+}
+
 type AdapterSettings struct {
-	SuiteName          string `json:"suiteName"`
-	TestName           string `json:"testName"`
-	EnvironmentAddress string `json:"environmentAddress"`
-	CaseID             string `json:"caseId,omitempty"`
+	SuiteName          string    `json:"suiteName"`
+	TestName           string    `json:"testName"`
+	EnvironmentAddress string    `json:"environmentAddress"`
+	CaseID             string    `json:"caseId,omitempty"`
+	DdtScope           *DdtScope `json:"ddtScope,omitempty"`
 	// 用例执行超时（秒），由 adapter 自身看门狗强制中断；0 表示控制面未下发，
 	// adapter 使用自己的默认值。
 	CaseTimeoutSeconds int64 `json:"caseTimeoutSeconds,omitempty"`

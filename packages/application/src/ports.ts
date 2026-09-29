@@ -1631,6 +1631,7 @@ export type CreateRunBatchRecord = {
   }>;
   adapter?: CaseSuiteExecutionPolicy["adapter"];
   adapterRuntimeSnapshot?: RunBatchAdapterRuntimeSnapshot;
+  ddtDebug?: import("./ddt-debug").DdtDebugAccess;
   dispatchJob?: JobEnvelope;
   scheduledFor?: string;
   createdAt: string;
@@ -1648,6 +1649,7 @@ export type RunBatchRuntimeAssetSnapshot = {
 };
 
 export type RunBatchAdapterRuntimeSnapshot = {
+  ddtDebug?: import("./ddt-debug").DdtDebugAccess;
   suiteName: string;
   testName: string;
   environmentAddresses: string[];

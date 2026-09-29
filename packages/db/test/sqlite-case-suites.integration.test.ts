@@ -615,6 +615,7 @@ describe("SQLite case suite lifecycle", () => {
         capabilities: [
           "executor:testng-v1",
           "adapter:cotest-testng-v1",
+          "adapter:ddt-insight-url-v1",
           "adapter:ddt-case-id-v1",
           "runtime:project-assets-v1",
           "isolation:cgroup-v2",
@@ -631,6 +632,7 @@ describe("SQLite case suite lifecycle", () => {
         capabilities: [
           "executor:testng-v1",
           "adapter:cotest-testng-v1",
+          "adapter:ddt-insight-url-v1",
           "adapter:ddt-case-id-v1",
           "runtime:project-assets-v1",
           "isolation:cgroup-v2",
@@ -752,6 +754,11 @@ describe("SQLite case suite lifecycle", () => {
         testName: "task-test",
         environmentAddress: "10.0.0.9",
         caseTimeoutSeconds: 600,
+        ddtScope: {
+          projectId: DEFAULT_PROJECT_ID,
+          projectVersionId: "project-version-1",
+          testStageId: "stage-1",
+        },
       });
       expect(specs.map((candidate) => candidate.adapter.environmentAddress)).toEqual([
         "10.0.0.9",

@@ -1,5 +1,7 @@
 package com.autoforge.adapters.cotest;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
@@ -12,13 +14,14 @@ final class AdapterArguments {
   static final String USAGE =
       "Usage: java -jar cotest-testng-adapter.jar "
           + "--jars DIR --class CLASS [--environment-address VALUE] "
-          + "[--case-id CASE_ID] [--config FILE] [--suite-name NAME] "
+          + "[--case-id CASE_ID] [--ddt-insight-url URL] [--config FILE] [--suite-name NAME] "
           + "[--test-name NAME] [--output DIR] [--case-timeout-seconds SECONDS]";
 
   private final Path jarDirectory;
   private final String className;
   private final String environmentAddress;
   private final String caseId;
+  private final String ddtInsightUrl;
   private final Path configurationFile;
   private final String suiteName;
   private final String testName;
@@ -30,6 +33,7 @@ final class AdapterArguments {
     className = required(options, "--class");
     environmentAddress = options.getOrDefault("--environment-address", "");
     caseId = options.get("--case-id");
+    ddtInsightUrl = validatedDdtInsightUrl(options.get("--ddt-insight-url"));
     if (caseId != null && caseId.length() > 512) {
       throw new IllegalArgumentException("--case-id must not exceed 512 characters.");
     }
@@ -75,6 +79,32 @@ final class AdapterArguments {
 
   String caseId() {
     return caseId;
+  }
+
+  String ddtInsightUrl() {
+    return ddtInsightUrl;
+  }
+
+  private static String validatedDdtInsightUrl(String value) {
+    if (value == null) return null;
+    try {
+      URI uri = new URI(value);
+      if (value.length() <= 8192
+          && ("http".equals(uri.getScheme()) || "https".equals(uri.getScheme()))
+          && uri.getHost() != null
+          && uri.getUserInfo() == null
+          && uri.getRawQuery() == null
+          && uri.getRawFragment() == null
+          && uri.getPath().endsWith("/case")) {
+        return value;
+      }
+    } catch (URISyntaxException invalid) {
+      throw new IllegalArgumentException(
+          "--ddt-insight-url must be a valid DDT case API URL.", invalid);
+    }
+    throw new IllegalArgumentException(
+        "--ddt-insight-url must be HTTP(S), end with /case "
+            + "and contain no credentials, query or fragment.");
   }
 
   Path configurationFile() {
@@ -137,6 +167,7 @@ final class AdapterArguments {
       case "--class":
       case "--environment-address":
       case "--case-id":
+      case "--ddt-insight-url":
       case "--config":
       case "--suite-name":
       case "--test-name":

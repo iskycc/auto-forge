@@ -91,6 +91,7 @@ export type DdtImportFile = {
 };
 
 export type DdtImportJob = DdtScope & {
+  debugOwnerId?: string;
   id: string;
   status: DdtImportJobStatus;
   conflictStrategy?: "overwrite" | "skip" | "error";

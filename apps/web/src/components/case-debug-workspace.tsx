@@ -1,0 +1,419 @@
+"use client";
+
+import { Divider, Empty, Flex, Switch, Tag, Typography } from "antd";
+import { Bug, Play, Terminal } from "lucide-react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { DdtScope, Runner, RunnerGroup, RunBatch } from "@autoforge/domain";
+import { Button, Input, Select, Textarea } from "./ui";
+import { Card } from "./ui/card";
+import { Tabs } from "./ui/tabs";
+import { TabContent } from "./ui/tab-content";
+import { Segmented } from "./ui/segmented";
+import { Notice } from "./ui/notice";
+import { useToast } from "./ui-feedback";
+import { createCaseDebugRunSchema } from "@autoforge/contracts";
+import { ZodError } from "zod";
+import { CaseDebugInput, type DebugInputChoice } from "./case-debug-input";
+import { CaseDebugResults } from "./case-debug-results";
+import { debugRequest } from "@/lib/case-debug-client";
+import { LinkButton } from "./ui/link-button";
+
+export type CaseDebugWorkspaceProps = {
+  scope: DdtScope;
+  ddtDebugAccess: { ownerUserId: string; accessKey: string };
+  maxJarBytes: number;
+  labels: { project: string; version: string; stage: string };
+  permissions: { uploadJar: boolean; uploadDdt: boolean; readLogs: boolean; cancel: boolean };
+};
+
+export function CaseDebugWorkspace(props: CaseDebugWorkspaceProps) {
+  const parameters = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const active = parameters.get("tab") === "ddt" ? "ddt" : "testng";
+  const [visited, setVisited] = useState<Set<string>>(new Set([active]));
+  const visible = new Set([...visited, active]);
+  return (
+    <div className="grid min-w-0 gap-4">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <div>
+          <Typography.Title level={2} className="!mb-1">
+            用例调试
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            选择用例、配置执行，在本页查看日志与结果；JAR 导入正式库，DDT 数据仅保存在个人调试库。
+          </Typography.Text>
+        </div>
+        <Flex gap="small" wrap className="min-w-0 max-w-full">
+          <Tag className="!whitespace-normal [overflow-wrap:anywhere]">{props.labels.version}</Tag>
+          <Tag>{props.labels.stage}</Tag>
+        </Flex>
+      </header>
+      <Tabs
+        label="用例调试类型"
+        value={active}
+        items={[
+          { key: "testng", label: "普通用例调试" },
+          { key: "ddt", label: "DDT 调试" },
+        ]}
+        onChange={(next) => {
+          setVisited(visible);
+          const query = new URLSearchParams(parameters);
+          query.set("tab", next);
+          router.replace(`${pathname}?${query}`, { scroll: false });
+        }}
+      />
+      {(["testng", "ddt"] as const)
+        .filter((kind) => visible.has(kind))
+        .map((kind) => (
+          <div key={kind} hidden={active !== kind}>
+            <TabContent activeKey={active}>
+              <DebugPanel {...props} kind={kind} active={active === kind} />
+            </TabContent>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function DebugPanel({
+  scope,
+  ddtDebugAccess,
+  maxJarBytes,
+  labels,
+  permissions,
+  kind,
+  active,
+}: CaseDebugWorkspaceProps & { kind: "testng" | "ddt"; active: boolean }) {
+  const parameters = useSearchParams();
+  const toast = useToast();
+  const [executionClass, setExecutionClass] = useState<DebugInputChoice>();
+  const [ddtCase, setDdtCase] = useState<DebugInputChoice>();
+  const [runnerKind, setRunnerKind] = useState<"runner" | "group">("runner");
+  const [runnerId, setRunnerId] = useState("");
+  const [groupId, setGroupId] = useState("");
+  const [runners, setRunners] = useState<Runner[]>([]);
+  const [groups, setGroups] = useState<RunnerGroup[]>([]);
+  const [adapterEnabled, setAdapterEnabled] = useState(kind === "ddt");
+  const [suiteName, setSuiteName] = useState(labels.project);
+  const [testName, setTestName] = useState(`${labels.version} ${labels.stage}`);
+  const [addresses, setAddresses] = useState("");
+  const batchScope = new URLSearchParams(scope).toString();
+  const [batchId, setBatchId] = useState(
+    parameters.get(`${kind}Scope`) === batchScope ? (parameters.get(`${kind}Batch`) ?? "") : "",
+  );
+  const [running, setRunning] = useState(Boolean(batchId));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [resourcesRevision, setResourcesRevision] = useState(0);
+  const onActiveChange = useCallback((value: boolean) => setRunning(value), []);
+  const browserOrigin = useSyncExternalStore(
+    subscribeOrigin,
+    browserOriginSnapshot,
+    serverOriginSnapshot,
+  );
+  const publicApiPath = `${browserOrigin}/api/v1/public/ddt/projects/${encodeURIComponent(scope.projectId)}/versions/${encodeURIComponent(scope.projectVersionId)}/stages/${encodeURIComponent(scope.testStageId)}/users/${encodeURIComponent(ddtDebugAccess.ownerUserId)}/debug/${encodeURIComponent(ddtDebugAccess.accessKey)}/case`;
+
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    void Promise.all([
+      debugRequest<{ items: Runner[] }>("/api/v1/runners?limit=500", { signal: controller.signal }),
+      debugRequest<{ items: RunnerGroup[] }>("/api/v1/runner-groups", {
+        signal: controller.signal,
+      }),
+    ])
+      .then(([runnerPage, groupPage]) => {
+        setRunners(runnerPage.items);
+        setGroups(groupPage.items);
+      })
+      .catch((problem: unknown) => {
+        if (!controller.signal.aborted)
+          setError(problem instanceof Error ? problem.message : "执行资源加载失败。");
+      });
+    return () => controller.abort();
+  }, [active, resourcesRevision]);
+
+  async function execute() {
+    setError("");
+    if (!executionClass || (kind === "ddt" && !ddtCase)) {
+      setError("请选择待调试用例和执行类。");
+      return;
+    }
+    if (!(runnerKind === "runner" ? runnerId : groupId)) {
+      setError("请选择执行机或执行机组。");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const batch = await debugRequest<RunBatch>(
+        `/api/v1/case-debug/runs?${new URLSearchParams(scope)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            createCaseDebugRunSchema.parse({
+              ...scope,
+              kind,
+              caseDefinitionId: executionClass.id,
+              ...(ddtCase ? { ddtCaseId: ddtCase.id } : {}),
+              execution: {
+                runnerIds: runnerKind === "runner" ? [runnerId] : [],
+                ...(runnerKind === "group" ? { runnerGroupId: groupId } : {}),
+                retryLimit: 0,
+                retryMode: "round",
+                artifactPatterns: ["reports/testng/**"],
+                adapter: {
+                  enabled: kind === "ddt" || adapterEnabled,
+                  suiteName,
+                  testName,
+                  environmentAddresses: [
+                    ...new Set(
+                      addresses
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean),
+                    ),
+                  ],
+                },
+              },
+            }),
+          ),
+        },
+      );
+      toast.success("调试执行已创建，日志将在右侧自动显示。");
+      setBatchId(batch.id);
+      setRunning(true);
+      const url = new URL(window.location.href);
+      url.searchParams.set(`${kind}Batch`, batch.id);
+      url.searchParams.set(`${kind}Scope`, batchScope);
+      window.history.replaceState(null, "", url);
+    } catch (problem) {
+      setError(
+        problem instanceof ZodError
+          ? problem.issues.map((issue) => issue.message).join("；")
+          : problem instanceof Error
+            ? problem.message
+            : "调试执行创建失败。",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(320px,400px)_minmax(0,1fr)]">
+      {kind === "ddt" ? (
+        <Card className="grid min-w-0 gap-2 p-4 lg:col-span-2" aria-label="个人 DDT API">
+          <Flex align="center" justify="space-between" gap="small" wrap>
+            <Typography.Text strong>个人 DDT API</Typography.Text>
+            <Tag color="blue">个人数据 · 只读</Tag>
+          </Flex>
+          <Typography.Paragraph
+            className="!mb-0 break-all text-xs [&_.ant-typography-copy]:!h-8 [&_.ant-typography-copy]:!w-8"
+            copyable={{ text: publicApiPath }}
+          >
+            {publicApiPath}
+          </Typography.Paragraph>
+          <Typography.Text type="secondary" className="text-xs">
+            自动传入 setDdtInsightUrl；查询时附加
+            ?caseId=CaseId。完整链接可读取本人的调试数据，请按测试数据权限分享。
+          </Typography.Text>
+        </Card>
+      ) : null}
+      <Card
+        className="grid min-w-0 gap-4 p-4"
+        as="section"
+        aria-label={`${kind === "ddt" ? "DDT" : "普通用例"}调试配置`}
+      >
+        <Flex gap="small" align="center">
+          <Bug size={18} className="text-primary" />
+          <Typography.Title level={4} className="!m-0">
+            调试配置
+          </Typography.Title>
+        </Flex>
+        {kind === "ddt" ? (
+          <>
+            <CaseDebugInput
+              kind="ddt"
+              scope={scope}
+              maxJarBytes={maxJarBytes}
+              scopeLabels={labels}
+              active={active}
+              disabled={submitting}
+              canUpload={permissions.uploadDdt}
+              value={ddtCase}
+              onChange={(choice) => {
+                setDdtCase(choice);
+                if (choice?.suggestedClass) setExecutionClass(choice.suggestedClass);
+              }}
+            />
+            <Divider className="!my-0" />
+          </>
+        ) : null}
+        {kind === "ddt" ? (
+          <Typography.Text type="secondary">
+            执行类仅对本次调试生效，不修改 SR 关联。
+          </Typography.Text>
+        ) : null}
+        <CaseDebugInput
+          kind="jar"
+          maxJarBytes={maxJarBytes}
+          scopeLabels={labels}
+          scope={scope}
+          active={active}
+          disabled={submitting}
+          canUpload={permissions.uploadJar}
+          value={executionClass}
+          onChange={setExecutionClass}
+        />
+        <Divider className="!my-0" />
+        <Flex gap="small" align="center" justify="space-between">
+          <Typography.Text strong>执行资源</Typography.Text>
+          <Button onClick={() => setResourcesRevision((value) => value + 1)}>刷新资源</Button>
+        </Flex>
+        <Segmented
+          label="调试资源类型"
+          value={runnerKind}
+          onChange={setRunnerKind}
+          options={[
+            { value: "runner", label: "执行机" },
+            { value: "group", label: "执行机组" },
+          ]}
+          block
+        />
+        {runnerKind === "runner" ? (
+          <Select
+            aria-label="调试执行机"
+            value={runnerId}
+            onChange={(event) => setRunnerId(event.target.value)}
+          >
+            <option value="">选择执行机</option>
+            {runners
+              .filter((runner) => !runner.deregisteredAt)
+              .map((runner) => (
+                <option
+                  key={runner.id}
+                  value={runner.id}
+                  disabled={runner.state === "disabled" || runner.state === "draining"}
+                >
+                  {runner.name} · {runner.state === "online" ? "在线" : "离线"}
+                </option>
+              ))}
+          </Select>
+        ) : (
+          <Select
+            aria-label="调试执行机组"
+            value={groupId}
+            onChange={(event) => setGroupId(event.target.value)}
+          >
+            <option value="">选择执行机组</option>
+            {groups.map((group) => (
+              <option key={group.id} value={group.id} disabled={!group.runnerIds.length}>
+                {group.name} · {group.runnerIds.length} 台
+              </option>
+            ))}
+          </Select>
+        )}
+        <label className="flex min-h-8 cursor-pointer items-center justify-between gap-2">
+          <Typography.Text strong>CoTest Adapter</Typography.Text>
+          <Switch
+            aria-label="调试启用 Adapter"
+            checked={kind === "ddt" || adapterEnabled}
+            disabled={kind === "ddt"}
+            onChange={setAdapterEnabled}
+          />
+        </label>
+        {kind === "ddt" || adapterEnabled ? (
+          <div className="grid min-w-0 gap-3">
+            <Notice>
+              Adapter 使用当前版本的 JDK 和完整依赖包；更新代码需同步更新依赖包。
+              <LinkButton href="/settings/projects" target="_blank" rel="noreferrer">
+                配置运行依赖
+              </LinkButton>
+            </Notice>
+            <label className="grid min-w-0 gap-1">
+              Suite Name
+              <Input
+                aria-label="调试 Suite Name"
+                value={suiteName}
+                maxLength={512}
+                onChange={(event) => setSuiteName(event.target.value)}
+              />
+            </label>
+            <label className="grid min-w-0 gap-1">
+              Test Name
+              <Input
+                aria-label="调试 Test Name"
+                value={testName}
+                maxLength={512}
+                onChange={(event) => setTestName(event.target.value)}
+              />
+            </label>
+            <label className="grid min-w-0 gap-1">
+              环境地址
+              <Textarea
+                aria-label="调试环境地址"
+                rows={2}
+                className="min-h-16"
+                placeholder="每行一个 IP 或地址"
+                value={addresses}
+                onChange={(event) => setAddresses(event.target.value)}
+              />
+            </label>
+          </div>
+        ) : null}
+        <Typography.Text type="secondary">
+          每次执行一个用例；使用平台执行时限，本次不自动重跑。
+        </Typography.Text>
+        {error ? <Notice tone="error">{error}</Notice> : null}
+        <Button
+          variant="primary"
+          disabled={submitting || running || !executionClass || (kind === "ddt" && !ddtCase)}
+          onClick={() => void execute()}
+        >
+          <Play size={16} />
+          {submitting
+            ? "正在创建执行…"
+            : running
+              ? "本次调试执行中"
+              : batchId
+                ? "再次执行"
+                : "开始调试"}
+        </Button>
+      </Card>
+      <Card className="min-w-0 p-4 lg:sticky lg:top-20">
+        {batchId ? (
+          <CaseDebugResults
+            key={batchId}
+            batchId={batchId}
+            scope={scope}
+            visible={active}
+            canReadLogs={permissions.readLogs}
+            canCancel={permissions.cancel}
+            onActiveChange={onActiveChange}
+          />
+        ) : (
+          <div className="grid min-h-96 content-center gap-4 text-center">
+            <Terminal size={36} className="mx-auto text-muted-foreground" />
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="配置完成后开始调试，日志与结果将在这里展示"
+            />
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function subscribeOrigin() {
+  return () => {};
+}
+function browserOriginSnapshot() {
+  return window.location.origin;
+}
+function serverOriginSnapshot() {
+  return "";
+}

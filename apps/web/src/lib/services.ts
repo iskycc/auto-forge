@@ -25,6 +25,8 @@ import {
   CaseSuiteActivityService,
   DdtCaseService,
   DdtImportService,
+  DdtDebugService,
+  type DdtDebugRepository,
   DashboardSnapshotService,
   ReadModelSnapshotService,
   type ReadModelSnapshotRepository,
@@ -78,6 +80,7 @@ import {
   SqliteCaseSuiteRepository,
   SqliteCaseSuiteActivityRepository,
   SqliteDdtRepository,
+  SqliteDdtDebugRepository,
   SqliteDashboardSnapshotRepository,
   SqliteReadModelSnapshotRepository,
   SqliteExecutionControlRepository,
@@ -146,6 +149,7 @@ async function createPlatformServices() {
   let suites: CaseSuiteRepository;
   let suiteActivityRepository: CaseSuiteActivityRepository;
   let ddtRepository: DdtRepository;
+  let ddtDebugRepository: DdtDebugRepository;
   let dashboardSnapshotRepository: DashboardSnapshotRepository;
   let readModelRepository: ReadModelSnapshotRepository;
   let failureAnalysisRepository: FailureAnalysisRepository;
@@ -188,6 +192,7 @@ async function createPlatformServices() {
     suites = new SqliteCaseSuiteRepository(database);
     suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
+    ddtDebugRepository = new SqliteDdtDebugRepository(database);
     dashboardSnapshotRepository = new SqliteDashboardSnapshotRepository(database);
     readModelRepository = new SqliteReadModelSnapshotRepository(database);
     runners = new SqliteRunnerRepository(database);
@@ -230,6 +235,7 @@ async function createPlatformServices() {
         PostgresCaseSuiteRepository,
         PostgresCaseSuiteActivityRepository,
         PostgresDdtRepository,
+        PostgresDdtDebugRepository,
         PostgresDashboardSnapshotRepository,
         PostgresReadModelSnapshotRepository,
         PostgresIdentityAccessRepository,
@@ -381,6 +387,7 @@ async function createPlatformServices() {
     suites = new PostgresCaseSuiteRepository(database);
     suiteActivityRepository = new PostgresCaseSuiteActivityRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
+    ddtDebugRepository = new PostgresDdtDebugRepository(database);
     dashboardSnapshotRepository = new PostgresDashboardSnapshotRepository(database);
     readModelRepository = new PostgresReadModelSnapshotRepository(database);
     runners = new PostgresRunnerRepository(database);
@@ -466,6 +473,7 @@ async function createPlatformServices() {
   );
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
   const ddtCases = new DdtCaseService(ddtRepository, clock, ids, catalog);
+  const ddtDebug = new DdtDebugService(ddtDebugRepository, ddtRepository, clock, ids);
   const ddtImports = new DdtImportService(
     ddtRepository,
     objectStore,
@@ -480,6 +488,7 @@ async function createPlatformServices() {
         maximumZipSpreadsheets: limits.ddtImportZipSpreadsheetLimit,
       };
     },
+    ddtDebugRepository,
   );
   const projectStructures = new ProjectStructureService(
     projectStructuresRepository,
@@ -522,7 +531,7 @@ async function createPlatformServices() {
         maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
       },
       config.scheduler.metricsMaximumAgeSeconds,
-      { catalog, objectStore, ddt: ddtRepository },
+      { catalog, objectStore, ddt: ddtRepository, ddtDebug: ddtDebugRepository },
       config.scheduler.projectMaximumConcurrency,
       config.scheduler.priorityAgingIntervalMinutes,
       projectStructuresRepository,
@@ -610,6 +619,9 @@ async function createPlatformServices() {
               ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
               : importTestNgJar.jobHandler(),
             "ddt-import": dispatcher
+              ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
+              : ddtImports.jobHandler(),
+            "ddt-debug-import": dispatcher
               ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
               : ddtImports.jobHandler(),
             "analytics-export": dispatcher
@@ -877,6 +889,7 @@ async function createPlatformServices() {
     caseDefinitions,
     ddtCases,
     ddtImports,
+    ddtDebug,
     projectStructures,
     storageInventory,
     readStorageInventory: createStorageInventoryReader({

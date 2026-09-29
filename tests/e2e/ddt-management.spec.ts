@@ -251,11 +251,31 @@ test("DDT template dialog keeps focus and protects unsaved edits", async ({ page
     .toBe(true);
   await page.keyboard.press("Escape");
   await expect(dialog.getByText("放弃未保存的修改？", { exact: true })).toBeVisible();
+  const continueBounds = (await dialog
+    .getByRole("button", { name: "继续编辑", exact: true })
+    .boundingBox())!;
+  const discardBounds = (await dialog
+    .getByRole("button", { name: "放弃修改并关闭", exact: true })
+    .boundingBox())!;
+  expect(discardBounds.x - continueBounds.x - continueBounds.width).toBeGreaterThanOrEqual(8);
   await dialog.getByRole("button", { name: "继续编辑", exact: true }).click();
   await expect(dialog.getByLabel("模板名称", { exact: true })).toHaveValue("支付字段草稿");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await captureDdtUi(page, `ddt-template-guard-${width}`);
+    const save = dialog.getByRole("button", { name: "创建模板", exact: true });
+    const bounds = (await dialog.boundingBox())!;
+    const saveBounds = (await save.boundingBox())!;
+    expect(bounds.x + bounds.width - saveBounds.x - saveBounds.width).toBeLessThan(32);
+  }
+  for (let index = 0; index < 12; index++)
+    await dialog.getByRole("button", { name: "添加字段", exact: true }).click();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expect(dialog.getByRole("button", { name: "创建模板", exact: true })).toBeInViewport({
+      ratio: 1,
+    });
+    await captureDdtUi(page, `ddt-template-many-fields-${width}`);
   }
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await dialog.getByRole("button", { name: "放弃修改并关闭", exact: true }).click();
@@ -470,6 +490,131 @@ test("DDT overview shows seven-day execution snapshots without periodic dashboar
     execution.generatedAt,
   );
   expect(dashboardRequests).toBe(requestsBeforeWaiting + 1);
+});
+
+test("DDT spreadsheet import contains long file names, strategies and footer actions", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.goto("/cases?tab=ddt");
+      await page.getByRole("button", { name: "导入表格", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+      await expect(dialog.getByRole("button", { name: "开始预检" })).toBeDisabled();
+      await captureDdtUi(page, `ddt-import-empty-${appearance}-${width}`);
+
+      if (width === 1024 && appearance === "light") {
+        await dialog.locator('input[type="file"]').setInputFiles(
+          Array.from({ length: 20 }, (_, index) => ({
+            name: `批量表格-${index}.csv`,
+            mimeType: "text/csv",
+            buffer: Buffer.from(`CaseID,srNum\nMANY-${index},PAYMENT\n`),
+          })),
+        );
+        const fileList = dialog.locator(".ddt-picked-files");
+        expect(
+          await fileList.evaluate((element) => element.scrollHeight - element.clientHeight),
+        ).toBeGreaterThan(0);
+        const footerButton = await dialog.getByRole("button", { name: "开始预检" }).boundingBox();
+        expect(footerButton!.y + footerButton!.height).toBeLessThanOrEqual(768);
+        await captureDdtUi(page, "ddt-import-many-files-light-1024");
+      }
+
+      const caseId = `LAYOUT-${appearance}-${width}-${hierarchy.suffix}`;
+      const fileName = `payment-${"transaction_regression_".repeat(6)}${appearance}-${width}.xlsx`;
+      const workbook = buildExportWorkbook([{ CaseID: caseId, srNum: "PAYMENT", 金额: 20 }]);
+      await dialog.locator('input[type="file"]').setInputFiles([
+        {
+          name: fileName,
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          buffer: Buffer.from(workbook),
+        },
+        { name: "缺少必要字段.csv", mimeType: "text/csv", buffer: Buffer.from("金额\n30\n") },
+      ]);
+      await expect(dialog.locator(".ddt-picked-files")).toContainText(fileName);
+      await captureDdtUi(page, `ddt-import-selected-${appearance}-${width}`);
+      for (const fileSize of await dialog.locator(".ddt-picked-files small").all()) {
+        expect(
+          await fileSize.evaluate((element) => element.getBoundingClientRect().height),
+        ).toBeLessThanOrEqual(24);
+      }
+      await dialog.getByRole("button", { name: "开始预检" }).click();
+      await expect(dialog.locator(".ddt-preview-summary")).toContainText("1 / 2");
+      await expect(dialog.locator(".ddt-preview-files")).toContainText(fileName);
+      await dialog.getByRole("radio", { name: "跳过已有用例", exact: true }).check();
+      await expect(dialog.getByRole("radio", { name: "跳过已有用例", exact: true })).toBeChecked();
+      await captureDdtUi(page, `ddt-import-preview-${appearance}-${width}`);
+
+      const geometry = await dialog.evaluate((element) => {
+        const body = element.querySelector<HTMLElement>(".action-dialog-body")!;
+        const footer = element.querySelector<HTMLElement>("footer")!;
+        const buttons = footer.querySelectorAll("button");
+        const lastButton = buttons[buttons.length - 1]!;
+        const choices = Array.from(
+          element.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+        );
+        return {
+          overflow: body.scrollWidth - body.clientWidth,
+          actionRightGap:
+            footer.getBoundingClientRect().right - lastButton.getBoundingClientRect().right,
+          choiceHeights: choices.map(
+            (choice) => choice.closest("label")!.getBoundingClientRect().height,
+          ),
+          nestedChoiceLabels: choices.filter((choice) =>
+            choice.closest("label")!.parentElement?.closest("label"),
+          ).length,
+          footerBottom: footer.getBoundingClientRect().bottom,
+          viewportHeight: window.innerHeight,
+          headingTop: element.querySelector("h2")!.getBoundingClientRect().top,
+        };
+      });
+      expect.soft(geometry.overflow).toBeLessThanOrEqual(1);
+      expect.soft(geometry.actionRightGap).toBeLessThanOrEqual(25);
+      expect.soft(geometry.nestedChoiceLabels).toBe(0);
+      expect.soft(geometry.footerBottom).toBeLessThanOrEqual(geometry.viewportHeight);
+      expect.soft(geometry.headingTop).toBeGreaterThanOrEqual(0);
+      for (const height of geometry.choiceHeights) expect.soft(height).toBeLessThanOrEqual(48);
+
+      const confirmResponse = page.waitForResponse(
+        (response) =>
+          response.url().includes("/confirm?") && response.request().method() === "POST",
+      );
+      await dialog.getByRole("button", { name: "确认并后台导入" }).click();
+      const confirmation = await confirmResponse;
+      expect(confirmation.status()).toBe(200);
+      const importJob = (await confirmation.json()) as { id: string };
+      await expect(dialog).toBeHidden();
+      await expect
+        .poll(
+          async () => {
+            const result = await browserJson<{ status: string }>(
+              page,
+              ddtPath(hierarchy, `imports/${importJob.id}`),
+            );
+            expect(result.status).toBe(200);
+            return result.body.status;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("partially_succeeded");
+      const importedCase = await browserJson<{ data: { CaseID: string } }>(
+        page,
+        ddtPath(hierarchy, `cases/${caseId}`),
+      );
+      expect(importedCase.status).toBe(200);
+      expect(importedCase.body.data.CaseID).toBe(caseId);
+    }
+  }
 });
 
 test("DDT import resolves duplicate column names before background import", async ({ page }) => {
@@ -2241,6 +2386,13 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
           )
           .toBe(true);
         expect(claim!.assignment.executionSpec.className).toBe(className);
+        expect(claim!.assignment.executionSpec.adapter).toMatchObject({
+          ddtScope: {
+            projectId: hierarchy.projectId,
+            projectVersionId: hierarchy.versionId,
+            testStageId: hierarchy.stageId,
+          },
+        });
         expect(
           claim!.assignment.executionSpec.inputs.some((input) => input.kind === "class-data"),
         ).toBe(false);
@@ -2368,6 +2520,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
 const ddtTaskCapabilities = [
   "executor:testng-v1",
   "adapter:cotest-testng-v1",
+  "adapter:ddt-insight-url-v1",
   "adapter:ddt-case-id-v1",
   "runtime:project-assets-v1",
   "isolation:cgroup-v2",

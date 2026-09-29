@@ -17,7 +17,7 @@
 - `src/main/java/com/autoforge/javacases/JavaCasesDdtFixture.java`：DDT 用例，验证原始 CaseID 经真实 Runner 和 Adapter 注入后，
   测试类自行调用本地平台公开 API，并校验 CaseID、SR 与动态字段内容。
 - `src/main/java/cotest/auto/dataproviders/MM2DataProvider.java`：只用于验收包的最小 CoTest
-  兼容桩，记录 Adapter 为各执行类注入的 CaseID 字符串。
+  兼容桩，记录 Adapter 为各执行类注入的 CaseID 和平台提供的作用域 `/case` API 地址；DDT 验收用例直接使用该地址取数。
 - `src/main/java/com/autoforge/javacases/JavaCasesConstants.java`：共享常量；
   环境地址 `10.20.30.40` 只是 mock 值，不参与真实网络访问。
 

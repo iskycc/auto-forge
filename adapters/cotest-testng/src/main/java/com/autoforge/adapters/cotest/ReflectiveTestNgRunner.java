@@ -52,8 +52,6 @@ final class ReflectiveTestNgRunner {
     ReflectionSupport.invoke(
         testNgClass.getMethod("addListener", listenerInterface), testNg, listener);
 
-    new CotestRuntimeConfigurer(output)
-        .configure(loader, testClass, request.environmentAddress(), request.caseId());
     ReflectionSupport.invoke(testNgClass.getMethod("run"), testNg);
 
     TestNgResultSummary summary = new TestNgResultReporter(output).report(loader, listener);

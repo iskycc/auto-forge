@@ -8,6 +8,18 @@ import org.junit.jupiter.api.Test;
 
 class AdapterArgumentsTest {
   @Test
+  void rejectsUnsafeOrCaseSpecificApiUrls() {
+    for (String invalid : new String[] {
+        "file:///tmp/case", "http://user:secret@platform/case", "http://platform/case?caseId=1",
+        "http://platform/case#fragment", "http://platform/other", "http://platform/invalid space/case"
+    }) {
+      assertThrows(IllegalArgumentException.class, () -> AdapterArguments.parse(new String[] {
+          "--jars", "jars", "--class", "example.Case", "--ddt-insight-url", invalid
+      }));
+    }
+  }
+
+  @Test
   void parsesRequiredAndOptionalArguments() {
     AdapterArguments arguments =
         AdapterArguments.parse(
@@ -16,6 +28,7 @@ class AdapterArgumentsTest {
               "--class", "example.AdapterCase",
               "--environment-address", "10.0.0.8",
               "--case-id", "CASE/0001 中文?x=1",
+              "--ddt-insight-url", "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
               "--suite-name", "Regression",
               "--test-name", "Adapter cases",
               "--output", "/tmp/testng-output"
@@ -25,6 +38,7 @@ class AdapterArgumentsTest {
     assertEquals("example.AdapterCase", arguments.className());
     assertEquals("10.0.0.8", arguments.environmentAddress());
     assertEquals("CASE/0001 中文?x=1", arguments.caseId());
+    assertEquals("http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case", arguments.ddtInsightUrl());
     assertEquals("Regression", arguments.suiteName());
     assertEquals("Adapter cases", arguments.testName());
     assertEquals(Paths.get("/tmp/testng-output"), arguments.outputDirectory());

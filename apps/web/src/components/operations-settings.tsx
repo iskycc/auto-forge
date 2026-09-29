@@ -29,7 +29,7 @@ import type {
 } from "@autoforge/contracts";
 import { permissionCatalog } from "@autoforge/domain";
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import {
   permissionDescription,
@@ -61,6 +61,7 @@ export function OperationsSettings({
   const confirmAction = useConfirm();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
+  const tokenFormId = useId();
   const [accounts, setAccounts] = useState(initialAccounts);
   const [policies, setPolicies] = useState(initialPolicies);
   const [tokens, setTokens] = useState<Record<string, ApiToken[]>>({});
@@ -653,8 +654,30 @@ export function OperationsSettings({
                       title={`签发令牌：${account.name}`}
                       open
                       onClose={() => !pending && setIssuingAccountId(undefined)}
+                      closeDisabled={pending}
+                      footer={
+                        <>
+                          <Button
+                            data-dialog-dismiss
+                            disabled={pending}
+                            onClick={() => setIssuingAccountId(undefined)}
+                            type="button"
+                          >
+                            取消
+                          </Button>
+                          <Button
+                            variant="primary"
+                            disabled={pending}
+                            form={tokenFormId}
+                            type="submit"
+                          >
+                            签发
+                          </Button>
+                        </>
+                      }
                     >
                       <form
+                        id={tokenFormId}
                         className={cn(
                           "settings-grid-form action-dialog-form",
                           uiPatterns["settings-grid-form"],
@@ -688,6 +711,7 @@ export function OperationsSettings({
                           />
                         </label>
                         <CheckboxGroup
+                          className="col-span-full min-w-0"
                           label="作用域"
                           name="scopes"
                           options={[
@@ -703,17 +727,6 @@ export function OperationsSettings({
                           }))}
                           required
                         />
-                        <Button
-                          className={cn(
-                            "button button-primary",
-                            uiPatterns["button"],
-                            uiPatterns["button-primary"],
-                          )}
-                          disabled={pending}
-                          type="submit"
-                        >
-                          签发
-                        </Button>
                       </form>
                     </ActionDialog>
                   ) : null}

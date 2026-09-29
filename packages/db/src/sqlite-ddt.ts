@@ -1223,8 +1223,8 @@ export class SqliteDdtRepository implements DdtRepository {
            (id, project_id, project_version_id, test_stage_id, status, uploads_json,
             progress_percent, total_files, valid_files, total_rows, inserted_count,
             updated_count, unchanged_count, skipped_count, failed_files, requested_by,
-            created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            created_at, updated_at, debug_owner_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             job.id,
@@ -1243,6 +1243,7 @@ export class SqliteDdtRepository implements DdtRepository {
             job.requestedBy ?? null,
             job.createdAt,
             job.updatedAt,
+            job.debugOwnerId ?? null,
           );
         const insertFile = this.handle.client.prepare(
           `INSERT INTO ddt_import_files
@@ -1403,7 +1404,7 @@ export class SqliteDdtRepository implements DdtRepository {
     const rows = this.handle.client
       .prepare(
         `SELECT * FROM ddt_import_jobs
-         WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
+         WHERE debug_owner_id IS NULL AND project_id = ? AND project_version_id = ? AND test_stage_id = ?
            ${input.cursor ? "AND id < ?" : ""}
          ORDER BY id DESC LIMIT ?`,
       )
@@ -1716,6 +1717,7 @@ export class SqliteDdtRepository implements DdtRepository {
       ...(row.error_code ? { errorCode: row.error_code } : {}),
       ...(row.error_summary ? { errorSummary: row.error_summary } : {}),
       ...(row.requested_by ? { requestedBy: row.requested_by } : {}),
+      ...(row.debug_owner_id ? { debugOwnerId: row.debug_owner_id } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...(row.started_at ? { startedAt: row.started_at } : {}),
@@ -1772,6 +1774,7 @@ type ImportFileRow = Omit<DdtImportFile, "archiveEntryName" | "errorSummary"> & 
 };
 
 type ImportJobRow = {
+  debug_owner_id: string | null;
   id: string;
   project_id: string;
   project_version_id: string;

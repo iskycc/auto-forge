@@ -6,6 +6,16 @@ import java.util.Map;
 public final class MM2DataProvider {
   private static final Map<String, String> CLASS_DATA_FILES = new HashMap<>();
 
+  private static String ddtInsightUrl;
+
+  public static void setDdtInsightUrl(String value) {
+    ddtInsightUrl = value;
+  }
+
+  public static String getDdtInsightUrl() {
+    return ddtInsightUrl;
+  }
+
   private MM2DataProvider() {}
 
   public static void setClassDataProvider(String className, String caseId) {

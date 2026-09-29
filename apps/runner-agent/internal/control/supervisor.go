@@ -426,6 +426,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 			executionSpec,
 			executionToolchain,
 			supervisor.configuration.Adapter,
+			supervisor.client.baseURL,
 		)
 	} else {
 		specification, inputs, err = testNGExecutorSpec(executionSpec, executionToolchain)

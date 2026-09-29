@@ -1,6 +1,8 @@
+import { ddtDebugAccessSchema } from "@autoforge/contracts";
 import {
   COTEST_ADAPTER_CAPABILITY,
   DDT_CASE_ID_CAPABILITY,
+  DDT_INSIGHT_URL_CAPABILITY,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   PROJECT_RUNTIME_ASSETS_CAPABILITY,
   REQUIRED_EXECUTION_CAPABILITIES,
@@ -16,6 +18,7 @@ const sha256Pattern = /^[a-f0-9]{64}$/u;
 export type RuntimeAssetSnapshot = RunBatchRuntimeAssetSnapshot;
 
 export type ProjectAdapterRuntime = {
+  ddtDebug?: import("@autoforge/application").DdtDebugAccess;
   requiresDdtCaseId?: boolean;
   suiteName: string;
   testName: string;
@@ -42,6 +45,7 @@ export function parseProjectAdapterRuntime(
         ? boundedString(record.environmentAddress ?? "", 2_048)
         : boundedString(record.fallbackEnvironmentAddress, 2_048);
     return {
+      ...(record.ddtDebug ? { ddtDebug: ddtDebugAccessSchema.parse(record.ddtDebug) } : {}),
       ...(record.requiresDdtCaseId === true ? { requiresDdtCaseId: true } : {}),
       suiteName: boundedString(record.suiteName, 512),
       testName: boundedString(record.testName, 512),
@@ -97,8 +101,8 @@ export function projectAdapterRequiredCapabilities(
   if (!runtime) return [...REQUIRED_EXECUTION_CAPABILITIES];
   const capabilities =
     runtime.jdk && runtime.jarBundle
-      ? [COTEST_ADAPTER_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
-      : [COTEST_ADAPTER_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
+      ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
+      : [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
   return runtime.requiresDdtCaseId ? [...capabilities, DDT_CASE_ID_CAPABILITY] : capabilities;
 }
 

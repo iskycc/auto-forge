@@ -27,7 +27,7 @@ func TestCotestAdapterExecutorUsesDownloadedJDKAndProjectSettings(t *testing.T) 
 	mapped, _, err := cotestAdapterExecutorSpec(
 		specification,
 		config.ToolchainConfig{},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestCotestAdapterExecutorPassesCaseTimeoutWhenConfigured(t *testing.T) {
 	mapped, _, err := cotestAdapterExecutorSpec(
 		specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestCotestAdapterExecutorPassesCaseIDWithoutFileConversion(t *testing.T) {
 	specification.Adapter = &AdapterSettings{SuiteName: "suite", CaseID: caseID}
 	mapped, inputs, err := cotestAdapterExecutorSpec(specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"})
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestCotestAdapterRejectsLegacyDDTFileInput(t *testing.T) {
 	specification.Inputs = append(specification.Inputs, ExecutionInput{Kind: "class-data"})
 	_, _, err := cotestAdapterExecutorSpec(specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"})
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "recreate the execution") {
 		t.Fatalf("error = %v", err)
 	}
@@ -128,7 +128,7 @@ func TestCotestAdapterExecutorOmitsCaseTimeoutWhenAbsent(t *testing.T) {
 	mapped, _, err := cotestAdapterExecutorSpec(
 		specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestCotestAdapterExecutorRejectsCaseTimeoutOutOfRange(t *testing.T) {
 	_, _, err := cotestAdapterExecutorSpec(
 		specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
-		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "case timeout") {
 		t.Fatalf("cotestAdapterExecutorSpec() error = %v", err)

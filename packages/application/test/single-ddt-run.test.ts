@@ -8,6 +8,7 @@ import type {
   RunBatchRepository,
   RunnerRepository,
 } from "../src/ports";
+import { createCaseDebugRunSchema } from "@autoforge/contracts";
 import { RunBatchSchedulingService } from "../src/schedule-run-batches";
 
 const scope = { projectId: "project", projectVersionId: "version", testStageId: "stage" };
@@ -22,6 +23,22 @@ const input = {
 };
 
 describe("single DDT execution", () => {
+  it("rejects an older Runner before execution instead of silently losing the DDT API URL", async () => {
+    const { service, runners, create, item } = fixture();
+    const registered = await runners.listByIds(["runner"], "2026-09-09T00:00:00Z");
+    vi.mocked(runners.listByIds).mockResolvedValue(
+      registered.map((runner) => ({
+        ...runner,
+        capabilities: runner.capabilities.filter(
+          (capability) => capability !== "adapter:ddt-insight-url-v1",
+        ),
+      })),
+    );
+    await expect(service.createSingleDdtCase(scope, item.caseId, input)).rejects.toThrow(
+      "升级 Runner",
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
   it("snapshots the DDT CaseID and associated class without creating a JSON data file", async () => {
     const { service, getCase, create, item } = fixture();
     await service.createSingleDdtCase(scope, item.caseId, {
@@ -81,6 +98,111 @@ describe("single DDT execution", () => {
     ).rejects.toMatchObject({ code });
     expect(create).not.toHaveBeenCalled();
   });
+});
+
+describe("case debug execution", () => {
+  it("executes a formal TestNG case with the normal immutable execution snapshot", async () => {
+    const { service, create } = fixture();
+    await service.createDebugCase(
+      createCaseDebugRunSchema.parse({
+        ...scope,
+        kind: "testng",
+        caseDefinitionId: "class",
+        execution: { runnerIds: ["runner"] },
+      }),
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteName: "用例调试 · Test",
+        retryLimit: 0,
+        runs: [
+          expect.objectContaining({
+            caseDefinitionId: "class",
+            caseVersion: 3,
+            className: "example.Test",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("uses an explicit class for an unlinked DDT case without changing its SR mapping", async () => {
+    const { service, create, item } = fixture();
+    delete item.executionClass;
+    await service.createDebugCase(
+      createCaseDebugRunSchema.parse({
+        ...scope,
+        kind: "ddt",
+        caseDefinitionId: "class",
+        ddtCaseId: item.caseId,
+        execution: input,
+      }),
+      "owner",
+    );
+    expect(item.executionClass).toBeUndefined();
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteName: `用例调试 · ${item.caseId}`,
+        runs: [
+          expect.objectContaining({
+            displayName: item.caseId,
+            executionCaseDefinitionId: "class",
+            caseType: "ddt",
+            parameters: {},
+          }),
+        ],
+      }),
+    );
+    expect(create.mock.calls[0]![0].runs[0]).not.toHaveProperty("classData");
+  });
+
+  it("does not overwrite an existing SR association when another class is selected", async () => {
+    const { service, item, create } = fixture();
+    item.executionClass!.caseDefinitionId = "formal-sr-class";
+    await service.createDebugCase(
+      createCaseDebugRunSchema.parse({
+        ...scope,
+        kind: "ddt",
+        caseDefinitionId: "class",
+        ddtCaseId: item.caseId,
+        execution: input,
+      }),
+      "owner",
+    );
+    expect(item.executionClass!.caseDefinitionId).toBe("formal-sr-class");
+    expect(create.mock.calls[0]![0].runs[0].executionCaseDefinitionId).toBe("class");
+  });
+
+  it.each(["wrong-version", "wrong-stage", "missing-ddt", "disabled-class"])(
+    "rejects %s without creating an execution",
+    async (condition) => {
+      const { service, create, definition, getCase, item } = fixture();
+      if (condition === "wrong-version") definition.projectVersionId = "other-version";
+      if (condition === "wrong-stage") definition.testStageId = "other-stage";
+      if (condition === "missing-ddt") getCase.mockResolvedValue(null);
+      if (condition === "disabled-class") definition.enabled = false;
+      await expect(
+        service.createDebugCase(
+          createCaseDebugRunSchema.parse({
+            ...scope,
+            kind: "ddt",
+            caseDefinitionId: "class",
+            ddtCaseId: item.caseId,
+            execution: input,
+          }),
+          "owner",
+        ),
+      ).rejects.toMatchObject({
+        code:
+          condition === "missing-ddt"
+            ? "DDT_CASE_NOT_FOUND"
+            : condition === "disabled-class"
+              ? "CASE_DEFINITION_DISABLED"
+              : "CASE_DEFINITION_NOT_FOUND",
+      });
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("DDT task execution", () => {
@@ -255,6 +377,7 @@ function fixture() {
         capabilities: [
           "executor:testng-v1",
           "adapter:cotest-testng-v1",
+          "adapter:ddt-insight-url-v1",
           "adapter:ddt-case-id-v1",
           "isolation:cgroup-v2",
           "java:21.0.8",
@@ -286,10 +409,17 @@ function fixture() {
       catalog,
       objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
       ddt: { getCase },
+      ddtDebug: {
+        get: getCase,
+        workspace: async () => ({
+          ownerUserId: "owner",
+          accessKey: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+        }),
+      },
     },
     128,
     5,
     structure,
   );
-  return { service, getCase, create, item, definition, getSource, suite, getSuite };
+  return { service, getCase, create, item, definition, getSource, suite, getSuite, runners };
 }

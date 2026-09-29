@@ -8,6 +8,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import {
   BarChart3,
+  Bug,
   BookOpenText,
   Bot,
   CircleHelp,
@@ -56,6 +57,7 @@ type NavigationItem = {
 const primaryNavigation: NavigationItem[] = [
   { label: "工作概览", href: "/", icon: Home, permission: "case.read" },
   { label: "用例管理", href: "/cases", icon: BookOpenText, permission: "case.read" },
+  { label: "用例调试", href: "/case-debug", icon: Bug, permission: "run.create" },
   { label: "用例任务", href: "/case-suites", icon: Layers3, permission: "case_suite.read" },
   { label: "执行记录", href: "/execution-records", icon: ClipboardList, permission: "run.read" },
   {

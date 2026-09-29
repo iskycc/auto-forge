@@ -204,6 +204,16 @@ test("service account lifecycle immediately narrows token access and produces ex
 
   await accountCard.getByRole("button", { name: "签发令牌", exact: true }).click();
   const tokenForm = page.getByRole("dialog", { name: `签发令牌：${accountName}` });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    const formBounds = await tokenForm.locator("form").boundingBox();
+    const scopesBounds = await tokenForm
+      .getByRole("group", { name: "作用域", exact: true })
+      .boundingBox();
+    expect(scopesBounds!.width).toBeGreaterThan(formBounds!.width * 0.9);
+    const footer = tokenForm.locator(".action-dialog-footer");
+    await expect(footer.getByRole("button", { name: "签发", exact: true })).toBeVisible();
+  }
   await tokenForm.getByLabel("令牌名称").fill("e2e-token");
   await tokenForm
     .locator('input[name="expiresAt"]')
@@ -556,6 +566,37 @@ test("task schedule dialog keeps read permissions separate from execution histor
       await readerContext.close();
     }
   }
+});
+
+test("webhook dialog footers submit create and edit forms and preserve deletion confirmation", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const versionId = await ensureDefaultProjectVersion(page);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, versionId);
+  const name = uniqueName("dialog-webhook");
+  await page.goto("/settings/webhooks");
+  await page.getByRole("button", { name: "新建 Webhook", exact: true }).click();
+  const create = page.getByRole("dialog", { name: "新建 Webhook", exact: true });
+  await create.getByLabel("名称", { exact: true }).fill(name);
+  await create
+    .getByLabel("目标地址", { exact: true })
+    .fill("http://127.0.0.1:3100/webhook-layout-fixture");
+  await create.getByRole("button", { name: "创建端点", exact: true }).click();
+  const card = page.locator(".webhook-endpoint-card", { hasText: name });
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "编辑", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "编辑 Webhook", exact: true });
+  await editor.getByLabel("说明", { exact: true }).fill("通过弹窗底栏保存的通知配置");
+  await editor.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(card).toContainText("通过弹窗底栏保存的通知配置");
+  await card.getByRole("button", { name: "删除", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除 Webhook", exact: true });
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "删除", exact: true }).click();
+  await confirmation.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(card).toHaveCount(0);
 });
 
 test("project webhooks support custom POST bodies and task binding", async ({ page }) => {

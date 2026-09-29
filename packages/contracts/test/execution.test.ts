@@ -107,12 +107,29 @@ describe("Runner Protocol v1 contracts", () => {
     const specification = validExecutionSpec();
     const parsed = executionSpecSchema.parse({
       ...specification,
-      adapter: { caseId: "支付/0001?x=1&y=2" },
+      adapter: {
+        caseId: "支付/0001?x=1&y=2",
+        ddtScope: { projectId: "project", projectVersionId: "version", testStageId: "stage" },
+      },
     });
     expect(parsed.adapter?.caseId).toBe("支付/0001?x=1&y=2");
+    expect(parsed.adapter).toMatchObject({
+      ddtScope: { projectId: "project", projectVersionId: "version", testStageId: "stage" },
+    });
     expect(parsed.inputs).toEqual(specification.inputs);
     expect(
       executionSpecSchema.safeParse({ ...specification, adapter: { caseId: "" } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects incomplete DDT API scope while accepting historical specifications", () => {
+    const specification = validExecutionSpec();
+    expect(executionSpecSchema.safeParse({ ...specification, adapter: {} }).success).toBe(true);
+    expect(
+      executionSpecSchema.safeParse({
+        ...specification,
+        adapter: { ddtScope: { projectId: "project", projectVersionId: "version" } },
+      }).success,
     ).toBe(false);
   });
 

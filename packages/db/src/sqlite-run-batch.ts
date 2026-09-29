@@ -26,6 +26,7 @@ import {
   transitionRunBatch,
   type ExecutionEnvironmentVariable,
   type ExecutionEnvironmentSecretBinding,
+  type DdtScope,
   type ExecutionRun,
   type RunAttempt,
   type RunBatch,
@@ -77,6 +78,7 @@ import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   assignments,
   caseSources,
+  caseDefinitions,
   caseVersions,
   executionRuns,
   runAttempts,
@@ -178,6 +180,7 @@ export class SqliteRunBatchRepository
           record.runs,
           record.policy?.projectVersionId,
         );
+    if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
     await retrySqliteLockContention(() =>
       runSqliteWriteTransaction(this.handle, () => {
         // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
@@ -593,6 +596,7 @@ export class SqliteRunBatchRepository
       ...(runtime
         ? {
             adapterRuntime: {
+              ...(runtime.ddtDebug ? { ddtDebug: runtime.ddtDebug } : {}),
               suiteName: runtime.suiteName,
               testName: runtime.testName,
               environmentAddresses: [...runtime.environmentAddresses],
@@ -1263,6 +1267,9 @@ export class SqliteRunBatchRepository
               parametersJson: executionRuns.parametersJson,
               caseType: executionRuns.caseType,
               displayName: executionRuns.displayName,
+              projectId: caseDefinitions.projectId,
+              projectVersionId: caseDefinitions.projectVersionId,
+              testStageId: caseDefinitions.testStageId,
               sourceId: caseSources.id,
               sourceSha256: caseSources.sha256,
               sourceSizeBytes: caseSources.sizeBytes,
@@ -1276,6 +1283,7 @@ export class SqliteRunBatchRepository
               ),
             )
             .innerJoin(caseSources, eq(caseSources.id, caseVersions.sourceId))
+            .innerJoin(caseDefinitions, eq(caseDefinitions.id, caseVersions.caseDefinitionId))
             .where(and(eq(executionRuns.batchId, input.batchId), inArray(executionRuns.id, ids)))
             .all(),
       );
@@ -1392,6 +1400,15 @@ export class SqliteRunBatchRepository
                       sha256: executionInput.sourceSha256,
                       sizeBytes: executionInput.sourceSizeBytes,
                     },
+                    ...(executionInput.projectVersionId && executionInput.testStageId
+                      ? {
+                          ddtScope: {
+                            projectId: executionInput.projectId,
+                            projectVersionId: executionInput.projectVersionId,
+                            testStageId: executionInput.testStageId,
+                          },
+                        }
+                      : {}),
                     ...(executionInput.caseType === "ddt"
                       ? { caseId: executionInput.displayName }
                       : {}),
@@ -2099,6 +2116,7 @@ function executionSpec(input: {
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
   caseId?: string;
+  ddtScope?: DdtScope;
   adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
@@ -2143,6 +2161,16 @@ function executionSpec(input: {
             ),
             caseTimeoutSeconds: input.caseTimeoutSeconds,
             ...(input.caseId !== undefined ? { caseId: input.caseId } : {}),
+            ...(input.ddtScope
+              ? {
+                  ddtScope: {
+                    ...input.ddtScope,
+                    ...(input.adapterRuntime.ddtDebug
+                      ? { debug: input.adapterRuntime.ddtDebug }
+                      : {}),
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -2280,6 +2308,7 @@ function runtimeSnapshotForRuns(
   runs: CreateRunBatchRecord["runs"],
 ): ProjectAdapterRuntime {
   return {
+    ...(snapshot.ddtDebug ? { ddtDebug: snapshot.ddtDebug } : {}),
     suiteName: snapshot.suiteName,
     requiresDdtCaseId: runs.some((run) => run.caseType === "ddt"),
     testName: snapshot.testName,

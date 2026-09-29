@@ -27,6 +27,7 @@ import {
   transitionRunBatch,
   type ExecutionEnvironmentVariable,
   type ExecutionEnvironmentSecretBinding,
+  type DdtScope,
   type ExecutionRun,
   type RunAttempt,
   type RunBatch,
@@ -182,6 +183,7 @@ export class PostgresRunBatchRepository
           record.runs,
           record.policy?.projectVersionId,
         );
+    if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
     let createdRow: typeof pgRunBatches.$inferSelect | undefined;
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       // 展示编号在同一插入语句内取序列（nextval 不参与回滚，空洞不影响展示），
@@ -570,6 +572,7 @@ export class PostgresRunBatchRepository
       ...(runtime
         ? {
             adapterRuntime: {
+              ...(runtime.ddtDebug ? { ddtDebug: runtime.ddtDebug } : {}),
               suiteName: runtime.suiteName,
               testName: runtime.testName,
               environmentAddresses: [...runtime.environmentAddresses],
@@ -1446,10 +1449,15 @@ export class PostgresRunBatchRepository
             id: string;
             sha256: string;
             size_bytes: string | number;
+            project_id: string;
+            project_version_id: string | null;
+            test_stage_id: string | null;
           }>(sql`
-            SELECT cv.case_definition_id, cv.version, cs.id, cs.sha256, cs.size_bytes
+            SELECT cv.case_definition_id, cv.version, cs.id, cs.sha256, cs.size_bytes,
+                   cd.project_id, cd.project_version_id, cd.test_stage_id
             FROM case_versions cv
             JOIN case_sources cs ON cs.id = cv.source_id
+            JOIN case_definitions cd ON cd.id = cv.case_definition_id
             JOIN jsonb_to_recordset(${JSON.stringify(
               uniqueCaseVersions.map((pair) => ({
                 case_definition_id: pair.caseDefinitionId,
@@ -1461,7 +1469,19 @@ export class PostgresRunBatchRepository
           const sourceByCase = new Map(
             sources.rows.map((row) => [
               `${row.case_definition_id}:${row.version}`,
-              { id: row.id, sha256: row.sha256, sizeBytes: Number(row.size_bytes) },
+              {
+                id: row.id,
+                sha256: row.sha256,
+                sizeBytes: Number(row.size_bytes),
+                ddtScope:
+                  row.project_version_id && row.test_stage_id
+                    ? {
+                        projectId: row.project_id,
+                        projectVersionId: row.project_version_id,
+                        testStageId: row.test_stage_id,
+                      }
+                    : undefined,
+              },
             ]),
           );
           const attemptRows = [];
@@ -1499,6 +1519,7 @@ export class PostgresRunBatchRepository
                   className: run.class_name,
                   parameters: stringRecord(run.parameters_json),
                   source,
+                  ...(source.ddtScope ? { ddtScope: source.ddtScope } : {}),
                   ...(run.case_type === "ddt" ? { caseId: run.display_name } : {}),
                   ...(adapterRuntime ? { adapterRuntime } : {}),
                   environment: environmentVariables(lockedBatch.environmentJson),
@@ -2290,6 +2311,7 @@ function executionSpec(input: {
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
   caseId?: string;
+  ddtScope?: DdtScope;
   adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
@@ -2333,6 +2355,16 @@ function executionSpec(input: {
             ),
             caseTimeoutSeconds: input.caseTimeoutSeconds,
             ...(input.caseId !== undefined ? { caseId: input.caseId } : {}),
+            ...(input.ddtScope
+              ? {
+                  ddtScope: {
+                    ...input.ddtScope,
+                    ...(input.adapterRuntime.ddtDebug
+                      ? { debug: input.adapterRuntime.ddtDebug }
+                      : {}),
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -2462,6 +2494,7 @@ function runtimeSnapshotForRuns(
   runs: CreateRunBatchRecord["runs"],
 ): ProjectAdapterRuntime {
   return {
+    ...(snapshot.ddtDebug ? { ddtDebug: snapshot.ddtDebug } : {}),
     suiteName: snapshot.suiteName,
     requiresDdtCaseId: runs.some((run) => run.caseType === "ddt"),
     testName: snapshot.testName,

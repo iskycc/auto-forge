@@ -2084,7 +2084,7 @@ function CompleteAnalysisDialog({
           )}
         >
           <span>
-            <ClipboardCheck size={17} />
+            <ClipboardCheck size={17} className="shrink-0" aria-hidden="true" />
             <strong>
               {readOnly
                 ? "用例分析详情"

@@ -1091,8 +1091,8 @@ export class PostgresDdtRepository implements DdtRepository {
          (id, project_id, project_version_id, test_stage_id, status, uploads_json,
           progress_percent, total_files, valid_files, total_rows, inserted_count,
           updated_count, unchanged_count, skipped_count, failed_files, requested_by,
-          created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          created_at, updated_at, debug_owner_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
         [
           job.id,
           ...scopeValues(job),
@@ -1110,6 +1110,7 @@ export class PostgresDdtRepository implements DdtRepository {
           job.requestedBy ?? null,
           job.createdAt,
           job.updatedAt,
+          job.debugOwnerId ?? null,
         ],
       );
       for (const file of input.files) {
@@ -1264,7 +1265,7 @@ export class PostgresDdtRepository implements DdtRepository {
     const values: PgValue[] = [...scopeValues(input)];
     const cursor = input.cursor ? `AND id < $${values.push(input.cursor)}` : "";
     const result = await this.handle.pool.query<ImportJobRow>(
-      `SELECT * FROM ddt_import_jobs WHERE project_id = $1 AND project_version_id = $2
+      `SELECT * FROM ddt_import_jobs WHERE debug_owner_id IS NULL AND project_id = $1 AND project_version_id = $2
        AND test_stage_id = $3 ${cursor} ORDER BY id DESC LIMIT $${values.push(input.limit + 1)}`,
       values,
     );
@@ -1555,6 +1556,7 @@ export class PostgresDdtRepository implements DdtRepository {
       ...(row.error_code ? { errorCode: row.error_code } : {}),
       ...(row.error_summary ? { errorSummary: row.error_summary } : {}),
       ...(row.requested_by ? { requestedBy: row.requested_by } : {}),
+      ...(row.debug_owner_id ? { debugOwnerId: row.debug_owner_id } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...(row.started_at ? { startedAt: row.started_at } : {}),
@@ -1637,6 +1639,7 @@ type ImportFileRow = {
 };
 
 type ImportJobRow = {
+  debug_owner_id: string | null;
   id: string;
   project_id: string;
   project_version_id: string;

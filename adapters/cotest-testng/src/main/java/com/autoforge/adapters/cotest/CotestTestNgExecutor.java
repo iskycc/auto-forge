@@ -21,7 +21,10 @@ final class CotestTestNgExecutor {
       Files.createDirectories(request.outputDirectory());
       executionThread.setContextClassLoader(loader);
       try {
-        Class<?> testClass = Class.forName(request.className(), true, loader);
+        Class<?> testClass = Class.forName(request.className(), false, loader);
+        new CotestRuntimeConfigurer(output)
+            .configure(
+                loader, testClass, request.environmentAddress(), request.caseId(), request.ddtInsightUrl());
         TestNgExecutionOutcome outcome =
             new ReflectiveTestNgRunner(output).run(loader, testClass, request);
         return outcome.exitCode();

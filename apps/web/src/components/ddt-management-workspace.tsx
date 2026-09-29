@@ -1,5 +1,5 @@
 "use client";
-import { Upload as AntUpload } from "antd";
+import { Radio, Upload as AntUpload } from "antd";
 import { Progress } from "@/components/ui/progress";
 
 import { Badge } from "@/components/ui/badge";
@@ -1266,7 +1266,7 @@ export function DdtManagementWorkspace({
         />
       ) : null}
       {showImport ? (
-        <ImportDialog
+        <DdtImportDialog
           endpoint={endpoint}
           onClose={() => setShowImport(false)}
           onComplete={async () => {
@@ -1674,14 +1674,18 @@ function Recycle({
   );
 }
 
-function ImportDialog({
+export function DdtImportDialog({
+  description = "先预检，再选择冲突策略启动后台导入",
+  overwriteLabel = "覆盖并保留历史",
   endpoint,
   onClose,
   onComplete,
 }: {
+  description?: string;
+  overwriteLabel?: string;
   endpoint(path: string, extra?: URLSearchParams): string;
   onClose(): void;
-  onComplete(): Promise<void>;
+  onComplete(jobId: string): Promise<void>;
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [job, setJob] = useState<ImportJob>();
@@ -1803,7 +1807,7 @@ function ImportDialog({
         headers: jsonHeaders,
         body: JSON.stringify({ conflictStrategy: strategy }),
       });
-      await onComplete();
+      await onComplete(job.id);
     } catch (confirmError) {
       setError(messageOf(confirmError));
       setBusy(false);
@@ -1812,14 +1816,42 @@ function ImportDialog({
   const unresolvedColumnConflicts = job ? importColumnConflicts(job) : [];
   return (
     <>
-      <Dialog
+      <ActionDialog
+        open
         title="导入 DDT 用例"
-        subtitle="先预检，再选择冲突策略启动后台导入"
+        description={description}
+        className="ddt-dialog w-[min(760px,calc(100vw-3rem))]"
+        closeLabel="关闭弹窗"
+        protectUnsavedChanges
         onClose={onClose}
         inactive={showColumnConflicts}
         closeDisabled={busy}
+        footer={
+          <>
+            <Button
+              type="button"
+              {...(!job ? { "data-dialog-dismiss": true } : {})}
+              onClick={() => (job ? setJob(undefined) : onClose())}
+              disabled={busy}
+            >
+              {job ? "重新选择" : "取消"}
+            </Button>
+            <Button
+              variant="primary"
+              type="button"
+              disabled={
+                busy ||
+                (job ? !job.validFiles || unresolvedColumnConflicts.length > 0 : !files.length)
+              }
+              loading={busy}
+              onClick={() => void (job ? confirm() : preview())}
+            >
+              {job ? "确认并后台导入" : "开始预检"}
+            </Button>
+          </>
+        }
       >
-        <div className={cn("ddt-import-dialog", ddtManagementWorkspaceStyles["ddt-import-dialog"])}>
+        <div className="ddt-import-dialog grid min-w-0 gap-4">
           {error ? (
             <Notice
               tone="error"
@@ -1879,10 +1911,20 @@ function ImportDialog({
                   )}
                 >
                   {files.map((file) => (
-                    <span key={`${file.name}-${file.size}`}>
-                      <FileSpreadsheet size={14} /> {file.name}
-                      <small>{formatBytes(file.size)}</small>
-                    </span>
+                    <div
+                      key={`${file.name}-${file.size}`}
+                      className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg bg-muted px-3 py-2"
+                    >
+                      <FileSpreadsheet
+                        size={16}
+                        aria-hidden="true"
+                        className="text-muted-foreground"
+                      />
+                      <span className="min-w-0 [overflow-wrap:anywhere]">{file.name}</span>
+                      <small className="whitespace-nowrap text-muted-foreground">
+                        {formatBytes(file.size)}
+                      </small>
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -1894,34 +1936,6 @@ function ImportDialog({
                   value={uploadProgress.percent}
                 />
               ) : null}
-              <footer>
-                <Button
-                  className={cn(
-                    "button button-secondary",
-                    uiPatterns["button"],
-                    uiPatterns["button-secondary"],
-                  )}
-                  type="button"
-                  data-dialog-dismiss
-                  onClick={onClose}
-                  disabled={busy}
-                >
-                  取消
-                </Button>
-                <Button
-                  className={cn(
-                    "button button-primary",
-                    uiPatterns["button"],
-                    uiPatterns["button-primary"],
-                  )}
-                  type="button"
-                  disabled={!files.length || busy}
-                  onClick={() => void preview()}
-                >
-                  {busy ? <LoadingIcon size={15} /> : null}
-                  开始预检
-                </Button>
-              </footer>
             </>
           ) : (
             <>
@@ -1957,10 +1971,24 @@ function ImportDialog({
                 )}
               >
                 {job.files.map((file) => (
-                  <div key={file.id}>
-                    <strong>{file.archiveEntryName ?? file.fileName}</strong>
-                    <span>{file.rowCount} 行</span>
-                    {file.errorSummary ? <small>{file.errorSummary}</small> : <i>可导入</i>}
+                  <div
+                    key={file.id}
+                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 rounded-lg bg-muted px-3 py-2"
+                  >
+                    <strong className="min-w-0 font-medium [overflow-wrap:anywhere]">
+                      {file.archiveEntryName ?? file.fileName}
+                    </strong>
+                    <span className="whitespace-nowrap text-xs text-muted-foreground">
+                      {file.rowCount} 行
+                    </span>
+                    <Badge variant={file.errorSummary ? "destructive" : "success"}>
+                      {file.errorSummary ? "不可导入" : "可导入"}
+                    </Badge>
+                    {file.errorSummary ? (
+                      <small className="col-span-full text-destructive [overflow-wrap:anywhere]">
+                        {file.errorSummary}
+                      </small>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -1994,63 +2022,41 @@ function ImportDialog({
                   </Button>
                 </Notice>
               ) : null}
-              <fieldset
-                className={cn("ddt-strategy", ddtManagementWorkspaceStyles["ddt-strategy"])}
+              <Radio.Group
+                aria-label="CaseID 冲突时"
+                name="strategy"
+                value={strategy}
+                onChange={(event) => setStrategy(event.target.value as string)}
                 disabled={busy || unresolvedColumnConflicts.length > 0}
+                className="ddt-strategy w-full"
               >
-                <legend>CaseID 冲突时</legend>
-                {(
-                  [
-                    ["overwrite", "覆盖并保留历史"],
-                    ["skip", "跳过已有用例"],
-                    ["error", "遇到冲突终止"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <label key={value}>
-                    <Input
-                      type="radio"
-                      name="strategy"
+                <div className="mb-2 text-xs text-muted-foreground">CaseID 冲突时</div>
+                <div className="grid min-w-0 grid-cols-3 gap-2">
+                  {(
+                    [
+                      ["overwrite", overwriteLabel],
+                      ["skip", "跳过已有用例"],
+                      ["error", "遇到冲突终止"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <Radio
+                      key={value}
                       value={value}
-                      checked={strategy === value}
-                      onChange={() => setStrategy(value)}
-                    />
-                    <span>
-                      <strong>{label}</strong>
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
-              <footer>
-                <Button
-                  className={cn(
-                    "button button-secondary",
-                    uiPatterns["button"],
-                    uiPatterns["button-secondary"],
-                  )}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setJob(undefined)}
-                >
-                  重新选择
-                </Button>
-                <Button
-                  className={cn(
-                    "button button-primary",
-                    uiPatterns["button"],
-                    uiPatterns["button-primary"],
-                  )}
-                  type="button"
-                  disabled={!job.validFiles || busy || unresolvedColumnConflicts.length > 0}
-                  onClick={() => void confirm()}
-                >
-                  {busy ? <LoadingIcon size={15} /> : null}
-                  确认并后台导入
-                </Button>
-              </footer>
+                      className={cn(
+                        "min-w-0 rounded-lg border border-solid px-3 py-2.5",
+                        strategy === value ? "border-primary bg-primary/5" : "border-border",
+                      )}
+                      styles={{ root: { marginInlineEnd: 0, alignItems: "center" } }}
+                    >
+                      {label}
+                    </Radio>
+                  ))}
+                </div>
+              </Radio.Group>
             </>
           )}
         </div>
-      </Dialog>
+      </ActionDialog>
       {showColumnConflicts && job ? (
         <ColumnConflictDialog
           conflicts={unresolvedColumnConflicts}
@@ -2138,6 +2144,36 @@ function ColumnConflictDialog({
         "ddt-column-conflict-backdrop",
         ddtManagementWorkspaceStyles["ddt-column-conflict-backdrop"],
       )}
+      footer={
+        <>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            type="button"
+            disabled={busy}
+            data-dialog-dismiss
+            onClick={onClose}
+          >
+            暂不处理
+          </Button>
+          <Button
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
+            type="button"
+            disabled={busy || conflicts.length === 0 || Boolean(validationError)}
+            onClick={onConfirm}
+          >
+            {busy ? <LoadingIcon size={15} /> : null}
+            应用并重新预检
+          </Button>
+        </>
+      }
     >
       <div
         className={cn(
@@ -2411,34 +2447,6 @@ function ColumnConflictDialog({
             对照上方内容，改名可保留全部数据，也可仅保留指定列。应用后会重新预检，此时还不会导入用例。
           </p>
         </div>
-        <footer>
-          <Button
-            className={cn(
-              "button button-secondary",
-              uiPatterns["button"],
-              uiPatterns["button-secondary"],
-            )}
-            type="button"
-            disabled={busy}
-            data-dialog-dismiss
-            onClick={onClose}
-          >
-            暂不处理
-          </Button>
-          <Button
-            className={cn(
-              "button button-primary",
-              uiPatterns["button"],
-              uiPatterns["button-primary"],
-            )}
-            type="button"
-            disabled={busy || conflicts.length === 0 || Boolean(validationError)}
-            onClick={onConfirm}
-          >
-            {busy ? <LoadingIcon size={15} /> : null}
-            应用并重新预检
-          </Button>
-        </footer>
       </div>
     </Dialog>
   );
@@ -2495,6 +2503,34 @@ function TemplateDialog({
         rules.some((rule) => rule.field || rule.required || rule.type !== "string"),
       )}
       closeDisabled={saving}
+      footer={
+        <>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            type="button"
+            data-dialog-dismiss
+            onClick={onClose}
+          >
+            取消
+          </Button>
+          <Button
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
+            type="button"
+            disabled={saving || !srNum.trim() || !name.trim()}
+            onClick={() => void save()}
+          >
+            创建模板
+          </Button>
+        </>
+      }
     >
       <div
         className={cn(
@@ -2601,32 +2637,6 @@ function TemplateDialog({
             </div>
           ))}
         </div>
-        <footer className={cn("full-span", uiPatterns["full-span"])}>
-          <Button
-            className={cn(
-              "button button-secondary",
-              uiPatterns["button"],
-              uiPatterns["button-secondary"],
-            )}
-            type="button"
-            data-dialog-dismiss
-            onClick={onClose}
-          >
-            取消
-          </Button>
-          <Button
-            className={cn(
-              "button button-primary",
-              uiPatterns["button"],
-              uiPatterns["button-primary"],
-            )}
-            type="button"
-            disabled={saving || !srNum.trim() || !name.trim()}
-            onClick={() => void save()}
-          >
-            创建模板
-          </Button>
-        </footer>
       </div>
     </Dialog>
   );
@@ -2666,6 +2676,34 @@ function BulkDialog({
       title={`批量修改 ${count} 条用例`}
       subtitle="普通用例直接修改字段；用户旅程可指定 step1…stepN"
       onClose={onClose}
+      footer={
+        <>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            type="button"
+            data-dialog-dismiss
+            onClick={onClose}
+          >
+            取消
+          </Button>
+          <Button
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
+            disabled={!field.trim()}
+            type="button"
+            onClick={() => void save()}
+          >
+            应用修改
+          </Button>
+        </>
+      }
     >
       <div
         className={cn(
@@ -2707,32 +2745,6 @@ function BulkDialog({
             placeholder="step1"
           />
         </label>
-        <footer className={cn("full-span", uiPatterns["full-span"])}>
-          <Button
-            className={cn(
-              "button button-secondary",
-              uiPatterns["button"],
-              uiPatterns["button-secondary"],
-            )}
-            type="button"
-            data-dialog-dismiss
-            onClick={onClose}
-          >
-            取消
-          </Button>
-          <Button
-            className={cn(
-              "button button-primary",
-              uiPatterns["button"],
-              uiPatterns["button-primary"],
-            )}
-            disabled={!field.trim()}
-            type="button"
-            onClick={() => void save()}
-          >
-            应用修改
-          </Button>
-        </footer>
       </div>
     </Dialog>
   );
@@ -2799,6 +2811,38 @@ function AddDdtToSuiteDialog({
       subtitle="可加入已有任务与普通用例混合执行，也可新建仅含 DDT 的任务。执行前所有 DDT 用例必须完成 SR 测试类关联，并在任务设置中启用 Adapter。"
       onClose={onClose}
       closeDisabled={busy}
+      footer={
+        <>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            type="button"
+            disabled={busy}
+            data-dialog-dismiss
+            onClick={onClose}
+          >
+            取消
+          </Button>
+          <Button
+            className={cn(
+              "button button-primary",
+              uiPatterns["button"],
+              uiPatterns["button-primary"],
+            )}
+            type="button"
+            disabled={
+              busy || (suiteId === "new" ? !newSuiteName.trim() && !createdSuite : !suiteId)
+            }
+            onClick={() => void save()}
+          >
+            {busy ? <LoadingIcon size={15} /> : <ListPlus size={15} />}
+            加入任务
+          </Button>
+        </>
+      }
     >
       <div
         className={cn(
@@ -2852,36 +2896,6 @@ function AddDdtToSuiteDialog({
             任务“{createdSuite.name}”已创建，重新点击加入任务可重试添加所选用例。
           </p>
         ) : null}
-        <footer className={cn("full-span", uiPatterns["full-span"])}>
-          <Button
-            className={cn(
-              "button button-secondary",
-              uiPatterns["button"],
-              uiPatterns["button-secondary"],
-            )}
-            type="button"
-            disabled={busy}
-            data-dialog-dismiss
-            onClick={onClose}
-          >
-            取消
-          </Button>
-          <Button
-            className={cn(
-              "button button-primary",
-              uiPatterns["button"],
-              uiPatterns["button-primary"],
-            )}
-            type="button"
-            disabled={
-              busy || (suiteId === "new" ? !newSuiteName.trim() && !createdSuite : !suiteId)
-            }
-            onClick={() => void save()}
-          >
-            {busy ? <LoadingIcon size={15} /> : <ListPlus size={15} />}
-            加入任务
-          </Button>
-        </footer>
       </div>
     </Dialog>
   );
@@ -2896,6 +2910,7 @@ function Dialog({
   closeDisabled = false,
   backdropClassName,
   dirty,
+  footer,
 }: {
   title: string;
   subtitle: string;
@@ -2905,6 +2920,7 @@ function Dialog({
   closeDisabled?: boolean;
   backdropClassName?: string;
   dirty?: boolean;
+  footer?: ReactNode;
 }) {
   return (
     <ActionDialog
@@ -2914,6 +2930,7 @@ function Dialog({
       onClose={onClose}
       className={cn("ddt-dialog", ddtManagementWorkspaceStyles["ddt-dialog"])}
       closeLabel="关闭弹窗"
+      footer={footer}
       protectUnsavedChanges
       {...(dirty === undefined ? {} : { dirty })}
       inactive={inactive}
@@ -3206,14 +3223,12 @@ function csvCell(value: string): string {
 }
 
 const ddtManagementWorkspaceStyles = {
-  "ddt-add-suite-dialog":
-    "p-5 [&_footer]:flex [&_footer]:justify-end [&_footer]:gap-2 [&_footer]:m-0",
+  "ddt-add-suite-dialog": "min-w-0 [&_>_label]:grid [&_>_label]:min-w-0 [&_>_label]:gap-2",
   "ddt-advanced-filter-fields":
     "absolute z-10 top-full left-0 grid w-[calc(200%_+_8px)] max-h-[var(--ddt-case-filter-max-height)] overflow-y-auto gap-2 border border-solid border-border rounded-lg p-3 bg-card shadow-xs [&_.ui-select-list]:static [&_.ui-select-list]:mt-1",
   "ddt-advanced-filters":
     "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-1 [&_.ui-disclosure-label]:text-xs [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:text-primary-text relative",
-  "ddt-bulk-form":
-    "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2 [&_>_label]:grid [&_>_label]:gap-[5px]",
+  "ddt-bulk-form": "min-w-0 [&_>_label]:grid [&_>_label]:min-w-0 [&_>_label]:gap-2",
   "ddt-chart-card":
     "[&_header]:flex [&_header]:items-center [&_header_>_div]:grid [&_header_>_div]:min-w-0 [&_header_>_div]:gap-[3px] [&_header_>_div]:mr-auto [&_header_span]:text-muted-foreground [&_header_span]:text-xs min-w-0 p-5",
   "ddt-chart-empty": "m-auto text-muted-foreground",
@@ -3225,8 +3240,7 @@ const ddtManagementWorkspaceStyles = {
     "flex min-w-0 items-center justify-between gap-2.5 [&_>_span]:grid [&_>_span]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small]:text-muted-foreground",
   "ddt-column-conflict-backdrop":
     "[&_.ddt-dialog]:w-[min(960px,_calc(100dvw_-_40px))] [&_.ddt-dialog]:overflow-hidden",
-  "ddt-column-conflict-dialog":
-    "flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5 [&_footer]:flex [&_footer]:shrink-0 [&_footer]:justify-end [&_footer]:gap-[9px]",
+  "ddt-column-conflict-dialog": "flex min-h-0 min-w-0 flex-1 flex-col gap-3.5",
   "ddt-column-conflict-group-actions":
     "flex [flex:0_0_auto] items-center gap-[9px] [&_>_small]:text-muted-foreground [&_>_small]:whitespace-nowrap",
   "ddt-column-conflict-guidance":
@@ -3247,8 +3261,7 @@ const ddtManagementWorkspaceStyles = {
   "ddt-column-samples":
     "[&_header_small]:text-muted-foreground overflow-hidden border border-solid border-border rounded-lg bg-muted [&_>_header]:flex [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-[7px] [&_>_header]:px-[9px] [&_>_header]:text-xs [&_ul]:grid [&_ul]:max-h-[152px] [&_ul]:m-0 [&_ul]:py-1 [&_ul]:px-0 [&_ul]:overflow-auto [&_ul]:[list-style:none] [&_li]:grid [&_li]:grid-cols-[45px_minmax(0,_1fr)] [&_li]:items-center [&_li]:gap-[7px] [&_li]:py-[5px] [&_li]:px-[9px] [&_li_+_li]:border-t [&_li_+_li]:border-solid [&_li_+_li]:border-transparent [&_li_small]:text-muted-foreground [&_li_span]:overflow-hidden [&_li_span]:text-ellipsis [&_li_span]:whitespace-nowrap [&_>_p]:m-0 [&_>_p]:py-3.5 [&_>_p]:px-[9px] [&_>_p]:text-muted-foreground [&_>_p]:text-xs [&_>_p]:text-center",
   "ddt-detail-error": "overflow-auto p-5",
-  "ddt-dialog":
-    "[&_>_header]:flex [&_>_header]:items-center [&_>_header]:[flex:0_0_auto] [&_>_header]:justify-between [&_>_header]:gap-4.5 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-4.5 [&_>_header]:px-5 flex w-[min(760px,_calc(100dvw_-_40px))] max-h-[calc(100dvh_-_40px)] flex-col overflow-auto border border-solid border-border rounded-xl bg-card shadow-lg [&_>_header_h2]:m-0 [&_>_header_p]:m-0 [&_>_header_p]:mt-1 [&_>_header_p]:text-muted-foreground [&_>_.action-dialog-body]:p-0 [&_.draft-discard-prompt]:m-3",
+  "ddt-dialog": "w-[min(760px,calc(100vw-3rem))]",
   "ddt-dropzone":
     "grid w-full min-h-[170px] place-items-center [align-content:center] gap-[7px] border border-dashed border-border rounded-lg bg-info/10 text-info transition-colors duration-150 motion-reduce:transition-none [&:hover:not(:disabled)]:border-info [&:hover:not(:disabled)]:shadow-xs [&:focus-visible]:border-info [&:focus-visible]:shadow-xs [&.drag-active]:border-info [&.drag-active]:shadow-xs [&.drag-active]:[border-style:solid] [&.drag-active]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_72%,_var(--card))] [&.drag-active]:[transform:translateY(-1px)] [&_span]:max-w-[520px] [&_span]:text-muted-foreground [&_span]:text-center",
   "ddt-empty":
@@ -3259,7 +3272,6 @@ const ddtManagementWorkspaceStyles = {
     "grid gap-2 mt-[17px] [&_button]:grid [&_button]:grid-cols-[24px_minmax(90px,_0.7fr)_minmax(80px,_1fr)_32px] [&_button]:items-center [&_button]:gap-[9px] [&_button]:border-0 [&_button]:rounded-lg [&_button]:p-[7px] [&_button]:bg-transparent [&_button]:text-foreground [&_button]:text-left [&_button:hover]:bg-muted [&_button_>_span]:grid [&_button_>_span]:h-6 [&_button_>_span]:place-items-center [&_button_>_span]:rounded-md [&_button_>_span]:bg-info/10 [&_button_>_span]:text-info [&_button_>_span]:text-xs [&_i]:h-[7px] [&_i]:rounded-md [&_i]:bg-primary",
   "ddt-group-tag":
     "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap",
-  "ddt-import-dialog": "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2",
   "ddt-job":
     "relative grid gap-[13px] p-[17px] [&_.ui-disclosure]:border-t [&_.ui-disclosure]:border-solid [&_.ui-disclosure]:border-border [&_.ui-disclosure]:pt-2.5 [&_.ui-disclosure-label]:text-muted-foreground [&_.ui-disclosure-label]:cursor-pointer",
   "ddt-job-list": "grid gap-3",
@@ -3274,9 +3286,9 @@ const ddtManagementWorkspaceStyles = {
   "ddt-metrics": "grid grid-cols-4 gap-3 max-[1181px]:grid-cols-2",
   "ddt-overview": "grid min-w-0 gap-4",
   "ddt-picked-files":
-    "grid gap-[7px] mt-3 [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2 [&_>_span]:rounded-lg [&_>_span]:py-[9px] [&_>_span]:px-[11px] [&_>_span]:bg-muted [&_small]:ml-auto [&_small]:text-muted-foreground",
+    "grid min-w-0 gap-2 max-h-[min(280px,30dvh)] overflow-auto [overscroll-behavior:contain]",
   "ddt-preview-files":
-    "grid gap-[7px] mt-3 max-h-[min(320px,_35dvh)] overflow-auto [overscroll-behavior:contain] [&_>_div]:flex [&_>_div]:items-center [&_>_div]:gap-2 [&_>_div]:rounded-lg [&_>_div]:py-[9px] [&_>_div]:px-[11px] [&_>_div]:bg-muted [&_>_div]:flex-wrap [&_span]:ml-auto [&_span]:text-muted-foreground [&_small]:[flex-basis:100%] [&_small]:text-destructive [&_>_div_>_strong]:min-w-0 [&_>_div_>_strong]:[flex:1_1_50%] [&_>_div_>_strong]:[overflow-wrap:anywhere] [&_i]:text-success [&_i]:text-xs",
+    "grid min-w-0 gap-2 max-h-[min(320px,35dvh)] overflow-auto [overscroll-behavior:contain]",
   "ddt-preview-summary":
     "grid grid-cols-[repeat(4,_1fr)] gap-2 [&_span]:grid [&_span]:gap-[3px] [&_span]:rounded-lg [&_span]:p-[11px] [&_span]:bg-muted [&_small]:text-muted-foreground [&_strong]:text-lg",
   "ddt-rule-builder":
@@ -3289,16 +3301,13 @@ const ddtManagementWorkspaceStyles = {
     "flex items-center gap-[9px] border border-solid border-border rounded-lg py-[9px] px-3 bg-info/10 [&_strong]:mr-auto [&_strong]:text-info",
   "ddt-status":
     "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap [&.running]:bg-info/10 [&.running]:text-info [&.queued]:bg-info/10 [&.queued]:text-info [&.succeeded]:bg-success/10 [&.succeeded]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.previewed]:bg-warning/10 [&.previewed]:text-warning [&.partially\\_succeeded]:bg-warning/10 [&.partially\\_succeeded]:text-warning",
-  "ddt-strategy":
-    "flex gap-2 mt-[15px] border-0 p-0 [&_legend]:mb-[7px] [&_legend]:text-muted-foreground [&_legend]:text-xs [&_label]:flex [&_label]:flex-1 [&_label]:items-center [&_label]:gap-[7px] [&_label]:border [&_label]:border-solid [&_label]:border-border [&_label]:rounded-lg [&_label]:p-2.5",
   "ddt-subtabs":
     "flex items-center flex-wrap gap-[3px] border-b border-solid border-border pb-2 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_button]:border-0 [&_button]:rounded-lg [&_button]:py-[9px] [&_button]:px-3.5 [&_button]:bg-transparent [&_button]:text-muted-foreground [&_button]:font-semibold [&_button]:relative [&_button]:shadow-none [&_button.active]:bg-info/10 [&_button.active]:text-info [&_button.active]:shadow-none [&_small]:inline-grid [&_small]:min-w-4.5 [&_small]:h-4.5 [&_small]:place-items-center [&_small]:rounded-lg [&_small]:bg-destructive/10 [&_small]:text-destructive",
   "ddt-table-shell":
     "min-w-0 overflow-hidden border border-solid border-border rounded-xl bg-card shadow-xs",
   "ddt-template":
     "relative grid gap-[13px] p-[17px] grid-cols-[minmax(0,_1fr)_auto] [&_.ui-card-content_>_div:first-child]:grid [&_.ui-card-content_>_div:first-child]:gap-[7px] [&_p]:m-0 [&_p]:text-muted-foreground",
-  "ddt-template-form":
-    "p-5 [&_footer]:grid [&_footer]:grid-cols-[repeat(4,_1fr)] [&_footer]:gap-2 [&_>_label]:grid [&_>_label]:gap-[5px]",
+  "ddt-template-form": "min-w-0 [&_>_label]:grid [&_>_label]:min-w-0 [&_>_label]:gap-2",
   "ddt-template-grid": "grid gap-3 grid-cols-2 max-[1181px]:grid-cols-[1fr]",
   "ddt-workspace":
     "grid min-w-0 gap-4 [&_.inline-notice]:justify-between [&_.inline-notice.success]:border-success/10 [&_.inline-notice.success]:bg-success/10 [&_.inline-notice.success]:text-success [&_.inline-notice.error]:border-destructive/10 [&_.inline-notice.error]:bg-destructive/10 [&_.inline-notice.error]:text-destructive [&_.inline-notice_button]:grid [&_.inline-notice_button]:border-0 [&_.inline-notice_button]:bg-transparent [&_.inline-notice_button]:text-current [&_.text-button]:inline-flex [&_.text-button]:min-h-8 [&_.text-button]:items-center [&_.text-button]:gap-[5px] [&_.text-button]:border-0 [&_.text-button]:p-[3px] [&_.text-button]:bg-transparent [&_.text-button]:text-info [&_.text-button]:font-semibold [&_.text-button.danger]:text-destructive [&_.icon-button.danger]:text-destructive [&_.button-danger]:border-destructive/10 [&_.button-danger]:bg-destructive/10 [&_.button-danger]:text-destructive",

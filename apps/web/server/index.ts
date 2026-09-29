@@ -1,3 +1,4 @@
+import { redactRequestPath } from "./redact-request-path.js";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { webResourcePlan } from "../src/lib/worker-sizing.ts";
@@ -354,7 +355,16 @@ function configureProductionRuntime(directory: string): void {
 }
 
 function log(level: "info" | "warn" | "error", message: string, fields: object = {}): void {
-  const entry = JSON.stringify({ timestamp: new Date().toISOString(), level, message, ...fields });
+  const safeFields =
+    "path" in fields && typeof fields.path === "string"
+      ? { ...fields, path: redactRequestPath(fields.path) }
+      : fields;
+  const entry = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    ...safeFields,
+  });
   if (level === "error") process.stderr.write(`${entry}\n`);
   else process.stdout.write(`${entry}\n`);
 }

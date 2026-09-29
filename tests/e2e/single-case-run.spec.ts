@@ -20,6 +20,7 @@ const runnerCapabilities = [
   "java:21.0.8",
   "testng:7.11.0",
   "adapter:cotest-testng-v1",
+  "adapter:ddt-insight-url-v1",
 ];
 
 test("global execution dialog schedules one case through a runner group with Adapter IP", async ({
@@ -143,6 +144,11 @@ test("global execution dialog schedules one case through a runner group with Ada
       suiteName: "Single Case Suite",
       testName: "Single Case Test",
       environmentAddress: "10.0.0.21",
+      ddtScope: {
+        projectId: project.id,
+        projectVersionId: project.versionId,
+        testStageId: project.stageId,
+      },
     },
   });
 });

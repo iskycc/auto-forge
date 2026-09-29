@@ -1,4 +1,6 @@
 import {
+  createCaseDebugRunSchema,
+  type CreateCaseDebugRunInput,
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
   rerunFinalFailuresInputSchema,
@@ -12,6 +14,7 @@ import {
   assessRunnerCompatibility,
   COTEST_ADAPTER_CAPABILITY,
   DDT_CASE_ID_CAPABILITY,
+  DDT_INSIGHT_URL_CAPABILITY,
   DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   defaultCaseSuiteExecutionPolicy,
@@ -49,6 +52,7 @@ import type {
   RunnerRepository,
   SchedulingSnapshot,
 } from "./ports";
+import type { DdtDebugAccess, DdtDebugRepository } from "./ddt-debug";
 import { CoalescedOperation } from "./coalesced-operation";
 
 const OFFLINE_AFTER_SECONDS = 45;
@@ -61,7 +65,7 @@ function derivedBatchAdapterRuntime(input: {
   snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>;
   runtimeAssetSource: DerivedRuntimeAssetSource;
   adapterEnvironmentAddresses?: string[];
-}): Pick<CreateRunBatchRecord, "adapter" | "adapterRuntimeSnapshot"> {
+}): Pick<CreateRunBatchRecord, "adapter" | "adapterRuntimeSnapshot" | "ddtDebug"> {
   const runtime = input.snapshot.adapterRuntime;
   if (!runtime) return {};
   const environmentAddresses = [
@@ -72,6 +76,7 @@ function derivedBatchAdapterRuntime(input: {
     // 日志页的单用例重跑用于验证当前环境。只继承 Adapter 的任务级设置，
     // 让仓储按 policy.projectVersionId 重新固化当前 JDK/依赖包资产。
     return {
+      ...(runtime.ddtDebug ? { ddtDebug: runtime.ddtDebug } : {}),
       adapter: {
         enabled: true,
         suiteName: runtime.suiteName,
@@ -136,6 +141,7 @@ export class RunBatchSchedulingService {
       catalog: CaseCatalogRepository;
       objectStore: JarObjectStorePort;
       ddt?: Pick<DdtRepository, "getCase">;
+      ddtDebug?: Pick<DdtDebugRepository, "get" | "workspace">;
     },
     private readonly projectMaximumConcurrency = 128,
     private readonly priorityAgingIntervalMinutes = 5,
@@ -190,7 +196,9 @@ export class RunBatchSchedulingService {
     const runnerIds = await this.resolveRunnerSelection(suitePolicy);
     const projectId = suite.projectId;
     await this.ensureRunnersExist(runnerIds, [
-      ...(usesTaskAdapter(suitePolicy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+      ...(usesTaskAdapter(suitePolicy.adapter)
+        ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
+        : []),
       ...(enabledDdtCases.length ? [DDT_CASE_ID_CAPABILITY] : []),
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ]);
@@ -275,6 +283,45 @@ export class RunBatchSchedulingService {
     return this.createSingleExecution(caseDefinitionId, input);
   }
 
+  async createDebugCase(input: CreateCaseDebugRunInput, ownerUserId?: string): Promise<RunBatch> {
+    const validated = createCaseDebugRunSchema.parse(input);
+    if (!this.executionInputs) {
+      throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
+    }
+    const definition = await this.executionInputs.catalog.getCaseDefinition(
+      validated.caseDefinitionId,
+      [validated.projectId],
+    );
+    if (
+      !definition ||
+      definition.projectVersionId !== validated.projectVersionId ||
+      definition.testStageId !== validated.testStageId
+    ) {
+      throw new DomainError("CASE_DEFINITION_NOT_FOUND", "执行类不属于当前项目、版本和测试阶段。");
+    }
+    if (validated.ddtCaseId && (!ownerUserId || !this.executionInputs.ddtDebug)) {
+      throw new DomainError("DDT_DEBUG_USER_REQUIRED", "DDT 调试需要使用个人用户账号。");
+    }
+    const personalScope = { ...validated, ownerUserId: ownerUserId ?? "" };
+    const ddtCase = validated.ddtCaseId
+      ? await this.executionInputs.ddtDebug!.get(personalScope, validated.ddtCaseId)
+      : undefined;
+    const debugAccess = ddtCase
+      ? await this.executionInputs.ddtDebug!.workspace(personalScope, this.ids.next())
+      : undefined;
+    if (validated.ddtCaseId && !ddtCase) {
+      throw new DomainError("DDT_CASE_NOT_FOUND", "当前范围内找不到该 DDT 用例。");
+    }
+    // The explicit class applies only to this snapshot; SR mappings remain unchanged.
+    return this.createSingleExecution(
+      definition.id,
+      { ...validated.execution, projectId: validated.projectId },
+      ddtCase ?? undefined,
+      validated,
+      debugAccess,
+    );
+  }
+
   async createSingleDdtCase(
     scope: DdtScope,
     caseId: string,
@@ -315,6 +362,8 @@ export class RunBatchSchedulingService {
     caseDefinitionId: string,
     input: CreateSingleCaseRunInput,
     ddtCase?: DdtCase,
+    debugScope?: DdtScope,
+    ddtDebug?: DdtDebugAccess,
   ): Promise<RunBatch> {
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
@@ -329,6 +378,13 @@ export class RunBatchSchedulingService {
         "CASE_DEFINITION_NOT_FOUND",
         "指定用例不存在、已归档或不属于当前项目。",
       );
+    }
+    if (
+      debugScope &&
+      (definition.projectVersionId !== debugScope.projectVersionId ||
+        definition.testStageId !== debugScope.testStageId)
+    ) {
+      throw new DomainError("CASE_DEFINITION_NOT_FOUND", "执行类范围已变化，请重新选择。");
     }
     if (
       ddtCase &&
@@ -386,7 +442,9 @@ export class RunBatchSchedulingService {
       });
     }
     await this.ensureRunnersExist(runnerIds, [
-      ...(usesTaskAdapter(validated.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+      ...(usesTaskAdapter(validated.adapter)
+        ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
+        : []),
       ...(ddtCase ? [DDT_CASE_ID_CAPABILITY] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
@@ -409,7 +467,8 @@ export class RunBatchSchedulingService {
       projectId,
       eventId: this.ids.next(),
       suiteId: `single:${ddtCase?.id ?? definition.id}`,
-      suiteName: `单用例 · ${ddtCase?.caseId ?? definition.displayName}`,
+      ...(ddtDebug ? { ddtDebug } : {}),
+      suiteName: `${debugScope ? "用例调试" : "单用例"} · ${ddtCase?.caseId ?? definition.displayName}`,
       suiteVersion: ddtCase?.revision ?? definition.currentVersion,
       retryLimit: validated.retryLimit ?? defaultCaseSuiteExecutionPolicy.retryLimit,
       retryMode: validated.retryMode ?? defaultCaseSuiteExecutionPolicy.retryMode,
@@ -1192,7 +1251,9 @@ export class RunBatchSchedulingService {
       suite?.policy.runnerLabels ?? [],
       suite?.policy.executor ?? "testng",
       [
-        ...(suite && usesTaskAdapter(suite.policy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+        ...(suite && usesTaskAdapter(suite.policy.adapter)
+          ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
+          : []),
         ...(suite?.ddtItems?.length ? [DDT_CASE_ID_CAPABILITY] : []),
       ],
     );
@@ -1364,7 +1425,9 @@ export class RunBatchSchedulingService {
             "toolchain",
             capability === DDT_CASE_ID_CAPABILITY
               ? "执行机不支持直接传递 DDT CaseID，请升级 Runner（包含受管 Adapter）后重试。"
-              : "执行机未安装任务所需的 CoTest Adapter；请重新下发 Runner。",
+              : capability === DDT_INSIGHT_URL_CAPABILITY
+                ? "执行机不支持自动配置 DDT API 地址，请升级 Runner（包含受管 Adapter）后重试。"
+                : "执行机未安装任务所需的 CoTest Adapter；请重新下发 Runner。",
             { runnerId },
           ),
         );
@@ -1490,6 +1553,15 @@ export class RunBatchSchedulingService {
       throw new DomainError(
         "RUNNER_INCOMPATIBLE",
         "所选执行机中包含协议、平台或执行能力不兼容的节点。",
+      );
+    }
+    if (
+      additionalCapabilities.includes(DDT_INSIGHT_URL_CAPABILITY) &&
+      resolved.some((runner) => runner && !runner.capabilities.includes(DDT_INSIGHT_URL_CAPABILITY))
+    ) {
+      throw new DomainError(
+        "RUNNER_INCOMPATIBLE",
+        "执行机不支持自动配置 DDT API 地址，请升级 Runner（包含受管 Adapter）后重试。",
       );
     }
     if (

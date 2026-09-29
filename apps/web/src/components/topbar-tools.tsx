@@ -245,8 +245,10 @@ export function TopbarTools({ permissions = [] }: { permissions?: readonly Permi
                           {kindLabel(item.kind)}
                         </span>
                         <span>
-                          <strong>{item.title}</strong>
-                          <small>
+                          <strong className="min-w-0 leading-snug [overflow-wrap:anywhere]">
+                            {item.title}
+                          </strong>
+                          <small className="leading-relaxed">
                             {searchResultSubtitle(
                               item,
                               searchItems.filter(

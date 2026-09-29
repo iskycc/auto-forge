@@ -7,6 +7,7 @@ import {
   sqliteTable,
   text,
   uniqueIndex,
+  unique,
 } from "drizzle-orm/sqlite-core";
 
 export const projects = sqliteTable(
@@ -1609,6 +1610,7 @@ export const ddtImportJobs = sqliteTable(
     }).notNull(),
     conflictStrategy: text("conflict_strategy", { enum: ["overwrite", "skip", "error"] }),
     uploadsJson: text("uploads_json").notNull().default("[]"),
+    debugOwnerId: text("debug_owner_id"),
     progressPercent: integer("progress_percent").notNull().default(0),
     totalFiles: integer("total_files").notNull().default(0),
     validFiles: integer("valid_files").notNull().default(0),
@@ -1924,7 +1926,75 @@ export const ddtImportCaseIds = sqliteTable(
   ],
 );
 
+export const ddtDebugWorkspaces = sqliteTable(
+  "ddt_debug_workspaces",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => projectVersions.id, { onDelete: "cascade" }),
+    testStageId: text("test_stage_id")
+      .notNull()
+      .references(() => testStages.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accessKey: text("access_key").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.projectId, table.projectVersionId, table.testStageId, table.ownerUserId],
+    }),
+  ],
+);
+export const ddtDebugCases = sqliteTable(
+  "ddt_debug_cases",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => projectVersions.id, { onDelete: "cascade" }),
+    testStageId: text("test_stage_id")
+      .notNull()
+      .references(() => testStages.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    caseId: text("case_id").notNull(),
+    caseIdNormalized: text("case_id_normalized").notNull(),
+    dataJson: text("data_json").notNull(),
+    sourceName: text("source_name").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    unique().on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.ownerUserId,
+      table.caseIdNormalized,
+    ),
+  ],
+);
+export const ddtDebugImportRows = sqliteTable("ddt_debug_import_rows", {
+  rowKey: text("row_key").primaryKey(),
+  outcome: text("outcome").notNull(),
+  jobId: text("job_id")
+    .notNull()
+    .references(() => ddtImportJobs.id, { onDelete: "cascade" }),
+});
+
 export const schema = {
+  ddtDebugWorkspaces,
+  ddtDebugCases,
+  ddtDebugImportRows,
   projects,
   projectVersions,
   testStages,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +25,7 @@ func cotestAdapterExecutorSpec(
 	specification ExecutionSpec,
 	toolchain config.ToolchainConfig,
 	adapter config.AdapterConfig,
+	controlPlaneURL *url.URL,
 ) (executor.Spec, []ExecutionInput, error) {
 	if specification.SchemaVersion != protocolVersion || specification.Executor != "testng" {
 		return executor.Spec{}, nil, errors.New("CoTest adapter supports only the process TestNG executor")
@@ -89,6 +91,13 @@ func cotestAdapterExecutorSpec(
 			"--environment-address",
 			specification.Adapter.EnvironmentAddress,
 		)
+	}
+	if specification.Adapter.DdtScope != nil {
+		ddtURL, err := ddtInsightURL(controlPlaneURL, *specification.Adapter.DdtScope)
+		if err != nil {
+			return executor.Spec{}, nil, err
+		}
+		arguments = append(arguments, "--ddt-insight-url", ddtURL)
 	}
 	if specification.Adapter.CaseID != "" {
 		if !utf8.ValidString(specification.Adapter.CaseID) || utf8.RuneCountInString(specification.Adapter.CaseID) > 512 || strings.ContainsRune(specification.Adapter.CaseID, 0) {

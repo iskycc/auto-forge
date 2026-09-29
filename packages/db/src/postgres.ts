@@ -25,3 +25,5 @@ export { createPostgresClock } from "./postgres-clock";
 export * from "./postgres-read-model-snapshots";
 
 export { isDatabaseLockContentionError } from "./lock-contention";
+
+export * from "./postgres-ddt-debug";

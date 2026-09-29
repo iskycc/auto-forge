@@ -651,6 +651,7 @@ function assertJobScope(
 ): asserts job {
   if (
     !job ||
+    job.debugOwnerId ||
     job.projectId !== scope.projectId ||
     job.projectVersionId !== scope.projectVersionId ||
     job.testStageId !== scope.testStageId

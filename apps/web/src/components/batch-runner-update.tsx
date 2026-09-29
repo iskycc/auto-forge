@@ -1,7 +1,7 @@
 "use client";
 import { Notice } from "@/components/ui/notice";
 
-import { Dialog } from "@/components/ui/dialog";
+import { ActionDialog } from "@/components/action-dialog";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -9,7 +9,7 @@ import {
   batchUpdateRunnerAgentsResultSchema,
   type BatchUpdateRunnerAgentsResult,
 } from "@autoforge/contracts";
-import { CheckCircle2, Download, ShieldAlert, X } from "lucide-react";
+import { CheckCircle2, Download, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -83,32 +83,25 @@ export function BatchRunnerUpdate({
         <Download size={16} /> 批量更新
       </Button>
       {open ? (
-        <Dialog
+        <ActionDialog
           open
           title={"批量更新执行机 Agent"}
+          description={`目标版本 ${latestVersion} · 最多并行 4 台`}
           onClose={() => !pending && setOpen(false)}
-          className={cn(
-            "runner-update-dialog batch-runner-update-dialog",
-            batchRunnerUpdateStyles["runner-update-dialog"],
-            batchRunnerUpdateStyles["batch-runner-update-dialog"],
-          )}
+          closeDisabled={pending}
+          className="batch-runner-update-dialog w-[min(760px,calc(100vw-3rem))]"
           backdropClassName="runner-update-overlay"
-        >
-          <header
-            className={cn(
-              "runner-update-titlebar",
-              batchRunnerUpdateStyles["runner-update-titlebar"],
-            )}
-          >
-            <span>
-              <Download size={16} />
-              <strong>批量更新执行机 Agent</strong>
-              <small>目标版本 {latestVersion} · 最多并行 4 台</small>
-            </span>
-            <Button aria-label="关闭" disabled={pending} onClick={() => setOpen(false)}>
-              <X size={16} />
+          footer={
+            <Button
+              variant="primary"
+              disabled={selectedIds.size === 0 || pending}
+              onClick={() => void updateSelected()}
+              type="button"
+            >
+              <Download size={16} /> {pending ? "正在批量更新…" : `更新 ${selectedIds.size} 台`}
             </Button>
-          </header>
+          }
+        >
           <div className={cn("runner-update-body", batchRunnerUpdateStyles["runner-update-body"])}>
             <div
               className={cn(
@@ -202,42 +195,19 @@ export function BatchRunnerUpdate({
                 {error}
               </Notice>
             ) : null}
-            <div
-              className={cn(
-                "runner-installer-actions",
-                batchRunnerUpdateStyles["runner-installer-actions"],
-              )}
-            >
-              <Button
-                className={cn("button-primary", uiPatterns["button-primary"])}
-                disabled={selectedIds.size === 0 || pending}
-                onClick={() => void updateSelected()}
-                type="button"
-              >
-                <Download size={16} /> {pending ? "正在批量更新…" : `更新 ${selectedIds.size} 台`}
-              </Button>
-            </div>
           </div>
-        </Dialog>
+        </ActionDialog>
       ) : null}
     </>
   );
 }
 
 const batchRunnerUpdateStyles = {
-  "batch-runner-update-dialog": "w-[min(760px,_calc(100vw_-_64px))]",
-  "batch-runner-update-list": "grid gap-2",
-  "batch-runner-update-results": "grid gap-2",
+  "batch-runner-update-list": "grid min-w-0 grid-cols-1 gap-2",
+  "batch-runner-update-results": "grid min-w-0 grid-cols-1 gap-2",
   "batch-runner-update-row":
-    "flex items-center gap-3 py-3 px-3.5 border border-solid border-border rounded-lg bg-muted [&_>_span]:grid [&_>_span]:gap-[3px] [&_>_span]:min-w-0 [&_small]:text-muted-foreground",
+    "flex min-w-0 items-center gap-3 py-3 px-3.5 border border-solid border-border rounded-lg bg-muted [&_>_span]:grid [&_>_span]:gap-[3px] [&_>_span]:min-w-0 [&_small]:text-muted-foreground [overflow-wrap:anywhere]",
   "batch-update-result":
-    "flex items-center gap-3 py-3 px-3.5 border border-solid border-border rounded-lg bg-muted [&_>_span]:grid [&_>_span]:gap-[3px] [&_>_span]:min-w-0 [&_small]:text-muted-foreground [&.updated_svg]:text-success [&.failed_svg]:text-warning [&.missing\\_profile_svg]:text-warning",
-  "runner-installer-actions":
-    "flex items-center gap-3.5 [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[7px] [&_small]:text-muted-foreground",
-  "runner-update-body": "grid gap-4 p-4.5 overflow-y-auto",
-  "runner-update-dialog":
-    "grid w-[min(640px,_92vw)] max-h-[86vh] [grid-template-rows:auto_minmax(0,_1fr)] overflow-hidden border border-solid border-border rounded-xl bg-card shadow-lg",
-
-  "runner-update-titlebar":
-    "flex items-center justify-between gap-3 py-3.5 px-4.5 border-b border-solid border-border [&_>_span]:flex [&_>_span]:items-center [&_>_span]:gap-2.5 [&_small]:text-muted-foreground",
+    "flex min-w-0 items-center gap-3 py-3 px-3.5 border border-solid border-border rounded-lg bg-muted [&_>_span]:grid [&_>_span]:gap-[3px] [&_>_span]:min-w-0 [&_small]:text-muted-foreground [&>svg]:shrink-0 [overflow-wrap:anywhere] [&.updated_svg]:text-success [&.failed_svg]:text-warning [&.missing\\_profile_svg]:text-warning",
+  "runner-update-body": "grid min-w-0 grid-cols-1 gap-4",
 } as const;

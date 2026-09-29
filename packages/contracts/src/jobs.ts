@@ -21,6 +21,7 @@ export const jobEnvelopeSchema = z.object({
     "jar-import",
     "analytics-export",
     "ddt-import",
+    "ddt-debug-import",
   ]),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 });

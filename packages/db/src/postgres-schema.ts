@@ -9,6 +9,7 @@ import {
   pgTable,
   text,
   uniqueIndex,
+  unique,
 } from "drizzle-orm/pg-core";
 
 export const pgProjects = pgTable(
@@ -1611,6 +1612,7 @@ export const pgDdtImportJobs = pgTable(
     }).notNull(),
     conflictStrategy: text("conflict_strategy", { enum: ["overwrite", "skip", "error"] }),
     uploadsJson: text("uploads_json").notNull().default("[]"),
+    debugOwnerId: text("debug_owner_id"),
     progressPercent: integer("progress_percent").notNull().default(0),
     totalFiles: integer("total_files").notNull().default(0),
     validFiles: integer("valid_files").notNull().default(0),
@@ -1947,7 +1949,75 @@ export const pgRunBatchLogLocations = pgTable(
   (table) => [index("run_batch_log_locations_node_idx").on(table.nodeId, table.batchId)],
 );
 
+export const pgDdtDebugWorkspaces = pgTable(
+  "ddt_debug_workspaces",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => pgProjects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => pgProjectVersions.id, { onDelete: "cascade" }),
+    testStageId: text("test_stage_id")
+      .notNull()
+      .references(() => pgTestStages.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => pgUsers.id, { onDelete: "cascade" }),
+    accessKey: text("access_key").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.projectId, table.projectVersionId, table.testStageId, table.ownerUserId],
+    }),
+  ],
+);
+export const pgDdtDebugCases = pgTable(
+  "ddt_debug_cases",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => pgProjects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => pgProjectVersions.id, { onDelete: "cascade" }),
+    testStageId: text("test_stage_id")
+      .notNull()
+      .references(() => pgTestStages.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => pgUsers.id, { onDelete: "cascade" }),
+    caseId: text("case_id").notNull(),
+    caseIdNormalized: text("case_id_normalized").notNull(),
+    dataJson: text("data_json").notNull(),
+    sourceName: text("source_name").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    unique().on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.ownerUserId,
+      table.caseIdNormalized,
+    ),
+  ],
+);
+export const pgDdtDebugImportRows = pgTable("ddt_debug_import_rows", {
+  rowKey: text("row_key").primaryKey(),
+  outcome: text("outcome").notNull(),
+  jobId: text("job_id")
+    .notNull()
+    .references(() => pgDdtImportJobs.id, { onDelete: "cascade" }),
+});
+
 export const postgresSchema = {
+  ddtDebugWorkspaces: pgDdtDebugWorkspaces,
+  ddtDebugCases: pgDdtDebugCases,
+  ddtDebugImportRows: pgDdtDebugImportRows,
   platformNodes: pgPlatformNodes,
   runBatchLogLocations: pgRunBatchLogLocations,
   projects: pgProjects,

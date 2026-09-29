@@ -47,6 +47,7 @@ import { buildAttemptCompletionEvents, RunBatchSchedulingService } from "@autofo
 import {
   createLocalClock,
   SqliteDdtRepository,
+  SqliteDdtDebugRepository,
   SqliteReadModelSnapshotRepository,
   SqlitePlatformOperationsRepository,
   createAttemptLogStore,
@@ -65,6 +66,7 @@ import {
 import {
   createPostgresDatabase,
   PostgresDdtRepository,
+  PostgresDdtDebugRepository,
   PostgresReadModelSnapshotRepository,
   PostgresPlatformOperationsRepository,
   createPostgresClock,
@@ -454,7 +456,8 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
         discovery: new TestNgJarDiscovery(configuration.imports),
       }).jobHandler()(job, signal);
     }
-    case "ddt-import": {
+    case "ddt-import":
+    case "ddt-debug-import": {
       const { parseDdtUpload } = await import("@autoforge/ddt-import");
       const repository =
         configuration.mode === "lite"
@@ -468,6 +471,9 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
         ids,
         snapshots,
         currentDdtImportLimits,
+        configuration.mode === "lite"
+          ? new SqliteDdtDebugRepository(sqliteHandle())
+          : new PostgresDdtDebugRepository(postgresHandle()),
       ).jobHandler()(job, signal);
     }
     default:
