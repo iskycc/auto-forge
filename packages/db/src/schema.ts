@@ -1991,7 +1991,77 @@ export const ddtDebugImportRows = sqliteTable("ddt_debug_import_rows", {
     .references(() => ddtImportJobs.id, { onDelete: "cascade" }),
 });
 
+export const ddtChangeRequests = sqliteTable(
+  "ddt_change_requests",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => projectVersions.id, { onDelete: "cascade" }),
+    testStageId: text("test_stage_id")
+      .notNull()
+      .references(() => testStages.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    status: text("status", { enum: ["pending", "approved", "rejected", "withdrawn"] }).notNull(),
+    caseCount: integer("case_count").notNull(),
+    createdAt: text("created_at").notNull(),
+    reviewedAt: text("reviewed_at"),
+    reviewerId: text("reviewer_id").references(() => users.id),
+    reviewComment: text("review_comment").notNull().default(""),
+  },
+  (t) => [
+    index("ddt_change_requests_scope_idx").on(
+      t.projectId,
+      t.projectVersionId,
+      t.testStageId,
+      t.createdAt,
+      t.id,
+    ),
+    index("ddt_change_requests_owner_idx").on(
+      t.projectId,
+      t.projectVersionId,
+      t.testStageId,
+      t.ownerUserId,
+      t.createdAt,
+      t.id,
+    ),
+    index("ddt_change_requests_status_idx").on(
+      t.projectId,
+      t.projectVersionId,
+      t.testStageId,
+      t.status,
+      t.createdAt,
+      t.id,
+    ),
+  ],
+);
+export const ddtChangeRequestItems = sqliteTable(
+  "ddt_change_request_items",
+  {
+    requestId: text("request_id")
+      .notNull()
+      .references(() => ddtChangeRequests.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    caseId: text("case_id").notNull(),
+    baseId: text("base_id"),
+    baseRevision: integer("base_revision"),
+    personalRevision: integer("personal_revision").notNull(),
+    beforeJson: text("before_json").notNull(),
+    afterJson: text("after_json").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.requestId, t.position] })],
+);
+
 export const schema = {
+  ddtChangeRequests,
+  ddtChangeRequestItems,
   ddtDebugWorkspaces,
   ddtDebugCases,
   ddtDebugImportRows,

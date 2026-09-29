@@ -26,3 +26,5 @@ export * from "./sqlite-read-model-snapshots";
 export { isDatabaseLockContentionError } from "./lock-contention";
 
 export * from "./sqlite-ddt-debug";
+
+export { SqliteDdtChangeRequestRepository } from "./sqlite-ddt-change-requests";

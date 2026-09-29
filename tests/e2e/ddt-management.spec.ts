@@ -251,13 +251,22 @@ test("DDT template dialog keeps focus and protects unsaved edits", async ({ page
     .toBe(true);
   await page.keyboard.press("Escape");
   await expect(dialog.getByText("放弃未保存的修改？", { exact: true })).toBeVisible();
-  const continueBounds = (await dialog
+  const guardActions = dialog
     .getByRole("button", { name: "继续编辑", exact: true })
-    .boundingBox())!;
-  const discardBounds = (await dialog
-    .getByRole("button", { name: "放弃修改并关闭", exact: true })
-    .boundingBox())!;
-  expect(discardBounds.x - continueBounds.x - continueBounds.width).toBeGreaterThanOrEqual(8);
+    .or(dialog.getByRole("button", { name: "放弃修改并关闭", exact: true }));
+  // Measure both controls in one frame and allow the dialog transition to settle.
+  await expect
+    .poll(() =>
+      guardActions.evaluateAll((buttons) => {
+        const continueButton = buttons.find((button) => button.textContent === "继续编辑");
+        const discardButton = buttons.find((button) => button.textContent === "放弃修改并关闭");
+        if (!continueButton || !discardButton) return -1;
+        const continueBounds = continueButton.getBoundingClientRect();
+        const discardBounds = discardButton.getBoundingClientRect();
+        return discardBounds.left - continueBounds.right;
+      }),
+    )
+    .toBeGreaterThanOrEqual(8);
   await dialog.getByRole("button", { name: "继续编辑", exact: true }).click();
   await expect(dialog.getByLabel("模板名称", { exact: true })).toHaveValue("支付字段草稿");
   for (const width of [1024, 1536]) {

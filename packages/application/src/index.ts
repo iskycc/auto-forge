@@ -51,3 +51,4 @@ export * from "./runtime-notifications";
 export * from "./search-ddt-values";
 export * from "./inherit-ddt-cases";
 export * from "./initialize-project-version";
+export * from "./ddt-change-requests";

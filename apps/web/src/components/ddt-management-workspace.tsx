@@ -1,4 +1,5 @@
 "use client";
+import { DdtChangeReview } from "./ddt-change-review";
 import { Radio, Upload as AntUpload } from "antd";
 import { Progress } from "@/components/ui/progress";
 
@@ -173,7 +174,8 @@ type DeletedCase = {
   sourceName: string;
   deletedAt: string;
 };
-type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle" | "api" | "search";
+type WorkspaceTab =
+  "overview" | "cases" | "imports" | "templates" | "recycle" | "api" | "search" | "reviews";
 
 function workspaceTab(value: string | null): WorkspaceTab {
   return value === "cases" ||
@@ -181,7 +183,8 @@ function workspaceTab(value: string | null): WorkspaceTab {
     value === "templates" ||
     value === "recycle" ||
     value === "api" ||
-    value === "search"
+    value === "search" ||
+    value === "reviews"
     ? value
     : "overview";
 }
@@ -239,7 +242,7 @@ export function DdtManagementWorkspace({
   const requestedTab = workspaceTab(searchParameters.get("ddtView"));
   const [tab, setActiveTab] = useState<WorkspaceTab>(requestedTab);
   const isApiTab = tab === "api";
-  const isIndependentTab = isApiTab || tab === "search";
+  const isIndependentTab = isApiTab || tab === "search" || tab === "reviews";
   const setTab = (value: WorkspaceTab) => {
     setActiveTab(value);
     const url = new URL(window.location.href);
@@ -669,6 +672,7 @@ export function DdtManagementWorkspace({
             ["cases", FileSpreadsheet, "用例"],
             ["search", Search, "高级检索"],
             ["imports", Layers3, "导入任务"],
+            ["reviews", ListPlus, "变更审核"],
             ["templates", Boxes, "字段模板"],
             ["recycle", ArchiveRestore, "回收站"],
             ["api", Globe2, "开放 API"],
@@ -692,7 +696,13 @@ export function DdtManagementWorkspace({
         }}
       />
 
-      <div className={cn("ddt-workspace-bar", ddtManagementWorkspaceStyles["ddt-workspace-bar"])}>
+      <div
+        className={cn(
+          "ddt-workspace-bar",
+          ddtManagementWorkspaceStyles["ddt-workspace-bar"],
+          tab === "reviews" && "!hidden",
+        )}
+      >
         <div className={tab === "cases" ? "hidden 2xl:block" : undefined}>
           <strong>DDT 工作台</strong>
           <span>CaseID 在当前项目版本与测试阶段内唯一</span>
@@ -770,6 +780,16 @@ export function DdtManagementWorkspace({
       </div>
 
       <TabContent activeKey={tab}>
+        {tab === "reviews" ? (
+          <Card className="min-w-0 p-4">
+            <DdtChangeReview
+              key={JSON.stringify(scope)}
+              scope={scope}
+              canReview={canManage}
+              syncFilters
+            />
+          </Card>
+        ) : null}
         {error ? (
           <Notice
             tone="error"

@@ -1,5 +1,6 @@
 "use client";
 
+import { DdtDebugChangeActions } from "./ddt-change-review";
 import { Divider, Empty, Flex, Switch, Tag, Typography } from "antd";
 import { Bug, Play, Terminal } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
@@ -208,7 +209,7 @@ function DebugPanel({
         <Card className="grid min-w-0 gap-2 p-4 lg:col-span-2" aria-label="个人 DDT API">
           <Flex align="center" justify="space-between" gap="small" wrap>
             <Typography.Text strong>个人 DDT API</Typography.Text>
-            <Tag color="blue">个人数据 · 只读</Tag>
+            <DdtDebugChangeActions scope={scope} />
           </Flex>
           <Typography.Paragraph
             className="!mb-0 break-all text-xs [&_.ant-typography-copy]:!h-8 [&_.ant-typography-copy]:!w-8"

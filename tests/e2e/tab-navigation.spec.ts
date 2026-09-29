@@ -155,7 +155,16 @@ test("case tabs keep their navigation in place across all DDT views", async ({ p
     await expect.poll(() => position(caseTabs)).toEqual(initialPosition);
     const ddtPosition = await position(ddtTabs);
 
-    for (const tab of ["用例", "高级检索", "导入任务", "字段模板", "回收站", "开放 API", "概览"]) {
+    for (const tab of [
+      "用例",
+      "高级检索",
+      "导入任务",
+      "变更审核",
+      "字段模板",
+      "回收站",
+      "开放 API",
+      "概览",
+    ]) {
       await ddtTabs.getByRole("tab", { name: tab, exact: true }).click();
       await expect(ddtTabs.getByRole("tab", { name: tab, exact: true })).toHaveAttribute(
         "aria-selected",

@@ -298,6 +298,8 @@ run_adapter_tests() {
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
       packages/db/test/case-debug.integration.test.ts \
+      packages/db/test/ddt-change-requests.integration.test.ts \
+      packages/db/test/ddt-change-migrations.integration.test.ts \
       packages/db/test/postgres-transaction.integration.test.ts \
       packages/db/test/api-token-contention.integration.test.ts \
       packages/db/test/ddt-value-search.integration.test.ts \

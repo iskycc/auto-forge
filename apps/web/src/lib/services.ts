@@ -26,6 +26,8 @@ import {
   DdtCaseService,
   DdtImportService,
   DdtDebugService,
+  DdtChangeRequestService,
+  type DdtChangeRequestRepository,
   type DdtDebugRepository,
   DashboardSnapshotService,
   ReadModelSnapshotService,
@@ -81,6 +83,7 @@ import {
   SqliteCaseSuiteActivityRepository,
   SqliteDdtRepository,
   SqliteDdtDebugRepository,
+  SqliteDdtChangeRequestRepository,
   SqliteDashboardSnapshotRepository,
   SqliteReadModelSnapshotRepository,
   SqliteExecutionControlRepository,
@@ -150,6 +153,7 @@ async function createPlatformServices() {
   let suiteActivityRepository: CaseSuiteActivityRepository;
   let ddtRepository: DdtRepository;
   let ddtDebugRepository: DdtDebugRepository;
+  let ddtChangeRepository: DdtChangeRequestRepository;
   let dashboardSnapshotRepository: DashboardSnapshotRepository;
   let readModelRepository: ReadModelSnapshotRepository;
   let failureAnalysisRepository: FailureAnalysisRepository;
@@ -193,6 +197,7 @@ async function createPlatformServices() {
     suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
     ddtDebugRepository = new SqliteDdtDebugRepository(database);
+    ddtChangeRepository = new SqliteDdtChangeRequestRepository(database);
     dashboardSnapshotRepository = new SqliteDashboardSnapshotRepository(database);
     readModelRepository = new SqliteReadModelSnapshotRepository(database);
     runners = new SqliteRunnerRepository(database);
@@ -236,6 +241,7 @@ async function createPlatformServices() {
         PostgresCaseSuiteActivityRepository,
         PostgresDdtRepository,
         PostgresDdtDebugRepository,
+        PostgresDdtChangeRequestRepository,
         PostgresDashboardSnapshotRepository,
         PostgresReadModelSnapshotRepository,
         PostgresIdentityAccessRepository,
@@ -388,6 +394,7 @@ async function createPlatformServices() {
     suiteActivityRepository = new PostgresCaseSuiteActivityRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
     ddtDebugRepository = new PostgresDdtDebugRepository(database);
+    ddtChangeRepository = new PostgresDdtChangeRequestRepository(database);
     dashboardSnapshotRepository = new PostgresDashboardSnapshotRepository(database);
     readModelRepository = new PostgresReadModelSnapshotRepository(database);
     runners = new PostgresRunnerRepository(database);
@@ -474,6 +481,13 @@ async function createPlatformServices() {
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
   const ddtCases = new DdtCaseService(ddtRepository, clock, ids, catalog);
   const ddtDebug = new DdtDebugService(ddtDebugRepository, ddtRepository, clock, ids);
+  const ddtChanges = new DdtChangeRequestService(
+    ddtChangeRepository,
+    ddtDebugRepository,
+    ddtRepository,
+    clock,
+    ids,
+  );
   const ddtImports = new DdtImportService(
     ddtRepository,
     objectStore,
@@ -890,6 +904,7 @@ async function createPlatformServices() {
     ddtCases,
     ddtImports,
     ddtDebug,
+    ddtChanges,
     projectStructures,
     storageInventory,
     readStorageInventory: createStorageInventoryReader({

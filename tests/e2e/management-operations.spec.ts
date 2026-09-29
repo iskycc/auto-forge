@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { expectUiIntegrity } from "./support/ui-guard";
 import {
   createInitializationProject,
@@ -213,6 +215,7 @@ test("service account lifecycle immediately narrows token access and produces ex
     expect(scopesBounds!.width).toBeGreaterThan(formBounds!.width * 0.9);
     const footer = tokenForm.locator(".action-dialog-footer");
     await expect(footer.getByRole("button", { name: "签发", exact: true })).toBeVisible();
+    await captureManagementDialog(page, `service-token-${width}`);
   }
   await tokenForm.getByLabel("令牌名称").fill("e2e-token");
   await tokenForm
@@ -582,12 +585,20 @@ test("webhook dialog footers submit create and edit forms and preserve deletion 
   await create
     .getByLabel("目标地址", { exact: true })
     .fill("http://127.0.0.1:3100/webhook-layout-fixture");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await captureManagementDialog(page, `webhook-filled-create-${width}`);
+  }
   await create.getByRole("button", { name: "创建端点", exact: true }).click();
   const card = page.locator(".webhook-endpoint-card", { hasText: name });
   await expect(card).toBeVisible();
   await card.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "编辑 Webhook", exact: true });
   await editor.getByLabel("说明", { exact: true }).fill("通过弹窗底栏保存的通知配置");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await captureManagementDialog(page, `webhook-filled-edit-${width}`);
+  }
   await editor.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(card).toContainText("通过弹窗底栏保存的通知配置");
   await card.getByRole("button", { name: "删除", exact: true }).click();
@@ -812,3 +823,11 @@ test("management drafts require confirmation and candidate search preserves proj
     await page.screenshot({ path: testInfo.outputPath(`member-candidates-${viewport.width}.png`) });
   }
 });
+
+async function captureManagementDialog(page: Page, name: string) {
+  await expectUiIntegrity(page);
+  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  await page.screenshot({ path: resolve(directory, `${name}.png`) });
+}

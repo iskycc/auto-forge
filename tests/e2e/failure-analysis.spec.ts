@@ -213,6 +213,21 @@ test("long case names keep single, bulk and completed analysis dialogs within th
   const bulk = page.getByRole("dialog", { name: "批量分析 2 个用例" });
   await expect(bulk.getByRole("button", { name: "弹窗日志", exact: true })).toHaveCount(2);
   await expectLongAnalysisDialog(page, bulk, "bulk");
+  await bulk.getByRole("button", { name: "弹窗日志", exact: true }).first().click();
+  const logDialog = page.locator(".log-viewer-dialog");
+  await expect(logDialog).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    const header = logDialog.locator(".log-viewer-titlebar");
+    expect(
+      await header.evaluate((element) => element.scrollWidth - element.clientWidth),
+    ).toBeLessThanOrEqual(1);
+    await expect(logDialog.getByRole("button", { name: "关闭日志终端" })).toBeInViewport();
+    await expectUiIntegrity(page);
+    await captureUi(page, `analysis-long-log-title-${width}`);
+  }
+  await logDialog.getByRole("button", { name: "关闭日志终端" }).click();
+  await expect(logDialog).toBeHidden();
   await installClipboardCapture(page);
   await bulk.getByRole("button", { name: "复制用例信息" }).click();
   const bulkLinks = await expectCopiedAnalysisLogs(page, fixture.failedNames.slice(1, 3));
