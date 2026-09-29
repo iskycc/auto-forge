@@ -4,6 +4,8 @@
 
 The suite is divided by failure domain so each scenario can run alone with an isolated platform data directory:
 
+CI runs the UI interaction suite in three test-level Playwright shards, each with its own data directory and one browser worker. The union retains every original UI/tab-navigation test; the primary-route traversal remains a separate scenario. UI shards build the real bundled Agent/Adapter resources before starting Web because Runner update controls require a validated resource manifest. SSH probe/update responses in the layout scenario remain deterministic fixtures; actual installation is covered separately.
+
 | Owner                     | Entrypoint                                               | Scope                                                                                                                                                                            |
 | ------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `functional-matrix`       | `node scripts/quality/validate-e2e-matrix.mjs`           | Matrix completeness and evidence integrity                                                                                                                                       |
