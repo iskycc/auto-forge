@@ -116,7 +116,22 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
     workflow,
     /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill/,
   );
-  assert.match(workflow, /scenario: ui\n\s+specs: .*ui-layout.*tab-navigation/);
+  for (let shard = 1; shard <= 3; shard += 1) {
+    assert.match(
+      workflow,
+      new RegExp(
+        `scenario: ui-${shard}\\n\\s+specs: .*ui-layout.*tab-navigation\\n\\s+grep_invert: primary product and administration routes\\n\\s+shard: ${shard}/3\\n\\s+agent_resources: true`,
+      ),
+    );
+  }
+  assert.match(
+    workflow,
+    /scenario_filters\+=\(--fully-parallel --shard "\$\{E2E_SCENARIO_SHARD\}"\)/,
+  );
+  assert.match(
+    workflow,
+    /Build verified Agent resources for Runner update controls[\s\S]*?run: pnpm build:agent-resources/,
+  );
   assert.doesNotMatch(workflow, /scenario: operations\n\s+specs: .*ui-layout/);
   assert.match(workflow, /scenario: ui-pages\n\s+specs: .*ui-layout/);
   assert.match(workflow, /grep_invert: primary product and administration routes/);
