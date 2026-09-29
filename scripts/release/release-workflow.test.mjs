@@ -120,7 +120,7 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
     assert.match(
       workflow,
       new RegExp(
-        `scenario: ui-${shard}\\n\\s+specs: .*ui-layout.*tab-navigation\\n\\s+grep_invert: primary product and administration routes\\n\\s+shard: ${shard}/3\\n\\s+agent_resources: true`,
+        `scenario: ui-${shard}\\n\\s+specs: .*ui-layout.*tab-navigation[^\\n]*\\n\\s+grep_invert: primary product and administration routes\\n\\s+shard: ${shard}/3\\n\\s+agent_resources: true`,
       ),
     );
   }
