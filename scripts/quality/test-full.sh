@@ -302,6 +302,7 @@ run_adapter_tests() {
       packages/db/test/ddt-change-migrations.integration.test.ts \
       packages/db/test/postgres-transaction.integration.test.ts \
       packages/db/test/api-token-contention.integration.test.ts \
+      packages/db/test/authorization-scope.integration.test.ts \
       packages/db/test/ddt-value-search.integration.test.ts \
       packages/db/test/ddt-inheritance.integration.test.ts \
       packages/db/test/postgres-failure-analysis.integration.test.ts \
@@ -330,6 +331,7 @@ run_distributed_contract_tests() {
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
       packages/db/test/attempt-log-store.integration.test.ts \
+      packages/db/test/authorization-scope.integration.test.ts \
       packages/db/test/platform-node-transport.test.ts \
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \

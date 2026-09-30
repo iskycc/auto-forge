@@ -1270,6 +1270,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const identity = new PostgresIdentityAccessRepository(handle);
     const operations = new PostgresPlatformOperationsRepository(handle);
     const roleId = randomUUID();
+    const recoveryRoleId = randomUUID();
     const userId = randomUUID();
     const ownerId = randomUUID();
     const projectId = randomUUID();
@@ -1327,6 +1328,23 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         ],
       });
 
+      await expect(
+        identity.updateRole({ id: roleId, active: false, updatedAt: now }),
+      ).rejects.toMatchObject({ code: "LAST_ADMIN_REQUIRED" });
+      expect((await identity.resolveSession(tokenHash, now))?.systemPermissions).toContain(
+        "user.manage",
+      );
+      // Deactivation is permitted only after another active user can recover access.
+      await identity.createRole({
+        id: recoveryRoleId,
+        key: `recovery-${recoveryRoleId}`,
+        name: "Remaining Recovery Admin",
+        description: "Retains administrative recovery after role deactivation",
+        scope: "system",
+        permissions: ["user.manage", "role.manage"],
+        createdAt: now,
+      });
+      await identity.assignSystemRole(ownerId, recoveryRoleId, ownerId, now);
       const deactivated = await identity.updateRole({ id: roleId, active: false, updatedAt: now });
       expect(deactivated.active).toBe(false);
       expect((await identity.resolveSession(tokenHash, now))?.systemPermissions).not.toContain(
@@ -1407,8 +1425,11 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       ]);
       await handle.pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
       await handle.pool.query("DELETE FROM user_sessions WHERE id = $1", [sessionId]);
-      await handle.pool.query("DELETE FROM user_system_roles WHERE role_id = $1", [roleId]);
-      await handle.pool.query("DELETE FROM roles WHERE id = $1", [roleId]);
+      await handle.pool.query("DELETE FROM user_system_roles WHERE role_id IN ($1, $2)", [
+        roleId,
+        recoveryRoleId,
+      ]);
+      await handle.pool.query("DELETE FROM roles WHERE id IN ($1, $2)", [roleId, recoveryRoleId]);
       await handle.pool.query("DELETE FROM users WHERE id IN ($1, $2)", [userId, ownerId]);
       await handle.close();
     }
