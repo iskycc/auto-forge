@@ -1,3 +1,4 @@
+import { authorizeReadModelQuery } from "@/lib/read-model-authorization";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { readDirectoryBranch } from "@autoforge/application";
@@ -30,13 +31,7 @@ export async function GET(
       !snapshot.query.tree
     )
       throw new DomainError("READ_MODEL_NOT_FOUND", "目录已过期，请刷新。");
-    services.identityAccess.authorize(
-      identity,
-      snapshot.query.kind === "case_directory" ? "case.read" : "case_suite.read",
-      snapshot.query.projectId,
-    );
-    if (snapshot.query.kind === "case_directory" && snapshot.query.filter?.missingSuiteId)
-      services.identityAccess.authorize(identity, "case_suite.read", snapshot.query.projectId);
+    authorizeReadModelQuery(identity, snapshot.query);
     const branch = await readDirectoryBranch({
       kind: snapshot.query.kind,
       ordinal: input.ordinal,

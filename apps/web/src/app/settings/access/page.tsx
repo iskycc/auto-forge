@@ -33,15 +33,15 @@ export default async function AccessSettingsPage({
     requested.source === "local" || requested.source === "ldap" ? requested.source : undefined;
   const cursor = requested.cursor?.trim().slice(0, 128) || undefined;
   const capabilities = {
-    settingsRead: hasPermissionInAnyScope(identity, "settings.read"),
-    userRead: hasPermissionInAnyScope(identity, "user.read"),
-    userManage: hasPermissionInAnyScope(identity, "user.manage"),
-    roleRead: hasPermissionInAnyScope(identity, "role.read"),
-    roleManage: hasPermissionInAnyScope(identity, "role.manage"),
+    settingsRead: hasPermission(identity, "settings.read"),
+    userRead: hasPermission(identity, "user.read"),
+    userManage: hasPermission(identity, "user.manage"),
+    roleRead: hasPermission(identity, "role.read"),
+    roleManage: hasPermission(identity, "role.manage"),
     systemRoleAssign: hasPermission(identity, "role.manage"),
     projectRead: hasPermissionInAnyScope(identity, "project.read"),
-    ldapRead: hasPermissionInAnyScope(identity, "ldap.read"),
-    ldapManage: hasPermissionInAnyScope(identity, "ldap.manage"),
+    ldapRead: hasPermission(identity, "ldap.read"),
+    ldapManage: hasPermission(identity, "ldap.manage"),
   };
   const availableSections = organizationSections(identity);
   const requestedSection = requested.section as AccessSection | undefined;

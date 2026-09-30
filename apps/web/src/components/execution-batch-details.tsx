@@ -51,6 +51,7 @@ export function ExecutionBatchDetails({
   rerunConfiguration,
   canCancelRuns,
   canCreateRuns,
+  canRetryRuns,
   canReadLogs,
   canReadAttemptEvents,
   canReadArtifacts,
@@ -67,6 +68,7 @@ export function ExecutionBatchDetails({
   };
   canCancelRuns: boolean;
   canCreateRuns: boolean;
+  canRetryRuns: boolean;
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
@@ -95,7 +97,7 @@ export function ExecutionBatchDetails({
     batch.status === "queued" && Date.parse(batch.scheduledFor) > Date.parse(batch.updatedAt);
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
   const canRerunFinalFailures =
-    canCreateRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
+    canRetryRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
 
   const refreshBatch = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
@@ -367,7 +369,7 @@ export function ExecutionBatchDetails({
         batch={accessToken ? { ...batch, accessToken } : batch}
         canCancelRuns={canCancelRuns}
         canReadLogs={canReadLogs}
-        canCreateRuns={canCreateRuns}
+        canRetryRuns={canRetryRuns}
         canReadAttemptEvents={canReadAttemptEvents}
         canReadArtifacts={canReadArtifacts}
         artifactsEnabled={artifactsEnabled}

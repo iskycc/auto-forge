@@ -6,7 +6,7 @@ import type {
   Project,
   ProjectStructure,
 } from "@autoforge/domain";
-import { projectIdsForPermission } from "@autoforge/domain";
+import { projectIdsForPermission, projectIdsForContext } from "@autoforge/domain";
 import { cookies } from "next/headers";
 
 import { fallbackProjectId } from "./project-selection";
@@ -20,34 +20,8 @@ export type SelectedProjectHierarchy = {
   testStageId?: string;
 };
 
-const SYSTEM_PROJECT_CONTEXT_PERMISSIONS: readonly Permission[] = [
-  "case.read",
-  "case.manage",
-  "case_source.read",
-  "case_source.manage",
-  "case_suite.read",
-  "case_suite.manage",
-  "run.read",
-  "run.create",
-  "run.cancel",
-  "run.retry",
-  "log.read",
-  "artifact.read",
-  "project.read",
-  "project.manage",
-  "audit.read",
-  "audit.export",
-];
-
 export function selectableProjectIds(identity: AuthenticatedIdentity): string[] | undefined {
-  if (
-    SYSTEM_PROJECT_CONTEXT_PERMISSIONS.some((permission) =>
-      identity.systemPermissions.includes(permission),
-    )
-  ) {
-    return undefined;
-  }
-  return Object.keys(identity.projectPermissions);
+  return projectIdsForContext(identity);
 }
 
 export async function selectedProjectId(
@@ -62,7 +36,9 @@ export async function selectedProjectId(
     ? projects.filter((project) => permittedProjectIds.includes(project.id))
     : projects;
   const requestedProjectId = (await cookies()).get(SELECTED_PROJECT_COOKIE_NAME)?.value;
-  return accessibleProjects.some((project) => project.id === requestedProjectId)
+  // Keep the page and top bar on the same selected project. The page must show
+  // its permission boundary instead of silently loading another project's data.
+  return projects.some((project) => project.id === requestedProjectId)
     ? requestedProjectId
     : fallbackProjectId(accessibleProjects);
 }

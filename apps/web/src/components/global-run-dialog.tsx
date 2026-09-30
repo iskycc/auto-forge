@@ -97,12 +97,14 @@ export function OpenRunDialogButton({
 
 export function GlobalRunDialog({
   enabled,
+  showTrigger = enabled,
   userId,
   projectId,
   projectVersionId,
   testStageId,
 }: {
   enabled: boolean;
+  showTrigger?: boolean;
   userId: string;
   projectId?: string;
   projectVersionId?: string;
@@ -360,12 +362,14 @@ export function GlobalRunDialog({
   if (!enabled) return null;
   return (
     <>
-      <OpenRunDialogButton
-        className={cn("global-run-trigger", globalRunDialogStyles["global-run-trigger"])}
-        variant="primary"
-      >
-        开始执行
-      </OpenRunDialogButton>
+      {showTrigger ? (
+        <OpenRunDialogButton
+          className={cn("global-run-trigger", globalRunDialogStyles["global-run-trigger"])}
+          variant="primary"
+        >
+          开始执行
+        </OpenRunDialogButton>
+      ) : null}
       <Dialog
         open={open}
         title="开始执行"
@@ -1017,25 +1021,32 @@ async function loadRunOptions(
   projectVersionId?: string,
   testStageId?: string,
 ): Promise<RunOptions> {
+  const requestedCase = requestedCaseId
+    ? await requestJson<CaseDefinitionWithMethods>(
+        `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
+      )
+    : undefined;
+  projectId = requestedCase?.projectId ?? projectId;
+  projectVersionId = requestedCase?.projectVersionId ?? projectVersionId;
+  testStageId = requestedCase?.testStageId ?? testStageId;
   const contextQuery = new URLSearchParams();
   if (projectId) contextQuery.set("projectId", projectId);
   if (projectVersionId) contextQuery.set("projectVersionId", projectVersionId);
   if (testStageId) contextQuery.set("testStageId", testStageId);
   const query = contextQuery.size > 0 ? `&${contextQuery.toString()}` : "";
-  const [suitePage, casePage, requestedCase, runnerPage, groupPage] = await Promise.all([
+  const [suitePage, casePage, runnerPage, groupPage] = await Promise.all([
     projectVersionId
       ? requestJson<{ items: CaseSuite[] }>(`/api/v1/case-suites?limit=200${query}`)
       : Promise.resolve({ items: [] }),
     requestJson<{ items: CaseDefinitionWithMethods[] }>(
       `/api/v1/case-definitions?limit=100${query}`,
     ),
-    requestedCaseId
-      ? requestJson<CaseDefinitionWithMethods>(
-          `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
-        )
-      : Promise.resolve(undefined),
-    requestJson<{ items: Runner[] }>("/api/v1/runners?limit=500"),
-    requestJson<{ items: RunnerGroup[] }>("/api/v1/runner-groups"),
+    requestJson<{ items: Runner[] }>(
+      `/api/v1/runners?limit=500${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
+    ),
+    requestJson<{ items: RunnerGroup[] }>(
+      `/api/v1/runner-groups${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`,
+    ),
   ]);
   const cases = requestedCase
     ? [requestedCase, ...casePage.items.filter((candidate) => candidate.id !== requestedCase.id)]

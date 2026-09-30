@@ -154,10 +154,16 @@ function DebugPanel({
     if (!active) return;
     const controller = new AbortController();
     void Promise.all([
-      debugRequest<{ items: Runner[] }>("/api/v1/runners?limit=500", { signal: controller.signal }),
-      debugRequest<{ items: RunnerGroup[] }>("/api/v1/runner-groups", {
-        signal: controller.signal,
-      }),
+      debugRequest<{ items: Runner[] }>(
+        `/api/v1/runners?limit=500&projectId=${encodeURIComponent(scope.projectId)}`,
+        { signal: controller.signal },
+      ),
+      debugRequest<{ items: RunnerGroup[] }>(
+        `/api/v1/runner-groups?projectId=${encodeURIComponent(scope.projectId)}`,
+        {
+          signal: controller.signal,
+        },
+      ),
     ])
       .then(([runnerPage, groupPage]) => {
         setRunners(runnerPage.items);
@@ -168,7 +174,7 @@ function DebugPanel({
           setError(problem instanceof Error ? problem.message : "执行资源加载失败。");
       });
     return () => controller.abort();
-  }, [active, resourcesRevision]);
+  }, [active, resourcesRevision, scope.projectId]);
 
   async function execute() {
     setError("");

@@ -175,6 +175,7 @@ export function AppShell({
   userName,
   userId,
   permissions = [],
+  canRunAnyProject = false,
   forcePasswordChange = false,
   projects = [],
   selectedProjectId,
@@ -191,6 +192,7 @@ export function AppShell({
   userName?: string;
   userId?: string;
   permissions?: Permission[] | undefined;
+  canRunAnyProject?: boolean;
   forcePasswordChange?: boolean;
   projects?: Array<{ id: string; name: string }>;
   selectedProjectId?: string | undefined;
@@ -337,7 +339,8 @@ export function AppShell({
             {!forcePasswordChange ? (
               <GlobalRunDialog
                 userId={userId ?? ""}
-                enabled={granted.has("run.create")}
+                enabled={canRunAnyProject}
+                showTrigger={granted.has("run.create")}
                 {...(selectedProjectId ? { projectId: selectedProjectId } : {})}
                 {...(selectedProjectVersionId
                   ? { projectVersionId: selectedProjectVersionId }

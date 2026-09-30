@@ -1,6 +1,6 @@
+import { hasPermissionInAnyScope } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { hasPermission } from "@autoforge/domain";
 
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
@@ -22,7 +22,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const projectIds = services.identityAccess.projectScope(identity, "case.read");
     const page = await services.caseDefinitions.listExecutionHistory(caseDefinitionId, projectIds, {
       limit: query.limit,
-      includeRunnerNames: hasPermission(identity, "runner.read"),
+      includeRunnerNames: hasPermissionInAnyScope(identity, "runner.read"),
       ...(query.cursor ? { cursor: query.cursor } : {}),
     });
     return NextResponse.json(page, {

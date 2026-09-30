@@ -1001,3 +1001,220 @@ async function browserStatus(
     { requestPath: path, requestMethod: method, requestBody: body },
   );
 }
+
+test("all protected HTTP entrypoints reject anonymous callers", async ({
+  playwright,
+  baseURL,
+}, testInfo) => {
+  const anonymous = await playwright.request.newContext({ baseURL: baseURL! });
+  const { authorizationRouteInventory, anonymousRequestPath, anonymousRequestBody } =
+    await import("./support/authorization-route-inventory");
+  const results: Array<{ route: string; status: number; code?: string }> = [];
+  try {
+    for (const endpoint of authorizationRouteInventory()) {
+      const response = await anonymous.fetch(anonymousRequestPath(endpoint.path), {
+        method: endpoint.method,
+        headers: { origin: baseURL! },
+        ...(endpoint.method !== "GET" ? { data: anonymousRequestBody(endpoint.path) } : {}),
+      });
+      const body = await response.json();
+      results.push({
+        route: `${endpoint.method} ${endpoint.path}`,
+        status: response.status(),
+        code: body.error?.code,
+      });
+      // Runner/peer credentials have independent rejection codes, but never return business data.
+      if (endpoint.protocol)
+        expect
+          .soft([401, 403], `${endpoint.method} ${endpoint.path}: ${JSON.stringify(body)}`)
+          .toContain(response.status());
+      else
+        expect
+          .soft(response.status(), `${endpoint.method} ${endpoint.path}: ${JSON.stringify(body)}`)
+          .toBe(401);
+    }
+  } finally {
+    await testInfo.attach("authorization-route-results", {
+      body: JSON.stringify(results, null, 2),
+      contentType: "application/json",
+    });
+    await anonymous.dispose();
+  }
+});
+
+test("non-default project operator can execute while another project's viewer cannot", async ({
+  browser,
+  page,
+}) => {
+  const { createInitializationProject, seedInitializationSource } =
+    await import("./support/version-initialization");
+  const { selectProjectContext } = await import("./support/session");
+  const { configureTaskExecution, startTaskFromTopbar } = await import("./support/task-execution");
+  const { freshRunnerBootstrapToken } = await import("./support/runner-bootstrap");
+  await ensureAdministrator(page);
+  const projectA = await createInitializationProject(page);
+  const projectB = await createInitializationProject(page);
+  const scope = await seedInitializationSource(page, projectA.projectId);
+  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: scope.projectId,
+      projectVersionId: scope.projectVersionId,
+      name: uniqueName("operator-execution"),
+    },
+  });
+  expect(suite.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: [scope.classId] },
+      })
+    ).status,
+  ).toBe(200);
+  const capabilities = [
+    "executor:testng-v1",
+    "isolation:cgroup-v2",
+    "java:21.0.8",
+    "testng:7.11.0",
+    "adapter:cotest-testng-v1",
+  ];
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name: uniqueName("Operator Runner"),
+      labels: ["java", "testng"],
+      capabilities,
+      maxConcurrency: 2,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "0.7.2",
+      protocolVersion: 1,
+      terminalEnabled: false,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const runner = (await registration.json()) as { runnerId: string; credential: string };
+  expect(
+    (
+      await page.request.post(`/api/v1/runner-agents/${runner.runnerId}/heartbeat`, {
+        headers: { authorization: `Bearer ${runner.credential}` },
+        data: {
+          schemaVersion: 1,
+          busySlots: 0,
+          labels: ["java", "testng"],
+          capabilities,
+          maxConcurrency: 2,
+          agentVersion: "0.7.2",
+          terminalEnabled: false,
+          resourceSnapshot: {
+            cpuUtilizationPercent: 10,
+            memoryUtilizationPercent: 20,
+            loadAverage1m: 0.1,
+            logicalCpuCount: 4,
+            observedAt: new Date().toISOString(),
+          },
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  await configureTaskExecution(page, suite.body.id, runner.runnerId, {
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  const username = uniqueName("scoped-operator");
+  const password = "Operator!Password123";
+  const user = await createActiveUser(page, username, password);
+  for (const [projectId, roleId] of [
+    [projectA.projectId, EXECUTION_OPERATOR_ROLE_ID],
+    [projectB.projectId, VIEWER_ROLE_ID],
+  ])
+    expect(
+      (
+        await browserJson(page, `/api/v1/users/${user.id}/project-roles`, {
+          method: "POST",
+          body: { projectId: projectId!, roleId: roleId! },
+        })
+      ).status,
+    ).toBe(204);
+  const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  const operator = await context.newPage();
+  try {
+    await login(operator, username, password);
+    await selectProjectContext(
+      operator,
+      scope.projectId,
+      scope.projectVersionId,
+      scope.testStageId,
+    );
+    await operator.goto("/case-suites");
+    for (const path of ["runners", "runner-groups", `runners/${runner.runnerId}/telemetry`])
+      expect(
+        (await browserJson(operator, `/api/v1/${path}?projectId=${scope.projectId}`)).status,
+      ).toBe(200);
+    expect((await browserJson(operator, "/api/v1/settings/platform")).status).toBe(403);
+    expect(
+      (
+        await browserJson(operator, "/api/v1/runner-groups", {
+          method: "POST",
+          body: { name: "forbidden", runnerIds: [] },
+        })
+      ).status,
+    ).toBe(403);
+    await operator.getByRole("button", { name: "开始执行", exact: true }).click();
+    const dialog = operator.getByRole("dialog", { name: "开始执行" });
+    await dialog.locator('select[aria-label="执行用例任务"]').selectOption(suite.body.id);
+    await expect(dialog.getByText("没有执行此操作所需的权限", { exact: false })).toHaveCount(0);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 1024 },
+    ]) {
+      await operator.setViewportSize(viewport);
+      await expectUiIntegrity(operator);
+      await captureUi(operator, `authorization-operator-dialog-${viewport.width}`);
+    }
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    const batch = await startTaskFromTopbar(operator, suite.body.id);
+    expect((await browserJson(operator, `/api/v1/run-batches/${batch.id}`)).status).toBe(200);
+    expect(
+      (
+        await browserJson(operator, `/api/v1/run-batches/${batch.id}/cancel`, {
+          method: "POST",
+          body: { reason: "Authorization regression completed" },
+        })
+      ).status,
+    ).toBe(200);
+    await selectProjectContext(operator, projectB.projectId);
+    await operator.goto("/");
+    await expect(operator.getByRole("button", { name: "开始执行", exact: true })).toHaveCount(0);
+    expect(
+      (
+        await browserJson(
+          operator,
+          `/api/v1/case-debug/runs?projectId=${projectB.projectId}&projectVersionId=missing&testStageId=missing`,
+          { method: "POST", body: {} },
+        )
+      ).status,
+    ).toBe(403);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 1024 },
+    ]) {
+      await operator.setViewportSize(viewport);
+      await expectUiIntegrity(operator);
+      await captureUi(operator, `authorization-viewer-shell-${viewport.width}`);
+    }
+    await operator.goto("/case-debug");
+    await expect(operator).toHaveURL(/\/forbidden$/);
+    // A direct resource link retains its own project's authority even when
+    // the top bar still selects the user's read-only project.
+    await operator.goto(`/cases/${scope.classId}`);
+    await operator.getByRole("button", { name: "执行此用例", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('select[aria-label="待执行单个用例"]')).toHaveValue(scope.classId);
+    await expect(dialog.getByText("没有执行此操作所需的权限", { exact: false })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  } finally {
+    await context.close();
+  }
+});

@@ -11,6 +11,8 @@ import type {
 } from "@autoforge/application";
 import {
   DomainError,
+  countSystemAdministrators,
+  assertAdministratorRecoveryPreserved,
   isPermission,
   type AuditEvent,
   type AuthenticatedIdentity,
@@ -28,8 +30,6 @@ import {
 import type { PoolClient, QueryResultRow } from "pg";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
-
-const SYSTEM_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000001";
 
 type UserDatabaseRow = QueryResultRow & {
   id: string;
@@ -465,11 +465,11 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     >(
       `SELECT s.id AS session_id, u.*,
          (SELECT json_agg(r.permissions_json) FROM user_system_roles b
-           JOIN roles r ON r.id = b.role_id AND r.active = TRUE
+           JOIN roles r ON r.id = b.role_id AND r.active = TRUE AND r.scope = 'system'
            WHERE b.user_id = u.id) AS system_permissions,
          (SELECT json_agg(json_build_object('p', b.project_id, 'r', r.permissions_json))
            FROM project_role_bindings b
-           JOIN roles r ON r.id = b.role_id AND r.active = TRUE
+           JOIN roles r ON r.id = b.role_id AND r.active = TRUE AND r.scope = 'project'
            WHERE b.user_id = u.id) AS project_bindings
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
@@ -652,7 +652,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   async updateUserStatus(userId: string, status: UserStatus, updatedAt: string): Promise<User> {
     await this.ready();
     return this.transaction(async (client) => {
-      if (status === "disabled") await ensureNotLastAdministrator(client, userId);
+      const administratorsBefore = await lockRecoveryAdministrators(client);
       const result = await client.query<UserDatabaseRow>(
         `UPDATE users SET status = $1,
          failed_login_attempts = CASE WHEN $1 = 'active' THEN 0 ELSE failed_login_attempts END,
@@ -662,6 +662,10 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         [status, updatedAt, userId],
       );
       if (!result.rows[0]) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
+      assertAdministratorRecoveryPreserved(
+        administratorsBefore,
+        await countRecoveryAdministrators(client),
+      );
       return mapUserRow(result.rows[0]);
     });
   }
@@ -742,26 +746,36 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     updatedAt: string;
   }): Promise<Role> {
     await this.ready();
-    const current = await this.findRole(input.id);
-    if (!current || current.builtIn)
-      throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
-    const result = await retryPostgresWrite(() =>
-      this.handle.pool.query<RoleDatabaseRow>(
-        `UPDATE roles SET name = $1, description = $2, scope = $3,
-       permissions_json = $4, active = $5, updated_at = $6
-       WHERE id = $7 AND built_in = FALSE RETURNING *`,
+    return this.transaction(async (client) => {
+      const administratorsBefore = await lockRecoveryAdministrators(client);
+      const existing = await client.query<RoleDatabaseRow>(
+        "SELECT * FROM roles WHERE id=$1 FOR UPDATE",
+        [input.id],
+      );
+      const current = existing.rows[0] ? mapRoleRow(existing.rows[0]) : null;
+      if (!current || current.builtIn)
+        throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
+      if (input.scope && current.scope !== input.scope)
+        throw new DomainError("ROLE_SCOPE_INVALID", "已有角色不能切换系统/项目范围。");
+      const result = await client.query<RoleDatabaseRow>(
+        `UPDATE roles SET name=$1, description=$2, scope=$3, permissions_json=$4, active=$5, updated_at=$6
+         WHERE id=$7 AND built_in=FALSE RETURNING *`,
         [
           input.name ?? current.name,
           input.description ?? current.description,
-          input.scope ?? current.scope,
+          current.scope,
           JSON.stringify(input.permissions ?? current.permissions),
           input.active ?? current.active,
           input.updatedAt,
           input.id,
         ],
-      ),
-    );
-    return mapRoleRow(requiredRow(result.rows[0], "PostgreSQL did not return role."));
+      );
+      assertAdministratorRecoveryPreserved(
+        administratorsBefore,
+        await countRecoveryAdministrators(client),
+      );
+      return mapRoleRow(requiredRow(result.rows[0], "PostgreSQL did not return role."));
+    });
   }
 
   async deleteRole(roleId: string): Promise<boolean> {
@@ -819,10 +833,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   async removeSystemRole(userId: string, roleId: string): Promise<boolean> {
     await this.ready();
     return this.transaction(async (client) => {
-      if (roleId === SYSTEM_ADMIN_ROLE_ID) await ensureNotLastAdministrator(client, userId);
+      const administratorsBefore = await lockRecoveryAdministrators(client);
       const result = await client.query(
         "DELETE FROM user_system_roles WHERE user_id = $1 AND role_id = $2",
         [userId, roleId],
+      );
+      assertAdministratorRecoveryPreserved(
+        administratorsBefore,
+        await countRecoveryAdministrators(client),
       );
       return result.rowCount === 1;
     });
@@ -939,7 +957,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
        FROM user_system_roles b
        JOIN roles r ON r.id = b.role_id AND r.active = TRUE
        JOIN users u ON u.id = b.user_id
-       WHERE u.status = 'active'`,
+       WHERE u.status = 'active' AND r.scope = 'system'`,
     );
     return result.rows.map((row) => ({
       userId: row.user_id,
@@ -1286,21 +1304,27 @@ async function insertLocalUser(
   return requiredRow(result.rows[0], "PostgreSQL did not return local user.");
 }
 
-async function ensureNotLastAdministrator(client: PoolClient, userId: string): Promise<void> {
-  const target = await client.query(
-    "SELECT 1 FROM user_system_roles WHERE user_id = $1 AND role_id = $2",
-    [userId, SYSTEM_ADMIN_ROLE_ID],
+async function lockRecoveryAdministrators(client: PoolClient): Promise<number> {
+  // Serialize destructive role/user edits across nodes; ordinary authentication stays read-only.
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended('autoforge:identity-recovery', 0))",
   );
-  if (!target.rowCount) return;
-  const active = await client.query<{ value: string }>(
-    `SELECT COUNT(*) AS value FROM user_system_roles b
-     JOIN users u ON u.id = b.user_id
-     WHERE b.role_id = $1 AND u.status = 'active'`,
-    [SYSTEM_ADMIN_ROLE_ID],
+  return countRecoveryAdministrators(client);
+}
+
+async function countRecoveryAdministrators(client: PoolClient): Promise<number> {
+  const result = await client.query<{ user_id: string; role_id: string; permissions_json: string }>(
+    `SELECT b.user_id,b.role_id,r.permissions_json FROM user_system_roles b
+     JOIN users u ON u.id=b.user_id AND u.status='active'
+     JOIN roles r ON r.id=b.role_id AND r.active=TRUE AND r.scope='system'`,
   );
-  if (Number(active.rows[0]?.value ?? 0) <= 1) {
-    throw new DomainError("LAST_ADMIN_REQUIRED", "不能禁用最后一位系统管理员。");
-  }
+  return countSystemAdministrators(
+    result.rows.map((row) => ({
+      userId: row.user_id,
+      roleId: row.role_id,
+      permissions: permissions(row.permissions_json),
+    })),
+  );
 }
 
 function mapUserRow(row: UserDatabaseRow): User {

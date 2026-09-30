@@ -601,8 +601,32 @@ export class IdentityAccessService {
     if (existing.builtIn) {
       throw new DomainError("BUILT_IN_ROLE_IMMUTABLE", "内置角色不能修改。");
     }
-    if (input.active === false) {
-      await this.ensureSystemAdministratorsRemain({ roleId });
+    if (input.scope && input.scope !== existing.scope) {
+      throw new DomainError(
+        "ROLE_SCOPE_INVALID",
+        "已有角色不能切换系统/项目范围，请新建对应范围的角色后重新分配。",
+      );
+    }
+    if (existing.scope === "system" && (input.active === false || input.permissions)) {
+      const bindings = await this.repository.listSystemRoleBindingsForActiveUsers();
+      const remaining = bindings.flatMap((binding) => {
+        if (binding.roleId !== roleId) return [binding];
+        if (input.active === false) return [];
+        return [
+          {
+            ...binding,
+            permissions: input.permissions
+              ? validatedPermissions(input.permissions)
+              : binding.permissions,
+          },
+        ];
+      });
+      if (countSystemAdministrators(remaining) === 0) {
+        throw new DomainError(
+          "LAST_ADMIN_REQUIRED",
+          "该操作会使系统失去最后一位可管理用户与角色的管理员。",
+        );
+      }
     }
     const role = await this.repository.updateRole({
       id: roleId,

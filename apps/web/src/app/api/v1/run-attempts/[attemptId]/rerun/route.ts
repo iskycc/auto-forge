@@ -15,7 +15,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const services = await getPlatformServices();
     const rerunContext = await services.runBatches.getAttemptRerunContext(attemptId);
     services.identityAccess.authorize(identity, "log.read", rerunContext.projectId);
-    services.identityAccess.authorize(identity, "run.create", rerunContext.projectId);
+    services.identityAccess.authorize(identity, "run.retry", rerunContext.projectId);
     const batch = await services.runBatches.rerunCaseFromAttempt(attemptId, {
       username: identity.user.username,
       source: identity.user.source,

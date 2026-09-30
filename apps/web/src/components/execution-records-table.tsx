@@ -136,6 +136,41 @@ export function ExecutionRecordsTable({
   const dragState = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
   const widths: Record<string, number> = { ...storedWidths, ...dragWidths };
   const automaticWidths = useMemo(() => executionRecordColumnWidths(rows), [rows]);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [measuredActionsWidth, setMeasuredActionsWidth] = useState(
+    () => executionRecordColumnWidths([]).actions,
+  );
+  const minimumColumnWidth = useCallback(
+    (column: ExecutionRecordColumnDefinition) =>
+      column.key === "actions" ? Math.max(column.minWidth, measuredActionsWidth) : column.minWidth,
+    [measuredActionsWidth],
+  );
+
+  useEffect(() => {
+    const groups = Array.from(
+      tableContainerRef.current?.querySelectorAll<HTMLElement>(".execution-record-row-actions") ??
+        [],
+    );
+    // Buttons include icons, spacing and controls revealed after sharing. Their
+    // intrinsic width is independent of the column, so observing it cannot feed
+    // back into table sizing. Only the current, bounded page is measured.
+    const observer = new ResizeObserver(() => {
+      const requiredWidth = groups.reduce((maximum, group) => {
+        const cell = group.closest("td");
+        if (!cell) return maximum;
+        const style = getComputedStyle(cell);
+        const insets =
+          parseFloat(style.paddingLeft) +
+          parseFloat(style.paddingRight) +
+          parseFloat(style.borderLeftWidth) +
+          parseFloat(style.borderRightWidth);
+        return Math.max(maximum, Math.ceil(group.getBoundingClientRect().width + insets));
+      }, 0);
+      setMeasuredActionsWidth(requiredWidth);
+    });
+    groups.forEach((group) => observer.observe(group));
+    return () => observer.disconnect();
+  }, [rows]);
 
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
@@ -143,7 +178,10 @@ export function ExecutionRecordsTable({
       if (!state) return;
       const column = EXECUTION_RECORD_COLUMNS.find((item) => item.key === state.key);
       if (!column) return;
-      const nextWidth = Math.max(column.minWidth, state.startWidth + event.clientX - state.startX);
+      const nextWidth = Math.max(
+        minimumColumnWidth(column),
+        state.startWidth + event.clientX - state.startX,
+      );
       const nextDragWidths = { ...dragWidthsRef.current, [state.key]: nextWidth };
       dragWidthsRef.current = nextDragWidths;
       setDragWidths(nextDragWidths);
@@ -163,7 +201,7 @@ export function ExecutionRecordsTable({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, []);
+  }, [minimumColumnWidth]);
 
   const startResize = useCallback(
     (event: React.MouseEvent, column: ExecutionRecordColumnDefinition) => {
@@ -183,7 +221,7 @@ export function ExecutionRecordsTable({
   const columnWidth = (column: ExecutionRecordColumnDefinition): number =>
     // 已持久化的列宽可能来自旧版约束；读取时重新执行当前下限，防止升级后
     // localStorage 中的过窄数值继续截断状态、百分比和操作按钮。
-    Math.max(column.minWidth, widths[column.key] ?? automaticWidths[column.key]);
+    Math.max(minimumColumnWidth(column), widths[column.key] ?? automaticWidths[column.key]);
   // table-layout: fixed 只有在表格拥有确定宽度时才会完全忽略单元格的内在宽度。
   // 直接使用各列宽度之和，避免某个超长且不可换行的任务名通过 max-content 撑宽整列。
   const tableWidth = EXECUTION_RECORD_COLUMNS.reduce(
@@ -226,6 +264,7 @@ export function ExecutionRecordsTable({
 
   return (
     <div
+      ref={tableContainerRef}
       className={cn(
         "execution-record-table-stack",
         executionRecordsTableStyles["execution-record-table-stack"],
@@ -293,7 +332,7 @@ export function ExecutionRecordsTable({
                     <span
                       tabIndex={0}
                       aria-orientation="vertical"
-                      aria-valuemin={column.minWidth}
+                      aria-valuemin={minimumColumnWidth(column)}
                       aria-valuenow={columnWidth(column)}
                       onKeyDown={(event) => {
                         if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
@@ -302,7 +341,7 @@ export function ExecutionRecordsTable({
                           event.key === "Home"
                             ? automaticWidths[column.key]!
                             : Math.max(
-                                column.minWidth,
+                                minimumColumnWidth(column),
                                 columnWidth(column) + (event.key === "ArrowRight" ? 20 : -20),
                               );
                         persistColumnWidths({ ...storedWidths, [column.key]: width });
@@ -430,7 +469,8 @@ const executionRecordsTableStyles = {
   "batch-status": uiPatterns["batch-status"],
   "column-resize-handle":
     "absolute top-0 right-0 z-2 w-1.5 h-full cursor-col-resize bg-transparent transition-colors duration-150 motion-reduce:transition-none [&:hover]:bg-info [&:hover]:opacity-45 [&:active]:bg-info [&:active]:opacity-45 [&:focus-visible]:[outline:2px_solid_var(--info)]",
-  "execution-record-row-actions": "inline-flex items-center gap-2 flex-wrap whitespace-normal",
+  "execution-record-row-actions":
+    "inline-flex w-max flex-nowrap items-center gap-2 whitespace-nowrap",
   "execution-record-table-stack": "grid gap-3",
   "execution-records-table":
     "[&_td_small]:text-muted-foreground [&_:is(th,_td):first-child]:sticky [&_:is(th,_td):first-child]:z-1 [&_:is(th,_td):first-child]:bg-card [&_:is(th,_td):first-child]:left-0 [&_:is(th,_td):nth-child(2)]:sticky [&_:is(th,_td):nth-child(2)]:z-1 [&_:is(th,_td):nth-child(2)]:bg-card [&_:is(th,_td):nth-child(2)]:left-[var(--record-id-width)] [&_:is(th,_td):nth-child(2)]:border-r [&_:is(th,_td):nth-child(2)]:border-solid [&_:is(th,_td):nth-child(2)]:border-border [&_:is(th,_td):last-child]:sticky [&_:is(th,_td):last-child]:z-1 [&_:is(th,_td):last-child]:bg-card [&_:is(th,_td):last-child]:right-0 [&_:is(th,_td):last-child]:border-l [&_:is(th,_td):last-child]:border-solid [&_:is(th,_td):last-child]:border-border [&_th:is(:first-child,_:nth-child(2),_:last-child)]:bg-muted",

@@ -29,23 +29,50 @@ export async function expectDdtCaseSearch(
   expect(exact.items.map((item) => item.caseId)).toEqual([caseId]);
   expect(exact.items[0]).not.toHaveProperty("data");
   const fragment = caseId.slice(1).toLowerCase();
-  const fuzzy = await repository.listCases({
+  for (const match of [{}, { queryMatch: "contains" as const }]) {
+    const fuzzy = await repository.listCases({
+      ...scope,
+      ...match,
+      query: ` ${fragment} `,
+      limit: 20,
+      filters: [],
+    });
+    expect(fuzzy.items.map((item) => item.caseId)).toEqual([caseId]);
+  }
+  expect(
+    (
+      await repository.listCases({
+        ...scope,
+        query: fragment,
+        queryMatch: "prefix",
+        limit: 20,
+        filters: [],
+      })
+    ).items,
+  ).toEqual([]);
+  const firstPage = await repository.listCases({
     ...scope,
-    query: ` ${fragment} `,
-    queryMatch: "contains",
-    limit: 20,
+    query: "rDeR",
+    limit: 1,
     filters: [],
   });
-  expect(fuzzy.items.map((item) => item.caseId)).toEqual([caseId]);
-  expect(
-    (await repository.listCases({ ...scope, query: fragment, limit: 20, filters: [] })).items,
-  ).toEqual([]);
+  expect(firstPage.items).toHaveLength(1);
+  expect(firstPage.nextCursor).toBeDefined();
+  const secondPage = await repository.listCases({
+    ...scope,
+    query: "rDeR",
+    cursor: firstPage.nextCursor!,
+    limit: 1,
+    filters: [],
+  });
+  expect(secondPage.items.map((item) => item.caseId)).toEqual([caseId]);
+  expect(secondPage.items[0]!.id).not.toBe(firstPage.items[0]!.id);
+  expect(secondPage.nextCursor).toBeUndefined();
   expect(
     (
       await repository.listCases({
         ...scope,
         query: "%_",
-        queryMatch: "contains",
         limit: 20,
         filters: [],
       })

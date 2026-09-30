@@ -1508,6 +1508,86 @@ async function dispatchFileDrag(
   );
 }
 
+test("DDT CaseID search matches fragments across pages and preserves literal filters", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const rows = Array.from({ length: 62 }, (_, index) => ({
+    CaseID: `PAY-${String(index).padStart(3, "0")}-WaLLeT-Flow`,
+    srNum: "PAY",
+    CaseName: `钱包支付验证 ${index}`,
+    描述: "验证支付后账户余额与订单状态一致",
+  }));
+  const literalCaseId = "PAY-LITERAL%_\\-TAIL";
+  await importDdtApiFixture(page, hierarchy, rows[0]!.CaseID, 1, [
+    ...rows,
+    { CaseID: literalCaseId, srNum: "PAY", CaseName: "特殊字符" },
+    { CaseID: "PAY-中文场景-尾部", srNum: "PAY", CaseName: "中文用例" },
+    { CaseID: "UNRELATED", srNum: "OTHER", CaseName: "WaLLeT is only a value" },
+  ]);
+
+  // Existing callers that omit queryMatch must also get scoped substring matching.
+  const apiSearch = await browserJson<{ items: Array<{ caseId: string }> }>(
+    page,
+    `${ddtPath(hierarchy, "cases")}&query=wallet&limit=200`,
+  );
+  expect(apiSearch.status).toBe(200);
+  expect(apiSearch.body.items.map((item) => item.caseId)).toEqual(rows.map((row) => row.CaseID));
+
+  const searches: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/ddt/cases" && url.searchParams.has("query")) searches.push(url);
+  });
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const navigation = page.getByRole("region", { name: "DDT 用例导航" });
+  const input = navigation.getByLabel("搜索 DDT 用例");
+  const caseRows = navigation.locator(".ddt-case-list-row");
+  const details = page.getByRole("region", { name: "DDT 用例详情" });
+  await Promise.all([
+    page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === "/api/v1/ddt/cases" &&
+        url.searchParams.get("query") === "wAlLeT" &&
+        response.status() === 200
+      );
+    }),
+    input.fill(" wAlLeT "),
+  ]);
+  await expect(caseRows).toHaveCount(60);
+  await expect(caseRows.last()).toContainText(rows[59]!.CaseID);
+  await navigation.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(caseRows).toHaveCount(62);
+  await navigation.getByRole("button", { name: rows[61]!.CaseID, exact: true }).click();
+  await expect(details.getByRole("heading", { name: rows[61]!.CaseID, exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-case-fragment-search-${width}`);
+  }
+  await page.reload();
+  await expect(input).toHaveValue(" wAlLeT ");
+  await expect(caseRows).toHaveCount(60);
+  await selectDdtGroup(navigation, "OTHER");
+  await expect(caseRows).toHaveCount(0);
+  await selectDdtGroup(navigation, "PAY");
+  await expect(caseRows).toHaveCount(60);
+  await input.fill("061");
+  await expect(caseRows).toHaveCount(1);
+  await expect(caseRows).toContainText(rows[61]!.CaseID);
+  await input.fill("%_\\");
+  await expect(caseRows).toHaveCount(1);
+  await expect(caseRows).toContainText(literalCaseId);
+  await input.fill("场景");
+  await expect(caseRows).toHaveCount(1);
+  await expect(caseRows).toContainText("PAY-中文场景-尾部");
+  expect(searches.some((url) => url.searchParams.has("cursor"))).toBe(true);
+  expect(searches.every((url) => url.searchParams.get("queryMatch") === "contains")).toBe(true);
+});
+
 test("DDT split workspace loads details on demand and keeps field edits and navigation consistent", async ({
   page,
 }) => {

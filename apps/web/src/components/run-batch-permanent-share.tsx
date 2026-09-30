@@ -88,7 +88,7 @@ export function RunBatchPermanentShare({
           </Button>
           <LinkButton
             aria-label={`打开批次 #${sequenceNumber} 永久分享链接`}
-            className={"ui-button ui-button-ghost ui-button-compact"}
+            className={cn("compact-button", uiPatterns["compact-button"])}
             href={shareUrl}
             rel="noreferrer"
             target="_blank"

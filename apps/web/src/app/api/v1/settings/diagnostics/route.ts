@@ -6,7 +6,7 @@ import { getPlatformServices } from "@/lib/services";
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
-    await authorizeRequest(request, "settings.read");
+    await authorizeRequest(request, "settings.read", undefined);
     const services = await getPlatformServices();
     const diagnostic = await services.diagnostics.read(
       new URL(request.url).searchParams.get("refresh") === "1",
@@ -33,7 +33,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "settings.manage");
+    const identity = await authorizeRequest(request, "settings.manage", undefined);
     const services = await getPlatformServices();
     const redriven = await services.jobQueue.redriveDeadLetters({
       redrivenAt: services.clock.now().toISOString(),

@@ -2133,6 +2133,8 @@ export interface RunBatchRepository {
   listSchedulingEvents(input: {
     batchId: string;
     runnerId?: string;
+    /** Case-insensitive literal substring of the event message. */
+    query?: string;
     // 游标：返回该 id 之后的记录（按 recorded_at, id 定位）
     afterId?: string;
     // 反向游标：返回该 id 之前最近的一页，结果仍按时间正序返回。
@@ -2463,7 +2465,15 @@ export interface PlatformOperationsRepository {
     query: string;
     limit: number;
     projectIds?: readonly string[];
+    kinds?: readonly GlobalSearchResult["items"][number]["kind"][];
   }): Promise<GlobalSearchResult>;
+  getAnalyticsExportScope(
+    jobId: string,
+    requestedBy: string,
+  ): Promise<{
+    filter: AnalyticsFilter;
+    projectIds?: readonly string[];
+  } | null>;
 }
 
 /**

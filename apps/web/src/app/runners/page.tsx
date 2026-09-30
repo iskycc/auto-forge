@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { PagePagination } from "@/components/ui/page-pagination";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -21,7 +22,7 @@ import { RunnerUpdateDialog } from "@/components/runner-update-dialog";
 import { RunnerGroupManager } from "@/components/runner-group-manager";
 import { BatchRunnerUpdate } from "@/components/batch-runner-update";
 import { getPlatformServices } from "@/lib/services";
-import { requirePagePermission } from "@/lib/auth";
+import { requirePageAnyPermission } from "@/lib/auth";
 import {
   selectableProjectIds,
   selectedProjectHierarchy,
@@ -50,8 +51,8 @@ export default async function RunnersPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const identity = await requirePagePermission("runner.read");
-  const canManage = hasPermission(identity, "runner.manage");
+  const identity = await requirePageAnyPermission(["runner.read"]);
+  const canManage = hasPermission(identity, "runner.manage", DEFAULT_PROJECT_ID);
   const services = await getPlatformServices();
   const timeZone = services.configurationStore.read().web.timeZone;
   const parameters = await searchParams;

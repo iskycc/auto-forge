@@ -1118,6 +1118,15 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     return mapAnalyticsExportJob(row);
   }
 
+  async getAnalyticsExportScope(jobId: string, requestedBy: string) {
+    const row = this.handle.client
+      .prepare("SELECT * FROM analytics_export_jobs WHERE id=? AND requested_by=?")
+      .get(jobId, requestedBy) as AnalyticsExportJobRow | undefined;
+    if (!row) return null;
+    const projectIds = analyticsExportProjectIds(row);
+    return { filter: mapAnalyticsExportJob(row).filter, ...(projectIds ? { projectIds } : {}) };
+  }
+
   async getAnalyticsExportJob(jobId: string, requestedBy: string) {
     const row = this.handle.client
       .prepare("SELECT * FROM analytics_export_jobs WHERE id=? AND requested_by=?")
@@ -1228,49 +1237,62 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       ...(input.projectIds ?? []),
       input.limit,
     ];
-    const cases = this.handle.client
-      .prepare(
-        `SELECT id, project_id, display_name AS title, class_name AS subtitle
+    const cases =
+      input.kinds && !input.kinds.includes("case")
+        ? []
+        : (this.handle.client
+            .prepare(
+              `SELECT id, project_id, display_name AS title, class_name AS subtitle
          FROM case_definitions WHERE archived = 0
            AND (instr(lower(display_name), ?) > 0 OR instr(lower(class_name), ?) > 0)
            ${projectFilter} ORDER BY updated_at DESC LIMIT ?`,
-      )
-      .all(...parameters([search, search])) as SearchRow[];
-    const suites = this.handle.client
-      .prepare(
-        `SELECT id, project_id, name AS title, COALESCE(description, '') AS subtitle
+            )
+            .all(...parameters([search, search])) as SearchRow[]);
+    const suites =
+      input.kinds && !input.kinds.includes("suite")
+        ? []
+        : (this.handle.client
+            .prepare(
+              `SELECT id, project_id, name AS title, COALESCE(description, '') AS subtitle
          FROM case_suites WHERE status = 'active' AND instr(lower(name), ?) > 0
            ${projectFilter} ORDER BY updated_at DESC LIMIT ?`,
-      )
-      .all(...parameters([search])) as SearchRow[];
-    const batches = this.handle.client
-      .prepare(
-        `SELECT id, project_id, suite_name AS title, status AS subtitle
+            )
+            .all(...parameters([search])) as SearchRow[]);
+    const batches =
+      input.kinds && !input.kinds.includes("batch")
+        ? []
+        : (this.handle.client
+            .prepare(
+              `SELECT id, project_id, suite_name AS title, status AS subtitle
          FROM run_batches WHERE batch_kind <> 'case_log_rerun'
            AND (instr(lower(suite_name), ?) > 0 OR instr(lower(id), ?) > 0)
            ${projectFilter} ORDER BY created_at DESC LIMIT ?`,
-      )
-      .all(...parameters([search, search])) as SearchRow[];
-    const runs = this.handle.client
-      .prepare(
-        `SELECT r.id, b.project_id, r.display_name AS title, r.status AS subtitle
+            )
+            .all(...parameters([search, search])) as SearchRow[]);
+    const runs =
+      input.kinds && !input.kinds.includes("run")
+        ? []
+        : (this.handle.client
+            .prepare(
+              `SELECT r.id, b.project_id, r.display_name AS title, r.status AS subtitle
          FROM execution_runs r JOIN run_batches b ON b.id = r.batch_id
          WHERE b.batch_kind <> 'case_log_rerun'
            AND (instr(lower(r.display_name), ?) > 0 OR instr(lower(r.id), ?) > 0)
            ${input.projectIds ? `AND b.project_id IN (${input.projectIds.map(() => "?").join(",")})` : ""}
          ORDER BY r.created_at DESC LIMIT ?`,
-      )
-      .all(...parameters([search, search])) as SearchRow[];
-    const runnerRows = input.projectIds
-      ? []
-      : (this.handle.client
-          .prepare(
-            `SELECT id, NULL AS project_id, name AS title,
+            )
+            .all(...parameters([search, search])) as SearchRow[]);
+    const runnerRows =
+      (input.kinds && !input.kinds.includes("runner")) || input.projectIds
+        ? []
+        : (this.handle.client
+            .prepare(
+              `SELECT id, NULL AS project_id, name AS title,
                     os || ' · ' || architecture || ' · ' || agent_version AS subtitle
              FROM runners WHERE deregistered_at IS NULL AND instr(lower(name), ?) > 0
              ORDER BY updated_at DESC LIMIT ?`,
-          )
-          .all(search, input.limit) as SearchRow[]);
+            )
+            .all(search, input.limit) as SearchRow[]);
     return {
       items: [
         ...searchItems("case", cases, (id) => `/cases/${encodeURIComponent(id)}`),

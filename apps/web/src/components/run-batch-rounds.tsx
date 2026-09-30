@@ -242,7 +242,7 @@ export function RunBatchRounds({
   batch,
   canCancelRuns,
   canReadLogs,
-  canCreateRuns,
+  canRetryRuns,
   canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
@@ -252,7 +252,7 @@ export function RunBatchRounds({
   batch: ExecutionBatchView;
   canCancelRuns: boolean;
   canReadLogs: boolean;
-  canCreateRuns: boolean;
+  canRetryRuns: boolean;
   canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
@@ -744,12 +744,13 @@ export function RunBatchRounds({
           attemptId={logAttempt.id}
           attemptStatus={logAttempt.status}
           canReadLogs={canReadLogs}
-          canCreateRuns={canCreateRuns}
+          canRetryRuns={canRetryRuns}
           onClose={() => setLogAttempt(undefined)}
         />
       ) : null}
       {schedulingViewer ? (
         <SchedulingLogViewer
+          key={JSON.stringify([batch.id, schedulingViewer.runnerId])}
           batchId={batch.id}
           runnerId={schedulingViewer.runnerId}
           title={schedulingViewer.title}
@@ -2444,7 +2445,7 @@ const runBatchRoundsStyles = {
   "round-page-size":
     "inline-flex items-center gap-1.5 mr-auto text-muted-foreground whitespace-nowrap [&>_.ui-field-feedback]:w-auto [&_.ui-select]:w-auto [&_.ui-select]:min-w-18 [&_.ui-select]:py-1",
   "round-pagination": "flex items-center justify-end gap-3 text-muted-foreground text-xs",
-  "round-row-actions": "flex flex-wrap items-center gap-1",
+  "round-row-actions": "flex flex-nowrap items-center gap-1",
   "round-runner-name": "block min-w-0 [overflow-wrap:anywhere] whitespace-normal",
   "round-select-button": "font-semibold",
   "round-tab-content":

@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { runnerInstallationProfileListSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
@@ -10,7 +11,7 @@ export const runtime = "nodejs";
 export async function GET(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
-    await authorizeRequest(request, "runner.manage");
+    await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const services = await getPlatformServices();
     const runners = await services.runnerControl.list(500);
     await services.runnerInstallationProfiles.reconcileBindings(runners);

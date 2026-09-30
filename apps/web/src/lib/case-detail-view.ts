@@ -13,6 +13,7 @@ export type CaseDetailView = {
   executable: boolean;
   canManage: boolean;
   canRun: boolean;
+  canRetry?: boolean;
   canReadLogs: boolean;
   canReadSource: boolean;
   canReadAnalysisEvidence: boolean;
@@ -31,6 +32,7 @@ export type CaseHistoryView = Pick<
   | "executionHistory"
   | "failureAnalysisHistory"
   | "canRun"
+  | "canRetry"
   | "canReadLogs"
   | "canReadAnalysisEvidence"
   | "timeZone"

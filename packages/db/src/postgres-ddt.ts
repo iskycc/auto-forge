@@ -161,7 +161,7 @@ export class PostgresDdtRepository implements DdtRepository {
     if (query.query)
       builder.add(
         "case_id_normalized LIKE",
-        `${query.queryMatch === "contains" ? "%" : ""}${escapeLike(normalize(query.query))}%`,
+        `${query.queryMatch === "prefix" ? "" : "%"}${escapeLike(normalize(query.query))}%`,
       );
     if (query.srNum) builder.add("sr_num_normalized =", normalize(query.srNum));
     if (query.sourceName) builder.add("source_name LIKE", `%${escapeLike(query.sourceName)}%`);

@@ -1,17 +1,17 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { updateRunnerGroupInputSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
-import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { authenticateRequest, authorizeRunnerRead, requestId, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ groupId: string }> };
 
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {
-    const identity = await authenticateRequest(request);
+    await authorizeRunnerRead(request);
     const services = await getPlatformServices();
-    services.identityAccess.authorize(identity, "runner.read");
     return NextResponse.json(await services.runnerGroups.get((await context.params).groupId));
   } catch (error) {
     return apiErrorResponse(error, requestId(request));
@@ -24,7 +24,7 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
     requireSameOrigin(request);
     const identity = await authenticateRequest(request);
     const services = await getPlatformServices();
-    services.identityAccess.authorize(identity, "runner.manage");
+    services.identityAccess.authorize(identity, "runner.manage", DEFAULT_PROJECT_ID);
     const group = await services.runnerGroups.update(
       (await context.params).groupId,
       updateRunnerGroupInputSchema.parse(await readJsonBody(request, 64 * 1024)),
@@ -48,7 +48,7 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
     requireSameOrigin(request);
     const identity = await authenticateRequest(request);
     const services = await getPlatformServices();
-    services.identityAccess.authorize(identity, "runner.manage");
+    services.identityAccess.authorize(identity, "runner.manage", DEFAULT_PROJECT_ID);
     const groupId = (await context.params).groupId;
     await services.runnerGroups.delete(groupId);
     await services.identityAccess.recordAuthorizedOperation(identity, {

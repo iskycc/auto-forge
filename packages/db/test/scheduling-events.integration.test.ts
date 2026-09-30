@@ -534,6 +534,64 @@ function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarnes
     }
   });
 
+  it("searches message fragments across cursor pages with literal wildcards and scope isolation", async () => {
+    const harness = await createHarness();
+    try {
+      const messages = [
+        "prefix MiDdLe 中文 suffix",
+        "unrelated",
+        "prefix middle 中文 suffix",
+        "literal %_\\ value",
+        "literal XX value",
+      ];
+      const events = messages.map((message, index) => ({
+        id: `${harness.eventPrefix}-search-${index}`,
+        batchId: harness.batchIdA,
+        runnerId: harness.runnerIdA,
+        eventType: "run_assigned" as const,
+        message,
+        recordedAt: `2026-08-10T00:0${index}:00.000Z`,
+      }));
+      await harness.batches.appendSchedulingEvents([
+        ...events,
+        { ...events[0]!, id: `${harness.eventPrefix}-other-runner`, runnerId: harness.runnerIdB },
+        { ...events[0]!, id: `${harness.eventPrefix}-other-batch`, batchId: harness.batchIdB },
+      ]);
+      const scope = {
+        batchId: harness.batchIdA,
+        runnerId: harness.runnerIdA,
+        query: "  MIDDLE  ",
+        limit: 1,
+      };
+      const latest = await harness.batches.listSchedulingEvents({ ...scope, latest: true });
+      expect(latest.items.map((event) => event.id)).toEqual([events[2]!.id]);
+      const older = await harness.batches.listSchedulingEvents({
+        ...scope,
+        beforeId: latest.nextBeforeId!,
+      });
+      expect(older.items.map((event) => event.id)).toEqual([events[0]!.id]);
+      const newer = await harness.batches.listSchedulingEvents({
+        ...scope,
+        afterId: older.items[0]!.id,
+      });
+      expect(newer.items.map((event) => event.id)).toEqual([events[2]!.id]);
+      expect(
+        (await harness.batches.listSchedulingEvents({ ...scope, query: "中文", limit: 10 })).items,
+      ).toHaveLength(2);
+      expect(
+        (
+          await harness.batches.listSchedulingEvents({ ...scope, query: "%_\\", limit: 10 })
+        ).items.map((event) => event.id),
+      ).toEqual([events[3]!.id]);
+      expect(
+        (await harness.batches.listSchedulingEvents({ ...scope, query: "no match" })).items,
+      ).toEqual([]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("clamps oversized limits to the 500 cap", async () => {
     const harness = await createHarness();
     try {

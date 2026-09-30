@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import {
   runnerAgentInstallationResultSchema,
   updateRunnerAgentRequestSchema,
@@ -18,7 +19,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "runner.manage");
+    const identity = await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const { runnerId } = await context.params;
     const input = updateRunnerAgentRequestSchema.parse(await readJsonBody(request, 96 * 1024));
     const services = await getPlatformServices();

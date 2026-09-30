@@ -37,9 +37,7 @@ export default async function RunBatchDetailsPage({
   let runnerDirectory: RunnerDirectoryEntry[] = [];
   if (hasPermissionInAnyScope(identity, "runner.read")) {
     const runners = await services.runnerControl.list(500);
-    const canReadTelemetry = canAuthorize(() =>
-      services.identityAccess.authorize(identity, "runner.read"),
-    );
+    const canReadTelemetry = true;
     runnerDirectory = runners.map((runner) => ({
       id: runner.id,
       name: runner.name,
@@ -87,6 +85,9 @@ export default async function RunBatchDetailsPage({
         )}
         canCreateRuns={canAuthorize(() =>
           services.identityAccess.authorize(identity, "run.create", batch.projectId),
+        )}
+        canRetryRuns={canAuthorize(() =>
+          services.identityAccess.authorize(identity, "run.retry", batch.projectId),
         )}
         canReadLogs={canAuthorize(() =>
           services.identityAccess.authorize(identity, "log.read", batch.projectId),

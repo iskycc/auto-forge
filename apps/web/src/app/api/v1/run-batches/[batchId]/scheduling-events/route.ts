@@ -10,6 +10,7 @@ type Context = { params: Promise<{ batchId: string }> };
 // 查询参数在入口校验：limit 有上限，避免无界查询。
 const querySchema = z
   .object({
+    query: z.string().trim().max(256).optional(),
     runnerId: z.string().min(1).max(128).optional(),
     afterId: z.string().min(1).max(128).optional(),
     beforeId: z.string().min(1).max(128).optional(),
@@ -40,6 +41,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     await services.runBatches.getMetadata(batchId, projectIds);
     const page = await services.runBatches.listSchedulingEvents(batchId, {
       limit: query.limit,
+      ...(query.query ? { query: query.query } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
       ...(query.afterId ? { afterId: query.afterId } : {}),
       ...(query.beforeId ? { beforeId: query.beforeId } : {}),

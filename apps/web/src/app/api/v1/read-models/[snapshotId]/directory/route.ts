@@ -1,3 +1,4 @@
+import { authorizeReadModelQuery } from "@/lib/read-model-authorization";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { caseDirectoryFilterSchema, DIRECTORY_CHUNK_SIZE } from "@autoforge/contracts";
@@ -28,11 +29,7 @@ export async function GET(
       throw new DomainError("READ_MODEL_NOT_FOUND", "目录已过期，请刷新页面。");
     }
     const query = original.query;
-    services.identityAccess.authorize(
-      identity,
-      query.kind === "case_directory" ? "case.read" : "case_suite.read",
-      query.projectId,
-    );
+    authorizeReadModelQuery(identity, query);
     if (filter.missingSuiteId) {
       services.identityAccess.authorize(identity, "case_suite.read", query.projectId);
       await services.caseSuites.getSummary(filter.missingSuiteId, [query.projectId]);

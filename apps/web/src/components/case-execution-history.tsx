@@ -44,7 +44,7 @@ export function CaseExecutionHistory({
   caseDefinitionId,
   initialPage,
   canReadLogs,
-  canCreateRuns,
+  canRetryRuns,
   timeZone,
   historyUrl,
   compact = false,
@@ -52,7 +52,7 @@ export function CaseExecutionHistory({
   caseDefinitionId: string;
   initialPage: CaseExecutionHistoryPage;
   canReadLogs: boolean;
-  canCreateRuns: boolean;
+  canRetryRuns: boolean;
   timeZone: string;
   historyUrl?: string;
   compact?: boolean;
@@ -122,33 +122,69 @@ export function CaseExecutionHistory({
           </div>
           <ListRestart size={22} aria-hidden="true" />
         </div>
-        <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
-          <Table className={cn("data-table", uiPatterns["data-table"])}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>执行时间</TableHead>
-                <TableHead>任务批次</TableHead>
-                <TableHead>用例状态</TableHead>
-                <TableHead>轮次 / 结果</TableHead>
-                <TableHead>Runner</TableHead>
-                <TableHead>耗时</TableHead>
-                <TableHead>操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 ? (
+        <div className="min-w-0 px-4">
+          <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
+            <Table
+              className={cn(
+                "data-table min-w-[760px] table-fixed [&_td]:align-top",
+                uiPatterns["data-table"],
+              )}
+            >
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={7}>当前用例尚无执行记录。</TableCell>
+                  <TableHead className="w-40">执行时间</TableHead>
+                  <TableHead>任务批次</TableHead>
+                  <TableHead className="w-20">用例状态</TableHead>
+                  <TableHead className="w-32">轮次 / 结果</TableHead>
+                  <TableHead>Runner</TableHead>
+                  <TableHead className="w-20">耗时</TableHead>
+                  <TableHead className="w-32">操作</TableHead>
                 </TableRow>
-              ) : null}
-              {items.flatMap((item) => {
-                if (item.attempts.length === 0) {
-                  return (
-                    <TableRow key={item.runId}>
-                      <TableCell>{formatDate(item.createdAt, timeZone)}</TableCell>
+              </TableHeader>
+              <TableBody>
+                {items.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7}>当前用例尚无执行记录。</TableCell>
+                  </TableRow>
+                ) : null}
+                {items.flatMap((item) => {
+                  if (item.attempts.length === 0) {
+                    return (
+                      <TableRow key={item.runId}>
+                        <TableCell>{formatDate(item.createdAt, timeZone)}</TableCell>
+                        <TableCell>
+                          <strong>#{item.batchSequenceNumber}</strong>
+                          <span
+                            title={item.batchName}
+                            className={cn(
+                              "case-history-batch-name",
+                              caseExecutionHistoryStyles["case-history-batch-name"],
+                            )}
+                          >
+                            {item.batchName}
+                          </span>
+                        </TableCell>
+                        <TableCell>{caseExecutionStatusLabel(item.status)}</TableCell>
+                        <TableCell>尚未生成执行尝试</TableCell>
+                        <TableCell>—</TableCell>
+                        <TableCell>—</TableCell>
+                        <TableCell>
+                          <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
+                            查看批次
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }
+                  return item.attempts.map((attempt) => (
+                    <TableRow key={attempt.id}>
+                      <TableCell>
+                        {formatDate(attempt.finishedAt ?? attempt.createdAt, timeZone)}
+                      </TableCell>
                       <TableCell>
                         <strong>#{item.batchSequenceNumber}</strong>
                         <span
+                          title={item.batchName}
                           className={cn(
                             "case-history-batch-name",
                             caseExecutionHistoryStyles["case-history-batch-name"],
@@ -158,89 +194,64 @@ export function CaseExecutionHistory({
                         </span>
                       </TableCell>
                       <TableCell>{caseExecutionStatusLabel(item.status)}</TableCell>
-                      <TableCell>尚未生成执行尝试</TableCell>
-                      <TableCell>—</TableCell>
-                      <TableCell>—</TableCell>
                       <TableCell>
-                        <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
-                          查看批次
-                        </Link>
+                        <strong>第 {attempt.executionRound} 轮总结</strong>
+                        <span
+                          className={cn(
+                            "case-history-attempt-result",
+                            caseExecutionHistoryStyles["case-history-attempt-result"],
+                          )}
+                        >
+                          {attempt.executionRound === attempt.attemptNumber
+                            ? ""
+                            : `第 ${attempt.attemptNumber} 次尝试 · `}
+                          {caseExecutionStatusLabel(attempt.status)} ·{" "}
+                          {caseExecutionResultLabel(attempt.resultCode)}
+                        </span>
+                      </TableCell>
+                      <TableCell title={attempt.runnerName ?? attempt.runnerId}>
+                        <span className="line-clamp-2 [overflow-wrap:anywhere]">
+                          {attempt.runnerName ?? attempt.runnerId.slice(0, 8)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {attempt.durationMs === undefined
+                          ? "—"
+                          : formatAttemptDuration(attempt.durationMs)}
+                      </TableCell>
+                      <TableCell>
+                        <div
+                          className={cn(
+                            "case-history-actions",
+                            caseExecutionHistoryStyles["case-history-actions"],
+                          )}
+                        >
+                          {canReadLogs ? (
+                            <Button
+                              aria-label={`查看第 ${attempt.executionRound} 轮总结日志`}
+                              className={cn(
+                                "button button-secondary compact-button",
+                                uiPatterns["button"],
+                                uiPatterns["button-secondary"],
+                                uiPatterns["compact-button"],
+                              )}
+                              onClick={() => setLogAttempt(attempt)}
+                              type="button"
+                            >
+                              查看日志
+                            </Button>
+                          ) : null}
+                          <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
+                            查看批次
+                          </Link>
+                        </div>
                       </TableCell>
                     </TableRow>
-                  );
-                }
-                return item.attempts.map((attempt) => (
-                  <TableRow key={attempt.id}>
-                    <TableCell>
-                      {formatDate(attempt.finishedAt ?? attempt.createdAt, timeZone)}
-                    </TableCell>
-                    <TableCell>
-                      <strong>#{item.batchSequenceNumber}</strong>
-                      <span
-                        className={cn(
-                          "case-history-batch-name",
-                          caseExecutionHistoryStyles["case-history-batch-name"],
-                        )}
-                      >
-                        {item.batchName}
-                      </span>
-                    </TableCell>
-                    <TableCell>{caseExecutionStatusLabel(item.status)}</TableCell>
-                    <TableCell>
-                      <strong>第 {attempt.executionRound} 轮总结</strong>
-                      <span
-                        className={cn(
-                          "case-history-attempt-result",
-                          caseExecutionHistoryStyles["case-history-attempt-result"],
-                        )}
-                      >
-                        {attempt.executionRound === attempt.attemptNumber
-                          ? ""
-                          : `第 ${attempt.attemptNumber} 次尝试 · `}
-                        {caseExecutionStatusLabel(attempt.status)} ·{" "}
-                        {caseExecutionResultLabel(attempt.resultCode)}
-                      </span>
-                    </TableCell>
-                    <TableCell title={attempt.runnerId}>
-                      {attempt.runnerName ?? attempt.runnerId.slice(0, 8)}
-                    </TableCell>
-                    <TableCell>
-                      {attempt.durationMs === undefined
-                        ? "—"
-                        : formatAttemptDuration(attempt.durationMs)}
-                    </TableCell>
-                    <TableCell>
-                      <div
-                        className={cn(
-                          "case-history-actions",
-                          caseExecutionHistoryStyles["case-history-actions"],
-                        )}
-                      >
-                        {canReadLogs ? (
-                          <Button
-                            aria-label={`查看第 ${attempt.executionRound} 轮总结日志`}
-                            className={cn(
-                              "button button-secondary compact-button",
-                              uiPatterns["button"],
-                              uiPatterns["button-secondary"],
-                              uiPatterns["compact-button"],
-                            )}
-                            onClick={() => setLogAttempt(attempt)}
-                            type="button"
-                          >
-                            查看日志
-                          </Button>
-                        ) : null}
-                        <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
-                          查看批次
-                        </Link>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ));
-              })}
-            </TableBody>
-          </Table>
+                  ));
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </div>
         {error ? (
           <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
@@ -284,7 +295,7 @@ export function CaseExecutionHistory({
           attemptId={logAttempt.id}
           attemptStatus={logAttempt.status}
           canReadLogs={canReadLogs}
-          canCreateRuns={canCreateRuns}
+          canRetryRuns={canRetryRuns}
           onClose={() => setLogAttempt(undefined)}
         />
       ) : null}
@@ -295,9 +306,10 @@ export function CaseExecutionHistory({
 const caseExecutionHistoryStyles = {
   "case-execution-history":
     "[&_.card-heading_p]:[margin:4px_0_0] [&_.card-heading_p]:text-muted-foreground [&.is-compact_.ui-card-content_>_.card-heading]:min-h-0 [&.is-compact_.ui-card-content_>_.card-heading]:py-2 [&.is-compact_.card-heading_p]:text-xs",
-  "case-history-actions": "flex items-center gap-2.5 whitespace-nowrap",
+  "case-history-actions": "flex flex-wrap items-center gap-2 whitespace-nowrap",
   "case-history-attempt-result": "block mt-[3px] text-muted-foreground text-xs",
-  "case-history-batch-name": "block mt-[3px] text-muted-foreground text-xs",
+  "case-history-batch-name":
+    "line-clamp-2 mt-1 text-muted-foreground text-xs [overflow-wrap:anywhere]",
   "case-history-complete": "m-0 [padding:14px_16px_18px] text-muted-foreground text-center",
   "case-history-load-more": "flex justify-center [padding:14px_16px_18px]",
   "table-card":

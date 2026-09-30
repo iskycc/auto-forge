@@ -69,6 +69,7 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
           accessToken={token}
           canCancelRuns={false}
           canCreateRuns={false}
+          canRetryRuns={false}
           canReadLogs={false}
           canReadAttemptEvents={false}
           canReadArtifacts={false}

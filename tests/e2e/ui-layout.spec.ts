@@ -7,8 +7,12 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { selectJarForInspection } from "./support/jar-import";
 import { dropCaseListFiles } from "./support/case-list-upload";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
+import { attachCaseDetailHistoryFixture } from "./support/case-detail-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
-import { insertBatchRunnerFixture } from "./support/batch-runner-fixture";
+import {
+  insertBatchRunnerFixture,
+  insertSchedulingLogFixture,
+} from "./support/batch-runner-fixture";
 import { insertRunnerInstallationProfileFixture } from "./support/runner-installation-profile-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
@@ -3837,3 +3841,606 @@ async function expectViewportDialog(
     .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
     .toBe(true);
 }
+
+test("runner dialogs remain clickable after repeated scheduling and telemetry switches", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("dialog-switch");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertBatchRunnerFixture(directory, version.body.id, suffix);
+  for (const index of [0, 1, 3, 4, 5, 6, 7]) {
+    insertSchedulingLogFixture(directory, fixture.batchId, `node-${index}-${suffix}`);
+  }
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`/run-batches/${fixture.batchId}`);
+  await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
+  const cards = page.getByRole("region", { name: "本轮执行机状态" }).locator(".runner-card");
+  await expect(cards).toHaveCount(8);
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    for (const index of [0, 1, 3, 4, 5, 6, 7]) {
+      const card = cards.nth(index);
+      await card.getByRole("button", { name: "调度日志", exact: true }).click();
+      const logs = page.getByRole("dialog", { name: /调度日志/ });
+      await expect(logs).toBeVisible();
+      await expect(logs.getByRole("log")).toContainText("调度事件 1500");
+      if (cycle === 1) await logs.press("Escape");
+      else await logs.getByRole("button", { name: "关闭日志终端" }).click();
+      await expect(logs).not.toBeVisible();
+      await card.getByRole("button", { name: /的资源监控/ }).click();
+      const telemetry = page.getByRole("dialog", { name: /资源监控/ });
+      await expect(telemetry).toContainText("暂无资源历史");
+      await telemetry.getByRole("button", { name: /^关闭/ }).click();
+      await expect(telemetry).not.toBeVisible();
+    }
+  }
+  expect(errors).toEqual([]);
+  await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(0);
+});
+
+test("scheduling logs bound history requests and search older message fragments on demand", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("scheduling-search");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertBatchRunnerFixture(directory, version.body.id, suffix);
+  insertSchedulingLogFixture(directory, fixture.batchId, `node-0-${suffix}`);
+  const requests: URL[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes(`/run-batches/${fixture.batchId}/scheduling-events`))
+      requests.push(new URL(request.url()));
+  });
+  await page.goto(`/run-batches/${fixture.batchId}`);
+  await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
+  const node = page
+    .getByRole("region", { name: "本轮执行机状态" })
+    .locator(".runner-card")
+    .filter({ hasText: fixture.longName });
+  await node.getByRole("button", { name: "调度日志", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /调度日志/ });
+  await expect(dialog.getByRole("log")).toContainText("调度事件 1500");
+  expect(requests.filter((url) => url.searchParams.has("beforeId"))).toHaveLength(0);
+  expect(requests).toHaveLength(1);
+  expect(await dialog.locator(".scheduling-event").count()).toBeLessThan(100);
+  await dialog.getByRole("log").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(dialog.getByRole("log")).toContainText("调度事件 1001");
+  await dialog.getByRole("button", { name: "返回最新", exact: true }).click();
+  await expect(dialog.getByRole("log")).toContainText("调度事件 1500");
+  await dialog.getByRole("button", { name: "更早日志", exact: true }).click();
+  await expect(dialog).toContainText("历史浏览");
+  await expect(dialog.getByRole("log")).toContainText("调度事件 501");
+  await dialog.getByRole("button", { name: "返回最新", exact: true }).click();
+  await expect(dialog.getByRole("log")).toContainText("调度事件 1500");
+  const search = dialog.getByRole("textbox", { name: "搜索调度日志" });
+  await search.fill("middle");
+  expect(requests.filter((url) => url.searchParams.has("query"))).toHaveLength(0);
+  await dialog.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(dialog.getByRole("log")).toContainText("旧历史 MiDdLe");
+  await expect(dialog.locator(".scheduling-event")).toHaveCount(3);
+  const repeatSearch = page.waitForResponse(
+    (response) => new URL(response.url()).searchParams.get("query") === "middle",
+  );
+  await dialog.getByRole("button", { name: "搜索", exact: true }).click();
+  expect((await repeatSearch).status()).toBe(200);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await waitForUiTransitions(page);
+    await expectUiIntegrity(page);
+    await captureUi(page, "scheduling-log-search", width, false);
+  }
+  await search.fill("%_\\");
+  await search.press("Enter");
+  await expect(dialog.locator(".scheduling-event")).toHaveCount(3);
+  await search.fill("does not exist");
+  await search.press("Enter");
+  await expect(dialog.getByRole("log")).toContainText("未找到匹配的调度日志");
+  await dialog.getByRole("button", { name: "清空搜索", exact: true }).click();
+  await expect(dialog.getByRole("log")).toContainText("调度事件 1500");
+  await dialog.getByRole("button", { name: "关闭日志终端" }).click();
+  await node.getByRole("button", { name: /的资源监控/ }).click();
+  const telemetry = page.getByRole("dialog", { name: /资源监控/ });
+  await expect(telemetry).toContainText("暂无资源历史");
+  await telemetry.getByRole("button", { name: /^关闭/ }).click();
+  await node.getByRole("button", { name: "调度日志", exact: true }).click();
+  await expect(dialog.getByRole("log")).toContainText("调度事件 1500");
+  await dialog.getByRole("button", { name: "关闭日志终端" }).click();
+});
+
+test("closing a pending scheduling request releases other runner dialogs and errors can retry", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("scheduling-pending");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertBatchRunnerFixture(directory, version.body.id, suffix);
+  const endpoint = `**/run-batches/${fixture.batchId}/scheduling-events?*`;
+  let requestStarted = false;
+  await page.route(endpoint, () => {
+    requestStarted = true;
+  });
+  await page.goto(`/run-batches/${fixture.batchId}`);
+  await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
+  const cards = page.getByRole("region", { name: "本轮执行机状态" }).locator(".runner-card");
+  await cards.first().getByRole("button", { name: "调度日志", exact: true }).click();
+  await expect.poll(() => requestStarted).toBe(true);
+  const requestCancelled = page.waitForEvent("requestfailed", {
+    predicate: (request) => request.url().includes("/scheduling-events?"),
+  });
+  await page.getByRole("button", { name: "关闭日志终端" }).click();
+  await requestCancelled;
+  await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(0);
+  await cards
+    .nth(1)
+    .getByRole("button", { name: /的资源监控/ })
+    .click();
+  const telemetry = page.getByRole("dialog", { name: /资源监控/ });
+  await expect(telemetry).toContainText("暂无资源历史");
+  await telemetry.getByRole("button", { name: /^关闭/ }).click();
+  await page.unroute(endpoint);
+  let fail = true;
+  await page.route(endpoint, async (route) => {
+    await route.fulfill(
+      fail
+        ? { status: 503, json: { error: { code: "PLATFORM_BUSY", message: "调度日志暂时繁忙" } } }
+        : { status: 200, json: { items: [] } },
+    );
+  });
+  await cards.nth(1).getByRole("button", { name: "调度日志", exact: true }).click();
+  const logs = page.getByRole("dialog", { name: /调度日志/ });
+  await expect(logs).toContainText("调度日志暂时繁忙");
+  fail = false;
+  await logs.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(logs.getByRole("log")).toContainText("暂无调度日志");
+  await logs.getByRole("button", { name: "关闭日志终端" }).click();
+  await cards.first().getByRole("button", { name: "调度日志", exact: true }).click();
+  await expect(logs.getByRole("log")).toContainText("暂无调度日志");
+  await logs.press("Escape");
+  await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(0);
+});
+
+test("case details keep long metadata, methods and expanded version snapshots within their sections", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const className = `com.example.${"longpackage.".repeat(8)}${"PaymentCase".repeat(10)}Test`;
+  const methodName = "verify" + "PaymentResult".repeat(9);
+  for (const version of [1, 2]) {
+    const jar = zipSync({
+      "testng.xml": new TextEncoder().encode(
+        `<suite name="layout"><parameter name="accountAlias" value="${"layout-read-only-".repeat(20)}"/><test name="layout"><classes><class name="${className}"/></classes></test></suite>`,
+      ),
+      [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
+        className,
+        methods: [
+          {
+            name: methodName,
+            descriptor: "(Ljava/lang/String;Ljava/util/Map;)V",
+            annotations: [
+              {
+                type: "Test",
+                values: { groups: ["regression", "long_group_".repeat(12)], priority: version },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await page.goto("/cases/import");
+    await selectJarForInspection(page, {
+      name: `detail-layout-${version}.jar`,
+      mimeType: "application/java-archive",
+      buffer: Buffer.from(jar),
+    });
+    await page.getByRole("button", { name: "扫描测试类" }).click();
+    await expect(page.getByText(className, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "确认导入" }).click();
+    await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
+      timeout: 60_000,
+    });
+  }
+  const definitions = await browserJson<{ items: Array<{ id: string; revision: number }> }>(
+    page,
+    `/api/v1/case-definitions?${new URLSearchParams({ ...scope, query: "PaymentCase" })}`,
+  );
+  expect(definitions.status).toBe(200);
+  const definition = definitions.body.items[0]!;
+  expect(definition).toBeTruthy();
+  const displayName = "支付用例_" + "LongDisplayName".repeat(10);
+  const update = await browserJson(page, `/api/v1/case-definitions/${definition.id}`, {
+    method: "PATCH",
+    body: {
+      displayName,
+      description: "验证长内容布局与编辑功能",
+      tags: ["支付", "long-tag-".repeat(7)],
+      expectedRevision: definition.revision,
+    },
+  });
+  expect(update.status, JSON.stringify(update.body)).toBe(200);
+  const restore = await browserJson(
+    page,
+    `/api/v1/case-definitions/${definition.id}/versions/1/restore`,
+    { method: "POST" },
+  );
+  expect(restore.status).toBe(200);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  attachCaseDetailHistoryFixture(
+    directory,
+    scope.projectId,
+    scope.projectVersionId,
+    definition.id,
+    uniqueName("detail-history"),
+  );
+  await page.goto(`/cases/${definition.id}`);
+  await expect(page.getByRole("heading", { name: displayName, exact: true })).toBeVisible();
+  await expect(page.locator(".case-definition-summary")).toContainText(
+    "accountAlias=layout-read-only-",
+  );
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    await page.reload();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await waitForUiTransitions(page);
+      await captureUi(page, `case-detail-header-${appearance}`, width, false);
+      const summaryColumns = await page
+        .locator(".case-definition-summary .ant-descriptions-row")
+        .first()
+        .locator("th")
+        .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+      expect(summaryColumns).toHaveLength(width === 1024 ? 2 : 4);
+      expect(Math.max(...summaryColumns) - Math.min(...summaryColumns)).toBeLessThanOrEqual(1);
+      const methods = page
+        .locator('[data-slot="card"]')
+        .filter({ has: page.getByRole("heading", { name: "测试方法（1）", exact: true }) });
+      await methods.scrollIntoViewIfNeeded();
+      await captureUi(page, `case-detail-methods-${appearance}`, width, false);
+      expect(
+        await methods
+          .locator(".table-scroll")
+          .evaluate((element) => element.scrollWidth - element.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      await page.locator(".case-execution-history").scrollIntoViewIfNeeded();
+      await captureUi(page, `case-detail-history-${appearance}`, width, false);
+      const editor = page.locator(".case-detail-page .settings-grid-form");
+      await editor.scrollIntoViewIfNeeded();
+      await captureUi(page, `case-detail-editor-${appearance}`, width, false);
+      const inset = await editor.evaluate((element) => {
+        const card = element.closest('[data-slot="card"]')!;
+        return element.getBoundingClientRect().left - card.getBoundingClientRect().left;
+      });
+      expect.soft(inset, "metadata fields need card padding").toBeGreaterThanOrEqual(16);
+      const snapshot = page.getByText("查看快照与相邻差异", { exact: true }).first();
+      if (width === 1024) await snapshot.click();
+      await snapshot.scrollIntoViewIfNeeded();
+      await captureUi(page, `case-detail-version-snapshot-${appearance}`, width, false);
+      await expectUiIntegrity(page);
+      expect
+        .soft(
+          await page
+            .locator(".version-snapshot-details:visible")
+            .first()
+            .evaluate((element) => {
+              const area = element.closest(".table-scroll")!;
+              return area.scrollWidth - area.clientWidth;
+            }),
+          "expanded snapshots must not widen the version table",
+        )
+        .toBeLessThanOrEqual(1);
+    }
+  }
+  await page.getByLabel("标签（逗号分隔）").fill("layout, regression");
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.getByText("用例已更新。", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("标签（逗号分隔）")).toHaveValue("layout, regression");
+  await page.getByRole("button", { name: "匿名分享", exact: true }).click();
+  await expect(page.getByRole("link", { name: "在新窗口打开永久分享链接" })).toBeVisible();
+  await page.goto(`/cases?${new URLSearchParams(scope)}`);
+  await page.getByLabel("页内搜索用例").fill("PaymentCase");
+  await page.getByRole("button", { name: `快速预览 ${displayName}`, exact: true }).click();
+  const inspector = page.locator(".case-inspector-pane");
+  await expect(inspector.locator(".case-definition-summary")).toContainText("layout、regression");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await inspector.scrollIntoViewIfNeeded();
+    await waitForUiTransitions(page);
+    await expectUiIntegrity(page);
+    await captureUi(page, "case-detail-inspector", width, false);
+  }
+  expect(pageErrors).toEqual([]);
+});
+
+test("execution case actions stay on one line in console and shared details", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("case-actions");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: suffix } },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    database
+      .prepare(
+        "UPDATE run_attempts SET testng_result_json=? WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+      )
+      .run(
+        JSON.stringify({
+          total: 1,
+          passed: 0,
+          failed: 1,
+          skipped: 0,
+          configurationFailures: 0,
+          detailsTruncated: true,
+          suites: [],
+        }),
+        fixture.batchId,
+      );
+  } finally {
+    database.close();
+  }
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${fixture.batchId}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  const anonymousContext = await browser.newContext();
+  try {
+    const anonymousPage = await anonymousContext.newPage();
+    for (const [target, url, access, buttonCount] of [
+      [page, `/run-batches/${fixture.batchId}`, "console", 3],
+      [anonymousPage, share.body.shareUrl, "public", 2],
+    ] as const) {
+      await target.goto(url);
+      await expect(target.locator(".round-row-actions")).toHaveCount(5);
+      for (const appearance of ["light", "dark"]) {
+        await target
+          .context()
+          .addCookies([
+            { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+          ]);
+        await target.reload();
+        for (const width of [1024, 1536]) {
+          await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          for (const round of ["初始轮次", "全部轮次"]) {
+            await target.getByRole("button", { name: round, exact: true }).click();
+            const actions = target.locator(".round-row-actions");
+            await expect(actions).toHaveCount(5);
+            await actions.first().scrollIntoViewIfNeeded();
+            await waitForUiTransitions(target);
+            await captureUi(
+              target,
+              `case-actions-${access}-${appearance}-${round === "全部轮次" ? "all" : "initial"}`,
+              width,
+              false,
+            );
+            const layouts = await actions.evaluateAll((groups) =>
+              groups.map((group) => {
+                const buttons = Array.from(group.querySelectorAll("button, a")).map((button) => {
+                  const { top, left, right, width } = button.getBoundingClientRect();
+                  return { top, left, right, width };
+                });
+                const bounds = group.getBoundingClientRect();
+                return {
+                  count: buttons.length,
+                  heightDifference:
+                    Math.max(...buttons.map((button) => button.top)) -
+                    Math.min(...buttons.map((button) => button.top)),
+                  overflow: Math.max(...buttons.map((button) => button.right)) - bounds.right,
+                  groupWidth: bounds.width,
+                  buttonWidths: buttons.map((button) => button.width),
+                };
+              }),
+            );
+            for (const layout of layouts) {
+              expect(layout.count).toBe(buttonCount);
+              expect.soft(layout.heightDifference, JSON.stringify(layout)).toBeLessThanOrEqual(1);
+              expect.soft(layout.overflow, JSON.stringify(layout)).toBeLessThanOrEqual(1);
+            }
+            await expectUiIntegrity(target);
+          }
+        }
+      }
+      const detail = target
+        .locator(".round-row-actions")
+        .first()
+        .getByRole("button", { name: "详情", exact: true });
+      await detail.click();
+      await expect(target.locator(".testng-results")).toBeVisible();
+      await detail.click();
+      await expect(target.locator(".testng-results")).toHaveCount(0);
+    }
+    await page
+      .locator(".round-row-actions")
+      .first()
+      .getByRole("button", { name: "查看日志", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.getByRole("dialog").press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  } finally {
+    await anonymousContext.close();
+  }
+});
+
+test("execution record actions stay on one line after sharing and resizing saved columns", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const suites = [];
+  for (let index = 0; index < 5; index++) {
+    const name = `操作布局任务 ${index + 1}`;
+    const suite = await createUiSuite(page, scope, name);
+    suites.push({ ...suite, name, passedRuns: index === 4 ? 0 : 2 });
+  }
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR!;
+  insertSuiteProgressFixture(directory, scope, suites);
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout=5000");
+    database
+      .prepare("UPDATE run_batches SET status='queued',scheduled_for=? WHERE suite_id=?")
+      .run(new Date(Date.now() + 86_400_000).toISOString(), suites[0]!.id);
+  } finally {
+    database.close();
+  }
+  await page.goto("/execution-records");
+  const widthKey = "autoforge.execution-records.column-widths.v1";
+  await page.evaluate(
+    (key) => localStorage.setItem(key, JSON.stringify({ actions: 190 })),
+    widthKey,
+  );
+  const groups = page.locator(".execution-record-row-actions");
+  const failedRow = page
+    .locator(".execution-records-table tbody tr")
+    .filter({ hasText: suites[4]!.name });
+  const handle = page.getByRole("separator", { name: "调整“操作”列宽" });
+  async function expectSingleLine() {
+    await expect(groups).toHaveCount(5);
+    await expect
+      .poll(() =>
+        groups.evaluateAll((elements) =>
+          elements.every((element) => {
+            const buttons = Array.from(element.querySelectorAll("button, a")).map((button) =>
+              button.getBoundingClientRect(),
+            );
+            const cell = element.closest("td")!;
+            const cellBounds = cell.getBoundingClientRect();
+            const inset = parseFloat(getComputedStyle(cell).paddingRight);
+            return (
+              Math.max(...buttons.map((button) => button.top)) -
+                Math.min(...buttons.map((button) => button.top)) <=
+                1 &&
+              Math.max(...buttons.map((button) => button.right)) <= cellBounds.right - inset + 1
+            );
+          }),
+        ),
+      )
+      .toBe(true);
+  }
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.reload();
+      await expect(failedRow.getByRole("button", { name: "开始分析", exact: true })).toBeVisible();
+      await groups.first().scrollIntoViewIfNeeded();
+      await waitForUiTransitions(page);
+      await captureUi(page, `record-actions-${appearance}`, width, false);
+      await expectSingleLine();
+      const widthBeforeSharing = Number(await handle.getAttribute("aria-valuenow"));
+      await failedRow.getByRole("button", { name: /生成批次/ }).click();
+      await expect(failedRow.getByRole("link", { name: /打开批次/ })).toBeVisible();
+      await expectSingleLine();
+      await expect
+        .poll(async () => Number(await handle.getAttribute("aria-valuenow")))
+        .toBeGreaterThan(widthBeforeSharing);
+      for (let index = 0; index < 15; index++) await handle.press("ArrowLeft");
+      await expectSingleLine();
+      await expect(handle).toHaveAttribute(
+        "aria-valuenow",
+        (await handle.getAttribute("aria-valuemin"))!,
+      );
+      await handle.press("ArrowRight");
+      await handle.scrollIntoViewIfNeeded();
+      await handle.hover();
+      const resizeHandle = (await handle.boundingBox())!;
+      await page.mouse.move(
+        resizeHandle.x + resizeHandle.width / 2,
+        resizeHandle.y + resizeHandle.height / 2,
+      );
+      await page.mouse.down();
+      await page.mouse.move(resizeHandle.x - 300, resizeHandle.y + resizeHandle.height / 2);
+      await page.mouse.up();
+      await expectSingleLine();
+      await expect(handle).toHaveAttribute(
+        "aria-valuenow",
+        (await handle.getAttribute("aria-valuemin"))!,
+      );
+      await handle.press("ArrowRight");
+      const resizedWidth = await handle.getAttribute("aria-valuenow");
+      await failedRow.getByRole("button", { name: /复制批次/ }).click();
+      await expect(failedRow.getByRole("status")).toHaveText("永久分享链接已复制");
+      await failedRow.scrollIntoViewIfNeeded();
+      await captureUi(page, `record-actions-shared-${appearance}`, width, false);
+      await expectUiIntegrity(page);
+      await page.reload();
+      await expect(handle).toHaveAttribute("aria-valuenow", resizedWidth!);
+      await page.getByRole("button", { name: "重置列宽", exact: true }).click();
+      await expectSingleLine();
+      await expect
+        .poll(async () => Number(await handle.getAttribute("aria-valuenow")))
+        .toBeLessThan(Number(resizedWidth));
+    }
+  }
+  const activeRow = page
+    .locator(".execution-records-table tbody tr")
+    .filter({ hasText: suites[0]!.name });
+  await activeRow.getByRole("button", { name: "终止任务", exact: true }).click();
+  const confirmation = page.getByRole("dialog");
+  await expect(confirmation).toContainText("确认终止");
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  await failedRow.getByRole("link", { name: /查看批次/ }).click();
+  await expect(page).toHaveURL(/\/run-batches\//);
+  expect(pageErrors).toEqual([]);
+});

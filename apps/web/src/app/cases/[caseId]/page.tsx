@@ -31,23 +31,11 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const { definition, canRun, executable } = detail;
 
   return (
-    <div
-      className={cn(
-        "page-stack case-detail-page",
-        uiPatterns["page-stack"],
-        pageStyles["case-detail-page"],
-      )}
-    >
-      <section
-        className={cn(
-          "page-hero case-detail-hero",
-          uiPatterns["page-hero"],
-          pageStyles["case-detail-hero"],
-        )}
-      >
-        <div>
+    <div className={cn("page-stack case-detail-page", uiPatterns["page-stack"])}>
+      <section className="case-detail-hero grid min-w-0 gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <Link
-            className={cn("back-link", pageStyles["back-link"])}
+            className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-primary"
             href={`/cases?${new URLSearchParams({
               projectId: definition.projectId,
               projectVersionId: definition.projectVersionId!,
@@ -56,52 +44,31 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           >
             <ArrowLeft size={15} aria-hidden="true" /> 返回用例管理
           </Link>
-          <span
-            className={cn(
-              "eyebrow case-detail-eyebrow",
-              uiPatterns["eyebrow"],
-              pageStyles["case-detail-eyebrow"],
-            )}
+          <div className="case-detail-actions flex max-w-full flex-wrap items-center gap-2">
+            <CasePermanentShare caseDefinitionId={definition.id} />
+            {canRun && definition.enabled && !definition.archived && executable ? (
+              <OpenRunDialogButton caseDefinitionId={definition.id} variant="primary" />
+            ) : null}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <h1
+            className="m-0 text-2xl font-semibold leading-snug break-all"
+            title={definition.displayName}
           >
-            Case Definition
-          </span>
-          <h1 title={definition.displayName}>{definition.displayName}</h1>
-          <p>
+            {definition.displayName}
+          </h1>
+          <p className="mb-0 mt-2 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
             <code>{definition.className}</code>
           </p>
         </div>
-        <div className={cn("case-detail-actions", pageStyles["case-detail-actions"])}>
-          <CasePermanentShare caseDefinitionId={definition.id} />
-          {canRun && definition.enabled && !definition.archived && executable ? (
-            <OpenRunDialogButton
-              caseDefinitionId={definition.id}
-              className={cn(
-                "button button-primary",
-                uiPatterns["button"],
-                uiPatterns["button-primary"],
-              )}
-            />
-          ) : null}
-          <Badge className={cn("storage-pill", pageStyles["storage-pill"])}>
-            <FileCode2 size={16} aria-hidden="true" /> 当前版本 v{definition.currentVersion}
-          </Badge>
-        </div>
+
+        <Badge variant="info">
+          <FileCode2 size={14} aria-hidden="true" /> 当前版本 v{definition.currentVersion}
+        </Badge>
       </section>
 
       <CaseDetailContent detail={detail} />
     </div>
   );
 }
-
-const pageStyles = {
-  "back-link":
-    "text-muted-foreground font-semibold inline-flex items-center gap-1.5 mb-[5px] text-sm w-fit [&:hover]:[text-decoration:underline]",
-  "case-detail-actions": "flex items-center justify-end gap-2",
-  "case-detail-eyebrow": "block",
-  "case-detail-hero":
-    "[&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:justify-items-start [&_.back-link]:mb-[9px] [&_h1]:[display:-webkit-box] [&_h1]:max-w-full [&_h1]:overflow-hidden [&_h1]:[overflow-wrap:anywhere] [&_h1]:leading-[1.3] [&_h1]:[-webkit-box-orient:vertical] [&_h1]:[-webkit-line-clamp:2] [&_code]:[overflow-wrap:anywhere] [&_code]:[word-break:break-word]",
-  "case-detail-page":
-    "w-[min(100%,_clamp(1280px,_82vw,_1920px))] [&_.source-meta-grid]:grid-cols-4 [&_.source-meta-grid_strong]:overflow-visible [&_.source-meta-grid_strong]:text-sm [&_.source-meta-grid_strong]:leading-[1.45] [&_.source-meta-grid_strong]:text-clip [&_.source-meta-grid_strong]:whitespace-normal [&_.source-meta-grid_strong]:[overflow-wrap:anywhere] [&_.source-meta-grid_code]:overflow-visible [&_.source-meta-grid_code]:text-sm [&_.source-meta-grid_code]:leading-[1.45] [&_.source-meta-grid_code]:text-clip [&_.source-meta-grid_code]:whitespace-normal [&_.source-meta-grid_code]:[overflow-wrap:anywhere] [&_.source-meta-wide]:col-span-full max-[1281px]:[&_.source-meta-grid]:grid-cols-2",
-  "storage-pill":
-    "inline-flex items-center gap-2 border border-solid border-border rounded-full py-[9px] px-[13px] bg-card text-muted-foreground text-xs font-semibold shadow-xs",
-} as const;

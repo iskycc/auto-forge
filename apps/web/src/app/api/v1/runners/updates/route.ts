@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import {
   batchUpdateRunnerAgentsInputSchema,
   batchUpdateRunnerAgentsResultSchema,
@@ -15,7 +16,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "runner.manage");
+    const identity = await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const input = batchUpdateRunnerAgentsInputSchema.parse(await readJsonBody(request, 16 * 1024));
     const services = await getPlatformServices();
     rejectRateLimited(

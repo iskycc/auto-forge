@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { updateRunnerLifecycleInputSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
@@ -11,7 +12,7 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "runner.manage");
+    const identity = await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const { runnerId } = await context.params;
     const input = updateRunnerLifecycleInputSchema.parse(await readJsonBody(request, 4 * 1024));
     const services = await getPlatformServices();
@@ -33,7 +34,7 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "runner.manage");
+    const identity = await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const { runnerId } = await context.params;
     const services = await getPlatformServices();
     const runner = await services.runnerControl.purgeRunner(runnerId);

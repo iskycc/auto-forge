@@ -1,3 +1,5 @@
+import { DomainError } from "./errors";
+
 export const permissionCatalog = [
   "case.read",
   "case.manage",
@@ -282,6 +284,7 @@ export function hasPermission(
   projectId?: string,
 ): boolean {
   if (identity.systemPermissions.includes(permission)) return true;
+  if (systemOnlyPermissions.includes(permission)) return false;
   if (!projectId) return false;
   return identity.projectPermissions[projectId]?.includes(permission) ?? false;
 }
@@ -291,10 +294,78 @@ export function projectIdsForPermission(
   permission: Permission,
 ): string[] | undefined {
   if (identity.systemPermissions.includes(permission)) return undefined;
+  if (systemOnlyPermissions.includes(permission)) return [];
   return Object.entries(identity.projectPermissions)
     .filter(([, permissions]) => permissions.includes(permission))
     .map(([projectId]) => projectId)
     .sort();
+}
+
+export const systemOnlyPermissions: readonly Permission[] = [
+  "user.read",
+  "user.manage",
+  "role.read",
+  "role.manage",
+  "ldap.read",
+  "ldap.manage",
+  "settings.read",
+  "settings.manage",
+  "api_token.manage",
+];
+
+const projectContextPermissions: readonly Permission[] = [
+  "case.read",
+  "case.manage",
+  "case_source.read",
+  "case_source.manage",
+  "case_suite.read",
+  "case_suite.manage",
+  "run.read",
+  "run.create",
+  "run.cancel",
+  "run.retry",
+  "analysis.manage",
+  "analysis.assign",
+  "log.read",
+  "artifact.read",
+  "project.read",
+  "project.manage",
+  "audit.read",
+  "audit.export",
+];
+
+export function projectIdsForContext(identity: AuthenticatedIdentity): string[] | undefined {
+  if (
+    projectContextPermissions.some((permission) => identity.systemPermissions.includes(permission))
+  )
+    return undefined;
+  return Object.entries(identity.projectPermissions)
+    .filter(([, permissions]) =>
+      permissions.some((permission) => projectContextPermissions.includes(permission)),
+    )
+    .map(([projectId]) => projectId)
+    .sort();
+}
+
+export function hasPermissionInAnyScope(
+  identity: AuthenticatedIdentity,
+  permission: Permission,
+): boolean {
+  const projects = projectIdsForPermission(identity, permission);
+  return projects === undefined || projects.length > 0;
+}
+
+/** Match controls to their selected project, with shared Runner access handled explicitly. */
+export function permissionsForProject(
+  identity: AuthenticatedIdentity,
+  projectId?: string,
+): Permission[] {
+  return permissionCatalog.filter((permission) => {
+    if (permission === "runner.read") return hasPermissionInAnyScope(identity, permission);
+    if (permission === "runner.manage" || permission === "runner.terminal")
+      return hasPermission(identity, permission, DEFAULT_PROJECT_ID);
+    return hasPermission(identity, permission, projectId);
+  });
 }
 
 export function isPermission(value: string): value is Permission {
@@ -324,20 +395,28 @@ export function countSystemAdministrators(
   bindings: readonly SystemRoleBindingView[],
   exclusion?: { userId?: string; roleId?: string },
 ): number {
-  const administrators = new Set<string>();
+  const permissionsByUser = new Map<string, Set<Permission>>();
   for (const binding of bindings) {
     const excludedByRole =
       exclusion?.roleId === binding.roleId &&
       (exclusion.userId === undefined || exclusion.userId === binding.userId);
     const excludedByUser = exclusion?.roleId === undefined && exclusion?.userId === binding.userId;
     if (excludedByRole || excludedByUser) continue;
-    if (
-      administratorRecoveryPermissions.every((permission) =>
-        binding.permissions.includes(permission),
-      )
-    ) {
-      administrators.add(binding.userId);
-    }
+    const permissions = permissionsByUser.get(binding.userId) ?? new Set<Permission>();
+    for (const permission of binding.permissions) permissions.add(permission);
+    permissionsByUser.set(binding.userId, permissions);
   }
-  return administrators.size;
+  return [...permissionsByUser.values()].filter((permissions) =>
+    administratorRecoveryPermissions.every((permission) => permissions.has(permission)),
+  ).length;
+}
+
+/** Check inside the write transaction so concurrent revocations cannot remove recovery access. */
+export function assertAdministratorRecoveryPreserved(before: number, after: number): void {
+  if (before > 0 && after === 0) {
+    throw new DomainError(
+      "LAST_ADMIN_REQUIRED",
+      "必须保留至少一位可管理用户和角色的活跃系统管理员。",
+    );
+  }
 }

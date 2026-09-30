@@ -1,3 +1,4 @@
+import { hasPermissionInAnyScope } from "@autoforge/domain";
 import { failureAnalysisHistoryPageSchema } from "@autoforge/contracts";
 import { DomainError, hasPermission, type AuthenticatedIdentity } from "@autoforge/domain";
 
@@ -40,11 +41,11 @@ export async function loadCaseDetail(
       historySource
         ? historySource.executions({
             limit: 50,
-            includeRunnerNames: hasPermission(identity, "runner.read"),
+            includeRunnerNames: hasPermissionInAnyScope(identity, "runner.read"),
           })
         : services.caseDefinitions.listExecutionHistory(caseDefinitionId, projectIds, {
             limit: 50,
-            includeRunnerNames: hasPermission(identity, "runner.read"),
+            includeRunnerNames: hasPermissionInAnyScope(identity, "runner.read"),
           }),
       services.failureAnalysis.listCaseHistory({
         projectId: definition.projectId,
@@ -71,6 +72,7 @@ export async function loadCaseDetail(
     testStageName: testStage.name,
     executable,
     canManage: hasPermission(identity, "case.manage", definition.projectId),
+    canRetry: hasPermission(identity, "run.retry", definition.projectId),
     canRun: hasPermission(identity, "run.create", definition.projectId),
     canReadLogs: hasPermission(identity, "log.read", definition.projectId),
     canReadSource: hasPermission(identity, "case_source.read", definition.projectId),

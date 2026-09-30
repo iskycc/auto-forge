@@ -19,7 +19,7 @@ export async function sharedLogRerunAccess(
     return "forbidden";
   }
   try {
-    services.identityAccess.authorize(identity, "run.create", context.projectId);
+    services.identityAccess.authorize(identity, "run.retry", context.projectId);
     return "allowed";
   } catch {
     return "read_only";

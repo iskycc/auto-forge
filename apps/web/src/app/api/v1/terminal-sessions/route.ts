@@ -1,5 +1,5 @@
 import { createTerminalSessionInputSchema } from "@autoforge/contracts";
-import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
+import { AuthorizationDeniedError, DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
@@ -14,15 +14,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
+    const identity = await authenticateRequest(request);
+    if (identity.sessionId.startsWith("api-token:"))
+      throw new AuthorizationDeniedError(identity, "runner.terminal", DEFAULT_PROJECT_ID);
     const services = await getPlatformServices();
+    services.identityAccess.authorize(identity, "runner.terminal", DEFAULT_PROJECT_ID);
     if (!services.config.terminalAccessToken) {
       throw new DomainError("TERMINAL_DISABLED", "平台未启用直连终端。请先配置终端访问令牌。");
     }
     rejectRateLimited(
       await services.runnerRequestLimiter.allow("terminal:authorize:v1", 30, 60_000),
     );
-    const identity = await authenticateRequest(request);
-    services.identityAccess.authorize(identity, "runner.terminal", DEFAULT_PROJECT_ID);
     const input = createTerminalSessionInputSchema.parse(await readJsonBody(request, 16 * 1024));
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(

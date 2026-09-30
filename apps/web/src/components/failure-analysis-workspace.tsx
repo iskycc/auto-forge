@@ -2519,7 +2519,7 @@ function CompleteAnalysisDialog({
         <AttemptLogViewer
           attemptId={logClaim.attemptId}
           attemptStatus="failed"
-          canCreateRuns={false}
+          canRetryRuns={false}
           canReadLogs
           onClose={() => setLogClaim(undefined)}
         />

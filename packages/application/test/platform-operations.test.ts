@@ -58,6 +58,39 @@ describe("per-suite schedule access", () => {
 });
 
 describe("PlatformOperationsService analytics", () => {
+  it("rechecks every export source after access is revoked, before reading or changing stored output", async () => {
+    const repository = {
+      getAnalyticsExportScope: vi.fn(async () => ({ filter: {}, projectIds: ["project-1"] })),
+      getAnalyticsExportJob: vi.fn(async () => ({ id: "export" })),
+      requestAnalyticsExportCancellation: vi.fn(),
+      resolveAnalyticsExportObject: vi.fn(),
+    };
+    const service = new PlatformOperationsService(
+      repository as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    const revoked = {
+      ...projectIdentity,
+      projectPermissions: { "project-2": ["run.read" as const] },
+    };
+    for (const operation of [
+      "getAnalyticsExport",
+      "cancelAnalyticsExport",
+      "downloadAnalyticsExport",
+    ] as const)
+      await expect(service[operation](revoked, "export")).rejects.toMatchObject({
+        code: "AUTH_FORBIDDEN",
+      });
+    expect(repository.getAnalyticsExportJob).not.toHaveBeenCalled();
+    expect(repository.requestAnalyticsExportCancellation).not.toHaveBeenCalled();
+    expect(repository.resolveAnalyticsExportObject).not.toHaveBeenCalled();
+    await expect(service.getAnalyticsExport(projectIdentity, "export")).resolves.toEqual({
+      id: "export",
+    });
+  });
+
   it("validates and forwards an explicitly bounded dashboard sample", async () => {
     const readAnalyticsOverview = vi.fn(async () => emptyAnalyticsSummary());
     const service = new PlatformOperationsService(
@@ -116,8 +149,68 @@ describe("PlatformOperationsService analytics", () => {
       query: "smoke",
       limit: 10,
       projectIds: ["project-1"],
+      kinds: ["case"],
     });
     expect(repository.countUnreadNotifications).toHaveBeenCalledWith({
+      userId: reader.user.id,
+      projectIds: ["project-1"],
+    });
+  });
+
+  it("searches each resource only within projects granting its own permission", async () => {
+    const globalSearch = vi.fn<PlatformOperationsRepository["globalSearch"]>(async () => ({
+      items: [],
+    }));
+    const service = new PlatformOperationsService(
+      { globalSearch } as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    const mixed: AuthenticatedIdentity = {
+      ...projectIdentity,
+      projectPermissions: {
+        "project-1": ["case.read"],
+        "project-2": ["run.read"],
+        "project-3": ["case_suite.read"],
+      },
+    };
+    await service.globalSearch(mixed, "shared-keyword", 10);
+    expect(globalSearch.mock.calls.map(([input]) => input)).toEqual([
+      { query: "shared-keyword", limit: 10, kinds: ["case"], projectIds: ["project-1"] },
+      { query: "shared-keyword", limit: 10, kinds: ["suite"], projectIds: ["project-3"] },
+      { query: "shared-keyword", limit: 10, kinds: ["batch", "run"], projectIds: ["project-2"] },
+    ]);
+    globalSearch.mockClear();
+    await expect(
+      service.globalSearch(
+        { ...mixed, projectPermissions: {}, systemPermissions: ["run.read"] },
+        "execution",
+        10,
+      ),
+    ).resolves.toEqual({ items: [] });
+    expect(globalSearch).toHaveBeenCalledExactlyOnceWith({
+      query: "execution",
+      limit: 10,
+      kinds: ["batch", "run"],
+    });
+  });
+
+  it("does not expose every project's notifications for an unrelated system role", async () => {
+    const countUnreadNotifications = vi.fn(async () => 0);
+    const service = new PlatformOperationsService(
+      { countUnreadNotifications } as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    const reader: AuthenticatedIdentity = {
+      ...projectIdentity,
+      systemPermissions: ["user.read"],
+      projectPermissions: { "project-1": ["run.read"] },
+    };
+    await service.countUnreadNotifications(reader);
+    expect(countUnreadNotifications).toHaveBeenCalledWith({
       userId: reader.user.id,
       projectIds: ["project-1"],
     });

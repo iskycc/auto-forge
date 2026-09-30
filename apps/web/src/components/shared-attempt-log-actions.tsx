@@ -15,10 +15,10 @@ import { Button } from "@/components/ui";
 /** 登录用户在永久日志详情页直接打开当前手动执行或新提交重跑的实时日志。 */
 export function SharedAttemptLogActions({
   attempt,
-  canCreateRuns,
+  canRetryRuns,
 }: {
   attempt: Pick<RunAttempt, "id" | "status">;
-  canCreateRuns: boolean;
+  canRetryRuns: boolean;
 }) {
   const router = useRouter();
   const [openAttempt, setOpenAttempt] = useState<LiveLogAttempt | null>(null);
@@ -45,7 +45,7 @@ export function SharedAttemptLogActions({
           <Radio size={15} /> 查看实时日志
         </Button>
       ) : null}
-      {terminal && canCreateRuns ? (
+      {terminal && canRetryRuns ? (
         <AttemptRerunAction
           attemptId={attempt.id}
           onOpenLiveLogs={setOpenAttempt}
@@ -56,7 +56,7 @@ export function SharedAttemptLogActions({
         <AttemptLogViewer
           attemptId={openAttempt.id}
           attemptStatus={openAttempt.status}
-          canCreateRuns={false}
+          canRetryRuns={false}
           canReadLogs
           onClose={() => setOpenAttempt(null)}
         />

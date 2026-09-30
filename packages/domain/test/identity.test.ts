@@ -3,6 +3,8 @@ import {
   countSystemAdministrators,
   DEFAULT_PROJECT_ID,
   hasPermission,
+  hasPermissionInAnyScope,
+  permissionsForProject,
   permissionCatalog,
   projectIdsForPermission,
   type AuthenticatedIdentity,
@@ -62,6 +64,40 @@ describe("identity permissions", () => {
     expect(hasPermission(auditor, "user.read")).toBe(false);
   });
 
+  it("does not offer controls from a different project's role", () => {
+    const mixed = identity([], {
+      "project-a": role("execution-operator").permissions,
+      "project-b": role("viewer").permissions,
+    });
+    expect(permissionsForProject(mixed, "project-a")).toContain("run.create");
+    expect(permissionsForProject(mixed, "project-b")).not.toContain("run.create");
+    expect(permissionsForProject(mixed, "project-b")).not.toContain("run.retry");
+    expect(permissionsForProject(mixed, "project-b")).toContain("runner.read");
+  });
+
+  it("never promotes project grants into platform settings or identity administration", () => {
+    const scoped = identity([], {
+      [DEFAULT_PROJECT_ID]: ["settings.read", "role.manage", "user.manage"],
+    });
+    for (const permission of ["settings.read", "role.manage", "user.manage"] as const) {
+      expect(hasPermission(scoped, permission, DEFAULT_PROJECT_ID)).toBe(false);
+      expect(hasPermissionInAnyScope(scoped, permission)).toBe(false);
+      expect(projectIdsForPermission(scoped, permission)).toEqual([]);
+      expect(permissionsForProject(scoped, DEFAULT_PROJECT_ID)).not.toContain(permission);
+    }
+  });
+
+  it("keeps shared node management in its explicit legacy administration project", () => {
+    const ordinaryAdmin = identity([], { "project-a": role("project-admin").permissions });
+    expect(permissionsForProject(ordinaryAdmin, "project-a")).toContain("runner.read");
+    expect(permissionsForProject(ordinaryAdmin, "project-a")).not.toContain("runner.manage");
+    expect(permissionsForProject(ordinaryAdmin, "project-a")).not.toContain("runner.terminal");
+    const infrastructureAdmin = identity([], {
+      [DEFAULT_PROJECT_ID]: role("project-admin").permissions,
+    });
+    expect(permissionsForProject(infrastructureAdmin, "project-a")).toContain("runner.manage");
+  });
+
   it("derives a stable project filter without broadening system access", () => {
     const scoped = identity([], {
       "project-b": role("viewer").permissions,
@@ -114,6 +150,15 @@ describe("countSystemAdministrators", () => {
 
   it("counts only users holding every recovery permission", () => {
     expect(countSystemAdministrators(bindings)).toBe(2);
+  });
+
+  it("combines a user's active system roles when checking recovery permissions", () => {
+    expect(
+      countSystemAdministrators([
+        { userId: "user", roleId: "users", permissions: ["user.manage"] },
+        { userId: "user", roleId: "roles", permissions: ["role.manage"] },
+      ]),
+    ).toBe(1);
   });
 
   it("evaluates role deactivation against the remaining administrators", () => {

@@ -1,7 +1,8 @@
 export const executionCaseColumnWidthsRem = {
   round: 4.875,
   duration: 4.75,
-  actions: 17,
+  // Three compact actions need 263px, plus the two 9px cell insets.
+  actions: 18,
   sharedActions: 12,
 } as const;
 

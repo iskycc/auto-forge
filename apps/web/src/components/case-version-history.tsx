@@ -5,8 +5,6 @@ import { Notice } from "@/components/ui/notice";
 
 import { Badge } from "@/components/ui/badge";
 
-import { Disclosure } from "@/components/ui/disclosure";
-
 import {
   Table,
   TableHeader,
@@ -31,7 +29,7 @@ import { GitCompareArrows, History } from "lucide-react";
 import Link from "next/link";
 import { LinkButton } from "@/components/ui/link-button";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
@@ -66,6 +64,7 @@ export function CaseVersionHistory({
   );
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedVersions, setExpandedVersions] = useState<number[]>([]);
   const [leftVersion, setLeftVersion] = useState(currentVersion);
   const [rightVersion, setRightVersion] = useState(
     orderedVersions.find((version) => version.version !== currentVersion)?.version ??
@@ -170,15 +169,19 @@ export function CaseVersionHistory({
       </section>
 
       <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
-        <Table className={cn("data-table", uiPatterns["data-table"])}>
+        <Table
+          className={cn(
+            "data-table min-w-[680px] table-fixed [&_td]:align-top [&_td]:[overflow-wrap:anywhere]",
+            uiPatterns["data-table"],
+          )}
+        >
           <TableHeader>
             <TableRow>
-              <TableHead>版本</TableHead>
-              <TableHead>变更原因</TableHead>
-              <TableHead>操作人</TableHead>
-              <TableHead>创建时间</TableHead>
-              <TableHead>内容与引用</TableHead>
-              {canManage ? <TableHead>操作</TableHead> : null}
+              <TableHead className="w-24">版本</TableHead>
+              <TableHead className="w-28">变更原因</TableHead>
+              <TableHead className="w-28">操作人</TableHead>
+              <TableHead className="w-40">创建时间</TableHead>
+              <TableHead>内容与操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -187,124 +190,144 @@ export function CaseVersionHistory({
               const previous = snapshotFor(orderedVersions, version.version - 1);
               const adjacentChanges = compareSnapshots(previous, snapshot);
               return (
-                <TableRow key={version.id}>
-                  <TableCell>
-                    <strong>v{version.version}</strong>
-                    {version.version === currentVersion ? (
-                      <Badge
-                        className={cn(
-                          "tag current-version-tag",
-                          uiPatterns["tag"],
-                          caseVersionHistoryStyles["current-version-tag"],
-                        )}
-                      >
-                        当前
-                      </Badge>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    {CHANGE_REASON_LABELS[version.changeReason] ?? version.changeReason}
-                  </TableCell>
-                  <TableCell>
-                    {version.createdBy ?? (
-                      <span className={cn("muted", uiPatterns["muted"])}>—</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <time dateTime={version.createdAt}>{formatDate(version.createdAt)}</time>
-                  </TableCell>
-                  <TableCell>
-                    <Disclosure
-                      header={<>查看快照与相邻差异</>}
-                      headerClassName={cn(
-                        "role-action-summary",
-                        caseVersionHistoryStyles["role-action-summary"],
-                      )}
-                    >
-                      {snapshot ? (
-                        <div
-                          className={cn(
-                            "version-snapshot-details",
-                            caseVersionHistoryStyles["version-snapshot-details"],
-                          )}
-                        >
-                          <p>
-                            <strong>JAR 来源：</strong>
-                            {canReadSource ? (
-                              <Link href={`/case-sources/${encodeURIComponent(version.sourceId)}`}>
-                                {version.sourceId}
-                              </Link>
-                            ) : (
-                              <code>{version.sourceId}</code>
-                            )}
-                          </p>
-                          <p>
-                            <strong>源码条目：</strong>
-                            {snapshot.source?.entryPath ?? "字节码快照（无源码条目）"}
-                          </p>
-                          {snapshot.source ? (
-                            <p>
-                              <strong>源码 SHA-256：</strong>
-                              <code>{snapshot.source.sha256}</code>
-                            </p>
-                          ) : null}
-                          <p>
-                            <strong>相邻版本差异：</strong>
-                            {previous
-                              ? adjacentChanges.join("；") || "无可执行内容差异"
-                              : "首个版本，无相邻基准"}
-                          </p>
-                          <pre
-                            className={cn(
-                              "source-code-viewer",
-                              caseVersionHistoryStyles["source-code-viewer"],
-                            )}
-                            tabIndex={0}
-                          >
-                            <code>
-                              {JSON.stringify(snapshotForPresentation(snapshot), null, 2)}
-                            </code>
-                          </pre>
-                        </div>
-                      ) : (
-                        <Notice tone="error" className={cn("auth-error", uiPatterns["auth-error"])}>
-                          该历史快照格式无效，不能展示或恢复。
-                        </Notice>
-                      )}
-                      <LinkButton
-                        className={cn(
-                          "button button-secondary",
-                          uiPatterns["button"],
-                          uiPatterns["button-secondary"],
-                        )}
-                        href={`/run-batches?caseDefinitionId=${encodeURIComponent(caseDefinitionId)}`}
-                      >
-                        查看该用例关联执行
-                      </LinkButton>
-                    </Disclosure>
-                  </TableCell>
-                  {canManage ? (
+                <Fragment key={version.id}>
+                  <TableRow>
                     <TableCell>
+                      <strong>v{version.version}</strong>
                       {version.version === currentVersion ? (
-                        <span className={cn("muted", uiPatterns["muted"])}>—</span>
-                      ) : (
-                        <Button
-                          className={cn("secondary-button", uiPatterns["secondary-button"])}
-                          disabled={pendingVersion !== null || !snapshot}
-                          onClick={() => void restore(version.version)}
-                          type="button"
-                        >
-                          {pendingVersion === version.version ? (
-                            <LoadingIcon size={14} />
-                          ) : (
-                            <History size={14} />
+                        <Badge
+                          className={cn(
+                            "tag current-version-tag",
+                            uiPatterns["tag"],
+                            caseVersionHistoryStyles["current-version-tag"],
                           )}
-                          从该版本创建
-                        </Button>
-                      )}
+                        >
+                          当前
+                        </Badge>
+                      ) : null}
                     </TableCell>
+                    <TableCell>
+                      {CHANGE_REASON_LABELS[version.changeReason] ?? version.changeReason}
+                    </TableCell>
+                    <TableCell>
+                      <span className="block truncate" title={version.createdBy ?? undefined}>
+                        {version.createdBy ?? "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <time dateTime={version.createdAt}>{formatDate(version.createdAt)}</time>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-start gap-2">
+                        <Button
+                          type="button"
+                          size="compact"
+                          variant="secondary"
+                          aria-expanded={expandedVersions.includes(version.version)}
+                          aria-controls={`case-version-${version.id}`}
+                          onClick={() =>
+                            setExpandedVersions((current) =>
+                              current.includes(version.version)
+                                ? current.filter((value) => value !== version.version)
+                                : [...current, version.version],
+                            )
+                          }
+                        >
+                          查看快照与相邻差异
+                        </Button>
+
+                        {canManage && version.version !== currentVersion ? (
+                          <Button
+                            className={cn("secondary-button", uiPatterns["secondary-button"])}
+                            disabled={pendingVersion !== null || !snapshot}
+                            onClick={() => void restore(version.version)}
+                            type="button"
+                          >
+                            {pendingVersion === version.version ? (
+                              <LoadingIcon size={14} />
+                            ) : (
+                              <History size={14} />
+                            )}
+                            从该版本创建
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {expandedVersions.includes(version.version) ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="bg-muted/30">
+                        <div id={`case-version-${version.id}`} className="min-w-0">
+                          {snapshot ? (
+                            <div
+                              className={cn(
+                                "version-snapshot-details",
+                                caseVersionHistoryStyles["version-snapshot-details"],
+                              )}
+                            >
+                              <p>
+                                <strong>JAR 来源：</strong>
+                                {canReadSource ? (
+                                  <Link
+                                    href={`/case-sources/${encodeURIComponent(version.sourceId)}`}
+                                  >
+                                    {version.sourceId}
+                                  </Link>
+                                ) : (
+                                  <code>{version.sourceId}</code>
+                                )}
+                              </p>
+                              <p>
+                                <strong>源码条目：</strong>
+                                {snapshot.source?.entryPath ?? "字节码快照（无源码条目）"}
+                              </p>
+                              {snapshot.source ? (
+                                <p>
+                                  <strong>源码 SHA-256：</strong>
+                                  <code>{snapshot.source.sha256}</code>
+                                </p>
+                              ) : null}
+                              <p>
+                                <strong>相邻版本差异：</strong>
+                                {previous
+                                  ? adjacentChanges.join("；") || "无可执行内容差异"
+                                  : "首个版本，无相邻基准"}
+                              </p>
+                              <pre
+                                className={cn(
+                                  "source-code-viewer",
+                                  caseVersionHistoryStyles["source-code-viewer"],
+                                )}
+                                tabIndex={0}
+                              >
+                                <code>
+                                  {JSON.stringify(snapshotForPresentation(snapshot), null, 2)}
+                                </code>
+                              </pre>
+                            </div>
+                          ) : (
+                            <Notice
+                              tone="error"
+                              className={cn("auth-error", uiPatterns["auth-error"])}
+                            >
+                              该历史快照格式无效，不能展示或恢复。
+                            </Notice>
+                          )}
+                          <LinkButton
+                            className={cn(
+                              "button button-secondary",
+                              uiPatterns["button"],
+                              uiPatterns["button-secondary"],
+                            )}
+                            href={`/run-batches?caseDefinitionId=${encodeURIComponent(caseDefinitionId)}`}
+                          >
+                            查看该用例关联执行
+                          </LinkButton>
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   ) : null}
-                </TableRow>
+                </Fragment>
               );
             })}
           </TableBody>
@@ -437,13 +460,13 @@ const caseVersionHistoryStyles = {
   "current-version-tag": "ml-[7px] bg-success/10 text-success",
   "inline-feedback":
     "border-b border-solid border-border py-2.5 px-4.5 bg-success/10 text-success text-xs [&.error]:border-destructive/10 [&.error]:bg-destructive/10 [&.error]:text-destructive",
-  "role-action-summary": "w-fit text-muted-foreground cursor-pointer",
   "settings-inline-form":
-    "inline-flex items-end gap-2 [&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.ui-button]:[flex:0_0_auto] [&_.ui-button]:whitespace-nowrap",
+    "flex min-w-0 flex-wrap items-end gap-3 [&_label]:grid [&_label]:gap-1.5 [&_label]:text-muted-foreground [&_label]:text-xs [&_label]:font-semibold [&_.ui-button]:[flex:0_0_auto] [&_.ui-button]:whitespace-nowrap",
   "source-code-viewer":
-    "max-h-[640px] overflow-auto m-0 p-4.5 border border-solid border-border rounded-lg bg-log-background text-log-foreground font-mono text-xs leading-[1.65] [tab-size:2] whitespace-pre",
-  "version-comparison": "grid gap-3.5 border border-solid border-border rounded-lg p-4 bg-muted",
-  "version-diff-list": "grid gap-[7px] m-0 pl-5 text-muted-foreground",
+    "min-w-0 max-w-full max-h-[480px] overflow-auto m-0 p-4.5 border border-solid border-border rounded-lg bg-log-background text-log-foreground font-mono text-xs leading-[1.65] [tab-size:2] whitespace-pre",
+  "version-comparison":
+    "grid min-w-0 gap-3.5 border border-solid border-border rounded-lg p-4 bg-muted",
+  "version-diff-list": "grid min-w-0 gap-2 m-0 pl-5 text-muted-foreground [overflow-wrap:anywhere]",
   "version-snapshot-details":
-    "grid min-w-[min(680px,_75vw)] gap-2.5 my-3 mx-0 [&_p]:m-0 [&_p]:[overflow-wrap:anywhere]",
+    "grid min-w-0 max-w-full gap-2.5 my-3 mx-0 [&_p]:m-0 [&_p]:[overflow-wrap:anywhere]",
 } as const;

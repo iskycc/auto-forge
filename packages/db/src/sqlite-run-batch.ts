@@ -1487,6 +1487,10 @@ export class SqliteRunBatchRepository
       parameters.push(input.runnerId);
       filters += " AND runner_id = ?";
     }
+    if (input.query?.trim()) {
+      parameters.push(`%${escapeSqliteLike(input.query.trim().toLowerCase())}%`);
+      filters += " AND LOWER(message) LIKE ? ESCAPE '\\'";
+    }
     if (input.afterId !== undefined) {
       // 游标用 (recorded_at, id) 元组比较定位，id 为唯一键保证边界不重复、不遗漏。
       parameters.push(input.afterId);

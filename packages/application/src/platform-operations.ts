@@ -1,3 +1,4 @@
+import { hasPermissionInAnyScope, projectIdsForContext } from "@autoforge/domain";
 import { compareBatchCase } from "./compare-batch-case";
 import { createHash } from "node:crypto";
 
@@ -604,14 +605,14 @@ export class PlatformOperationsService {
   }
 
   async getAnalyticsExport(actor: AuthenticatedIdentity, exportId: string) {
-    requirePermissionInAnyScope(actor, "run.read");
+    await this.authorizeAnalyticsExport(actor, exportId);
     const job = await this.repository.getAnalyticsExportJob(exportId, actor.user.id);
     if (!job) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
     return job;
   }
 
   async cancelAnalyticsExport(actor: AuthenticatedIdentity, exportId: string) {
-    requirePermissionInAnyScope(actor, "run.read");
+    await this.authorizeAnalyticsExport(actor, exportId);
     return this.repository.requestAnalyticsExportCancellation({
       jobId: exportId,
       requestedBy: actor.user.id,
@@ -620,7 +621,7 @@ export class PlatformOperationsService {
   }
 
   async downloadAnalyticsExport(actor: AuthenticatedIdentity, exportId: string) {
-    requirePermissionInAnyScope(actor, "run.read");
+    await this.authorizeAnalyticsExport(actor, exportId);
     if (!this.objectStore?.read) {
       throw new DomainError("ANALYTICS_EXPORT_UNAVAILABLE", "当前运行时未配置导出对象读取能力。");
     }
@@ -639,6 +640,19 @@ export class PlatformOperationsService {
       throw new DomainError("ANALYTICS_EXPORT_CORRUPT", "导出文件大小或摘要校验失败。");
     }
     return { ...resolved, content };
+  }
+
+  private async authorizeAnalyticsExport(
+    actor: AuthenticatedIdentity,
+    exportId: string,
+  ): Promise<void> {
+    requirePermissionInAnyScope(actor, "run.read");
+    const scope = await this.repository.getAnalyticsExportScope(exportId, actor.user.id);
+    if (!scope) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
+    if (scope.filter.projectId) requirePermission(actor, "run.read", scope.filter.projectId);
+    else if (scope.projectIds)
+      for (const projectId of scope.projectIds) requirePermission(actor, "run.read", projectId);
+    else requirePermission(actor, "run.read");
   }
 
   analyticsExportJobHandler(): JobHandler {
@@ -772,12 +786,30 @@ export class PlatformOperationsService {
   }
 
   async globalSearch(actor: AuthenticatedIdentity, query: string, limit: number) {
-    requirePermissionInAnyScope(actor, "case.read");
-    const projectIds = mergeProjectScopes(
-      projectIdsForPermission(actor, "case.read"),
-      projectIdsForPermission(actor, "run.read"),
+    const scopes: Array<{
+      permission: Permission;
+      kinds: NonNullable<Parameters<PlatformOperationsRepository["globalSearch"]>[0]["kinds"]>;
+    }> = [
+      { permission: "case.read", kinds: ["case"] },
+      { permission: "case_suite.read", kinds: ["suite"] },
+      { permission: "run.read", kinds: ["batch", "run"] },
+      { permission: "runner.read", kinds: ["runner"] },
+    ];
+    const allowed = scopes.filter(({ permission }) => hasPermissionInAnyScope(actor, permission));
+    if (allowed.length === 0) throw new AuthorizationDeniedError(actor, "case.read");
+    const pages = await Promise.all(
+      allowed.map(({ permission, kinds }) => {
+        const projectIds =
+          permission === "runner.read" ? undefined : projectIdsForPermission(actor, permission);
+        return this.repository.globalSearch({
+          query,
+          limit,
+          kinds,
+          ...(projectIds ? { projectIds } : {}),
+        });
+      }),
     );
-    return this.repository.globalSearch({ query, limit, ...(projectIds ? { projectIds } : {}) });
+    return { items: pages.flatMap((page) => page.items).slice(0, limit) };
   }
 }
 
@@ -877,16 +909,7 @@ function requireScopedPermission(
 }
 
 function accessibleProjectIds(actor: AuthenticatedIdentity): string[] | undefined {
-  if (actor.systemPermissions.length > 0) return undefined;
-  return Object.keys(actor.projectPermissions).sort();
-}
-
-function mergeProjectScopes(
-  left: string[] | undefined,
-  right: string[] | undefined,
-): string[] | undefined {
-  if (left === undefined || right === undefined) return undefined;
-  return [...new Set([...left, ...right])].sort();
+  return projectIdsForContext(actor);
 }
 
 function cutoff(now: Date, retentionDays: number): string {

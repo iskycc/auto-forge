@@ -1,3 +1,4 @@
+import { Descriptions } from "antd";
 import { Badge } from "@/components/ui/badge";
 import { Disclosure } from "@/components/ui/disclosure";
 import { Card } from "@/components/ui/card";
@@ -61,72 +62,93 @@ export function CaseDetailContent({
         <>
           <Card
             as="section"
-            className={`case-definition-summary ${inspector ? "" : cn("card source-summary-card", uiPatterns["card"], caseDetailContentStyles["source-summary-card"])}`}
+            aria-label="用例基本信息"
+            className="case-definition-summary min-w-0 p-4"
           >
-            <div
-              className={
-                inspector
-                  ? cn("case-inspector-meta", caseDetailContentStyles["case-inspector-meta"])
-                  : cn("source-meta-grid", caseDetailContentStyles["source-meta-grid"])
-              }
-            >
-              <div>
-                <span>状态</span>
-                <strong>
-                  <StatusBadge enabled={definition.enabled} />
-                  {definition.archived ? (
-                    <Badge className={cn("tag", uiPatterns["tag"])}>已归档</Badge>
-                  ) : null}
-                </strong>
-              </div>
-              <div>
-                <span>包名</span>
-                <strong>{definition.packageName || "—"}</strong>
-              </div>
-              <div>
-                <span>版本 / 测试阶段</span>
-                <strong>
-                  {detail.projectVersionName} / {detail.testStageName}
-                </strong>
-              </div>
-              <div>
-                <span>分组</span>
-                <strong>{definition.groups.join("、") || "—"}</strong>
-              </div>
-              <div>
-                <span>标签</span>
-                <strong>{definition.tags.join("、") || "—"}</strong>
-              </div>
-              <div>
-                <span>测试方法</span>
-                <strong>{definition.methods.length}</strong>
-              </div>
-              <div>
-                <span>修订</span>
-                <strong>r{definition.revision}</strong>
-              </div>
-              <div>
-                <span>最近更新</span>
-                <strong>{formatDate(definition.updatedAt, timeZone)}</strong>
-              </div>
-              <div
-                className={
-                  inspector
-                    ? cn(
-                        "case-inspector-meta-wide",
-                        caseDetailContentStyles["case-inspector-meta-wide"],
-                      )
-                    : "source-meta-wide"
-                }
-              >
-                <span>参数（只读）</span>
-                <strong>
-                  {Object.entries(definition.parameters)
-                    .map(([name, value]) => `${name}=${value}`)
-                    .join("；") || "—"}
-                </strong>
-              </div>
-            </div>
+            <Descriptions
+              className={cn(
+                inspector ? "case-inspector-meta" : "source-meta-grid",
+                "[&_table]:w-full [&_table]:table-fixed!",
+              )}
+              bordered
+              size="small"
+              layout="vertical"
+              column={inspector ? 2 : { xs: 2, sm: 2, md: 2, lg: 2, xl: 4 }}
+              classNames={{ content: "min-w-0 [overflow-wrap:anywhere]", label: "text-xs" }}
+              items={[
+                {
+                  key: "state",
+                  label: "状态",
+                  children: (
+                    <strong className="flex flex-wrap gap-2">
+                      <StatusBadge enabled={definition.enabled} />
+                      {definition.archived ? <Badge>已归档</Badge> : null}
+                    </strong>
+                  ),
+                },
+                {
+                  key: "package",
+                  label: "包名",
+                  children: (
+                    <strong className="font-medium">{definition.packageName || "—"}</strong>
+                  ),
+                },
+                {
+                  key: "scope",
+                  label: "版本 / 测试阶段",
+                  children: (
+                    <strong className="font-medium">
+                      {detail.projectVersionName} / {detail.testStageName}
+                    </strong>
+                  ),
+                },
+                {
+                  key: "groups",
+                  label: "分组",
+                  children: (
+                    <strong className="font-medium">{definition.groups.join("、") || "—"}</strong>
+                  ),
+                },
+                {
+                  key: "tags",
+                  label: "标签",
+                  children: (
+                    <strong className="font-medium">{definition.tags.join("、") || "—"}</strong>
+                  ),
+                },
+                {
+                  key: "methods",
+                  label: "测试方法",
+                  children: <strong className="font-medium">{definition.methods.length}</strong>,
+                },
+                {
+                  key: "revision",
+                  label: "修订",
+                  children: <strong className="font-medium">r{definition.revision}</strong>,
+                },
+                {
+                  key: "updated",
+                  label: "最近更新",
+                  children: (
+                    <strong className="font-medium">
+                      {formatDate(definition.updatedAt, timeZone)}
+                    </strong>
+                  ),
+                },
+                {
+                  key: "parameters",
+                  label: "参数（只读）",
+                  span: "filled",
+                  children: (
+                    <strong className="whitespace-pre-wrap font-medium">
+                      {Object.entries(definition.parameters)
+                        .map(([name, value]) => `${name}=${value}`)
+                        .join("；") || "—"}
+                    </strong>
+                  ),
+                },
+              ]}
+            />
           </Card>
 
           {!detail.executable ? (
@@ -173,13 +195,18 @@ export function CaseDetailContent({
             open
           >
             <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
-              <Table className={cn("data-table", uiPatterns["data-table"])}>
+              <Table
+                className={cn(
+                  "data-table table-fixed [&_td]:align-top [&_td]:[overflow-wrap:anywhere]",
+                  uiPatterns["data-table"],
+                )}
+              >
                 <TableHeader>
                   <TableRow>
-                    <TableHead>方法</TableHead>
-                    <TableHead>方法签名</TableHead>
+                    <TableHead className="w-[30%]">方法</TableHead>
+                    <TableHead className="w-[30%]">方法签名</TableHead>
                     <TableHead>分组</TableHead>
-                    <TableHead>状态</TableHead>
+                    <TableHead className="w-24">状态</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -255,7 +282,7 @@ export function CaseHistoryContent({
           : {})}
         initialPage={detail.executionHistory}
         canReadLogs={detail.canReadLogs}
-        canCreateRuns={detail.canRun}
+        canRetryRuns={Boolean(detail.canRetry)}
         timeZone={timeZone}
       />
       <CaseFailureAnalysisHistory
@@ -274,12 +301,17 @@ export function CaseHistoryContent({
         title={`执行结果统计历史（最近 ${activity.analyses.length} 条）`}
       >
         <div className={cn("table-scroll", uiPatterns["table-scroll"])}>
-          <Table className={cn("data-table", uiPatterns["data-table"])}>
+          <Table
+            className={cn(
+              "data-table table-fixed [&_td]:align-top [&_td]:[overflow-wrap:anywhere]",
+              uiPatterns["data-table"],
+            )}
+          >
             <TableHeader>
               <TableRow>
-                <TableHead>完成时间</TableHead>
-                <TableHead>结果</TableHead>
-                <TableHead>通过 / 失败 / 跳过</TableHead>
+                <TableHead className="w-40">完成时间</TableHead>
+                <TableHead className="w-24">结果</TableHead>
+                <TableHead className="w-40">通过 / 失败 / 跳过</TableHead>
                 <TableHead>失败签名</TableHead>
               </TableRow>
             </TableHeader>
@@ -339,22 +371,16 @@ function CaseDetailSection({
       <div className={cn("card-heading", uiPatterns["card-heading"])}>
         <h2>{title}</h2>
       </div>
-      {children}
+      <div className="min-w-0 p-4">{children}</div>
     </Card>
   );
 }
 
 const caseDetailContentStyles = {
-  "case-inspector-meta":
-    "grid grid-cols-2 gap-2 [&_>_div]:grid [&_>_div]:min-w-0 [&_>_div]:gap-1 [&_>_div]:border [&_>_div]:border-solid [&_>_div]:border-border [&_>_div]:rounded-lg [&_>_div]:p-2.5 [&_>_div]:bg-card [&_span]:text-muted-foreground [&_span]:text-xs [&_strong]:min-w-0 [&_strong]:[overflow-wrap:anywhere]",
-  "case-inspector-meta-wide": "col-span-full",
   "case-inspector-section":
     "min-w-0 overflow-hidden border border-solid border-border rounded-lg bg-card [&_.ui-disclosure-label]:min-h-11 [&_.ui-disclosure-label]:py-3 [&_.ui-disclosure-label]:px-3.5 [&_.ui-disclosure-label]:text-foreground [&_.ui-disclosure-label]:font-semibold [&_.ui-disclosure-label]:cursor-pointer [&[data-open=true]_.ui-disclosure-label]:border-b [&[data-open=true]_.ui-disclosure-label]:border-solid [&[data-open=true]_.ui-disclosure-label]:border-border [&_.ui-disclosure-body_>_:not(summary):not(.table-scroll)]:m-3.5 [&_.ui-disclosure-body_>_.settings-stack]:m-0 [&_.ui-disclosure-body_>_.settings-stack]:p-3.5",
   "method-signature":
-    "max-w-[340px] overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground text-xs",
-  "source-meta-grid":
-    "grid grid-cols-[1.4fr_2fr_0.8fr_1fr] gap-px overflow-hidden border border-solid border-border rounded-lg bg-border [&_>_div]:flex [&_>_div]:min-w-0 [&_>_div]:flex-col [&_>_div]:gap-[7px] [&_>_div]:p-[13px] [&_>_div]:bg-muted [&_>_div:last-child:nth-child(4n_+_1)]:col-span-full [&_>_div:last-child:nth-child(4n_+_2)]:[grid-column:span_3] [&_>_div:last-child:nth-child(4n_+_3)]:[grid-column:span_2] [&_span]:text-muted-foreground [&_span]:text-xs [&_code]:text-xs [&_code]:[overflow-wrap:anywhere] [&_code]:whitespace-normal [&_strong]:text-xs [&_strong]:[overflow-wrap:anywhere] [&_strong]:whitespace-normal",
-  "source-summary-card": "p-4.5",
+    "block whitespace-normal text-muted-foreground text-xs [overflow-wrap:anywhere]",
   "table-card":
-    "overflow-hidden [&_.ui-card-content_>_.card-heading]:min-h-17 [&_.ui-card-content_>_.card-heading]:items-center [&_.ui-card-content_>_.card-heading]:border-b [&_.ui-card-content_>_.card-heading]:border-solid [&_.ui-card-content_>_.card-heading]:border-border [&_.ui-card-content_>_.card-heading]:py-3.5 [&_.ui-card-content_>_.card-heading]:px-4.5",
+    "overflow-hidden [&_.ui-card-content_>_.card-heading]:mb-0 [&_.ui-card-content_>_.card-heading]:min-h-14 [&_.ui-card-content_>_.card-heading]:items-center [&_.ui-card-content_>_.card-heading]:border-b [&_.ui-card-content_>_.card-heading]:border-solid [&_.ui-card-content_>_.card-heading]:border-border [&_.ui-card-content_>_.card-heading]:py-3.5 [&_.ui-card-content_>_.card-heading]:px-4.5",
 } as const;

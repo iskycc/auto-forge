@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse } from "@/lib/api-response";
@@ -10,7 +11,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "runner.manage");
+    const identity = await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const { runnerId } = await context.params;
     const services = await getPlatformServices();
     const runner = await services.runnerControl.requestCredentialRotation(runnerId);

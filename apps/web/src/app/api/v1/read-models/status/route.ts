@@ -1,7 +1,7 @@
+import { authorizeReadModelQuery } from "@/lib/read-model-authorization";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import type { ReadModelQuery } from "@autoforge/contracts";
-import { DomainError, hasPermission } from "@autoforge/domain";
+import { DomainError } from "@autoforge/domain";
 import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { authenticateRequest, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
@@ -21,25 +21,7 @@ async function authorizedSnapshots(request: Request, ids: string[]) {
     const snapshot = await services.readModels.inspect(id);
     if (!snapshot)
       throw new DomainError("READ_MODEL_NOT_FOUND", "当前数据已过期，请重新打开页面。");
-    const permission =
-      snapshot.query.kind === "dashboard" &&
-      !hasPermission(identity, "case.read", snapshot.query.projectId)
-        ? "run.read"
-        : snapshot.query.kind === "analysis_batch" &&
-            hasPermission(identity, "audit.read", snapshot.query.projectId)
-          ? "audit.read"
-          : readModelPermission(snapshot.query);
-    services.identityAccess.authorize(identity, permission, snapshot.query.projectId);
-    if (snapshot.query.kind === "case_directory" && snapshot.query.filter?.missingSuiteId) {
-      services.identityAccess.authorize(identity, "case_suite.read", snapshot.query.projectId);
-    }
-    if (snapshot.query.kind === "batch_comparison" && snapshot.query.rightProjectId) {
-      services.identityAccess.authorize(identity, "run.read", snapshot.query.rightProjectId);
-    }
-    if (snapshot.query.kind === "batch_counters") {
-      for (const projectId of new Set(snapshot.query.batches.map((batch) => batch.projectId)))
-        services.identityAccess.authorize(identity, "run.read", projectId);
-    }
+    authorizeReadModelQuery(identity, snapshot.query);
     const current = await services.readModels.read(snapshot.query);
     results.push({ query: snapshot.query, status: current.status });
   }
@@ -79,18 +61,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiErrorResponse(error);
   }
-}
-
-function readModelPermission(query: ReadModelQuery) {
-  if (
-    query.kind === "case_directory" ||
-    query.kind === "ddt_dashboard" ||
-    query.kind === "dashboard"
-  )
-    return "case.read";
-  if (query.kind === "source_preview" || query.kind === "source_directory")
-    return "case_source.read";
-  if (query.kind === "suite_directory") return "case_suite.read";
-  if (query.kind === "analysis_statistics") return "audit.read";
-  return "run.read";
 }

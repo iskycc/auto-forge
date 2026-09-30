@@ -1651,6 +1651,10 @@ export class PostgresRunBatchRepository
       parameters.push(input.runnerId);
       filters += ` AND runner_id = $${parameters.length}`;
     }
+    if (input.query?.trim()) {
+      parameters.push(`%${escapePostgresLike(input.query.trim().toLowerCase())}%`);
+      filters += ` AND LOWER(message) LIKE $${parameters.length} ESCAPE '\\'`;
+    }
     if (input.afterId !== undefined) {
       // 游标用 (recorded_at, id) 元组比较定位，id 为唯一键保证边界不重复、不遗漏。
       parameters.push(input.afterId);

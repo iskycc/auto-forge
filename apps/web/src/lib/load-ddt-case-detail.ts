@@ -1,3 +1,4 @@
+import { hasPermissionInAnyScope } from "@autoforge/domain";
 import { failureAnalysisHistoryPageSchema } from "@autoforge/contracts";
 import { hasPermission, type AuthenticatedIdentity, type DdtScope } from "@autoforge/domain";
 import type { PlatformServices } from "./services";
@@ -31,7 +32,7 @@ export async function loadDdtCaseDetail(
       services.ddtCases.listActivity(scope, item.caseId, 50),
       services.ddtCases.listExecutionHistory(scope, item.caseId, {
         limit: 50,
-        includeRunnerNames: hasPermission(identity, "runner.read"),
+        includeRunnerNames: hasPermissionInAnyScope(identity, "runner.read"),
       }),
       services.failureAnalysis.listCaseHistory({
         projectId: scope.projectId,
@@ -47,6 +48,7 @@ export async function loadDdtCaseDetail(
         failureAnalysisHistory: failureAnalysisHistoryPageSchema.parse(failureAnalysisHistory),
         historyContext,
         canRun: false,
+        canRetry: hasPermission(identity, "run.retry", scope.projectId),
         canReadLogs: hasPermission(identity, "log.read", scope.projectId),
         canReadAnalysisEvidence: hasPermission(identity, "run.read", scope.projectId),
         timeZone: services.configurationStore.read().web.timeZone,

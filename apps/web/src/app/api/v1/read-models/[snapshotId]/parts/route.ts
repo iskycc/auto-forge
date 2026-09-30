@@ -1,3 +1,4 @@
+import { authorizeReadModelQuery } from "@/lib/read-model-authorization";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { DomainError } from "@autoforge/domain";
@@ -35,21 +36,7 @@ export async function GET(
       !["case_directory", "batch_comparison", "suite_directory"].includes(snapshot.query.kind)
     )
       throw new DomainError("READ_MODEL_NOT_FOUND", "用例目录已过期，请刷新。");
-    services.identityAccess.authorize(
-      identity,
-      snapshot.query.kind === "suite_directory"
-        ? "case_suite.read"
-        : snapshot.query.kind === "case_directory"
-          ? "case.read"
-          : "run.read",
-      snapshot.query.projectId,
-    );
-    if (snapshot.query.kind === "batch_comparison" && snapshot.query.rightProjectId) {
-      services.identityAccess.authorize(identity, "run.read", snapshot.query.rightProjectId);
-    }
-    if (snapshot.query.kind === "case_directory" && snapshot.query.filter?.missingSuiteId) {
-      services.identityAccess.authorize(identity, "case_suite.read", snapshot.query.projectId);
-    }
+    authorizeReadModelQuery(identity, snapshot.query);
     const part = await services.readModels.part(snapshotId, input.generation, input.ordinal);
     if (part === null)
       throw new DomainError("READ_MODEL_GENERATION_CONFLICT", "数据已更新，请重新读取。");

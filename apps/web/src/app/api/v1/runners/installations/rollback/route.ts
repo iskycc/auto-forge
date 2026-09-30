@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import {
   rollbackRunnerAgentInputSchema,
   runnerAgentRollbackResultSchema,
@@ -14,7 +15,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "runner.manage");
+    const identity = await authorizeRequest(request, "runner.manage", DEFAULT_PROJECT_ID);
     const input = rollbackRunnerAgentInputSchema.parse(await readJsonBody(request, 32 * 1024));
     const services = await getPlatformServices();
     rejectRateLimited(

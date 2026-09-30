@@ -75,13 +75,13 @@ export function AttemptLogViewer({
   attemptId,
   attemptStatus,
   canReadLogs,
-  canCreateRuns,
+  canRetryRuns,
   onClose,
 }: {
   attemptId: string;
   attemptStatus: RunAttempt["status"];
   canReadLogs: boolean;
-  canCreateRuns: boolean;
+  canRetryRuns: boolean;
   onClose: () => void;
 }) {
   const [stream, setStream] = useState<LogStream>("stdout");
@@ -332,7 +332,7 @@ export function AttemptLogViewer({
             返回原日志
           </Button>
         ) : null}
-        {canCreateRuns && attemptTerminal && !viewingManualRerun ? (
+        {canRetryRuns && attemptTerminal && !viewingManualRerun ? (
           <AttemptRerunAction attemptId={attemptId} compact onOpenLiveLogs={setActiveAttempt} />
         ) : null}
       </div>

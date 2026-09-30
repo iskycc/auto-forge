@@ -1018,6 +1018,7 @@ export class RunBatchSchedulingService {
     batchId: string,
     input: {
       runnerId?: string;
+      query?: string;
       afterId?: string;
       beforeId?: string;
       latest?: boolean;

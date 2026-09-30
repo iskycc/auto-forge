@@ -1095,6 +1095,18 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return mapAnalyticsExportJob(row);
   }
 
+  async getAnalyticsExportScope(jobId: string, requestedBy: string) {
+    await this.ready();
+    const result = await this.handle.pool.query<AnalyticsExportJobRow>(
+      "SELECT * FROM analytics_export_jobs WHERE id=$1 AND requested_by=$2",
+      [jobId, requestedBy],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const projectIds = analyticsExportProjectIds(row);
+    return { filter: mapAnalyticsExportJob(row).filter, ...(projectIds ? { projectIds } : {}) };
+  }
+
   async getAnalyticsExportJob(jobId: string, requestedBy: string) {
     await this.ready();
     const result = await this.handle.pool.query<AnalyticsExportJobRow>(
@@ -1204,35 +1216,43 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       : [search, input.limit];
     const limitParameter = input.projectIds ? "$3" : "$2";
     const [cases, suites, batches, runs, runners] = await Promise.all([
-      this.handle.pool.query<SearchRow>(
-        `SELECT id,project_id,display_name AS title,class_name AS subtitle FROM case_definitions
+      input.kinds && !input.kinds.includes("case")
+        ? Promise.resolve({ rows: [] as SearchRow[] })
+        : this.handle.pool.query<SearchRow>(
+            `SELECT id,project_id,display_name AS title,class_name AS subtitle FROM case_definitions
          WHERE archived=FALSE AND (lower(display_name) LIKE $1 ESCAPE '\\' OR lower(class_name) LIKE $1 ESCAPE '\\')
          ${scope} ORDER BY updated_at DESC LIMIT ${limitParameter}`,
-        values,
-      ),
-      this.handle.pool.query<SearchRow>(
-        `SELECT id,project_id,name AS title,COALESCE(description,'') AS subtitle FROM case_suites
+            values,
+          ),
+      input.kinds && !input.kinds.includes("suite")
+        ? Promise.resolve({ rows: [] as SearchRow[] })
+        : this.handle.pool.query<SearchRow>(
+            `SELECT id,project_id,name AS title,COALESCE(description,'') AS subtitle FROM case_suites
          WHERE status='active' AND lower(name) LIKE $1 ESCAPE '\\' ${scope}
          ORDER BY updated_at DESC LIMIT ${limitParameter}`,
-        values,
-      ),
-      this.handle.pool.query<SearchRow>(
-        `SELECT id,project_id,suite_name AS title,status AS subtitle FROM run_batches
+            values,
+          ),
+      input.kinds && !input.kinds.includes("batch")
+        ? Promise.resolve({ rows: [] as SearchRow[] })
+        : this.handle.pool.query<SearchRow>(
+            `SELECT id,project_id,suite_name AS title,status AS subtitle FROM run_batches
          WHERE batch_kind <> 'case_log_rerun'
            AND (lower(suite_name) LIKE $1 ESCAPE '\\' OR lower(id) LIKE $1 ESCAPE '\\') ${scope}
          ORDER BY created_at DESC LIMIT ${limitParameter}`,
-        values,
-      ),
-      this.handle.pool.query<SearchRow>(
-        `SELECT r.id,b.project_id,r.display_name AS title,r.status AS subtitle
+            values,
+          ),
+      input.kinds && !input.kinds.includes("run")
+        ? Promise.resolve({ rows: [] as SearchRow[] })
+        : this.handle.pool.query<SearchRow>(
+            `SELECT r.id,b.project_id,r.display_name AS title,r.status AS subtitle
          FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
          WHERE b.batch_kind <> 'case_log_rerun'
            AND (lower(r.display_name) LIKE $1 ESCAPE '\\' OR lower(r.id) LIKE $1 ESCAPE '\\')
          ${input.projectIds ? "AND b.project_id=ANY($2::text[])" : ""}
          ORDER BY r.created_at DESC LIMIT ${limitParameter}`,
-        values,
-      ),
-      input.projectIds
+            values,
+          ),
+      (input.kinds && !input.kinds.includes("runner")) || input.projectIds
         ? Promise.resolve({ rows: [] as SearchRow[] })
         : this.handle.pool.query<SearchRow>(
             `SELECT id,NULL AS project_id,name AS title,

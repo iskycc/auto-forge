@@ -35,7 +35,7 @@ const deleteRequestSchema = z.union([
 export async function GET(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
-    await authorizeRequest(request, "settings.read");
+    await authorizeRequest(request, "settings.read", undefined);
     const url = new URL(request.url);
     const input = querySchema.parse({
       nodeId: url.searchParams.get("nodeId") ?? undefined,

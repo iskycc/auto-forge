@@ -1,3 +1,4 @@
+import { hasPermissionInAnyScope } from "@autoforge/domain";
 import { readReadyModel } from "@/lib/read-ready-model";
 import {
   createSingleCaseRunInputSchema,
@@ -21,7 +22,6 @@ import {
   upsertDdtTemplateInputSchema,
 } from "@autoforge/contracts";
 import type { AuthenticatedIdentity, DdtScope, Permission } from "@autoforge/domain";
-import { hasPermission } from "@autoforge/domain";
 import { loadDdtCaseDetail } from "@/lib/load-ddt-case-detail";
 import { DomainError } from "@autoforge/domain";
 import { buildStyledDdtExportWorkbook } from "@/lib/ddt-export-xlsx";
@@ -174,7 +174,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           ? await services.ddtCases.listExecutionHistory(scope, item.caseId, {
               limit: query.limit,
               ...(query.cursor ? { cursor: query.cursor } : {}),
-              includeRunnerNames: hasPermission(identity, "runner.read"),
+              includeRunnerNames: hasPermissionInAnyScope(identity, "runner.read"),
             })
           : failureAnalysisHistoryPageSchema.parse(
               await services.failureAnalysis.listCaseHistory({

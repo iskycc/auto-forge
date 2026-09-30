@@ -215,11 +215,11 @@ function SharedLogRerunAction({
   attempt: { id: string; status: SharedAttemptLogView["outcome"] };
 }) {
   if (access === "allowed") {
-    return <SharedAttemptLogActions attempt={attempt} canCreateRuns />;
+    return <SharedAttemptLogActions attempt={attempt} canRetryRuns />;
   }
   if (access === "read_only") {
     if (attempt.status === "assigned" || attempt.status === "running") {
-      return <SharedAttemptLogActions attempt={attempt} canCreateRuns={false} />;
+      return <SharedAttemptLogActions attempt={attempt} canRetryRuns={false} />;
     }
     return (
       <Button

@@ -16,6 +16,8 @@ import type {
 } from "@autoforge/application";
 import {
   DomainError,
+  countSystemAdministrators,
+  assertAdministratorRecoveryPreserved,
   type AuditEvent,
   type AuthenticatedIdentity,
   type BuiltInRoleDefinition,
@@ -57,8 +59,6 @@ import {
   userSessions,
   userSystemRoles,
 } from "./schema";
-
-const SYSTEM_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000001";
 
 export class SqliteIdentityAccessRepository implements IdentityAccessRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
@@ -466,13 +466,27 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     const systemRows = this.handle.db
       .select({ permissionsJson: roles.permissionsJson })
       .from(userSystemRoles)
-      .innerJoin(roles, and(eq(roles.id, userSystemRoles.roleId), eq(roles.active, true)))
+      .innerJoin(
+        roles,
+        and(
+          eq(roles.id, userSystemRoles.roleId),
+          eq(roles.active, true),
+          eq(roles.scope, "system"),
+        ),
+      )
       .where(eq(userSystemRoles.userId, user.id))
       .all();
     const projectRows = this.handle.db
       .select({ projectId: projectRoleBindings.projectId, permissionsJson: roles.permissionsJson })
       .from(projectRoleBindings)
-      .innerJoin(roles, and(eq(roles.id, projectRoleBindings.roleId), eq(roles.active, true)))
+      .innerJoin(
+        roles,
+        and(
+          eq(roles.id, projectRoleBindings.roleId),
+          eq(roles.active, true),
+          eq(roles.scope, "project"),
+        ),
+      )
       .where(eq(projectRoleBindings.userId, user.id))
       .all();
     const projectPermissions: Record<string, Permission[]> = {};
@@ -642,7 +656,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
 
   async updateUserStatus(userId: string, status: UserStatus, updatedAt: string): Promise<User> {
     return await retrySqliteWriteTransaction(this.handle, () => {
-      if (status === "disabled") this.ensureNotLastAdministrator(userId);
+      const administratorsBefore = this.countRecoveryAdministrators();
       const row = this.handle.db
         .update(users)
         .set({
@@ -655,6 +669,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         .returning()
         .get();
       if (!row) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
+      this.assertRecoveryPreserved(administratorsBefore);
       return mapUser(row);
     });
   }
@@ -739,8 +754,12 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     active?: boolean;
     updatedAt: string;
   }): Promise<Role> {
-    const row = await retrySqliteLockContention(() =>
-      this.handle.db
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const administratorsBefore = this.countRecoveryAdministrators();
+      const current = this.handle.db.select().from(roles).where(eq(roles.id, input.id)).get();
+      if (current && input.scope && current.scope !== input.scope)
+        throw new DomainError("ROLE_SCOPE_INVALID", "已有角色不能切换系统/项目范围。");
+      const row = this.handle.db
         .update(roles)
         .set({
           ...(input.name ? { name: input.name } : {}),
@@ -752,10 +771,11 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         })
         .where(and(eq(roles.id, input.id), eq(roles.builtIn, false)))
         .returning()
-        .get(),
-    );
-    if (!row) throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
-    return mapRole(row);
+        .get();
+      if (!row) throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
+      this.assertRecoveryPreserved(administratorsBefore);
+      return mapRole(row);
+    });
   }
 
   async deleteRole(roleId: string): Promise<boolean> {
@@ -833,13 +853,14 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
 
   async removeSystemRole(userId: string, roleId: string): Promise<boolean> {
     return await retrySqliteWriteTransaction(this.handle, () => {
-      if (roleId === SYSTEM_ADMIN_ROLE_ID) this.ensureNotLastAdministrator(userId);
-      return (
+      const administratorsBefore = this.countRecoveryAdministrators();
+      const removed =
         this.handle.db
           .delete(userSystemRoles)
           .where(and(eq(userSystemRoles.userId, userId), eq(userSystemRoles.roleId, roleId)))
-          .run().changes > 0
-      );
+          .run().changes > 0;
+      this.assertRecoveryPreserved(administratorsBefore);
+      return removed;
     });
   }
 
@@ -974,6 +995,10 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async listSystemRoleBindingsForActiveUsers(): Promise<SystemRoleBindingView[]> {
+    return this.activeSystemBindings();
+  }
+
+  private activeSystemBindings(): SystemRoleBindingView[] {
     const rows = this.handle.db
       .select({
         userId: userSystemRoles.userId,
@@ -983,7 +1008,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .from(userSystemRoles)
       .innerJoin(roles, eq(roles.id, userSystemRoles.roleId))
       .innerJoin(users, eq(users.id, userSystemRoles.userId))
-      .where(and(eq(users.status, "active"), eq(roles.active, true)))
+      .where(and(eq(users.status, "active"), eq(roles.active, true), eq(roles.scope, "system")))
       .all();
     return rows.map((row) => ({
       userId: row.userId,
@@ -1213,26 +1238,12 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .get();
   }
 
-  private ensureNotLastAdministrator(userId: string): void {
-    const targetIsAdministrator = Boolean(
-      this.handle.db
-        .select({ userId: userSystemRoles.userId })
-        .from(userSystemRoles)
-        .where(
-          and(eq(userSystemRoles.userId, userId), eq(userSystemRoles.roleId, SYSTEM_ADMIN_ROLE_ID)),
-        )
-        .get(),
-    );
-    if (!targetIsAdministrator) return;
-    const activeAdministrators = this.handle.db
-      .select({ value: count() })
-      .from(userSystemRoles)
-      .innerJoin(users, eq(users.id, userSystemRoles.userId))
-      .where(and(eq(userSystemRoles.roleId, SYSTEM_ADMIN_ROLE_ID), eq(users.status, "active")))
-      .get()?.value;
-    if ((activeAdministrators ?? 0) <= 1) {
-      throw new DomainError("LAST_ADMIN_REQUIRED", "不能禁用最后一位系统管理员。");
-    }
+  private countRecoveryAdministrators(): number {
+    return countSystemAdministrators(this.activeSystemBindings());
+  }
+
+  private assertRecoveryPreserved(before: number): void {
+    assertAdministratorRecoveryPreserved(before, this.countRecoveryAdministrators());
   }
 }
 

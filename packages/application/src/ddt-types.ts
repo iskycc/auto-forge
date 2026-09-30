@@ -18,6 +18,7 @@ import type {
 export type DdtCaseListQuery = DdtScope & {
   caseIds?: string[];
   query?: string;
+  /** CaseID fragment matching by default; prefix matching must be requested explicitly. */
   queryMatch?: "prefix" | "contains";
   srNum?: string;
   sourceName?: string;

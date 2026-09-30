@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
 import {
   AuthorizationDeniedError,
-  DEFAULT_PROJECT_ID,
   DomainError,
+  hasPermissionInAnyScope,
   isPermission,
   projectIdsForPermission,
 } from "@autoforge/domain";
@@ -16,6 +16,7 @@ import { redirect } from "next/navigation";
 import { getPlatformServices } from "./services";
 
 export const SESSION_COOKIE_NAME = "autoforge_session";
+export { hasPermissionInAnyScope } from "@autoforge/domain";
 
 export async function authenticateRequest(
   request: Request,
@@ -25,9 +26,11 @@ export async function authenticateRequest(
   // An explicitly presented API token wins over the ambient session cookie:
   // a narrowed, expired or revoked token must never silently inherit the
   // broader rights of a browser session riding on the same request.
-  const apiToken = request.headers.get("authorization")?.startsWith("Bearer af_api_")
-    ? request.headers.get("authorization")?.slice(7).trim()
-    : undefined;
+  const authorization = request.headers.get("authorization");
+  if (authorization !== null && !/^Bearer af_api_\S+$/u.test(authorization)) {
+    throw new DomainError("AUTHENTICATION_FAILED", "API 令牌格式无效。");
+  }
+  const apiToken = authorization?.slice(7);
   if (apiToken) {
     const authenticated = await services.platformOperations.authenticateApiToken(apiToken);
     if (!authenticated || authenticated.effectiveScopes.length === 0) {
@@ -75,11 +78,22 @@ export async function authenticateRequest(
 export async function authorizeRequest(
   request: Request,
   permission: Permission,
-  projectId: string | undefined = DEFAULT_PROJECT_ID,
+  projectId: string | undefined,
 ): Promise<AuthenticatedIdentity> {
   const services = await getPlatformServices();
   const identity = await authenticateRequest(request);
   services.identityAccess.authorize(identity, permission, projectId);
+  return identity;
+}
+
+/** Runners are shared infrastructure; a supplied project must still grant their use. */
+export async function authorizeRunnerRead(request: Request): Promise<AuthenticatedIdentity> {
+  const identity = await authenticateRequest(request);
+  const projectId = new URL(request.url).searchParams.get("projectId");
+  if (projectId !== null && (!projectId.trim() || projectId.length > 128)) {
+    throw new DomainError("VALIDATION_FAILED", "项目标识无效。");
+  }
+  authorizedProjectScope(identity, "runner.read", projectId ?? undefined);
   return identity;
 }
 
@@ -95,7 +109,7 @@ export async function currentIdentity(): Promise<AuthenticatedIdentity | null> {
 
 export async function requirePagePermission(
   permission: Permission,
-  projectId: string | undefined = DEFAULT_PROJECT_ID,
+  projectId: string | undefined,
 ): Promise<AuthenticatedIdentity> {
   const services = await getPlatformServices();
   const identity = await currentIdentity();
@@ -141,18 +155,6 @@ export async function requirePageAnyPermission(
     redirect("/forbidden");
   }
   return identity;
-}
-
-export function hasPermissionInAnyScope(
-  identity: AuthenticatedIdentity,
-  permission: Permission,
-): boolean {
-  return (
-    identity.systemPermissions.includes(permission) ||
-    Object.values(identity.projectPermissions).some((permissions) =>
-      permissions.includes(permission),
-    )
-  );
 }
 
 export function authorizedProjectScope(

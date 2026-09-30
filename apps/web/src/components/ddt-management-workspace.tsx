@@ -313,6 +313,8 @@ export function DdtManagementWorkspace({
       const parameters = new URLSearchParams({ projectId, projectVersionId, testStageId });
       if (path === "dashboard") parameters.set("statisticsVersion", "2");
       extra?.forEach((value, key) => parameters.append(key, value));
+      // Separate substring results from browser snapshots of the former prefix-only query.
+      if (path === "cases" && parameters.has("query")) parameters.set("queryMatch", "contains");
       return `/api/v1/ddt/${path}?${parameters.toString()}`;
     },
     [projectId, projectVersionId, testStageId],
@@ -932,7 +934,7 @@ export function DdtManagementWorkspace({
                       const value = event.target.value;
                       void changeFilter(() => setQuery(value));
                     }}
-                    placeholder="按 CaseID 前缀搜索"
+                    placeholder="按 CaseID 任意片段搜索"
                     aria-label="搜索 DDT 用例"
                   />
                 </label>

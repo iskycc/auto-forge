@@ -113,3 +113,30 @@ export function insertBatchRunnerFixture(directory: string, versionId: string, s
   }
   return { ...fixture, longName };
 }
+
+export function insertSchedulingLogFixture(directory: string, batchId: string, runnerId: string) {
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    database.exec("BEGIN IMMEDIATE");
+    const insert = database.prepare(`INSERT INTO scheduling_events
+      (id,batch_id,runner_id,event_type,message,recorded_at) VALUES (?,?,?,'run_assigned',?,?)`);
+    for (let index = 0; index < 1501; index += 1) {
+      insert.run(
+        `${runnerId}-event-${String(index).padStart(5, "0")}`,
+        batchId,
+        runnerId,
+        index < 3
+          ? `旧历史 MiDdLe 中文 %_\\ 匹配 ${index}`
+          : `调度事件 ${index}：已分配 PaymentIntegrationCase 到执行节点，等待领取。`,
+        new Date(Date.UTC(2026, 8, 1) + index * 1000).toISOString(),
+      );
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  } finally {
+    database.close();
+  }
+}

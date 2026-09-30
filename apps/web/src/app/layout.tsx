@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { hasPermission, type Permission } from "@autoforge/domain";
+import { hasPermission, hasPermissionInAnyScope, permissionsForProject } from "@autoforge/domain";
 import { connection } from "next/server";
 import { cookies } from "next/headers";
 import { COLOR_MODE_COOKIE, parseColorMode } from "@/lib/color-mode";
@@ -36,18 +36,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const services = await getPlatformServices();
   const platformTimeZone = services.configurationStore.read().web.timeZone;
   const identity = await currentIdentity();
-  const permissions = identity
-    ? ([
-        ...new Set([
-          ...identity.systemPermissions,
-          ...Object.values(identity.projectPermissions).flat(),
-        ]),
-      ] as Permission[])
-    : undefined;
   const projects = identity
     ? await services.identities.listProjects(selectableProjectIds(identity)).catch(() => [])
     : [];
   const activeProjectId = identity ? await selectedProjectId(identity, projects) : undefined;
+  const permissions = identity ? permissionsForProject(identity, activeProjectId) : undefined;
   const activeProjectStructure = activeProjectId
     ? await services.projectStructures.list(activeProjectId).catch(() => undefined)
     : undefined;
@@ -76,6 +69,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                       userName: identity.user.displayName,
                       userId: identity.user.id,
                       permissions,
+                      canRunAnyProject: hasPermissionInAnyScope(identity, "run.create"),
                       canCreateProject: hasPermission(identity, "project.manage"),
                       canManageSelectedProject: Boolean(
                         activeProjectId &&
