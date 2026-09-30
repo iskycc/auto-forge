@@ -823,14 +823,14 @@
     {
       "ecosystem": "npm",
       "name": "brace-expansion",
-      "version": "1.1.18",
+      "version": "1.1.20",
       "license": "MIT",
       "homepage": "https://github.com/juliangruber/brace-expansion"
     },
     {
       "ecosystem": "npm",
       "name": "brace-expansion",
-      "version": "2.1.4",
+      "version": "2.1.6",
       "license": "MIT",
       "homepage": "https://github.com/juliangruber/brace-expansion"
     },
