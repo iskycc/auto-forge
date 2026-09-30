@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 import {
   createInitializationProject,
   seedInitializationSource,
@@ -208,6 +208,8 @@ test("service account lifecycle immediately narrows token access and produces ex
   const tokenForm = page.getByRole("dialog", { name: `签发令牌：${accountName}` });
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expect(tokenForm).toBeVisible();
+    await waitForUiTransitions(page);
     const formBounds = await tokenForm.locator("form").boundingBox();
     const scopesBounds = await tokenForm
       .getByRole("group", { name: "作用域", exact: true })

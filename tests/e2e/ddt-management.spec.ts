@@ -1004,6 +1004,8 @@ test("DDT CaseID conflict strategies preserve existing data and report the outco
     await dialog.getByRole("button", { name: "开始预检" }).click();
     if (fileName !== "original.csv") {
       const conflicts = page.getByRole("dialog", { name: "解决重复列名" });
+      await expect(conflicts).toBeVisible();
+      await waitForUiTransitions(page);
       await conflicts.getByRole("button", { name: "应用并重新预检" }).click();
       await expect(conflicts).toBeHidden();
       await expect(dialog.locator(".ddt-preview-summary")).toContainText("预计更新1");
