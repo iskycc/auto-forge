@@ -788,8 +788,21 @@ public class MixedVisibleTest {
   await expect(
     page.locator(".case-inspector-header").getByRole("heading", { name: "CheckoutTest" }),
   ).toBeVisible();
-  await expect(page.locator(".case-inspector-meta > div")).toHaveCount(9);
-  await expect(page.locator(".case-inspector-meta-wide")).toHaveCount(1);
+  const inspectorMetadata = page.locator(".case-inspector-meta");
+  for (const label of [
+    "状态",
+    "包名",
+    "版本 / 测试阶段",
+    "分组",
+    "标签",
+    "测试方法",
+    "修订",
+    "最近更新",
+    "参数（只读）",
+  ]) {
+    await expect(inspectorMetadata.getByText(label, { exact: true })).toBeVisible();
+  }
+  await expect(inspectorMetadata.getByText("com.example", { exact: true })).toBeVisible();
   await expect(page.locator(".case-inspector-pane .method-signature")).toHaveText(
     "入参：空，返回值：空",
   );
@@ -917,7 +930,7 @@ public class MixedVisibleTest {
   await expect(versionDiff.getByText(/方法(?:新增|移除)：refund/)).toBeVisible();
   await expect(versionDiff).toContainText("refund（入参：空，返回值：空）");
   await expect(versionDiff).not.toContainText("()V");
-  await page.locator(".role-action-summary").first().click();
+  await page.getByRole("button", { name: "查看快照与相邻差异", exact: true }).first().click();
   const versionSnapshot = page.locator(".version-snapshot-details").first();
   await expect(versionSnapshot).toContainText('"methodSignature": "入参：空，返回值：空"');
   await expect(versionSnapshot).not.toContainText('"descriptor"');
