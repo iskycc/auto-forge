@@ -173,11 +173,45 @@ test("DDT inheritance copies another version with pause, recovery and safe dupli
   expect((await original.json()).data.marker).toBe("source");
   const copied = await page.request.get(ddtPath(target, "cases/COPY-069"));
   expect((await copied.json()).data.marker).toBe("source");
-  const self = await browserJson(page, ddtPath(target, "cases/inherit"), {
-    method: "POST",
-    body: { sourceProjectVersionId: target.versionId, sourceTestStageId: target.stageId },
-  });
-  expect(self.status).toBe(400);
+  await page.route(
+    pattern,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台正在处理高优先级工作，请稍后继续继承。",
+          },
+        },
+      }),
+    { times: 1 },
+  );
+  // Worker admission can defer even invalid inheritance requests before the
+  // application checks their scope. Only that explicit deferral is retryable.
+  const selfValidationDeadline = Date.now() + 30_000;
+  for (;;) {
+    const self = await browserJson<{ error?: { code?: string; message?: string } }>(
+      page,
+      ddtPath(target, "cases/inherit"),
+      {
+        method: "POST",
+        body: { sourceProjectVersionId: target.versionId, sourceTestStageId: target.stageId },
+      },
+    );
+    const priorityDeferred =
+      self.status === 503 &&
+      self.body.error?.code === "PLATFORM_BUSY" &&
+      self.body.error.message === "平台正在处理高优先级工作，请稍后继续继承。";
+    if (!priorityDeferred) {
+      expect(self.status).toBe(400);
+      break;
+    }
+    expect(Date.now(), "DDT self-inheritance validation remained deferred").toBeLessThan(
+      selfValidationDeadline,
+    );
+    await page.waitForTimeout(500);
+  }
   const invalid = await browserJson(page, ddtPath(target, "cases/inherit"), {
     method: "POST",
     body: { sourceProjectVersionId: source.versionId, sourceTestStageId: target.stageId },
