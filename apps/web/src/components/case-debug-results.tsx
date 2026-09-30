@@ -20,20 +20,18 @@ import { parseSafeAnsi } from "@/lib/safe-ansi";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { ApiClientError } from "@/lib/client-api";
 import { debugLogWindow } from "@/lib/case-debug-log-window";
+import { caseDebugResult } from "@/lib/case-debug-result";
+import { runBatchCompletionLabel } from "@/lib/run-batch-presentation";
 import { useConfirm, useToast } from "./ui-feedback";
+import { CaseDebugSplitter } from "./case-debug-splitter";
 
-const statusLabels: Record<string, string> = {
-  queued: "等待调度",
-  dispatching: "正在调度",
-  scheduled: "已分配",
+const attemptStatusLabels: Record<RunAttempt["status"], string> = {
   assigned: "已分配",
   running: "执行中",
   succeeded: "执行通过",
   failed: "执行失败",
   timed_out: "执行超时",
   cancelled: "已终止",
-  uploading: "上传结果",
-  claimed: "已领取",
 };
 
 export function CaseDebugResults({
@@ -59,6 +57,8 @@ export function CaseDebugResults({
   const [selectedAttempt, setSelectedAttempt] = useState("");
   const [stopping, setStopping] = useState(false);
   const active = batch ? !isTerminalBatchStatus(batch.status) : !error;
+  const lifecycleLabel = batch ? runBatchCompletionLabel(batch) : "正在获取执行状态";
+  const result = batch ? caseDebugResult(batch) : undefined;
   const attempt =
     batch?.attempts.find((item) => item.id === selectedAttempt) ?? batch?.attempts.at(-1);
 
@@ -142,15 +142,23 @@ export function CaseDebugResults({
   }
 
   return (
-    <section className="grid min-w-0 gap-4" aria-label="调试执行结果">
-      <Flex align="center" justify="space-between" gap="small" wrap>
+    <section className="flex h-full min-h-0 min-w-0 flex-col gap-3" aria-label="调试执行结果">
+      <Flex align="center" justify="space-between" gap="small" wrap className="shrink-0">
         <Flex align="center" gap="small" wrap>
           <Typography.Title level={4} className="!m-0">
             日志与结果
           </Typography.Title>
-          <Tag color={active ? "processing" : batch?.status === "succeeded" ? "success" : "error"}>
-            {batch ? (statusLabels[batch.status] ?? batch.status) : "正在获取执行状态"}
+          <Tag
+            aria-label="调试执行状态"
+            color={active ? "processing" : batch?.status === "failed" ? "error" : "default"}
+          >
+            {lifecycleLabel}
           </Tag>
+          {result && result.label !== lifecycleLabel ? (
+            <Tag aria-label="调试用例结果" color={result.color}>
+              {result.label}
+            </Tag>
+          ) : null}
         </Flex>
         <Flex gap="small" wrap>
           <Button onClick={() => setRefresh((value) => value + 1)} aria-label="刷新调试结果">
@@ -176,107 +184,130 @@ export function CaseDebugResults({
           </LinkButton>
         </Flex>
       </Flex>
-      {error ? <Notice tone="error">{error}</Notice> : null}
-      {batch ? (
-        <Descriptions
-          size="small"
-          column={1}
-          items={[
-            {
-              key: "case",
-              label: "本次用例",
-              children: (
-                <span className="[overflow-wrap:anywhere]">{batch.runs[0]?.displayName}</span>
-              ),
-            },
-            {
-              key: "class",
-              label: "执行类",
-              children: (
-                <span className="[overflow-wrap:anywhere]">{batch.runs[0]?.className}</span>
-              ),
-            },
-            {
-              key: "attempt-status",
-              label: "执行尝试",
-              children: attempt ? (statusLabels[attempt.status] ?? attempt.status) : "等待领取",
-            },
-            ...(attempt?.durationMs !== undefined
-              ? [
+      <CaseDebugSplitter
+        direction="rows"
+        first={
+          <div
+            role="region"
+            aria-label="调试执行信息"
+            tabIndex={0}
+            className="grid h-full min-h-0 min-w-0 content-start gap-3 overflow-auto overscroll-contain pr-2"
+          >
+            {error ? <Notice tone="error">{error}</Notice> : null}
+            {batch ? (
+              <Descriptions
+                size="small"
+                column={1}
+                items={[
                   {
-                    key: "duration",
-                    label: "耗时",
-                    children: `${(attempt.durationMs / 1_000).toFixed(2)} 秒`,
-                  },
-                ]
-              : []),
-            ...(attempt?.resultCode
-              ? [
-                  {
-                    key: "code",
-                    label: "结果码",
+                    key: "case",
+                    label: "本次用例",
                     children: (
-                      <span className="[overflow-wrap:anywhere]">{attempt.resultCode}</span>
+                      <span className="[overflow-wrap:anywhere]">{batch.runs[0]?.displayName}</span>
                     ),
                   },
-                ]
-              : []),
-            ...(attempt?.testNg
-              ? [
                   {
-                    key: "counts",
-                    label: "方法结果",
+                    key: "class",
+                    label: "执行类",
                     children: (
-                      <Flex gap="small" wrap>
-                        <Tag color="success">通过 {attempt.testNg.passed}</Tag>
-                        <Tag color="error">失败 {attempt.testNg.failed}</Tag>
-                        <Tag color="warning">跳过 {attempt.testNg.skipped}</Tag>
-                        {attempt.testNg.configurationFailures ? (
-                          <Tag color="error">配置失败 {attempt.testNg.configurationFailures}</Tag>
-                        ) : null}
-                      </Flex>
+                      <span className="[overflow-wrap:anywhere]">{batch.runs[0]?.className}</span>
                     ),
                   },
-                ]
-              : []),
-            {
-              key: "result",
-              label: "结果",
-              children: (
-                <span className="max-h-32 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {attempt?.resultSummary ?? (active ? "执行结束后显示结果" : "尚无执行结果")}
-                </span>
-              ),
-            },
-          ]}
-        />
-      ) : (
-        <Spin tip="读取执行状态">
-          <div className="min-h-24" />
-        </Spin>
-      )}
-      {batch && batch.attempts.length > 1 ? (
-        <Select
-          aria-label="调试执行尝试"
-          value={attempt?.id ?? ""}
-          onChange={(event) => setSelectedAttempt(event.target.value)}
-        >
-          {batch.attempts.map((item) => (
-            <option key={item.id} value={item.id}>
-              第 {item.attemptNumber} 次 · {statusLabels[item.status] ?? item.status}
-            </option>
-          ))}
-        </Select>
-      ) : null}
-      {attempt ? (
-        <CaseDebugLogs key={attempt.id} attempt={attempt} canRead={canReadLogs} visible={visible} />
-      ) : (
-        <Empty
-          description={
-            active ? "等待 Runner 领取，日志会自动显示在这里" : "本次执行没有产生执行尝试"
-          }
-        />
-      )}
+                  {
+                    key: "attempt-status",
+                    label: "执行尝试",
+                    children: attempt ? attemptStatusLabels[attempt.status] : "等待领取",
+                  },
+                  ...(attempt?.durationMs !== undefined
+                    ? [
+                        {
+                          key: "duration",
+                          label: "耗时",
+                          children: `${(attempt.durationMs / 1_000).toFixed(2)} 秒`,
+                        },
+                      ]
+                    : []),
+                  ...(attempt?.resultCode
+                    ? [
+                        {
+                          key: "code",
+                          label: "结果码",
+                          children: (
+                            <span className="[overflow-wrap:anywhere]">{attempt.resultCode}</span>
+                          ),
+                        },
+                      ]
+                    : []),
+                  ...(attempt?.testNg
+                    ? [
+                        {
+                          key: "counts",
+                          label: "方法结果",
+                          children: (
+                            <Flex gap="small" wrap>
+                              <Tag color="success">通过 {attempt.testNg.passed}</Tag>
+                              <Tag color="error">失败 {attempt.testNg.failed}</Tag>
+                              <Tag color="warning">跳过 {attempt.testNg.skipped}</Tag>
+                              {attempt.testNg.configurationFailures ? (
+                                <Tag color="error">
+                                  配置失败 {attempt.testNg.configurationFailures}
+                                </Tag>
+                              ) : null}
+                            </Flex>
+                          ),
+                        },
+                      ]
+                    : []),
+                  {
+                    key: "result",
+                    label: "结果",
+                    children: (
+                      <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {attempt?.resultSummary ?? (active ? "执行结束后显示结果" : "尚无执行结果")}
+                      </span>
+                    ),
+                  },
+                ]}
+              />
+            ) : (
+              <Spin tip="读取执行状态">
+                <div className="min-h-24" />
+              </Spin>
+            )}
+            {batch && batch.attempts.length > 1 ? (
+              <Select
+                aria-label="调试执行尝试"
+                value={attempt?.id ?? ""}
+                onChange={(event) => setSelectedAttempt(event.target.value)}
+              >
+                {batch.attempts.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    第 {item.attemptNumber} 次 · {attemptStatusLabels[item.status]}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+          </div>
+        }
+        second={
+          attempt ? (
+            <CaseDebugLogs
+              key={attempt.id}
+              attempt={attempt}
+              canRead={canReadLogs}
+              visible={visible}
+            />
+          ) : (
+            <div className="grid h-full content-center overflow-auto">
+              <Empty
+                description={
+                  active ? "等待 Runner 领取，日志会自动显示在这里" : "本次执行没有产生执行尝试"
+                }
+              />
+            </div>
+          )
+        }
+      />
     </section>
   );
 }
@@ -369,8 +400,8 @@ function CaseDebugLogs({
     parseSafeAnsi(logPage?.items.map((chunk) => chunk.content).join("") ?? ""),
   );
   return (
-    <div className="grid min-w-0 gap-3">
-      <Flex gap="small" align="center" justify="space-between" wrap>
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-2">
+      <Flex gap="small" align="center" justify="space-between" wrap className="shrink-0">
         <Segmented
           label="调试日志流"
           value={stream}
@@ -410,7 +441,8 @@ function CaseDebugLogs({
       <pre
         ref={logViewport}
         aria-label="调试日志内容"
-        className="m-0 h-96 min-w-0 overflow-auto rounded-lg border border-border bg-muted/40 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]"
+        tabIndex={0}
+        className="m-0 min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]"
       >
         {segments.length
           ? segments.map((segment, index) => (
@@ -420,11 +452,11 @@ function CaseDebugLogs({
             ))
           : "当前日志流暂无内容。"}
       </pre>
-      <Flex justify="space-between" gap="small">
-        <Typography.Text type="secondary">
+      <Flex justify="space-between" align="center" gap="small" wrap className="shrink-0">
+        <Typography.Text type="secondary" className="text-xs">
           {trimmed ? "仅显示最近内容，可回到开头分段查看" : "实时保留最近 200 块；历史逐块查看"}
         </Typography.Text>
-        <Flex gap="small">
+        <Flex gap="small" wrap>
           {afterSequence >= 0 || view !== "page" ? (
             <Button
               onClick={() => {

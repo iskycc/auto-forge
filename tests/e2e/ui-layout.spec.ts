@@ -575,6 +575,7 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
     "Caused by: java.lang.IllegalStateException: Account settlement has not completed; expected SETTLED but received PENDING",
   ].join("\n");
   const shares: string[] = [];
+  const batches: string[] = [];
   const scenarios = [
     { summary: "断言失败", screenshot: "shared-short-status", singleFailure: false },
     { summary: stack, screenshot: "shared-failure-stack", singleFailure: false },
@@ -600,10 +601,10 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
         const failedRunId = `run-failed-0-${suffix}-${index}`;
         database
           .prepare(
-            `UPDATE run_attempts SET status = 'succeeded', outcome = 'succeeded', result_summary = '通过'
+            `UPDATE run_attempts SET status = 'succeeded', outcome = 'succeeded', result_summary = ?
              WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id = ? AND id <> ?)`,
           )
-          .run(fixture.batchId, failedRunId);
+          .run("未在成功行显示的执行摘要".repeat(40), fixture.batchId, failedRunId);
         database
           .prepare(
             `UPDATE execution_runs SET status = 'succeeded', terminal_outcome = 'succeeded'
@@ -621,13 +622,15 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
     );
     expect(share.status).toBe(200);
     shares.push(share.body.shareUrl);
+    batches.push(fixture.batchId);
   }
   const context = await browser.newContext();
   try {
     const anonymousPage = await context.newPage();
     for (const viewport of [
-      { width: 1024, height: 768 },
       { width: 1536, height: 960 },
+      { width: 1024, height: 768 },
+      { width: 1920, height: 1080 },
     ]) {
       await anonymousPage.setViewportSize(viewport);
       const widths: number[][] = [];
@@ -647,6 +650,63 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
             .locator("td")
             .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width)),
         );
+        await page.setViewportSize(viewport);
+        await page.goto(`/run-batches/${batches[index]}`);
+        const consoleRows = page.locator(".execution-case-table tbody tr");
+        await expect(consoleRows).toHaveCount(5);
+        const consoleWidths = await consoleRows
+          .first()
+          .locator("td")
+          .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+        const consoleBody = page.locator(".round-detail-body");
+        if (viewport.width === 1536) {
+          const bodyBounds = (await consoleBody.boundingBox())!;
+          const tableBounds = (await consoleBody.locator(".execution-case-table").boundingBox())!;
+          expect(
+            tableBounds.width,
+            "charts must not squeeze the table on a standard desktop",
+          ).toBeGreaterThan(bodyBounds.width - 2);
+        }
+        if (index === 0) {
+          for (const measured of [widths[0]!, consoleWidths]) {
+            expect(
+              measured[1],
+              "short results must not absorb all remaining table space",
+            ).toBeLessThan(measured.reduce((total, width) => total + width, 0) * 0.26);
+          }
+        } else {
+          expect(consoleWidths[1], "console stacks also need readable width").toBeGreaterThan(
+            consoleWidths[0]!,
+          );
+        }
+        await expectUiIntegrity(page);
+        await captureUi(
+          page,
+          scenarios[index]!.screenshot.replace("shared-", "console-"),
+          viewport.width,
+        );
+        if (index === 0) {
+          for (const detailsPage of [anonymousPage, page]) {
+            await detailsPage.getByRole("button", { name: "全部轮次", exact: true }).click();
+            await expect(detailsPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
+            await expect(
+              detailsPage
+                .locator(".execution-case-table")
+                .getByRole("columnheader", { name: "轮次", exact: true }),
+            ).toBeVisible();
+            const allRoundWidths = await detailsPage
+              .locator(".execution-case-table tbody tr")
+              .first()
+              .locator("td")
+              .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+            expect(
+              allRoundWidths[2],
+              "adding a round column keeps short results compact",
+            ).toBeLessThan(allRoundWidths.reduce((total, width) => total + width, 0) * 0.26);
+            await expectUiIntegrity(detailsPage);
+            await detailsPage.getByRole("button", { name: "初始轮次", exact: true }).click();
+          }
+        }
       }
       expect(widths[1]![1], "long failure stacks need more space than case names").toBeGreaterThan(
         widths[1]![0]!,
@@ -678,6 +738,19 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
       ).toBeLessThan(widths[1]![1]!);
       await expectUiIntegrity(anonymousPage);
       await captureUi(anonymousPage, "shared-passed-filter", viewport.width);
+      await page.getByLabel("按名称搜索用例", { exact: true }).fill("通过用例");
+      const consolePassedRows = page.locator(".execution-case-table tbody tr");
+      await expect(consolePassedRows).toHaveCount(1);
+      const consolePassedWidths = await consolePassedRows
+        .first()
+        .locator("td")
+        .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+      expect(
+        consolePassedWidths[1],
+        "hidden successful summaries must not widen the result column",
+      ).toBeLessThan(consolePassedWidths.reduce((total, width) => total + width, 0) * 0.26);
+      await expectUiIntegrity(page);
+      await captureUi(page, "console-passed-filter", viewport.width);
       await anonymousPage.getByLabel("按名称搜索用例", { exact: true }).fill("");
       await expect(filteredRows).toHaveCount(5);
       await anonymousPage.getByRole("button", { name: "全部轮次", exact: true }).click();
@@ -689,6 +762,7 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
       await captureUi(anonymousPage, "shared-failure-stack-all-rounds", viewport.width);
       await expectUiIntegrity(anonymousPage);
     }
+    await anonymousPage.setViewportSize({ width: 1536, height: 960 });
     await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
     await waitForUiTransitions(anonymousPage);
     await captureUi(anonymousPage, "shared-failure-stack-dark", 1536);

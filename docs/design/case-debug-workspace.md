@@ -9,7 +9,17 @@
 主导航在“用例管理”后增加“用例调试”，沿用顶栏项目、版本、测试阶段。页面包含
 “普通用例调试 / DDT 调试”两个子 Tab，访问过的面板保持挂载，隐藏时暂停轮询。
 左侧配置输入、执行机/机组与 Adapter；右侧常驻日志和结果。在 1024px 及以上桌面
-保持有界双栏，长类名、版本名、API 地址和错误说明可换行。上传弹窗复用正式导入组件。
+固定工作台到视口可用高度，配置、执行信息及日志分别滚动，滚轮到达边界也不会带动整页。
+执行按钮固定在左栏底部，个人 DDT API 单独展示在左侧配置区。左右栏宽度及右侧
+执行信息/日志的高度比例使用 Ant Design Splitter 调整，支持鼠标拖动、方向键，双击或
+Home 恢复默认比例；切换子 Tab 保留布局，窗口缩放时按比例调整并保留两栏最小空间。
+长类名、版本名、API 地址和错误说明可换行，日志填满剩余空间，不使用固定高度。
+上传弹窗复用正式导入组件。
+
+日志区分别显示批次生命周期和用例结果。“执行完成”只表示执行流程正常结束，用例是否通过
+读取后台聚合的实际用例结果；TestNG 失败或跳过均为不通过。完成状态使用中性标签，只有实际
+通过才显示绿色“执行通过”；超时、终止和结果尚未确认单独标识。查看历史尝试不会改写本次
+调试的最终结果，轮询停止仍由批次生命周期决定。
 
 - 输入从正式用例库按批读取，关键词仅在点击搜索或按 Enter 时提交。
 - 普通调试默认直接执行测试 JAR。Adapter 模式沿用当前版本完整依赖包，页面明确提示更新执行代码时需同步更新依赖包。
@@ -70,3 +80,20 @@ SQLite `0073_ddt_debug.sql` / PostgreSQL `0071_ddt_debug.sql` 新增三张个人
 - `pnpm exec playwright test tests/e2e/case-debug.spec.ts --workers=1`：连接实际 Lite 生产构建，两项通过。覆盖未执行就离开再返回、刷新后保留普通/DDT 配置并完成执行与日志闭环、执行机组恢复、阶段往返、同一浏览器退出并切换两名用户、损坏数据恢复和存储配额不足。执行环节使用协议模拟 Runner，此项前端变更未重跑 Full 整体部署或真实 Runner 离线验收。
 - `pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更 TypeScript 的 ESLint/Prettier、`pnpm test:e2e:matrix`、`git diff --check` 均通过。
 - 已实际查看 **1024×768、1536×960** 的普通/DDT 已保存配置、深色执行结果和存储失败提示截图，状态文字与控件无横向溢出或变形。截图位于忽略的 `.local/debug-autosave-ui/`，不提交。
+
+### 独立滚动与可调整日志验证（2026-09-30）
+
+- 先在旧生产构建增加页面高度断言，复现 1024px 视口整页超出 145px；新布局固定视口高度，配置、执行信息和日志使用独立滚动容器。
+- 实际 Lite 生产构建运行 `pnpm exec playwright test tests/e2e/case-debug.spec.ts --workers=1`：两项通过。扩展既有执行闭环，注入 120 行日志，验证左右滚轮互不影响、页面不滚动、执行按钮保持可见、鼠标调整宽度/高度、键盘恢复默认比例，以及窗口缩放后的最小宽度约束。原有普通/DDT 执行、停止、导入、日志分段、账号隔离和草稿恢复继续通过。
+- `pnpm exec vitest run apps/web/src/lib/case-debug-log-window.test.ts apps/web/src/lib/case-debug-draft.test.ts apps/web/src/components/ui-usage.test.ts`：25 项通过。生产构建、测试 TypeScript、变更组件 ESLint/Prettier、E2E 覆盖矩阵和 `git diff --check` 通过。
+- 实际查看 **1024×768、1536×960** 浅色/深色截图，包含普通执行、DDT 长日志与失败结果、个人 API 和导入弹窗；未发现横向溢出、按钮变形或整页纵向滚动。截图保存在忽略的 `.local/debug-layout-ui/`，不提交。
+- 本次只改变共享前端布局，未修改执行、日志 API 或持久化；未重复运行 Full 基础设施和真实 Runner 离线验收。浏览器执行沿用协议模拟 Runner。
+
+### 调试结果显示验证（2026-09-30）
+
+- 旧生产构建复现：正常结束的断言失败批次为 `succeeded`，但 `failedRuns=1`、`succeededRuns=0`；界面顶部错误显示“执行通过”，执行尝试却显示“执行失败”。修复后复用批次生命周期文案，另按后台聚合结果显示用例结论。
+- `pnpm exec vitest run apps/web/src/lib/case-debug-result.test.ts apps/web/src/lib/run-batch-presentation.test.ts packages/application/test/normalize-testng-completion.test.ts packages/domain/test/execution.test.ts`：44 项通过，覆盖失败、通过、结果缺失、超时、终止、进行中状态及 TestNG 结果归一化。
+- `pnpm exec playwright test tests/e2e/case-debug.spec.ts --workers=1`：连接实际 Lite 生产构建，两项通过。普通断言失败和 DDT 全部跳过都校验后台生命周期为完成、失败用例计数为 1，且界面显示中性的“执行完成”和红色的“执行失败”；再次执行通过仍正确显示通过。原有导入、停止、日志、独立滚动、调整布局、配置恢复及账号隔离流程继续通过。
+- `pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更 TypeScript 的 ESLint、变更文件 Prettier 和 `git diff --check` 均通过。
+- 实际查看 **1024×768、1536×960** 普通失败与 DDT 跳过截图，以及 1024×768 深色截图，完成状态与结果清晰区分，无标签溢出或布局变形。截图保存在忽略的 `.local/debug-outcome-ui/`，不提交。
+- 本次修复仅涉及 Lite/Full 共用的前端结果展示，没有修改数据库、执行状态机或 Runner 协议；E2E 使用协议模拟 Runner，未重跑 Full 整体部署和真实 JVM/Runner 验收。

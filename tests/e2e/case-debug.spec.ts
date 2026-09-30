@@ -200,6 +200,14 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   );
   await logAndComplete(page, runner, ordinaryAdapter);
   await expect(page.getByLabel("调试执行结果")).toContainText("执行通过");
+  await panel.getByRole("button", { name: "再次执行", exact: true }).click();
+  const ordinaryFailure = await claim(page, runner);
+  await logAndComplete(page, runner, ordinaryFailure, "failed");
+  await expectCompletedDebugFailure(page, ordinaryFailure.assignment.executionSpec.batchId);
+  await screenshotReview(page, "ordinary-assertion-failed");
+  await panel.getByRole("button", { name: "再次执行", exact: true }).click();
+  await logAndComplete(page, runner, await claim(page, runner));
+  await expect(page.getByLabel("调试用例结果")).toHaveText("执行通过");
   await page.getByRole("tab", { name: "DDT 调试", exact: true }).click();
   panel = page.getByRole("region", { name: "DDT调试配置" });
   const ddtInput = panel.getByLabel("DDT 用例输入", { exact: true });
@@ -390,8 +398,9 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
     "jar-bundle",
   );
   expect(uploadedDdt.assignment.executionSpec.adapter).not.toHaveProperty("classDataFile");
-  await logAndComplete(page, runner, uploadedDdt, "failed");
-  await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行失败");
+  await logAndComplete(page, runner, uploadedDdt, "skipped");
+  await expectCompletedDebugFailure(page, uploadedDdt.assignment.executionSpec.batchId);
+  await verifyDebugPaneScrolling(page);
   await screenshotReview(page, "ddt-failed-result");
   await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
@@ -638,8 +647,9 @@ async function logAndComplete(
   page: Page,
   runner: { runnerId: string; credential: string },
   claim: ClaimedAssignment,
-  status: "succeeded" | "failed" = "succeeded",
+  outcome: "succeeded" | "failed" | "skipped" = "succeeded",
 ) {
+  const status = outcome === "succeeded" ? "succeeded" : "failed";
   const path = `/api/v1/run-attempts/${claim.assignment.attemptId}`;
   const logged = await page.request.post(`${path}/logs`, {
     headers: runnerHeaders(runner),
@@ -657,7 +667,14 @@ async function logAndComplete(
         {
           stream: "stdout",
           sequence: 0,
-          content: "INFO DEBUG_NEW_JAR_EXECUTED\n执行结果：通过\n",
+          content:
+            `INFO DEBUG_NEW_JAR_EXECUTED\n执行结果：${status === "succeeded" ? "通过" : "失败"}\n` +
+            (status === "failed"
+              ? Array.from(
+                  { length: 120 },
+                  (_, index) => `ERROR 调试堆栈第 ${index + 1} 行\n`,
+                ).join("")
+              : ""),
           recordedAt: new Date().toISOString(),
         },
       ],
@@ -672,7 +689,12 @@ async function logAndComplete(
       leaseToken: claim.lease.token,
       result: {
         status,
-        resultCode: status === "succeeded" ? "TESTNG_OK" : "TESTNG_TEST_FAILED",
+        resultCode:
+          outcome === "succeeded"
+            ? "TESTNG_SUCCEEDED"
+            : outcome === "skipped"
+              ? "TESTNG_SKIPPED"
+              : "TESTNG_ASSERTIONS_FAILED",
         summary:
           status === "succeeded"
             ? "调试用例执行完成"
@@ -680,8 +702,8 @@ async function logAndComplete(
         testNg: {
           total: 1,
           passed: status === "succeeded" ? 1 : 0,
-          failed: 0,
-          skipped: status === "failed" ? 1 : 0,
+          failed: outcome === "failed" ? 1 : 0,
+          skipped: outcome === "skipped" ? 1 : 0,
           configurationFailures: 0,
           detailsTruncated: false,
           suites: [],
@@ -694,6 +716,93 @@ async function logAndComplete(
   });
   expect(completed.status()).toBe(200);
 }
+async function expectCompletedDebugFailure(page: Page, batchId: string) {
+  const completed = await browserJson<{
+    status: string;
+    failedRuns: number;
+    succeededRuns: number;
+  }>(page, `/api/v1/run-batches/${batchId}`);
+  expect(completed.body).toMatchObject({ status: "succeeded", failedRuns: 1, succeededRuns: 0 });
+  const results = page.getByRole("region", { name: "调试执行结果", exact: true });
+  await expect(results).not.toContainText("执行通过");
+  await expect(results.getByLabel("调试执行状态")).toHaveText("执行完成");
+  await expect(results.getByLabel("调试用例结果")).toHaveText("执行失败");
+  await expect(results.getByLabel("调试用例结果")).toHaveClass(/ant-tag-error/);
+}
+
+async function verifyDebugPaneScrolling(page: Page) {
+  const configuration = page.getByRole("region", { name: "DDT调试配置", exact: true });
+  const fields = configuration.getByRole("region", { name: "调试配置内容", exact: true });
+  const results = page.getByRole("region", { name: "调试执行结果", exact: true });
+  const logs = results.getByLabel("调试日志内容");
+  await results.getByRole("checkbox", { name: "跟随最新" }).uncheck();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => logs.evaluate((element) => element.clientHeight)).toBeGreaterThan(180);
+    await fields.evaluate((element) => (element.scrollTop = 0));
+    await logs.evaluate((element) => (element.scrollTop = 0));
+    await fields.hover();
+    await page.mouse.wheel(0, 500);
+    await expect.poll(() => fields.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    expect(await logs.evaluate((element) => element.scrollTop)).toBe(0);
+    const configurationScroll = await fields.evaluate((element) => element.scrollTop);
+    await logs.hover();
+    await page.mouse.wheel(0, 500);
+    await expect.poll(() => logs.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    expect(await fields.evaluate((element) => element.scrollTop)).toBe(configurationScroll);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(
+      configuration.getByRole("button", { name: "再次执行", exact: true }),
+    ).toBeInViewport();
+
+    const widthHandle = page.getByRole("separator", { name: "调整调试配置与日志宽度" });
+    const oldWidth = await configuration.evaluate((element) => element.clientWidth);
+    const widthBounds = (await widthHandle.boundingBox())!;
+    await page.mouse.move(
+      widthBounds.x + widthBounds.width / 2,
+      widthBounds.y + widthBounds.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(widthBounds.x + 50, widthBounds.y + widthBounds.height / 2, { steps: 5 });
+    await page.mouse.up();
+    await expect
+      .poll(() => configuration.evaluate((element) => element.clientWidth))
+      .toBeGreaterThan(oldWidth + 20);
+    await widthHandle.focus();
+    await widthHandle.press("Home");
+    await expect
+      .poll(() => configuration.evaluate((element) => element.clientWidth))
+      .toBe(oldWidth);
+
+    const heightHandle = results.getByRole("separator", { name: "调整执行信息与日志高度" });
+    const oldHeight = await logs.evaluate((element) => element.clientHeight);
+    const heightBounds = (await heightHandle.boundingBox())!;
+    await page.mouse.move(
+      heightBounds.x + heightBounds.width / 2,
+      heightBounds.y + heightBounds.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(heightBounds.x + heightBounds.width / 2, heightBounds.y - 48, {
+      steps: 5,
+    });
+    await page.mouse.up();
+    await expect
+      .poll(() => logs.evaluate((element) => element.clientHeight))
+      .toBeGreaterThan(oldHeight + 20);
+    await heightHandle.focus();
+    await heightHandle.press("ArrowDown");
+    await heightHandle.press("Home");
+    await expect.poll(() => logs.evaluate((element) => element.clientHeight)).toBe(oldHeight);
+    await expectUiIntegrity(page);
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(
+      viewport.height + 1,
+    );
+  }
+}
+
 async function screenshotReview(page: Page, name: string) {
   for (const close of await page.locator(".ant-notification-notice-close").all())
     await close.click();
@@ -707,6 +816,9 @@ async function screenshotReview(page: Page, name: string) {
     await page.setViewportSize(viewport);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expectUiIntegrity(page);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight))
+      .toBeLessThanOrEqual(1);
     await page.screenshot({
       path: resolve(directory, `${name}-${viewport.width}.png`),
       fullPage: true,

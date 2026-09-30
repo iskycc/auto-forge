@@ -211,6 +211,7 @@ export function AppShell({
       `${userId ?? "anonymous"}:${selectedProjectId ?? ""}:${selectedProjectVersionId ?? ""}:${selectedTestStageId ?? ""}:${permissions.join(",")}`,
     );
   const pathname = usePathname();
+  const debugWorkspace = pathname === "/case-debug";
   const pageContentRef = useContentTransition<HTMLElement>(pathname);
   const currentSection = useSearchParams().get("section");
   // 保留 /run-batches/[id] 详情路由，但所有批次入口统一归属“执行记录”。
@@ -303,8 +304,14 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className={cn("app-frame", appShellStyles["app-frame"])}>
-        <header className={cn("topbar", appShellStyles["topbar"])}>
+      <div
+        className={cn(
+          "app-frame",
+          appShellStyles["app-frame"],
+          debugWorkspace && "flex h-dvh min-h-0 flex-col overflow-hidden",
+        )}
+      >
+        <header className={cn("topbar", appShellStyles["topbar"], "shrink-0")}>
           {forcePasswordChange ? (
             <span />
           ) : (
@@ -373,7 +380,14 @@ export function AppShell({
             {userName ? <LogoutButton /> : null}
           </div>
         </header>
-        <main ref={pageContentRef} className={cn("main-content", appShellStyles["main-content"])}>
+        <main
+          ref={pageContentRef}
+          className={cn(
+            "main-content",
+            appShellStyles["main-content"],
+            debugWorkspace && "min-h-0 flex-1 overflow-hidden",
+          )}
+        >
           {children}
         </main>
       </div>

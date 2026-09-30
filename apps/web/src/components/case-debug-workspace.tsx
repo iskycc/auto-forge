@@ -17,6 +17,7 @@ import { createCaseDebugRunSchema } from "@autoforge/contracts";
 import { ZodError } from "zod";
 import { CaseDebugInput } from "./case-debug-input";
 import { CaseDebugResults } from "./case-debug-results";
+import { CaseDebugSplitter } from "./case-debug-splitter";
 import { debugRequest } from "@/lib/case-debug-client";
 import { LinkButton } from "./ui/link-button";
 import { caseDebugDraftKey, createCaseDebugDraftStore } from "@/lib/case-debug-draft";
@@ -37,8 +38,8 @@ export function CaseDebugWorkspace(props: CaseDebugWorkspaceProps) {
   const [visited, setVisited] = useState<Set<string>>(new Set([active]));
   const visible = new Set([...visited, active]);
   return (
-    <div className="grid min-w-0 gap-4">
-      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3">
+      <header className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
           <Typography.Title level={2} className="!mb-1">
             用例调试
@@ -76,8 +77,9 @@ export function CaseDebugWorkspace(props: CaseDebugWorkspaceProps) {
               kind,
             })}
             hidden={active !== kind}
+            className="min-h-0 flex-1"
           >
-            <TabContent activeKey={active}>
+            <TabContent activeKey={active} className="block h-full min-h-0">
               <DebugPanel {...props} kind={kind} active={active === kind} />
             </TabContent>
           </div>
@@ -235,243 +237,259 @@ function DebugPanel({
   }
 
   return (
-    <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(320px,400px)_minmax(0,1fr)]">
-      {kind === "ddt" ? (
-        <Card className="grid min-w-0 gap-2 p-4 lg:col-span-2" aria-label="个人 DDT API">
-          <Flex align="center" justify="space-between" gap="small" wrap>
-            <Typography.Text strong>个人 DDT API</Typography.Text>
-            <DdtDebugChangeActions scope={scope} />
-          </Flex>
-          <Typography.Paragraph
-            className="!mb-0 break-all text-xs [&_.ant-typography-copy]:!h-8 [&_.ant-typography-copy]:!w-8"
-            copyable={{ text: publicApiPath }}
-          >
-            {publicApiPath}
-          </Typography.Paragraph>
-          <Typography.Text type="secondary" className="text-xs">
-            自动传入 setDdtInsightUrl；查询时附加
-            ?caseId=CaseId。完整链接可读取本人的调试数据，请按测试数据权限分享。
-          </Typography.Text>
-        </Card>
-      ) : null}
-      <Card
-        className="grid min-w-0 gap-4 p-4"
-        as="section"
-        aria-label={`${kind === "ddt" ? "DDT" : "普通用例"}调试配置`}
-      >
-        <Flex gap="small" align="center">
-          <Bug size={18} className="text-primary" />
-          <Typography.Title level={4} className="!m-0">
-            调试配置
-          </Typography.Title>
-        </Flex>
-        <Typography.Text
-          type={
-            draftStatus === "unavailable" || draftStatus === "invalid" ? "warning" : "secondary"
-          }
-          className="text-xs"
-          aria-label="调试配置保存状态"
+    <CaseDebugSplitter
+      direction="columns"
+      first={
+        <Card
+          className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+          as="section"
+          aria-label={`${kind === "ddt" ? "DDT" : "普通用例"}调试配置`}
         >
-          {draftStatus === "loading"
-            ? "正在恢复调试配置…"
-            : draftStatus === "unavailable"
-              ? "浏览器无法保存配置；当前填写仍可使用，刷新后可能丢失。"
-              : draftStatus === "invalid"
-                ? "已保存配置无法读取，请重新选择；修改后将重新保存。"
-                : draftStatus === "saved"
-                  ? "配置已自动保存到当前浏览器"
-                  : "填写后自动保存到当前浏览器，按账号和项目范围分别记忆。"}
-        </Typography.Text>
-        {kind === "ddt" ? (
-          <>
+          <div className="grid shrink-0 gap-2 border-b border-border p-3">
+            <Flex gap="small" align="center">
+              <Bug size={18} className="text-primary" />
+              <Typography.Title level={4} className="!m-0">
+                调试配置
+              </Typography.Title>
+            </Flex>
+            <Typography.Text
+              type={
+                draftStatus === "unavailable" || draftStatus === "invalid" ? "warning" : "secondary"
+              }
+              className="text-xs"
+              aria-label="调试配置保存状态"
+            >
+              {draftStatus === "loading"
+                ? "正在恢复调试配置…"
+                : draftStatus === "unavailable"
+                  ? "浏览器无法保存配置；当前填写仍可使用，刷新后可能丢失。"
+                  : draftStatus === "invalid"
+                    ? "已保存配置无法读取，请重新选择；修改后将重新保存。"
+                    : draftStatus === "saved"
+                      ? "配置已自动保存到当前浏览器"
+                      : "填写后自动保存到当前浏览器，按账号和项目范围分别记忆。"}
+            </Typography.Text>
+          </div>
+          <div
+            role="region"
+            aria-label="调试配置内容"
+            tabIndex={0}
+            className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto overscroll-contain p-3"
+          >
+            {kind === "ddt" ? (
+              <Card className="grid min-w-0 gap-2 bg-muted/30 p-3" aria-label="个人 DDT API">
+                <Typography.Text strong>个人 DDT API</Typography.Text>
+                <Typography.Paragraph
+                  className="!mb-0 break-all text-xs [&_.ant-typography-copy]:!h-8 [&_.ant-typography-copy]:!w-8"
+                  copyable={{ text: publicApiPath }}
+                >
+                  {publicApiPath}
+                </Typography.Paragraph>
+                <Typography.Text type="secondary" className="text-xs">
+                  自动传入 setDdtInsightUrl；查询时附加
+                  ?caseId=CaseId。完整链接可读取本人的调试数据，请按测试数据权限分享。
+                </Typography.Text>
+                <DdtDebugChangeActions scope={scope} />
+              </Card>
+            ) : null}
+            {kind === "ddt" ? (
+              <>
+                <CaseDebugInput
+                  kind="ddt"
+                  scope={scope}
+                  maxJarBytes={maxJarBytes}
+                  scopeLabels={labels}
+                  active={active}
+                  disabled={editingDisabled}
+                  canUpload={permissions.uploadDdt}
+                  value={ddtCase}
+                  onChange={(choice) => {
+                    draftStore.update({
+                      ddtCase: choice,
+                      ...(choice?.suggestedClass ? { executionClass: choice.suggestedClass } : {}),
+                    });
+                  }}
+                />
+                <Divider className="!my-0" />
+              </>
+            ) : null}
+            {kind === "ddt" ? (
+              <Typography.Text type="secondary">
+                执行类仅对本次调试生效，不修改 SR 关联。
+              </Typography.Text>
+            ) : null}
             <CaseDebugInput
-              kind="ddt"
-              scope={scope}
+              kind="jar"
               maxJarBytes={maxJarBytes}
               scopeLabels={labels}
+              scope={scope}
               active={active}
               disabled={editingDisabled}
-              canUpload={permissions.uploadDdt}
-              value={ddtCase}
-              onChange={(choice) => {
-                draftStore.update({
-                  ddtCase: choice,
-                  ...(choice?.suggestedClass ? { executionClass: choice.suggestedClass } : {}),
-                });
-              }}
+              canUpload={permissions.uploadJar}
+              value={executionClass}
+              onChange={(executionClass) => draftStore.update({ executionClass })}
             />
             <Divider className="!my-0" />
-          </>
-        ) : null}
-        {kind === "ddt" ? (
-          <Typography.Text type="secondary">
-            执行类仅对本次调试生效，不修改 SR 关联。
-          </Typography.Text>
-        ) : null}
-        <CaseDebugInput
-          kind="jar"
-          maxJarBytes={maxJarBytes}
-          scopeLabels={labels}
-          scope={scope}
-          active={active}
-          disabled={editingDisabled}
-          canUpload={permissions.uploadJar}
-          value={executionClass}
-          onChange={(executionClass) => draftStore.update({ executionClass })}
-        />
-        <Divider className="!my-0" />
-        <Flex gap="small" align="center" justify="space-between">
-          <Typography.Text strong>执行资源</Typography.Text>
-          <Button onClick={() => setResourcesRevision((value) => value + 1)}>刷新资源</Button>
-        </Flex>
-        <Segmented
-          label="调试资源类型"
-          value={runnerKind}
-          onChange={(runnerKind) => draftStore.update({ runnerKind })}
-          options={[
-            { value: "runner", label: "执行机", disabled: editingDisabled },
-            { value: "group", label: "执行机组", disabled: editingDisabled },
-          ]}
-          block
-        />
-        {runnerKind === "runner" ? (
-          <Select
-            aria-label="调试执行机"
-            value={runnerId}
-            disabled={editingDisabled}
-            onChange={(event) => draftStore.update({ runnerId: event.target.value })}
-          >
-            <option value="">选择执行机</option>
-            {runnerId &&
-            !runners.some((runner) => runner.id === runnerId && !runner.deregisteredAt) ? (
-              <option value={runnerId} disabled>
-                已保存的执行机暂不可用，请刷新资源或重新选择
-              </option>
-            ) : null}
-            {runners
-              .filter((runner) => !runner.deregisteredAt)
-              .map((runner) => (
-                <option
-                  key={runner.id}
-                  value={runner.id}
-                  disabled={runner.state === "disabled" || runner.state === "draining"}
-                >
-                  {runner.name} · {runner.state === "online" ? "在线" : "离线"}
-                </option>
-              ))}
-          </Select>
-        ) : (
-          <Select
-            aria-label="调试执行机组"
-            value={groupId}
-            disabled={editingDisabled}
-            onChange={(event) => draftStore.update({ groupId: event.target.value })}
-          >
-            <option value="">选择执行机组</option>
-            {groupId && !groups.some((group) => group.id === groupId) ? (
-              <option value={groupId} disabled>
-                已保存的执行机组暂不可用，请刷新资源或重新选择
-              </option>
-            ) : null}
-            {groups.map((group) => (
-              <option key={group.id} value={group.id} disabled={!group.runnerIds.length}>
-                {group.name} · {group.runnerIds.length} 台
-              </option>
-            ))}
-          </Select>
-        )}
-        <label className="flex min-h-8 cursor-pointer items-center justify-between gap-2">
-          <Typography.Text strong>CoTest Adapter</Typography.Text>
-          <Switch
-            aria-label="调试启用 Adapter"
-            checked={kind === "ddt" || adapterEnabled}
-            disabled={kind === "ddt" || editingDisabled}
-            onChange={(adapterEnabled) => draftStore.update({ adapterEnabled })}
-          />
-        </label>
-        {kind === "ddt" || adapterEnabled ? (
-          <div className="grid min-w-0 gap-3">
-            <Notice>
-              Adapter 使用当前版本的 JDK 和完整依赖包；更新代码需同步更新依赖包。
-              <LinkButton href="/settings/projects" target="_blank" rel="noreferrer">
-                配置运行依赖
-              </LinkButton>
-            </Notice>
-            <label className="grid min-w-0 gap-1">
-              Suite Name
-              <Input
-                aria-label="调试 Suite Name"
-                value={suiteName}
-                maxLength={512}
-                disabled={editingDisabled}
-                onChange={(event) => draftStore.update({ suiteName: event.target.value })}
-              />
-            </label>
-            <label className="grid min-w-0 gap-1">
-              Test Name
-              <Input
-                aria-label="调试 Test Name"
-                value={testName}
-                maxLength={512}
-                disabled={editingDisabled}
-                onChange={(event) => draftStore.update({ testName: event.target.value })}
-              />
-            </label>
-            <label className="grid min-w-0 gap-1">
-              环境地址
-              <Textarea
-                aria-label="调试环境地址"
-                rows={2}
-                className="min-h-16"
-                placeholder="每行一个 IP 或地址"
-                value={addresses}
-                disabled={editingDisabled}
-                onChange={(event) => draftStore.update({ addresses: event.target.value })}
-              />
-            </label>
-          </div>
-        ) : null}
-        <Typography.Text type="secondary">
-          每次执行一个用例；使用平台执行时限，本次不自动重跑。
-        </Typography.Text>
-        {error ? <Notice tone="error">{error}</Notice> : null}
-        <Button
-          variant="primary"
-          disabled={editingDisabled || running || !executionClass || (kind === "ddt" && !ddtCase)}
-          onClick={() => void execute()}
-        >
-          <Play size={16} />
-          {submitting
-            ? "正在创建执行…"
-            : running
-              ? "本次调试执行中"
-              : batchId
-                ? "再次执行"
-                : "开始调试"}
-        </Button>
-      </Card>
-      <Card className="min-w-0 p-4 lg:sticky lg:top-20">
-        {batchId ? (
-          <CaseDebugResults
-            key={batchId}
-            batchId={batchId}
-            scope={scope}
-            visible={active}
-            canReadLogs={permissions.readLogs}
-            canCancel={permissions.cancel}
-            onActiveChange={onActiveChange}
-          />
-        ) : (
-          <div className="grid min-h-96 content-center gap-4 text-center">
-            <Terminal size={36} className="mx-auto text-muted-foreground" />
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="配置完成后开始调试，日志与结果将在这里展示"
+            <Flex gap="small" align="center" justify="space-between">
+              <Typography.Text strong>执行资源</Typography.Text>
+              <Button onClick={() => setResourcesRevision((value) => value + 1)}>刷新资源</Button>
+            </Flex>
+            <Segmented
+              label="调试资源类型"
+              value={runnerKind}
+              onChange={(runnerKind) => draftStore.update({ runnerKind })}
+              options={[
+                { value: "runner", label: "执行机", disabled: editingDisabled },
+                { value: "group", label: "执行机组", disabled: editingDisabled },
+              ]}
+              block
             />
+            {runnerKind === "runner" ? (
+              <Select
+                aria-label="调试执行机"
+                value={runnerId}
+                disabled={editingDisabled}
+                onChange={(event) => draftStore.update({ runnerId: event.target.value })}
+              >
+                <option value="">选择执行机</option>
+                {runnerId &&
+                !runners.some((runner) => runner.id === runnerId && !runner.deregisteredAt) ? (
+                  <option value={runnerId} disabled>
+                    已保存的执行机暂不可用，请刷新资源或重新选择
+                  </option>
+                ) : null}
+                {runners
+                  .filter((runner) => !runner.deregisteredAt)
+                  .map((runner) => (
+                    <option
+                      key={runner.id}
+                      value={runner.id}
+                      disabled={runner.state === "disabled" || runner.state === "draining"}
+                    >
+                      {runner.name} · {runner.state === "online" ? "在线" : "离线"}
+                    </option>
+                  ))}
+              </Select>
+            ) : (
+              <Select
+                aria-label="调试执行机组"
+                value={groupId}
+                disabled={editingDisabled}
+                onChange={(event) => draftStore.update({ groupId: event.target.value })}
+              >
+                <option value="">选择执行机组</option>
+                {groupId && !groups.some((group) => group.id === groupId) ? (
+                  <option value={groupId} disabled>
+                    已保存的执行机组暂不可用，请刷新资源或重新选择
+                  </option>
+                ) : null}
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id} disabled={!group.runnerIds.length}>
+                    {group.name} · {group.runnerIds.length} 台
+                  </option>
+                ))}
+              </Select>
+            )}
+            <label className="flex min-h-8 cursor-pointer items-center justify-between gap-2">
+              <Typography.Text strong>CoTest Adapter</Typography.Text>
+              <Switch
+                aria-label="调试启用 Adapter"
+                checked={kind === "ddt" || adapterEnabled}
+                disabled={kind === "ddt" || editingDisabled}
+                onChange={(adapterEnabled) => draftStore.update({ adapterEnabled })}
+              />
+            </label>
+            {kind === "ddt" || adapterEnabled ? (
+              <div className="grid min-w-0 gap-3">
+                <Notice>
+                  Adapter 使用当前版本的 JDK 和完整依赖包；更新代码需同步更新依赖包。
+                  <LinkButton href="/settings/projects" target="_blank" rel="noreferrer">
+                    配置运行依赖
+                  </LinkButton>
+                </Notice>
+                <label className="grid min-w-0 gap-1">
+                  Suite Name
+                  <Input
+                    aria-label="调试 Suite Name"
+                    value={suiteName}
+                    maxLength={512}
+                    disabled={editingDisabled}
+                    onChange={(event) => draftStore.update({ suiteName: event.target.value })}
+                  />
+                </label>
+                <label className="grid min-w-0 gap-1">
+                  Test Name
+                  <Input
+                    aria-label="调试 Test Name"
+                    value={testName}
+                    maxLength={512}
+                    disabled={editingDisabled}
+                    onChange={(event) => draftStore.update({ testName: event.target.value })}
+                  />
+                </label>
+                <label className="grid min-w-0 gap-1">
+                  环境地址
+                  <Textarea
+                    aria-label="调试环境地址"
+                    rows={2}
+                    className="min-h-16"
+                    placeholder="每行一个 IP 或地址"
+                    value={addresses}
+                    disabled={editingDisabled}
+                    onChange={(event) => draftStore.update({ addresses: event.target.value })}
+                  />
+                </label>
+              </div>
+            ) : null}
+            {error ? <Notice tone="error">{error}</Notice> : null}
           </div>
-        )}
-      </Card>
-    </div>
+          <div className="grid shrink-0 gap-2 border-t border-border p-3">
+            <Typography.Text type="secondary" className="text-xs">
+              每次执行一个用例，使用平台时限，不自动重跑。
+            </Typography.Text>
+            <Button
+              variant="primary"
+              disabled={
+                editingDisabled || running || !executionClass || (kind === "ddt" && !ddtCase)
+              }
+              onClick={() => void execute()}
+            >
+              <Play size={16} />
+              {submitting
+                ? "正在创建执行…"
+                : running
+                  ? "本次调试执行中"
+                  : batchId
+                    ? "再次执行"
+                    : "开始调试"}
+            </Button>
+          </div>
+        </Card>
+      }
+      second={
+        <Card className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-3">
+          {batchId ? (
+            <CaseDebugResults
+              key={batchId}
+              batchId={batchId}
+              scope={scope}
+              visible={active}
+              canReadLogs={permissions.readLogs}
+              canCancel={permissions.cancel}
+              onActiveChange={onActiveChange}
+            />
+          ) : (
+            <div className="grid min-h-0 flex-1 content-center gap-4 overflow-auto text-center">
+              <Terminal size={36} className="mx-auto text-muted-foreground" />
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="配置完成后开始调试，日志与结果将在这里展示"
+              />
+            </div>
+          )}
+        </Card>
+      }
+    />
   );
 }
 

@@ -76,8 +76,8 @@ import { columnCharacterWidthAtCoverage, widestText } from "@/lib/table-column-w
 import {
   executionCaseColumnWidthsRem,
   minimumCaseNameWidthCh,
-  sharedExecutionColumnLayout,
-} from "@/lib/shared-execution-column-layout";
+  executionCaseColumnLayout,
+} from "@/lib/execution-case-column-layout";
 
 const DEFAULT_CASE_PAGE_SIZE = 50;
 const EMPTY_CASE_ROWS: RoundCaseRowModel[] = [];
@@ -1533,36 +1533,18 @@ function RoundCasesTable({
 
   const columnWidths = useMemo(() => {
     // Successful rows have no failure text; they must not dilute a visible stack's width.
-    const sharedFailureLines = batch.accessToken
-      ? rows.flatMap(({ attempt }) => {
-          if (
-            !attempt ||
-            !isTerminalAttemptStatus(attempt.status) ||
-            attempt.status === "succeeded"
-          )
-            return [];
-          const hint = attemptFailureHint(attempt);
-          return hint ? [widestText(hint.split(/\r?\n/))] : [];
-        })
-      : [];
+    const failureLines = rows.flatMap(({ attempt }) => {
+      if (!attempt || !isTerminalAttemptStatus(attempt.status) || attempt.status === "succeeded")
+        return [];
+      const hint = attemptFailureHint(attempt);
+      return hint ? [widestText(hint.split(/\r?\n/))] : [];
+    });
     return {
       case: columnCharacterWidthAtCoverage(
         rows.map((row) => widestText([row.run.displayName, row.run.className])),
-        { minimum: minimumCaseNameWidthCh, maximum: 42 },
+        { minimum: minimumCaseNameWidthCh, maximum: 64 },
       ),
-      status: columnCharacterWidthAtCoverage(
-        sharedFailureLines.length > 0
-          ? sharedFailureLines
-          : rows.map((row) =>
-              widestText(
-                (row.attempt
-                  ? `${attemptStatusLabel(row.attempt)} ${attemptFailureHint(row.attempt) ?? ""}`
-                  : "未执行"
-                ).split(/\r?\n/),
-              ),
-            ),
-        { minimum: 12, maximum: batch.accessToken ? 96 : 36 },
-      ),
+      status: columnCharacterWidthAtCoverage(failureLines, { minimum: 12, maximum: 96 }),
       runner: columnCharacterWidthAtCoverage(
         rows.map((row) => {
           const runnerId = row.attempt?.runnerId ?? row.run.assignedRunnerId;
@@ -1571,10 +1553,12 @@ function RoundCasesTable({
         { minimum: 10, maximum: 24 },
       ),
     };
-  }, [rows, runnerDirectory, batch.accessToken]);
-  const sharedLayout = batch.accessToken
-    ? sharedExecutionColumnLayout({ widths: columnWidths, showRoundColumn })
-    : undefined;
+  }, [rows, runnerDirectory]);
+  const columnLayout = executionCaseColumnLayout({
+    widths: columnWidths,
+    showRoundColumn,
+    access: batch.accessToken ? "public" : "console",
+  });
 
   const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -1646,7 +1630,7 @@ function RoundCasesTable({
       ) : (
         <div
           className={cn("table-scroll", uiPatterns["table-scroll"])}
-          style={sharedLayout ? { containerType: "inline-size" } : undefined}
+          style={{ containerType: "inline-size" }}
         >
           <Table
             className={cn(
@@ -1654,17 +1638,17 @@ function RoundCasesTable({
               uiPatterns["data-table"],
               runBatchRoundsStyles["execution-case-table"],
             )}
-            style={sharedLayout ? { minWidth: sharedLayout.minimumTableWidth } : undefined}
+            style={{ minWidth: columnLayout.minimumTableWidth }}
           >
             <colgroup>
-              <col style={{ width: sharedLayout?.caseWidth ?? `${columnWidths.case}ch` }} />
+              <col style={{ width: columnLayout.caseWidth }} />
               {showRoundColumn ? (
                 <col
                   className="case-column-round"
                   style={{ width: `${executionCaseColumnWidthsRem.round}rem` }}
                 />
               ) : null}
-              <col style={sharedLayout ? undefined : { width: `${columnWidths.status}ch` }} />
+              <col style={{ width: columnLayout.statusWidth }} />
               <col style={{ width: `${columnWidths.runner}ch` }} />
               <col
                 className="case-column-duration"
@@ -1673,7 +1657,7 @@ function RoundCasesTable({
               <col
                 className="case-column-actions"
                 style={{
-                  width: `${batch.accessToken ? executionCaseColumnWidthsRem.sharedActions : executionCaseColumnWidthsRem.actions}rem`,
+                  width: columnLayout.actionsWidth,
                 }}
               />
             </colgroup>
@@ -2440,17 +2424,17 @@ const runBatchRoundsStyles = {
   "round-concurrency":
     "inline-flex items-center gap-[5px] tabular-nums font-semibold [&.changed]:text-warning [&_small]:rounded-full [&_small]:py-0.5 [&_small]:px-[5px] [&_small]:bg-warning/10 [&_small]:text-xs [&_small]:font-semibold [&_small]:whitespace-nowrap",
   "round-detail-body":
-    "grid grid-cols-[minmax(220px,_260px)_minmax(0,_1fr)] gap-4 items-start max-[1101px]:grid-cols-[1fr]",
+    "grid grid-cols-1 @[80rem]/round:grid-cols-[minmax(220px,_260px)_minmax(0,_1fr)] gap-4 items-start",
   "round-detail-header":
     "flex items-center justify-between gap-3 [&_.status-badge]:bg-info/10 [&_.status-badge]:text-info",
   "round-detail-header-actions": "flex flex-wrap items-center gap-2",
   "round-detail-panel":
-    "grid gap-3.5 border border-solid border-border rounded-xl p-4 bg-card shadow-xs [&_>_.form-error]:m-0",
+    "@container/round grid gap-3.5 border border-solid border-border rounded-xl p-4 bg-card shadow-xs [&_>_.form-error]:m-0",
   "round-detail-row": "[&_>_td]:bg-muted",
   "round-detail-title": "flex items-center gap-2.5 [&_h2]:m-0 [&_h2]:text-base",
   "round-donut-block":
     "grid gap-2.5 [&_h3]:m-0 [&_h3]:text-muted-foreground [&_h3]:text-sm [&_h3]:font-semibold",
-  "round-donuts": "grid gap-4.5 max-[1101px]:grid-cols-2 max-[1101px]:items-start",
+  "round-donuts": "grid grid-cols-2 @[80rem]/round:grid-cols-1 gap-4.5 items-start",
   "round-filter-row":
     "flex flex-wrap items-center gap-2.5 [&_.ui-select]:w-auto [&_.ui-select]:min-w-[150px]",
   "round-filter-search":
