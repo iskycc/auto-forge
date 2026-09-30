@@ -49,6 +49,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   };
   const query = new URLSearchParams(scope).toString();
   const headers = { origin: new URL(page.url()).origin };
+  await seedAdditionalDebugCandidates(page, query, headers);
   const jar = Buffer.from(
     zipSync({
       "com/example/InitializationPaymentTest.class": buildClassFile({
@@ -79,12 +80,45 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(page.getByRole("heading", { name: "用例调试", exact: true })).toBeVisible();
   let panel = page.getByRole("region", { name: "普通用例调试配置" });
   const classInput = panel.getByLabel("测试类输入", { exact: true });
+  await expect(classInput.locator("option")).toHaveCount(51);
+  await expect(classInput.locator(`option[value="${source.classId}"]`)).toHaveCount(0);
+  await classInput.getByLabel("搜索测试类", { exact: true }).fill("  PAYMENT  ");
+  await classInput.getByRole("button", { name: "检索测试类", exact: true }).click();
   await expect(classInput.locator(`option[value="${source.classId}"]`)).toHaveCount(1);
-  await classInput.locator('select[aria-label="调试测试类"]').selectOption(source.classId);
+  let directoryReads = 0;
+  page.on("request", (request) => {
+    if (/\/read-models\/[^/]+\/branches\?/.test(request.url())) directoryReads += 1;
+  });
+  await classInput.getByRole("button", { name: "从目录树选择", exact: true }).click();
+  const casePicker = page.getByRole("dialog", { name: "选择调试用例", exact: true });
+  await expect(casePicker.getByRole("tree")).toBeVisible();
+  await expect(casePicker.getByText(className, { exact: true })).toHaveCount(0);
+  await expect.poll(() => directoryReads).toBe(1);
+  for (const segment of ["com", "example"]) {
+    const directoryNode = casePicker.locator(".ant-tree-treenode").filter({
+      has: page.locator(".ant-tree-title").filter({ hasText: new RegExp(`^${segment}\\d+$`) }),
+    });
+    await directoryNode.locator(".ant-tree-switcher").click();
+  }
+  await expect(casePicker.getByText(className, { exact: true })).toBeVisible();
+  await expect.poll(() => directoryReads).toBe(3);
+  await expect(casePicker.getByText("com.unopened.Extra0", { exact: true })).toHaveCount(0);
+  await screenshotReview(page, "ordinary-case-tree");
+  await casePicker.getByText(className, { exact: true }).click();
+  await casePicker.getByRole("button", { name: "确认选择", exact: true }).click();
+  await expect(casePicker).toHaveCount(0);
+  await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
+  await classInput.getByRole("button", { name: "从目录树选择", exact: true }).click();
+  await casePicker.getByLabel("搜索目录用例").fill("payment");
+  await casePicker.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(casePicker.getByRole("tree")).toBeVisible();
+  await casePicker.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
   await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
-  await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
-  await panel.getByLabel("调试启用 Adapter").check();
+  await expect(panel.getByLabel("调试启用 Adapter")).toBeChecked();
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
+  await panel.getByLabel("调试启用 Adapter").scrollIntoViewIfNeeded();
+  await screenshotReview(page, "ordinary-adapter-default-enabled");
   await panel.getByLabel("调试 Suite Name").fill("Remembered ordinary suite");
   await panel.getByLabel("调试 Test Name").fill("Remembered ordinary test");
   await panel.getByLabel("调试环境地址").fill("127.0.0.1");
@@ -160,7 +194,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   expect(new URL(page.url()).searchParams.get("testngBatch")).toBe(firstBatch);
   const formalClasses = await browserJson<{ items: Array<{ id: string; currentVersion: number }> }>(
     page,
-    `/api/v1/case-definitions?${query}`,
+    `/api/v1/case-definitions?${query}&query=${encodeURIComponent(className)}`,
   );
   expect(formalClasses.body.items).toHaveLength(1);
   expect(formalClasses.body.items[0]).toMatchObject({ id: source.classId, currentVersion: 2 });
@@ -210,10 +244,31 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(page.getByLabel("调试用例结果")).toHaveText("执行通过");
   await page.getByRole("tab", { name: "DDT 调试", exact: true }).click();
   panel = page.getByRole("region", { name: "DDT调试配置" });
+  await expect(panel.getByLabel("调试启用 Adapter")).toBeChecked();
+  await expect(panel.getByLabel("调试启用 Adapter")).toBeDisabled();
   const ddtInput = panel.getByLabel("DDT 用例输入", { exact: true });
   await ddtInput.getByRole("radio", { name: "复制现有用例", exact: true }).locator("..").click();
+  await expect(ddtInput.locator("option")).toHaveCount(51);
+  await expect(ddtInput.locator('option[value="PAY-1"]')).toHaveCount(0);
+  await ddtInput.getByLabel("搜索DDT 用例", { exact: true }).fill("  aY-  ");
+  await ddtInput.getByRole("button", { name: "检索DDT 用例", exact: true }).click();
   await expect(ddtInput.locator('option[value="PAY-1"]')).toHaveCount(1);
   await ddtInput.locator('select[aria-label="调试DDT 用例"]').selectOption("PAY-1");
+  await expect(ddtInput.getByRole("radio", { name: "个人数据", exact: true })).toBeChecked();
+  await ddtInput.getByLabel("搜索DDT 用例", { exact: true }).fill(" y-1 ");
+  const personalSearch = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/case-debug/ddt/cases" && url.searchParams.get("query") === "y-1"
+    );
+  });
+  await ddtInput.getByRole("button", { name: "检索DDT 用例", exact: true }).click();
+  const personalMatches = await personalSearch;
+  expect(personalMatches.status()).toBe(200);
+  expect((await personalMatches.json()).items).toEqual([
+    expect.objectContaining({ caseId: "PAY-1" }),
+  ]);
+  await expect(ddtInput.locator('option[value="PAY-1"]')).toHaveCount(1);
   await expect(panel.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
   await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
   await panel.getByLabel("调试环境地址").fill("127.0.0.1");
@@ -485,8 +540,7 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(page.getByLabel("调试执行结果")).toHaveCount(0);
   await expect(ordinaryPanel.locator('select[aria-label="调试测试类"]')).toHaveValue("");
   await expect(ordinaryPanel.locator('select[aria-label="调试执行机"]')).toHaveValue("");
-  await expect(ordinaryPanel.getByLabel("调试启用 Adapter")).not.toBeChecked();
-  await ordinaryPanel.getByLabel("调试启用 Adapter").check();
+  await expect(ordinaryPanel.getByLabel("调试启用 Adapter")).toBeChecked();
   await ordinaryPanel.getByLabel("调试 Suite Name").fill("Other stage draft");
   await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
   await page.goto(savedUrl);
@@ -548,8 +602,7 @@ test("debug drafts isolate accounts in the same browser and remain usable when s
   ).toBe(200);
   await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
   await page.goto("/case-debug");
-  await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
-  await panel.getByLabel("调试启用 Adapter").check();
+  await expect(panel.getByLabel("调试启用 Adapter")).toBeChecked();
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
   await panel.getByLabel("调试 Suite Name").fill("Peer draft");
   expect((await page.request.post("/api/v1/auth/logout", { headers })).ok()).toBe(true);
@@ -801,6 +854,71 @@ async function verifyDebugPaneScrolling(page: Page) {
       viewport.height + 1,
     );
   }
+}
+
+async function seedAdditionalDebugCandidates(
+  page: Page,
+  query: string,
+  headers: { origin: string },
+) {
+  const classes = Object.fromEntries(
+    Array.from({ length: 60 }, (_, index) => [
+      `com/unopened/Extra${index}.class`,
+      buildClassFile({
+        className: `com.unopened.Extra${index}`,
+        methods: [{ name: "candidate", annotations: [{ type: "Test", values: {} }] }],
+      }),
+    ]),
+  );
+  const imported = await page.request.post(`/api/v1/case-sources/jar/import?${query}`, {
+    headers: { ...headers, "Idempotency-Key": randomUUID() },
+    multipart: {
+      file: {
+        name: "other-candidates.jar",
+        mimeType: "application/java-archive",
+        buffer: Buffer.from(zipSync(classes)),
+      },
+    },
+  });
+  expect([200, 202]).toContain(imported.status());
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(`/api/v1/case-definitions?${query}&limit=100`);
+        return (await response.json()).items.length;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(61);
+  const preview = await page.request.post(`/api/v1/ddt/imports/preview?${query}`, {
+    headers,
+    multipart: {
+      files: {
+        name: "other-candidates.csv",
+        mimeType: "text/csv",
+        buffer: Buffer.from(
+          `CaseID,srNum\n${Array.from({ length: 60 }, (_, index) => `AAA-${index},PAY`).join("\n")}\n`,
+        ),
+      },
+    },
+  });
+  expect(preview.status()).toBe(201);
+  const job = (await preview.json()) as { id: string };
+  expect(
+    (
+      await page.request.post(`/api/v1/ddt/imports/${job.id}/confirm?${query}`, {
+        headers,
+        data: { conflictStrategy: "skip" },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/v1/ddt/imports/${job.id}?${query}`)).json()).status,
+      { timeout: 30_000 },
+    )
+    .toBe("succeeded");
 }
 
 async function screenshotReview(page: Page, name: string) {

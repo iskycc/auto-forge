@@ -1,7 +1,7 @@
 "use client";
 
 import { Empty, Flex, Typography } from "antd";
-import { UploadCloud, Search } from "lucide-react";
+import { UploadCloud, Search, FolderTree } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { JarImportResult } from "@autoforge/contracts";
@@ -14,6 +14,10 @@ import { ActionDialog } from "./action-dialog";
 import { CaseDebugImportProgress } from "./case-debug-import-progress";
 import { debugRequest } from "@/lib/case-debug-client";
 import { useToast } from "./ui-feedback";
+
+const CaseDebugCasePicker = dynamic(() =>
+  import("./case-debug-case-picker").then((module) => module.CaseDebugCasePicker),
+);
 
 const JarImporter = dynamic(() => import("./jar-importer").then((module) => module.JarImporter));
 const DdtImportDialog = dynamic(() =>
@@ -49,6 +53,7 @@ export function CaseDebugInput({
 }) {
   const [ddtSource, setDdtSource] = useState<"personal" | "formal">("personal");
   const [editing, setEditing] = useState(false);
+  const [choosingFromTree, setChoosingFromTree] = useState(false);
   const [copying, setCopying] = useState(false);
   const [candidates, setCandidates] = useState<DebugInputChoice[]>([]);
   const [query, setQuery] = useState("");
@@ -66,6 +71,7 @@ export function CaseDebugInput({
 
   const search = useCallback(
     async (keyword: string, cursor?: string) => {
+      keyword = keyword.trim();
       const generation = ++requestGeneration.current;
       setLoading(true);
       setError("");
@@ -87,6 +93,7 @@ export function CaseDebugInput({
             .map((item) => ({ id: item.id, label: item.className }));
           next = page.nextCursor;
         } else {
+          parameters.set("queryMatch", "contains");
           const page = await debugRequest<{ items: DdtCaseSummary[]; nextCursor?: string }>(
             `${ddtSource === "personal" ? "/api/v1/case-debug/ddt" : "/api/v1/ddt"}/cases?${parameters}`,
           );
@@ -208,10 +215,18 @@ export function CaseDebugInput({
           </Typography.Text>
         </>
       ) : null}
+      {kind === "jar" ? (
+        <Button disabled={disabled} onClick={() => setChoosingFromTree(true)}>
+          <FolderTree size={15} />
+          从目录树选择
+        </Button>
+      ) : null}
       <Flex gap="small">
         <Input
           aria-label={`搜索${label}`}
-          placeholder={kind === "jar" ? "完整类名或关键词" : "CaseId 或关键词"}
+          placeholder={
+            kind === "jar" ? "类名或名称片段，不区分大小写" : "CaseId 任意片段，不区分大小写"
+          }
           maxLength={200}
           value={query}
           disabled={disabled}
@@ -287,6 +302,17 @@ export function CaseDebugInput({
         <CaseDebugDdtEditor scope={scope} caseId={value.id} onClose={() => setEditing(false)} />
       ) : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
+      {choosingFromTree ? (
+        <CaseDebugCasePicker
+          scope={scope}
+          value={value}
+          onClose={() => setChoosingFromTree(false)}
+          onChoose={(choice) => {
+            onChange(choice);
+            setChoosingFromTree(false);
+          }}
+        />
+      ) : null}
       {importJobId ? (
         <CaseDebugImportProgress
           key={importJobId}

@@ -12,7 +12,7 @@ import { usePlatformNow } from "./platform-time";
 
 import { OctagonX, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { RerunFinalFailuresDialog } from "@/components/rerun-final-failures-dialog";
@@ -77,6 +77,13 @@ export function ExecutionBatchDetails({
   const router = useRouter();
   const confirmAction = useConfirm();
   const [batch, setBatch] = useState(initialBatch);
+  const currentRunnerDirectory = useMemo(() => {
+    const entries = new Map(runnerDirectory.map((runner) => [runner.id, runner]));
+    for (const runner of batch.runnerNames ?? []) {
+      entries.set(runner.id, { ...entries.get(runner.id), ...runner });
+    }
+    return [...entries.values()];
+  }, [runnerDirectory, batch.runnerNames]);
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
@@ -108,7 +115,8 @@ export function ExecutionBatchDetails({
         current.finishedAt === next.finishedAt &&
         current.status === next.status &&
         current.statistics?.generation === next.statistics?.generation &&
-        current.statistics?.state === next.statistics?.state
+        current.statistics?.state === next.statistics?.state &&
+        JSON.stringify(current.runnerNames) === JSON.stringify(next.runnerNames)
           ? current
           : next,
       );
@@ -363,7 +371,7 @@ export function ExecutionBatchDetails({
         canReadAttemptEvents={canReadAttemptEvents}
         canReadArtifacts={canReadArtifacts}
         artifactsEnabled={artifactsEnabled}
-        runnerDirectory={runnerDirectory}
+        runnerDirectory={currentRunnerDirectory}
         onRefresh={() => void refreshVisibleBatch()}
       />
       {finalFailuresDialogOpen ? (

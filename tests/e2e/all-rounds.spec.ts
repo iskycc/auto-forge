@@ -543,6 +543,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  // This scenario executes the imported TestNG JAR directly, without Adapter dependencies.
+  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
   await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
   await createSuiteDialog.getByLabel("说明").fill("验证全部轮次虚拟轮次视图");
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();

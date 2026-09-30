@@ -20,7 +20,10 @@ import { useState, useTransition } from "react";
 
 import { CaseSuiteCard } from "./case-suite-card";
 import { parseExportFilename } from "@/lib/run-batch-export";
-import type { AdapterNameDefaults } from "@/lib/case-suite-adapter-defaults";
+import {
+  DEFAULT_EXECUTION_ADAPTER_ENABLED,
+  type AdapterNameDefaults,
+} from "@/lib/case-suite-adapter-defaults";
 
 export function CaseSuiteManager({
   adapterNameDefaults,
@@ -55,7 +58,7 @@ export function CaseSuiteManager({
   const [configurationOnly, setConfigurationOnly] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [adapterEnabled, setAdapterEnabled] = useState(false);
+  const [adapterEnabled, setAdapterEnabled] = useState<boolean>(DEFAULT_EXECUTION_ADAPTER_ENABLED);
   const [adapterSuiteName, setAdapterSuiteName] = useState(adapterNameDefaults.suiteName);
   const [adapterTestName, setAdapterTestName] = useState(adapterNameDefaults.testName);
   const [environmentAddresses, setEnvironmentAddresses] = useState("");
@@ -117,7 +120,7 @@ export function CaseSuiteManager({
       setCreatedSuites((current) => [suite, ...current]);
       setName("");
       setDescription("");
-      setAdapterEnabled(false);
+      setAdapterEnabled(DEFAULT_EXECUTION_ADAPTER_ENABLED);
       setAdapterSuiteName(adapterNameDefaults.suiteName);
       setAdapterTestName(adapterNameDefaults.testName);
       setEnvironmentAddresses("");

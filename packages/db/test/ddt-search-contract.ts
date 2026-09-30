@@ -28,6 +28,29 @@ export async function expectDdtCaseSearch(
   });
   expect(exact.items.map((item) => item.caseId)).toEqual([caseId]);
   expect(exact.items[0]).not.toHaveProperty("data");
+  const fragment = caseId.slice(1).toLowerCase();
+  const fuzzy = await repository.listCases({
+    ...scope,
+    query: ` ${fragment} `,
+    queryMatch: "contains",
+    limit: 20,
+    filters: [],
+  });
+  expect(fuzzy.items.map((item) => item.caseId)).toEqual([caseId]);
+  expect(
+    (await repository.listCases({ ...scope, query: fragment, limit: 20, filters: [] })).items,
+  ).toEqual([]);
+  expect(
+    (
+      await repository.listCases({
+        ...scope,
+        query: "%_",
+        queryMatch: "contains",
+        limit: 20,
+        filters: [],
+      })
+    ).items,
+  ).toEqual([]);
   for (const selection of [
     { ...scope, caseIds: [] },
     { ...scope, caseIds: [caseId], projectId: "other-project" },

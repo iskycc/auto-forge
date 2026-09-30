@@ -972,6 +972,8 @@ public class MixedVisibleTest {
   await page.getByRole("option", { name: "默认项目" }).click();
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  // This scenario executes the imported TestNG JAR directly, without Adapter dependencies.
+  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
   await createSuiteDialog.getByLabel("任务名称").fill("每日冒烟测试");
   await createSuiteDialog.getByLabel("说明").fill("E2E 创建的可复用任务");
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();

@@ -158,6 +158,10 @@ export class RunnerControlService {
     return this.runners.list(this.offlineBefore(), limit);
   }
 
+  async listByIds(runnerIds: readonly string[]) {
+    return this.runners.listByIds(runnerIds, this.offlineBefore());
+  }
+
   async get(runnerId: string) {
     const runner = await this.runners.get(runnerId, this.offlineBefore());
     if (!runner) throw new DomainError("RUNNER_NOT_FOUND", "指定的执行机不存在。");

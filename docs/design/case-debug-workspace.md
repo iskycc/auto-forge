@@ -21,8 +21,10 @@ Home 恢复默认比例；切换子 Tab 保留布局，窗口缩放时按比例�
 通过才显示绿色“执行通过”；超时、终止和结果尚未确认单独标识。查看历史尝试不会改写本次
 调试的最终结果，轮询停止仍由批次生命周期决定。
 
-- 输入从正式用例库按批读取，关键词仅在点击搜索或按 Enter 时提交。
-- 普通调试默认直接执行测试 JAR。Adapter 模式沿用当前版本完整依赖包，页面明确提示更新执行代码时需同步更新依赖包。
+- 普通测试类可通过“从目录树选择”弹窗浏览包目录，复用后台目录快照与浏览器分支缓存，仅在展开时加载子目录和用例。弹窗支持关键词搜索、单选确认和取消；确认后沿用调试配置自动保存。
+- 普通类按类名或用例名称片段匹配，正式及个人 DDT 按 CaseId 任意位置片段匹配，忽略大小写及首尾空格。关键词仅在点击搜索或按 Enter 时提交，搜索在当前项目、版本、阶段的完整范围执行，候选仍按批加载，不局限于当前下拉列表。
+- DDT 列表契约新增可选 `queryMatch=contains`，调试页显式启用；未传入时保持既有前缀查询，避免改变用例管理的原有行为。Lite/Full 采用相同语义，无迁移、Runner 或离线资源变化。
+- 普通及 DDT 调试的新配置默认启用 CoTest Adapter，普通用例可手动关闭后直接执行测试 JAR；已有浏览器草稿仍恢复保存的选择。Adapter 模式沿用当前版本完整依赖包，页面明确提示更新执行代码时需同步更新依赖包。
 - DDT 调试优先带入 SR 关联类，也允许临时选择其他类或为未关联用例指定类；不写回 SR 关联。
 - 每次执行一个用例，重跑次数为零，沿用平台执行期限与 Runner 资源隔离。
 - 结果区显示状态、耗时、结果码、上报的 TestNG 计数、分流日志与完整记录入口。
@@ -97,3 +99,20 @@ SQLite `0073_ddt_debug.sql` / PostgreSQL `0071_ddt_debug.sql` 新增三张个人
 - `pnpm --filter @autoforge/web build`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更 TypeScript 的 ESLint、变更文件 Prettier 和 `git diff --check` 均通过。
 - 实际查看 **1024×768、1536×960** 普通失败与 DDT 跳过截图，以及 1024×768 深色截图，完成状态与结果清晰区分，无标签溢出或布局变形。截图保存在忽略的 `.local/debug-outcome-ui/`，不提交。
 - 本次修复仅涉及 Lite/Full 共用的前端结果展示，没有修改数据库、执行状态机或 Runner 协议；E2E 使用协议模拟 Runner，未重跑 Full 整体部署和真实 JVM/Runner 验收。
+
+### 目录选择与模糊搜索验证（2026-09-30）
+
+- `AUTOFORGE_TEST_POSTGRES_URL=… pnpm exec vitest run packages/db/test/sqlite-ddt.integration.test.ts packages/db/test/postgres-ddt.integration.test.ts packages/db/test/case-debug.integration.test.ts`：真实 SQLite/PostgreSQL 共 26 项通过，覆盖普通类名中间片段、大小写与范围隔离、正式及个人 DDT 搜索、通配字符转义和既有前缀查询兼容。
+- `pnpm exec vitest run apps/web/src/components/ui-usage.test.ts apps/web/src/lib/execution-batch-view.test.ts apps/web/src/lib/directory-tree.test.ts apps/web/src/lib/case-debug-draft.test.ts`：28 项通过。
+- `pnpm exec playwright test tests/e2e/case-debug.spec.ts tests/e2e/ui-layout.spec.ts -g 'debug workspace|debug drafts|anonymous execution details' --workers=1`：连接实际 Lite 生产构建，3 项通过。普通和正式 DDT 候选各准备 61 条，目标位于首批 50 条之外；验证搜索可查到目标、个人 DDT 片段搜索返回真实结果、未展开目录不读分支、目录选择确认及取消、原有导入/执行/日志/草稿闭环与匿名 Runner 名称刷新。
+- 新目录接口的匿名请求返回 401，错误阶段返回 404；Web 生产构建、测试 TypeScript、变更 TypeScript 的 ESLint 和变更文件 Prettier 通过。
+- 已实际查看 **1024×768、1536×960** 的目录弹窗、普通/DDT 搜索控件及匿名执行详情，另检查深色匿名详情；未发现横向溢出、按钮变形或滚动边界异常。截图位于忽略的 `.local/debug-selection-ui/`，不提交。浏览器执行使用协议模拟 Runner，未重跑 Full 整体部署、真实 JVM/Runner 或离线验收。
+
+### 默认启用 CoTest Adapter（2026-09-30）
+
+- 新调试配置、新建任务与立即执行表单共用默认开启值；创建成功后再次创建任务、重新打开立即执行弹窗均恢复开启。已保存的调试草稿、任务策略及复制/继承继续保留显式选择，普通用例仍可手动关闭 Adapter。
+- 该默认值位于共享前端表单；页面始终显式提交开关，不改写历史策略，不改变既有程序化 API 省略 Adapter 时的兼容语义，无数据库迁移、Runner、Adapter 或离线资源类型变化。
+- `pnpm exec vitest run apps/web/src/lib/case-suite-adapter-defaults.test.ts apps/web/src/lib/case-debug-draft.test.ts apps/web/src/components/ui-usage.test.ts`：28 项通过。生产构建、测试 TypeScript、变更代码 ESLint/Prettier、E2E 覆盖矩阵检查通过。
+- 已实际查看普通/DDT 调试和新建任务在 **1024×768、1536×960** 下默认展开的配置区，以及立即执行 **1024×768、1536×1024** 截图；按钮与字段无横向溢出，内容使用原有独立滚动区域。截图位于忽略的 `.local/adapter-default-ui/`，不提交。
+- Lite 生产构建的 Playwright 验证共 7 个场景通过：`case-debug.spec.ts` 的执行闭环与草稿隔离、`single-case-run.spec.ts` 的全局单用例执行，以及 `case-suite-lifecycle.spec.ts` 的 Adapter 默认配置、`all-rounds.spec.ts` 的完整轮次、`scheduling-refill.spec.ts` 的补槽和 `ui-layout.spec.ts` 的管理控件场景。连续创建测试等待前一弹框关闭再定位按钮，避免退出动画期间的重名按钮竞态；覆盖默认开启、显式关闭后持久化、关闭任务复制保持原配置、下一新任务恢复开启及立即执行重开后的默认值。
+- 本次仅调整 Lite/Full 共用的表单默认值；E2E 使用协议模拟 Runner，未重复运行 Full 全套基础设施、真实容器/JVM/Runner 和离线验收。

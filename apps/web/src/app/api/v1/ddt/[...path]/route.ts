@@ -139,6 +139,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       const input = ddtCaseListInputSchema.parse({
         ...scope,
         query: url.searchParams.get("query") ?? undefined,
+        queryMatch: url.searchParams.get("queryMatch") ?? undefined,
         srNum: url.searchParams.get("srNum") ?? undefined,
         sourceName: url.searchParams.get("sourceName") ?? undefined,
         cursor: url.searchParams.get("cursor") ?? undefined,

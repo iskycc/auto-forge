@@ -172,7 +172,9 @@ export class SqliteDdtRepository implements DdtRepository {
     }
     if (query.query) {
       where.push("case_id_normalized LIKE ? ESCAPE '\\'");
-      parameters.push(`${escapeLike(normalize(query.query))}%`);
+      parameters.push(
+        `${query.queryMatch === "contains" ? "%" : ""}${escapeLike(normalize(query.query))}%`,
+      );
     }
     if (query.srNum) {
       where.push("sr_num_normalized = ?");

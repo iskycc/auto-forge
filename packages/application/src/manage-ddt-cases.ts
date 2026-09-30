@@ -36,6 +36,7 @@ export class DdtCaseService {
       testStageId: input.testStageId,
       ...(input.caseIds !== undefined ? { caseIds: input.caseIds } : {}),
       ...(input.query ? { query: input.query } : {}),
+      ...(input.queryMatch ? { queryMatch: input.queryMatch } : {}),
       ...(input.srNum ? { srNum: input.srNum } : {}),
       ...(input.sourceName ? { sourceName: input.sourceName } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),

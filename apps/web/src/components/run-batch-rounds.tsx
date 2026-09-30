@@ -92,8 +92,8 @@ type AttemptDetailEntry = {
 };
 
 /**
- * 执行机目录条目：由服务端页面按 runner.read 权限加载后传入，用于把 UUID
- * 映射为执行机名称与实时资源快照；查不到（无权限、已清除等）时回落 UUID 短码。
+ * 页面按权限加载资源快照；批次概要只补充本批次参与节点的名称。
+ * 公开页可读取参与节点名称，历史记录确实缺失时才回落 UUID 短码。
  */
 export type RunnerDirectoryEntry = {
   id: string;

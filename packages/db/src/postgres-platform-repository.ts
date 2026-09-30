@@ -803,11 +803,11 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
       conditions.push(sql`${pgCaseDefinitions.projectVersionId} IS NOT NULL`);
       conditions.push(sql`${pgCaseDefinitions.testStageId} IS NOT NULL`);
     }
-    const normalized = query.query?.trim();
+    const normalized = query.query?.trim().toLowerCase();
     if (normalized) {
       const search = or(
-        like(pgCaseDefinitions.className, `%${normalized}%`),
-        like(pgCaseDefinitions.displayName, `%${normalized}%`),
+        like(sql`lower(${pgCaseDefinitions.className})`, `%${normalized}%`),
+        like(sql`lower(${pgCaseDefinitions.displayName})`, `%${normalized}%`),
       );
       if (search) conditions.push(search);
     }

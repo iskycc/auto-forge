@@ -40,6 +40,20 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} case debug execution`,
     () => {
+      it("finds ordinary debug classes by mixed-case fragments within their scope", async () => {
+        const fixture = await createFixture(dialect);
+        try {
+          const query = { ...fixture.scope, query: " FoRmAl ", limit: 50 };
+          expect((await fixture.catalog.listCases(query)).items.map((item) => item.id)).toEqual([
+            fixture.classId,
+          ]);
+          expect(
+            (await fixture.catalog.listCases({ ...query, testStageId: "other-stage" })).items,
+          ).toEqual([]);
+        } finally {
+          await fixture.close();
+        }
+      });
       it("isolates DDT API configuration from ordinary cases in the same Adapter batch", async () => {
         const fixture = await createFixture(dialect);
         try {
@@ -341,6 +355,11 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           expect(next.items[0]?.caseId).toBe("PRIVATE-2");
           expect(next.nextCursor).toBeUndefined();
           expect((await debugService.list(alice, { query: "%", limit: 50 })).items).toEqual([]);
+          expect(
+            (await debugService.list(alice, { query: " RiVaTe- ", limit: 50 })).items.map(
+              (item) => item.caseId,
+            ),
+          ).toEqual(["PRIVATE-2"]);
         } finally {
           await fixture.close();
         }

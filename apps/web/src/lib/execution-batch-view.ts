@@ -31,7 +31,11 @@ export type ExecutionBatchView = Pick<
     | "runnerRoundSummaries"
     | "runnerFaultIncidents"
     | "finishedAt"
-  > & { accessToken?: string; statistics?: ReadModelStatus };
+  > & {
+    accessToken?: string;
+    statistics?: ReadModelStatus;
+    runnerNames?: { id: string; name: string }[];
+  };
 
 export function toExecutionBatchView(
   overview: RunBatchDetailOverview & { statistics?: ReadModelStatus },

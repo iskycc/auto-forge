@@ -207,7 +207,6 @@ describe("shared UI controls", () => {
     expect(suiteEditor).not.toContain("参数模板");
     expect(runDialog).not.toContain("单用例参数覆盖");
     expect(runDialog).not.toContain("parseParameterRecord");
-    expect(runDialog).toContain("useState(true)");
     expect(caseSelection).not.toContain("环境、参数和 Adapter 地址");
     expect(caseSelection).toContain("<CaseDetailContent");
     const caseDetail = readFileSync(

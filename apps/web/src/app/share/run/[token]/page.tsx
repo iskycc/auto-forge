@@ -38,14 +38,13 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
         (version) => version.id === batch.policy?.projectVersionId,
       )
     : undefined;
-  const participatingRunnerIds = new Set(overview.participatingRunnerIds);
-  const runnerDirectory: RunnerDirectoryEntry[] = (await services.runnerControl.list(500))
-    .filter((runner) => participatingRunnerIds.has(runner.id))
-    .map((runner) => ({
-      id: runner.id,
-      name: runner.name,
-      ...(runner.resourceSnapshot ? { resourceSnapshot: runner.resourceSnapshot } : {}),
-    }));
+  const runnerDirectory: RunnerDirectoryEntry[] = (
+    await services.runnerControl.listByIds(overview.participatingRunnerIds)
+  ).map((runner) => ({
+    id: runner.id,
+    name: runner.name,
+    ...(runner.resourceSnapshot ? { resourceSnapshot: runner.resourceSnapshot } : {}),
+  }));
 
   return (
     <main className={cn("shared-run-detail-page", pageStyles["shared-run-detail-page"])}>

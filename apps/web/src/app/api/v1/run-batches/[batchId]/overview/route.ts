@@ -33,9 +33,16 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       projectIds = services.identityAccess.projectScope(identity, "run.read");
     }
     const overview = await services.executionOverview(batchId, projectIds);
-    return NextResponse.json(toExecutionBatchView(overview), {
-      headers: { "Cache-Control": "private, no-store" },
-    });
+    const runners = await services.runnerControl.listByIds(overview.participatingRunnerIds);
+    return NextResponse.json(
+      {
+        ...toExecutionBatchView(overview),
+        runnerNames: runners.map(({ id, name }) => ({ id, name })),
+      },
+      {
+        headers: { "Cache-Control": "private, no-store" },
+      },
+    );
   } catch (error) {
     return apiErrorResponse(error);
   }

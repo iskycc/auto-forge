@@ -53,6 +53,11 @@ test("global execution dialog schedules one case through a runner group with Ada
   const dialog = page.getByRole("dialog", { name: "开始执行" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("radio", { name: "单个用例", exact: true }).locator("..").click();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await dialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "开始执行", exact: true }).click();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
   await selectOptionContaining(
     dialog.locator('select[aria-label="待执行单个用例"]'),
     "SingleCaseFixture",

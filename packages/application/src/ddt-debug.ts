@@ -46,7 +46,7 @@ export class DdtDebugService {
     return this.repository.workspace(scope, this.ids.next());
   }
   list(scope: DdtDebugScope, query: { query: string; cursor?: string; limit: number }) {
-    return this.repository.list(scope, query);
+    return this.repository.list(scope, { ...query, query: query.query.trim() });
   }
   async get(scope: DdtDebugScope, caseId: string): Promise<DdtCase> {
     const item = await this.repository.get(scope, caseId);

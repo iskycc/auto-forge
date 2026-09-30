@@ -1,5 +1,8 @@
 import type { ProjectVersion, TestStage } from "@autoforge/domain";
 
+// New execution forms share this default; saved task policies and debug drafts retain their choice.
+export const DEFAULT_EXECUTION_ADAPTER_ENABLED = true;
+
 export type AdapterNameDefaults = { suiteName: string; testName: string };
 
 type VersionWithStages = Pick<ProjectVersion, "name"> & {

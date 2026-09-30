@@ -225,6 +225,8 @@ async function createContainerSuite(
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  // This scenario executes the imported TestNG JAR directly, without Adapter dependencies.
+  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
   await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
   await createSuiteDialog.getByLabel("说明").fill("GitHub Actions 真实容器隔离与取消清理验收");
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();

@@ -21,6 +21,7 @@ import { CaseDebugSplitter } from "./case-debug-splitter";
 import { debugRequest } from "@/lib/case-debug-client";
 import { LinkButton } from "./ui/link-button";
 import { caseDebugDraftKey, createCaseDebugDraftStore } from "@/lib/case-debug-draft";
+import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@/lib/case-suite-adapter-defaults";
 
 export type CaseDebugWorkspaceProps = {
   scope: DdtScope;
@@ -106,7 +107,7 @@ function DebugPanel({
         runnerKind: "runner",
         runnerId: "",
         groupId: "",
-        adapterEnabled: kind === "ddt",
+        adapterEnabled: DEFAULT_EXECUTION_ADAPTER_ENABLED,
         suiteName: labels.project,
         testName: `${labels.version} ${labels.stage}`,
         addresses: "",

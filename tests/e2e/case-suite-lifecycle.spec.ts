@@ -38,14 +38,14 @@ test("task adapter names default to project, version and stage without replacing
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "创建用例任务", exact: true });
-  await dialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
   await expect(dialog.getByLabel("TestNG Suite Name", { exact: true })).toHaveValue(project.name);
   await expect(dialog.getByLabel("TestNG Test Name", { exact: true })).toHaveValue(
     "Lifecycle version - SIT",
   );
   await dialog.getByLabel("任务名称", { exact: true }).fill(`Adapter defaults ${suffix}`);
   for (const width of [1024, 1536]) {
-    await page.setViewportSize({ width, height: 960 });
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await dialog.getByLabel("TestNG Test Name", { exact: true }).scrollIntoViewIfNeeded();
     await expectUiIntegrity(page);
     await captureUi(page, `adapter-defaults-create-${width}`);
@@ -63,9 +63,41 @@ test("task adapter names default to project, version and stage without replacing
     policy: { adapter: { suiteName: string; testName: string } };
   };
   expect(suite.policy.adapter).toMatchObject({
+    enabled: true,
     suiteName: project.name,
     testName: "Lifecycle version - SIT",
   });
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await dialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
+  await dialog.getByLabel("任务名称", { exact: true }).fill(`Direct execution ${suffix}`);
+  const directCreated = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/case-suites",
+  );
+  await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const directResponse = await directCreated;
+  expect(directResponse.status()).toBe(201);
+  const directSuite = (await directResponse.json()) as {
+    id: string;
+    policy: { adapter: { enabled: boolean } };
+  };
+  expect(directSuite.policy.adapter.enabled).toBe(false);
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  const directCopy = await browserJson<{ id: string; policy: { adapter: { enabled: boolean } } }>(
+    page,
+    `/api/v1/case-suites/${directSuite.id}/copy`,
+    { method: "POST", body: { name: `Direct copy ${suffix}`, includeCases: false } },
+  );
+  expect(directCopy.status).toBe(201);
+  expect(directCopy.body.policy.adapter.enabled).toBe(false);
+  await page.goto(`/case-suites/${directCopy.body.id}`);
+  await expect(page.locator('input[name="adapterEnabled"]')).not.toBeChecked();
   const runner = await registerRunner(page, suffix);
   await configureTaskExecution(page, suite.id, runner.id);
 

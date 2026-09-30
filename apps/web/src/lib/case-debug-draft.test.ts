@@ -4,6 +4,7 @@ import {
   createCaseDebugDraftStore,
   type CaseDebugDraft,
 } from "./case-debug-draft";
+import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "./case-suite-adapter-defaults";
 
 const scope = {
   userId: "user",
@@ -16,7 +17,7 @@ const defaults: CaseDebugDraft = {
   runnerKind: "runner",
   runnerId: "",
   groupId: "",
-  adapterEnabled: false,
+  adapterEnabled: DEFAULT_EXECUTION_ADAPTER_ENABLED,
   suiteName: "Project",
   testName: "V1 SIT",
   addresses: "",
@@ -49,7 +50,7 @@ describe("case debug automatic configuration saving", () => {
       runnerKind: "group",
       groupId: "group",
       addresses: "10.0.0.1\n10.0.0.2",
-      adapterEnabled: true,
+      adapterEnabled: false,
     });
     unsubscribe();
     const beforeMount = [...values];
@@ -62,6 +63,7 @@ describe("case debug automatic configuration saving", () => {
       suiteName: "",
       runnerId: "runner",
       groupId: "group",
+      adapterEnabled: false,
     });
     expect([...values]).toEqual(beforeMount);
   });

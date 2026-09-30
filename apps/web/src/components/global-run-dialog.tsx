@@ -1,4 +1,5 @@
 "use client";
+import { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@/lib/case-suite-adapter-defaults";
 import { LoadingIcon } from "@/components/ui/loading-icon";
 
 import { Segmented } from "./ui/segmented";
@@ -126,7 +127,7 @@ export function GlobalRunDialog({
   const [runnerGroupId, setRunnerGroupId] = useState("");
   const [retryLimit, setRetryLimit] = useState(0);
   const [retryMode, setRetryMode] = useState(defaultCaseSuiteExecutionPolicy.retryMode);
-  const [adapterEnabled, setAdapterEnabled] = useState(true);
+  const [adapterEnabled, setAdapterEnabled] = useState<boolean>(DEFAULT_EXECUTION_ADAPTER_ENABLED);
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");
   const [environmentAddresses, setEnvironmentAddresses] = useState("");
@@ -170,9 +171,9 @@ export function GlobalRunDialog({
       setProjectOptions(undefined);
       setCaseDefinitionId("");
       setDdtCase(requestedDdtCase);
+      setAdapterEnabled(DEFAULT_EXECUTION_ADAPTER_ENABLED);
       if (requestedDdtCase) {
         requestedCaseId = requestedDdtCase.executionClass?.caseDefinitionId;
-        setAdapterEnabled(true);
       }
       if (requestedCaseId) {
         setRunKind("case");

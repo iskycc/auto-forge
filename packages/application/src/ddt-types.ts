@@ -18,6 +18,7 @@ import type {
 export type DdtCaseListQuery = DdtScope & {
   caseIds?: string[];
   query?: string;
+  queryMatch?: "prefix" | "contains";
   srNum?: string;
   sourceName?: string;
   cursor?: string;

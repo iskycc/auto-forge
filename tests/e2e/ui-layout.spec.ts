@@ -456,6 +456,10 @@ test("anonymous execution details keep tables and actions within the page", asyn
   const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
   try {
     database.exec("PRAGMA busy_timeout = 5000");
+    // Historical participants may no longer appear in the active Runner list.
+    database
+      .prepare("UPDATE runners SET purged_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), `analysis-runner-${suffix}`);
     database
       .prepare("UPDATE run_batches SET scheduled_for = created_at, suite_name = ? WHERE id = ?")
       .run(`支付回归_${"PaymentRegression".repeat(10)}`, fixture.batchId);
@@ -493,6 +497,29 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await anonymousPage.goto(share.body.shareUrl);
     await expect(anonymousPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
     await expect(anonymousPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
+    await expect(anonymousPage.locator(".execution-case-table")).toContainText(
+      `分析 Runner ${suffix}`,
+    );
+    const renamedRunner = `支付回归执行节点-${suffix}`;
+    const renameDatabase = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+    try {
+      renameDatabase.exec("PRAGMA busy_timeout = 5000");
+      renameDatabase
+        .prepare("UPDATE runners SET name = ? WHERE id = ?")
+        .run(renamedRunner, `analysis-runner-${suffix}`);
+    } finally {
+      renameDatabase.close();
+    }
+    await anonymousPage.getByRole("button", { name: "刷新", exact: true }).click();
+    await expect(anonymousPage.locator(".execution-case-table")).toContainText(renamedRunner);
+    const shareToken = new URL(share.body.shareUrl).pathname.split("/").at(-1)!;
+    const overviewResponse = await anonymousPage.request.get(
+      `/api/v1/run-batches/${fixture.batchId}/overview?access_token=${encodeURIComponent(shareToken)}`,
+    );
+    expect(overviewResponse.status()).toBe(200);
+    expect((await overviewResponse.json()).runnerNames).toEqual([
+      { id: `analysis-runner-${suffix}`, name: renamedRunner },
+    ]);
     for (const viewport of [
       { width: 1024, height: 768 },
       { width: 1536, height: 960 },
@@ -1791,9 +1818,10 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
-  await expect(suiteDialog.getByText("TestNG Suite Name")).toHaveCount(0);
-  await suiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await expect(suiteDialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
   await expect(suiteDialog.getByText("TestNG Suite Name")).toBeVisible();
+  await suiteDialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
+  await expect(suiteDialog.getByText("TestNG Suite Name")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   await page.goto("/route-that-does-not-exist");
