@@ -27,16 +27,9 @@ final class CotestRuntimeConfigurer {
       output.println("Configured CoTest environment address: " + environmentAddress);
     }
 
-    if (caseId == null && ddtInsightUrl == null) return;
-    Class<?> dataProvider;
-    try {
-      dataProvider = Class.forName(DATA_PROVIDER, true, loader);
-    } catch (ClassNotFoundException missing) {
-      // Ordinary TestNG classes do not require CoTest. DDT executions must fail explicitly.
-      if (caseId != null) throw missing;
-      output.println("DDT API configuration not applicable: MM2DataProvider is absent.");
-      return;
-    }
+    // A historical ordinary execution may still carry a URL; it must not configure DDT.
+    if (caseId == null) return;
+    Class<?> dataProvider = Class.forName(DATA_PROVIDER, true, loader);
     if (ddtInsightUrl != null) {
       Method setDdtInsightUrl;
       try {
@@ -50,11 +43,9 @@ final class CotestRuntimeConfigurer {
       ReflectionSupport.invoke(setDdtInsightUrl, null, ddtInsightUrl);
       output.println("Configured DDT API URL: " + ddtInsightUrl);
     }
-    if (caseId != null) {
-      Method setClassDataProvider =
-          dataProvider.getMethod("setClassDataProvider", String.class, String.class);
-      ReflectionSupport.invoke(setClassDataProvider, null, testClass.getName(), caseId);
-      output.println("Configured DDT CaseID for " + testClass.getName() + ": " + caseId);
-    }
+    Method setClassDataProvider =
+        dataProvider.getMethod("setClassDataProvider", String.class, String.class);
+    ReflectionSupport.invoke(setClassDataProvider, null, testClass.getName(), caseId);
+    output.println("Configured DDT CaseID for " + testClass.getName() + ": " + caseId);
   }
 }

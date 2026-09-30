@@ -58,7 +58,8 @@ Adapter 不会访问网络或自动补装缺失依赖。
   普通用例不传入 CaseID。测试类自行通过 DDT 公开 API 获取数据；
 - `--ddt-insight-url URL`：在测试类初始化及 TestNG 执行前调用同一隔离 ClassLoader 中的
   `MM2DataProvider.setDdtInsightUrl(String)`，传入以 `/case` 结尾、不带查询参数的 HTTP(S) URL。
-  普通 Adapter 用例存在该提供器时同样配置；普通 TestNG 不依赖该类，缺失时明确记录不适用。
+  仅在同时传入 `--case-id` 的 DDT 用例中生效；普通用例不加载该提供器，也不调用此方法，
+  即使历史规格残留 URL 也会忽略。
   DDT 缺少提供器、或者现有提供器缺少 setter / setter 抛出异常时明确失败，不继续使用错误地址；
 - `--output DIR`：默认是当前目录下的 `reports/testng`。
 
@@ -98,7 +99,8 @@ Runner 使用当前身份连接控制面的地址（含反向代理路径前缀�
 `--ddt-insight-url` 传给 Adapter，不携带 Runner 凭据或 `caseId` 查询参数。测试类负责实际取数；
 数据以 API 请求时为准。该链路统一覆盖调试、立即执行、批跑及重跑。
 
-Adapter 任务要求 `adapter:ddt-insight-url-v1` 能力，DDT 还要求 `adapter:ddt-case-id-v1`。
+只有 DDT 任务和含 DDT 的混合任务要求 `adapter:ddt-insight-url-v1` 与 `adapter:ddt-case-id-v1`；
+普通 Adapter 用例不要求这两项能力，混合任务也仅向 DDT 用例传入 API 地址。
 旧 Runner 在预检中提示升级；升级 Runner 会安装配套 Adapter，无需单独部署。已有 assignment
 保持原始快照，缺失范围的历史规格继续按旧协议读取；需自动注入地址时重新发起执行。
 本次没有数据库迁移，Lite/Full 使用相同可选契约；未启用 Adapter 的原生 TestNG 执行不注入 CoTest 配置。

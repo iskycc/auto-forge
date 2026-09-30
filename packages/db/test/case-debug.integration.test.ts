@@ -13,7 +13,7 @@ import {
   executionSpecSchema,
   type TestNgClassCandidate,
 } from "@autoforge/contracts";
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
 import { LocalObjectStore } from "../../object-store/src/local-object-store";
 import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
@@ -40,6 +40,76 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} case debug execution`,
     () => {
+      it("isolates DDT API configuration from ordinary cases in the same Adapter batch", async () => {
+        const fixture = await createFixture(dialect);
+        try {
+          const { scope, classId, runnerId, suites, ddt, service, now } = fixture;
+          await ddt.changeExecutionClassRange({
+            scope,
+            executionCaseDefinitionId: classId,
+            included: true,
+            expectedRevision: 0,
+            updatedAt: now,
+          });
+          await ddt.setSrExecutionClass({
+            scope,
+            srNum: "SR",
+            executionCaseDefinitionId: classId,
+            expectedRevision: 0,
+            updatedAt: now,
+          });
+          const suiteId = randomUUID();
+          await suites.create({
+            id: suiteId,
+            projectId: scope.projectId,
+            name: "Mixed Adapter batch",
+            createdAt: now,
+            policy: {
+              ...defaultCaseSuiteExecutionPolicy,
+              projectVersionId: scope.projectVersionId,
+              runnerIds: [runnerId],
+              concurrency: 2,
+              adapter: {
+                enabled: true,
+                suiteName: "Mixed",
+                testName: "SIT",
+                environmentAddresses: ["127.0.0.1"],
+              },
+            },
+          });
+          await suites.addCases({
+            suiteId,
+            items: [{ id: randomUUID(), caseDefinitionId: classId }],
+            versionId: randomUUID(),
+            updatedAt: now,
+          });
+          const ddtCase = (await ddt.getCase(scope, "DEBUG-1"))!;
+          await suites.addDdtCases({
+            suiteId,
+            items: [{ id: randomUUID(), ddtCaseId: ddtCase.id }],
+            versionId: randomUUID(),
+            updatedAt: now,
+          });
+          const created = await service.create({ suiteId });
+          const batch = (await fixture.batches.get(created.id))!;
+          expect(batch.runs).toHaveLength(2);
+          for (const run of batch.runs) {
+            const spec = await fixture.assignmentSpec(batch.id, run.id);
+            expect(spec.adapter).toBeDefined();
+            if (run.caseType === "ddt") {
+              expect(spec.adapter).toMatchObject({ caseId: "DEBUG-1", ddtScope: scope });
+              expect(spec.requiredCapabilities).toContain("adapter:ddt-insight-url-v1");
+            } else {
+              expect(spec.adapter).not.toHaveProperty("ddtScope");
+              expect(spec.adapter).not.toHaveProperty("caseId");
+              expect(spec.requiredCapabilities).not.toContain("adapter:ddt-insight-url-v1");
+            }
+          }
+        } finally {
+          await fixture.close();
+        }
+      });
+
       it("resumes personal imports after interruption with stable receipts and observes cancellation", async () => {
         const fixture = await createFixture(dialect);
         try {
@@ -280,7 +350,11 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         const fixture = await createFixture(dialect);
         try {
           const { service, scope, classId, runnerId, batches, ddt, catalog } = fixture;
-          for (const kind of ["testng", "ddt"] as const) {
+          for (const [kind, adapterEnabled] of [
+            ["testng", false],
+            ["testng", true],
+            ["ddt", true],
+          ] as const) {
             const batch = await service.createDebugCase(
               createCaseDebugRunSchema.parse({
                 ...scope,
@@ -290,7 +364,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
                 execution: {
                   runnerIds: [runnerId],
                   adapter: {
-                    enabled: kind === "ddt",
+                    enabled: adapterEnabled,
                     suiteName: "Debug",
                     testName: "V1 SIT",
                     environmentAddresses: ["127.0.0.1"],
@@ -320,7 +394,14 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             const spec = await fixture.assignmentSpec(batch.id);
             if (kind === "ddt")
               expect(spec.adapter?.ddtScope).toEqual({ ...scope, debug: fixture.debugAccess });
-            else expect(spec.adapter).toBeUndefined();
+            else {
+              if (adapterEnabled) {
+                expect(spec.adapter).toBeDefined();
+                expect(spec.adapter).not.toHaveProperty("ddtScope");
+                expect(spec.adapter).not.toHaveProperty("caseId");
+              } else expect(spec.adapter).toBeUndefined();
+              expect(spec.requiredCapabilities).not.toContain("adapter:ddt-insight-url-v1");
+            }
           }
           expect((await ddt.getCase(scope, "DEBUG-1"))?.executionClass).toBeUndefined();
           expect((await catalog.getCaseDefinition(classId))?.currentVersion).toBe(1);
@@ -379,11 +460,10 @@ for (const dialect of ["sqlite", "postgres"] as const) {
               environmentAddresses: ["127.0.0.1"],
             },
           });
-          expect((await fixture.assignmentSpec(inherited.id)).adapter?.ddtScope).toEqual({
-            projectId: scope.projectId,
-            projectVersionId: targetVersion,
-            testStageId: targetStage,
-          });
+          const inheritedSpec = await fixture.assignmentSpec(inherited.id);
+          expect(inheritedSpec.adapter).toBeDefined();
+          expect(inheritedSpec.adapter).not.toHaveProperty("ddtScope");
+          expect(inheritedSpec.requiredCapabilities).not.toContain("adapter:ddt-insight-url-v1");
           await expect(
             service.createDebugCase(
               createCaseDebugRunSchema.parse({
@@ -656,15 +736,18 @@ async function createFixture(dialect: "sqlite" | "postgres") {
     suites,
     now,
     assetId: asset.id,
-    assignmentSpec: async (batchId: string) => {
+    assignmentSpec: async (batchId: string, executionRunId?: string) => {
       const row = sqlite
         ? (sqlite.client
-            .prepare("SELECT execution_spec_json FROM assignments WHERE batch_id = ?")
-            .get(batchId) as { execution_spec_json: string } | undefined)
+            .prepare(
+              "SELECT execution_spec_json FROM assignments WHERE batch_id = ? AND (? IS NULL OR execution_run_id = ?)",
+            )
+            .get(batchId, executionRunId ?? null, executionRunId ?? null) as
+            { execution_spec_json: string } | undefined)
         : (
             await postgres!.pool.query<{ execution_spec_json: string }>(
-              "SELECT execution_spec_json FROM assignments WHERE batch_id = $1",
-              [batchId],
+              "SELECT execution_spec_json FROM assignments WHERE batch_id = $1 AND ($2::text IS NULL OR execution_run_id = $2)",
+              [batchId, executionRunId ?? null],
             )
           ).rows[0];
       expect(row, "execution must be assigned to the online Runner").toBeDefined();

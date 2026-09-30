@@ -10,28 +10,53 @@ import java.io.PrintStream;
 import org.junit.jupiter.api.Test;
 
 class CotestRuntimeConfigurerTest {
-  private static final String API_URL = "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case";
+  private static final String API_URL =
+      "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case";
 
   @Test
-  void configuresTheApiForOrdinaryCasesWithoutSettingACaseId() throws Exception {
+  void ignoresHistoricalDdtUrlsForOrdinaryCasesWithoutLoadingTheProvider() throws Exception {
+    ClassLoader ordinaryLoader = new ClassLoader(getClass().getClassLoader()) {
+      @Override
+      public Class<?> loadClass(String name) throws ClassNotFoundException {
+        if (name.equals("cotest.auto.dataproviders.MM2DataProvider")) {
+          throw new AssertionError("Ordinary cases must not load the DDT provider.");
+        }
+        return super.loadClass(name);
+      }
+    };
     try (PrintStream output = AdapterMain.utf8PrintStream(new ByteArrayOutputStream())) {
-      new CotestRuntimeConfigurer(output).configure(getClass().getClassLoader(), getClass(), "", null, API_URL);
+      new CotestRuntimeConfigurer(output).configure(ordinaryLoader, getClass(), "", null, API_URL);
+    }
+  }
+
+  @Test
+  void configuresTheApiAndCaseIdForDdtCases() throws Exception {
+    try (PrintStream output = AdapterMain.utf8PrintStream(new ByteArrayOutputStream())) {
+      new CotestRuntimeConfigurer(output)
+          .configure(getClass().getClassLoader(), getClass(), "", "CASE-1", API_URL);
       assertEquals(API_URL, MM2DataProvider.getDdtInsightUrl());
+      assertEquals("CASE-1", MM2DataProvider.getClassDataProvider(getClass().getName()));
     }
   }
 
   @Test
   void missingProviderIsOptionalForOrdinaryCasesButRequiredForDdt() throws Exception {
     ClassLoader missingProvider = new ClassLoader(getClass().getClassLoader()) {
-      @Override public Class<?> loadClass(String name) throws ClassNotFoundException {
-        if (name.equals("cotest.auto.dataproviders.MM2DataProvider")) throw new ClassNotFoundException(name);
+      @Override
+      public Class<?> loadClass(String name) throws ClassNotFoundException {
+        if (name.equals("cotest.auto.dataproviders.MM2DataProvider")) {
+          throw new ClassNotFoundException(name);
+        }
         return super.loadClass(name);
       }
     };
     try (PrintStream output = AdapterMain.utf8PrintStream(new ByteArrayOutputStream())) {
       CotestRuntimeConfigurer configurer = new CotestRuntimeConfigurer(output);
-      assertDoesNotThrow(() -> configurer.configure(missingProvider, getClass(), "", null, API_URL));
-      assertThrows(ClassNotFoundException.class, () -> configurer.configure(missingProvider, getClass(), "", "CASE-1", API_URL));
+      assertDoesNotThrow(
+          () -> configurer.configure(missingProvider, getClass(), "", null, API_URL));
+      assertThrows(
+          ClassNotFoundException.class,
+          () -> configurer.configure(missingProvider, getClass(), "", "CASE-1", API_URL));
     }
   }
 

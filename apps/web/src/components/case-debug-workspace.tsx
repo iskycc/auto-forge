@@ -15,10 +15,11 @@ import { Notice } from "./ui/notice";
 import { useToast } from "./ui-feedback";
 import { createCaseDebugRunSchema } from "@autoforge/contracts";
 import { ZodError } from "zod";
-import { CaseDebugInput, type DebugInputChoice } from "./case-debug-input";
+import { CaseDebugInput } from "./case-debug-input";
 import { CaseDebugResults } from "./case-debug-results";
 import { debugRequest } from "@/lib/case-debug-client";
 import { LinkButton } from "./ui/link-button";
+import { caseDebugDraftKey, createCaseDebugDraftStore } from "@/lib/case-debug-draft";
 
 export type CaseDebugWorkspaceProps = {
   scope: DdtScope;
@@ -68,7 +69,14 @@ export function CaseDebugWorkspace(props: CaseDebugWorkspaceProps) {
       {(["testng", "ddt"] as const)
         .filter((kind) => visible.has(kind))
         .map((kind) => (
-          <div key={kind} hidden={active !== kind}>
+          <div
+            key={caseDebugDraftKey({
+              ...props.scope,
+              userId: props.ddtDebugAccess.ownerUserId,
+              kind,
+            })}
+            hidden={active !== kind}
+          >
             <TabContent activeKey={active}>
               <DebugPanel {...props} kind={kind} active={active === kind} />
             </TabContent>
@@ -89,23 +97,46 @@ function DebugPanel({
 }: CaseDebugWorkspaceProps & { kind: "testng" | "ddt"; active: boolean }) {
   const parameters = useSearchParams();
   const toast = useToast();
-  const [executionClass, setExecutionClass] = useState<DebugInputChoice>();
-  const [ddtCase, setDdtCase] = useState<DebugInputChoice>();
-  const [runnerKind, setRunnerKind] = useState<"runner" | "group">("runner");
-  const [runnerId, setRunnerId] = useState("");
-  const [groupId, setGroupId] = useState("");
+  const [draftStore] = useState(() =>
+    createCaseDebugDraftStore(
+      caseDebugDraftKey({ ...scope, userId: ddtDebugAccess.ownerUserId, kind }),
+      {
+        runnerKind: "runner",
+        runnerId: "",
+        groupId: "",
+        adapterEnabled: kind === "ddt",
+        suiteName: labels.project,
+        testName: `${labels.version} ${labels.stage}`,
+        addresses: "",
+      },
+      () => window.localStorage,
+    ),
+  );
+  const { draft, status: draftStatus } = useSyncExternalStore(
+    draftStore.subscribe,
+    draftStore.getSnapshot,
+    draftStore.getServerSnapshot,
+  );
+  const {
+    executionClass,
+    ddtCase,
+    runnerKind,
+    runnerId,
+    groupId,
+    adapterEnabled,
+    suiteName,
+    testName,
+    addresses,
+  } = draft;
   const [runners, setRunners] = useState<Runner[]>([]);
   const [groups, setGroups] = useState<RunnerGroup[]>([]);
-  const [adapterEnabled, setAdapterEnabled] = useState(kind === "ddt");
-  const [suiteName, setSuiteName] = useState(labels.project);
-  const [testName, setTestName] = useState(`${labels.version} ${labels.stage}`);
-  const [addresses, setAddresses] = useState("");
   const batchScope = new URLSearchParams(scope).toString();
   const [batchId, setBatchId] = useState(
     parameters.get(`${kind}Scope`) === batchScope ? (parameters.get(`${kind}Batch`) ?? "") : "",
   );
   const [running, setRunning] = useState(Boolean(batchId));
   const [submitting, setSubmitting] = useState(false);
+  const editingDisabled = submitting || draftStatus === "loading";
   const [error, setError] = useState("");
   const [resourcesRevision, setResourcesRevision] = useState(0);
   const onActiveChange = useCallback((value: boolean) => setRunning(value), []);
@@ -234,6 +265,23 @@ function DebugPanel({
             调试配置
           </Typography.Title>
         </Flex>
+        <Typography.Text
+          type={
+            draftStatus === "unavailable" || draftStatus === "invalid" ? "warning" : "secondary"
+          }
+          className="text-xs"
+          aria-label="调试配置保存状态"
+        >
+          {draftStatus === "loading"
+            ? "正在恢复调试配置…"
+            : draftStatus === "unavailable"
+              ? "浏览器无法保存配置；当前填写仍可使用，刷新后可能丢失。"
+              : draftStatus === "invalid"
+                ? "已保存配置无法读取，请重新选择；修改后将重新保存。"
+                : draftStatus === "saved"
+                  ? "配置已自动保存到当前浏览器"
+                  : "填写后自动保存到当前浏览器，按账号和项目范围分别记忆。"}
+        </Typography.Text>
         {kind === "ddt" ? (
           <>
             <CaseDebugInput
@@ -242,12 +290,14 @@ function DebugPanel({
               maxJarBytes={maxJarBytes}
               scopeLabels={labels}
               active={active}
-              disabled={submitting}
+              disabled={editingDisabled}
               canUpload={permissions.uploadDdt}
               value={ddtCase}
               onChange={(choice) => {
-                setDdtCase(choice);
-                if (choice?.suggestedClass) setExecutionClass(choice.suggestedClass);
+                draftStore.update({
+                  ddtCase: choice,
+                  ...(choice?.suggestedClass ? { executionClass: choice.suggestedClass } : {}),
+                });
               }}
             />
             <Divider className="!my-0" />
@@ -264,10 +314,10 @@ function DebugPanel({
           scopeLabels={labels}
           scope={scope}
           active={active}
-          disabled={submitting}
+          disabled={editingDisabled}
           canUpload={permissions.uploadJar}
           value={executionClass}
-          onChange={setExecutionClass}
+          onChange={(executionClass) => draftStore.update({ executionClass })}
         />
         <Divider className="!my-0" />
         <Flex gap="small" align="center" justify="space-between">
@@ -277,10 +327,10 @@ function DebugPanel({
         <Segmented
           label="调试资源类型"
           value={runnerKind}
-          onChange={setRunnerKind}
+          onChange={(runnerKind) => draftStore.update({ runnerKind })}
           options={[
-            { value: "runner", label: "执行机" },
-            { value: "group", label: "执行机组" },
+            { value: "runner", label: "执行机", disabled: editingDisabled },
+            { value: "group", label: "执行机组", disabled: editingDisabled },
           ]}
           block
         />
@@ -288,9 +338,16 @@ function DebugPanel({
           <Select
             aria-label="调试执行机"
             value={runnerId}
-            onChange={(event) => setRunnerId(event.target.value)}
+            disabled={editingDisabled}
+            onChange={(event) => draftStore.update({ runnerId: event.target.value })}
           >
             <option value="">选择执行机</option>
+            {runnerId &&
+            !runners.some((runner) => runner.id === runnerId && !runner.deregisteredAt) ? (
+              <option value={runnerId} disabled>
+                已保存的执行机暂不可用，请刷新资源或重新选择
+              </option>
+            ) : null}
             {runners
               .filter((runner) => !runner.deregisteredAt)
               .map((runner) => (
@@ -307,9 +364,15 @@ function DebugPanel({
           <Select
             aria-label="调试执行机组"
             value={groupId}
-            onChange={(event) => setGroupId(event.target.value)}
+            disabled={editingDisabled}
+            onChange={(event) => draftStore.update({ groupId: event.target.value })}
           >
             <option value="">选择执行机组</option>
+            {groupId && !groups.some((group) => group.id === groupId) ? (
+              <option value={groupId} disabled>
+                已保存的执行机组暂不可用，请刷新资源或重新选择
+              </option>
+            ) : null}
             {groups.map((group) => (
               <option key={group.id} value={group.id} disabled={!group.runnerIds.length}>
                 {group.name} · {group.runnerIds.length} 台
@@ -322,8 +385,8 @@ function DebugPanel({
           <Switch
             aria-label="调试启用 Adapter"
             checked={kind === "ddt" || adapterEnabled}
-            disabled={kind === "ddt"}
-            onChange={setAdapterEnabled}
+            disabled={kind === "ddt" || editingDisabled}
+            onChange={(adapterEnabled) => draftStore.update({ adapterEnabled })}
           />
         </label>
         {kind === "ddt" || adapterEnabled ? (
@@ -340,7 +403,8 @@ function DebugPanel({
                 aria-label="调试 Suite Name"
                 value={suiteName}
                 maxLength={512}
-                onChange={(event) => setSuiteName(event.target.value)}
+                disabled={editingDisabled}
+                onChange={(event) => draftStore.update({ suiteName: event.target.value })}
               />
             </label>
             <label className="grid min-w-0 gap-1">
@@ -349,7 +413,8 @@ function DebugPanel({
                 aria-label="调试 Test Name"
                 value={testName}
                 maxLength={512}
-                onChange={(event) => setTestName(event.target.value)}
+                disabled={editingDisabled}
+                onChange={(event) => draftStore.update({ testName: event.target.value })}
               />
             </label>
             <label className="grid min-w-0 gap-1">
@@ -360,7 +425,8 @@ function DebugPanel({
                 className="min-h-16"
                 placeholder="每行一个 IP 或地址"
                 value={addresses}
-                onChange={(event) => setAddresses(event.target.value)}
+                disabled={editingDisabled}
+                onChange={(event) => draftStore.update({ addresses: event.target.value })}
               />
             </label>
           </div>
@@ -371,7 +437,7 @@ function DebugPanel({
         {error ? <Notice tone="error">{error}</Notice> : null}
         <Button
           variant="primary"
-          disabled={submitting || running || !executionClass || (kind === "ddt" && !ddtCase)}
+          disabled={editingDisabled || running || !executionClass || (kind === "ddt" && !ddtCase)}
           onClick={() => void execute()}
         >
           <Play size={16} />

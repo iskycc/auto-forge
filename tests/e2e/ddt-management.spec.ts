@@ -2395,18 +2395,16 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
           )
           .toBe(true);
         expect(claim!.assignment.executionSpec.className).toBe(className);
-        expect(claim!.assignment.executionSpec.adapter).toMatchObject({
-          ddtScope: {
-            projectId: hierarchy.projectId,
-            projectVersionId: hierarchy.versionId,
-            testStageId: hierarchy.stageId,
-          },
-        });
         expect(
           claim!.assignment.executionSpec.inputs.some((input) => input.kind === "class-data"),
         ).toBe(false);
         const caseId = claim!.assignment.executionSpec.adapter?.caseId;
         if (caseId) {
+          expect(claim!.assignment.executionSpec.adapter).toHaveProperty("ddtScope", {
+            projectId: hierarchy.projectId,
+            projectVersionId: hierarchy.versionId,
+            testStageId: hierarchy.stageId,
+          });
           // The test fetches its own data; Runner receives only the CaseID.
           const response = await page.request.get(
             `/api/v1/public/ddt/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/stages/${hierarchy.stageId}/case?${new URLSearchParams({ caseId })}`,
@@ -2416,7 +2414,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
           expect(caseIds).toContain(content.CaseID);
           values.push(content.value);
           ddtAttempts.push({ attemptId: claim!.assignment.attemptId, caseId: content.CaseID });
-        }
+        } else expect(claim!.assignment.executionSpec.adapter).not.toHaveProperty("ddtScope");
         const completed = await page.request.post(
           `/api/v1/run-attempts/${claim!.assignment.attemptId}/complete`,
           {

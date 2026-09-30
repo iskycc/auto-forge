@@ -11,6 +11,8 @@ import {
   browserJson,
   selectProjectContext,
   acceptSystemDialog,
+  E2E_ADMIN_USERNAME,
+  E2E_ADMIN_PASSWORD,
 } from "./support/session";
 import {
   createInitializationProject,
@@ -83,7 +85,21 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
   await panel.getByLabel("调试启用 Adapter").check();
   await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
+  await panel.getByLabel("调试 Suite Name").fill("Remembered ordinary suite");
+  await panel.getByLabel("调试 Test Name").fill("Remembered ordinary test");
+  await panel.getByLabel("调试环境地址").fill("127.0.0.1");
   await panel.getByLabel("调试启用 Adapter").uncheck();
+  await page.goto("/cases");
+  await page.goto("/case-debug");
+  await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
+  await expect(panel.locator('select[aria-label="调试执行机"]')).toHaveValue(runner.runnerId);
+  await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
+  await panel.getByLabel("调试启用 Adapter").check();
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Remembered ordinary suite");
+  await expect(panel.getByLabel("调试 Test Name")).toHaveValue("Remembered ordinary test");
+  await expect(panel.getByLabel("调试环境地址")).toHaveValue("127.0.0.1");
+  await panel.getByLabel("调试启用 Adapter").uncheck();
+  await expect(panel.getByLabel("调试配置保存状态")).toHaveText("配置已自动保存到当前浏览器");
   await screenshotReview(page, "ordinary-existing");
   await heartbeat(page, runner);
   await panel.getByRole("button", { name: "开始调试", exact: true }).click();
@@ -138,6 +154,8 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await logPanel.getByRole("checkbox", { name: "跟随最新" }).check();
   await screenshotReview(page, "ordinary-result");
   await page.reload();
+  await expect(classInput.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
+  await expect(panel.locator('select[aria-label="调试执行机"]')).toHaveValue(runner.runnerId);
   await expect(page.getByLabel("调试日志内容")).toContainText("DEBUG_NEW_JAR_EXECUTED");
   expect(new URL(page.url()).searchParams.get("testngBatch")).toBe(firstBatch);
   const formalClasses = await browserJson<{ items: Array<{ id: string; currentVersion: number }> }>(
@@ -169,6 +187,19 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
       )
     ).status,
   ).toBe(200);
+  await panel.getByLabel("调试启用 Adapter").check();
+  await panel.getByLabel("调试环境地址").fill("127.0.0.1");
+  await heartbeat(page, runner);
+  await panel.getByRole("button", { name: "再次执行", exact: true }).click();
+  const ordinaryAdapter = await claim(page, runner);
+  expect(ordinaryAdapter.assignment.executionSpec.adapter).toBeDefined();
+  expect(ordinaryAdapter.assignment.executionSpec.adapter).not.toHaveProperty("ddtScope");
+  expect(ordinaryAdapter.assignment.executionSpec.adapter).not.toHaveProperty("caseId");
+  expect(ordinaryAdapter.assignment.executionSpec.requiredCapabilities).not.toContain(
+    "adapter:ddt-insight-url-v1",
+  );
+  await logAndComplete(page, runner, ordinaryAdapter);
+  await expect(page.getByLabel("调试执行结果")).toContainText("执行通过");
   await page.getByRole("tab", { name: "DDT 调试", exact: true }).click();
   panel = page.getByRole("region", { name: "DDT调试配置" });
   const ddtInput = panel.getByLabel("DDT 用例输入", { exact: true });
@@ -178,6 +209,15 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(panel.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
   await panel.locator('select[aria-label="调试执行机"]').selectOption(runner.runnerId);
   await panel.getByLabel("调试环境地址").fill("127.0.0.1");
+  await panel.getByLabel("调试 Suite Name").fill("Remembered DDT suite");
+  await panel.getByLabel("调试 Test Name").fill("Remembered DDT test");
+  await page.reload();
+  await expect(ddtInput.locator('select[aria-label="调试DDT 用例"]')).toHaveValue("PAY-1");
+  await expect(panel.locator('select[aria-label="调试测试类"]')).toHaveValue(source.classId);
+  await expect(panel.locator('select[aria-label="调试执行机"]')).toHaveValue(runner.runnerId);
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Remembered DDT suite");
+  await expect(panel.getByLabel("调试 Test Name")).toHaveValue("Remembered DDT test");
+  await expect(panel.getByLabel("调试环境地址")).toHaveValue("127.0.0.1");
   await screenshotReview(page, "ddt-existing");
   const personalAccess = await browserJson<{ ownerUserId: string; accessKey: string }>(
     page,
@@ -387,6 +427,9 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await panel.getByRole("radio", { name: "执行机组", exact: true }).locator("..").click();
   await expect(panel.locator(`option[value="${group.body.id}"]`)).toHaveCount(1);
   await panel.locator('select[aria-label="调试执行机组"]').selectOption(group.body.id);
+  await page.reload();
+  await expect(panel.getByRole("radio", { name: "执行机组", exact: true })).toBeChecked();
+  await expect(panel.locator('select[aria-label="调试执行机组"]')).toHaveValue(group.body.id);
   await panel.getByRole("button", { name: "再次执行", exact: true }).click();
   await page
     .getByRole("button", { name: "停止执行", exact: true })
@@ -395,6 +438,13 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await acceptSystemDialog(page, "停止本次调试", "停止执行");
   await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("已终止");
   await page.getByRole("tab", { name: "普通用例调试", exact: true }).click();
+  const ordinaryPanel = page.getByRole("region", { name: "普通用例调试配置" });
+  await expect(ordinaryPanel.getByLabel("调试 Suite Name")).toHaveValue(
+    "Remembered ordinary suite",
+  );
+  await expect(ordinaryPanel.locator('select[aria-label="调试执行机"]')).toHaveValue(
+    runner.runnerId,
+  );
   await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行通过");
   const anonymous = await page.context().browser()!.newContext();
   try {
@@ -424,9 +474,107 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await selectProjectContext(page, scope.projectId, scope.projectVersionId, anotherStage.body.id);
   await page.goto(savedUrl);
   await expect(page.getByLabel("调试执行结果")).toHaveCount(0);
+  await expect(ordinaryPanel.locator('select[aria-label="调试测试类"]')).toHaveValue("");
+  await expect(ordinaryPanel.locator('select[aria-label="调试执行机"]')).toHaveValue("");
+  await expect(ordinaryPanel.getByLabel("调试启用 Adapter")).not.toBeChecked();
+  await ordinaryPanel.getByLabel("调试启用 Adapter").check();
+  await ordinaryPanel.getByLabel("调试 Suite Name").fill("Other stage draft");
   await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
   await page.goto(savedUrl);
+  await expect(ordinaryPanel.getByLabel("调试 Suite Name")).toHaveValue(
+    "Remembered ordinary suite",
+  );
+  await expect(ordinaryPanel.locator('select[aria-label="调试测试类"]')).toHaveValue(
+    source.classId,
+  );
   await expect(page.getByLabel("调试执行结果").filter({ visible: true })).toContainText("执行通过");
+});
+
+test("debug drafts isolate accounts in the same browser and remain usable when storage fails", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const project = await createInitializationProject(page);
+  const source = await seedInitializationSource(page, project.projectId);
+  await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
+  await page.goto("/case-debug");
+  const panel = page.getByRole("region", { name: "普通用例调试配置" });
+  await panel.getByLabel("调试启用 Adapter").check();
+  await panel.getByLabel("调试 Suite Name").fill("Administrator draft");
+  const draftKey = await page.evaluate(() =>
+    Object.keys(localStorage).find((key) => key.startsWith("autoforge.case-debug-draft.v1:"))!,
+  );
+  const username = `draft-peer-${randomUUID().slice(0, 8)}`;
+  const password = "DraftPeer!Password123";
+  const user = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName: "配置隔离用户", password, forcePasswordChange: false },
+  });
+  expect(user.status).toBe(201);
+  const role = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: username,
+      name: username,
+      scope: "project",
+      permissions: ["case.read", "run.create", "run.read", "runner.read"],
+    },
+  });
+  expect(role.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/users/${user.body.id}/project-roles`, {
+        method: "POST",
+        body: { projectId: project.projectId, roleId: role.body.id },
+      })
+    ).status,
+  ).toBe(204);
+  const headers = { origin: new URL(page.url()).origin };
+  expect((await page.request.post("/api/v1/auth/logout", { headers })).ok()).toBe(true);
+  expect(
+    (
+      await page.request.post("/api/v1/auth/login", { headers, data: { username, password } })
+    ).status(),
+  ).toBe(200);
+  await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
+  await page.goto("/case-debug");
+  await expect(panel.getByLabel("调试启用 Adapter")).not.toBeChecked();
+  await panel.getByLabel("调试启用 Adapter").check();
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue(project.name);
+  await panel.getByLabel("调试 Suite Name").fill("Peer draft");
+  expect((await page.request.post("/api/v1/auth/logout", { headers })).ok()).toBe(true);
+  expect(
+    (
+      await page.request.post("/api/v1/auth/login", {
+        headers,
+        data: { username: E2E_ADMIN_USERNAME, password: E2E_ADMIN_PASSWORD },
+      })
+    ).status(),
+  ).toBe(200);
+  await selectProjectContext(page, project.projectId, source.projectVersionId, source.testStageId);
+  await page.goto("/case-debug");
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Administrator draft");
+  await page.evaluate((key) => localStorage.setItem(key, "{broken"), draftKey);
+  await page.reload();
+  await expect(panel.getByLabel("调试配置保存状态")).toContainText("已保存配置无法读取");
+  await panel.getByLabel("调试启用 Adapter").check();
+  await panel.getByLabel("调试 Suite Name").fill("Recovered draft");
+  await page.reload();
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Recovered draft");
+  await page.addInitScript(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("autoforge.case-debug-draft.v1:"))
+        throw new DOMException("Storage full", "QuotaExceededError");
+      return setItem.call(this, key, value);
+    };
+  });
+  await page.reload();
+  await panel.getByLabel("调试 Suite Name").fill("Unsaved but usable");
+  await expect(panel.getByLabel("调试 Suite Name")).toHaveValue("Unsaved but usable");
+  await expect(panel.getByLabel("调试配置保存状态")).toContainText("浏览器无法保存配置");
+  await screenshotReview(page, "draft-storage-warning");
 });
 
 async function heartbeat(page: Page, runner: { runnerId: string; credential: string }) {

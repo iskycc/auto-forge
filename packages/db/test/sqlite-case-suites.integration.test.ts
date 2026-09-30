@@ -754,11 +754,6 @@ describe("SQLite case suite lifecycle", () => {
         testName: "task-test",
         environmentAddress: "10.0.0.9",
         caseTimeoutSeconds: 600,
-        ddtScope: {
-          projectId: DEFAULT_PROJECT_ID,
-          projectVersionId: "project-version-1",
-          testStageId: "stage-1",
-        },
       });
       expect(specs.map((candidate) => candidate.adapter.environmentAddress)).toEqual([
         "10.0.0.9",
@@ -768,6 +763,15 @@ describe("SQLite case suite lifecycle", () => {
       const ddtSpec = specs.find((candidate) => candidate.adapter.caseId === "ORDER-1");
       expect(ddtSpec).toBeDefined();
       expect(ddtSpec?.adapter?.caseId).toBe("ORDER-1");
+      expect(ddtSpec?.adapter).toHaveProperty("ddtScope", {
+        projectId: DEFAULT_PROJECT_ID,
+        projectVersionId: "project-version-1",
+        testStageId: "stage-1",
+      });
+      for (const ordinarySpec of specs.filter((candidate) => !candidate.adapter.caseId)) {
+        expect(ordinarySpec.adapter).not.toHaveProperty("ddtScope");
+        expect(ordinarySpec.requiredCapabilities).not.toContain("adapter:ddt-insight-url-v1");
+      }
       expect(ddtSpec?.inputs.some((input) => input.kind === "class-data")).toBe(false);
       const storedDdtRun = handle.client
         .prepare(

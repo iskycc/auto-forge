@@ -27,7 +27,7 @@ export default async function CaseDebugPage() {
   if (!version || !stage) return <Notice>请在顶栏选择项目版本和测试阶段后开始调试。</Notice>;
   return (
     <CaseDebugWorkspace
-      key={`${projectId}:${version.id}:${stage.id}`}
+      key={`${identity.user.id}:${projectId}:${version.id}:${stage.id}`}
       ddtDebugAccess={await services.ddtDebug.workspace({
         projectId,
         projectVersionId: version.id,

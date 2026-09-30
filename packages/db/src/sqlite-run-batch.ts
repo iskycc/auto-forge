@@ -1400,7 +1400,9 @@ export class SqliteRunBatchRepository
                       sha256: executionInput.sourceSha256,
                       sizeBytes: executionInput.sourceSizeBytes,
                     },
-                    ...(executionInput.projectVersionId && executionInput.testStageId
+                    ...(executionInput.caseType === "ddt" &&
+                    executionInput.projectVersionId &&
+                    executionInput.testStageId
                       ? {
                           ddtScope: {
                             projectId: executionInput.projectId,

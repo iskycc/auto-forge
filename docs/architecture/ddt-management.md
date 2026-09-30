@@ -237,14 +237,15 @@ DDL 和转换在同一事务中；失败回滚后修复并重试。降级须恢�
 调试、用例管理立即执行、任务批跑和重跑共用此逻辑。测试类自行编码 CaseID 并获取数据；动态字段以 API
 请求时的当前值为准，不再是批次创建时的数据快照。诊断重跑仍沿用 CaseID 和执行类身份。
 
-Adapter 批次要求 Runner 声明 `adapter:ddt-insight-url-v1`，DDT 额外要求 `adapter:ddt-case-id-v1`；
-预检和调度都会检查，旧 Runner 明确提示升级，升级同时安装配套 Adapter。普通 Adapter 用例包含
-MM2DataProvider 时也注入 URL；没有该类的普通用例保持可执行。DDT 缺少该类、或者存在该类但缺少
-setter 时明确失败并提示更新全量依赖包。未启用 Adapter 的原生 TestNG 执行不加载 CoTest 类。
+仅含 DDT 的执行或混合批次要求 Runner 声明 `adapter:ddt-insight-url-v1` 与 `adapter:ddt-case-id-v1`；
+预检和调度都会检查，旧 Runner 明确提示升级，升级同时安装配套 Adapter。普通 Adapter 用例不下发
+DDT URL，也不加载 MM2DataProvider；混合批次逐用例区分，只有 DDT assignment 携带范围和 CaseId。
+DDT 缺少该类、或者缺少 setter 时明确失败并提示更新全量依赖包。Runner 和 Adapter 忽略历史普通
+执行中残留的 DDT URL。未启用 Adapter 的原生 TestNG 执行不加载 CoTest 类。
 执行规格字段可选、持久于既有 assignment JSON；个人 DDT 数据另通过 SQLite 0073 / PostgreSQL 0071 迁移保存。历史 assignment 保留原规格。
 升级 Runner 自动更新受管 Adapter；升级前已分配的 `class-data` 文件协议任务在新 Runner 上明确
 拒绝，需结束或停止后重新发起。历史数据库列和输入读取契约保留以支持旧记录，新批次不写 JSON 正文。
-Lite/Full 分别持久化于 SQLite/PostgreSQL，共享业务与协议语义，无新外部服务或公网依赖。DDT 调试的 `ddtScope.debug` 保存用户及只读访问标识，调试 URL 在阶段路径后增加 `/users/{userId}/debug/{accessKey}/case`，读取个人库并验证全部范围；普通立即执行和批跑不携带此字段，读取正式库。见[调试工作台](../design/case-debug-workspace.md)。
+Lite/Full 分别持久化于 SQLite/PostgreSQL，共享业务与协议语义，无新外部服务或公网依赖。DDT 调试的 `ddtScope.debug` 保存用户及只读访问标识，调试 URL 在阶段路径后增加 `/users/{userId}/debug/{accessKey}/case`，读取个人库并验证全部范围；DDT 用例管理立即执行和批跑不携带 `debug` 字段，读取正式库。见[调试工作台](../design/case-debug-workspace.md)。
 
 ### DDT API 地址注入验证（2026-09-29）
 
@@ -255,6 +256,15 @@ Lite/Full 分别持久化于 SQLite/PostgreSQL，共享业务与协议语义，�
 - Lite 生产构建的 Playwright 回归验证调试页、单用例执行弹窗、普通/DDT 混合任务和纯 DDT 任务，检查实际领取规格的范围。浏览器测试使用协议模拟 Runner；真实 Runner 的 java-cases 验收夹具已改为使用注入 URL 取数，本轮未运行该 CI 专属验收或完整离线发布验收。
 
 没有新增运行依赖，Adapter 仍由本地 Java 资源和项目全量依赖包运行。
+
+### 普通用例不注入 DDT 地址回归（2026-09-30）
+
+- 先通过应用/仓储、Go Runner 和 Java Adapter 测试复现普通用例误传 URL，再修复生成规格、能力预检、Runner 参数与 Adapter 注入条件。历史普通规格即使含有 DDT 范围或 URL，也不会触发 setter。
+- 应用/契约与仓储运行时测试、SQLite 任务集成测试共 94 项通过；真实 SQLite/PostgreSQL 的调试与混合批次集成测试另有 10 项通过，验证同一批次逐用例区分地址、CaseID 和必需能力。
+- `go -C apps/runner-agent test ./internal/control` 和 `go -C apps/runner-agent vet ./internal/control` 通过。Java 8 + TestNG 7.5.1 / 6.14.3、Java 21 + TestNG 7.11.0 各 26 项通过：普通测试类即使依赖包含 MM2DataProvider 也不接收 URL；DDT 仍在测试类初始化前注入 URL 和 CaseID。
+- Lite 生产构建的 Playwright 三项场景通过：调试工作台、单用例立即执行、混合与纯 DDT 任务。实际领取规格断言普通用例无 DDT 范围、DDT 用例保留正式或个人范围；调试场景同时验证日志、结果、个人数据隔离和终止。浏览器使用协议模拟 Runner，真实 Java 执行由上述 Adapter 测试单独验证，本轮未运行真实 Go Runner + JVM 的整链离线验收。
+- 实际查看 1024px 与 1536px 宽度的调试工作台、DDT API 和任务截图，未发现布局溢出或控件变形。新增普通 Adapter 浏览器步骤首次因刷新后漏选测试类与执行机而失败，补齐选择操作后通过，未放宽执行断言。
+- Web 生产构建、受影响 TypeScript 文件的 lint、测试类型与格式检查通过。本次没有修改页面组件、数据库迁移或运行依赖。
 
 ## API 概览
 

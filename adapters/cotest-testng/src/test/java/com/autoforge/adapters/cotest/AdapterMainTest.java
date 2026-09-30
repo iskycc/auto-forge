@@ -1,6 +1,7 @@
 package com.autoforge.adapters.cotest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -65,6 +66,31 @@ class AdapterMainTest {
   }
 
   @Test
+  void ordinaryCasesIgnoreHistoricalDdtUrlsEvenWhenTheProviderIsPresent() throws IOException {
+    Path jarDirectory =
+        createJarDirectory(
+            "cotest/auto/dataproviders/MM2DataProvider.class",
+            "fixture/AdapterOrdinaryCase.class");
+    ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
+    ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
+    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
+        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
+      int exitCode =
+          AdapterMain.run(
+              new String[] {
+                "--jars", jarDirectory.toString(),
+                "--class", "fixture.AdapterOrdinaryCase",
+                "--ddt-insight-url", "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
+                "--output", temporaryDirectory.resolve("reports-ordinary").toString()
+              },
+              output,
+              errors);
+      assertEquals(0, exitCode, Utf8TestIO.decode(errorOutput));
+      assertFalse(Utf8TestIO.decode(standardOutput).contains("Configured DDT"));
+    }
+  }
+
+  @Test
   void completesNormallyWhenTheCaseFinishesWithinTheLimit() throws IOException {
     Path jarDirectory =
         createJarDirectory(
@@ -84,7 +110,7 @@ class AdapterMainTest {
                 "--class", "fixture.AdapterCase",
                 "--environment-address", "10.0.0.8",
                 "--case-id", "CASE/0001 中文?x=1",
-              "--ddt-insight-url", "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
+                "--ddt-insight-url", "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
                 "--output", temporaryDirectory.resolve("reports-ok").toString(),
                 "--case-timeout-seconds", "600"
               },

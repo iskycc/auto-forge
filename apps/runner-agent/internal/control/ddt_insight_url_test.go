@@ -35,7 +35,7 @@ func TestDdtInsightURLRejectsMissingScopeAndCredentialExposure(t *testing.T) {
 	}
 }
 
-func TestCotestAdapterPassesScopedURLForOrdinaryAndDDTCases(t *testing.T) {
+func TestCotestAdapterPassesScopedURLOnlyForDDTCases(t *testing.T) {
 	for _, caseID := range []string{"", "CASE/1?x=2"} {
 		specification := testExecutionSpec()
 		specification.Adapter = &AdapterSettings{CaseID: caseID, DdtScope: &DdtScope{ProjectID: "p", ProjectVersionID: "v", TestStageID: "s"}}
@@ -49,8 +49,8 @@ func TestCotestAdapterPassesScopedURLForOrdinaryAndDDTCases(t *testing.T) {
 				found = mapped.Command.Args[index+1] == "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case"
 			}
 		}
-		if !found {
-			t.Fatalf("missing scoped API URL: %q", mapped.Command.Args)
+		if found != (caseID != "") {
+			t.Fatalf("unexpected scoped API URL for CaseID %q: %q", caseID, mapped.Command.Args)
 		}
 	}
 }

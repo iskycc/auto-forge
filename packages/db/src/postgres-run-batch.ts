@@ -1519,7 +1519,9 @@ export class PostgresRunBatchRepository
                   className: run.class_name,
                   parameters: stringRecord(run.parameters_json),
                   source,
-                  ...(source.ddtScope ? { ddtScope: source.ddtScope } : {}),
+                  ...(run.case_type === "ddt" && source.ddtScope
+                    ? { ddtScope: source.ddtScope }
+                    : {}),
                   ...(run.case_type === "ddt" ? { caseId: run.display_name } : {}),
                   ...(adapterRuntime ? { adapterRuntime } : {}),
                   environment: environmentVariables(lockedBatch.environmentJson),

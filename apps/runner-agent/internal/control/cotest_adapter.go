@@ -92,7 +92,8 @@ func cotestAdapterExecutorSpec(
 			specification.Adapter.EnvironmentAddress,
 		)
 	}
-	if specification.Adapter.DdtScope != nil {
+	// Older platforms attached DDT scope to ordinary cases as well; only CaseID enables DDT.
+	if specification.Adapter.CaseID != "" && specification.Adapter.DdtScope != nil {
 		ddtURL, err := ddtInsightURL(controlPlaneURL, *specification.Adapter.DdtScope)
 		if err != nil {
 			return executor.Spec{}, nil, err

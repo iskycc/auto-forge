@@ -196,10 +196,8 @@ export class RunBatchSchedulingService {
     const runnerIds = await this.resolveRunnerSelection(suitePolicy);
     const projectId = suite.projectId;
     await this.ensureRunnersExist(runnerIds, [
-      ...(usesTaskAdapter(suitePolicy.adapter)
-        ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
-        : []),
-      ...(enabledDdtCases.length ? [DDT_CASE_ID_CAPABILITY] : []),
+      ...(usesTaskAdapter(suitePolicy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+      ...(enabledDdtCases.length ? [DDT_CASE_ID_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY] : []),
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
@@ -442,10 +440,8 @@ export class RunBatchSchedulingService {
       });
     }
     await this.ensureRunnersExist(runnerIds, [
-      ...(usesTaskAdapter(validated.adapter)
-        ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
-        : []),
-      ...(ddtCase ? [DDT_CASE_ID_CAPABILITY] : []),
+      ...(usesTaskAdapter(validated.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+      ...(ddtCase ? [DDT_CASE_ID_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
     const scheduledFor = delayedStart(createdAt, validated.delaySeconds);
@@ -1251,10 +1247,8 @@ export class RunBatchSchedulingService {
       suite?.policy.runnerLabels ?? [],
       suite?.policy.executor ?? "testng",
       [
-        ...(suite && usesTaskAdapter(suite.policy.adapter)
-          ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
-          : []),
-        ...(suite?.ddtItems?.length ? [DDT_CASE_ID_CAPABILITY] : []),
+        ...(suite && usesTaskAdapter(suite.policy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+        ...(suite?.ddtItems?.length ? [DDT_CASE_ID_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY] : []),
       ],
     );
     return { ready: blockers.length === 0, blockers };

@@ -101,9 +101,11 @@ export function projectAdapterRequiredCapabilities(
   if (!runtime) return [...REQUIRED_EXECUTION_CAPABILITIES];
   const capabilities =
     runtime.jdk && runtime.jarBundle
-      ? [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
-      : [COTEST_ADAPTER_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
-  return runtime.requiresDdtCaseId ? [...capabilities, DDT_CASE_ID_CAPABILITY] : capabilities;
+      ? [COTEST_ADAPTER_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
+      : [COTEST_ADAPTER_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
+  return runtime.requiresDdtCaseId
+    ? [...capabilities, DDT_CASE_ID_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
+    : capabilities;
 }
 
 export function supportsProjectAdapterRuntime(

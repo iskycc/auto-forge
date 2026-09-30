@@ -12,7 +12,7 @@ import {
 } from "../src/project-adapter-runtime";
 
 describe("Adapter execution resource limits", () => {
-  it("requires CaseID support only for DDT batches and preserves it across runtime serialization", () => {
+  it("requires CaseID and API URL support only for DDT batches across runtime serialization", () => {
     const ordinary = parseProjectAdapterRuntime(
       JSON.stringify({ suiteName: "suite", testName: "test" }),
     )!;
@@ -21,10 +21,17 @@ describe("Adapter execution resource limits", () => {
     )!;
     const legacyCapabilities = projectAdapterRequiredCapabilities(ordinary);
     expect(legacyCapabilities).not.toContain("adapter:ddt-case-id-v1");
+    expect(legacyCapabilities).not.toContain("adapter:ddt-insight-url-v1");
     expect(supportsProjectAdapterRuntime(legacyCapabilities, ordinary)).toBe(true);
     expect(supportsProjectAdapterRuntime(legacyCapabilities, ddt)).toBe(false);
     expect(
       supportsProjectAdapterRuntime([...legacyCapabilities, "adapter:ddt-case-id-v1"], ddt),
+    ).toBe(false);
+    expect(
+      supportsProjectAdapterRuntime(
+        [...legacyCapabilities, "adapter:ddt-case-id-v1", "adapter:ddt-insight-url-v1"],
+        ddt,
+      ),
     ).toBe(true);
   });
 

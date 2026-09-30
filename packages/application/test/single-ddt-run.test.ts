@@ -23,6 +23,31 @@ const input = {
 };
 
 describe("single DDT execution", () => {
+  it("allows ordinary debug, immediate and suite execution without DDT Runner capabilities", async () => {
+    const { service, runners, create, suite } = fixture();
+    suite.ddtItems = [];
+    const registered = await runners.listByIds(["runner"], "2026-09-09T00:00:00Z");
+    vi.mocked(runners.listByIds).mockResolvedValue(
+      registered.map((runner) => ({
+        ...runner,
+        capabilities: runner.capabilities.filter(
+          (capability) => !capability.startsWith("adapter:ddt-"),
+        ),
+      })),
+    );
+    expect((await service.preflight({ suiteId: suite.id })).blockers).toEqual([]);
+    await service.create({ suiteId: suite.id });
+    await service.createSingleCase("class", { ...input, projectId: scope.projectId });
+    await service.createDebugCase(
+      createCaseDebugRunSchema.parse({
+        ...scope,
+        kind: "testng",
+        caseDefinitionId: "class",
+        execution: input,
+      }),
+    );
+    expect(create).toHaveBeenCalledTimes(3);
+  });
   it("rejects an older Runner before execution instead of silently losing the DDT API URL", async () => {
     const { service, runners, create, item } = fixture();
     const registered = await runners.listByIds(["runner"], "2026-09-09T00:00:00Z");
