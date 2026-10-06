@@ -669,13 +669,13 @@ export class RunBatchSchedulingService {
   async getAttemptRerunContext(attemptId: string): Promise<{ projectId: string }> {
     const source = await this.batches.resolveAttemptRerunSource(attemptId);
     if (!source) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
-    const batch = await this.batches.getSummary(source.batchId);
+    const batch = await this.batches.getMetadata(source.batchId);
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     if (batch.kind !== "case_log_rerun") return { projectId: batch.projectId };
     if (!batch.parentBatchId) {
       throw new DomainError("RUN_RERUN_SOURCE_INVALID", "无法定位原始用例执行快照。");
     }
-    const parent = await this.batches.getSummary(batch.parentBatchId);
+    const parent = await this.batches.getMetadata(batch.parentBatchId);
     if (!parent) throw new DomainError("RUN_BATCH_NOT_FOUND", "原始执行批次不存在。");
     return { projectId: parent.projectId };
   }

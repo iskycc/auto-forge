@@ -3,6 +3,7 @@ import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-tr
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
+  AttemptLogSnapshot,
   ReserveAssignmentsOutcome,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
@@ -600,6 +601,24 @@ export class PostgresRunBatchRepository
     };
   }
 
+  async getAttemptLogSnapshot(
+    batchId: string,
+    executionRunId: string,
+  ): Promise<AttemptLogSnapshot | null> {
+    await this.ready();
+    const result = await this.handle.pool.query<AttemptLogSnapshot>(
+      `SELECT batch.id AS "batchId", batch.sequence_number AS "batchSequenceNumber",
+              run.id AS "executionRunId", run.display_name AS "displayName",
+              run.class_name AS "className", run.case_type AS "caseType",
+              batch.adapter_runtime_json::json #>> '{jarBundle,createdAt}' AS "dependencyUpdatedAt"
+       FROM execution_runs run JOIN run_batches batch ON batch.id = run.batch_id
+       WHERE run.id = $1 AND batch.id = $2`,
+      [executionRunId, batchId],
+    );
+    const row = result.rows[0];
+    return row ? { ...row, batchSequenceNumber: Number(row.batchSequenceNumber) } : null;
+  }
+
   async listCaseLogRerunBatches(
     parentBatchId: string,
     sourceExecutionRunId: string,
@@ -635,8 +654,12 @@ export class PostgresRunBatchRepository
   async getMetadata(batchId: string, projectIds?: readonly string[]) {
     await this.ready();
     if (projectIds?.length === 0) return null;
+    const batchColumns = getTableColumns(pgRunBatches);
+    const metadataColumns = Object.fromEntries(
+      Object.entries(batchColumns).filter(([column]) => column !== "adapterRuntimeJson"),
+    ) as Omit<typeof batchColumns, "adapterRuntimeJson">;
     const rows = await this.handle.db
-      .select()
+      .select(metadataColumns)
       .from(pgRunBatches)
       .where(
         and(
@@ -1774,7 +1797,7 @@ export class PostgresRunBatchRepository
   }
 
   private mapBatchMetadataRow(
-    row: typeof pgRunBatches.$inferSelect,
+    row: Omit<typeof pgRunBatches.$inferSelect, "adapterRuntimeJson">,
     selectedRunnerIds: string[],
   ): import("@autoforge/application").RunBatchMetadata {
     const policy = batchPolicy(row.policyJson);

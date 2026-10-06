@@ -126,6 +126,7 @@ describe("buildRunBatchExportWorkbook", () => {
     expect(dataRow.getCell(3).alignment).toMatchObject({ vertical: "middle" });
     // OOXML 会省略 false 布尔属性；省略与 false 都表示禁用自动换行。
     expect(dataRow.getCell(3).alignment.wrapText).not.toBe(true);
+    dataRow.eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
   });
 
   it("keeps the standard execution result workbook compatible when no template is supplied", async () => {
@@ -146,6 +147,36 @@ describe("buildRunBatchExportWorkbook", () => {
     expect(sheet.getCell("G2").value).toBe(60);
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1, showGridLines: false });
     expect(sheet.autoFilter).toBe("A1:H1");
+    sheet.getRow(2).eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
+    expect(sheet.getColumn(5).width).toBeGreaterThanOrEqual(failedRow.startedAt!.length + 2);
+    expect(sheet.getColumn(7).width).toBeLessThan(sheet.getColumn(5).width!);
+    expect(sheet.getColumn(3).width).toBeLessThan(sheet.getColumn(1).width!);
+  });
+
+  it("adapts text columns to the exported content without letting long errors expand the sheet", async () => {
+    const exportRow = async (row: RunBatchExportRow) =>
+      (
+        await loadWorkbook(
+          (
+            await buildRunBatchExportWorkbook({
+              batchId: "batch-123456789",
+              scope: "all",
+              rows: [row],
+              shareLinks: new Map(),
+            })
+          ).buffer,
+        )
+      ).getWorksheet("执行结果")!;
+    const short = await exportRow({ ...failedRow, casePath: "example.Test", summary: "失败" });
+    const long = await exportRow({
+      ...failedRow,
+      casePath: "com.example.payment.regression.validation.SubmitPaymentTest",
+      summary: "失败堆栈".repeat(1_000),
+    });
+    expect(short.getColumn(1).width).toBeLessThan(short.getColumn(4).width!);
+    expect(long.getColumn(2).width).toBeGreaterThan(short.getColumn(2).width!);
+    expect(long.getColumn(5).width).toBeLessThanOrEqual(52);
+    expect(long.getCell("E2").value).toBe("失败堆栈".repeat(1_000));
   });
 
   it("writes a completed rerun public log into the proof column", async () => {

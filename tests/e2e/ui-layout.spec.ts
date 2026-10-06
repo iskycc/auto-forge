@@ -890,11 +890,25 @@ test("execution export dialog keeps choices readable and downloads the selected 
     round: "1",
     outcomes: "succeeded,failed,blocked",
   });
-  const standardStrings = new TextDecoder().decode(
-    unzipSync(await readFile((await standardDownload.path())!))["xl/sharedStrings.xml"],
-  );
+  const standardWorkbookPath = test.info().outputPath("execution-results.xlsx");
+  await standardDownload.saveAs(standardWorkbookPath);
+  const standardArchive = unzipSync(await readFile(standardWorkbookPath));
+  const standardStrings = new TextDecoder().decode(standardArchive["xl/sharedStrings.xml"]);
   expect(standardStrings).toContain(fixture.passedName);
   expect(standardStrings).toContain(fixture.failedNames[0]);
+  expect(new TextDecoder().decode(standardArchive["xl/styles.xml"])).not.toMatch(
+    /\bindent="[1-9]\d*"/u,
+  );
+  const exportedWidths = [
+    ...new TextDecoder()
+      .decode(standardArchive["xl/worksheets/sheet1.xml"])
+      .matchAll(/\bwidth="([\d.]+)"/gu),
+  ].map((match) => Number(match[1]));
+  expect(new Set(exportedWidths).size).toBeGreaterThan(3);
+  await test.info().attach("execution-results", {
+    path: standardWorkbookPath,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   await expect(dialog).not.toBeVisible();
 
   await page.setViewportSize({ width: 1536, height: 960 });
@@ -936,11 +950,19 @@ test("execution export dialog keeps choices readable and downloads the selected 
   expect(analysisResponse.status()).toBe(200);
   expect(new URL(analysisResponse.url()).searchParams.get("scope")).toBe("final");
   expect(new URL(analysisResponse.url()).searchParams.get("template")).toBe("failure-analysis");
-  const analysisStrings = new TextDecoder().decode(
-    unzipSync(await readFile((await analysisDownload.path())!))["xl/sharedStrings.xml"],
-  );
+  const analysisWorkbookPath = test.info().outputPath("failure-analysis.xlsx");
+  await analysisDownload.saveAs(analysisWorkbookPath);
+  const analysisArchive = unzipSync(await readFile(analysisWorkbookPath));
+  const analysisStrings = new TextDecoder().decode(analysisArchive["xl/sharedStrings.xml"]);
   expect(analysisStrings).toContain(fixture.failedNames[0]);
   expect(analysisStrings).not.toContain(fixture.passedName);
+  expect(new TextDecoder().decode(analysisArchive["xl/styles.xml"])).not.toMatch(
+    /\bindent="[1-9]\d*"/u,
+  );
+  await test.info().attach("failure-analysis", {
+    path: analysisWorkbookPath,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   await expect(dialog).not.toBeVisible();
 });
 

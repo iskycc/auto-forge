@@ -58,6 +58,7 @@ describe("case suite XLSX export", () => {
     expect(sheet?.getCell("A3").fill).toMatchObject({ fgColor: { argb: "FFF8FAFC" } });
     expect(sheet?.getColumn(1).width).toBe(52);
     expect(sheet?.getColumn(2).width).toBe(36);
+    sheet?.getRow(2).eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
   });
 
   it("creates a safe Chinese filename and RFC 5987 disposition", () => {

@@ -4,7 +4,13 @@ import { PassThrough } from "node:stream";
 import type { DdtCaseData } from "@autoforge/domain";
 import { buildDdtExportSheets } from "@autoforge/ddt-import";
 import ExcelJS from "exceljs";
-import { exportWorksheetOptions, styleExportHeader, styleExportRow } from "./export-workbook-style";
+import {
+  exportColumnWidth,
+  EXPORT_WIDTH_SAMPLE_ROWS,
+  exportWorksheetOptions,
+  styleExportHeader,
+  styleExportRow,
+} from "./export-workbook-style";
 
 export async function buildStyledDdtExportWorkbook(rows: DdtCaseData[]): Promise<Buffer> {
   const sheets = buildDdtExportSheets(rows);
@@ -39,10 +45,14 @@ async function writeDdtWorkbook(
   workbook.creator = "AutoForge";
   for (const definition of sheets) {
     const sheet = workbook.addWorksheet(definition.name, exportWorksheetOptions());
-    const samples = definition.rows.slice(0, 100);
+    const samples = definition.rows.slice(0, EXPORT_WIDTH_SAMPLE_ROWS);
     sheet.columns = definition.columns.map((column) => ({
       header: column.name,
-      width: Math.max(column.width, ...samples.map((cells) => displayWidth(cells[column.name]))),
+      width: exportColumnWidth(
+        column.name,
+        samples.map((cells) => String(cells[column.name] ?? "")),
+        { minimum: ddtColumnMinimumWidth(column.name), maximum: 42 },
+      ),
       hidden: column.hidden,
     }));
     sheet.autoFilter = {
@@ -62,12 +72,15 @@ async function writeDdtWorkbook(
   await workbook.commit();
 }
 
-// Sample a bounded prefix: no second unbounded scan or huge column widths for JSON/stack cells.
-function displayWidth(value: unknown): number {
-  let width = 3;
-  for (const character of String(value ?? "").slice(0, 42)) {
-    width += character.charCodeAt(0) > 255 ? 2 : 1;
-    if (width >= 42) return 42;
+function ddtColumnMinimumWidth(header: string): number {
+  switch (header.toLowerCase()) {
+    case "caseid":
+      return 12;
+    case "srnum":
+      return 10;
+    case "casename":
+      return 16;
+    default:
+      return 8;
   }
-  return width;
 }

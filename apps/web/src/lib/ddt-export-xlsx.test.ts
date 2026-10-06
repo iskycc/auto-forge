@@ -74,4 +74,37 @@ describe("styled DDT workbook", () => {
     expect(marker?.hidden).toBe(true);
     expect(sheet.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EEF5" } });
   });
+
+  it("fits short fields, Chinese headers and long text into distinct bounded widths without indent", async () => {
+    const rows: DdtCaseData[] = [
+      {
+        CaseID: "00100000000000000000001",
+        srNum: "PAY",
+        CaseName: "支付结果验证",
+        owner: "Alice",
+        业务验证说明: "说明",
+        details: "long payload ".repeat(1_000),
+      },
+    ];
+    const sheet = (await load(await buildStyledDdtExportWorkbook(rows))).getWorksheet("data")!;
+    expect(sheet.getColumn(1).width).toBeGreaterThan(sheet.getColumn(4).width!);
+    expect(sheet.getColumn(4).width).toBeLessThan(14);
+    expect(sheet.getColumn(5).width).toBeGreaterThanOrEqual("业务验证说明".length * 2 + 2);
+    expect(sheet.getColumn(6).width).toBeLessThanOrEqual(42);
+    expect(sheet.getCell("F2").value).toBe(rows[0]!.details);
+    sheet.getRow(2).eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
+  });
+
+  it("samples widths without dropping later rows or expanding columns for an isolated outlier", async () => {
+    const rows: DdtCaseData[] = Array.from({ length: 100 }, (_, index) => ({
+      CaseID: `PAY-${index}`,
+      srNum: "PAY",
+      owner: "Alice",
+    }));
+    rows.push({ CaseID: "PAY-100", srNum: "PAY", owner: "长负责人名称".repeat(1_000) });
+    const sheet = (await load(await buildStyledDdtExportWorkbook(rows))).getWorksheet("data")!;
+    expect(sheet.getColumn(3).width).toBeLessThan(14);
+    expect(sheet.actualRowCount).toBe(102);
+    expect(sheet.getCell("C102").value).toBe(rows[100]!.owner);
+  });
 });

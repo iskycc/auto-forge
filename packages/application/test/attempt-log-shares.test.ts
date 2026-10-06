@@ -96,6 +96,8 @@ type FakeState = {
   knownAttemptIds: Set<string>;
   /** 记录每次 createMany 的批量大小，验证批量写入是单次调用而非逐条。 */
   createManyCalls: number[];
+  wholeBatchReadCalls: string[];
+  logReadCalls: Array<{ stream: string; afterSequence: number; limit: number }>;
 };
 
 function makeState(
@@ -106,6 +108,8 @@ function makeState(
     logChunks: [],
     knownAttemptIds: new Set(["attempt-1"]),
     createManyCalls: [],
+    wholeBatchReadCalls: [],
+    logReadCalls: [],
     ...overrides,
   };
 }
@@ -147,29 +151,54 @@ function makeService(
   };
   const batches = {
     get: async () => batch,
-    getSummary: async () => batch,
-    getRerunSnapshot: async (batchId: string) => ({
-      batch: [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId),
-      roundRecoveries: [],
-      runs: [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId)?.runs ?? [],
-      ...(dependencyPublishedAt[batchId]
+    getMetadata: async () => batch,
+    getAttemptLogSnapshot: async (batchId: string, executionRunId: string) => {
+      const selectedBatch = [batch, ...diagnosticBatches].find(
+        (candidate) => candidate.id === batchId,
+      );
+      const run = selectedBatch?.runs.find((candidate) => candidate.id === executionRunId);
+      return selectedBatch && run
         ? {
-            adapterRuntime: {
-              suiteName: "suite",
-              testName: "test",
-              environmentAddresses: [],
-              jarBundle: {
-                id: `bundle-${batchId}`,
-                sourceType: "upload",
-                sha256: "a".repeat(64),
-                sizeBytes: 1,
-                archiveFormat: "zip",
-                createdAt: dependencyPublishedAt[batchId],
-              },
-            },
+            batchId,
+            batchSequenceNumber: selectedBatch.sequenceNumber,
+            executionRunId,
+            className: run.className,
+            displayName: run.displayName,
+            caseType: run.caseType ?? "testng",
+            dependencyUpdatedAt: dependencyPublishedAt[batchId] ?? null,
           }
-        : {}),
-    }),
+        : null;
+    },
+    getSummary: async () => {
+      state.wholeBatchReadCalls.push("summary");
+      return batch;
+    },
+    getRerunSnapshot: async (batchId: string) => {
+      state.wholeBatchReadCalls.push("rerun snapshot");
+      return {
+        batch: [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId),
+        roundRecoveries: [],
+        runs:
+          [batch, ...diagnosticBatches].find((candidate) => candidate.id === batchId)?.runs ?? [],
+        ...(dependencyPublishedAt[batchId]
+          ? {
+              adapterRuntime: {
+                suiteName: "suite",
+                testName: "test",
+                environmentAddresses: [],
+                jarBundle: {
+                  id: `bundle-${batchId}`,
+                  sourceType: "upload",
+                  sha256: "a".repeat(64),
+                  sizeBytes: 1,
+                  archiveFormat: "zip",
+                  createdAt: dependencyPublishedAt[batchId],
+                },
+              },
+            }
+          : {}),
+      };
+    },
     listAttemptsForExecutionRun: async (executionRunId: string) =>
       batch.attempts.filter((attempt) => attempt.executionRunId === executionRunId),
     listCaseLogRerunBatches: async () => diagnosticBatches,
@@ -200,16 +229,27 @@ function makeService(
       attemptIds.filter((attemptId) => state.knownAttemptIds.has(attemptId)).length,
     resolveAttemptProjectId: async (attemptId: string) =>
       state.knownAttemptIds.has(attemptId) ? "project-1" : null,
-    listLogChunks: async (input: { attemptId: string; stream: string; afterSequence: number }) => ({
-      items: state.logChunks.filter(
+    listLogChunks: async (input: {
+      attemptId: string;
+      stream: string;
+      afterSequence: number;
+      limit: number;
+    }) => {
+      state.logReadCalls.push(input);
+      const matching = state.logChunks.filter(
         (chunk) =>
           (!chunk.attemptId || chunk.attemptId === input.attemptId) &&
           chunk.stream === input.stream &&
           chunk.sequence > input.afterSequence,
-      ),
-      acknowledgedSequence: input.afterSequence,
-      truncated: false,
-    }),
+      );
+      const items = matching.slice(0, input.limit);
+      return {
+        items,
+        ...(matching.length > items.length ? { nextSequence: items.at(-1)!.sequence } : {}),
+        acknowledgedSequence: input.afterSequence,
+        truncated: false,
+      };
+    },
   } as unknown as ExecutionControlRepository;
   let tokenCounter = 0;
   let idCounter = 0;
@@ -227,6 +267,40 @@ function makeService(
 }
 
 describe("AttemptLogShareService", () => {
+  it("opens a completed case in an active batch without computing batch counters or preparing a rerun", async () => {
+    const state = makeState();
+    const batch = {
+      ...makeBatchDetails("succeeded"),
+      status: "running" as const,
+      totalRuns: 100_000,
+    };
+    const service = makeService(state, batch);
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+
+    expect(await service.getSharedAttemptLog("token-1")).toMatchObject({
+      attemptId: "attempt-1",
+      outcome: "succeeded",
+      displayName: "run-1#method",
+    });
+    expect(state.wholeBatchReadCalls).toEqual([]);
+  });
+
+  it("reads a fragmented completed log in bounded windows without a database round trip for every 16 chunks", async () => {
+    const state = makeState({
+      logChunks: Array.from({ length: 512 }, (_, sequence) => ({
+        stream: "stdout",
+        sequence,
+        content: `INFO fragmented line ${sequence}\n`,
+        recordedAt: "2026-08-17T00:01:00.000Z",
+      })),
+    });
+    const service = makeService(state);
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    const view = await service.getSharedAttemptLog("token-1");
+    expect(view?.logText).toBe(state.logChunks.map((chunk) => chunk.content).join(""));
+    expect(state.logReadCalls.filter((call) => call.stream === "stdout")).toHaveLength(4);
+    expect(state.logReadCalls.every((call) => call.limit <= 128)).toBe(true);
+  });
   it("issues a new share per attempt and merges stdout/stderr into one ordered log", async () => {
     const state = makeState({
       logChunks: [

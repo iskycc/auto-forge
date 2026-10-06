@@ -1,12 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { acceptSystemDialog, browserJson, ensureAdministrator } from "./support/session";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 /**
  * 即时补槽调度验收：一个批次 5 个用例、执行机并发 2。验证：
@@ -21,6 +24,7 @@ import { acceptSystemDialog, browserJson, ensureAdministrator } from "./support/
  */
 
 const caseNames = ["RefillCaseA", "RefillCaseB", "RefillCaseC", "RefillCaseD", "RefillCaseE"];
+const completedLogChunkCount = 64;
 
 type RunnerIdentity = { runnerId: string; credential: string };
 
@@ -118,6 +122,7 @@ async function completeAttempt(
   claim: ClaimedAssignment,
   completionId: string,
   outcome: "succeeded" | "failed" = "succeeded",
+  stdoutWatermark = -1,
 ): Promise<CompletionResponse> {
   const response = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/complete`,
@@ -132,7 +137,7 @@ async function completeAttempt(
           resultCode: outcome === "succeeded" ? "TESTNG_SUCCEEDED" : "TEST_ASSERTION_FAILED",
           summary: outcome === "succeeded" ? "refill probe passed" : "refill retry probe failed",
           durationMs: 100,
-          logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
+          logWatermarks: { stdout: stdoutWatermark, stderr: -1, agent: -1 },
           artifacts: [],
         },
       },
@@ -155,19 +160,107 @@ async function uploadAttemptLog(
         schemaVersion: 1,
         requestId: `e2e-refill-log-${randomUUID()}`,
         leaseToken: claim.lease.token,
-        chunks: [
-          {
-            stream: "stdout",
-            sequence: 0,
-            content: "worker-backed log upload\n",
-            recordedAt: new Date().toISOString(),
-          },
-        ],
+        chunks: Array.from({ length: completedLogChunkCount }, (_, sequence) => ({
+          stream: "stdout",
+          sequence,
+          content:
+            `INFO completed-case-log-${sequence}\n` + "worker-backed log upload\n".repeat(80),
+          recordedAt: new Date().toISOString(),
+        })),
       },
     },
   );
   expect(response.status()).toBe(200);
-  expect(await response.json()).toMatchObject({ acknowledgedSequence: { stdout: 0 } });
+  expect(await response.json()).toMatchObject({
+    acknowledgedSequence: { stdout: completedLogChunkCount - 1 },
+  });
+}
+
+async function verifyColdPublicLogDuringUploads(
+  page: Page,
+  batchId: string,
+  identity: RunnerIdentity,
+  liveClaim: ClaimedAssignment,
+): Promise<number> {
+  await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  const shareButton = page.getByRole("button", { name: "公开日志", exact: true });
+  await expect(shareButton).toBeVisible();
+  let stopUploading = false;
+  let uploadedChunks = 0;
+  const uploads = (async () => {
+    for (let sequence = 0; sequence < 256 && !stopUploading; sequence++) {
+      const response = await page.request.post(
+        `/api/v1/run-attempts/${encodeURIComponent(liveClaim.assignment.attemptId)}/logs`,
+        {
+          headers: runnerHeaders(identity),
+          data: {
+            schemaVersion: 1,
+            requestId: `public-log-live-${randomUUID()}`,
+            leaseToken: liveClaim.lease.token,
+            chunks: [
+              {
+                stream: "stdout",
+                sequence,
+                content: `INFO live case ${sequence}\n` + "concurrent log upload\n".repeat(512),
+                recordedAt: new Date().toISOString(),
+              },
+            ],
+          },
+        },
+      );
+      expect(response.status()).toBe(200);
+      uploadedChunks++;
+    }
+  })().then(
+    () => undefined,
+    (cause: unknown) => new Error("Concurrent Runner log upload failed.", { cause }),
+  );
+  const startedAt = performance.now();
+  let publicPage: Page | undefined;
+  try {
+    [publicPage] = await Promise.all([page.waitForEvent("popup"), shareButton.click()]);
+    await expect(publicPage.locator(".share-log-output")).toContainText(
+      `completed-case-log-${completedLogChunkCount - 1}`,
+      { timeout: 10_000 },
+    );
+    const firstOpenDurationMs = performance.now() - startedAt;
+    expect(firstOpenDurationMs).toBeLessThan(10_000);
+    stopUploading = true;
+    const uploadError = await uploads;
+    if (uploadError) throw uploadError;
+    expect(uploadedChunks).toBeGreaterThan(0);
+    const measurementsPath = test.info().outputPath("cold-public-log-timing.json");
+    await writeFile(
+      measurementsPath,
+      JSON.stringify({ firstOpenDurationMs, uploadedChunks, completedLogChunkCount }),
+    );
+    await test.info().attach("cold-public-log-during-uploads", {
+      path: measurementsPath,
+      contentType: "application/json",
+    });
+    for (const theme of ["light", "dark"]) {
+      if (theme === "dark")
+        await publicPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      for (const width of [1024, 1536]) {
+        await publicPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await expectUiIntegrity(publicPage);
+        const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+        if (directory) {
+          await mkdir(directory, { recursive: true });
+          await publicPage.screenshot({
+            path: resolve(directory, `cold-public-log-${theme}-${width}.png`),
+          });
+        }
+      }
+    }
+  } finally {
+    stopUploading = true;
+    const uploadError = await uploads;
+    await publicPage?.close();
+    if (uploadError) throw uploadError;
+  }
+  return uploadedChunks - 1;
 }
 
 test("completion immediately refills free runner slots without waiting for the whole wave", async ({
@@ -314,14 +407,28 @@ test("completion immediately refills free runner slots without waiting for the w
 
   // 第一个用例失败：其第二次 attempt 立即占用释放的槽位；此时首轮另一个
   // attempt 仍在运行，证明立即重试不等待整轮结束，也不等待心跳。
-  const first = await completeAttempt(page, identity, initial[0]!, "e2e-refill-r1", "failed");
+  const first = await completeAttempt(
+    page,
+    identity,
+    initial[0]!,
+    "e2e-refill-r1",
+    "failed",
+    completedLogChunkCount - 1,
+  );
   expect(first.disposition).toBe("accepted");
   expect(first.retryScheduled).toBe(true);
   expect(first.batchId).toBe(batch.id);
   expect(first.batchClosed).toBe(false);
   // 模拟完成响应丢失后的相同上报重放。duplicate 也应安全地补做幂等调度，
   // 不能额外创建 attempt，也不能让已释放的槽位空转。
-  const duplicate = await completeAttempt(page, identity, initial[0]!, "e2e-refill-r1", "failed");
+  const duplicate = await completeAttempt(
+    page,
+    identity,
+    initial[0]!,
+    "e2e-refill-r1",
+    "failed",
+    completedLogChunkCount - 1,
+  );
   expect(duplicate.disposition).toBe("duplicate");
   expect(duplicate.retryScheduled).toBe(true);
   expect(duplicate.batchId).toBe(batch.id);
@@ -331,7 +438,20 @@ test("completion immediately refills free runner slots without waiting for the w
     initial[0]!.assignment.executionSpec.executionRunId,
   );
 
-  const second = await completeAttempt(page, identity, initial[1]!, "e2e-refill-r2");
+  const liveWatermark = await verifyColdPublicLogDuringUploads(
+    page,
+    batch.id,
+    identity,
+    initial[1]!,
+  );
+  const second = await completeAttempt(
+    page,
+    identity,
+    initial[1]!,
+    "e2e-refill-r2",
+    "succeeded",
+    liveWatermark,
+  );
   expect(second.batchClosed).toBe(false);
   const refill1 = await claimOnce(page, identity, 1);
   expect(refill1).toHaveLength(1);

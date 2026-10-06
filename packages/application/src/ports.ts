@@ -1715,6 +1715,17 @@ export type AttemptRerunSource = {
   attemptStatus: RunAttempt["status"];
 };
 
+/** Read-only log facts never require batch counters, recovery credentials or environment rotation. */
+export type AttemptLogSnapshot = {
+  batchId: string;
+  batchSequenceNumber: number;
+  executionRunId: string;
+  displayName: string;
+  className: string;
+  caseType: "testng" | "ddt";
+  dependencyUpdatedAt: string | null;
+};
+
 export type SchedulingSnapshot = {
   batch: RunBatch;
   queuedRuns: ExecutionRun[];
@@ -2092,6 +2103,10 @@ export interface RunBatchRepository {
   getMetadata(batchId: string, projectIds?: readonly string[]): Promise<RunBatchMetadata | null>;
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
   resolveAttemptRerunSource(attemptId: string): Promise<AttemptRerunSource | null>;
+  getAttemptLogSnapshot(
+    batchId: string,
+    executionRunId: string,
+  ): Promise<AttemptLogSnapshot | null>;
   getRerunSnapshot(
     batchId: string,
     selection: { executionRunId?: string; finalFailuresOnly?: boolean },

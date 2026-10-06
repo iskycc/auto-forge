@@ -1,4 +1,25 @@
 import type ExcelJS from "exceljs";
+import { columnCharacterWidthAtCoverage, type ColumnWidthOptions } from "./table-column-width";
+
+export const EXPORT_WIDTH_SAMPLE_ROWS = 100;
+
+/** Fit common values and the header; a bounded sample keeps large exports inexpensive. */
+export function exportColumnWidth(
+  header: string,
+  values: readonly string[],
+  { minimum, maximum }: ColumnWidthOptions,
+): number {
+  const firstLine = (value: string) => value.slice(0, maximum).split("\n", 1)[0]!;
+  const sampleWidth = columnCharacterWidthAtCoverage(
+    values.slice(0, EXPORT_WIDTH_SAMPLE_ROWS).map(firstLine),
+    { coverage: 0.9, minimum: 0, maximum },
+  );
+  const headerWidth = columnCharacterWidthAtCoverage([firstLine(header)], {
+    minimum: 0,
+    maximum,
+  });
+  return Math.min(maximum, Math.max(minimum, headerWidth + 2, sampleWidth + 2));
+}
 
 /** Offline workbook theme: neutral surfaces, restrained semantic colors only for results. */
 export const EXPORT_COLORS = {
@@ -60,7 +81,6 @@ export function styleExportRow(row: ExcelJS.Row, columnCount: number): void {
     cell.alignment = {
       vertical: "middle",
       horizontal: typeof cell.value === "number" ? "right" : "left",
-      indent: 1,
       wrapText: column === columnCount,
     };
     cell.border = {

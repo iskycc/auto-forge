@@ -2,6 +2,7 @@ import { finalFailureRunCondition } from "./final-failure-selection";
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
+  AttemptLogSnapshot,
   ReserveAssignmentsOutcome,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
@@ -42,7 +43,20 @@ import {
   type SchedulingEvent,
   type SchedulingEventType,
 } from "@autoforge/domain";
-import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import {
   retrySqliteLockContention,
@@ -624,6 +638,23 @@ export class SqliteRunBatchRepository
     };
   }
 
+  async getAttemptLogSnapshot(
+    batchId: string,
+    executionRunId: string,
+  ): Promise<AttemptLogSnapshot | null> {
+    const row = this.handle.client
+      .prepare(
+        `SELECT batch.id AS batchId, batch.sequence_number AS batchSequenceNumber,
+                run.id AS executionRunId, run.display_name AS displayName,
+                run.class_name AS className, run.case_type AS caseType,
+                json_extract(batch.adapter_runtime_json, '$.jarBundle.createdAt') AS dependencyUpdatedAt
+         FROM execution_runs run JOIN run_batches batch ON batch.id = run.batch_id
+         WHERE run.id = ? AND batch.id = ?`,
+      )
+      .get(executionRunId, batchId) as AttemptLogSnapshot | undefined;
+    return row ?? null;
+  }
+
   async listCaseLogRerunBatches(
     parentBatchId: string,
     sourceExecutionRunId: string,
@@ -658,8 +689,12 @@ export class SqliteRunBatchRepository
 
   async getMetadata(batchId: string, projectIds?: readonly string[]) {
     if (projectIds?.length === 0) return null;
+    const batchColumns = getTableColumns(runBatches);
+    const metadataColumns = Object.fromEntries(
+      Object.entries(batchColumns).filter(([column]) => column !== "adapterRuntimeJson"),
+    ) as Omit<typeof batchColumns, "adapterRuntimeJson">;
     const rows = this.handle.db
-      .select()
+      .select(metadataColumns)
       .from(runBatches)
       .where(
         and(
@@ -1604,7 +1639,7 @@ export class SqliteRunBatchRepository
   }
 
   private mapBatchMetadataRow(
-    row: typeof runBatches.$inferSelect,
+    row: Omit<typeof runBatches.$inferSelect, "adapterRuntimeJson">,
     selectedRunnerIds: string[],
   ): import("@autoforge/application").RunBatchMetadata {
     const policy = batchPolicy(row.policyJson);

@@ -19,7 +19,9 @@ import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts"
 export const PERMANENT_LOG_ACCESS_EXPIRY = "9999-12-31T23:59:59.999Z";
 
 /** 小页读取并在应用层提前停止，避免单个公开页把超大日志完整载入进程内存。 */
-const LOG_PAGE_LIMIT = 16;
+// The store retains its byte budget; larger row windows reduce repeated DB/worker round trips
+// for small chunks. Remote owners may return their smaller protocol window with a cursor.
+const LOG_PAGE_LIMIT = 128;
 const SHARED_LOG_MAX_BYTES = 512 * 1024;
 
 export type AttemptLogShareTokenPort = {
@@ -88,7 +90,7 @@ export class AttemptLogShareService {
   ): Promise<SharedAttemptLogView | null> {
     const anchorContext = await this.executions.resolveAttemptSchedulingContext(anchorAttemptId);
     if (!anchorContext || anchorContext.batchId !== anchorBatchId) return null;
-    const anchorBatch = await this.batches.getSummary(anchorBatchId);
+    const anchorBatch = await this.batches.getMetadata(anchorBatchId);
     if (!anchorBatch) return null;
     const rootBatchId =
       anchorBatch.kind === "case_log_rerun" ? anchorBatch.parentBatchId : anchorBatch.id;
@@ -97,13 +99,8 @@ export class AttemptLogShareService {
         ? anchorBatch.sourceExecutionRunId
         : anchorContext.executionRunId;
     if (!rootBatchId || !rootExecutionRunId) return null;
-    const rootSnapshot = await this.batches.getRerunSnapshot(rootBatchId, {
-      executionRunId: rootExecutionRunId,
-    });
+    const rootSnapshot = await this.batches.getAttemptLogSnapshot(rootBatchId, rootExecutionRunId);
     if (!rootSnapshot) return null;
-    const batch = rootSnapshot.batch;
-    const run = rootSnapshot.runs.find((candidate) => candidate.id === rootExecutionRunId);
-    if (!run) return null;
     // 生产 Lite/Full 仓储只查当前 ExecutionRun 的 attempts。兼容回退仅供仍使用旧
     // fake 的调用方，不能成为生产大批次的默认路径。
     const roundAttempts = this.batches.listAttemptsForExecutionRun
@@ -157,25 +154,19 @@ export class AttemptLogShareService {
     const selectedSnapshot =
       selected.batchId === rootBatchId
         ? rootSnapshot
-        : await this.batches.getRerunSnapshot(selected.batchId, {
-            executionRunId: attempt.executionRunId,
-          });
+        : await this.batches.getAttemptLogSnapshot(selected.batchId, attempt.executionRunId);
     if (!selectedSnapshot) return null;
-    const selectedRun = selectedSnapshot.runs.find(
-      (candidate) => candidate.id === attempt.executionRunId,
-    );
-    if (!selectedRun) return null;
     const log = await this.readAttemptLogText(attempt.id);
     return {
-      batchId: batch.id,
-      batchSequenceNumber: batch.sequenceNumber,
+      batchId: rootSnapshot.batchId,
+      batchSequenceNumber: rootSnapshot.batchSequenceNumber,
       attemptId: attempt.id,
       attemptNumber: attempt.attemptNumber,
       executionRound: attempt.executionRound ?? attempt.attemptNumber,
-      casePath: selectedRun.className,
-      displayName: selectedRun.displayName,
-      caseType: selectedRun.caseType ?? "testng",
-      dependencyUpdatedAt: selectedSnapshot.adapterRuntime?.jarBundle?.createdAt ?? null,
+      casePath: selectedSnapshot.className,
+      displayName: selectedSnapshot.displayName,
+      caseType: selectedSnapshot.caseType,
+      dependencyUpdatedAt: selectedSnapshot.dependencyUpdatedAt,
       outcome,
       resultCode: attempt.resultCode ?? null,
       summary: outcome === "succeeded" ? null : (attempt.resultSummary ?? null),

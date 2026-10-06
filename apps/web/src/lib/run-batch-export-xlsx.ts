@@ -5,6 +5,8 @@ import type { ExportOutcomeFilter, RunBatchExportTemplate } from "@autoforge/con
 import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
 import ExcelJS from "exceljs";
 import {
+  exportColumnWidth,
+  EXPORT_WIDTH_SAMPLE_ROWS,
   exportWorksheetOptions,
   styleExportHeader,
   styleExportRow,
@@ -17,15 +19,15 @@ import {
  * blocked 新口径下所有导出行都有 attempt（从未执行的用例不导出）。
  */
 
-const EXPORT_HEADERS = [
-  "用例路径",
-  "名称",
-  "执行结果",
-  "错误描述",
-  "执行开始时间",
-  "执行结束时间",
-  "执行耗时(s)",
-  "日志链接",
+const EXPORT_COLUMNS = [
+  { header: "用例路径", minimum: 28, maximum: 52 },
+  { header: "名称", minimum: 18, maximum: 36 },
+  { header: "执行结果", minimum: 10, maximum: 18 },
+  { header: "错误描述", minimum: 24, maximum: 52 },
+  { header: "执行开始时间", minimum: 26, maximum: 26 },
+  { header: "执行结束时间", minimum: 26, maximum: 26 },
+  { header: "执行耗时(s)", minimum: 14, maximum: 16 },
+  { header: "日志链接", minimum: 32, maximum: 48 },
 ] as const;
 
 const FAILURE_ANALYSIS_HEADERS = [
@@ -107,15 +109,12 @@ function buildExecutionResultsSheet(
   const sheet = workbook.addWorksheet("执行结果", exportWorksheetOptions());
   // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
   const includeRound = input.scope === "all";
-  const headers: readonly string[] = includeRound ? ["轮次", ...EXPORT_HEADERS] : EXPORT_HEADERS;
-  sheet.columns = headers.map((header) => ({ header, width: headerWidth(header) }));
-
-  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
-  styleExportHeader(sheet.getRow(1));
-
-  for (const row of input.rows) {
+  const columns = includeRound
+    ? [{ header: "轮次", minimum: 6, maximum: 8 }, ...EXPORT_COLUMNS]
+    : EXPORT_COLUMNS;
+  const cellsFor = (row: RunBatchExportRow): ExcelJS.CellValue[] => {
     const shareLink = row.attemptId ? input.shareLinks.get(row.attemptId) : undefined;
-    const cells: ExcelJS.CellValue[] = [
+    return [
       ...(includeRound ? [row.round] : []),
       row.casePath,
       row.displayName,
@@ -126,8 +125,27 @@ function buildExecutionResultsSheet(
       row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
       shareLink ? { text: shareLink, hyperlink: shareLink } : "",
     ];
-    const exportedRow = sheet.addRow(cells);
-    styleExportRow(exportedRow, headers.length);
+  };
+  const samples = input.rows.slice(0, EXPORT_WIDTH_SAMPLE_ROWS).map(cellsFor);
+  sheet.columns = columns.map((column, index) => ({
+    header: column.header,
+    width: exportColumnWidth(
+      column.header,
+      samples.map((cells) => {
+        const value = cells[index];
+        return typeof value === "object" && value && "hyperlink" in value
+          ? value.text
+          : String(value ?? "");
+      }),
+      column,
+    ),
+  }));
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
+  styleExportHeader(sheet.getRow(1));
+
+  for (const row of input.rows) {
+    const exportedRow = sheet.addRow(cellsFor(row));
+    styleExportRow(exportedRow, columns.length);
     styleExportResult(exportedRow.getCell(includeRound ? 4 : 3), OUTCOME_TONES[row.outcome]);
     exportedRow.getCell(includeRound ? 8 : 7).numFmt = "0.0";
   }
@@ -221,14 +239,6 @@ function issueEvidenceCell(claim: FailureAnalysisClaim): ExcelJS.CellValue {
         : undefined;
   if (!value) return "";
   return /^https?:\/\/[^\s]+$/iu.test(value) ? { text: value, hyperlink: value } : value;
-}
-
-function headerWidth(header: string): number {
-  if (header === "用例路径" || header === "日志链接") return 48;
-  if (header === "错误描述") return 60;
-  if (header === "名称") return 32;
-  if (header === "轮次") return 10;
-  return 20;
 }
 
 function exportFilename(

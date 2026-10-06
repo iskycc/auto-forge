@@ -15,6 +15,39 @@ import type {
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 
+describe("public log rerun authorization context", () => {
+  it.each(["standard", "case_log_rerun"] as const)(
+    "checks the project of a %s attempt without aggregating execution counters",
+    async (kind) => {
+      const batches = {
+        resolveAttemptRerunSource: vi.fn().mockResolvedValue({ batchId: "batch" }),
+        getMetadata: vi.fn(async (batchId: string) =>
+          batchId === "batch"
+            ? { id: "batch", kind, projectId: "project", parentBatchId: "parent" }
+            : { id: "parent", projectId: "project" },
+        ),
+        getSummary: vi.fn(),
+      } as unknown as RunBatchRepository;
+      const service = new RunBatchSchedulingService(
+        batches,
+        {} as CaseSuiteRepository,
+        {} as RunnerRepository,
+        { now: () => new Date(timestamp) },
+        { next: () => "unused" },
+        {
+          maximumCpuUtilizationPercent: 90,
+          maximumMemoryUtilizationPercent: 90,
+          maximumLoadPerCpu: 2,
+        },
+        45,
+      );
+      expect(await service.getAttemptRerunContext("attempt")).toEqual({ projectId: "project" });
+      expect(batches.getSummary).not.toHaveBeenCalled();
+      expect(batches.getMetadata).toHaveBeenCalledTimes(kind === "case_log_rerun" ? 2 : 1);
+    },
+  );
+});
+
 describe("run batch preflight", () => {
   it("returns every structural input problem without touching repositories", async () => {
     const service = preflightService({
