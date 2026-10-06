@@ -89,6 +89,7 @@ const actionsByCategory = {
     "case_suite.create": "创建用例任务",
     "case_suite.update": "修改用例任务",
     "case_suite.copy": "复制用例任务",
+    "case_suite.create_from_failures": "以失败用例创建任务",
     "case_suite.add_cases": "向任务添加用例",
     "case_suite.remove_cases": "批量移除任务用例",
     "case_suite.remove_case": "移除任务用例",

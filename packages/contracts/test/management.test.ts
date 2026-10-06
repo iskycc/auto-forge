@@ -14,9 +14,23 @@ import {
   updateCaseSuiteItemsInputSchema,
   createWebhookConfigurationInputSchema,
   copyCaseSuiteInputSchema,
+  createFailureCaseSuiteInputSchema,
 } from "../src/management";
 
 describe("case suite copy scope", () => {
+  it("accepts only a name for failure task creation; the server owns scope and configuration", () => {
+    expect(createFailureCaseSuiteInputSchema.parse({ name: "  Failures  " })).toEqual({
+      name: "Failures",
+    });
+    for (const input of [
+      { name: " " },
+      { name: "x".repeat(121) },
+      { name: "Failures", caseIds: ["other-case"] },
+      { name: "Failures", policy: { concurrency: 1 } },
+    ]) {
+      expect(createFailureCaseSuiteInputSchema.safeParse(input).success).toBe(false);
+    }
+  });
   it("accepts an explicit configuration-only copy and retains legacy requests", () => {
     expect(copyCaseSuiteInputSchema.parse({ name: "Copy", includeCases: false })).toEqual({
       name: "Copy",

@@ -4383,6 +4383,17 @@ test("execution record actions stay on one line after sharing and resizing saved
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page.reload();
       await expect(failedRow.getByRole("button", { name: "开始分析", exact: true })).toBeVisible();
+      const headers = page.locator(".execution-records-table thead th");
+      const totalIndex = (await headers.allTextContents()).findIndex((label) =>
+        label.includes("用例总数"),
+      );
+      expect(totalIndex).toBeGreaterThan(1);
+      await expect(failedRow.locator("td").nth(totalIndex)).toHaveText("2");
+      const totalHandle = page.getByRole("separator", { name: "调整“用例总数”列宽" });
+      await totalHandle.press("ArrowRight");
+      const totalWidth = await totalHandle.getAttribute("aria-valuenow");
+      await page.reload();
+      await expect(totalHandle).toHaveAttribute("aria-valuenow", totalWidth!);
       await groups.first().scrollIntoViewIfNeeded();
       await waitForUiTransitions(page);
       await captureUi(page, `record-actions-${appearance}`, width, false);

@@ -1,3 +1,14 @@
+import {
+  failureSuiteMemberQuery,
+  failureCopyValidationQuery,
+  assertFailureCopyValidation,
+  type FailureCopyValidation,
+} from "./failure-case-suite-members";
+import {
+  toFailureCaseSuiteSource,
+  failureSuiteRecoveryQuery,
+  type FailureCaseSuiteRecovery,
+} from "./failure-case-suite-source";
 import type { RunnerResourceSample } from "@autoforge/domain";
 import {
   runPostgresTransaction,
@@ -21,6 +32,8 @@ import type {
   CaseSuiteExportPageQuery,
   CaseSuiteExportRow,
   CaseSuiteRepository,
+  FailureCaseSuiteSource,
+  FailureCaseSuiteMember,
   CopyCaseSuiteRecord,
   CreateCaseSuiteRecord,
   CreateSourceComparisonRecord,
@@ -101,6 +114,7 @@ import {
   pgCleanupJobs,
   pgDdtCases,
   pgExecutionRuns,
+  pgRunBatches,
   pgRunners,
   pgRunnerBootstrapUses,
   pgTestMethods,
@@ -2056,6 +2070,77 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     await this.handle.ready;
   }
 
+  async getFailureCopySource(
+    batchId: string,
+    projectIds?: readonly string[],
+  ): Promise<FailureCaseSuiteSource | null> {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const [row] = await this.handle.db
+      .select({
+        suiteId: pgRunBatches.suiteId,
+        projectId: pgRunBatches.projectId,
+        status: pgRunBatches.status,
+        kind: pgRunBatches.batchKind,
+        description: sql<
+          string | null
+        >`${pgCaseSuiteVersions.snapshotJson}::jsonb ->> 'description'`,
+        suitePolicyJson: sql<
+          string | null
+        >`(${pgCaseSuiteVersions.snapshotJson}::jsonb -> 'policy')::text`,
+        batchPolicyJson: pgRunBatches.policyJson,
+        priority: pgRunBatches.priority,
+        retryLimit: pgRunBatches.retryLimit,
+        retryMode: pgRunBatches.retryMode,
+        queueTimeoutMs: pgRunBatches.queueTimeoutMs,
+        claimTimeoutMs: pgRunBatches.claimTimeoutMs,
+        uploadTimeoutMs: pgRunBatches.uploadTimeoutMs,
+      })
+      .from(pgRunBatches)
+      .leftJoin(
+        pgCaseSuiteVersions,
+        and(
+          eq(pgCaseSuiteVersions.suiteId, pgRunBatches.suiteId),
+          eq(pgCaseSuiteVersions.version, pgRunBatches.suiteVersion),
+        ),
+      )
+      .where(
+        and(
+          eq(pgRunBatches.id, batchId),
+          ...(projectIds ? [inArray(pgRunBatches.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1);
+    if (!row) return null;
+    const recoveries = (
+      await this.handle.db.execute<FailureCaseSuiteRecovery>(failureSuiteRecoveryQuery(batchId))
+    ).rows;
+    return toFailureCaseSuiteSource(row, recoveries);
+  }
+
+  async listFinalFailureMemberPage(input: {
+    batchId: string;
+    projectId: string;
+    projectVersionId: string;
+    afterRunId?: string;
+    afterCreatedAt?: string;
+    limit: number;
+  }): Promise<FailureCaseSuiteMember[]> {
+    await this.ready();
+    const result = await this.handle.db.execute<
+      Omit<FailureCaseSuiteMember, "available" | "createdAt"> & {
+        available: number;
+        createdAt: string | Date;
+      }
+    >(failureSuiteMemberQuery(input));
+    const rows = result.rows;
+    return rows.map((row) => ({
+      ...row,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+      available: Boolean(row.available),
+    }));
+  }
+
   async create(record: CreateCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     const [row] = await retryPostgresWrite(() =>
@@ -2698,6 +2783,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      if (input.failureBatchId) {
+        const result = await transaction.execute<FailureCopyValidation>(
+          failureCopyValidationQuery(input),
+        );
+        assertFailureCopyValidation(result.rows[0]!, input);
+      }
       if (input.ifAbsent) {
         await transaction.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.id}, 0))`,

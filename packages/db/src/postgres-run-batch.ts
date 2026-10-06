@@ -1,3 +1,4 @@
+import { finalFailureRunCondition } from "./final-failure-selection";
 import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
@@ -2190,20 +2191,6 @@ function sameRoundConcurrencyTransition(
     current.ruleId === (input.ruleId ?? null) &&
     current.concurrency === input.concurrency
   );
-}
-
-function finalFailureRunCondition(table: typeof pgExecutionRuns) {
-  return sql`COALESCE(
-    (SELECT COALESCE(attempt.outcome, attempt.status)
-       FROM run_attempts attempt
-      WHERE attempt.execution_run_id = ${table.id}
-      ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
-                    THEN 0 ELSE 1 END,
-               attempt.attempt_number DESC
-      LIMIT 1),
-    ${table.terminalOutcome},
-    CASE WHEN ${table.status} IN ('succeeded','failed','cancelled') THEN ${table.status} END
-  ) IN ('failed','timed_out')`;
 }
 
 function isoTimestamp(value: DatabaseTimestamp): string {

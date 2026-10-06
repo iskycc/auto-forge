@@ -30,6 +30,7 @@ export type ExecutionRecordColumnKey =
   | "id"
   | "suite"
   | "status"
+  | "total"
   | "passRate"
   | "passed"
   | "failed"
@@ -74,6 +75,14 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     minWidth: 80,
     maxWidth: 140,
     text: (row) => executionRecordStatusLabel(row),
+  },
+  {
+    key: "total",
+    label: "用例总数",
+    defaultWidth: 104,
+    minWidth: 100,
+    maxWidth: 140,
+    text: (row) => String(row.totalRuns),
   },
   {
     key: "passRate",

@@ -1,4 +1,15 @@
 import {
+  failureSuiteMemberQuery,
+  failureCopyValidationQuery,
+  assertFailureCopyValidation,
+  type FailureCopyValidation,
+} from "./failure-case-suite-members";
+import {
+  toFailureCaseSuiteSource,
+  failureSuiteRecoveryQuery,
+  type FailureCaseSuiteRecovery,
+} from "./failure-case-suite-source";
+import {
   ddtRequirementCategoryIdSql,
   ddtExecutionClassIdSql,
   freezeDdtSrExecutionClasses,
@@ -6,6 +17,8 @@ import {
 import { getTableColumns } from "drizzle-orm";
 import type {
   CaseSuiteRepository,
+  FailureCaseSuiteSource,
+  FailureCaseSuiteMember,
   CaseSuiteExportPageQuery,
   CaseSuiteExportRow,
   CopyCaseSuiteRecord,
@@ -45,6 +58,7 @@ import {
   caseSuites,
   caseSuiteVersions,
   ddtCases,
+  runBatches,
   testMethods,
 } from "./schema";
 
@@ -114,6 +128,67 @@ function toSuite(row: typeof caseSuites.$inferSelect, caseCount: number): CaseSu
 
 export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async getFailureCopySource(
+    batchId: string,
+    projectIds?: readonly string[],
+  ): Promise<FailureCaseSuiteSource | null> {
+    if (projectIds?.length === 0) return null;
+    const row = this.handle.db
+      .select({
+        suiteId: runBatches.suiteId,
+        projectId: runBatches.projectId,
+        status: runBatches.status,
+        kind: runBatches.batchKind,
+        description: sql<
+          string | null
+        >`json_extract(${caseSuiteVersions.snapshotJson}, '$.description')`,
+        suitePolicyJson: sql<
+          string | null
+        >`json_extract(${caseSuiteVersions.snapshotJson}, '$.policy')`,
+        batchPolicyJson: runBatches.policyJson,
+        priority: runBatches.priority,
+        retryLimit: runBatches.retryLimit,
+        retryMode: runBatches.retryMode,
+        queueTimeoutMs: runBatches.queueTimeoutMs,
+        claimTimeoutMs: runBatches.claimTimeoutMs,
+        uploadTimeoutMs: runBatches.uploadTimeoutMs,
+      })
+      .from(runBatches)
+      .leftJoin(
+        caseSuiteVersions,
+        and(
+          eq(caseSuiteVersions.suiteId, runBatches.suiteId),
+          eq(caseSuiteVersions.version, runBatches.suiteVersion),
+        ),
+      )
+      .where(
+        and(
+          eq(runBatches.id, batchId),
+          ...(projectIds ? [inArray(runBatches.projectId, [...projectIds])] : []),
+        ),
+      )
+      .get();
+    if (!row) return null;
+    const recoveries = this.handle.db.all<FailureCaseSuiteRecovery>(
+      failureSuiteRecoveryQuery(batchId),
+    );
+    return toFailureCaseSuiteSource(row, recoveries);
+  }
+
+  async listFinalFailureMemberPage(input: {
+    batchId: string;
+    projectId: string;
+    projectVersionId: string;
+    afterRunId?: string;
+    afterCreatedAt?: string;
+    limit: number;
+  }): Promise<FailureCaseSuiteMember[]> {
+    const rows = this.handle.db.all<
+      Omit<FailureCaseSuiteMember, "available"> & { available: number }
+    >(failureSuiteMemberQuery(input));
+    return rows.map((row) => ({ ...row, available: Boolean(row.available) }));
+  }
 
   async create(record: CreateCaseSuiteRecord): Promise<CaseSuite> {
     const row = await retrySqliteLockContention(() =>
@@ -695,6 +770,12 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
 
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      if (input.failureBatchId) {
+        const validation = this.handle.db.get<FailureCopyValidation>(
+          failureCopyValidationQuery(input),
+        );
+        assertFailureCopyValidation(validation!, input);
+      }
       if (
         input.ifAbsent &&
         this.handle.db

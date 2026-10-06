@@ -385,6 +385,7 @@ export function ExecutionRecordsTable({
                     {executionRecordStatusLabel({ ...row, observedAt })}
                   </Badge>
                 </TableCell>
+                <TableCell className="tabular-nums">{row.totalRuns}</TableCell>
                 <TableCell title={row.statisticsPending ? "统计准备中" : undefined}>
                   {row.statisticsPending ? "—" : `${executionRecordPassRate(row)}%`}
                 </TableCell>

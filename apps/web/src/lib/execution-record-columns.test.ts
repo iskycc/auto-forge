@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  EXECUTION_RECORD_COLUMNS,
   executionRecordColumnWidths,
   executionRecordDurationMs,
   executionRecordStatusLabel,
@@ -29,6 +30,14 @@ function row(index: number, suiteName = "日常回归任务"): ExecutionRecordRo
 }
 
 describe("executionRecordColumnWidths", () => {
+  it("shows the execution case total independently of result statistics and retry rounds", () => {
+    const totalColumn = EXECUTION_RECORD_COLUMNS.find((column) => column.key === "total");
+    expect(totalColumn?.label).toBe("用例总数");
+    expect(totalColumn?.text({ ...row(1), totalRuns: 100_000, currentRound: 3 })).toBe("100000");
+    expect(totalColumn?.text({ ...row(1), totalRuns: 7, statisticsPending: true })).toBe("7");
+    expect(totalColumn?.text({ ...row(1), totalRuns: 0 })).toBe("0");
+  });
+
   it("sizes a column for at least 70 percent of rows without following long outliers", () => {
     const ordinaryRows = Array.from({ length: 8 }, (_, index) => row(index + 1));
     const rowsWithOutliers = [

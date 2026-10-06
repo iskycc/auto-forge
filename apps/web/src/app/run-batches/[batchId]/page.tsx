@@ -58,6 +58,14 @@ export default async function RunBatchDetailsPage({
       <ExecutionBatchDetails
         batch={toExecutionBatchView(overview)}
         retrySuiteId={batch.suiteId}
+        {...(batch.kind !== "case_log_rerun" &&
+        !batch.suiteId.startsWith("single:") &&
+        batch.policy?.projectVersionId &&
+        canAuthorize(() =>
+          services.identityAccess.authorize(identity, "case_suite.manage", batch.projectId),
+        )
+          ? { failureTaskConfiguration: { suiteName: batch.suiteName } }
+          : {})}
         {...((batch.kind ?? "standard") === "standard" &&
         !batch.suiteId.startsWith("single:") &&
         batch.policy?.projectVersionId &&

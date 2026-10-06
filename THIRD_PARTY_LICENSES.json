@@ -291,14 +291,14 @@
     {
       "ecosystem": "npm",
       "name": "@next/env",
-      "version": "16.3.3",
+      "version": "16.3.6",
       "license": "MIT",
       "homepage": "https://github.com/vercel/next.js#readme"
     },
     {
       "ecosystem": "npm",
       "name": "@next/swc-linux-x64-gnu",
-      "version": "16.3.3",
+      "version": "16.3.6",
       "license": "MIT",
       "homepage": "https://github.com/vercel/next.js#readme"
     },
@@ -1467,7 +1467,7 @@
     {
       "ecosystem": "npm",
       "name": "next",
-      "version": "16.3.3",
+      "version": "16.3.6",
       "license": "MIT",
       "homepage": "https://nextjs.org"
     },
@@ -1803,7 +1803,7 @@
     {
       "ecosystem": "npm",
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "license": "BSD-3-Clause",
       "homepage": "https://github.com/7rulnik/source-map-js"
     },

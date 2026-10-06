@@ -491,7 +491,7 @@ function roundStatus(
     (attempt) => attempt.status === "assigned" || attempt.status === "running",
   );
   if (hasActive) return "running";
-  if (isTerminalRoundBatchStatus(batch.status) || round < batch.currentRound) return "completed";
+  if (isTerminalRunBatchStatus(batch.status) || round < batch.currentRound) return "completed";
   if (batch.retryMode === "immediate") {
     if (roundAttempts.length === 0) return "waiting";
     return executed < totalRuns ? "running" : "completed";
@@ -500,7 +500,7 @@ function roundStatus(
   return executed < totalRuns ? "running" : "completed";
 }
 
-function isTerminalRoundBatchStatus(status: RunBatchStatus): boolean {
+export function isTerminalRunBatchStatus(status: RunBatchStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 

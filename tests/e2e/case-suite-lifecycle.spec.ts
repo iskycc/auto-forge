@@ -8,6 +8,7 @@ import {
   acceptSystemDialog,
   browserJson,
   ensureAdministrator,
+  login,
   selectProjectContext,
   uniqueName,
 } from "./support/session";
@@ -394,6 +395,296 @@ test("tasks and execution history follow the selected project version", async ({
     await expectUiIntegrity(page);
     await captureUi(page, `version-scoped-execution-records-${viewport.width}`);
   }
+});
+
+test("terminal execution failures create a reusable task with the execution configuration", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("failure-task");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const classes = ["Failed", "Timeout", "Passed"].map((name) => `example.failuretask.${name}`);
+  await importJar(
+    page,
+    project,
+    `failures-${suffix}.jar`,
+    classes[0]!,
+    ["test"],
+    classes.slice(1).map((className) => ({ className, methodNames: ["test"] })),
+  );
+  const definitions = await Promise.all(
+    classes.map((className) =>
+      findVersionCase(page, project.id, project.versionId, project.stageId, className),
+    ),
+  );
+  const name = `失败范围任务 ${suffix} ${"长名称检查".repeat(8)}`;
+  const suite = await createVersionSuite(
+    page,
+    project.id,
+    project.versionId,
+    name,
+    definitions[0]!.id,
+  );
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: definitions.slice(1).map((entry) => entry.id) },
+      })
+    ).status,
+  ).toBe(200);
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id, {
+    concurrency: 2,
+    retryLimit: 0,
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  const batch = await createTaskRun(page, suite.id);
+  const endpoint = `/api/v1/run-batches/${batch.id}/failure-case-suite`;
+  expect(
+    (await browserJson(page, endpoint, { method: "POST", body: { name: "Too early" } })).status,
+  ).toBe(400);
+  await page.goto(`/run-batches/${batch.id}`);
+  await expect(page.getByRole("button", { name: "以失败用例创建任务", exact: true })).toHaveCount(
+    0,
+  );
+  let completed = 0;
+  while (completed < 3) {
+    const response = await page.request.post(`/api/v1/runner-agents/${runner.id}/claims`, {
+      headers: { authorization: `Bearer ${runner.credential}` },
+      data: {
+        schemaVersion: 1,
+        requestId: `failure-task-${suffix}-${completed}`,
+        availableSlots: 2,
+        waitSeconds: 0,
+        labels: ["linux", "java", "testng"],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+      },
+    });
+    expect(response.status()).toBe(200);
+    const claims = (await response.json()) as {
+      assignments: Array<{
+        assignment: { attemptId: string; executionSpec: { className: string } };
+        lease: { token: string };
+      }>;
+    };
+    expect(claims.assignments.length).toBeGreaterThan(0);
+    for (const claim of claims.assignments) {
+      const className = claim.assignment.executionSpec.className;
+      const status = className.endsWith("Passed")
+        ? "succeeded"
+        : className.endsWith("Timeout")
+          ? "timed_out"
+          : "failed";
+      const result = await page.request.post(
+        `/api/v1/run-attempts/${claim.assignment.attemptId}/complete`,
+        {
+          headers: {
+            authorization: `Bearer ${runner.credential}`,
+            "x-autoforge-runner-id": runner.id,
+          },
+          data: {
+            schemaVersion: 1,
+            completionId: `complete-${claim.assignment.attemptId}`,
+            leaseToken: claim.lease.token,
+            result: {
+              status,
+              resultCode: status === "timed_out" ? "EXECUTION_TIMEOUT" : "TESTNG_RESULT",
+              summary: status,
+              durationMs: 100,
+              logWatermarks: { stdout: -1, stderr: -1, agent: -1 },
+              artifacts: [],
+            },
+          },
+        },
+      );
+      expect(result.status()).toBe(200);
+      completed++;
+    }
+  }
+  await configureTaskExecution(page, suite.id, runner.id, { concurrency: 13 });
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+    await page.reload();
+    const action = page.getByRole("button", { name: "以失败用例创建任务", exact: true });
+    await expect(action).toBeVisible();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.getByRole("region", { name: "批次操作" }).scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      await captureUi(page, `failure-task-actions-${theme}-${width}`);
+      await action.click();
+      const dialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+      await expect(dialog).toContainText("最终失败或超时的 2 个用例");
+      await expect(dialog.getByLabel("任务名称", { exact: true })).not.toHaveValue("");
+      await expect(dialog.getByRole("button", { name: "创建任务", exact: true })).toBeVisible();
+      await expect(
+        dialog.getByRole("button", { name: "创建并立即执行", exact: true }),
+      ).toBeVisible();
+      await expectUiIntegrity(page);
+      await captureUi(page, `failure-task-dialog-${theme}-${width}`);
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      await expect(dialog).toBeHidden();
+    }
+  }
+  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+  await dialog.getByLabel("任务名称", { exact: true }).fill(" ");
+  await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("请填写任务名称");
+  await dialog.getByLabel("任务名称", { exact: true }).fill(`失败新任务 ${suffix}`);
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === endpoint,
+  );
+  await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const created = await createdResponse;
+  expect(created.status()).toBe(201);
+  const copied = (await created.json()) as {
+    id: string;
+    caseCount: number;
+    policy: { concurrency: number };
+  };
+  expect(copied).toMatchObject({ caseCount: 2, policy: { concurrency: 2 } });
+  await expect(page).toHaveURL(new RegExp(`/case-suites/${copied.id}$`));
+  const members = await browserJson<{ items: Array<{ caseDefinition: { id: string } }> }>(
+    page,
+    `/api/v1/case-suites/${copied.id}/members?limit=100`,
+  );
+  expect(members.body.items.map((item) => item.caseDefinition.id).sort()).toEqual(
+    definitions
+      .slice(0, 2)
+      .map((item) => item.id)
+      .sort(),
+  );
+  await expectUiIntegrity(page);
+  await captureUi(page, "failure-task-created-1536");
+
+  const username = uniqueName("failure-task-manager");
+  const password = "TaskManager!Password123";
+  const restrictedUser = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName: username, password, forcePasswordChange: false },
+  });
+  expect(restrictedUser.status).toBe(201);
+  const restrictedRole = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: uniqueName("failure-task-manager-role"),
+      name: "失败任务管理（无执行权限）",
+      scope: "project",
+      permissions: ["project.read", "run.read", "case_suite.read", "case_suite.manage"],
+    },
+  });
+  expect(restrictedRole.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/users/${restrictedUser.body.id}/project-roles`, {
+        method: "POST",
+        body: { projectId: project.id, roleId: restrictedRole.body.id },
+      })
+    ).status,
+  ).toBe(204);
+  const restrictedContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const restrictedPage = await restrictedContext.newPage();
+    await login(restrictedPage, username, password);
+    await restrictedPage.goto(`/run-batches/${batch.id}`);
+    await restrictedPage.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+    const restrictedDialog = restrictedPage.getByRole("dialog", {
+      name: "以失败用例创建任务",
+      exact: true,
+    });
+    await expect(
+      restrictedDialog.getByRole("button", { name: "创建任务", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      restrictedDialog.getByRole("button", { name: "创建并立即执行", exact: true }),
+    ).toBeDisabled();
+    await expect(restrictedDialog).toContainText("没有此项目的执行权限");
+    expect(
+      (
+        await browserJson(restrictedPage, "/api/v1/run-batches", {
+          method: "POST",
+          body: { suiteId: copied.id, delaySeconds: 0 },
+        })
+      ).status,
+    ).toBe(403);
+    await restrictedDialog.getByLabel("任务名称", { exact: true }).fill(`仅创建任务 ${suffix}`);
+    await restrictedDialog.getByRole("button", { name: "创建任务", exact: true }).click();
+    await expect(restrictedPage).toHaveURL(/\/case-suites\/[^/]+$/u);
+  } finally {
+    await restrictedContext.close();
+  }
+
+  await page.goto(`/run-batches/${batch.id}`);
+  expect(
+    (
+      await browserJson(page, `/api/v1/runners/${runner.id}`, {
+        method: "PATCH",
+        body: { state: "disabled" },
+      })
+    ).status,
+  ).toBe(200);
+  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  await dialog.getByLabel("任务名称", { exact: true }).fill(`失败立即执行 ${suffix}`);
+  const immediateCreationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === endpoint,
+  );
+  let creations = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === endpoint) creations++;
+  });
+  await dialog.getByRole("button", { name: "创建并立即执行", exact: true }).click();
+  const immediateCreation = await immediateCreationResponse;
+  expect(immediateCreation.status()).toBe(201);
+  const immediateSuite = (await immediateCreation.json()) as { id: string };
+  await expect(dialog.getByRole("alert")).toContainText("任务已创建，但立即执行失败");
+  await expect(dialog.getByLabel("任务名称", { exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "查看任务", exact: true })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "重试执行", exact: true })).toBeEnabled();
+  await expectUiIntegrity(page);
+  await captureUi(page, "failure-task-execution-blocked-1536");
+  expect(
+    (
+      await browserJson(page, `/api/v1/runners/${runner.id}`, {
+        method: "PATCH",
+        body: { state: "active" },
+      })
+    ).status,
+  ).toBe(200);
+  const immediateExecutionResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/run-batches",
+  );
+  await dialog.getByRole("button", { name: "重试执行", exact: true }).click();
+  const immediateExecution = await immediateExecutionResponse;
+  expect(immediateExecution.status()).toBe(201);
+  expect(immediateExecution.request().postDataJSON()).toEqual({
+    suiteId: immediateSuite.id,
+    delaySeconds: 0,
+  });
+  const immediateBatch = (await immediateExecution.json()) as {
+    id: string;
+    suiteId: string;
+    totalRuns: number;
+    policy: { concurrency: number };
+  };
+  expect(immediateBatch).toMatchObject({
+    suiteId: immediateSuite.id,
+    totalRuns: 2,
+    policy: { concurrency: 2 },
+  });
+  expect(creations).toBe(1);
+  await expect(page).toHaveURL(new RegExp(`/run-batches/${immediateBatch.id}$`));
+  await expectUiIntegrity(page);
+  await captureUi(page, "failure-task-executed-1536");
 });
 
 async function captureUi(page: Page, name: string): Promise<void> {
@@ -1126,7 +1417,10 @@ async function createVersionSuite(
   return suite.body;
 }
 
-async function registerRunner(page: Page, suffix: string): Promise<{ id: string; name: string }> {
+async function registerRunner(
+  page: Page,
+  suffix: string,
+): Promise<{ id: string; name: string; credential: string }> {
   const name = `Lifecycle runner ${suffix}`;
   const capabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
   const registration = await page.request.post("/api/v1/runner-agents/register", {
@@ -1169,7 +1463,7 @@ async function registerRunner(page: Page, suffix: string): Promise<{ id: string;
     },
   );
   expect(heartbeat.status()).toBe(200);
-  return { id: identity.runnerId, name };
+  return { id: identity.runnerId, name, credential: identity.credential };
 }
 
 async function createProject(

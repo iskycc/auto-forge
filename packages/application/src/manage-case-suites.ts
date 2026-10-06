@@ -1,5 +1,6 @@
 import type {
   CopyCaseSuiteInput,
+  CreateFailureCaseSuiteInput,
   CreateCaseSuiteInput,
   UpdateCaseSuiteInput,
 } from "@autoforge/contracts";
@@ -8,6 +9,7 @@ import {
   DomainError,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
+  isTerminalRunBatchStatus,
   type CaseSuiteExecutionPolicy,
   type RetryConcurrencyRule,
   type RoundRecoveryRule,
@@ -235,6 +237,91 @@ export class CaseSuiteService {
         ? { roundRecoveryCredentials: copiedRecovery.credentials }
         : {}),
     });
+  }
+
+  async createFromFinalFailures(
+    batchId: string,
+    input: CreateFailureCaseSuiteInput,
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const source = await this.suites.getFailureCopySource(batchId, projectIds);
+    if (!source) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    if (!isTerminalRunBatchStatus(source.status)) {
+      throw new DomainError("RUN_BATCH_NOT_TERMINAL", "执行任务完全结束后才能以失败用例创建任务。");
+    }
+    const projectVersionId = source.policy?.projectVersionId;
+    if (
+      !source.policy ||
+      !projectVersionId ||
+      source.kind === "case_log_rerun" ||
+      source.suiteId.startsWith("single:")
+    ) {
+      throw new DomainError("RUN_RERUN_SOURCE_INVALID", "本次执行没有可复制的任务配置快照。");
+    }
+    await this.resolveActiveProjectVersion(source.projectId, projectVersionId);
+    const selectedMembers = await this.finalFailureMembers(
+      batchId,
+      source.projectId,
+      projectVersionId,
+    );
+    const suiteId = this.ids.next();
+    const recovery = this.copyRoundRecoveryRules(
+      source.suiteId,
+      suiteId,
+      source.policy.roundRecoveryRules,
+      source.roundRecoveryCredentials,
+    );
+    return this.suites.copySuite({
+      id: suiteId,
+      failureBatchId: batchId,
+      projectId: source.projectId,
+      name: input.name.trim(),
+      ...(source.description ? { description: source.description } : {}),
+      policy: mergeCaseSuiteExecutionPolicy(source.policy, { roundRecoveryRules: recovery.rules }),
+      items: [...selectedMembers.testng].map((caseDefinitionId) => ({
+        id: this.ids.next(),
+        caseDefinitionId,
+      })),
+      ddtItems: [...selectedMembers.ddt].map((ddtCaseId) => ({ id: this.ids.next(), ddtCaseId })),
+      versionId: this.ids.next(),
+      ...(actorId ? { actorId } : {}),
+      createdAt: this.clock.now().toISOString(),
+      roundRecoveryCredentials: recovery.credentials,
+    });
+  }
+
+  private async finalFailureMembers(batchId: string, projectId: string, projectVersionId: string) {
+    const selected = { testng: new Set<string>(), ddt: new Set<string>() };
+    let afterRunId: string | undefined;
+    let afterCreatedAt: string | undefined;
+    const limit = 500;
+    while (true) {
+      const members = await this.suites.listFinalFailureMemberPage({
+        batchId,
+        projectId,
+        projectVersionId,
+        limit,
+        ...(afterRunId ? { afterRunId } : {}),
+        ...(afterCreatedAt ? { afterCreatedAt } : {}),
+      });
+      for (const member of members) {
+        if (!member.available) {
+          throw new DomainError(
+            "CASE_SUITE_FAILURE_MEMBER_UNAVAILABLE",
+            "失败用例中包含已删除、已回收或不属于原项目版本的用例，无法完整创建任务。",
+          );
+        }
+        selected[member.caseType].add(member.caseId);
+      }
+      if (members.length < limit) break;
+      afterRunId = members.at(-1)!.runId;
+      afterCreatedAt = members.at(-1)!.createdAt;
+    }
+    if (selected.testng.size + selected.ddt.size === 0) {
+      throw new DomainError("RUN_BATCH_NO_FINAL_FAILURES", "本次执行没有最终失败或超时的用例。");
+    }
+    return selected;
   }
 
   async inheritConfiguration(input: {

@@ -10,12 +10,13 @@ import {
 } from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
-import { OctagonX, RotateCcw } from "lucide-react";
+import { ListPlus, OctagonX, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { RerunFinalFailuresDialog } from "@/components/rerun-final-failures-dialog";
+import { CreateFailureCaseSuiteDialog } from "@/components/create-failure-case-suite-dialog";
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { useConfirm } from "@/components/ui-feedback";
@@ -49,6 +50,7 @@ export function ExecutionBatchDetails({
   retrySuiteId,
   analysisScope,
   rerunConfiguration,
+  failureTaskConfiguration,
   canCancelRuns,
   canCreateRuns,
   canRetryRuns,
@@ -66,6 +68,7 @@ export function ExecutionBatchDetails({
     defaultConcurrency: number;
     hasRetryConcurrencyRules: boolean;
   };
+  failureTaskConfiguration?: { suiteName: string };
   canCancelRuns: boolean;
   canCreateRuns: boolean;
   canRetryRuns: boolean;
@@ -89,6 +92,7 @@ export function ExecutionBatchDetails({
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
+  const [failureTaskDialogOpen, setFailureTaskDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
   const statisticsState = batch.statistics?.state;
   const statisticsPending = !!batch.statistics && !batch.statistics.generation;
@@ -98,6 +102,10 @@ export function ExecutionBatchDetails({
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
   const canRerunFinalFailures =
     canRetryRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
+  const canCreateFailureTask =
+    failureTaskConfiguration !== undefined &&
+    isTerminalRunBatch(batch.status) &&
+    finalFailureCount > 0;
 
   const refreshBatch = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
@@ -277,7 +285,8 @@ export function ExecutionBatchDetails({
       {(analysisScope ||
         canCancelRuns ||
         (canCreateRuns && retrySuiteId) ||
-        canRerunFinalFailures) && (
+        canRerunFinalFailures ||
+        canCreateFailureTask) && (
         <section
           className={cn(
             "execution-detail-actions",
@@ -352,6 +361,17 @@ export function ExecutionBatchDetails({
                 重新执行最后一轮
               </Button>
             ) : null}
+            {canCreateFailureTask ? (
+              <Button
+                variant="secondary"
+                disabled={actionPending !== undefined}
+                onClick={() => setFailureTaskDialogOpen(true)}
+                type="button"
+              >
+                <ListPlus size={16} />
+                以失败用例创建任务
+              </Button>
+            ) : null}
           </div>
           {actionError ? (
             <Notice
@@ -385,6 +405,19 @@ export function ExecutionBatchDetails({
           hasRoundRecovery={batch.roundRecoveries.length > 0}
           onClose={() => setFinalFailuresDialogOpen(false)}
           onCreated={(createdBatchId) =>
+            router.push(`/run-batches/${encodeURIComponent(createdBatchId)}`)
+          }
+        />
+      ) : null}
+      {failureTaskDialogOpen && failureTaskConfiguration ? (
+        <CreateFailureCaseSuiteDialog
+          batchId={batch.id}
+          suiteName={failureTaskConfiguration.suiteName}
+          failedCount={finalFailureCount}
+          canCreateRuns={canCreateRuns}
+          onClose={() => setFailureTaskDialogOpen(false)}
+          onCreated={(suiteId) => router.push(`/case-suites/${encodeURIComponent(suiteId)}`)}
+          onStarted={(createdBatchId) =>
             router.push(`/run-batches/${encodeURIComponent(createdBatchId)}`)
           }
         />
@@ -452,6 +485,6 @@ const executionBatchDetailsStyles = {
   "batch-metrics-band":
     "grid grid-cols-6 border border-solid border-border rounded-xl bg-card shadow-xs overflow-hidden max-[1101px]:grid-cols-3",
   "execution-detail-actions":
-    "flex items-center justify-between gap-5 border border-solid border-border rounded-xl py-4 px-4.5 bg-card [&_>_div:first-child]:grid [&_>_div:first-child]:gap-1 [&_>_div:first-child_>_span]:text-muted-foreground [&_>_div:first-child_>_span]:text-xs [&_.button-row]:[flex:0_0_auto] [&_.button-row]:mt-0 [&_.form-error]:m-0 max-[1181px]:items-start max-[1181px]:flex-col",
+    "flex flex-wrap items-center justify-between gap-5 border border-solid border-border rounded-xl py-4 px-4.5 bg-card [&_>_div:first-child]:grid [&_>_div:first-child]:min-w-0 [&_>_div:first-child]:gap-1 [&_>_div:first-child_>_span]:text-muted-foreground [&_>_div:first-child_>_span]:text-xs [&_.button-row]:min-w-0 [&_.button-row]:max-w-full [&_.button-row]:mt-0 [&_.button-row_.button]:shrink-0 [&_.form-error]:m-0 max-[1181px]:items-start max-[1181px]:flex-col",
   "execution-detail-layout": "grid grid-cols-[minmax(0,_1fr)] gap-6",
 } as const;

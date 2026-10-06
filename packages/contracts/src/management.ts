@@ -341,6 +341,10 @@ export const copyCaseSuiteInputSchema = z.object({
   includeCases: z.boolean().optional(),
 });
 
+export const createFailureCaseSuiteInputSchema = z
+  .object({ name: z.string().trim().min(1).max(120) })
+  .strict();
+
 export const caseSourceComparisonEntrySchema = z.object({
   className: z.string().min(1),
   caseDefinitionId: z.string().min(1).optional(),
@@ -677,6 +681,7 @@ export type InspectRoundRecoveryConfigurationInput = z.infer<
 >;
 export type JenkinsJobInspection = z.infer<typeof jenkinsJobInspectionSchema>;
 export type CopyCaseSuiteInput = z.infer<typeof copyCaseSuiteInputSchema>;
+export type CreateFailureCaseSuiteInput = z.infer<typeof createFailureCaseSuiteInputSchema>;
 export type CaseSourceComparisonResult = z.infer<typeof caseSourceComparisonSchema>;
 export type ConfirmCaseSourceSyncInput = z.infer<typeof confirmCaseSourceSyncInputSchema>;
 export type UpdateCaseSourceLifecycleInput = z.infer<typeof updateCaseSourceLifecycleInputSchema>;

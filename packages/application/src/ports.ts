@@ -1276,6 +1276,18 @@ export type CaseSuiteMemberPageQuery = {
 };
 
 export interface CaseSuiteRepository {
+  getFailureCopySource(
+    batchId: string,
+    projectIds?: readonly string[],
+  ): Promise<FailureCaseSuiteSource | null>;
+  listFinalFailureMemberPage(input: {
+    batchId: string;
+    projectId: string;
+    projectVersionId: string;
+    afterRunId?: string;
+    afterCreatedAt?: string;
+    limit: number;
+  }): Promise<FailureCaseSuiteMember[]>;
   listMemberPage(
     input: CaseSuiteMemberPageQuery,
   ): Promise<Pick<CaseSuiteDetails, "items" | "ddtItems"> | null>;
@@ -1367,6 +1379,8 @@ export type UpdateCaseSuiteRecord = {
 
 export type CopyCaseSuiteRecord = {
   id: string;
+  /** Recheck the terminal source and member availability in the copy transaction. */
+  failureBatchId?: string;
   /** Initialization resumes the same disabled task without replacing edited configuration. */
   ifAbsent?: boolean;
   enabled?: boolean;
@@ -1381,6 +1395,24 @@ export type CopyCaseSuiteRecord = {
   actorId?: string;
   createdAt: string;
   roundRecoveryCredentials?: Record<string, string>;
+};
+
+export type FailureCaseSuiteSource = {
+  suiteId: string;
+  projectId: string;
+  status: RunBatch["status"];
+  kind: RunBatch["kind"];
+  description?: string;
+  policy?: CaseSuiteExecutionPolicy;
+  roundRecoveryCredentials: Record<string, string>;
+};
+
+export type FailureCaseSuiteMember = {
+  runId: string;
+  createdAt: string;
+  caseId: string;
+  caseType: "testng" | "ddt";
+  available: boolean;
 };
 
 export type RegisterRunnerRecord = {
