@@ -560,8 +560,8 @@ jobs:
   system-acceptance:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    # Governance takes about six minutes of browser checks plus source build,
-    # infrastructure setup and cleanup; the whole job needs bounded headroom.
+    # Asset and governance browser checks take about six minutes, in addition to
+    # source build, infrastructure setup and cleanup; allow bounded headroom.
     timeout-minutes: ${{ matrix.timeout_minutes || 8 }}
     strategy:
       fail-fast: false
@@ -575,6 +575,7 @@ jobs:
             command: bash scripts/quality/test-full-business-recovery.sh runtime-recovery
           - name: Full · asset lifecycle
             command: bash scripts/quality/test-full-business-recovery.sh browser-assets
+            timeout_minutes: 12
           - name: Full distributed deployment
             command: pnpm test:distributed
           - name: Full · governance
