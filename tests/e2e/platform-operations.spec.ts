@@ -16,7 +16,8 @@ import {
 import { systemDiagnosticSchema } from "@autoforge/contracts";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
-const SQLITE_FIXTURE_BATCH_ID = "e2e-storage-batch";
+const SQLITE_FIXTURE_BATCH_ID = "00000000-0000-7000-8000-000000918273";
+const SQLITE_FIXTURE_BATCH_AGE_MS = 90 * 24 * 60 * 60 * 1_000;
 const SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER = 918_273;
 const STORAGE_JDK_ASSET_ID = "e2e-storage-jdk-delete";
 const STORAGE_JDK_FILE_NAME = "e2e-removable-jdk.zip";
@@ -416,9 +417,33 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText("保留策略已更新，请重新预览后清理。")).toBeVisible();
 
   await logRetention.getByRole("button", { name: "影响预览" }).click();
+  if (diagnosticBody.mode === "lite" && liteDataDirectory) {
+    await expect(logRetention).toContainText(/当前将影响 [1-9]\d* 条/);
+  }
   await logRetention.getByRole("button", { name: "执行清理" }).click();
-  await acceptSystemDialog(page, /清理/, "确认清理");
+  const [cleanupResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/settings/retention/log/execute",
+    ),
+    acceptSystemDialog(page, /清理/, "确认清理"),
+  ]);
+  expect(cleanupResponse.status()).toBe(200);
   await expect(page.getByText(/清理已完成：删除 \d+ 条记录/)).toBeVisible();
+  if (diagnosticBody.mode === "lite" && liteDataDirectory) {
+    expect(await cleanupResponse.json()).toMatchObject({
+      category: "log",
+      deletedRecords: expect.any(Number),
+    });
+    for (const suffix of ["", "-wal", "-shm"]) {
+      expect(
+        existsSync(
+          resolve(liteDataDirectory, "attempt-logs", `${SQLITE_FIXTURE_BATCH_ID}.sqlite${suffix}`),
+        ),
+      ).toBe(false);
+    }
+  }
   const cleanupAudit = await page.request.get(
     "/api/v1/audit-events?action=retention.execute&limit=10",
   );
@@ -458,6 +483,7 @@ function insertLiteDeadLetterFixture(dataDirectory: string): void {
 }
 
 function insertSqliteStorageFixture(dataDirectory: string): void {
+  const expiredBatchAt = new Date(Date.now() - SQLITE_FIXTURE_BATCH_AGE_MS).toISOString();
   const mainPath = resolve(dataDirectory, "attempt-logs", `${SQLITE_FIXTURE_BATCH_ID}.sqlite`);
   const files = [
     { path: mainPath, bytes: 11, modifiedAt: "2026-09-01T00:00:00.000Z" },
@@ -515,8 +541,8 @@ function insertSqliteStorageFixture(dataDirectory: string): void {
       .run(
         SQLITE_FIXTURE_BATCH_ID,
         SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER,
-        "2026-09-01T02:30:00.000Z",
-        "2026-09-01T02:30:00.000Z",
+        expiredBatchAt,
+        expiredBatchAt,
       );
     const insert = database.prepare(
       `INSERT INTO project_runtime_assets
