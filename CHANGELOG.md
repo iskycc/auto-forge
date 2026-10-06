@@ -25,8 +25,13 @@ and known limitations.
 - SQLite 新增 `0075_case_suite_pins.sql`，PostgreSQL 新增 `0073_case_suite_pins.sql`，以用户与任务的联合主键保存个人偏好；升级后历史任务默认不置顶，不改写任务版本、修订号或执行快照。无新增配置、依赖或 Runner/Adapter 协议变更。恢复流程沿用完整备份恢复，详见[任务个人置顶](./docs/architecture/case-suite-pins.md)。
 - 执行异常诊断读取现有执行、尝试与轮次恢复记录，无需额外数据库迁移、配置或 Runner 升级；不会自行改写历史批次状态。
 
+### Security
+
+- 将 Next.js 的传递依赖 `sharp` 从 0.35.4 精确升级到 0.35.5，更新内置 libvips/librsvg、锁文件和离线许可证清单，修复 [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w) 报告的高危漏洞；不跨依赖主版本，离线镜像继续包含对应平台的本地二进制。
+
 ### Validation
 
+- 安全依赖更新后，`pnpm audit --prod --audit-level high`、许可证与格式检查、Web 生产构建通过；实际加载 `sharp 0.35.5` 与 `librsvg 2.63.2` 完成 SVG 解码、缩放和 PNG 输出检查。
 - 异常诊断和轮次标记复核通过 181 项相关单元检查、27 项真实 SQLite/PostgreSQL 轻量集成检查及 6 项 Lite Playwright 场景，覆盖正常/异常判定、历史故障、去重、游标、缺失原因码、分页失败重试、只读及跨项目权限、匿名分享、轮次选择、四阶段超时/取消/幂等、失败用例创建任务和原表格操作布局。异常诊断集成检查加入 Full 适配器测试入口。扩展检查中的 PostgreSQL 十万失败用例复制任务压测超过 60 秒，未计入通过项；该业务路径未被这两次修改改动，完整压力及 Full 业务验收仍需 CI 确认。详见[复核记录](./docs/architecture/execution-exceptions-validation.md)。
 - 已实际查看悬浮提示、异常弹窗、轮次选中、恢复时间线、执行表格和分享页的 1024px、1536px 截图；主要异常及轮次页面覆盖 1024×768、1536×960 深浅色主题，未发现新增溢出或变形。`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、Web 生产构建与 `pnpm test:e2e:matrix` 通过。本次未重跑 Full 整套服务、真实 Go Runner 或离线发布物验收，也未访问用户内网的具体批次；不修改执行协议和调度写入规则。
 - 针对性 Vitest 检查共 51 项单元测试与 22 项 SQLite/PostgreSQL 集成测试通过，覆盖自然排序、严格请求校验、权限范围、个人隔离、列表窗口外旧任务置顶、幂等取消、执行配置不变，以及新建数据库、上一 schema 升级和迁移失败回滚。
