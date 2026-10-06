@@ -21,6 +21,7 @@ import {
   freezeDdtSrExecutionClasses,
 } from "./ddt-execution-sql";
 import { getTableColumns } from "drizzle-orm";
+import { caseSuitePinPriority } from "./case-suite-pins-query";
 import type {
   CaseCatalogRepository,
   CaseActivity,
@@ -109,6 +110,7 @@ import {
   pgCaseSuiteItems,
   pgCaseSuiteRoundRecoveryCredentials,
   pgCaseSuites,
+  pgCaseSuitePins,
   pgCaseSuiteVersions,
   pgCaseVersions,
   pgCleanupJobs,
@@ -2171,6 +2173,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     projectIds?: readonly string[],
     projectVersionId?: string,
     page?: { afterId?: string },
+    pinnedByUserId?: string,
   ): Promise<CaseSuite[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
@@ -2188,7 +2191,13 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
             : []),
         ),
       )
-      .orderBy(page ? asc(pgCaseSuites.id) : desc(pgCaseSuites.updatedAt))
+      .orderBy(
+        ...(!page && pinnedByUserId
+          ? [desc(caseSuitePinPriority(pinnedByUserId, pgCaseSuites.id))]
+          : []),
+        page ? asc(pgCaseSuites.id) : desc(pgCaseSuites.updatedAt),
+        asc(pgCaseSuites.id),
+      )
       .limit(limit);
     if (!rows.length) return [];
     const suiteIds = rows.map((row) => row.id);
@@ -2209,6 +2218,41 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       countBySuite.set(row.suiteId, (countBySuite.get(row.suiteId) ?? 0) + row.value);
     }
     return rows.map((row) => toSuite(row, countBySuite.get(row.id) ?? 0));
+  }
+
+  async listPinnedSuiteIds(userId: string, suiteIds: readonly string[]): Promise<string[]> {
+    await this.ready();
+    if (!suiteIds.length) return [];
+    const rows = await this.handle.db
+      .select({ suiteId: pgCaseSuitePins.suiteId })
+      .from(pgCaseSuitePins)
+      .where(
+        and(eq(pgCaseSuitePins.userId, userId), inArray(pgCaseSuitePins.suiteId, [...suiteIds])),
+      );
+    return rows.map((row) => row.suiteId);
+  }
+
+  async setPinned(input: {
+    userId: string;
+    suiteId: string;
+    pinned: boolean;
+    createdAt: string;
+  }): Promise<void> {
+    await this.ready();
+    await retryPostgresWrite(async () => {
+      if (input.pinned) {
+        await this.handle.db
+          .insert(pgCaseSuitePins)
+          .values({ userId: input.userId, suiteId: input.suiteId, createdAt: input.createdAt })
+          .onConflictDoNothing();
+        return;
+      }
+      await this.handle.db
+        .delete(pgCaseSuitePins)
+        .where(
+          and(eq(pgCaseSuitePins.userId, input.userId), eq(pgCaseSuitePins.suiteId, input.suiteId)),
+        );
+    });
   }
 
   async getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null> {

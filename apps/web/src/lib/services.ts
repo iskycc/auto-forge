@@ -10,7 +10,11 @@ import { mkdir } from "node:fs/promises";
 import { isolatedAttemptLogs } from "./isolated-attempt-logs";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { publicPlatformStatisticsSchema } from "@autoforge/contracts";
-import { readBatchPage, readExecutionOverview } from "@autoforge/application";
+import {
+  readBatchPage,
+  readExecutionOverview,
+  readExecutionExceptions,
+} from "@autoforge/application";
 import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -921,6 +925,8 @@ async function createPlatformServices() {
       readBatchPage(batches, readModels, input),
     executionOverview: (batchId: string, projectIds?: readonly string[]) =>
       readExecutionOverview(batches, readModels, batchId, projectIds),
+    executionExceptions: (input: Parameters<typeof readExecutionExceptions>[1]) =>
+      readExecutionExceptions(batches, input),
     runners,
     identities,
     executions,

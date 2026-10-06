@@ -1044,6 +1044,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await expect(recoveryRow).toContainText("Jenkins 流水线 2 个 · 完成 2 · 失败 0");
     await expect(recoveryRow).toContainText("恢复完成");
     await recoveryRow.getByRole("button", { name: "环境恢复", exact: true }).click();
+    await expect(
+      recoveryRow.getByRole("button", { name: "环境恢复", exact: true }),
+    ).toHaveAttribute("aria-current", "true");
+    await expect(page.locator(".execution-round-table button[aria-pressed=true]")).toHaveCount(1);
+    await expect(page.getByText("当前查看：环境恢复 · 第 1 轮后", { exact: true })).toBeVisible();
     const recoveryPanel = page.getByRole("region", { name: "环境恢复详情：第 1 轮后" });
     await expect(recoveryPanel.locator(".recovery-step-card")).toHaveCount(2);
     await expect(recoveryPanel).toContainText("reset-app");

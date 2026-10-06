@@ -52,3 +52,4 @@ export * from "./search-ddt-values";
 export * from "./inherit-ddt-cases";
 export * from "./initialize-project-version";
 export * from "./ddt-change-requests";
+export * from "./read-execution-exceptions";

@@ -16,6 +16,18 @@ export type RoundCaseRowModel = {
   round: number;
 };
 
+/** A control-plane failure can finish a run before an attempt or log exists. */
+export function unstartedRunFailure(
+  row: RoundCaseRowModel,
+): { label: string; reasonCode: string } | null {
+  if (row.attempt || row.run.status !== "failed" || row.round !== (row.run.executionRound ?? 1))
+    return null;
+  const reasonCode = row.run.terminalReasonCode?.trim()
+    ? row.run.terminalReasonCode
+    : "UNKNOWN_RESULT";
+  return { label: reasonCode === "QUEUE_TIMEOUT" ? "排队超时" : "执行受阻", reasonCode };
+}
+
 /**
  * 组装轮次用例表的行。
  *

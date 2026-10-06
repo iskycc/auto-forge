@@ -18,7 +18,7 @@ import { ArrowRight, ChevronDown, Download, History, Layers3 } from "lucide-reac
 import Link from "next/link";
 import { useId, useState } from "react";
 
-import { Button } from "@/components/ui";
+import { Button, Input } from "@/components/ui";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { CaseSuiteRecentExecutions } from "./case-suite-recent-executions";
 
@@ -31,6 +31,9 @@ export function CaseSuiteCard({
   exporting,
   exportDisabled,
   onExport,
+  pinned,
+  pinning,
+  onPinnedChange,
 }: {
   suite: CaseSuite;
   statistics?: CaseSuiteExecutionStatistics | undefined;
@@ -38,6 +41,9 @@ export function CaseSuiteCard({
   exporting: boolean;
   exportDisabled: boolean;
   onExport: () => void;
+  pinned: boolean;
+  pinning: boolean;
+  onPinnedChange: (pinned: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const historyId = useId();
@@ -146,6 +152,16 @@ export function CaseSuiteCard({
       )}
 
       <footer className={cn("suite-card-actions", caseSuiteCardStyles["suite-card-actions"])}>
+        <label className={cn(uiPatterns["checkbox-field"], "whitespace-nowrap")}>
+          <Input
+            type="checkbox"
+            aria-label={`置顶 ${suite.name}`}
+            checked={pinned}
+            disabled={pinning}
+            onChange={(event) => onPinnedChange(event.target.checked)}
+          />
+          置顶
+        </label>
         <Button
           aria-controls={historyId}
           aria-expanded={expanded}

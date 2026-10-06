@@ -32,9 +32,14 @@ export default async function CaseSuitesPage() {
   );
   const structure = await services.projectStructures.list(activeProjectId);
   const hierarchy = await selectedProjectHierarchy(structure);
-  const suites = hierarchy.projectVersionId
-    ? await services.caseSuites.list(200, effectiveProjectIds, hierarchy.projectVersionId)
-    : [];
+  const { items: suites, pinnedSuiteIds } = hierarchy.projectVersionId
+    ? await services.caseSuites.listForUser(
+        identity.user.id,
+        200,
+        effectiveProjectIds,
+        hierarchy.projectVersionId,
+      )
+    : { items: [], pinnedSuiteIds: [] };
   const selectedVersion = structure.versions.find(
     (version) => version.id === hierarchy.projectVersionId,
   );
@@ -75,6 +80,7 @@ export default async function CaseSuitesPage() {
         canReadExecutions={canReadExecutions}
         {...(activitySummary ? { activitySummary } : {})}
         initialSuites={suites}
+        initialPinnedSuiteIds={pinnedSuiteIds}
         projectId={activeProjectId}
         {...(hierarchy.projectVersionId
           ? { selectedProjectVersionId: hierarchy.projectVersionId }

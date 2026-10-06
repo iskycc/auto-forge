@@ -13,10 +13,10 @@ import { Button, Input, Select, Textarea } from "@/components/ui";
 import { ActionDialog } from "@/components/action-dialog";
 
 import { apiErrorSchema, type CaseSuiteActivitySummary } from "@autoforge/contracts";
-import type { CaseSuite } from "@autoforge/domain";
+import { orderCaseSuitesByPins, type CaseSuite } from "@autoforge/domain";
 import { Copy, Layers3, Plus, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 
 import { CaseSuiteCard } from "./case-suite-card";
 import { parseExportFilename } from "@/lib/run-batch-export";
@@ -31,6 +31,7 @@ export function CaseSuiteManager({
   canReadExecutions,
   activitySummary,
   initialSuites,
+  initialPinnedSuiteIds,
   projectId: initialProjectId,
   selectedProjectVersionId,
   selectedProjectVersionName,
@@ -40,17 +41,34 @@ export function CaseSuiteManager({
   canReadExecutions: boolean;
   activitySummary?: CaseSuiteActivitySummary;
   initialSuites: CaseSuite[];
+  initialPinnedSuiteIds: string[];
   projectId?: string | undefined;
   selectedProjectVersionId?: string | undefined;
   selectedProjectVersionName?: string | undefined;
 }) {
   const router = useRouter();
   const [createdSuites, setCreatedSuites] = useState<CaseSuite[]>([]);
+  const [pinning, startPinChange] = useTransition();
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinnedSuiteIds, changeOptimisticPin] = useOptimistic(
+    initialPinnedSuiteIds,
+    (current: string[], change: { suiteId: string; pinned: boolean }) => {
+      const ids = new Set(current);
+      if (change.pinned) ids.add(change.suiteId);
+      else ids.delete(change.suiteId);
+      return [...ids];
+    },
+  );
   const initialSuiteIds = new Set(initialSuites.map((suite) => suite.id));
-  const suites = [
+  const pinnedIds = new Set(pinnedSuiteIds);
+  const suitesByUpdatedAt = [
     ...createdSuites.filter((suite) => !initialSuiteIds.has(suite.id)),
     ...initialSuites,
-  ];
+  ].sort(
+    (left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
+  );
+  const suites = orderCaseSuitesByPins(suitesByUpdatedAt, pinnedIds);
   const statisticsBySuite = new Map(activitySummary?.items.map((entry) => [entry.suiteId, entry]));
   const [refreshing, startRefresh] = useTransition();
   const [createMode, setCreateMode] = useState<"blank" | "copy">("blank");
@@ -68,6 +86,25 @@ export function CaseSuiteManager({
   const [exportingSuiteId, setExportingSuiteId] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const projectId = initialProjectId ?? "";
+
+  function setSuitePinned(suiteId: string, pinned: boolean): void {
+    if (pinning) return;
+    setPinError(null);
+    startPinChange(async () => {
+      changeOptimisticPin({ suiteId, pinned });
+      try {
+        const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suiteId)}/pin`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ pinned }),
+        });
+        if (!response.ok) throw await caseSuiteRequestError(response, "更新任务置顶状态失败。");
+        startPinChange(() => router.refresh());
+      } catch (caught) {
+        setPinError(caught instanceof Error ? caught.message : "更新任务置顶状态失败。");
+      }
+    });
+  }
 
   function openCreateDialog(): void {
     setError(null);
@@ -405,6 +442,11 @@ export function CaseSuiteManager({
         className={cn("suite-list", caseSuiteManagerStyles["suite-list"])}
         aria-label="用例任务列表"
       >
+        {pinError ? (
+          <Notice tone="error" role="alert" className="col-span-full">
+            {pinError}
+          </Notice>
+        ) : null}
         {exportError ? (
           <Notice
             tone="error"
@@ -445,6 +487,9 @@ export function CaseSuiteManager({
               exporting={exportingSuiteId === suite.id}
               exportDisabled={exportingSuiteId !== null}
               onExport={() => void exportSuiteCases(suite)}
+              pinned={pinnedIds.has(suite.id)}
+              pinning={pinning}
+              onPinnedChange={(pinned) => setSuitePinned(suite.id, pinned)}
             />
           ))
         )}

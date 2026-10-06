@@ -1,4 +1,10 @@
 import { finalFailureRunCondition } from "./final-failure-selection";
+import {
+  executionExceptionQueries,
+  mapExecutionExceptionRecords,
+  type ExceptionRecordRow,
+  type ExceptionCompletionRow,
+} from "./execution-exceptions-query";
 import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
@@ -164,6 +170,16 @@ const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
 export class PostgresRunBatchRepository
   implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
 {
+  async readExceptionRecords(input: Parameters<RunBatchRepository["readExceptionRecords"]>[0]) {
+    await this.ready();
+    const queries = executionExceptionQueries(input);
+    const [records, completions] = await Promise.all([
+      this.handle.db.execute<ExceptionRecordRow>(queries.records),
+      this.handle.db.execute<ExceptionCompletionRow>(queries.completions),
+    ]);
+    return mapExecutionExceptionRecords(records.rows, completions.rows);
+  }
+
   constructor(
     private readonly handle: PostgresDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,

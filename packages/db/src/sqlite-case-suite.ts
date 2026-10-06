@@ -15,6 +15,7 @@ import {
   freezeDdtSrExecutionClasses,
 } from "./ddt-execution-sql";
 import { getTableColumns } from "drizzle-orm";
+import { caseSuitePinPriority } from "./case-suite-pins-query";
 import type {
   CaseSuiteRepository,
   FailureCaseSuiteSource,
@@ -56,6 +57,7 @@ import {
   caseSuiteItems,
   caseSuiteRoundRecoveryCredentials,
   caseSuites,
+  caseSuitePins,
   caseSuiteVersions,
   ddtCases,
   runBatches,
@@ -219,6 +221,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     projectIds?: readonly string[],
     projectVersionId?: string,
     page?: { afterId?: string },
+    pinnedByUserId?: string,
   ): Promise<CaseSuite[]> {
     if (projectIds?.length === 0) return [];
     const suiteRows = this.handle.db
@@ -235,7 +238,13 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
             : []),
         ),
       )
-      .orderBy(page ? asc(caseSuites.id) : desc(caseSuites.updatedAt))
+      .orderBy(
+        ...(!page && pinnedByUserId
+          ? [desc(caseSuitePinPriority(pinnedByUserId, caseSuites.id))]
+          : []),
+        page ? asc(caseSuites.id) : desc(caseSuites.updatedAt),
+        asc(caseSuites.id),
+      )
       .limit(limit)
       .all();
     if (!suiteRows.length) return [];
@@ -256,6 +265,40 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     for (const row of ddtCountRows)
       counts.set(row.suiteId, (counts.get(row.suiteId) ?? 0) + row.value);
     return suiteRows.map((row) => toSuite(row, counts.get(row.id) ?? 0));
+  }
+
+  async listPinnedSuiteIds(userId: string, suiteIds: readonly string[]): Promise<string[]> {
+    if (!suiteIds.length) return [];
+    return this.handle.db
+      .select({ suiteId: caseSuitePins.suiteId })
+      .from(caseSuitePins)
+      .where(and(eq(caseSuitePins.userId, userId), inArray(caseSuitePins.suiteId, [...suiteIds])))
+      .all()
+      .map((row) => row.suiteId);
+  }
+
+  async setPinned(input: {
+    userId: string;
+    suiteId: string;
+    pinned: boolean;
+    createdAt: string;
+  }): Promise<void> {
+    await retrySqliteLockContention(() => {
+      if (input.pinned) {
+        this.handle.db
+          .insert(caseSuitePins)
+          .values({ userId: input.userId, suiteId: input.suiteId, createdAt: input.createdAt })
+          .onConflictDoNothing()
+          .run();
+        return;
+      }
+      this.handle.db
+        .delete(caseSuitePins)
+        .where(
+          and(eq(caseSuitePins.userId, input.userId), eq(caseSuitePins.suiteId, input.suiteId)),
+        )
+        .run();
+    });
   }
 
   async getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null> {

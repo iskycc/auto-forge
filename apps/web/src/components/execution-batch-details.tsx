@@ -10,7 +10,8 @@ import {
 } from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
-import { ListPlus, OctagonX, RotateCcw } from "lucide-react";
+import { AlertTriangle, ListPlus, OctagonX, RotateCcw } from "lucide-react";
+import { ExecutionExceptionsDialog } from "./execution-exceptions-dialog";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -93,6 +94,7 @@ export function ExecutionBatchDetails({
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
   const [failureTaskDialogOpen, setFailureTaskDialogOpen] = useState(false);
+  const [exceptionsDialogOpen, setExceptionsDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
   const statisticsState = batch.statistics?.state;
   const statisticsPending = !!batch.statistics && !batch.statistics.generation;
@@ -283,6 +285,7 @@ export function ExecutionBatchDetails({
       </section>
 
       {(analysisScope ||
+        batch.status === "failed" ||
         canCancelRuns ||
         (canCreateRuns && retrySuiteId) ||
         canRerunFinalFailures ||
@@ -305,10 +308,22 @@ export function ExecutionBatchDetails({
             <span>
               {batch.terminationRequestedAt
                 ? "后续调度已停止，等待正在执行的用例自然完成。"
-                : "再次执行会读取任务当前版本的完整配置并创建新批次。"}
+                : batch.status === "failed"
+                  ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
+                  : "再次执行会读取任务当前版本的完整配置并创建新批次。"}
             </span>
           </div>
           <div className={cn("button-row", uiPatterns["button-row"])}>
+            {batch.status === "failed" ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setExceptionsDialogOpen(true)}
+              >
+                <AlertTriangle size={16} />
+                查看异常原因
+              </Button>
+            ) : null}
             {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
               <StartFailureAnalysisButton scope={analysisScope} />
             ) : null}
@@ -385,6 +400,13 @@ export function ExecutionBatchDetails({
         </section>
       )}
 
+      {exceptionsDialogOpen ? (
+        <ExecutionExceptionsDialog
+          batchId={batch.id}
+          accessToken={accessToken}
+          onClose={() => setExceptionsDialogOpen(false)}
+        />
+      ) : null}
       <RunBatchRounds
         batch={accessToken ? { ...batch, accessToken } : batch}
         canCancelRuns={canCancelRuns}

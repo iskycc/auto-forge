@@ -1,4 +1,10 @@
 import { finalFailureRunCondition } from "./final-failure-selection";
+import {
+  executionExceptionQueries,
+  mapExecutionExceptionRecords,
+  type ExceptionRecordRow,
+  type ExceptionCompletionRow,
+} from "./execution-exceptions-query";
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
@@ -175,6 +181,14 @@ const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS (
 export class SqliteRunBatchRepository
   implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
 {
+  async readExceptionRecords(input: Parameters<RunBatchRepository["readExceptionRecords"]>[0]) {
+    const queries = executionExceptionQueries(input);
+    return mapExecutionExceptionRecords(
+      this.handle.db.all<ExceptionRecordRow>(queries.records),
+      this.handle.db.all<ExceptionCompletionRow>(queries.completions),
+    );
+  }
+
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,

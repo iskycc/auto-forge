@@ -1,4 +1,6 @@
 import type {
+  ExecutionException,
+  ExecutionExceptionCursor,
   AssignmentDto,
   ArtifactDeclaration,
   AttemptEventPage,
@@ -1297,7 +1299,15 @@ export interface CaseSuiteRepository {
     projectIds?: readonly string[],
     projectVersionId?: string,
     page?: { afterId?: string },
+    pinnedByUserId?: string,
   ): Promise<CaseSuite[]>;
+  listPinnedSuiteIds(userId: string, suiteIds: readonly string[]): Promise<string[]>;
+  setPinned(input: {
+    userId: string;
+    suiteId: string;
+    pinned: boolean;
+    createdAt: string;
+  }): Promise<void>;
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
   listExportRowsPage(input: CaseSuiteExportPageQuery): Promise<CaseSuiteExportRow[]>;
@@ -2093,6 +2103,15 @@ export type RunBatchMetadata = Omit<RunBatch, keyof RunBatchCounters>;
 export type ExecutionCasePageKey = { runId: string; attemptId?: string; round: number };
 
 export interface RunBatchRepository {
+  readExceptionRecords(input: {
+    batchId: string;
+    scope?: "all" | "terminal";
+    after?: ExecutionExceptionCursor;
+    limit: number;
+  }): Promise<{
+    items: ExecutionException[];
+    completions: Array<{ status: ExecutionRun["status"]; abnormal: boolean; count: number }>;
+  }>;
   readCasePageEntries(
     batchId: string,
     keys: readonly ExecutionCasePageKey[],

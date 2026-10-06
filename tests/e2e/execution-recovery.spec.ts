@@ -1,12 +1,17 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
+import type { ExecutionExceptionPage } from "@autoforge/contracts";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import {
   browserJson,
   ensureAdministrator,
+  login,
   selectProjectContext,
   uniqueName,
 } from "./support/session";
@@ -18,6 +23,344 @@ const runnerCapabilities = [
   "java:21.0.8",
   "testng:7.11.0",
 ];
+
+test("execution exceptions reveal unstarted timeouts and distinguish normal test failures", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const fixture = await createExecutableFixture(page);
+  const runner = await registerRunner(page, "Exception diagnostics Runner", runnerCapabilities);
+  const capacityBatch = await createBatch(page, fixture, runner.runnerId, {});
+  const capacityClaim = await claimAssignment(page, runner);
+  await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 2 });
+  const queueBatch = await createBatch(page, fixture, runner.runnerId, { queueTimeoutMs: 1_000 });
+  await expect
+    .poll(
+      async () => {
+        await triggerRecovery(page, runner);
+        const response = await browserJson<{ status: string }>(
+          page,
+          `/api/v1/run-batches/${queueBatch}`,
+        );
+        return response.body.status;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe("failed");
+  await expectBatchReason(page, queueBatch, "QUEUE_TIMEOUT");
+  const endpoint = `/api/v1/run-batches/${queueBatch}/exceptions`;
+  await page.goto("/execution-records");
+  const recordRow = page.getByRole("row").filter({
+    has: page.locator(`a[href="/run-batches/${queueBatch}"]`),
+  });
+  const abnormalStatus = recordRow.getByText("执行异常", { exact: true });
+  await expect(abnormalStatus).toBeVisible();
+  let previewRequests = 0;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === endpoint && url.searchParams.get("scope") === "terminal")
+      previewRequests++;
+  });
+  expect(previewRequests).toBe(0);
+  await page.route(
+    `**${endpoint}?scope=terminal*`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: { code: "PLATFORM_BUSY", message: "悬浮原因暂时不可用，请重试。" } },
+      }),
+    { times: 1 },
+  );
+  await abnormalStatus.hover();
+  const preview = page.getByRole("tooltip").filter({ hasText: "执行异常原因" });
+  await expect(preview.getByRole("alert")).toContainText("悬浮原因暂时不可用");
+  await preview.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(preview).toContainText("QUEUE_TIMEOUT");
+  await expect(preview).toContainText("第 1 轮");
+  await expect(preview).toContainText("1 秒时限");
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await abnormalStatus.hover();
+      await expect(preview).toContainText("QUEUE_TIMEOUT");
+      // Popover's enter animation scales controls; inspect their settled hit targets.
+      await expect
+        .poll(() =>
+          preview
+            .getByRole("button", { name: "查看全部异常原因", exact: true })
+            .evaluate((element) => Math.round(element.getBoundingClientRect().height)),
+        )
+        .toBeGreaterThanOrEqual(32);
+      await preview.getByRole("button", { name: "查看全部异常原因", exact: true }).hover();
+      await expectUiIntegrity(page);
+      await captureExceptionUi(page, `execution-exceptions-hover-${theme}-${width}`);
+    }
+  }
+  expect(previewRequests).toBe(2);
+  await page.mouse.move(0, 0);
+  await expect(preview).not.toBeVisible();
+  await abnormalStatus.focus();
+  await expect(preview).toContainText("QUEUE_TIMEOUT");
+  expect(previewRequests).toBe(2);
+  await abnormalStatus.press("Escape");
+  await expect(preview).not.toBeVisible();
+  await abnormalStatus.press("Tab");
+  await abnormalStatus.focus();
+  await expect(preview).toContainText("QUEUE_TIMEOUT");
+  await preview.getByRole("button", { name: "查看全部异常原因", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "执行异常原因" })).toContainText("QUEUE_TIMEOUT");
+  await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await page.goto(`/run-batches/${queueBatch}`);
+  await expect(page.getByText("排队超时", { exact: true })).toBeVisible();
+  const rounds = page.getByRole("region", { name: "轮次列表", exact: true });
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      for (const label of ["总结", "全部轮次", "初始轮次"]) {
+        const selection = rounds.getByRole("button", { name: label, exact: true });
+        await selection.click();
+        await expect(selection).toHaveAttribute("aria-current", "true");
+        await expect(rounds.locator("button[aria-current=true]")).toHaveCount(1);
+        await expect(rounds.locator(".selected-row")).toHaveCount(1);
+        await expect(rounds).toContainText(`当前查看：${label}`);
+        await expect(selection.locator("svg")).toBeVisible();
+        await expectUiIntegrity(page);
+        await captureExceptionUi(page, `execution-round-selected-${label}-${theme}-${width}`);
+      }
+    }
+  }
+  await page.reload();
+  await expect(rounds.getByRole("button", { name: "初始轮次", exact: true })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await page.route(
+    `**${endpoint}?*`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: { code: "PLATFORM_BUSY", message: "异常原因暂时不可用，请重试。" } },
+      }),
+    { times: 1 },
+  );
+  await page.getByRole("button", { name: "查看异常原因", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "执行异常原因", exact: true });
+  await expect(dialog.getByRole("alert")).toContainText("异常原因暂时不可用");
+  await dialog.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(dialog).toContainText("判定核对一致：1 个用例非正常结束");
+  await expect(dialog.getByText("QUEUE_TIMEOUT", { exact: true })).toBeVisible();
+  await expect(dialog).toContainText("第 1 轮");
+  await expect(dialog).toContainText("终态原因");
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") {
+      await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      await page.getByRole("button", { name: "查看异常原因", exact: true }).click();
+      await expect(dialog.getByText("QUEUE_TIMEOUT", { exact: true })).toBeVisible();
+    }
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      const time = dialog.locator("tbody time").first();
+      await expect(time).toBeVisible();
+      expect(
+        await time.evaluate((element) => element.scrollWidth - element.clientWidth),
+      ).toBeLessThanOrEqual(0);
+      if (process.env.AUTOFORGE_UI_SCREENSHOT_DIR) {
+        await mkdir(process.env.AUTOFORGE_UI_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({
+          path: resolve(
+            process.env.AUTOFORGE_UI_SCREENSHOT_DIR,
+            `execution-exceptions-${theme}-${width}.png`,
+          ),
+        });
+      }
+    }
+  }
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await test.step("diagnostic pages preserve every cause and recover after a next-page failure", () =>
+    verifyExceptionDialogPaging(page, queueBatch));
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${queueBatch}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  const anonymous = await browser.newContext();
+  try {
+    const sharedPage = await anonymous.newPage();
+    await sharedPage.goto(share.body.shareUrl);
+    await sharedPage.getByRole("button", { name: "查看异常原因", exact: true }).click();
+    await expect(sharedPage.getByRole("dialog", { name: "执行异常原因" })).toContainText(
+      "QUEUE_TIMEOUT",
+    );
+    expect((await sharedPage.request.get(new URL(endpoint, page.url()).toString())).status()).toBe(
+      401,
+    );
+    const token = decodeURIComponent(new URL(share.body.shareUrl).pathname.split("/").at(-1)!);
+    expect(
+      (
+        await sharedPage.request.get(
+          new URL(
+            `/api/v1/run-batches/${capacityBatch}/exceptions?access_token=${encodeURIComponent(token)}`,
+            page.url(),
+          ).toString(),
+        )
+      ).status(),
+    ).toBe(400);
+  } finally {
+    await anonymous.close();
+  }
+  await test.step("read-only project members can diagnose only their own project's batch", () =>
+    verifyExceptionProjectAccess(page, browser, fixture.projectId, queueBatch));
+  await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 0 });
+  await complete(page, runner, capacityClaim, randomUUID());
+  for (const resultCode of ["TESTNG_ASSERTIONS_FAILED", "EXECUTION_TIMEOUT"]) {
+    const batch = await createBatch(page, fixture, runner.runnerId, { retryLimit: 0 });
+    await complete(page, runner, await claimAssignment(page, runner), randomUUID(), {
+      status: resultCode === "EXECUTION_TIMEOUT" ? "timed_out" : "failed",
+      resultCode,
+    });
+    await waitForBatchStatus(
+      page,
+      batch,
+      resultCode === "EXECUTION_TIMEOUT" ? "failed" : "succeeded",
+    );
+    await page.goto(`/run-batches/${batch}`);
+    if (resultCode === "EXECUTION_TIMEOUT") {
+      await page.getByRole("button", { name: "查看异常原因", exact: true }).click();
+      await expect(dialog).toContainText("EXECUTION_TIMEOUT");
+      await expect(dialog).toContainText("尝试 1");
+      await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    } else {
+      await expect(page.getByRole("button", { name: "查看异常原因", exact: true })).toHaveCount(0);
+      const causes = await browserJson<{ consistent: boolean; items: unknown[] }>(
+        page,
+        `/api/v1/run-batches/${batch}/exceptions`,
+      );
+      expect(causes.body).toMatchObject({ consistent: true, items: [] });
+    }
+  }
+});
+
+async function verifyExceptionDialogPaging(page: Page, batchId: string): Promise<void> {
+  const endpoint = `/api/v1/run-batches/${batchId}/exceptions`;
+  const original = await browserJson<ExecutionExceptionPage>(page, endpoint);
+  expect(original.status).toBe(200);
+  const cause = original.body.items[0]!;
+  const items = Array.from({ length: 51 }, (_, index) => ({
+    ...cause,
+    id: `paging-cause-${index}`,
+    caseName: `分页用例 ${index + 1}`,
+  }));
+  let secondPageAttempts = 0;
+  const pattern = `**${endpoint}?*`;
+  await page.route(pattern, async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get("cursor");
+    if (cursor && secondPageAttempts++ === 0) {
+      await route.fulfill({
+        status: 503,
+        json: { error: { code: "PLATFORM_BUSY", message: "第二页暂时不可用，请重试。" } },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        ...original.body,
+        items: cursor ? items.slice(50) : items.slice(0, 50),
+        nextCursor: cursor ? undefined : "diagnostic-page-two",
+      },
+    });
+  });
+  const dialog = page.getByRole("dialog", { name: "执行异常原因", exact: true });
+  try {
+    await page.getByRole("button", { name: "查看异常原因", exact: true }).click();
+    await expect(dialog.locator("tbody tr")).toHaveCount(50);
+    await expect(dialog.getByRole("button", { name: "上一页", exact: true })).toBeDisabled();
+    await dialog.getByRole("button", { name: "下一页", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText("第二页暂时不可用");
+    await dialog.getByRole("button", { name: "重试", exact: true }).click();
+    await expect(dialog.locator("tbody tr")).toHaveCount(1);
+    await expect(dialog).toContainText("分页用例 51");
+    await expect(dialog.getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
+    await dialog.getByRole("button", { name: "上一页", exact: true }).click();
+    await expect(dialog.locator("tbody tr")).toHaveCount(50);
+    await expect(dialog.getByText("分页用例 1", { exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  } finally {
+    await page.unroute(pattern);
+  }
+}
+
+async function verifyExceptionProjectAccess(
+  administrator: Page,
+  browser: Browser,
+  projectId: string,
+  batchId: string,
+): Promise<void> {
+  const name = uniqueName("exception-access");
+  const otherProject = await browserJson<{ id: string }>(administrator, "/api/v1/projects", {
+    method: "POST",
+    body: { name, slug: name },
+  });
+  expect(otherProject.status).toBe(201);
+  const viewerRoleId = "00000000-0000-7000-8100-000000000005";
+  const password = "ExceptionViewer!Password123";
+  for (const scope of [projectId, otherProject.body.id]) {
+    const username = uniqueName("exception-viewer");
+    const user = await browserJson<{ id: string }>(administrator, "/api/v1/users", {
+      method: "POST",
+      body: { username, displayName: username, password, forcePasswordChange: false },
+    });
+    expect(user.status).toBe(201);
+    expect(
+      (
+        await browserJson(administrator, `/api/v1/users/${user.body.id}/project-roles`, {
+          method: "POST",
+          body: { projectId: scope, roleId: viewerRoleId },
+        })
+      ).status,
+    ).toBe(204);
+    const context = await browser.newContext({ baseURL: new URL(administrator.url()).origin });
+    try {
+      const reader = await context.newPage();
+      await login(reader, username, password);
+      const diagnostics = await reader.request.get(`/api/v1/run-batches/${batchId}/exceptions`);
+      expect(diagnostics.status()).toBe(scope === projectId ? 200 : 404);
+      if (scope === projectId) {
+        expect((await diagnostics.json()).items[0]).toMatchObject({ resultCode: "QUEUE_TIMEOUT" });
+        await reader.goto(`/run-batches/${batchId}`);
+        await reader.getByRole("button", { name: "查看异常原因", exact: true }).click();
+        await expect(reader.getByRole("dialog", { name: "执行异常原因" })).toContainText(
+          "QUEUE_TIMEOUT",
+        );
+        expect(
+          (
+            await reader.request.post(`/api/v1/run-batches/${batchId}/cancel`, {
+              data: { reason: "Verify diagnostics do not grant execution control" },
+            })
+          ).status(),
+        ).toBe(403);
+      }
+    } finally {
+      await context.close();
+    }
+  }
+}
+
+async function captureExceptionUi(page: Page, name: string): Promise<void> {
+  const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  await page.screenshot({ path: resolve(directory, `${name}.png`) });
+}
 
 test("execution duration and countdown tolerate browser clock skew and wall clock steps", async ({
   page,
@@ -392,6 +735,7 @@ async function complete(
   runner: RunnerIdentity,
   claim: Claim,
   completionId: string,
+  result?: { status: "failed" | "timed_out"; resultCode: string },
 ): Promise<{ disposition: string }> {
   const response = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/complete`,
@@ -407,6 +751,7 @@ async function complete(
           summary: "Execution recovery E2E completion",
           durationMs: 10,
           artifacts: [],
+          ...result,
         },
       },
     },

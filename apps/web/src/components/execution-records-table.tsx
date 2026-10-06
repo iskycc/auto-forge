@@ -47,6 +47,7 @@ import {
 import { formatBatchDuration } from "@/lib/run-batch-presentation";
 import { Button } from "@/components/ui";
 import { RunBatchPermanentShare } from "@/components/run-batch-permanent-share";
+import { ExecutionExceptionsPopover } from "@/components/execution-exceptions-popover";
 import { useConfirm } from "@/components/ui-feedback";
 
 export type { ExecutionRecordRow } from "@/lib/execution-record-columns";
@@ -376,14 +377,28 @@ export function ExecutionRecordsTable({
                   <small> v{row.suiteVersion}</small>
                 </TableCell>
                 <TableCell>
-                  <Badge
-                    className={cn(
-                      executionRecordsTableStyles["batch-status"],
-                      `batch-status batch-status batch-status-${row.status}`,
-                    )}
-                  >
-                    {executionRecordStatusLabel({ ...row, observedAt })}
-                  </Badge>
+                  {row.status === "failed" ? (
+                    <ExecutionExceptionsPopover batchId={row.id}>
+                      <Badge
+                        tabIndex={0}
+                        className={cn(
+                          executionRecordsTableStyles["batch-status"],
+                          "batch-status batch-status-failed cursor-help focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                        )}
+                      >
+                        {executionRecordStatusLabel({ ...row, observedAt })}
+                      </Badge>
+                    </ExecutionExceptionsPopover>
+                  ) : (
+                    <Badge
+                      className={cn(
+                        executionRecordsTableStyles["batch-status"],
+                        `batch-status batch-status-${row.status}`,
+                      )}
+                    >
+                      {executionRecordStatusLabel({ ...row, observedAt })}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="tabular-nums">{row.totalRuns}</TableCell>
                 <TableCell title={row.statisticsPending ? "统计准备中" : undefined}>

@@ -3,6 +3,7 @@ import type {
   CreateFailureCaseSuiteInput,
   CreateCaseSuiteInput,
   UpdateCaseSuiteInput,
+  SetCaseSuitePinInput,
 } from "@autoforge/contracts";
 import {
   DEFAULT_PROJECT_ID,
@@ -10,6 +11,7 @@ import {
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
   isTerminalRunBatchStatus,
+  orderCaseSuitesByPins,
   type CaseSuiteExecutionPolicy,
   type RetryConcurrencyRule,
   type RoundRecoveryRule,
@@ -64,6 +66,36 @@ export class CaseSuiteService {
 
   list(limit = 200, projectIds?: readonly string[], projectVersionId?: string) {
     return this.suites.list(limit, projectIds, projectVersionId);
+  }
+
+  async listForUser(
+    userId: string,
+    limit = 200,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ) {
+    const items = await this.suites.list(limit, projectIds, projectVersionId, undefined, userId);
+    const pinnedSuiteIds = await this.suites.listPinnedSuiteIds(
+      userId,
+      items.map((suite) => suite.id),
+    );
+    return { items: orderCaseSuitesByPins(items, new Set(pinnedSuiteIds)), pinnedSuiteIds };
+  }
+
+  async setPinned(
+    suiteId: string,
+    input: SetCaseSuitePinInput,
+    userId: string,
+    projectIds?: readonly string[],
+  ) {
+    const suite = await this.getSummary(suiteId, projectIds);
+    await this.suites.setPinned({
+      userId,
+      suiteId: suite.id,
+      pinned: input.pinned,
+      createdAt: this.clock.now().toISOString(),
+    });
+    return { suiteId: suite.id, pinned: input.pinned };
   }
 
   async listVersionPage(projectId: string, projectVersionId: string, cursor?: string) {

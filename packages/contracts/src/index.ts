@@ -13,6 +13,8 @@ export * from "./attempt-log-share";
 export * from "./ddt";
 export * from "./runner-group";
 export * from "./case-suite-activity";
+export * from "./case-suite-pins";
+export * from "./execution-exceptions";
 
 export * from "./read-models";
 

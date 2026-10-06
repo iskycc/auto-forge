@@ -17,6 +17,197 @@ import { selectJarForInspection } from "./support/jar-import";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("personal task pins persist across browsers, sort naturally and recover after failed changes", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("task-pins");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const tasks = new Map<
+    string,
+    { id: string; revision: number; version: number; updatedAt: string }
+  >();
+  for (const name of ["任务 10", "任务 2", "任务 1"]) {
+    const created = await browserJson<{
+      id: string;
+      revision: number;
+      version: number;
+      updatedAt: string;
+    }>(page, "/api/v1/case-suites", {
+      method: "POST",
+      body: { projectId: project.id, projectVersionId: project.versionId, name },
+    });
+    expect(created.status).toBe(201);
+    tasks.set(name, created.body);
+  }
+  await page.goto("/case-suites");
+  const titles = page.locator(".suite-list .suite-title-line > strong");
+  const pin = (name: string) => page.getByRole("checkbox", { name: `置顶 ${name}`, exact: true });
+  await expect(titles).toHaveText(["任务 1", "任务 2", "任务 10"]);
+  await pin("任务 10").check();
+  await expect(titles).toHaveText(["任务 10", "任务 1", "任务 2"]);
+  await expect(pin("任务 2")).toBeEnabled();
+  await pin("任务 2").check();
+  await expect(titles).toHaveText(["任务 2", "任务 10", "任务 1"]);
+  await expect(pin("任务 2")).toBeEnabled();
+  await page.reload();
+  await expect(titles).toHaveText(["任务 2", "任务 10", "任务 1"]);
+  await expect(pin("任务 2")).toBeChecked();
+
+  // A new browser context has no local preferences; persistence comes from the user's account.
+  const otherContext = await browser.newContext();
+  try {
+    await otherContext.addCookies(await page.context().cookies());
+    const otherPage = await otherContext.newPage();
+    await otherPage.goto(new URL("/case-suites", page.url()).toString());
+    await expect(otherPage.locator(".suite-list .suite-title-line > strong")).toHaveText([
+      "任务 2",
+      "任务 10",
+      "任务 1",
+    ]);
+    await expect(
+      otherPage.getByRole("checkbox", { name: "置顶 任务 10", exact: true }),
+    ).toBeChecked();
+  } finally {
+    await otherContext.close();
+  }
+
+  const readerName = uniqueName("task-pin-reader");
+  const readerPassword = "TaskReader!Password123";
+  const reader = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: {
+      username: readerName,
+      displayName: readerName,
+      password: readerPassword,
+      forcePasswordChange: false,
+    },
+  });
+  expect(reader.status).toBe(201);
+  const role = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: uniqueName("task-pin-reader-role"),
+      name: "任务只读与个人置顶",
+      scope: "project",
+      permissions: ["project.read", "case_suite.read"],
+    },
+  });
+  expect(role.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/users/${reader.body.id}/project-roles`, {
+        method: "POST",
+        body: { projectId: project.id, roleId: role.body.id },
+      })
+    ).status,
+  ).toBe(204);
+  const readerContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const readerPage = await readerContext.newPage();
+    await login(readerPage, readerName, readerPassword);
+    await selectProjectContext(readerPage, project.id, project.versionId, project.stageId);
+    await readerPage.goto("/case-suites");
+    const readerPin = readerPage.getByRole("checkbox", { name: "置顶 任务 10", exact: true });
+    await expect(readerPin).not.toBeChecked();
+    await expect(readerPage.getByRole("button", { name: "创建任务", exact: true })).toHaveCount(0);
+    await readerPin.check();
+    await expect(readerPin).toBeEnabled();
+    await readerPage.reload();
+    await expect(readerPage.locator(".suite-list .suite-title-line > strong")).toHaveText([
+      "任务 10",
+      "任务 1",
+      "任务 2",
+    ]);
+    await expect(
+      readerPage.getByRole("checkbox", { name: "置顶 任务 2", exact: true }),
+    ).not.toBeChecked();
+  } finally {
+    await readerContext.close();
+  }
+  await page.reload();
+  await expect(titles).toHaveText(["任务 2", "任务 10", "任务 1"]);
+
+  await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  const create = page.getByRole("dialog", { name: "创建用例任务", exact: true });
+  await create.getByLabel("任务名称", { exact: true }).fill("任务 100");
+  await create.getByRole("button", { name: "创建任务", exact: true }).click();
+  await expect(create).toHaveCount(0);
+  await expect(titles).toHaveText(["任务 2", "任务 10", "任务 100", "任务 1"]);
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      const card = page.getByRole("article", { name: "任务 任务 2", exact: true });
+      await expectHorizontalIntegrity(card.locator(".suite-card-actions"));
+      await captureUi(page, `task-pins-${theme}-${width}`);
+    }
+  }
+  const original = tasks.get("任务 10")!;
+  const summary = await browserJson<{ revision: number; version: number; updatedAt: string }>(
+    page,
+    `/api/v1/case-suites/${original.id}?view=summary`,
+  );
+  expect(summary.status).toBe(200);
+  expect(summary.body).toMatchObject({
+    revision: original.revision,
+    version: original.version,
+    updatedAt: original.updatedAt,
+  });
+  await page.route(
+    `**/api/v1/case-suites/${original.id}/pin`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "置顶保存暂时不可用，请重试。",
+            requestId: "pin-change",
+          },
+        },
+      }),
+    { times: 1 },
+  );
+  await pin("任务 10").uncheck();
+  await expect(page.getByRole("region", { name: "用例任务列表" }).getByRole("alert")).toContainText(
+    "置顶保存暂时不可用",
+  );
+  await expect(pin("任务 10")).toBeEnabled();
+  await expect(pin("任务 10")).toBeChecked();
+  await expect(titles).toHaveText(["任务 2", "任务 10", "任务 100", "任务 1"]);
+  let releaseSave: () => void = () => {};
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route(
+    `**/api/v1/case-suites/${original.id}/pin`,
+    async (route) => {
+      await saveGate;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  try {
+    await pin("任务 10").uncheck();
+    await expect(titles).toHaveText(["任务 2", "任务 100", "任务 1", "任务 10"]);
+    await expect(pin("任务 10")).toBeDisabled();
+  } finally {
+    releaseSave();
+  }
+  await expect(pin("任务 2")).toBeEnabled();
+  await pin("任务 2").focus();
+  await pin("任务 2").press("Space");
+  await expect(pin("任务 2")).not.toBeChecked();
+  await expect(titles).toHaveText(["任务 100", "任务 1", "任务 2", "任务 10"]);
+  await page.reload();
+  await expect(titles).toHaveText(["任务 100", "任务 1", "任务 2", "任务 10"]);
+});
+
 test("task adapter names default to project, version and stage without replacing saved names", async ({
   page,
 }) => {

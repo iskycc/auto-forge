@@ -45,6 +45,7 @@ import {
   FileText,
   Globe,
   AlertTriangle,
+  CheckCircle2,
   RefreshCw,
   ScrollText,
   Search,
@@ -64,7 +65,11 @@ import { LoadingState } from "@/components/loading-state";
 import { usePrompt } from "@/components/ui-feedback";
 import { readApiErrorMessage } from "@/lib/client-api";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
-import { canCancelRoundCaseRow, type RoundCaseRowModel } from "@/lib/round-case-rows";
+import {
+  canCancelRoundCaseRow,
+  unstartedRunFailure,
+  type RoundCaseRowModel,
+} from "@/lib/round-case-rows";
 import {
   attemptFailureHint,
   formatArtifactBytes,
@@ -238,6 +243,34 @@ function AttemptFailureHintLine({ attempt }: { attempt: RunAttempt }) {
  * 轮次列表 + 选中轮次的详情面板。轮次聚合来自领域纯函数 summarizeRunBatchRounds，
  * 选中轮次写入 ?round=N，刷新或分享链接后可恢复。
  */
+function RoundSelectionButton({
+  selected,
+  onSelect,
+  children,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  children: string;
+}) {
+  return (
+    <Button
+      aria-current={selected ? "true" : undefined}
+      aria-pressed={selected}
+      className={cn("round-select-button", runBatchRoundsStyles["round-select-button"])}
+      variant="ghost"
+      size="compact"
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <CheckCircle2 aria-hidden size={14} className={selected ? undefined : "invisible"} />
+      {children}
+    </Button>
+  );
+}
+
 export function RunBatchRounds({
   batch,
   canCancelRuns,
@@ -289,6 +322,13 @@ export function RunBatchRounds({
     ? requestedRound
     : defaultRound;
   const selectedSummary = summaries.find((summary) => summary.round === selectedRound);
+  const selectedRoundLabel = selectedRecovery
+    ? `环境恢复 · 第 ${selectedRecovery.afterRound} 轮后`
+    : summarySelected
+      ? "总结"
+      : allRoundsSelected
+        ? "全部轮次"
+        : roundLabel(batch.retryMode, selectedRound);
   const allRoundsStats = batch.allRoundsSummary;
   const finalStats = batch.finalSummary;
   const [activeTab, setActiveTab] = useState<"cases" | "runners">("cases");
@@ -369,10 +409,16 @@ export function RunBatchRounds({
             <span className={cn("step-label", runBatchRoundsStyles["step-label"])}>ROUNDS</span>
             <h2>轮次</h2>
           </div>
-          <span className={cn("muted", uiPatterns["muted"])}>
-            共 {summaries.length} 轮
-            {recoveries.length > 0 ? ` · ${recoveries.length} 次环境恢复` : ""}
-          </span>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Badge variant="info">
+              <CheckCircle2 aria-hidden size={14} />
+              当前查看：{selectedRoundLabel}
+            </Badge>
+            <span className={cn("muted", uiPatterns["muted"])}>
+              共 {summaries.length} 轮
+              {recoveries.length > 0 ? ` · ${recoveries.length} 次环境恢复` : ""}
+            </span>
+          </div>
         </div>
         <div
           className={cn(
@@ -417,22 +463,12 @@ export function RunBatchRounds({
                 onClick={() => selectRound("summary")}
               >
                 <TableCell>
-                  <Button
-                    aria-pressed={summarySelected}
-                    className={cn(
-                      "round-select-button",
-                      runBatchRoundsStyles["round-select-button"],
-                    )}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      selectRound("summary");
-                    }}
-                    size="compact"
-                    type="button"
-                    variant="ghost"
+                  <RoundSelectionButton
+                    selected={summarySelected}
+                    onSelect={() => selectRound("summary")}
                   >
                     总结
-                  </Button>
+                  </RoundSelectionButton>
                 </TableCell>
                 <TableCell>
                   <Badge
@@ -464,22 +500,12 @@ export function RunBatchRounds({
                 onClick={() => selectRound("all")}
               >
                 <TableCell>
-                  <Button
-                    className={cn(
-                      "round-select-button",
-                      runBatchRoundsStyles["round-select-button"],
-                    )}
-                    variant="ghost"
-                    size="compact"
-                    type="button"
-                    aria-pressed={allRoundsSelected}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      selectRound("all");
-                    }}
+                  <RoundSelectionButton
+                    selected={allRoundsSelected}
+                    onSelect={() => selectRound("all")}
                   >
                     全部轮次
-                  </Button>
+                  </RoundSelectionButton>
                 </TableCell>
                 <TableCell>—</TableCell>
                 <TableCell>—</TableCell>
@@ -495,38 +521,24 @@ export function RunBatchRounds({
               {summaries.flatMap((summary) => {
                 const recovery = recoveries.find((item) => item.afterRound === summary.round);
                 const roundConcurrency = concurrencyByRound.get(summary.round);
+                const roundSelected =
+                  !allRoundsSelected &&
+                  !summarySelected &&
+                  !selectedRecovery &&
+                  summary.round === selectedRound;
                 const rows = [
                   <TableRow
                     key={`round-${summary.round}`}
-                    className={
-                      !allRoundsSelected &&
-                      !summarySelected &&
-                      !selectedRecovery &&
-                      summary.round === selectedRound
-                        ? "selected-row"
-                        : undefined
-                    }
+                    className={roundSelected ? "selected-row" : undefined}
                     onClick={() => selectRound(summary.round)}
                   >
                     <TableCell>
-                      <Button
-                        className={cn(
-                          "round-select-button",
-                          runBatchRoundsStyles["round-select-button"],
-                        )}
-                        variant="ghost"
-                        size="compact"
-                        type="button"
-                        aria-pressed={
-                          !allRoundsSelected && !summarySelected && summary.round === selectedRound
-                        }
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          selectRound(summary.round);
-                        }}
+                      <RoundSelectionButton
+                        selected={roundSelected}
+                        onSelect={() => selectRound(summary.round)}
                       >
                         {roundLabel(batch.retryMode, summary.round)}
-                      </Button>
+                      </RoundSelectionButton>
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -613,22 +625,12 @@ export function RunBatchRounds({
                       onClick={() => selectRound(`recovery-${recovery.afterRound}`)}
                     >
                       <TableCell>
-                        <Button
-                          aria-pressed={selectedRecovery?.afterRound === recovery.afterRound}
-                          className={cn(
-                            "round-select-button",
-                            runBatchRoundsStyles["round-select-button"],
-                          )}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            selectRound(`recovery-${recovery.afterRound}`);
-                          }}
-                          size="compact"
-                          type="button"
-                          variant="ghost"
+                        <RoundSelectionButton
+                          selected={selectedRecovery?.afterRound === recovery.afterRound}
+                          onSelect={() => selectRound(`recovery-${recovery.afterRound}`)}
                         >
                           环境恢复
-                        </Button>
+                        </RoundSelectionButton>
                         <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
                           第 {recovery.afterRound} 轮后
                         </small>
@@ -1847,6 +1849,7 @@ function RoundCaseRow({
   onOpenLogs: (attempt: RunAttempt) => void;
 }) {
   const { run, attempt } = row;
+  const unstartedFailure = unstartedRunFailure(row);
   const runnerId = attempt?.runnerId ?? run.assignedRunnerId;
   const [sharePending, setSharePending] = useState(false);
   const [shareError, setShareError] = useState("");
@@ -1925,15 +1928,22 @@ function RoundCaseRow({
               ) : null}
             </>
           ) : (
-            <Badge
-              className={cn(
-                "batch-status batch-status-neutral",
-                runBatchRoundsStyles["batch-status"],
-                runBatchRoundsStyles["batch-status-neutral"],
-              )}
-            >
-              未执行
-            </Badge>
+            <>
+              <Badge
+                className={cn(
+                  "batch-status batch-status-neutral",
+                  runBatchRoundsStyles["batch-status"],
+                  runBatchRoundsStyles["batch-status-neutral"],
+                )}
+              >
+                {unstartedFailure?.label ?? "未执行"}
+              </Badge>
+              {unstartedFailure ? (
+                <small className={cn(uiPatterns["table-secondary"], "break-all")}>
+                  {unstartedFailure.reasonCode}
+                </small>
+              ) : null}
+            </>
           )}
         </TableCell>
         {/* 执行机优先展示注册名称（一般为 runner-IP），title 保留完整 UUID。 */}
@@ -2447,13 +2457,13 @@ const runBatchRoundsStyles = {
   "round-pagination": "flex items-center justify-end gap-3 text-muted-foreground text-xs",
   "round-row-actions": "flex flex-nowrap items-center gap-1",
   "round-runner-name": "block min-w-0 [overflow-wrap:anywhere] whitespace-normal",
-  "round-select-button": "font-semibold",
+  "round-select-button": "gap-1 px-0 font-semibold [&[aria-current=true]]:text-primary-text",
   "round-tab-content":
     "grid w-full min-w-0 gap-3.5 justify-items-start [&_>_.round-cases]:w-full [&_>_.runner-card-grid]:w-full [&_>_.inline-empty]:w-full",
   "round-tab-panel": "w-full min-w-0",
   "round-tab-toolbar": "flex items-center justify-between gap-3 mb-3 [&_.segmented-control]:mb-0",
   "round-table-scroll":
-    "border border-solid border-border rounded-lg bg-card [&_tbody_tr]:cursor-pointer",
+    "border border-solid border-border rounded-lg bg-card [&_tbody_tr]:cursor-pointer [&_.selected-row_>_td]:bg-primary/10 [&_.selected-row_>_td:first-child]:[box-shadow:inset_3px_0_0_var(--primary)]",
 
   "sortable-th-button":
     "inline-flex items-center gap-[5px] min-h-8 py-0.5 px-1 border-0 rounded-md bg-transparent text-inherit [font:inherit] font-semibold cursor-pointer [&:hover]:text-foreground",

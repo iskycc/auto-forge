@@ -1,7 +1,7 @@
 import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
-import { buildRoundCaseRows, canCancelRoundCaseRow } from "./round-case-rows";
+import { buildRoundCaseRows, canCancelRoundCaseRow, unstartedRunFailure } from "./round-case-rows";
 
 function run(id: string, overrides: Partial<ExecutionRun> = {}): ExecutionRun {
   return {
@@ -38,6 +38,49 @@ function attempt(
     createdAt: "2026-08-17T00:00:30.000Z",
   };
 }
+
+describe("unstarted failure presentation", () => {
+  it("shows queue timeout without fabricating a log attempt", () => {
+    const row = {
+      run: run("queue", {
+        status: "failed",
+        terminalOutcome: "timed_out",
+        terminalReasonCode: "QUEUE_TIMEOUT",
+        executionRound: 2,
+      }),
+      attempt: undefined,
+      round: 2,
+    };
+    expect(unstartedRunFailure(row)).toEqual({ label: "排队超时", reasonCode: "QUEUE_TIMEOUT" });
+  });
+  it("keeps historical rounds and ordinary pending cases unchanged", () => {
+    const row = {
+      run: run("queue", {
+        status: "failed",
+        terminalReasonCode: "QUEUE_TIMEOUT",
+        executionRound: 2,
+      }),
+      attempt: undefined,
+      round: 1,
+    };
+    expect(unstartedRunFailure(row)).toBeNull();
+    expect(unstartedRunFailure({ ...row, run: run("pending"), round: 1 })).toBeNull();
+  });
+  it.each([undefined, "", "   "])(
+    "shows an explicit unknown reason for missing code %s",
+    (code) => {
+      const row = {
+        run: run("legacy", {
+          status: "failed",
+          ...(code === undefined ? {} : { terminalReasonCode: code }),
+        }),
+        attempt: undefined,
+        round: 1,
+      };
+      expect(unstartedRunFailure(row)).toEqual({ label: "执行受阻", reasonCode: "UNKNOWN_RESULT" });
+    },
+  );
+});
 
 describe("buildRoundCaseRows", () => {
   // run-a 第 1 轮通过；run-b 第 1 轮失败、等待第 2 轮；run-c 尚未产生任何 attempt。

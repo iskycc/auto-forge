@@ -18,6 +18,19 @@ export type CaseSuite = {
   updatedAt: string;
 };
 
+const suiteNameOrder = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+
+/** Pinning changes presentation priority; unpinned tasks retain their existing list order. */
+export function orderCaseSuitesByPins<Suite extends Pick<CaseSuite, "id" | "name">>(
+  suites: readonly Suite[],
+  pinnedSuiteIds: ReadonlySet<string>,
+): Suite[] {
+  const pinned = suites
+    .filter((suite) => pinnedSuiteIds.has(suite.id))
+    .sort((left, right) => suiteNameOrder.compare(left.name, right.name));
+  return [...pinned, ...suites.filter((suite) => !pinnedSuiteIds.has(suite.id))];
+}
+
 export type CaseSuiteExecutionPolicy = {
   executor: "testng" | "testng-container";
   adapter: CaseSuiteAdapterConfiguration;
