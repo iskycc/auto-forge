@@ -156,20 +156,23 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /needs\.jenkins-plugins\.result/);
 });
 
-test("reserves bounded CI headroom for Full asset lifecycle acceptance", async () => {
+test("reserves bounded CI headroom for Lite and Full asset lifecycle acceptance", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
-  const assetPhase = workflow.match(/- name: Full · asset lifecycle\n([\s\S]*?)(?=\n\s+- name:|$)/);
-  assert.ok(assetPhase, "Full asset lifecycle acceptance must remain in the CI matrix");
-
-  const phaseDeadline = assetPhase[1].match(/timeout_minutes: (\d+)/);
   const defaultDeadline = workflow.match(
     /timeout-minutes: \$\{\{ matrix\.timeout_minutes \|\| (\d+) \}\}/,
   );
-  const deadlineMinutes = Number(phaseDeadline?.[1] ?? defaultDeadline?.[1]);
-  assert.ok(
-    deadlineMinutes >= 10 && deadlineMinutes <= 15,
-    "Full asset tests, build and cleanup need a bounded deadline between 10 and 15 minutes",
-  );
+  for (const phaseName of ["Full · asset lifecycle", "Network-blocked Lite · assets"]) {
+    const assetPhase = workflow.match(
+      new RegExp(`- name: ${phaseName}\\n([\\s\\S]*?)(?=\\n\\s+- name:|$)`),
+    );
+    assert.ok(assetPhase, `${phaseName} acceptance must remain in the CI matrix`);
+    const phaseDeadline = assetPhase[1].match(/timeout_minutes: (\d+)/);
+    const deadlineMinutes = Number(phaseDeadline?.[1] ?? defaultDeadline?.[1]);
+    assert.ok(
+      deadlineMinutes >= 10 && deadlineMinutes <= 15,
+      `${phaseName} tests, build and cleanup need a bounded deadline between 10 and 15 minutes`,
+    );
+  }
 });
 
 test("declares the official Jenkins repository in every plugin POM", async () => {

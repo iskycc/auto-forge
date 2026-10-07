@@ -583,6 +583,7 @@ jobs:
             timeout_minutes: 12
           - name: Network-blocked Lite · assets
             command: bash scripts/quality/test-offline.sh assets
+            timeout_minutes: 12
           - name: Network-blocked Lite · governance
             command: bash scripts/quality/test-offline.sh governance
           - name: Network-blocked Lite · operations and deployment
