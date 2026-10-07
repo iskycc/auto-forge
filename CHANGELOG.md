@@ -16,6 +16,7 @@ and known limitations.
 
 - Full 异常诊断统一查询时间与分页游标为 UTC ISO 格式，保留微秒精度，兼容排队超时恢复保存的 PostgreSQL 时间表示，避免第二页无法加载、导出中断及等价时间格式造成的遗漏或重复。只规范读取，不改写执行记录或状态。
 - 异常 Excel 导出先核验登录或批次分享权限，再校验导出选项；匿名请求携带无效参数时仍返回需要登录，合法身份继续使用严格参数校验。
+- 全部轮次 E2E 对 Jenkins 瞬时 503 恢复的等待由 30 秒调整为有界的 45 秒，覆盖 5 秒工作器轮询、退避及最终状态观察，避免正常恢复恰好跨过断言截止时间；成功状态与结果断言不变，不修改产品恢复时限。
 
 ### Database, deployment and compatibility
 
@@ -23,7 +24,7 @@ and known limitations.
 
 ### Validation
 
-- 本地 72 项不同单元/集成检查与三项 Lite Playwright 场景通过，覆盖真实 SQLite/PostgreSQL、101 条跨页完整下载、失败重试、分享与跨项目权限、匿名接口鉴权、微秒游标、时区、工作簿样式和原有诊断/轮次功能。已实际查看 1024×768、1536×960 深浅色弹框及导出错误状态截图，无新增溢出或变形；格式、Lint、类型、Web 生产构建和 E2E 矩阵检查通过。本地未运行 Full 整体部署、真实 Runner、离线发布物或十万条导出压测；完整源码、Full 与发布资产验收由既有 GitHub Actions 流水线执行。详见[导出验证记录](./docs/architecture/execution-exceptions.md#excel-导出验证2026-10-07)。
+- 本地 72 项不同单元/集成检查与四项 Lite Playwright 场景通过，覆盖真实 SQLite/PostgreSQL、101 条跨页完整下载、失败重试、分享与跨项目权限、匿名接口鉴权、微秒游标、时区、工作簿样式和原有诊断/轮次功能。已实际查看 1024×768、1536×960 深浅色弹框及导出错误状态截图，无新增溢出或变形；格式、Lint、类型、Web 生产构建和 E2E 矩阵检查通过。本地未运行 Full 整体部署、真实 Runner、离线发布物或十万条导出压测；完整源码、Full 与发布资产验收由既有 GitHub Actions 流水线执行。详见[导出验证记录](./docs/architecture/execution-exceptions.md#excel-导出验证2026-10-07)。
 
 ## 1.19.2 - 2026-10-07
 

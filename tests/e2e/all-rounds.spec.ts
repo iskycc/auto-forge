@@ -18,6 +18,10 @@ import {
 } from "./support/session";
 import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
 
+// The 5-second worker tick, Jenkins polling and injected 503 retry can consume 30 seconds
+// before the next round is released. Leave bounded time for the final state observation.
+const RECOVERY_READY_TIMEOUT_MS = 45_000;
+
 /**
  * 全部轮次虚拟轮次视图的验收：覆盖 Runner 异常同轮重调度、真实失败整轮重跑、
  * Jenkins 轮次恢复与公开日志。验证：
@@ -994,7 +998,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
             result: item.buildResult,
           }));
         },
-        { timeout: 30_000 },
+        { timeout: RECOVERY_READY_TIMEOUT_MS },
       )
       .toEqual([
         { status: "succeeded", hasStartedAt: true, hasFinishedAt: true, result: "SUCCESS" },
@@ -1500,7 +1504,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
           };
           return details.roundRecoveries.map((recovery) => recovery.status);
         },
-        { timeout: 30_000 },
+        { timeout: RECOVERY_READY_TIMEOUT_MS },
       )
       .toEqual(["succeeded"]);
     const finalRoundFailure = await claimAssignment(page, identity);

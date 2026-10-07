@@ -83,6 +83,7 @@ URL，刷新后可恢复，不新增表格列或改变结果统计。
 - 真实 PostgreSQL 混合保存带时区的数据库时间与 UTC ISO 时间，保留同一时刻的六位微秒，复现修复前的无效游标；修复后经应用层游标和完整导出读取 101 条，确认无遗漏、重复或精度丢失。匿名携带无效参数的导出请求在修复前返回 400，修复后先返回 401；合法分享仍严格拒绝未知参数。
 - 独立完成 `pnpm --filter @autoforge/web build`，启动隔离的 Lite 生产实例后，设置 `AUTOFORGE_E2E_EXTERNAL_SERVER=1`、对应 `AUTOFORGE_E2E_DATA_DIR`、截图目录及预安装 Chromium，运行 `pnpm exec playwright test tests/e2e/execution-recovery.spec.ts --grep 'execution exception Excel|execution exceptions reveal'`：两项通过。真实导入 101 个用例并触发排队超时，从弹框第二页下载并读回全部 101 条，验证无重复/遗漏、失败后重试、原页码保留、平台时区、永久分享、无登录及跨项目拒绝，以及原有悬浮诊断、轮次显示和判定行为。
 - 导出鉴权修复后重新完成生产构建，连接隔离 Lite 实例，运行 `pnpm exec playwright test tests/e2e/identity-rbac.spec.ts --grep 'all protected HTTP entrypoints'`：通过，验证全部受保护 HTTP 入口的匿名拒绝行为。与上述两个场景合计三项 Lite 浏览器检查。
+- CI 的已有全部轮次场景在主动注入 Jenkins 503 后，最后一次状态观察恰好停在下一次 5 秒恢复轮询之前；将两个注入故障的等待点由 30 秒调整为 45 秒，保持成功状态、起止时间和结果断言。连接隔离 Lite 生产实例运行 `pnpm exec playwright test tests/e2e/all-rounds.spec.ts --grep 'all-rounds virtual round annotates'`：通过，覆盖同轮重调度、重跑额度、轮次恢复、公开日志及原有导出。四项 Lite 浏览器场景全部通过；本次测试改动的 Prettier、ESLint、测试类型及 E2E 矩阵检查通过，不修改产品恢复期限。
 - `pnpm format:check`、`pnpm lint`、`pnpm typecheck`（包含 `tsconfig.tests.json`）、`pnpm test:e2e:matrix` 与 `git diff --check` 通过。发布前将异常字段映射、概览写入和流式输出分开；CI 发现鉴权顺序和 Full 时间游标问题后补充失败用例并修复，重新运行上述 72 项检查。
 
 已实际查看弹框 1024×768、1536×960 的深浅色截图，以及这两种视口下有 50 条记录的导出
