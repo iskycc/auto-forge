@@ -9,9 +9,10 @@ import type {
   ProjectStructureRepository,
 } from "../src/ports";
 
-function fixture(sourceOverrides: Partial<FailureCaseSuiteSource> = {}) {
+function fixture(sourceOverrides: Partial<FailureCaseSuiteSource> = {}, timeZone = "UTC") {
   const source: FailureCaseSuiteSource = {
     suiteId: "source-suite",
+    suiteName: "原任务",
     projectId: "project-1",
     status: "succeeded",
     kind: "standard",
@@ -43,6 +44,7 @@ function fixture(sourceOverrides: Partial<FailureCaseSuiteSource> = {}) {
       { runId: "run-2", caseId: "ddt-1", caseType: "ddt", available: true },
     ]),
     copySuite: vi.fn().mockResolvedValue({ id: "created-suite" } as CaseSuite),
+    suggestFailureCopyName: vi.fn().mockResolvedValue("原任务 Rerun-20261006"),
   };
   const structures = {
     list: vi.fn().mockResolvedValue({
@@ -63,11 +65,48 @@ function fixture(sourceOverrides: Partial<FailureCaseSuiteSource> = {}) {
     { now: () => new Date("2026-10-06T00:00:00.000Z") },
     { next: () => `new-${++nextId}` },
     cipher,
+    undefined,
+    () => timeZone,
   );
   return { source, repository, structures, cipher, service };
 }
 
 describe("create a reusable task from final execution failures", () => {
+  it("reads the injected platform timezone when selecting today's date", async () => {
+    const { service, repository } = fixture({}, "America/Los_Angeles");
+    await service.createFromFinalFailures("batch-1", {});
+    expect(repository.copySuite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "原任务 Rerun-20261005",
+        failureCopyName: expect.objectContaining({ date: "20261005" }),
+      }),
+    );
+  });
+  it("uses the platform date and reserves an automatic name when the name is omitted", async () => {
+    const { service, repository } = fixture();
+    await expect(service.suggestFinalFailureName("batch-1", ["project-1"])).resolves.toEqual({
+      name: "原任务 Rerun-20261006",
+    });
+    expect(repository.suggestFailureCopyName).toHaveBeenCalledWith({
+      sourceName: "原任务",
+      date: "20261006",
+      projectId: "project-1",
+      projectVersionId: "version-1",
+    });
+    await service.createFromFinalFailures("batch-1", {});
+    expect(repository.copySuite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "原任务 Rerun-20261006",
+        failureCopyName: {
+          sourceName: "原任务",
+          date: "20261006",
+          projectId: "project-1",
+          projectVersionId: "version-1",
+        },
+      }),
+    );
+  });
+
   it("copies the execution configuration and mixed members, rebinding Jenkins credentials", async () => {
     const { service, repository, source, cipher } = fixture();
     await service.createFromFinalFailures("batch-1", { name: "  失败任务  " }, "actor-1", [
@@ -100,6 +139,7 @@ describe("create a reusable task from final execution failures", () => {
       "jenkins-user:token",
       "case-suite-round-recovery:new-1:new-2",
     );
+    expect(repository.copySuite.mock.calls[0]![0]).not.toHaveProperty("failureCopyName");
   });
 
   it.each(["queued", "dispatching", "scheduled", "running"] as const)(

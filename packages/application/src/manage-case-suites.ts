@@ -4,7 +4,9 @@ import type {
   CreateCaseSuiteInput,
   UpdateCaseSuiteInput,
   SetCaseSuitePinInput,
+  RoundRecoveryCredentialSourcesPage,
 } from "@autoforge/contracts";
+import { roundRecoveryCredentialSourceCursorSchema } from "@autoforge/contracts";
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
@@ -12,7 +14,10 @@ import {
   mergeCaseSuiteExecutionPolicy,
   isTerminalRunBatchStatus,
   orderCaseSuitesByPins,
+  failureCaseSuiteNameDate,
+  formatFailureCaseSuiteName,
   type CaseSuiteExecutionPolicy,
+  type CaseSuite,
   type RetryConcurrencyRule,
   type RoundRecoveryRule,
 } from "@autoforge/domain";
@@ -24,11 +29,16 @@ import type {
   CaseSuiteRepository,
   Clock,
   DdtRepository,
+  FailureCaseSuiteNameRequest,
+  FailureCaseSuiteSource,
   IdGenerator,
   ProjectStructureRepository,
   SecretCipherPort,
 } from "./ports";
-import { roundRecoverySecretPurpose } from "./round-recovery-credentials";
+import {
+  roundRecoverySecretPurpose,
+  RoundRecoveryCredentialResolver,
+} from "./round-recovery-credentials";
 
 const CASE_SUITE_EXPORT_PAGE_SIZE = 1_000;
 
@@ -41,6 +51,7 @@ export class CaseSuiteService {
     private readonly ids: IdGenerator,
     private readonly secretCipher?: SecretCipherPort,
     private readonly ddt?: DdtRepository,
+    private readonly timeZone: () => string = () => "UTC",
   ) {}
 
   async create(input: CreateCaseSuiteInput, actorId?: string) {
@@ -168,7 +179,7 @@ export class CaseSuiteService {
     }
     const name = input.name?.trim();
     const policyUpdate = input.policy
-      ? await this.preparePolicyUpdate(suite.id, suite.policy, input.policy)
+      ? await this.preparePolicyUpdate(suite, input.policy, projectIds)
       : undefined;
     const policy = policyUpdate?.policy;
     if (policy) assertRunnableResourceSelection(policy);
@@ -271,12 +282,25 @@ export class CaseSuiteService {
     });
   }
 
-  async createFromFinalFailures(
-    batchId: string,
-    input: CreateFailureCaseSuiteInput,
-    actorId?: string,
-    projectIds?: readonly string[],
-  ) {
+  async suggestFinalFailureName(batchId: string, projectIds?: readonly string[]) {
+    const source = await this.finalFailureSource(batchId, projectIds);
+    return { name: await this.suites.suggestFailureCopyName(this.failureCopyNameRequest(source)) };
+  }
+
+  private failureCopyNameRequest(
+    source: FailureCaseSuiteSource & {
+      policy: CaseSuiteExecutionPolicy & { projectVersionId: string };
+    },
+  ): FailureCaseSuiteNameRequest {
+    return {
+      sourceName: source.suiteName,
+      date: failureCaseSuiteNameDate(this.clock.now(), this.timeZone()),
+      projectId: source.projectId,
+      projectVersionId: source.policy.projectVersionId,
+    };
+  }
+
+  private async finalFailureSource(batchId: string, projectIds?: readonly string[]) {
     const source = await this.suites.getFailureCopySource(batchId, projectIds);
     if (!source) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     if (!isTerminalRunBatchStatus(source.status)) {
@@ -292,6 +316,20 @@ export class CaseSuiteService {
       throw new DomainError("RUN_RERUN_SOURCE_INVALID", "本次执行没有可复制的任务配置快照。");
     }
     await this.resolveActiveProjectVersion(source.projectId, projectVersionId);
+    return { ...source, policy: { ...source.policy, projectVersionId } };
+  }
+
+  async createFromFinalFailures(
+    batchId: string,
+    input: CreateFailureCaseSuiteInput,
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const source = await this.finalFailureSource(batchId, projectIds);
+    const sourcePolicy = source.policy;
+    const projectVersionId = sourcePolicy.projectVersionId;
+    const failureCopyName =
+      input.name === undefined ? this.failureCopyNameRequest(source) : undefined;
     const selectedMembers = await this.finalFailureMembers(
       batchId,
       source.projectId,
@@ -301,16 +339,17 @@ export class CaseSuiteService {
     const recovery = this.copyRoundRecoveryRules(
       source.suiteId,
       suiteId,
-      source.policy.roundRecoveryRules,
+      sourcePolicy.roundRecoveryRules,
       source.roundRecoveryCredentials,
     );
     return this.suites.copySuite({
       id: suiteId,
       failureBatchId: batchId,
       projectId: source.projectId,
-      name: input.name.trim(),
+      name: failureCopyName ? formatFailureCaseSuiteName(failureCopyName) : input.name!.trim(),
+      ...(failureCopyName ? { failureCopyName } : {}),
       ...(source.description ? { description: source.description } : {}),
-      policy: mergeCaseSuiteExecutionPolicy(source.policy, { roundRecoveryRules: recovery.rules }),
+      policy: mergeCaseSuiteExecutionPolicy(sourcePolicy, { roundRecoveryRules: recovery.rules }),
       items: [...selectedMembers.testng].map((caseDefinitionId) => ({
         id: this.ids.next(),
         caseDefinitionId,
@@ -408,22 +447,16 @@ export class CaseSuiteService {
   }
 
   private async preparePolicyUpdate(
-    suiteId: string,
-    current: CaseSuiteExecutionPolicy,
+    suite: CaseSuite,
     input: NonNullable<UpdateCaseSuiteInput["policy"]>,
+    projectIds?: readonly string[],
   ): Promise<{ policy: CaseSuiteExecutionPolicy; credentialUpserts: Record<string, string> }> {
     const { retryConcurrencyRules, roundRecoveryRules, ...baseInput } = input;
     const normalizedRetryRules = retryConcurrencyRules?.map(normalizeRetryConcurrencyRule);
-    const existingCredentials = roundRecoveryRules
-      ? await this.suites.getRoundRecoveryCredentials(
-          suiteId,
-          roundRecoveryRules.map((rule) => rule.id),
-        )
-      : {};
     const normalizedRecovery = roundRecoveryRules
-      ? this.prepareRoundRecoveryRules(suiteId, roundRecoveryRules, existingCredentials)
+      ? await this.prepareRoundRecoveryRules(suite, roundRecoveryRules, projectIds)
       : undefined;
-    const policy = mergeCaseSuiteExecutionPolicy(current, {
+    const policy = mergeCaseSuiteExecutionPolicy(suite.policy, {
       ...baseInput,
       ...(normalizedRetryRules ? { retryConcurrencyRules: normalizedRetryRules } : {}),
       ...(normalizedRecovery ? { roundRecoveryRules: normalizedRecovery.rules } : {}),
@@ -432,42 +465,16 @@ export class CaseSuiteService {
     return { policy, credentialUpserts: normalizedRecovery?.credentialUpserts ?? {} };
   }
 
-  private prepareRoundRecoveryRules(
-    suiteId: string,
+  private async prepareRoundRecoveryRules(
+    suite: CaseSuite,
     input: NonNullable<NonNullable<UpdateCaseSuiteInput["policy"]>["roundRecoveryRules"]>,
-    existingCredentials: Record<string, string>,
-  ): { rules: RoundRecoveryRule[]; credentialUpserts: Record<string, string> } {
-    const credentialUpserts: Record<string, string> = {};
+    projectIds?: readonly string[],
+  ): Promise<{ rules: RoundRecoveryRule[]; credentialUpserts: Record<string, string> }> {
+    const credentialUpserts = await new RoundRecoveryCredentialResolver(
+      this.suites,
+      this.secretCipher,
+    ).prepare(suite, input, projectIds);
     const rules = input.map((rule): RoundRecoveryRule => {
-      const suppliedApiKey = rule.apiKey;
-      const credentialSeparator = suppliedApiKey?.indexOf(":") ?? -1;
-      if (
-        suppliedApiKey !== undefined &&
-        (credentialSeparator <= 0 || credentialSeparator === suppliedApiKey.length - 1)
-      ) {
-        throw new DomainError(
-          "JENKINS_CREDENTIAL_INVALID",
-          "Jenkins API 密钥需填写为“用户名:API Token”。",
-        );
-      }
-      if (suppliedApiKey !== undefined) {
-        if (!this.secretCipher?.available) {
-          throw new DomainError(
-            "SECRET_CIPHER_UNAVAILABLE",
-            "配置 Jenkins 环境恢复前必须先设置 AutoForge 主密钥。",
-          );
-        }
-        credentialUpserts[rule.id] = this.secretCipher.encrypt(
-          suppliedApiKey,
-          roundRecoverySecretPurpose(suiteId, rule.id),
-        );
-      }
-      if (!credentialUpserts[rule.id] && !existingCredentials[rule.id]) {
-        throw new DomainError(
-          "JENKINS_CREDENTIAL_REQUIRED",
-          `第 ${rule.afterRound} 轮后的 Jenkins 环境恢复尚未配置 API 密钥。`,
-        );
-      }
       return {
         id: rule.id,
         afterRound: rule.afterRound,
@@ -477,6 +484,37 @@ export class CaseSuiteService {
       };
     });
     return { rules, credentialUpserts };
+  }
+
+  async listRoundRecoveryCredentialSources(
+    suiteId: string,
+    input: { query?: string | undefined; cursor?: string | undefined },
+    projectIds?: readonly string[],
+  ): Promise<RoundRecoveryCredentialSourcesPage> {
+    await this.getSummary(suiteId, projectIds);
+    let after: { suiteId: string; ruleId: string } | undefined;
+    if (input.cursor) {
+      try {
+        after = roundRecoveryCredentialSourceCursorSchema.parse(JSON.parse(input.cursor));
+      } catch (cause) {
+        throw new DomainError("INVALID_CURSOR", "密钥来源分页游标无效。", { cause });
+      }
+    }
+    const rows = await this.suites.listRoundRecoveryCredentialSources({
+      limit: 51,
+      excludeSuiteId: suiteId,
+      ...(input.query ? { query: input.query } : {}),
+      ...(after ? { after } : {}),
+      ...(projectIds ? { projectIds } : {}),
+    });
+    const items = rows.slice(0, 50);
+    const last = items.at(-1);
+    return {
+      items,
+      ...(rows.length > 50 && last
+        ? { nextCursor: JSON.stringify({ suiteId: last.suiteId, ruleId: last.ruleId }) }
+        : {}),
+    };
   }
 
   private copyRoundRecoveryRules(

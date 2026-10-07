@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { insertCaseExecutionHistoryFixture } from "../../../tests/e2e/support/case-execution-history-fixture";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -30,6 +31,7 @@ import { normalizeTestNgCompletion } from "../../application/src/normalize-testn
 // 且完成上报要回传 batchId/batchClosed 供路由层触发补调度与 Agent 清理批次目录。
 // SQLite 使用真实临时库；PostgreSQL 仅在提供 AUTOFORGE_TEST_POSTGRES_URL 时运行。
 type RefillHarness = {
+  sqliteDataDirectory?: string;
   batches: RunBatchRepository;
   executions: ExecutionControlRepository;
   listCaseActivity(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
@@ -73,13 +75,14 @@ async function createSqliteHarness(): Promise<RefillHarness> {
   const directory = await mkdtemp(resolve(tmpdir(), "autoforge-scheduling-refill-"));
   temporaryDirectories.push(directory);
   const handle: SqliteDatabaseHandle = createSqliteDatabase({
-    databasePath: resolve(directory, "autoforge.sqlite"),
+    databasePath: resolve(directory, "db", "autoforge.sqlite"),
     migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
   });
   const fixture = await seedFixture((sql, parameters) =>
     Promise.resolve(handle.client.prepare(sql).run(...(parameters ?? []))),
   );
   return {
+    sqliteDataDirectory: directory,
     batches: new SqliteRunBatchRepository(handle),
     executions: new SqliteExecutionControlRepository(
       handle,
@@ -111,6 +114,70 @@ async function insertQueuedRun(harness: RefillHarness, batchId: string): Promise
     [runId, batchId, `case-${runId}`, "2026-08-10T00:00:00.000Z", "2026-08-10T00:00:00.000Z"],
   );
   return runId;
+}
+
+async function insertCaseHistoryRun(
+  harness: RefillHarness,
+  caseId: string,
+  input: {
+    status: "queued" | "assigned" | "running" | "succeeded" | "failed" | "cancelled";
+    createdAt?: string;
+    diagnostic?: boolean;
+    attempts: Array<{
+      status: "assigned" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
+      outcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
+      started?: boolean;
+      finished?: boolean;
+    }>;
+  },
+) {
+  const batchId = randomUUID();
+  const runId = randomUUID();
+  const createdAt = input.createdAt ?? "2026-08-10T00:00:00.000Z";
+  await harness.rawQuery(
+    `INSERT INTO run_batches
+       (id, suite_id, suite_name, suite_version, project_id, status, retry_limit,
+        environment_json, total_runs, batch_kind, created_at, updated_at)
+     VALUES (?, 'history-suite', 'History task', 1, ?, 'running', 0, '{}', 1, ?, ?, ?)`,
+    [
+      batchId,
+      harness.projectId,
+      input.diagnostic ? "case_log_rerun" : "standard",
+      createdAt,
+      createdAt,
+    ],
+  );
+  await harness.rawQuery(
+    `INSERT INTO execution_runs
+       (id, batch_id, case_definition_id, case_version, display_name, class_name,
+        status, attempt_count, created_at, updated_at)
+     VALUES (?, ?, ?, 1, 'History case', 'example.HistoryCase', ?, ?, ?, ?)`,
+    [runId, batchId, caseId, input.status, input.attempts.length, createdAt, createdAt],
+  );
+  const attemptIds: string[] = [];
+  for (const [index, attempt] of input.attempts.entries()) {
+    const attemptId = randomUUID();
+    await harness.rawQuery(
+      `INSERT INTO run_attempts
+         (id, execution_run_id, runner_id, attempt_number, execution_round, status, outcome,
+          scheduling_score, duration_ms, created_at, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 100, ?, ?, ?)`,
+      [
+        attemptId,
+        runId,
+        harness.runnerId,
+        index + 1,
+        index + 1,
+        attempt.status,
+        attempt.outcome ?? null,
+        createdAt,
+        attempt.started === false ? null : createdAt,
+        attempt.finished === false ? null : createdAt,
+      ],
+    );
+    attemptIds.push(attemptId);
+  }
+  return { runId, attemptIds };
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
@@ -583,6 +650,11 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
           harness.runnerId,
         ],
       );
+      await harness.rawQuery(
+        `UPDATE run_attempts SET started_at=created_at
+         WHERE execution_run_id IN (?, ?)`,
+        [visibleRunIds[1], visibleRunIds[2]],
+      );
 
       await expect(harness.batches.list(100)).resolves.not.toContainEqual(
         expect.objectContaining({ id: harness.batchQueuedId }),
@@ -621,12 +693,12 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
           resultCode: "TEST_ASSERTION_FAILED_FINAL",
         }),
       ]);
-      expect(firstPage.nextCursor).toBeTruthy();
+      expect(firstPage.nextCursor).toBeUndefined();
       const finalPage = await harness.listCaseExecutionHistory(caseDefinitionId, {
-        cursor: firstPage.nextCursor!,
+        cursor: Buffer.from(`2026-08-10T00:01:00.000Z|${visibleRunIds[1]}`).toString("base64url"),
         limit: 2,
       });
-      expect(finalPage.items).toMatchObject([{ runId: visibleRunIds[0] }]);
+      expect(finalPage.items).toEqual([]);
       expect(finalPage.nextCursor).toBeUndefined();
       await expect(
         harness.listCaseExecutionHistory(caseDefinitionId, { cursor: "invalid", limit: 2 }),
@@ -634,6 +706,102 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       await expect(harness.listLatestRunOutcomes([caseDefinitionId])).resolves.toMatchObject([
         { caseDefinitionId, outcome: "succeeded" },
       ]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("shows only completed case results and never substitutes an earlier result for an unfinished summary", async () => {
+    const harness = await createHarness();
+    const caseId = `case-completed-history-${randomUUID()}`;
+    try {
+      const expected: string[] = [];
+      for (const outcome of ["succeeded", "failed", "timed_out"] as const) {
+        const record = await insertCaseHistoryRun(harness, caseId, {
+          status: outcome === "succeeded" ? "succeeded" : "failed",
+          attempts: [{ status: outcome }],
+        });
+        expected.push(record.runId);
+      }
+      const recovered = await insertCaseHistoryRun(harness, caseId, {
+        status: "succeeded",
+        attempts: [{ status: "succeeded" }, { status: "failed" }, { status: "succeeded" }],
+      });
+      expected.push(recovered.runId);
+      for (const status of ["queued", "assigned", "running", "cancelled"] as const)
+        await insertCaseHistoryRun(harness, caseId, {
+          status,
+          attempts: [{ status: "failed" }],
+        });
+      await insertCaseHistoryRun(harness, caseId, { status: "failed", attempts: [] });
+      for (const status of ["assigned", "running", "cancelled"] as const)
+        await insertCaseHistoryRun(harness, caseId, {
+          status: "failed",
+          attempts: [{ status: "failed" }, { status }],
+        });
+      await insertCaseHistoryRun(harness, caseId, {
+        status: "failed",
+        attempts: [{ status: "failed", started: false }],
+      });
+      await insertCaseHistoryRun(harness, caseId, {
+        status: "failed",
+        attempts: [{ status: "failed", finished: false }],
+      });
+      await insertCaseHistoryRun(harness, caseId, {
+        status: "failed",
+        attempts: [{ status: "failed", outcome: "cancelled" }],
+      });
+      await insertCaseHistoryRun(harness, caseId, {
+        status: "failed",
+        diagnostic: true,
+        attempts: [{ status: "failed" }],
+      });
+      const page = await harness.listCaseExecutionHistory(caseId, {
+        limit: 50,
+        includeRunnerNames: true,
+      });
+      expect(page.items.map((item) => item.runId).sort()).toEqual(expected.sort());
+      expect(page.items.every((item) => item.attempts.length === 1)).toBe(true);
+      expect(page.items.find((item) => item.runId === recovered.runId)?.attempts).toEqual([
+        expect.objectContaining({ id: recovered.attemptIds[2], runnerName: "runner-refill" }),
+      ]);
+      expect(page.nextCursor).toBeUndefined();
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("filters cancelled and unexecuted records before cursor pagination without losing older completed results", async () => {
+    const harness = await createHarness();
+    const caseId = `case-paged-history-${randomUUID()}`;
+    try {
+      const fixture = await insertCaseExecutionHistoryFixture({
+        ...(harness.sqliteDataDirectory
+          ? { directory: harness.sqliteDataDirectory }
+          : { postgresUrl: postgresConnectionString! }),
+        projectId: harness.projectId,
+        projectVersionId: "history-version",
+        caseId,
+        runnerId: harness.runnerId,
+        completedCount: 3,
+      });
+      const page = await harness.listCaseExecutionHistory(caseId, { limit: 2 });
+      expect(page.items.map((item) => item.runId)).toEqual(fixture.completedRunIds.slice(0, 2));
+      expect(page.items[0]?.attempts[0]).not.toHaveProperty("runnerName");
+      expect(page.nextCursor).toBeTruthy();
+      const older = await harness.listCaseExecutionHistory(caseId, {
+        limit: 2,
+        cursor: page.nextCursor!,
+      });
+      expect(older.items.map((item) => item.runId)).toEqual(fixture.completedRunIds.slice(2));
+      expect(older.nextCursor).toBeUndefined();
+      await expect(
+        harness.listCaseExecutionHistory("no-executions", { limit: 2 }),
+      ).resolves.toEqual({
+        items: [],
+      });
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();

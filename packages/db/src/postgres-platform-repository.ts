@@ -9,6 +9,11 @@ import {
   failureSuiteRecoveryQuery,
   type FailureCaseSuiteRecovery,
 } from "./failure-case-suite-source";
+import {
+  failureCaseSuiteNamePageQuery,
+  FAILURE_CASE_SUITE_NAME_PAGE_SIZE,
+  type FailureCaseSuiteNameRow,
+} from "./failure-case-suite-name-query";
 import type { RunnerResourceSample } from "@autoforge/domain";
 import {
   runPostgresTransaction,
@@ -22,6 +27,8 @@ import {
 } from "./ddt-execution-sql";
 import { getTableColumns } from "drizzle-orm";
 import { caseSuitePinPriority } from "./case-suite-pins-query";
+import { roundRecoveryCredentialSourcesQuery } from "./round-recovery-credential-sources-query";
+import type { RoundRecoveryCredentialSource } from "@autoforge/contracts";
 import type {
   CaseCatalogRepository,
   CaseActivity,
@@ -33,6 +40,8 @@ import type {
   CaseSuiteExportPageQuery,
   CaseSuiteExportRow,
   CaseSuiteRepository,
+  RoundRecoveryCredentialSourceQuery,
+  FailureCaseSuiteNameRequest,
   FailureCaseSuiteSource,
   FailureCaseSuiteMember,
   CopyCaseSuiteRecord,
@@ -55,6 +64,7 @@ import {
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  FailureCaseSuiteNameSequence,
   buildCaseSuiteVersionSnapshot,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
@@ -90,8 +100,9 @@ import {
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
-  decodeCaseExecutionHistoryCursor,
-  encodeCaseExecutionHistoryCursor,
+  caseExecutionHistoryPageQuery,
+  mapCaseExecutionHistoryPage,
+  type CaseExecutionHistoryRow,
 } from "./case-execution-history";
 import {
   batchesOf,
@@ -983,110 +994,10 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     query: CaseExecutionHistoryQuery,
   ): Promise<CaseExecutionHistoryPage> {
     await this.ready();
-    const cursor = decodeCaseExecutionHistoryCursor(query.cursor);
-    const parameters: unknown[] = [caseDefinitionId];
-    let cursorClause = "";
-    if (cursor) {
-      parameters.push(cursor.createdAt, cursor.runId);
-      cursorClause = "AND (r.created_at < $2 OR (r.created_at = $2 AND r.id < $3))";
-    }
-    parameters.push(query.limit + 1);
-    const limitParameter = `$${parameters.length}`;
-    const runResult = await this.handle.pool.query<{
-      run_id: string;
-      batch_id: string;
-      status: CaseExecutionHistoryPage["items"][number]["status"];
-      created_at: string;
-      sequence_number: number;
-      suite_name: string;
-    }>(
-      `SELECT r.id AS run_id, r.batch_id, r.status, r.created_at,
-              b.sequence_number, b.suite_name
-       FROM execution_runs r
-       JOIN run_batches b ON b.id = r.batch_id
-       WHERE r.case_definition_id = $1 AND b.batch_kind <> 'case_log_rerun'
-       ${cursorClause}
-       ORDER BY r.created_at DESC, r.id DESC LIMIT ${limitParameter}`,
-      parameters,
+    const result = await this.handle.db.execute<CaseExecutionHistoryRow>(
+      caseExecutionHistoryPageQuery(caseDefinitionId, query),
     );
-    const hasMore = runResult.rows.length > query.limit;
-    const pageRows = runResult.rows.slice(0, query.limit);
-    const attemptsByRunId = new Map<
-      string,
-      CaseExecutionHistoryPage["items"][number]["attempts"]
-    >();
-    if (pageRows.length > 0) {
-      const attemptResult = await this.handle.pool.query<{
-        id: string;
-        execution_run_id: string;
-        attempt_number: number;
-        execution_round: number;
-        status: CaseExecutionHistoryPage["items"][number]["attempts"][number]["status"];
-        runner_id: string;
-        runner_name: string | null;
-        result_code: string | null;
-        duration_ms: string | number | null;
-        created_at: string;
-        finished_at: string | null;
-      }>(
-        `SELECT a.id, a.execution_run_id, a.attempt_number, a.execution_round, a.status, a.runner_id,
-                runner.name AS runner_name, a.result_code, a.duration_ms,
-                a.created_at, a.finished_at
-         FROM run_attempts a
-         LEFT JOIN runners runner ON runner.id = a.runner_id
-         WHERE a.execution_run_id = ANY($1::text[])
-           AND a.id=(
-             SELECT preferred.id FROM run_attempts preferred
-             WHERE preferred.execution_run_id=a.execution_run_id
-             ORDER BY CASE
-                        WHEN COALESCE(preferred.outcome,preferred.status)='succeeded' THEN 0
-                        ELSE 1
-                      END,
-                      preferred.attempt_number DESC
-             LIMIT 1
-           )
-         ORDER BY a.execution_run_id`,
-        [pageRows.map((row) => row.run_id)],
-      );
-      for (const attempt of attemptResult.rows) {
-        const runAttempts = attemptsByRunId.get(attempt.execution_run_id) ?? [];
-        runAttempts.push({
-          id: attempt.id,
-          attemptNumber: attempt.attempt_number,
-          executionRound: attempt.execution_round,
-          status: attempt.status,
-          runnerId: attempt.runner_id,
-          ...(query.includeRunnerNames && attempt.runner_name
-            ? { runnerName: attempt.runner_name }
-            : {}),
-          ...(attempt.result_code ? { resultCode: attempt.result_code } : {}),
-          ...(attempt.duration_ms === null ? {} : { durationMs: Number(attempt.duration_ms) }),
-          createdAt: attempt.created_at,
-          ...(attempt.finished_at ? { finishedAt: attempt.finished_at } : {}),
-        });
-        attemptsByRunId.set(attempt.execution_run_id, runAttempts);
-      }
-    }
-    const last = pageRows.at(-1);
-    return {
-      items: pageRows.map((row) => ({
-        runId: row.run_id,
-        batchId: row.batch_id,
-        batchSequenceNumber: row.sequence_number,
-        batchName: row.suite_name,
-        status: row.status,
-        createdAt: row.created_at,
-        attempts: attemptsByRunId.get(row.run_id) ?? [],
-      })),
-      ...(hasMore && last
-        ? {
-            nextCursor: encodeCaseExecutionHistoryCursor({
-              createdAt: last.created_at,
-              runId: last.run_id,
-            }),
-          }
-        : {}),
-    };
+    return mapCaseExecutionHistoryPage(result.rows, query);
   }
 
   async listLatestRunOutcomes(
@@ -2068,6 +1979,45 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
+  async listRoundRecoveryCredentialSources(
+    input: RoundRecoveryCredentialSourceQuery,
+  ): Promise<RoundRecoveryCredentialSource[]> {
+    await this.ready();
+    if (input.projectIds?.length === 0) return [];
+    return (
+      await this.handle.db.execute<RoundRecoveryCredentialSource>(
+        roundRecoveryCredentialSourcesQuery(
+          input,
+          sql`jsonb_array_elements(COALESCE(s.policy_json::jsonb->'roundRecoveryRules', '[]'::jsonb)) AS r(value)`,
+          sql`r.value->>'id'`,
+          sql`CAST(r.value->>'afterRound' AS INTEGER)`,
+          sql`r.value->>'jenkinsJobUrl'`,
+        ),
+      )
+    ).rows;
+  }
+
+  async suggestFailureCopyName(input: FailureCaseSuiteNameRequest): Promise<string> {
+    await this.ready();
+    return this.availableFailureCopyName(this.handle.db, input);
+  }
+
+  private async availableFailureCopyName(
+    database: Pick<PostgresSuiteTransaction, "execute">,
+    input: FailureCaseSuiteNameRequest,
+  ): Promise<string> {
+    const sequence = new FailureCaseSuiteNameSequence(input);
+    let afterId: string | undefined;
+    while (true) {
+      const { rows } = await database.execute<FailureCaseSuiteNameRow>(
+        failureCaseSuiteNamePageQuery(input, sql`policy_json::jsonb->>'projectVersionId'`, afterId),
+      );
+      sequence.observe(rows.map((row) => row.name));
+      if (rows.length < FAILURE_CASE_SUITE_NAME_PAGE_SIZE) return sequence.availableName();
+      afterId = rows.at(-1)!.id;
+    }
+  }
+
   private async ready(): Promise<void> {
     await this.handle.ready;
   }
@@ -2081,6 +2031,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     const [row] = await this.handle.db
       .select({
         suiteId: pgRunBatches.suiteId,
+        suiteName: pgRunBatches.suiteName,
         projectId: pgRunBatches.projectId,
         status: pgRunBatches.status,
         kind: pgRunBatches.batchKind,
@@ -2827,6 +2778,17 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      let name = input.name;
+      if (input.failureCopyName) {
+        const scope = JSON.stringify([
+          "failure-case-suite-name",
+          input.failureCopyName.projectId,
+          input.failureCopyName.projectVersionId,
+        ]);
+        // Serialize automatic name allocation across Web nodes in this project version.
+        await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`);
+        name = await this.availableFailureCopyName(transaction, input.failureCopyName);
+      }
       if (input.failureBatchId) {
         const result = await transaction.execute<FailureCopyValidation>(
           failureCopyValidationQuery(input),
@@ -2847,7 +2809,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       await transaction.insert(pgCaseSuites).values({
         id: input.id,
         projectId: input.projectId ?? DEFAULT_PROJECT_ID,
-        name: input.name,
+        name,
         description: input.description ?? null,
         version: 1,
         status: "active",

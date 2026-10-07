@@ -10,6 +10,7 @@ import {
 
 export type FailureCaseSuiteSourceRow = {
   suiteId: string;
+  suiteName: string;
   projectId: string;
   status: RunBatch["status"];
   kind: RunBatch["kind"];
@@ -38,6 +39,7 @@ export function toFailureCaseSuiteSource(
 ): FailureCaseSuiteSource {
   const source: FailureCaseSuiteSource = {
     suiteId: row.suiteId,
+    suiteName: row.suiteName,
     projectId: row.projectId,
     status: row.status,
     kind: row.kind,

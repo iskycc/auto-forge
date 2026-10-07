@@ -2,10 +2,13 @@ import type {
   InspectRoundRecoveryConfigurationInput,
   JenkinsJobInspection,
 } from "@autoforge/contracts";
-import { DomainError, type CaseSuite } from "@autoforge/domain";
+import { DomainError, assertJenkinsCredential, type CaseSuite } from "@autoforge/domain";
 
 import type { CaseSuiteRepository, JenkinsRoundRecoveryTransport, SecretCipherPort } from "./ports";
-import { roundRecoverySecretPurpose } from "./round-recovery-credentials";
+import {
+  roundRecoverySecretPurpose,
+  RoundRecoveryCredentialResolver,
+} from "./round-recovery-credentials";
 
 export class RoundRecoveryConfigurationInspector {
   constructor(
@@ -17,9 +20,18 @@ export class RoundRecoveryConfigurationInspector {
   async inspect(
     suite: CaseSuite,
     input: InspectRoundRecoveryConfigurationInput,
+    projectIds?: readonly string[],
   ): Promise<JenkinsJobInspection> {
     const credential =
-      input.apiKey ?? (await this.storedCredential(suite, input.ruleId, input.jenkinsJobUrl));
+      input.apiKey ??
+      (input.apiKeySource
+        ? await new RoundRecoveryCredentialResolver(this.suites, this.secretCipher).readSource(
+            input.apiKeySource,
+            input.jenkinsJobUrl,
+            projectIds,
+            suite,
+          )
+        : await this.storedCredential(suite, input.ruleId, input.jenkinsJobUrl));
     assertJenkinsCredential(credential);
     try {
       return await this.transport.inspectJob({ jobUrl: input.jenkinsJobUrl, credential });
@@ -68,14 +80,4 @@ function normalizedJobUrl(value: string): string {
   const url = new URL(value);
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   return url.toString();
-}
-
-function assertJenkinsCredential(value: string): void {
-  const separator = value.indexOf(":");
-  if (separator <= 0 || separator === value.length - 1) {
-    throw new DomainError(
-      "JENKINS_CREDENTIAL_INVALID",
-      "Jenkins API 密钥需填写为“用户名:API Token”。",
-    );
-  }
 }

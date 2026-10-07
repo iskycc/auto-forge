@@ -10,16 +10,25 @@ import {
   type FailureCaseSuiteRecovery,
 } from "./failure-case-suite-source";
 import {
+  failureCaseSuiteNamePageQuery,
+  FAILURE_CASE_SUITE_NAME_PAGE_SIZE,
+  type FailureCaseSuiteNameRow,
+} from "./failure-case-suite-name-query";
+import {
   ddtRequirementCategoryIdSql,
   ddtExecutionClassIdSql,
   freezeDdtSrExecutionClasses,
 } from "./ddt-execution-sql";
 import { getTableColumns } from "drizzle-orm";
 import { caseSuitePinPriority } from "./case-suite-pins-query";
+import { roundRecoveryCredentialSourcesQuery } from "./round-recovery-credential-sources-query";
+import type { RoundRecoveryCredentialSource } from "@autoforge/contracts";
 import type {
   CaseSuiteRepository,
+  RoundRecoveryCredentialSourceQuery,
   FailureCaseSuiteSource,
   FailureCaseSuiteMember,
+  FailureCaseSuiteNameRequest,
   CaseSuiteExportPageQuery,
   CaseSuiteExportRow,
   CopyCaseSuiteRecord,
@@ -29,6 +38,7 @@ import type {
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  FailureCaseSuiteNameSequence,
   buildCaseSuiteVersionSnapshot,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
@@ -131,6 +141,42 @@ function toSuite(row: typeof caseSuites.$inferSelect, caseCount: number): CaseSu
 export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
+  async listRoundRecoveryCredentialSources(
+    input: RoundRecoveryCredentialSourceQuery,
+  ): Promise<RoundRecoveryCredentialSource[]> {
+    if (input.projectIds?.length === 0) return [];
+    return this.handle.db.all<RoundRecoveryCredentialSource>(
+      roundRecoveryCredentialSourcesQuery(
+        input,
+        sql`json_each(s.policy_json, '$.roundRecoveryRules') AS r`,
+        sql`json_extract(r.value, '$.id')`,
+        sql`CAST(json_extract(r.value, '$.afterRound') AS INTEGER)`,
+        sql`json_extract(r.value, '$.jenkinsJobUrl')`,
+      ),
+    );
+  }
+
+  async suggestFailureCopyName(input: FailureCaseSuiteNameRequest): Promise<string> {
+    return this.availableFailureCopyName(input);
+  }
+
+  private availableFailureCopyName(input: FailureCaseSuiteNameRequest): string {
+    const sequence = new FailureCaseSuiteNameSequence(input);
+    let afterId: string | undefined;
+    while (true) {
+      const rows = this.handle.db.all<FailureCaseSuiteNameRow>(
+        failureCaseSuiteNamePageQuery(
+          input,
+          sql`json_extract(policy_json, '$.projectVersionId')`,
+          afterId,
+        ),
+      );
+      sequence.observe(rows.map((row) => row.name));
+      if (rows.length < FAILURE_CASE_SUITE_NAME_PAGE_SIZE) return sequence.availableName();
+      afterId = rows.at(-1)!.id;
+    }
+  }
+
   async getFailureCopySource(
     batchId: string,
     projectIds?: readonly string[],
@@ -139,6 +185,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     const row = this.handle.db
       .select({
         suiteId: runBatches.suiteId,
+        suiteName: runBatches.suiteName,
         projectId: runBatches.projectId,
         status: runBatches.status,
         kind: runBatches.batchKind,
@@ -833,7 +880,9 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         .values({
           id: input.id,
           projectId: input.projectId ?? DEFAULT_PROJECT_ID,
-          name: input.name,
+          name: input.failureCopyName
+            ? this.availableFailureCopyName(input.failureCopyName)
+            : input.name,
           description: input.description ?? null,
           version: 1,
           status: "active",

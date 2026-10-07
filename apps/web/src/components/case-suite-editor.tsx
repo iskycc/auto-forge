@@ -40,6 +40,12 @@ import { useConcurrentModificationFeedback } from "@/components/concurrent-modif
 import { useToast } from "@/components/ui-feedback";
 import { throwApiErrorResponse } from "@/lib/client-api";
 import { caseSuiteAdapterDefaults } from "@/lib/case-suite-adapter-defaults";
+import { RoundRecoveryCredentialDialog } from "./round-recovery-credential-dialog";
+import {
+  canReuseRecoveryCredential,
+  recoveryInspectionCredential,
+  type RoundRecoveryCredentialChoice,
+} from "@/lib/round-recovery-credential-input";
 
 type EditableRetryConcurrencyRule = {
   id: string;
@@ -58,6 +64,7 @@ type EditableRoundRecoveryRule = {
   waitMinutes: string;
   apiKey: string;
   apiKeyConfigured: boolean;
+  apiKeySource?: RoundRecoveryCredentialChoice | undefined;
 };
 
 type RecoveryInspectionState =
@@ -120,6 +127,7 @@ export function CaseSuiteEditor({
     })),
   );
   const [inspectingRecoveryRuleId, setInspectingRecoveryRuleId] = useState<string | null>(null);
+  const [credentialTargetRuleId, setCredentialTargetRuleId] = useState<string>();
   const [recoveryInspections, setRecoveryInspections] = useState<
     Record<string, RecoveryInspectionState>
   >({});
@@ -212,6 +220,17 @@ export function CaseSuiteEditor({
       acceptMutation(revision, savedSuite.revision);
       setAdapterSuiteName(savedSuite.policy.adapter.suiteName);
       setAdapterTestName(savedSuite.policy.adapter.testName);
+      setRoundRecoveryRules(
+        savedSuite.policy.roundRecoveryRules.map((rule) => ({
+          id: rule.id,
+          afterRound: String(rule.afterRound),
+          jenkinsJobUrl: rule.jenkinsJobUrl,
+          waitMinutes: String(rule.waitMinutes),
+          apiKey: "",
+          apiKeyConfigured: rule.apiKeyConfigured,
+        })),
+      );
+      setRecoveryInspections({});
       setDirty(false);
       toast.success("用例任务已更新，配置已保存并立即用于后续批次。");
       router.refresh();
@@ -260,12 +279,12 @@ export function CaseSuiteEditor({
     setRoundRecoveryRules((rules) =>
       rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
     );
-    if (patch.jenkinsJobUrl !== undefined || patch.apiKey !== undefined) {
-      setRecoveryInspections((inspections) => {
-        const remaining = { ...inspections };
-        delete remaining[ruleId];
-        return remaining;
-      });
+    if (
+      patch.jenkinsJobUrl !== undefined ||
+      patch.apiKey !== undefined ||
+      "apiKeySource" in patch
+    ) {
+      setRecoveryInspections({});
     }
   }
 
@@ -285,7 +304,7 @@ export function CaseSuiteEditor({
           body: JSON.stringify({
             ruleId: rule.id,
             jenkinsJobUrl: rule.jenkinsJobUrl,
-            ...(rule.apiKey ? { apiKey: rule.apiKey } : {}),
+            ...recoveryInspectionCredential(rule, roundRecoveryRules, suite.id),
           }),
         },
       );
@@ -694,13 +713,21 @@ export function CaseSuiteEditor({
                           aria-label={`恢复步骤 ${index + 1} API 密钥`}
                           autoComplete="new-password"
                           placeholder={
-                            rule.apiKeyConfigured ? "已配置；留空保持不变" : "用户名:API Token"
+                            rule.apiKeySource
+                              ? `复用：${rule.apiKeySource.label}`
+                              : rule.apiKeyConfigured
+                                ? "已配置；留空保持不变"
+                                : "用户名:API Token"
                           }
-                          required={!rule.apiKeyConfigured}
+                          title={rule.apiKeySource ? `复用：${rule.apiKeySource.label}` : undefined}
+                          required={!rule.apiKeyConfigured && !rule.apiKeySource}
                           type="password"
                           value={rule.apiKey}
                           onChange={(event) =>
-                            updateRecoveryRule(rule.id, { apiKey: event.currentTarget.value })
+                            updateRecoveryRule(rule.id, {
+                              apiKey: event.currentTarget.value,
+                              apiKeySource: undefined,
+                            })
                           }
                         />
                       </label>
@@ -722,13 +749,16 @@ export function CaseSuiteEditor({
                         className={cn(
                           "recovery-rule-status",
                           caseSuiteEditorStyles["recovery-rule-status"],
+                          "col-span-full max-w-full justify-self-start whitespace-normal! [overflow-wrap:anywhere]",
                         )}
                       >
-                        {rule.apiKeyConfigured
-                          ? "密钥已加密保存"
-                          : rule.apiKey
-                            ? "保存后加密"
-                            : "等待配置密钥"}
+                        {rule.apiKeySource
+                          ? "复用密钥；保存后独立加密"
+                          : rule.apiKeyConfigured
+                            ? "密钥已加密保存"
+                            : rule.apiKey
+                              ? "保存后加密"
+                              : "等待配置密钥"}
                       </Badge>
                       <span
                         className={cn(
@@ -736,11 +766,33 @@ export function CaseSuiteEditor({
                           caseSuiteEditorStyles["recovery-rule-actions"],
                         )}
                       >
+                        {rule.apiKeySource ? (
+                          <Button
+                            aria-label={`取消恢复步骤 ${index + 1} 密钥复用`}
+                            size="compact"
+                            type="button"
+                            onClick={() => {
+                              setDirty(true);
+                              updateRecoveryRule(rule.id, { apiKeySource: undefined });
+                            }}
+                          >
+                            取消复用
+                          </Button>
+                        ) : null}
+                        <Button
+                          aria-label={`复用恢复步骤 ${index + 1} Jenkins 密钥`}
+                          size="compact"
+                          type="button"
+                          onClick={() => setCredentialTargetRuleId(rule.id)}
+                        >
+                          <Copy size={14} />
+                          复用密钥
+                        </Button>
                         <Button
                           aria-label={`测试恢复步骤 ${index + 1} Jenkins 配置`}
                           disabled={
                             !rule.jenkinsJobUrl ||
-                            (!rule.apiKey && !rule.apiKeyConfigured) ||
+                            (!rule.apiKey && !rule.apiKeyConfigured && !rule.apiKeySource) ||
                             inspectingRecoveryRuleId !== null
                           }
                           size="compact"
@@ -778,8 +830,9 @@ export function CaseSuiteEditor({
               )}
               <p className={"form-help"}>
                 API 密钥使用单个“用户名:API Token”字段，服务端加密保存；页面不会回显。Jenkins 需安装
-                Rebuilder
-                插件。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。“测试配置”只读取任务与上一构建信息，不会触发构建。
+                Rebuilder 插件。可通过“复用密钥”选择本任务其他步骤或有管理权限的其他任务；同一
+                Jenkins
+                服务地址下可复用，保存后独立加密。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。“测试配置”只读取任务与上一构建信息，不会触发构建。
               </p>
             </div>
             <label>
@@ -1098,6 +1151,31 @@ export function CaseSuiteEditor({
           </ActionDialog>
         </div>
       </fieldset>
+      {credentialTargetRuleId ? (
+        <RoundRecoveryCredentialDialog
+          suiteId={suite.id}
+          localChoices={roundRecoveryRules
+            .filter((candidate) =>
+              canReuseRecoveryCredential(
+                candidate,
+                roundRecoveryRules,
+                suite.id,
+                credentialTargetRuleId,
+              ),
+            )
+            .map((candidate) => ({
+              suiteId: suite.id,
+              ruleId: candidate.id,
+              label: `本任务 · 步骤 ${roundRecoveryRules.findIndex((rule) => rule.id === candidate.id) + 1} · 第 ${candidate.afterRound} 轮后`,
+            }))}
+          onClose={() => setCredentialTargetRuleId(undefined)}
+          onSelect={(choice) => {
+            setDirty(true);
+            updateRecoveryRule(credentialTargetRuleId, { apiKey: "", apiKeySource: choice });
+            setCredentialTargetRuleId(undefined);
+          }}
+        />
+      ) : null}
     </Card>
   );
 }
@@ -1252,6 +1330,9 @@ function toRoundRecoveryRuleInput(rule: EditableRoundRecoveryRule) {
     waitMinutes: Number(rule.waitMinutes),
     apiKeyConfigured: rule.apiKeyConfigured,
     ...(rule.apiKey ? { apiKey: rule.apiKey } : {}),
+    ...(rule.apiKeySource
+      ? { apiKeySource: { suiteId: rule.apiKeySource.suiteId, ruleId: rule.apiKeySource.ruleId } }
+      : {}),
   };
 }
 

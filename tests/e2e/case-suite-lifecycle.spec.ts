@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { createServer } from "node:http";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import {
@@ -16,6 +17,132 @@ import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
+
+test("case detail and preview list only completed executions and keep filtered pagination and empty states", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("completed-history");
+  const project = await createProject(page, suffix);
+  const runner = await registerRunner(page, suffix);
+  const className = `example.History${Date.now()}Test`;
+  const emptyClassName = className.replace(/Test$/u, "EmptyTest");
+  await importJar(
+    page,
+    project,
+    `${suffix}.jar`,
+    className,
+    ["verify"],
+    [{ className: emptyClassName, methodNames: ["verify"] }],
+  );
+  const definitions = await browserJson<{
+    items: Array<{ id: string; className: string; displayName: string }>;
+  }>(
+    page,
+    `/api/v1/case-definitions?${new URLSearchParams({ projectId: project.id, query: className })}`,
+  );
+  const definition = definitions.body.items.find((item) => item.className === className)!;
+  const emptyDefinition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    emptyClassName,
+  );
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  const postgresUrl = process.env.AUTOFORGE_E2E_POSTGRES_URL;
+  const fixtureLocation = {
+    ...(directory ? { directory } : {}),
+    ...(postgresUrl ? { postgresUrl } : {}),
+  };
+  const fixture = await insertCaseExecutionHistoryFixture({
+    ...fixtureLocation,
+    projectId: project.id,
+    projectVersionId: project.versionId,
+    caseId: definition.id,
+    runnerId: runner.id,
+  });
+  await insertCaseExecutionHistoryFixture({
+    ...fixtureLocation,
+    projectId: project.id,
+    projectVersionId: project.versionId,
+    caseId: emptyDefinition.id,
+    runnerId: runner.id,
+    completedCount: 0,
+  });
+  const api = await browserJson<{ items: Array<{ runId: string }>; nextCursor?: string }>(
+    page,
+    `/api/v1/case-definitions/${definition.id}/executions?limit=2`,
+  );
+  expect(api.status).toBe(200);
+  expect(api.body.items.map((item) => item.runId)).toEqual(fixture.completedRunIds.slice(0, 2));
+  expect(api.body.nextCursor).toBeTruthy();
+  const history = page.locator(".case-execution-history");
+  const assertHistory = async (count: number) => {
+    await expect(history.locator("tbody tr")).toHaveCount(count);
+    await expect(history).not.toContainText(
+      /隐藏历史|已取消|等待资源|已分配|执行中|尚未生成执行尝试/u,
+    );
+    await expect(history).toContainText("TestNG 通过");
+    await expect(history).toContainText("TestNG 断言失败");
+    await expect(history).toContainText("执行超时");
+    await expect(history.getByRole("button", { name: "查看第 1 轮总结日志" })).toHaveCount(count);
+  };
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+    await page.goto(`/cases/${definition.id}`);
+    await assertHistory(50);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await history
+        .locator("thead")
+        .evaluate((element) =>
+          element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }),
+        );
+      await expectUiIntegrity(page);
+      await captureUi(page, `completed-history-detail-${theme}-${width}`);
+    }
+    await history.getByRole("button", { name: "加载更早的执行历史" }).click();
+    await assertHistory(51);
+    await expect(history.getByText("已显示该用例的全部执行历史。")).toBeVisible();
+    await page.goto(
+      `/cases?${new URLSearchParams({ projectId: project.id, projectVersionId: project.versionId, testStageId: project.stageId, query: definition.displayName })}`,
+    );
+    await page
+      .getByRole("button", { name: `快速预览 ${definition.displayName}`, exact: true })
+      .click();
+    await assertHistory(50);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await history
+        .locator("thead")
+        .evaluate((element) =>
+          element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }),
+        );
+      await expectUiIntegrity(page);
+      await captureUi(page, `completed-history-preview-${theme}-${width}`);
+    }
+    await history.getByRole("button", { name: "加载更早的执行历史" }).click();
+    await assertHistory(51);
+    await history.getByRole("button", { name: "查看第 1 轮总结日志" }).first().click();
+    await expect(page.locator(".execution-log")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".execution-log")).toHaveCount(0);
+  }
+  await page.goto(`/cases/${emptyDefinition.id}`);
+  await expect(history).toContainText("当前用例尚无执行记录。");
+  await expect(history.getByRole("button", { name: "加载更早的执行历史" })).toHaveCount(0);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await history
+    .locator("thead")
+    .evaluate((element) =>
+      element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }),
+    );
+  await captureUi(page, "completed-history-empty-1024");
+});
 
 test("personal task pins persist across browsers, sort naturally and recover after failed changes", async ({
   page,
@@ -588,6 +715,216 @@ test("tasks and execution history follow the selected project version", async ({
   }
 });
 
+test("Jenkins recovery credentials support current-task and cross-task reuse without exposing saved keys", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("recovery-key");
+  const project = await createProject(page, suffix);
+  const runner = await registerRunner(page, suffix);
+  const sharedKey = "e2e-user:shared-recovery-token";
+  const localKey = "e2e-user:local-recovery-token";
+  const inspectedCredentials: string[] = [];
+  let buildRequests = 0;
+  const jenkins = createServer((request, response) => {
+    if (request.method !== "GET") {
+      buildRequests++;
+      response.writeHead(405).end();
+      return;
+    }
+    const credential = Buffer.from(
+      (request.headers.authorization ?? "").replace(/^Basic /u, ""),
+      "base64",
+    ).toString("utf8");
+    if (![sharedKey, localKey].includes(credential)) {
+      response.writeHead(401).end();
+      return;
+    }
+    inspectedCredentials.push(credential);
+    const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    const name = url.pathname.split("/")[2]!;
+    const jobUrl = `${url.origin}/job/${name}/`;
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify({
+        name,
+        url: jobUrl,
+        buildable: true,
+        inQueue: false,
+        lastBuild: {
+          number: 8,
+          url: `${jobUrl}8/`,
+          building: false,
+          result: "SUCCESS",
+          timestamp: 0,
+          duration: 100,
+        },
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => jenkins.listen(0, "127.0.0.1", resolve));
+  const address = jenkins.address();
+  if (!address || typeof address === "string")
+    throw new Error("Jenkins test server did not bind a TCP port.");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const create = async (name: string) => {
+      const created = await browserJson<{ id: string; revision: number }>(
+        page,
+        "/api/v1/case-suites",
+        {
+          method: "POST",
+          body: { projectId: project.id, projectVersionId: project.versionId, name },
+        },
+      );
+      expect(created.status).toBe(201);
+      return created.body;
+    };
+    const sourceName = `可复用 Jenkins 密钥 ${suffix}`;
+    const source = await create(sourceName);
+    const sourceRule = {
+      id: "source-key",
+      afterRound: 1,
+      jenkinsJobUrl: `${base}/job/source/`,
+      waitMinutes: 0,
+      apiKey: sharedKey,
+    };
+    const configured = await browserJson<{ revision: number }>(
+      page,
+      `/api/v1/case-suites/${source.id}`,
+      {
+        method: "PATCH",
+        body: {
+          expectedRevision: source.revision,
+          policy: { runnerIds: [runner.id], retryLimit: 2, roundRecoveryRules: [sourceRule] },
+        },
+      },
+    );
+    expect(configured.status).toBe(200);
+    expect(JSON.stringify(configured.body)).not.toContain(sharedKey);
+    const target = await create(`密钥复用目标 ${suffix}`);
+    await configureTaskExecution(page, target.id, runner.id, { retryLimit: 2 });
+    await page.goto(`/case-suites/${target.id}`);
+    await page.getByRole("button", { name: "添加恢复步骤" }).click();
+    await page.getByLabel("恢复步骤 1 Jenkins 任务链接").fill(`${base}/job/first/`);
+    await page.getByLabel("恢复步骤 1 API 密钥").fill(localKey);
+    await page.getByRole("button", { name: "添加恢复步骤" }).click();
+    await page.getByLabel("恢复步骤 2 Jenkins 任务链接").fill(`${base}/job/second/`);
+    const picker = page.getByRole("dialog", { name: "复用 Jenkins 密钥", exact: true });
+    await page.getByRole("button", { name: "复用恢复步骤 2 Jenkins 密钥" }).click();
+    await picker.getByRole("button", { name: /本任务 · 步骤 1/u }).click();
+    await expect(page.getByLabel("恢复步骤 2 API 密钥")).toHaveValue("");
+    await expect(page.getByLabel("恢复步骤 2 API 密钥")).toHaveAttribute(
+      "placeholder",
+      /复用：本任务/u,
+    );
+    await page.getByRole("button", { name: "测试恢复步骤 2 Jenkins 配置" }).click();
+    await expect(page.getByText("连接成功 · second", { exact: true })).toBeVisible();
+    expect(inspectedCredentials.at(-1)).toBe(localKey);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page
+        .getByRole("button", { name: "复用恢复步骤 2 Jenkins 密钥" })
+        .scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      await captureUi(page, `recovery-credential-local-${width}`);
+      await page.getByRole("button", { name: "复用恢复步骤 2 Jenkins 密钥" }).click();
+      await expectUiIntegrity(page);
+      await captureUi(page, `recovery-credential-picker-local-${width}`);
+      await picker.getByRole("button", { name: "取消", exact: true }).click();
+    }
+    const firstSave = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api/v1/case-suites/${target.id}`,
+    );
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    const saved = await firstSave;
+    expect(saved.status()).toBe(200);
+    expect(await saved.text()).not.toContain(localKey);
+    await expect(page.getByLabel("恢复步骤 1 API 密钥")).toHaveValue("");
+    await expect(page.getByLabel("恢复步骤 2 API 密钥")).toHaveAttribute(
+      "placeholder",
+      "已配置；留空保持不变",
+    );
+    await page.getByRole("button", { name: "复用恢复步骤 2 Jenkins 密钥" }).click();
+    await picker.getByRole("button", { name: /本任务 · 步骤 1/u }).click();
+    await page.getByRole("button", { name: "测试恢复步骤 2 Jenkins 配置" }).click();
+    await expect(page.getByText("连接成功 · second", { exact: true })).toBeVisible();
+    expect(inspectedCredentials.at(-1)).toBe(localKey);
+    await page.getByRole("button", { name: "取消恢复步骤 2 密钥复用" }).click();
+    await expect(page.getByLabel("恢复步骤 2 API 密钥")).toHaveAttribute(
+      "placeholder",
+      "已配置；留空保持不变",
+    );
+
+    for (const theme of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+      await page.reload();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.getByRole("button", { name: "复用恢复步骤 2 Jenkins 密钥" }).click();
+        if (theme === "light" && width === 1024)
+          await page.route(
+            `**/api/v1/case-suites/${target.id}/round-recovery/credentials?**`,
+            async (route) =>
+              route.fulfill({
+                status: 503,
+                contentType: "application/json",
+                body: JSON.stringify({ error: { message: "密钥来源查询暂不可用，请重试。" } }),
+              }),
+            { times: 1 },
+          );
+        await picker.getByText("其他任务", { exact: true }).click();
+        if (theme === "light" && width === 1024) {
+          await expect(picker.getByRole("alert")).toContainText("密钥来源查询暂不可用");
+          await expect(picker.locator(".ant-segmented-thumb")).toHaveCount(0);
+          await captureUi(page, "recovery-credential-picker-query-error-1024");
+        }
+        await picker.getByLabel("查找密钥来源任务").fill(sourceName);
+        await picker.getByRole("button", { name: "查询", exact: true }).click();
+        const choice = picker.getByRole("button", { name: new RegExp(sourceName) });
+        await expect(choice).toBeVisible();
+        await expect(picker).not.toContainText(sharedKey);
+        await expectUiIntegrity(page);
+        await captureUi(page, `recovery-credential-picker-other-${theme}-${width}`);
+        if (theme === "dark" && width === 1536) await choice.click();
+        else await picker.getByRole("button", { name: "取消", exact: true }).click();
+      }
+    }
+    await page.getByRole("button", { name: "测试恢复步骤 2 Jenkins 配置" }).click();
+    await expect(page.getByText("连接成功 · second", { exact: true })).toBeVisible();
+    expect(inspectedCredentials.at(-1)).toBe(sharedKey);
+    const secondSave = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api/v1/case-suites/${target.id}`,
+    );
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    expect((await secondSave).status()).toBe(200);
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${source.id}`, {
+          method: "PATCH",
+          body: { expectedRevision: configured.body.revision, policy: { roundRecoveryRules: [] } },
+        })
+      ).status,
+    ).toBe(200);
+    await page.reload();
+    await page.getByRole("button", { name: "测试恢复步骤 2 Jenkins 配置" }).click();
+    await expect(page.getByText("连接成功 · second", { exact: true })).toBeVisible();
+    expect(inspectedCredentials.at(-1)).toBe(sharedKey);
+    expect(buildRequests).toBe(0);
+  } finally {
+    jenkins.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      jenkins.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test("terminal execution failures create a reusable task with the execution configuration", async ({
   page,
   browser,
@@ -696,6 +1033,11 @@ test("terminal execution failures create a reusable task with the execution conf
     }
   }
   await configureTaskExecution(page, suite.id, runner.id, { concurrency: 13 });
+  const suggestion = await browserJson<{ name: string }>(page, endpoint);
+  expect(suggestion.status).toBe(200);
+  expect(suggestion.body.name).toMatch(/ Rerun-\d{8}$/u);
+  const defaultName = suggestion.body.name;
+  expect(defaultName.startsWith(`${name} Rerun-`)).toBe(true);
   for (const theme of ["light", "dark"]) {
     await page
       .context()
@@ -711,7 +1053,7 @@ test("terminal execution failures create a reusable task with the execution conf
       await action.click();
       const dialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
       await expect(dialog).toContainText("最终失败或超时的 2 个用例");
-      await expect(dialog.getByLabel("任务名称", { exact: true })).not.toHaveValue("");
+      await expect(dialog.getByLabel("任务名称", { exact: true })).toHaveValue(defaultName);
       await expect(dialog.getByRole("button", { name: "创建任务", exact: true })).toBeVisible();
       await expect(
         dialog.getByRole("button", { name: "创建并立即执行", exact: true }),
@@ -722,9 +1064,49 @@ test("terminal execution failures create a reusable task with the execution conf
       await expect(dialog).toBeHidden();
     }
   }
+  // An open dialog may have an outdated suggestion after another window creates a task.
+  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  const defaultDialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+  await expect(defaultDialog.getByLabel("任务名称", { exact: true })).toHaveValue(defaultName);
+  const concurrentCopy = await browserJson<{ name: string }>(page, endpoint, {
+    method: "POST",
+    body: {},
+  });
+  expect(concurrentCopy.status).toBe(201);
+  expect(concurrentCopy.body.name).toBe(defaultName);
+  const defaultCreationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === endpoint,
+  );
+  await defaultDialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const defaultCopy = (await (await defaultCreationResponse).json()) as {
+    id: string;
+    name: string;
+    caseCount: number;
+  };
+  expect(defaultCopy).toMatchObject({ name: `${defaultName}01`, caseCount: 2 });
+  await expect(page).toHaveURL(new RegExp(`/case-suites/${defaultCopy.id}$`));
+  await page.goto(`/run-batches/${batch.id}`);
+  let releaseSuggestion!: () => void;
+  const delayedSuggestion = new Promise<void>((resolve) => {
+    releaseSuggestion = resolve;
+  });
+  const nameRoute = `**${endpoint}`;
+  await page.route(nameRoute, async (route) => {
+    if (route.request().method() === "GET") await delayedSuggestion;
+    await route.continue();
+  });
   await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
   await dialog.getByLabel("任务名称", { exact: true }).fill(" ");
+  const suggestionResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" && new URL(response.url()).pathname === endpoint,
+  );
+  releaseSuggestion();
+  await suggestionResponse;
+  await expect(dialog.getByLabel("任务名称", { exact: true })).toHaveValue(" ");
+  await page.unroute(nameRoute);
   await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("请填写任务名称");
   await dialog.getByLabel("任务名称", { exact: true }).fill(`失败新任务 ${suffix}`);
@@ -754,6 +1136,23 @@ test("terminal execution failures create a reusable task with the execution conf
   );
   await expectUiIntegrity(page);
   await captureUi(page, "failure-task-created-1536");
+
+  await page.goto(`/run-batches/${batch.id}`);
+  await page.route(nameRoute, async (route) => {
+    if (route.request().method() === "GET")
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "名称服务暂不可用，请填写任务名称。" } }),
+      });
+    else await route.continue();
+  });
+  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("名称服务暂不可用");
+  await dialog.getByLabel("任务名称", { exact: true }).fill(`手动命名恢复 ${suffix}`);
+  await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  await expect(page).toHaveURL(/\/case-suites\/[^/]+$/u);
+  await page.unroute(nameRoute);
 
   const username = uniqueName("failure-task-manager");
   const password = "TaskManager!Password123";
@@ -822,7 +1221,7 @@ test("terminal execution failures create a reusable task with the execution conf
     ).status,
   ).toBe(200);
   await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
-  await dialog.getByLabel("任务名称", { exact: true }).fill(`失败立即执行 ${suffix}`);
+  await expect(dialog.getByLabel("任务名称", { exact: true })).toHaveValue(`${defaultName}02`);
   const immediateCreationResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" && new URL(response.url()).pathname === endpoint,
@@ -834,7 +1233,8 @@ test("terminal execution failures create a reusable task with the execution conf
   await dialog.getByRole("button", { name: "创建并立即执行", exact: true }).click();
   const immediateCreation = await immediateCreationResponse;
   expect(immediateCreation.status()).toBe(201);
-  const immediateSuite = (await immediateCreation.json()) as { id: string };
+  const immediateSuite = (await immediateCreation.json()) as { id: string; name: string };
+  expect(immediateSuite.name).toBe(`${defaultName}02`);
   await expect(dialog.getByRole("alert")).toContainText("任务已创建，但立即执行失败");
   await expect(dialog.getByLabel("任务名称", { exact: true })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "查看任务", exact: true })).toBeEnabled();

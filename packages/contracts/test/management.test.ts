@@ -15,10 +15,12 @@ import {
   createWebhookConfigurationInputSchema,
   copyCaseSuiteInputSchema,
   createFailureCaseSuiteInputSchema,
+  updateCaseSuiteInputSchema,
 } from "../src/management";
 
 describe("case suite copy scope", () => {
-  it("accepts only a name for failure task creation; the server owns scope and configuration", () => {
+  it("accepts an optional custom name; the server owns automatic naming, scope and configuration", () => {
+    expect(createFailureCaseSuiteInputSchema.parse({})).toEqual({});
     expect(createFailureCaseSuiteInputSchema.parse({ name: "  Failures  " })).toEqual({
       name: "Failures",
     });
@@ -111,6 +113,45 @@ const connection = {
 };
 
 describe("case suite execution policy", () => {
+  it("accepts a saved credential reference and rejects ambiguous secret inputs", () => {
+    const apiKeySource = { suiteId: "source-suite", ruleId: "source-rule" };
+    const inspection = {
+      ruleId: "target",
+      jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+      apiKeySource,
+    };
+    expect(inspectRoundRecoveryConfigurationInputSchema.parse(inspection)).toMatchObject({
+      apiKeySource,
+    });
+    expect(
+      updateCaseSuiteInputSchema.parse({
+        expectedRevision: 1,
+        policy: {
+          roundRecoveryRules: [
+            {
+              id: "target",
+              afterRound: 1,
+              waitMinutes: 0,
+              jenkinsJobUrl: inspection.jenkinsJobUrl,
+              apiKeySource,
+            },
+          ],
+        },
+      }).policy?.roundRecoveryRules?.[0],
+    ).toMatchObject({ apiKeySource });
+    expect(
+      inspectRoundRecoveryConfigurationInputSchema.safeParse({
+        ...inspection,
+        apiKey: "user:token",
+      }).success,
+    ).toBe(false);
+    expect(
+      inspectRoundRecoveryConfigurationInputSchema.safeParse({
+        ...inspection,
+        apiKeySource: { suiteId: "", ruleId: "source" },
+      }).success,
+    ).toBe(false);
+  });
   it("accepts a read-only Jenkins recovery inspection request", () => {
     expect(
       inspectRoundRecoveryConfigurationInputSchema.parse({

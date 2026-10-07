@@ -2,6 +2,8 @@ export * from "./attempt-result";
 export * from "./case-definition";
 export * from "./case-source-lifecycle";
 export * from "./case-suite";
+export * from "./failure-case-suite-name";
+export * from "./jenkins-credential";
 export * from "./ddt";
 export * from "./errors";
 export * from "./environment";

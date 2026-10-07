@@ -12,6 +12,7 @@ import type {
   JarImportJob,
   JarImportResult,
   JenkinsJobInspection,
+  RoundRecoveryCredentialSource,
   JavaSourceReference,
   JobEnvelope,
   ObjectEntry,
@@ -862,6 +863,7 @@ export type CaseExecutionHistoryQuery = {
 };
 
 export type CaseExecutionHistoryPage = {
+  /** Only completed runs with a started, finished and non-cancelled summary attempt. */
   items: CaseExecutionHistoryItem[];
   nextCursor?: string;
 };
@@ -1278,6 +1280,10 @@ export type CaseSuiteMemberPageQuery = {
 };
 
 export interface CaseSuiteRepository {
+  listRoundRecoveryCredentialSources(
+    input: RoundRecoveryCredentialSourceQuery,
+  ): Promise<RoundRecoveryCredentialSource[]>;
+  suggestFailureCopyName(input: FailureCaseSuiteNameRequest): Promise<string>;
   getFailureCopySource(
     batchId: string,
     projectIds?: readonly string[],
@@ -1361,6 +1367,14 @@ export type CaseSuiteExportRow = {
   displayName: string;
 };
 
+export type RoundRecoveryCredentialSourceQuery = {
+  projectIds?: readonly string[];
+  excludeSuiteId: string;
+  query?: string;
+  after?: { suiteId: string; ruleId: string };
+  limit: number;
+};
+
 export type CaseSuiteExportPageQuery = {
   suiteId: string;
   memberType: CaseSuiteExportMemberType;
@@ -1391,6 +1405,8 @@ export type CopyCaseSuiteRecord = {
   id: string;
   /** Recheck the terminal source and member availability in the copy transaction. */
   failureBatchId?: string;
+  /** Allocate the default name again inside the copy transaction. */
+  failureCopyName?: FailureCaseSuiteNameRequest;
   /** Initialization resumes the same disabled task without replacing edited configuration. */
   ifAbsent?: boolean;
   enabled?: boolean;
@@ -1409,12 +1425,20 @@ export type CopyCaseSuiteRecord = {
 
 export type FailureCaseSuiteSource = {
   suiteId: string;
+  suiteName: string;
   projectId: string;
   status: RunBatch["status"];
   kind: RunBatch["kind"];
   description?: string;
   policy?: CaseSuiteExecutionPolicy;
   roundRecoveryCredentials: Record<string, string>;
+};
+
+export type FailureCaseSuiteNameRequest = {
+  sourceName: string;
+  date: string;
+  projectId: string;
+  projectVersionId: string;
 };
 
 export type FailureCaseSuiteMember = {

@@ -314,6 +314,7 @@ run_adapter_tests() {
       packages/db/test/postgres-platform.integration.test.ts \
       packages/db/test/analytics-snapshot-consistency.integration.test.ts \
       packages/db/test/postgres-round-recovery.integration.test.ts \
+      packages/db/test/round-recovery-credentials.integration.test.ts \
       packages/db/test/case-suite-pins.integration.test.ts \
       packages/db/test/execution-exceptions.integration.test.ts \
       packages/db/test/postgres-webhook.integration.test.ts \

@@ -477,6 +477,7 @@ async function createPlatformServices() {
     ids,
     secretCipher,
     ddtRepository,
+    () => configurationStore.read().web.timeZone,
   );
   const roundRecoveryConfigurationInspector = new RoundRecoveryConfigurationInspector(
     suites,

@@ -7,6 +7,24 @@ import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ batchId: string }> };
 
+export async function GET(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    const identity = await authenticateRequest(request);
+    const { batchId } = await context.params;
+    const services = await getPlatformServices();
+    const readScope = services.identityAccess.projectScope(identity, "run.read");
+    const batch = await services.runBatches.getSummary(batchId, readScope);
+    services.identityAccess.authorize(identity, "case_suite.manage", batch.projectId);
+    const suggestion = await services.caseSuites.suggestFinalFailureName(batchId, [
+      batch.projectId,
+    ]);
+    return NextResponse.json(suggestion, { headers: { "cache-control": "private, no-store" } });
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
+  }
+}
+
 export async function POST(request: Request, context: Context): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {

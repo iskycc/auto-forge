@@ -198,6 +198,86 @@ async function seed({ suites, execute }: Fixture) {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} failure task copy contract`, () => {
+    it("allocates distinct automatic names for simultaneous copies and preserves custom names", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service } = await seed(context);
+        await context.suites.updateSuite({
+          suiteId: "suite-1",
+          name: "Renamed after execution",
+          expectedRevision: 2,
+          versionId: "suite-snapshot-3",
+          changeReason: "Rename",
+          updatedAt: timestamp,
+        });
+        expect(await service.suggestFinalFailureName("batch-1")).toEqual({
+          name: "Original Rerun-20261006",
+        });
+        const copies = await Promise.all(
+          Array.from({ length: 4 }, () => service.createFromFinalFailures("batch-1", {})),
+        );
+        expect(copies.map((suite) => suite.name).sort()).toEqual([
+          "Original Rerun-20261006",
+          "Original Rerun-2026100601",
+          "Original Rerun-2026100602",
+          "Original Rerun-2026100603",
+        ]);
+        expect(
+          copies.every((suite) => suite.caseCount === 3 && suite.policy.concurrency === 17),
+        ).toBe(true);
+        expect(await service.suggestFinalFailureName("batch-1")).toEqual({
+          name: "Original Rerun-2026100604",
+        });
+        expect(
+          (await service.createFromFinalFailures("batch-1", { name: " 自定义名称 " })).name,
+        ).toBe("自定义名称");
+      } finally {
+        await context.close();
+      }
+    });
+
+    it("checks archived tasks and every bounded name page within the source project version", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service, policy } = await seed(context);
+        for (let offset = 0; offset <= 500; offset += 100) {
+          const names = Array.from({ length: Math.min(100, 501 - offset) }, (_, index) => {
+            const sequence = offset + index;
+            return [
+              `occupied-${String(sequence).padStart(4, "0")}`,
+              `Original Rerun-20261006${sequence ? String(sequence).padStart(2, "0") : ""}`,
+              JSON.stringify(policy),
+              timestamp,
+              timestamp,
+            ];
+          });
+          await context.execute(
+            `INSERT INTO case_suites (id, name, policy_json, created_at, updated_at, version) VALUES ${names.map(() => "(?, ?, ?, ?, ?, 1)").join(", ")}`,
+            names.flat(),
+          );
+        }
+        await context.execute(
+          "UPDATE case_suites SET status = 'archived' WHERE id = 'occupied-0000'",
+        );
+        await context.suites.copySuite({
+          id: "other-version-suite",
+          name: "Original Rerun-20261006999",
+          policy: { ...policy, projectVersionId: "other-version" },
+          items: [],
+          versionId: "other-version-snapshot",
+          createdAt: timestamp,
+        });
+        expect(await service.suggestFinalFailureName("batch-1")).toEqual({
+          name: "Original Rerun-20261006501",
+        });
+        expect((await service.createFromFinalFailures("batch-1", {})).name).toBe(
+          "Original Rerun-20261006501",
+        );
+      } finally {
+        await context.close();
+      }
+    });
+
     it("creates a task from 100,000 failures through bounded cursor pages and SQL writes", async () => {
       const context = await fixture(mode);
       try {

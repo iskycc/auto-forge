@@ -111,10 +111,10 @@ export function CaseExecutionHistory({
             <h2>全部执行历史</h2>
             <p>
               {compact ? (
-                `已加载 ${items.length} 条执行记录 · 每个任务展示总结结果`
+                `已加载 ${items.length} 条已完成记录 · 每个任务展示总结结果`
               ) : (
                 <>
-                  每个任务仅展示总结结果：任一轮通过则记录通过轮次，否则记录最后一轮；已加载{" "}
+                  仅展示已执行结束的总结结果：任一轮通过则记录通过轮次，否则记录最后一轮；已加载{" "}
                   {items.length} 条执行记录。
                 </>
               )}
@@ -147,36 +147,8 @@ export function CaseExecutionHistory({
                     <TableCell colSpan={7}>当前用例尚无执行记录。</TableCell>
                   </TableRow>
                 ) : null}
-                {items.flatMap((item) => {
-                  if (item.attempts.length === 0) {
-                    return (
-                      <TableRow key={item.runId}>
-                        <TableCell>{formatDate(item.createdAt, timeZone)}</TableCell>
-                        <TableCell>
-                          <strong>#{item.batchSequenceNumber}</strong>
-                          <span
-                            title={item.batchName}
-                            className={cn(
-                              "case-history-batch-name",
-                              caseExecutionHistoryStyles["case-history-batch-name"],
-                            )}
-                          >
-                            {item.batchName}
-                          </span>
-                        </TableCell>
-                        <TableCell>{caseExecutionStatusLabel(item.status)}</TableCell>
-                        <TableCell>尚未生成执行尝试</TableCell>
-                        <TableCell>—</TableCell>
-                        <TableCell>—</TableCell>
-                        <TableCell>
-                          <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
-                            查看批次
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  }
-                  return item.attempts.map((attempt) => (
+                {items.flatMap((item) =>
+                  item.attempts.map((attempt) => (
                     <TableRow key={attempt.id}>
                       <TableCell>
                         {formatDate(attempt.finishedAt ?? attempt.createdAt, timeZone)}
@@ -247,8 +219,8 @@ export function CaseExecutionHistory({
                         </div>
                       </TableCell>
                     </TableRow>
-                  ));
-                })}
+                  )),
+                )}
               </TableBody>
             </Table>
           </div>

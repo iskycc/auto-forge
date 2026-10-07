@@ -10,6 +10,34 @@ import type {
 } from "../src/ports";
 
 describe("RoundRecoveryConfigurationInspector", () => {
+  it("uses a referenced key for another job on the same Jenkins server without returning the key", async () => {
+    const repository = {
+      getSummary: vi.fn().mockResolvedValue(suite()),
+      getRoundRecoveryCredentials: vi.fn().mockResolvedValue({ "recovery-1": "ciphertext" }),
+    };
+    const transport = transportFake();
+    const inspector = new RoundRecoveryConfigurationInspector(
+      repository as unknown as CaseSuiteRepository,
+      transport,
+      { available: true, encrypt: vi.fn(), decrypt: vi.fn().mockReturnValue("user:private-token") },
+    );
+    const result = await inspector.inspect(
+      { ...suite(), id: "target" },
+      {
+        ruleId: "new",
+        jenkinsJobUrl: "https://jenkins.internal/job/other/",
+        apiKeySource: { suiteId: "suite-1", ruleId: "recovery-1" },
+      },
+      ["project-1"],
+    );
+    expect(repository.getSummary).toHaveBeenCalledWith("suite-1", ["project-1"]);
+    expect(transport.inspectJob).toHaveBeenCalledWith({
+      jobUrl: "https://jenkins.internal/job/other/",
+      credential: "user:private-token",
+    });
+    expect(JSON.stringify(result)).not.toContain("private-token");
+    expect(transport.rebuildLast).not.toHaveBeenCalled();
+  });
   it("uses an unsaved credential for a read-only Jenkins inspection", async () => {
     const transport = transportFake();
     const inspector = new RoundRecoveryConfigurationInspector({} as CaseSuiteRepository, transport);

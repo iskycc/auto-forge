@@ -23,6 +23,13 @@ export function attachCaseDetailHistoryFixture(
       .run(caseId, `case-run-failed-2-${suffix}`);
     database
       .prepare(
+        `UPDATE run_attempts SET started_at=created_at
+         WHERE finished_at IS NOT NULL AND execution_run_id IN
+           (SELECT id FROM execution_runs WHERE case_definition_id=?)`,
+      )
+      .run(caseId);
+    database
+      .prepare(
         "UPDATE failure_analysis_claims SET project_id=?,case_definition_id=? WHERE case_definition_id=?",
       )
       .run(projectId, caseId, `case-run-failed-2-${suffix}`);

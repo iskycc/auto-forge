@@ -2,7 +2,7 @@
 
 import type { RunBatchPreflightResult } from "@autoforge/contracts";
 import { ListPlus, Play } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import { Button, Input } from "@/components/ui";
 import { Notice } from "@/components/ui/notice";
@@ -25,13 +25,43 @@ export function CreateFailureCaseSuiteDialog({
   onCreated: (suiteId: string) => void;
   onStarted: (batchId: string) => void;
 }) {
-  const suffix = " · 失败用例";
-  const [name, setName] = useState(`${suiteName.slice(0, 120 - suffix.length)}${suffix}`);
+  const [name, setName] = useState("");
+  const [loadingName, setLoadingName] = useState(true);
+  const customName = useRef(false);
   const [pendingAction, setPendingAction] = useState<"create" | "execute">();
   const [createdSuiteId, setCreatedSuiteId] = useState<string>();
   const submitting = useRef(false);
   const [error, setError] = useState("");
   const pending = pendingAction !== undefined;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadName(): Promise<void> {
+      try {
+        const response = await fetch(
+          `/api/v1/run-batches/${encodeURIComponent(batchId)}/failure-case-suite`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok)
+          throw new Error(
+            (await readApiErrorMessage(response, "生成任务名称失败，请填写任务名称。"))!,
+          );
+        const suggestion = (await response.json()) as { name?: string };
+        if (!suggestion.name) throw new Error("平台未返回建议任务名称，请填写任务名称。");
+        if (!customName.current) setName(suggestion.name);
+      } catch (cause) {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : "生成任务名称失败，请填写任务名称。");
+      } finally {
+        if (!controller.signal.aborted) setLoadingName(false);
+      }
+    }
+    void loadName();
+    return () => controller.abort();
+  }, [batchId]);
 
   async function createTask(): Promise<string> {
     const response = await fetch(
@@ -39,13 +69,14 @@ export function CreateFailureCaseSuiteDialog({
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify(customName.current ? { name: name.trim() } : {}),
       },
     );
     if (!response.ok)
       throw new Error((await readApiErrorMessage(response, "以失败用例创建任务失败。"))!);
-    const suite = (await response.json()) as { id?: string };
+    const suite = (await response.json()) as { id?: string; name?: string };
     if (!suite.id) throw new Error("平台未返回新任务标识。");
+    if (suite.name) setName(suite.name);
     return suite.id;
   }
 
@@ -69,7 +100,7 @@ export function CreateFailureCaseSuiteDialog({
   }
 
   async function submit(action: "create" | "execute"): Promise<void> {
-    if (submitting.current || (action === "execute" && !canCreateRuns)) return;
+    if (submitting.current || loadingName || (action === "execute" && !canCreateRuns)) return;
     if (!name.trim()) {
       setError("请填写任务名称。");
       return;
@@ -111,7 +142,7 @@ export function CreateFailureCaseSuiteDialog({
             type="submit"
             form="create-failure-case-suite"
             variant="secondary"
-            disabled={pending}
+            disabled={pending || loadingName}
           >
             <ListPlus size={16} />
             {pendingAction === "create" ? "正在创建…" : createdSuiteId ? "查看任务" : "创建任务"}
@@ -119,7 +150,7 @@ export function CreateFailureCaseSuiteDialog({
           <Button
             type="button"
             variant="primary"
-            disabled={pending || !canCreateRuns}
+            disabled={pending || loadingName || !canCreateRuns}
             onClick={() => void submit("execute")}
           >
             <Play size={16} />
@@ -146,9 +177,13 @@ export function CreateFailureCaseSuiteDialog({
             aria-label="任务名称"
             autoFocus
             maxLength={120}
+            placeholder={loadingName ? "正在生成任务名称…" : "请输入任务名称"}
             disabled={pending || !!createdSuiteId}
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              customName.current = true;
+              setName(event.target.value);
+            }}
           />
         </label>
         <div className="grid min-w-0 gap-2 rounded-lg border border-border bg-muted/30 p-4 text-sm">

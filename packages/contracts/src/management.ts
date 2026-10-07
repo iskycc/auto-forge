@@ -255,24 +255,76 @@ const jenkinsJobUrlSchema = z
     );
   }, "Jenkins 任务链接必须使用 HTTP(S)，且不能内嵌凭据。");
 
+export const roundRecoveryCredentialReferenceSchema = z
+  .object({
+    suiteId: z.string().trim().min(1).max(128),
+    ruleId: z.string().trim().min(1).max(128),
+  })
+  .strict();
+
+const credentialInputFields = {
+  apiKey: z.string().min(3).max(2_048).optional(),
+  apiKeySource: roundRecoveryCredentialReferenceSchema.optional(),
+};
+
+function hasSingleCredentialSource(input: {
+  apiKey?: string | undefined;
+  apiKeySource?: unknown;
+}): boolean {
+  return input.apiKey === undefined || input.apiKeySource === undefined;
+}
+
 const roundRecoveryRuleInputSchema = z
   .object({
     id: z.string().trim().min(1).max(128),
     afterRound: z.number().int().min(1).max(10),
     jenkinsJobUrl: jenkinsJobUrlSchema,
     waitMinutes: z.number().int().min(0).max(1_440),
-    apiKey: z.string().min(3).max(2_048).optional(),
+    ...credentialInputFields,
     apiKeyConfigured: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(hasSingleCredentialSource, {
+    message: "输入新密钥与复用密钥只能选择一种。",
+    path: ["apiKeySource"],
+  });
 
 export const inspectRoundRecoveryConfigurationInputSchema = z
   .object({
     ruleId: z.string().trim().min(1).max(128),
     jenkinsJobUrl: jenkinsJobUrlSchema,
-    apiKey: z.string().min(3).max(2_048).optional(),
+    ...credentialInputFields,
   })
-  .strict();
+  .strict()
+  .refine(hasSingleCredentialSource, {
+    message: "输入新密钥与复用密钥只能选择一种。",
+    path: ["apiKeySource"],
+  });
+
+export const roundRecoveryCredentialSourceSchema = z.object({
+  suiteId: z.string().min(1),
+  suiteName: z.string().min(1),
+  projectId: z.string().min(1),
+  ruleId: z.string().min(1),
+  afterRound: z.number().int().min(1),
+  jenkinsJobUrl: jenkinsJobUrlSchema,
+});
+export const roundRecoveryCredentialSourcesPageSchema = z.object({
+  items: z.array(roundRecoveryCredentialSourceSchema).max(50),
+  nextCursor: z.string().optional(),
+});
+export const roundRecoveryCredentialSourcesQuerySchema = z.object({
+  query: z.string().trim().max(120).optional(),
+  cursor: z.string().max(1_024).optional(),
+});
+export const roundRecoveryCredentialSourceCursorSchema = roundRecoveryCredentialReferenceSchema;
+export type RoundRecoveryCredentialReference = z.infer<
+  typeof roundRecoveryCredentialReferenceSchema
+>;
+export type RoundRecoveryCredentialSource = z.infer<typeof roundRecoveryCredentialSourceSchema>;
+export type RoundRecoveryCredentialSourcesPage = z.infer<
+  typeof roundRecoveryCredentialSourcesPageSchema
+>;
 
 const jenkinsLastBuildInspectionSchema = z.object({
   number: z.number().int().nonnegative(),
@@ -342,7 +394,7 @@ export const copyCaseSuiteInputSchema = z.object({
 });
 
 export const createFailureCaseSuiteInputSchema = z
-  .object({ name: z.string().trim().min(1).max(120) })
+  .object({ name: z.string().trim().min(1).max(120).optional() })
   .strict();
 
 export const caseSourceComparisonEntrySchema = z.object({

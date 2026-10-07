@@ -15,11 +15,15 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
     const suiteId = (await context.params).suiteId;
-    const suite = await services.caseSuites.get(suiteId, projectIds);
+    const suite = await services.caseSuites.getSummary(suiteId, projectIds);
     const input = inspectRoundRecoveryConfigurationInputSchema.parse(
       await readJsonBody(request, 8 * 1_024),
     );
-    const inspection = await services.roundRecoveryConfigurationInspector.inspect(suite, input);
+    const inspection = await services.roundRecoveryConfigurationInspector.inspect(
+      suite,
+      input,
+      projectIds,
+    );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.round_recovery_inspect",
       resourceType: "case_suite",
