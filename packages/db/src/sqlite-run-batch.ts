@@ -185,7 +185,9 @@ export class SqliteRunBatchRepository
     const queries = executionExceptionQueries(input);
     return mapExecutionExceptionRecords(
       this.handle.db.all<ExceptionRecordRow>(queries.records),
-      this.handle.db.all<ExceptionCompletionRow>(queries.completions),
+      input.includeCompletions === false
+        ? []
+        : this.handle.db.all<ExceptionCompletionRow>(queries.completions),
     );
   }
 

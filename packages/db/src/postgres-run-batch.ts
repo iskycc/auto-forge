@@ -175,7 +175,9 @@ export class PostgresRunBatchRepository
     const queries = executionExceptionQueries(input);
     const [records, completions] = await Promise.all([
       this.handle.db.execute<ExceptionRecordRow>(queries.records),
-      this.handle.db.execute<ExceptionCompletionRow>(queries.completions),
+      input.includeCompletions === false
+        ? Promise.resolve({ rows: [] })
+        : this.handle.db.execute<ExceptionCompletionRow>(queries.completions),
     ]);
     return mapExecutionExceptionRecords(records.rows, completions.rows);
   }

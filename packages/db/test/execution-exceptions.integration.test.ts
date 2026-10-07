@@ -146,6 +146,26 @@ for (const dialect of ["sqlite", "postgresql"] as const) {
   describe.skipIf(dialect === "postgresql" && !postgresUrl)(
     `${dialect} execution exception causes`,
     () => {
+      it("can page export evidence without repeating the batch completion aggregate", async () => {
+        const fixture = await createFixture(dialect);
+        try {
+          await addRun(fixture, "queued", "QUEUE_TIMEOUT");
+          const first = await fixture.batches.readExceptionRecords({
+            batchId: "batch",
+            limit: 101,
+          });
+          const exported = await fixture.batches.readExceptionRecords({
+            batchId: "batch",
+            limit: 101,
+            includeCompletions: false,
+          });
+          expect(first.completions).toEqual([{ status: "failed", abnormal: true, count: 1 }]);
+          expect(exported.items).toEqual(first.items);
+          expect(exported.completions).toEqual([]);
+        } finally {
+          await fixture.close();
+        }
+      });
       it("finds queue timeout evidence even though no attempt appears in round results", async () => {
         const fixture = await createFixture(dialect);
         try {

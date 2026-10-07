@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { readExecutionExceptions } from "../src/read-execution-exceptions";
+import {
+  readExecutionExceptions,
+  prepareExecutionExceptionExport,
+} from "../src/read-execution-exceptions";
 import type { RunBatchRepository } from "../src/ports";
 
 function fixture() {
@@ -16,6 +19,63 @@ function fixture() {
   > & { getMetadata: typeof getMetadata; readExceptionRecords: typeof readExceptionRecords };
 }
 describe("execution exception evidence", () => {
+  it("exports all records through bounded cursor pages and reads subsequent pages only on demand", async () => {
+    const repository = fixture();
+    const items = Array.from({ length: 103 }, (_, index) => ({
+      id: `run:${index}`,
+      kind: "run",
+      round: 1,
+      attemptNumber: null,
+      runId: String(index),
+      caseName: `用例 ${index}`,
+      className: "example.Case",
+      resultCode: "QUEUE_TIMEOUT",
+      summary: "原始说明",
+      occurredAt: "2026-10-06T00:00:00.000Z",
+      affectsBatchStatus: true,
+    }));
+    const completions = [{ status: "failed", abnormal: true, count: 103 }];
+    repository.readExceptionRecords
+      .mockResolvedValueOnce({ items: items.slice(0, 101), completions })
+      .mockResolvedValueOnce({ items: items.slice(100), completions: [] });
+    const prepared = await prepareExecutionExceptionExport(repository, {
+      batchId: "batch",
+      projectIds: [],
+    });
+    expect(prepared.firstPage.items).toHaveLength(100);
+    expect(repository.readExceptionRecords).toHaveBeenCalledTimes(1);
+    const pages = [];
+    for await (const page of prepared.pages) pages.push(page);
+    expect(pages.map((page) => page.items.length)).toEqual([100, 3]);
+    expect(pages.every((page) => page.abnormalRuns === 103 && page.consistent)).toBe(true);
+    expect(pages[1]!.items[0]!.summary).toContain("1 秒时限");
+    expect(pages.flatMap((page) => page.items).map((item) => item.id)).toEqual(
+      items.map((item) => item.id),
+    );
+    expect(repository.getMetadata).toHaveBeenLastCalledWith("batch", []);
+    expect(repository.getMetadata).toHaveBeenCalledTimes(1);
+    expect(repository.readExceptionRecords).toHaveBeenLastCalledWith({
+      batchId: "batch",
+      scope: "all",
+      limit: 101,
+      includeCompletions: false,
+      after: { occurredAt: items[99]!.occurredAt, id: items[99]!.id },
+    });
+  });
+  it("rejects inaccessible exports before generating a download and stops paging when iteration closes", async () => {
+    const repository = fixture();
+    repository.getMetadata.mockResolvedValueOnce(null);
+    await expect(
+      prepareExecutionExceptionExport(repository, { batchId: "batch" }),
+    ).rejects.toMatchObject({ code: "RUN_BATCH_NOT_FOUND" });
+    expect(repository.readExceptionRecords).not.toHaveBeenCalled();
+    const prepared = await prepareExecutionExceptionExport(repository, { batchId: "batch" });
+    for await (const page of prepared.pages) {
+      expect(page).toBe(prepared.firstPage);
+      break;
+    }
+    expect(repository.readExceptionRecords).toHaveBeenCalledTimes(1);
+  });
   it("pages with stable cursors and explains the stored queue timeout rather than current settings", async () => {
     const repository = fixture();
     const item = {

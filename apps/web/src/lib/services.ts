@@ -14,6 +14,7 @@ import {
   readBatchPage,
   readExecutionOverview,
   readExecutionExceptions,
+  prepareExecutionExceptionExport,
 } from "@autoforge/application";
 import "server-only";
 
@@ -927,6 +928,8 @@ async function createPlatformServices() {
       readExecutionOverview(batches, readModels, batchId, projectIds),
     executionExceptions: (input: Parameters<typeof readExecutionExceptions>[1]) =>
       readExecutionExceptions(batches, input),
+    executionExceptionExport: (input: Parameters<typeof prepareExecutionExceptionExport>[1]) =>
+      prepareExecutionExceptionExport(batches, input),
     runners,
     identities,
     executions,

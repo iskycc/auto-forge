@@ -43,9 +43,49 @@ TestNG 断言失败、测试配置失败和跳过属于正常测试结果，批�
 不附带执行控制、独立日志或跨项目访问权限；响应禁止缓存。读取失败时可重试，关闭弹窗会
 取消浏览器请求，表格在弹窗内部滚动，沿用 Ant Design 与全局深浅色主题。
 
+## Excel 导出
+
+异常弹框底部提供“导出 Excel”，导出当前批次全部异常记录，包含终态原因和历史异常，
+不受弹框当前页影响。按钮在读取中、无记录或导出中禁用；下载失败保留原表格和页码，
+显示原因并支持再次点击，关闭弹框会取消下载。
+
+“异常原因”工作表包含轮次、步骤、尝试、用例名称、用例类路径、异常类型、原因码、
+说明、判定影响、发生时间及 UTC 原值。“判定概览”保留批次编号、导出开始时的当前状态、
+按终态应有状态、核对结果、非正常结束用例数、异常记录数、范围和时区。发生时间沿用
+页面的平台时区；列头注明时区，UTC 原值独立保留。正文无额外缩进，按字段用途和首批
+最多 100 条内容设置有上下限的列宽，沿用统一字体、表头、隔行底色、结果配色、筛选和
+冻结列；异常说明保留诊断 API 提供的完整文本，最多 8,192 字符，按文本写入单元格。
+
+`GET /api/v1/run-batches/{batchId}/exceptions/export` 返回 XLSX。可选 `time_zone` 必须为
+有效 IANA 时区，省略时使用 UTC；弹框传入平台时区。登录身份要求同一项目的 `run.read`，
+永久分享使用同一批次的 `access_token`，不可跨批次导出；响应使用 `private, no-store`。
+
+Lite 和 Full 通过同一应用用例按游标每次读取最多 100 条，逐行提交流式工作簿，不在
+服务端加载整个批次。权限和元数据在开始时校验，终态计数只读一次，后续页跳过聚合；
+导出不持有跨网络传输的长事务。达到 Excel 单工作表行数限制时自动分表，未设置低容量
+用例上限。后续页读取失败会中断下载，浏览器只在完整下载成功后保存文件，避免保存残缺
+工作簿。无需数据库迁移、对象存储、缓存、消息队列或 Runner 协议变更。
+
 ## 轮次选中标记
 
 执行详情及永久分享页的轮次列表，以勾选图标、浅色高亮行和左侧色条标出当前查看项，顶部
 同时展示“当前查看”名称。总结、全部轮次、实际执行轮次和环境恢复行共用同一按钮，任一
 时刻只有一项选中；切换环境恢复时不再让对应执行轮次的按钮也显示为选中。选择仍记录于
 URL，刷新后可恢复，不新增表格列或改变结果统计。
+
+## Excel 导出验证（2026-10-07）
+
+- 设置 `AUTOFORGE_TEST_POSTGRES_URL` 指向临时 PostgreSQL，运行 `pnpm exec vitest run packages/application/test/read-execution-exceptions.test.ts packages/db/test/execution-exceptions.integration.test.ts apps/web/src/lib/execution-exceptions-api.test.ts apps/web/src/lib/execution-exceptions-export-api.test.ts apps/web/src/lib/execution-exceptions-export-xlsx.test.ts --maxWorkers=2`：39 项通过。覆盖真实 SQLite/PostgreSQL、游标分页、单次聚合、权限、空记录、完整说明、文本类型、时区、终态/历史/恢复原因、工作簿格式、中断与取消。
+- `pnpm exec vitest run apps/web/src/lib/execution-exceptions-export-xlsx.test.ts apps/web/src/components/ui-usage.test.ts apps/web/src/lib/run-batch-export.test.ts --maxWorkers=2`：31 项通过，含上述工作簿检查的 4 项重叠，合计 66 项不同检查。
+- 独立完成 `pnpm --filter @autoforge/web build`，启动隔离的 Lite 生产实例后，设置 `AUTOFORGE_E2E_EXTERNAL_SERVER=1`、对应 `AUTOFORGE_E2E_DATA_DIR`、截图目录及预安装 Chromium，运行 `pnpm exec playwright test tests/e2e/execution-recovery.spec.ts --grep 'execution exception Excel|execution exceptions reveal'`：两项通过。真实导入 101 个用例并触发排队超时，从弹框第二页下载并读回全部 101 条，验证无重复/遗漏、失败后重试、原页码保留、平台时区、永久分享、无登录及跨项目拒绝，以及原有悬浮诊断、轮次显示和判定行为。
+- `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix` 与 `git diff --check` 通过。发布前将异常字段映射、概览写入和流式输出分开，整理后重新运行完整格式、Lint、类型检查及六个相关文件的 50 项测试，均通过；数据库适配器行为未再次改动。
+
+已实际查看弹框 1024×768、1536×960 的深浅色截图，以及这两种视口下有 50 条记录的导出
+错误状态截图。表格列宽、按钮对齐、内部滚动及固定底部操作区正常，没有新增变形或页面
+横向溢出。工作簿通过实际 XLSX 读回验证，未在 Microsoft Excel 桌面客户端进行视觉验收。
+
+初次浏览器入口与静态检查并行运行时触发生产服务的 120 秒启动等待限制，随后单独
+构建并连接隔离实例完成检查；未修改测试时限。大批量夹具适配了现有导入页超过 100 类
+只显示汇总、同时存在多个状态提示的行为，不修改产品导入逻辑。本次未运行十万条导出
+压力测试、Full 整套部署、真实 Go Agent 或离线发布物验收；真实双数据库行为已经覆盖，
+执行协议、调度写入和结果判定规则未变更。

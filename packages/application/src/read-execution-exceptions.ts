@@ -4,11 +4,18 @@ import {
   type ExecutionExceptionPage,
 } from "@autoforge/contracts";
 import { aggregateBatchStatus, DomainError } from "@autoforge/domain";
-import type { RunBatchRepository } from "./ports";
+import type { RunBatchMetadata, RunBatchRepository } from "./ports";
+
+type ExceptionRepository = Pick<RunBatchRepository, "getMetadata" | "readExceptionRecords">;
+type ExceptionPageInput = { cursor?: string; limit?: number; scope?: "all" | "terminal" };
+type ExceptionAudit = Pick<
+  ExecutionExceptionPage,
+  "status" | "expectedStatus" | "consistent" | "abnormalRuns"
+>;
 
 /** Read persisted evidence independently of background charts and their refresh state. */
 export async function readExecutionExceptions(
-  batches: Pick<RunBatchRepository, "getMetadata" | "readExceptionRecords">,
+  batches: ExceptionRepository,
   input: {
     batchId: string;
     projectIds?: readonly string[];
@@ -17,9 +24,48 @@ export async function readExecutionExceptions(
     scope?: "all" | "terminal";
   },
 ): Promise<ExecutionExceptionPage> {
+  const batch = await accessibleBatchMetadata(batches, input);
+  return readExceptionPage(batches, batch, input);
+}
+
+export async function prepareExecutionExceptionExport(
+  batches: ExceptionRepository,
+  input: { batchId: string; projectIds?: readonly string[] },
+): Promise<{ firstPage: ExecutionExceptionPage; pages: AsyncIterable<ExecutionExceptionPage> }> {
+  const batch = await accessibleBatchMetadata(batches, input);
+  const firstPage = await readExceptionPage(batches, batch, { scope: "all", limit: 100 });
+  async function* pages(): AsyncGenerator<ExecutionExceptionPage> {
+    let page = firstPage;
+    while (true) {
+      yield page;
+      if (!page.nextCursor) return;
+      page = await readExceptionPage(
+        batches,
+        batch,
+        { scope: "all", limit: 100, cursor: page.nextCursor },
+        firstPage,
+      );
+    }
+  }
+  return { firstPage, pages: pages() };
+}
+
+async function accessibleBatchMetadata(
+  batches: ExceptionRepository,
+  input: { batchId: string; projectIds?: readonly string[] },
+): Promise<RunBatchMetadata> {
   const batch = await batches.getMetadata(input.batchId, input.projectIds);
   if (!batch || batch.kind === "case_log_rerun")
     throw new DomainError("RUN_BATCH_NOT_FOUND", "执行批次不存在或当前身份无权访问。");
+  return batch;
+}
+
+async function readExceptionPage(
+  batches: ExceptionRepository,
+  batch: RunBatchMetadata,
+  input: ExceptionPageInput,
+  initialAudit?: ExceptionAudit,
+): Promise<ExecutionExceptionPage> {
   const requestedLimit = input.limit ?? 50;
   const limit = Number.isInteger(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50;
   const after = input.cursor ? parseCursor(input.cursor) : undefined;
@@ -28,14 +74,9 @@ export async function readExecutionExceptions(
     limit: limit + 1,
     ...(input.scope ? { scope: input.scope } : {}),
     ...(after ? { after } : {}),
+    ...(initialAudit ? { includeCompletions: false } : {}),
   });
-  const expectedStatus = aggregateBatchStatus(
-    records.completions.map(({ status, abnormal }) => ({
-      status,
-      terminalReasonCode: abnormal ? "EXECUTION_EXCEPTION" : "TESTNG_ASSERTIONS_FAILED",
-    })),
-    { terminationRequested: !!batch.terminationRequestedAt },
-  );
+  const audit = initialAudit ?? auditBatchStatus(batch, records.completions);
   const items = records.items.slice(0, limit).map((item) =>
     item.kind === "run" && item.resultCode === "QUEUE_TIMEOUT"
       ? {
@@ -47,13 +88,10 @@ export async function readExecutionExceptions(
   const last = items.at(-1);
   return executionExceptionPageSchema.parse({
     batchId: batch.id,
-    status: batch.status,
-    expectedStatus,
-    consistent: batch.status === expectedStatus,
-    abnormalRuns: records.completions.reduce(
-      (count, row) => count + (row.abnormal ? row.count : 0),
-      0,
-    ),
+    status: audit.status,
+    expectedStatus: audit.expectedStatus,
+    consistent: audit.consistent,
+    abnormalRuns: audit.abnormalRuns,
     items,
     ...(records.items.length > limit && last
       ? {
@@ -63,6 +101,25 @@ export async function readExecutionExceptions(
         }
       : {}),
   });
+}
+
+function auditBatchStatus(
+  batch: RunBatchMetadata,
+  completions: Awaited<ReturnType<RunBatchRepository["readExceptionRecords"]>>["completions"],
+): ExceptionAudit {
+  const expectedStatus = aggregateBatchStatus(
+    completions.map(({ status, abnormal }) => ({
+      status,
+      terminalReasonCode: abnormal ? "EXECUTION_EXCEPTION" : "TESTNG_ASSERTIONS_FAILED",
+    })),
+    { terminationRequested: !!batch.terminationRequestedAt },
+  );
+  return {
+    status: batch.status,
+    expectedStatus,
+    consistent: batch.status === expectedStatus,
+    abnormalRuns: completions.reduce((count, row) => count + (row.abnormal ? row.count : 0), 0),
+  };
 }
 
 function parseCursor(cursor: string) {

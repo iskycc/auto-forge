@@ -2,7 +2,8 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 import type { ExecutionExceptionPage } from "@autoforge/contracts";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { expectUiIntegrity } from "./support/ui-guard";
 
@@ -17,12 +18,103 @@ import {
 } from "./support/session";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 
+// ExcelJS belongs to the Web workspace; reuse its locked offline dependency for download checks.
+const ExcelJS = createRequire(resolve(import.meta.dirname, "../../apps/web/package.json"))(
+  "exceljs",
+) as typeof import("exceljs").default;
+
 const runnerCapabilities = [
   "executor:testng-v1",
   "isolation:cgroup-v2",
   "java:21.0.8",
   "testng:7.11.0",
 ];
+
+test("execution exception Excel includes every page and retries failed downloads", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const fixture = await createExecutableFixture(page, 101);
+  const runner = await registerRunner(page, "Exception export Runner", runnerCapabilities);
+  const capacityBatch = await createBatch(page, fixture, runner.runnerId, {});
+  await claimAssignment(page, runner);
+  await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 2 });
+  const queueBatch = await createBatch(page, fixture, runner.runnerId, { queueTimeoutMs: 1_000 });
+  await expect
+    .poll(
+      async () => {
+        await triggerRecovery(page, runner);
+        return (await browserJson<{ status: string }>(page, `/api/v1/run-batches/${queueBatch}`))
+          .body.status;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe("failed");
+  try {
+    await page.goto(`/run-batches/${queueBatch}`);
+    await page.getByRole("button", { name: "查看异常原因", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "执行异常原因", exact: true });
+    await expect(dialog.locator("tbody tr")).toHaveCount(50);
+    await dialog.getByRole("button", { name: "下一页", exact: true }).click();
+    await expect(dialog).toContainText("第 2 页");
+    const exportButton = dialog.getByRole("button", { name: "导出异常原因 Excel", exact: true });
+    await page.route(
+      `**/run-batches/${queueBatch}/exceptions/export?*`,
+      (route) =>
+        route.fulfill({
+          status: 503,
+          json: { error: { code: "PLATFORM_BUSY", message: "导出暂时不可用，请重试。" } },
+        }),
+      { times: 1 },
+    );
+    await exportButton.click();
+    await expect(dialog.getByRole("alert")).toContainText("导出暂时不可用");
+    await expect(exportButton).toBeEnabled();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureExceptionUi(page, `execution-exceptions-export-error-light-${width}`);
+    }
+    const workbook = await downloadExceptionWorkbook(page);
+    const sheet = workbook.getWorksheet("异常原因")!;
+    expect(sheet.actualRowCount).toBe(102);
+    const paths = new Set<string>();
+    for (let row = 2; row <= sheet.actualRowCount; row++) {
+      expect(sheet.getCell(`G${row}`).value).toBe("QUEUE_TIMEOUT");
+      expect(sheet.getCell(`I${row}`).value).toBe("终态原因");
+      paths.add(String(sheet.getCell(`E${row}`).value));
+    }
+    expect(paths.size).toBe(101);
+    expect(workbook.getWorksheet("判定概览")!.getCell("B7").value).toBe(101);
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await expect(dialog).toContainText("第 2 页");
+  } finally {
+    await browserJson(page, `/api/v1/run-batches/${capacityBatch}/cancel`, {
+      method: "POST",
+      body: { reason: "Exception export acceptance cleanup" },
+    });
+  }
+});
+
+async function downloadExceptionWorkbook(
+  page: Page,
+): Promise<InstanceType<typeof ExcelJS.Workbook>> {
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .getByRole("dialog", { name: "执行异常原因", exact: true })
+    .getByRole("button", { name: "导出异常原因 Excel", exact: true })
+    .click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^run-batch-.*-exceptions\.xlsx$/);
+  const filePath = await download.path();
+  expect(filePath).not.toBeNull();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await readFile(filePath!));
+  const timeZone = await page.locator("html").getAttribute("data-time-zone");
+  expect(workbook.getWorksheet("异常原因")!.getCell("J1").value).toBe(`发生时间（${timeZone}）`);
+  expect(workbook.getWorksheet("判定概览")!.getCell("B9").value).toBe(timeZone);
+  return workbook;
+}
 
 test("execution exceptions reveal unstarted timeouts and distinguish normal test failures", async ({
   page,
@@ -201,10 +293,25 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
     await expect(sharedPage.getByRole("dialog", { name: "执行异常原因" })).toContainText(
       "QUEUE_TIMEOUT",
     );
+    const sharedExport = await downloadExceptionWorkbook(sharedPage);
+    expect(sharedExport.getWorksheet("异常原因")!.getCell("G2").value).toBe("QUEUE_TIMEOUT");
+    expect(
+      (await sharedPage.request.get(new URL(`${endpoint}/export`, page.url()).toString())).status(),
+    ).toBe(401);
     expect((await sharedPage.request.get(new URL(endpoint, page.url()).toString())).status()).toBe(
       401,
     );
     const token = decodeURIComponent(new URL(share.body.shareUrl).pathname.split("/").at(-1)!);
+    expect(
+      (
+        await sharedPage.request.get(
+          new URL(
+            `/api/v1/run-batches/${capacityBatch}/exceptions/export?access_token=${encodeURIComponent(token)}`,
+            page.url(),
+          ).toString(),
+        )
+      ).status(),
+    ).toBe(400);
     expect(
       (
         await sharedPage.request.get(
@@ -334,6 +441,8 @@ async function verifyExceptionProjectAccess(
       await login(reader, username, password);
       const diagnostics = await reader.request.get(`/api/v1/run-batches/${batchId}/exceptions`);
       expect(diagnostics.status()).toBe(scope === projectId ? 200 : 404);
+      const exported = await reader.request.get(`/api/v1/run-batches/${batchId}/exceptions/export`);
+      expect(exported.status()).toBe(scope === projectId ? 200 : 404);
       if (scope === projectId) {
         expect((await diagnostics.json()).items[0]).toMatchObject({ resultCode: "QUEUE_TIMEOUT" });
         await reader.goto(`/run-batches/${batchId}`);
@@ -543,7 +652,7 @@ type Claim = {
 
 type ExecutableFixture = { projectId: string; suiteId: string };
 
-async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
+async function createExecutableFixture(page: Page, caseCount = 1): Promise<ExecutableFixture> {
   const fixtureName = uniqueName("execution-recovery");
   const project = await browserJson<{ id: string; name: string }>(page, "/api/v1/projects", {
     method: "POST",
@@ -566,13 +675,22 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
   );
   expect(stage.status).toBe(201);
   await selectProjectContext(page, project.body.id);
-  const className = `com.example.ExecutionRecovery${Date.now()}Test`;
-  const jar = zipSync({
-    [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
-      className,
-      methods: [{ name: "recovers", annotations: [{ type: "Test", values: {} }] }],
-    }),
-  });
+  const classPrefix = `com.example.ExecutionRecovery${Date.now()}`;
+  const classNames = Array.from(
+    { length: caseCount },
+    (_, index) => `${classPrefix}Case${index}Test`,
+  );
+  const jar = zipSync(
+    Object.fromEntries(
+      classNames.map((name) => [
+        `${name.replaceAll(".", "/")}.class`,
+        buildClassFile({
+          className: name,
+          methods: [{ name: "recovers", annotations: [{ type: "Test", values: {} }] }],
+        }),
+      ]),
+    ),
+  );
   await page.goto(
     `/cases/import?${new URLSearchParams({
       projectId: project.body.id,
@@ -589,15 +707,29 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
     buffer: Buffer.from(jar),
   });
   await page.getByRole("button", { name: "扫描测试类" }).click();
-  await expect(page.getByText(className)).toBeVisible();
+  await expect(page.getByText(`将创建 ${caseCount} 个用例定义`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByRole("status")).toContainText("已导入", { timeout: 60_000 });
-  const cases = await browserJson<{ items: Array<{ id: string; className: string }> }>(
-    page,
-    `/api/v1/case-definitions?projectId=${encodeURIComponent(project.body.id)}&query=${encodeURIComponent(className)}`,
-  );
-  const caseDefinition = cases.body.items.find((item) => item.className === className);
-  expect(caseDefinition).toBeTruthy();
+  await expect(
+    page.getByRole("status").filter({ hasText: `已导入 ${caseCount} 个测试类` }),
+  ).toBeVisible({ timeout: 60_000 });
+  const caseDefinitionIds: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const query = new URLSearchParams({
+      projectId: project.body.id,
+      query: classPrefix,
+      limit: "100",
+    });
+    if (cursor) query.set("cursor", cursor);
+    const cases = await browserJson<{
+      items: Array<{ id: string; className: string }>;
+      nextCursor?: string;
+    }>(page, `/api/v1/case-definitions?${query}`);
+    expect(cases.status).toBe(200);
+    caseDefinitionIds.push(...cases.body.items.map((item) => item.id));
+    cursor = cases.body.nextCursor;
+  } while (cursor);
+  expect(caseDefinitionIds).toHaveLength(caseCount);
   const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
     method: "POST",
     body: { projectId: project.body.id, name: fixtureName },
@@ -605,7 +737,7 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
   expect(suite.status).toBe(201);
   const addition = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds: [caseDefinition!.id] },
+    body: { caseDefinitionIds },
   });
   expect(addition.status).toBe(200);
   return { projectId: project.body.id, suiteId: suite.body.id };

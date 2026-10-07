@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, RefreshCw, X } from "lucide-react";
 import { executionExceptionPageSchema, type ExecutionExceptionPage } from "@autoforge/contracts";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui";
@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { formatLocalDateTime, runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { executionExceptionReasonLabel } from "@/lib/execution-exceptions-presentation";
+import { downloadExecutionExceptions } from "@/lib/download-execution-exceptions";
 
 export function ExecutionExceptionsDialog({
   batchId,
@@ -36,6 +37,26 @@ export function ExecutionExceptionsDialog({
   const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
   const [page, setPage] = useState(0);
   const [retry, setRetry] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const exportController = useRef<AbortController | null>(null);
+  useEffect(() => () => exportController.current?.abort(), [batchId, accessToken]);
+  async function exportReasons() {
+    if (exportController.current) return;
+    const controller = new AbortController();
+    exportController.current = controller;
+    setExporting(true);
+    setExportError("");
+    try {
+      await downloadExecutionExceptions(batchId, accessToken, controller.signal);
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setExportError(cause instanceof Error ? cause.message : "导出异常原因失败，请重试。");
+    } finally {
+      if (exportController.current === controller) exportController.current = null;
+      if (!controller.signal.aborted) setExporting(false);
+    }
+  }
   const cursor = cursors[page];
   useEffect(() => {
     const controller = new AbortController();
@@ -88,6 +109,11 @@ export function ExecutionExceptionsDialog({
         <p className="m-0 text-sm text-muted-foreground">
           排队超时、轮次恢复失败可能没有本次执行日志；同轮次的较早异常也可能已被后续重试恢复。
         </p>
+        {exportError ? (
+          <Notice tone="error" role="alert">
+            {exportError}
+          </Notice>
+        ) : null}
         {error ? (
           <Notice tone="error" role="alert">
             {error}
@@ -174,6 +200,17 @@ export function ExecutionExceptionsDialog({
       <footer className="flex items-center justify-between gap-3 border-t border-solid border-border px-5 py-3">
         <span className="text-sm text-muted-foreground">第 {page + 1} 页 · 每页最多 50 条</span>
         <div className="inline-flex gap-2">
+          <Button
+            type="button"
+            aria-label="导出异常原因 Excel"
+            title="导出全部异常记录，包含终态原因和历史异常"
+            disabled={!result?.items.length || exporting}
+            loading={exporting}
+            onClick={() => void exportReasons()}
+          >
+            {!exporting ? <Download size={16} /> : null}
+            导出 Excel
+          </Button>
           <Button
             type="button"
             disabled={!result || page === 0}

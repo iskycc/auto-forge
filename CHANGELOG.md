@@ -6,6 +6,20 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.3 - 2026-10-07
+
+### Added
+
+- 执行异常原因弹框增加“导出 Excel”，导出全部分页记录及判定概览，包含轮次、步骤、尝试、用例名称与类路径、异常类型、原因码、说明、判定影响、平台时区时间及 UTC 原值。沿用统一 Excel 配色、无缩进正文、冻结表头和字段列宽；导出失败可重试，关闭弹框取消下载。登录用户与永久分享沿用现有批次权限。
+
+### Database, deployment and compatibility
+
+- Lite/SQLite 与 Full/PostgreSQL 共用有界游标导出，每页最多 100 条，逐行写入 XLSX，只在导出开始时统计一次批次；无需新增依赖、迁移、配置或 Runner 升级。
+
+### Validation
+
+- 本地 66 项不同单元/集成检查与两项 Lite Playwright 场景通过，覆盖真实 SQLite/PostgreSQL、101 条跨页完整下载、失败重试、分享与跨项目权限、时区、工作簿样式和原有诊断/轮次功能。已实际查看 1024×768、1536×960 深浅色弹框及导出错误状态截图，无新增溢出或变形；格式、Lint、类型、Web 生产构建和 E2E 矩阵检查通过。本地未运行 Full 整体部署、真实 Runner、离线发布物或十万条导出压测；完整源码、Full 与发布资产验收由既有 GitHub Actions 流水线执行。详见[导出验证记录](./docs/architecture/execution-exceptions.md#excel-导出验证2026-10-07)。
+
 ## 1.19.2 - 2026-10-07
 
 ### Added

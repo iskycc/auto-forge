@@ -2108,6 +2108,8 @@ export interface RunBatchRepository {
     scope?: "all" | "terminal";
     after?: ExecutionExceptionCursor;
     limit: number;
+    /** 导出后续页复用首屏判定，避免每页重新扫描整个批次；默认读取终态计数。 */
+    includeCompletions?: boolean;
   }): Promise<{
     items: ExecutionException[];
     completions: Array<{ status: ExecutionRun["status"]; abnormal: boolean; count: number }>;
