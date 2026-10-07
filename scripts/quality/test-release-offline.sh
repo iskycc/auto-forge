@@ -545,16 +545,18 @@ run_current_release_browser() {
       return 2
       ;;
   esac
-  local admin_token runner_master_key runner_token
+  local admin_token runner_master_key runner_token callback_host
   admin_token="$(read_platform_secret "${current_data}" adminBootstrapToken)"
   runner_master_key="$(read_platform_secret "${current_data}" masterKey)"
   runner_token="$(read_platform_secret "${current_data}" runnerBootstrapToken)"
+  callback_host="$(network_gateway)"
   E2E_BASE_URL="${base_url}" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
   E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_master_key}" \
   AUTOFORGE_E2E_DATA_DIR="${current_data}" \
-  E2E_WEBHOOK_CALLBACK_HOST="$(network_gateway)" \
+  E2E_WEBHOOK_CALLBACK_HOST="${callback_host}" \
+  E2E_JENKINS_CALLBACK_HOST="${callback_host}" \
     pnpm exec playwright test --config playwright.full.config.ts \
       "${browser_specs[@]}"
 }

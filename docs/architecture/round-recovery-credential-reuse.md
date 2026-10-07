@@ -77,3 +77,9 @@ pnpm exec playwright test tests/e2e/case-suite-lifecycle.spec.ts \
 
 本地未运行 Full 完整部署、真实 Runner、离线发布物或高规模压测；本次已运行真实 PostgreSQL 适配器检查。
 完整高资源验收按仓库规定由既有 GitHub Actions 执行，新适配器测试已加入 Full 质量脚本。
+
+发布物浏览器验收通过 `E2E_JENKINS_CALLBACK_HOST` 将宿主 Jenkins 测试服务地址设为隔离 Docker 网络的
+网关，并允许该测试服务监听宿主接口；源码场景默认仍使用回环地址。该变量仅用于 E2E 夹具，
+不改变产品 Jenkins 地址校验、认证和实际请求，也不开放容器出站公网。
+修正夹具后已使用 `E2E_JENKINS_CALLBACK_HOST=127.0.0.2` 重跑单项 Lite 密钥复用场景，
+实际认证、来源移除后的独立使用与原有页面断言均通过；发布包通过默认分支验收工具复验同一不可变 Release。

@@ -724,6 +724,7 @@ test("Jenkins recovery credentials support current-task and cross-task reuse wit
   const runner = await registerRunner(page, suffix);
   const sharedKey = "e2e-user:shared-recovery-token";
   const localKey = "e2e-user:local-recovery-token";
+  const callbackHost = process.env.E2E_JENKINS_CALLBACK_HOST ?? "127.0.0.1";
   const inspectedCredentials: string[] = [];
   let buildRequests = 0;
   const jenkins = createServer((request, response) => {
@@ -762,11 +763,13 @@ test("Jenkins recovery credentials support current-task and cross-task reuse wit
       }),
     );
   });
-  await new Promise<void>((resolve) => jenkins.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    jenkins.listen(0, callbackHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0", resolve),
+  );
   const address = jenkins.address();
   if (!address || typeof address === "string")
     throw new Error("Jenkins test server did not bind a TCP port.");
-  const base = `http://127.0.0.1:${address.port}`;
+  const base = `http://${callbackHost}:${address.port}`;
   try {
     const create = async (name: string) => {
       const created = await browserJson<{ id: string; revision: number }>(
