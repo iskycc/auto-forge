@@ -1,7 +1,11 @@
 import "server-only";
 
 import type { RunBatchExportRow } from "@autoforge/application";
-import type { ExportOutcomeFilter, RunBatchExportTemplate } from "@autoforge/contracts";
+import {
+  DEFAULT_PLATFORM_TIME_ZONE,
+  type ExportOutcomeFilter,
+  type RunBatchExportTemplate,
+} from "@autoforge/contracts";
 import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
 import ExcelJS from "exceljs";
 import {
@@ -19,6 +23,8 @@ import {
  * blocked 新口径下所有导出行都有 attempt（从未执行的用例不导出）。
  */
 
+const LOG_LINK_COLUMN_WIDTH = { minimum: 64, maximum: 120 } as const;
+
 const EXPORT_COLUMNS = [
   { header: "用例路径", minimum: 28, maximum: 52 },
   { header: "名称", minimum: 18, maximum: 36 },
@@ -27,7 +33,7 @@ const EXPORT_COLUMNS = [
   { header: "执行开始时间", minimum: 26, maximum: 26 },
   { header: "执行结束时间", minimum: 26, maximum: 26 },
   { header: "执行耗时(s)", minimum: 14, maximum: 16 },
-  { header: "日志链接", minimum: 32, maximum: 48 },
+  { header: "日志链接", ...LOG_LINK_COLUMN_WIDTH },
 ] as const;
 
 const FAILURE_ANALYSIS_HEADERS = [
@@ -53,7 +59,7 @@ const FAILURE_ANALYSIS_RESULT_LABELS: Record<FailureAnalysisCategory, string> = 
 
 // 分析清单常有数百条失败记录，优先保证纵向浏览密度。长类名、堆栈和说明保留
 // 完整单元格值，但不通过超宽列或多行行高强制展示全部内容。
-const FAILURE_ANALYSIS_COLUMN_WIDTHS = [32, 24, 36, 14, 18, 24, 24, 18, 20, 32] as const;
+const FAILURE_ANALYSIS_COLUMN_WIDTHS = [32, 24, 36, 14, 18, 24, 24, 18, 20] as const;
 const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
   succeeded: "成功",
   failed: "失败",
@@ -77,6 +83,8 @@ export type RunBatchExportWorkbookInput = {
   /** scope=round 时记录具体轮次，用于文件名区分。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
+  /** 与页面一致的平台展示时区；未指定时使用北京时间。 */
+  timeZone?: string;
   /** attemptId -> 日志公开访问链接绝对地址。 */
   shareLinks: ReadonlyMap<string, string>;
   /** 最终失败 attemptId -> 已持久化的分析记录；未认领用例不在映射中。 */
@@ -109,6 +117,17 @@ function buildExecutionResultsSheet(
   const sheet = workbook.addWorksheet("执行结果", exportWorksheetOptions());
   // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
   const includeRound = input.scope === "all";
+  const timestampFormatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: input.timeZone ?? DEFAULT_PLATFORM_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    hourCycle: "h23",
+  });
   const columns = includeRound
     ? [{ header: "轮次", minimum: 6, maximum: 8 }, ...EXPORT_COLUMNS]
     : EXPORT_COLUMNS;
@@ -120,8 +139,8 @@ function buildExecutionResultsSheet(
       row.displayName,
       OUTCOME_LABELS[row.outcome],
       row.summary ?? "",
-      row.startedAt ?? "",
-      row.finishedAt ?? "",
+      formatExportTimestamp(row.startedAt, timestampFormatter),
+      formatExportTimestamp(row.finishedAt, timestampFormatter),
       row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
       shareLink ? { text: shareLink, hyperlink: shareLink } : "",
     ];
@@ -151,14 +170,32 @@ function buildExecutionResultsSheet(
   }
 }
 
+function formatExportTimestamp(value: string | null, formatter: Intl.DateTimeFormat): string {
+  if (value === null) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}`;
+}
+
 function buildFailureAnalysisSheet(
   workbook: ExcelJS.Workbook,
   input: RunBatchExportWorkbookInput,
 ): void {
   const sheet = workbook.addWorksheet("失败用例分析清单", exportWorksheetOptions(2));
+  const logColumnIndex = FAILURE_ANALYSIS_HEADERS.length - 1;
+  const logColumnWidth = exportColumnWidth(
+    FAILURE_ANALYSIS_HEADERS[logColumnIndex]!,
+    input.rows
+      .slice(0, EXPORT_WIDTH_SAMPLE_ROWS)
+      .map((row) => (row.attemptId ? (input.shareLinks.get(row.attemptId) ?? "") : "")),
+    LOG_LINK_COLUMN_WIDTH,
+  );
   sheet.columns = FAILURE_ANALYSIS_HEADERS.map((header, index) => ({
     header,
-    width: FAILURE_ANALYSIS_COLUMN_WIDTHS[index]!,
+    width: index === logColumnIndex ? logColumnWidth : FAILURE_ANALYSIS_COLUMN_WIDTHS[index]!,
   }));
   sheet.autoFilter = { from: "A1", to: "J1" };
   styleExportHeader(sheet.getRow(1));

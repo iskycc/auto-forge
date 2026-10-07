@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.5 - 2026-10-07
+
+### Fixed
+
+- 执行结果与失败分析 Excel 的日志列统一加宽至 64–120 字符单位，按前 100 行链接长度调整；修正共用正文样式让末列超链接自动换行的问题，链接保持单行、完整文本和可点击目标。其他列比例、行高、冻结、筛选、状态色与普通末列正文的换行规则保留，Lite/Full 共用实现，无新增迁移、依赖或配置。
+- 修复执行结果 Excel 的开始/结束时间直接输出 UTC、与页面默认北京时间相差 8 小时的问题；导出跟随平台展示时区，默认 `Asia/Shanghai`，当前轮次、最终结果及全部轮次均保留毫秒精度并正确处理跨日/跨年。原始 UTC 时间、执行耗时和表格布局保持原样，Lite/Full 共用实现。
+
+### Database, deployment and compatibility
+
+- 无新增数据库迁移、环境变量、生产依赖或 Runner 协议变更；Lite/Full 共用导出实现，沿用双架构后端离线镜像、内置双架构 Runner Agent、Compose 部署包、Jenkins 插件及签名/SBOM 资产。
+- 导出时间使用平台展示时区，默认北京时间；管理员配置其他时区时，导出跟随该配置。超长日志 URL 受列宽上限约束，完整单元格内容与点击目标保留。
+
+### Validation
+
+- 本地 58 项相关测试通过，21 项时间导出检查在不同宿主时区下复验通过；Lite 生产服务以 UTC 时区运行时，真实下载执行结果和分析工作簿的 Playwright 场景通过，覆盖北京时间跨日转换、毫秒、空值、完整链接、列宽、筛选与失败后重试。`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 通过。
+- 已实际查看 1024×768、1536×960 深浅色导出弹窗截图，并用 LibreOffice 渲染真实下载的工作簿；时间与链接单行显示，原有其他列比例、行高和页面布局正常。未运行 Microsoft Excel 桌面客户端；Full 整体部署、真实 Runner 和离线发布包验收由既有 GitHub Actions 执行。详见[导出排版与验证记录](./docs/design/export-workbook-layout.md)。
+
 ## 1.19.4 - 2026-10-07
 
 ### Added

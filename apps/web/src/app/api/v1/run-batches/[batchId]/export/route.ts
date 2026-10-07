@@ -101,6 +101,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       scope: parsed.scope,
       ...(parsed.round !== undefined ? { round: parsed.round } : {}),
       rows,
+      timeZone: services.configurationStore.read().web.timeZone,
       shareLinks,
       analysisClaims: analysisClaimsByAttempt,
       analysisProofLinks,

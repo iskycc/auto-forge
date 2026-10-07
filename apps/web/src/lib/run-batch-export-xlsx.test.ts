@@ -51,6 +51,129 @@ const completedClaim: FailureAnalysisClaim = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
+  it.each(["round", "final", "all"] as const)(
+    "exports %s execution timestamps in Beijing time by default",
+    async (scope) => {
+      const result = await buildRunBatchExportWorkbook({
+        batchId: "batch-123456789",
+        scope,
+        round: 2,
+        rows: [failedRow],
+        shareLinks: new Map(),
+      });
+      const sheet = (await loadWorkbook(result.buffer)).getWorksheet("执行结果")!;
+      const startColumn = scope === "all" ? 6 : 5;
+      expect(sheet.getRow(2).getCell(startColumn).value).toBe("2026-08-30 09:00:00.000");
+      expect(sheet.getRow(2).getCell(startColumn + 1).value).toBe("2026-08-30 09:01:00.000");
+      expect(sheet.getRow(2).getCell(startColumn + 2).value).toBe(60);
+      expect(failedRow.startedAt).toBe("2026-08-30T01:00:00.000Z");
+    },
+  );
+
+  it.each([
+    { instant: "2026-10-07T16:00:00.123Z", expected: "2026-10-08 00:00:00.123" },
+    { instant: "2026-12-31T16:30:59.999Z", expected: "2027-01-01 00:30:59.999" },
+    { instant: "2026-10-08T00:30:59.123+08:00", expected: "2026-10-08 00:30:59.123" },
+  ])(
+    "preserves milliseconds and the local calendar date for $instant",
+    async ({ instant, expected }) => {
+      const result = await buildRunBatchExportWorkbook({
+        batchId: "batch-123456789",
+        scope: "final",
+        rows: [{ ...failedRow, startedAt: instant, finishedAt: instant }],
+        shareLinks: new Map(),
+      });
+      const sheet = (await loadWorkbook(result.buffer)).getWorksheet("执行结果")!;
+      expect(sheet.getCell("E2").value).toBe(expected);
+      expect(sheet.getCell("F2").value).toBe(expected);
+    },
+  );
+
+  it.each([
+    { instant: "2026-07-15T12:30:00.000Z", expected: "2026-07-15 08:30:00.000" },
+    { instant: "2026-01-15T12:30:00.000Z", expected: "2026-01-15 07:30:00.000" },
+  ])("uses the supplied platform time zone for $instant", async ({ instant, expected }) => {
+    const result = await buildRunBatchExportWorkbook({
+      batchId: "batch-123456789",
+      scope: "final",
+      timeZone: "America/New_York",
+      rows: [{ ...failedRow, startedAt: instant, finishedAt: instant }],
+      shareLinks: new Map(),
+    });
+    const sheet = (await loadWorkbook(result.buffer)).getWorksheet("执行结果")!;
+    expect(sheet.getCell("E2").value).toBe(expected);
+    expect(sheet.getCell("F2").value).toBe(expected);
+  });
+
+  it("leaves missing execution timestamps and durations blank", async () => {
+    const result = await buildRunBatchExportWorkbook({
+      batchId: "batch-123456789",
+      scope: "final",
+      rows: [{ ...failedRow, startedAt: null, finishedAt: null, durationMs: null }],
+      shareLinks: new Map(),
+    });
+    const sheet = (await loadWorkbook(result.buffer)).getWorksheet("执行结果")!;
+    for (const address of ["E2", "F2", "G2"]) expect(sheet.getCell(address).text).toBe("");
+  });
+
+  it.each([
+    { template: "results" as const, scope: "round" as const, logColumn: 8, rowHeight: 22 },
+    { template: "results" as const, scope: "final" as const, logColumn: 8, rowHeight: 22 },
+    { template: "results" as const, scope: "all" as const, logColumn: 9, rowHeight: 22 },
+    {
+      template: "failure-analysis" as const,
+      scope: "final" as const,
+      logColumn: 10,
+      rowHeight: 20,
+    },
+  ])(
+    "keeps complete $template/$scope log URLs on a wide single-line column",
+    async ({ template, scope, logColumn, rowHeight }) => {
+      const shareLink = `https://autoforge.internal.example:3443/share/attempt-log/${"t".repeat(43)}`;
+      const result = await buildRunBatchExportWorkbook({
+        batchId: "batch-123456789",
+        template,
+        scope,
+        round: 2,
+        rows: [failedRow],
+        shareLinks: new Map([[failedRow.attemptId!, shareLink]]),
+      });
+      const sheet = (await loadWorkbook(result.buffer)).worksheets[0]!;
+      const cell = sheet.getRow(2).getCell(logColumn);
+      expect(sheet.getColumn(logColumn).width).toBeGreaterThanOrEqual(shareLink.length + 2);
+      expect(cell.value).toEqual({ text: shareLink, hyperlink: shareLink });
+      expect(cell.alignment.wrapText).not.toBe(true);
+      expect(cell.alignment.indent ?? 0).toBe(0);
+      expect(cell.font).toMatchObject({ underline: true, color: { argb: "FF2563A6" } });
+      expect(sheet.getRow(2).height).toBe(rowHeight);
+    },
+  );
+
+  it.each(["results", "failure-analysis"] as const)(
+    "bounds %s log width while preserving unusually long and missing URLs",
+    async (template) => {
+      const shareLink = `https://autoforge.internal.example/${"long-path/".repeat(100)}`;
+      const rows = [failedRow, { ...failedRow, attemptId: "attempt-no-share" }];
+      const result = await buildRunBatchExportWorkbook({
+        batchId: "batch-123456789",
+        template,
+        scope: "final",
+        rows,
+        shareLinks: new Map([[failedRow.attemptId!, shareLink]]),
+      });
+      const sheet = (await loadWorkbook(result.buffer)).worksheets[0]!;
+      const logColumn = sheet.columnCount;
+      expect(sheet.getColumn(logColumn).width).toBeLessThanOrEqual(120);
+      expect(sheet.getColumn(logColumn).width).toBeGreaterThanOrEqual(64);
+      expect(sheet.getRow(2).getCell(logColumn).value).toEqual({
+        text: shareLink,
+        hyperlink: shareLink,
+      });
+      expect(sheet.getRow(2).getCell(logColumn).alignment.wrapText).not.toBe(true);
+      expect(sheet.getRow(3).getCell(logColumn).text).toBe("");
+    },
+  );
+
   it("builds a compact single-line failure analysis template with the required columns", async () => {
     const shareLink = "https://autoforge.example/share/attempt-log/permanent-token";
     const result = await buildRunBatchExportWorkbook({
@@ -82,7 +205,7 @@ describe("buildRunBatchExportWorkbook", () => {
     ]);
     expect(sheet!.columnCount).toBe(10);
     expect(sheet!.columns.map((column) => column.width)).toEqual([
-      32, 24, 36, 14, 18, 24, 24, 18, 20, 32,
+      32, 24, 36, 14, 18, 24, 24, 18, 20, 64,
     ]);
     expect(sheet!.getRow(1).height).toBe(28);
     expect(sheet!.getRow(1).getCell(1).font).toMatchObject({

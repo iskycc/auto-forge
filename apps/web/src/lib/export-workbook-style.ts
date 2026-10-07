@@ -77,11 +77,13 @@ export function styleExportRow(row: ExcelJS.Row, columnCount: number): void {
   // Touch all declared columns, including trailing empty notes, so the stripe remains continuous.
   for (let column = 1; column <= columnCount; column++) {
     const cell = row.getCell(column);
+    const hasHyperlink =
+      typeof cell.value === "object" && cell.value !== null && "hyperlink" in cell.value;
     cell.font = { name: FONT_NAME, size: 10, color: { argb: EXPORT_COLORS.text } };
     cell.alignment = {
       vertical: "middle",
       horizontal: typeof cell.value === "number" ? "right" : "left",
-      wrapText: column === columnCount,
+      wrapText: column === columnCount && !hasHyperlink,
     };
     cell.border = {
       bottom: { style: "hair", color: { argb: EXPORT_COLORS.border } },
@@ -92,7 +94,7 @@ export function styleExportRow(row: ExcelJS.Row, columnCount: number): void {
       pattern: "solid",
       fgColor: { argb: row.number % 2 === 0 ? EXPORT_COLORS.body : EXPORT_COLORS.alternate },
     };
-    if (typeof cell.value === "object" && cell.value && "hyperlink" in cell.value) {
+    if (hasHyperlink) {
       cell.font = { ...cell.font, color: { argb: EXPORT_COLORS.link }, underline: true };
     }
   }

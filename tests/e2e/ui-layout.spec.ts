@@ -821,6 +821,18 @@ test("execution export dialog keeps choices readable and downloads the selected 
   const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
   const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const exportDatabase = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    exportDatabase.exec("PRAGMA busy_timeout = 5000");
+    exportDatabase
+      .prepare(
+        `UPDATE run_attempts SET started_at = ?, finished_at = ?, duration_ms = ?
+         WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id = ?)`,
+      )
+      .run("2026-10-06T16:00:00.123Z", "2026-10-06T16:01:01.456Z", 61_333, fixture.batchId);
+  } finally {
+    exportDatabase.close();
+  }
   await page.goto(`/run-batches/${fixture.batchId}?round=1`);
   await page.getByRole("button", { name: "导出结果", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
@@ -896,6 +908,9 @@ test("execution export dialog keeps choices readable and downloads the selected 
   const standardStrings = new TextDecoder().decode(standardArchive["xl/sharedStrings.xml"]);
   expect(standardStrings).toContain(fixture.passedName);
   expect(standardStrings).toContain(fixture.failedNames[0]);
+  expect(standardStrings).toContain("2026-10-07 00:00:00.123");
+  expect(standardStrings).toContain("2026-10-07 00:01:01.456");
+  expect(standardStrings).not.toContain("2026-10-06T16:00:00.123Z");
   expect(new TextDecoder().decode(standardArchive["xl/styles.xml"])).not.toMatch(
     /\bindent="[1-9]\d*"/u,
   );
@@ -905,6 +920,8 @@ test("execution export dialog keeps choices readable and downloads the selected 
       .matchAll(/\bwidth="([\d.]+)"/gu),
   ].map((match) => Number(match[1]));
   expect(new Set(exportedWidths).size).toBeGreaterThan(3);
+  expect(exportedWidths.at(-1)).toBeGreaterThanOrEqual(64);
+  expect(exportedWidths.at(-1)).toBeLessThanOrEqual(120);
   await test.info().attach("execution-results", {
     path: standardWorkbookPath,
     contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -959,6 +976,13 @@ test("execution export dialog keeps choices readable and downloads the selected 
   expect(new TextDecoder().decode(analysisArchive["xl/styles.xml"])).not.toMatch(
     /\bindent="[1-9]\d*"/u,
   );
+  const analysisWidths = [
+    ...new TextDecoder()
+      .decode(analysisArchive["xl/worksheets/sheet1.xml"])
+      .matchAll(/\bwidth="([\d.]+)"/gu),
+  ].map((match) => Number(match[1]));
+  expect(analysisWidths.at(-1)).toBeGreaterThanOrEqual(64);
+  expect(analysisWidths.at(-1)).toBeLessThanOrEqual(120);
   await test.info().attach("failure-analysis", {
     path: analysisWorkbookPath,
     contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

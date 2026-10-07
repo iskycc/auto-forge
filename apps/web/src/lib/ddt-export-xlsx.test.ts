@@ -92,6 +92,7 @@ describe("styled DDT workbook", () => {
     expect(sheet.getColumn(5).width).toBeGreaterThanOrEqual("业务验证说明".length * 2 + 2);
     expect(sheet.getColumn(6).width).toBeLessThanOrEqual(42);
     expect(sheet.getCell("F2").value).toBe(rows[0]!.details);
+    expect(sheet.getCell("F2").alignment.wrapText).toBe(true);
     sheet.getRow(2).eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
   });
 
