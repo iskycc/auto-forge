@@ -38,6 +38,9 @@ TestNG 断言失败、测试配置失败和跳过属于正常测试结果，批�
 使用 `scope=terminal&limit=3`。筛选不会改变终态计数或状态一致性核对。
 每条说明最多 8,192 字符，不读取 TestNG 大型报告、环境配置、凭据或完整日志。Lite/SQLite
 与 Full/PostgreSQL 共用 SQL 与分类规则，分页读取现有表，无新增迁移、缓存、队列或对象。
+Full 查询将排队超时恢复等路径保存的 PostgreSQL 时间表示与 ISO 时间统一为 UTC ISO，
+记录、排序和游标比较使用同一格式，保留微秒精度，避免等价时间表示导致跨页遗漏或重复。
+只在读取时规范时间，不改写历史记录、执行超时或状态判定。
 
 登录用户需有批次所在项目的 `run.read`。永久匿名执行分享只能读取 token 绑定的同一批次，
 不附带执行控制、独立日志或跨项目访问权限；响应禁止缓存。读取失败时可重试，关闭弹窗会
@@ -59,6 +62,7 @@ TestNG 断言失败、测试配置失败和跳过属于正常测试结果，批�
 `GET /api/v1/run-batches/{batchId}/exceptions/export` 返回 XLSX。可选 `time_zone` 必须为
 有效 IANA 时区，省略时使用 UTC；弹框传入平台时区。登录身份要求同一项目的 `run.read`，
 永久分享使用同一批次的 `access_token`，不可跨批次导出；响应使用 `private, no-store`。
+先校验登录或批次分享身份，再严格校验选项，匿名无效参数不会绕过鉴权顺序。
 
 Lite 和 Full 通过同一应用用例按游标每次读取最多 100 条，逐行提交流式工作簿，不在
 服务端加载整个批次。权限和元数据在开始时校验，终态计数只读一次，后续页跳过聚合；
@@ -75,10 +79,11 @@ URL，刷新后可恢复，不新增表格列或改变结果统计。
 
 ## Excel 导出验证（2026-10-07）
 
-- 设置 `AUTOFORGE_TEST_POSTGRES_URL` 指向临时 PostgreSQL，运行 `pnpm exec vitest run packages/application/test/read-execution-exceptions.test.ts packages/db/test/execution-exceptions.integration.test.ts apps/web/src/lib/execution-exceptions-api.test.ts apps/web/src/lib/execution-exceptions-export-api.test.ts apps/web/src/lib/execution-exceptions-export-xlsx.test.ts --maxWorkers=2`：39 项通过。覆盖真实 SQLite/PostgreSQL、游标分页、单次聚合、权限、空记录、完整说明、文本类型、时区、终态/历史/恢复原因、工作簿格式、中断与取消。
-- `pnpm exec vitest run apps/web/src/lib/execution-exceptions-export-xlsx.test.ts apps/web/src/components/ui-usage.test.ts apps/web/src/lib/run-batch-export.test.ts --maxWorkers=2`：31 项通过，含上述工作簿检查的 4 项重叠，合计 66 项不同检查。
+- 设置 `AUTOFORGE_TEST_POSTGRES_URL` 指向临时 PostgreSQL，运行 `pnpm exec vitest run packages/db/test/execution-exceptions.integration.test.ts packages/application/test/read-execution-exceptions.test.ts apps/web/src/lib/execution-exceptions-api.test.ts apps/web/src/lib/execution-exceptions-export-api.test.ts apps/web/src/lib/execution-exceptions-export-xlsx.test.ts apps/web/src/components/ui-usage.test.ts apps/web/src/lib/run-batch-export.test.ts --maxWorkers=2`：72 项通过。覆盖真实 SQLite/PostgreSQL 各 9 项集成检查，以及应用、权限、UI 使用和工作簿的 54 项检查。包含游标分页、单次聚合、权限、空记录、完整说明、文本类型、时区、终态/历史/恢复原因、工作簿格式、中断与取消。
+- 真实 PostgreSQL 混合保存带时区的数据库时间与 UTC ISO 时间，保留同一时刻的六位微秒，复现修复前的无效游标；修复后经应用层游标和完整导出读取 101 条，确认无遗漏、重复或精度丢失。匿名携带无效参数的导出请求在修复前返回 400，修复后先返回 401；合法分享仍严格拒绝未知参数。
 - 独立完成 `pnpm --filter @autoforge/web build`，启动隔离的 Lite 生产实例后，设置 `AUTOFORGE_E2E_EXTERNAL_SERVER=1`、对应 `AUTOFORGE_E2E_DATA_DIR`、截图目录及预安装 Chromium，运行 `pnpm exec playwright test tests/e2e/execution-recovery.spec.ts --grep 'execution exception Excel|execution exceptions reveal'`：两项通过。真实导入 101 个用例并触发排队超时，从弹框第二页下载并读回全部 101 条，验证无重复/遗漏、失败后重试、原页码保留、平台时区、永久分享、无登录及跨项目拒绝，以及原有悬浮诊断、轮次显示和判定行为。
-- `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix` 与 `git diff --check` 通过。发布前将异常字段映射、概览写入和流式输出分开，整理后重新运行完整格式、Lint、类型检查及六个相关文件的 50 项测试，均通过；数据库适配器行为未再次改动。
+- 导出鉴权修复后重新完成生产构建，连接隔离 Lite 实例，运行 `pnpm exec playwright test tests/e2e/identity-rbac.spec.ts --grep 'all protected HTTP entrypoints'`：通过，验证全部受保护 HTTP 入口的匿名拒绝行为。与上述两个场景合计三项 Lite 浏览器检查。
+- `pnpm format:check`、`pnpm lint`、`pnpm typecheck`（包含 `tsconfig.tests.json`）、`pnpm test:e2e:matrix` 与 `git diff --check` 通过。发布前将异常字段映射、概览写入和流式输出分开；CI 发现鉴权顺序和 Full 时间游标问题后补充失败用例并修复，重新运行上述 72 项检查。
 
 已实际查看弹框 1024×768、1536×960 的深浅色截图，以及这两种视口下有 50 条记录的导出
 错误状态截图。表格列宽、按钮对齐、内部滚动及固定底部操作区正常，没有新增变形或页面

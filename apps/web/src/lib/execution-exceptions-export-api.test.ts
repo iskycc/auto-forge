@@ -74,6 +74,21 @@ describe("execution exception export authorization", () => {
     );
     expect((await GET(request(), context)).status).toBe(404);
   });
+  it.each(["?scope=all&projectId=project", "?time_zone=invalid-zone", "?access_token="])(
+    "rejects anonymous callers before validating malformed export options %s",
+    async (query) => {
+      authenticateRequest.mockRejectedValue(new DomainError("AUTH_REQUIRED", "需要登录。"));
+      expect((await GET(request(query), context)).status).toBe(401);
+      expect(projectScope).not.toHaveBeenCalled();
+      expect(executionExceptionExport).not.toHaveBeenCalled();
+    },
+  );
+  it("keeps strict option validation after authenticating a valid batch share", async () => {
+    expect((await GET(request("?access_token=share&cursor=page-two"), context)).status).toBe(400);
+    expect(readToken).toHaveBeenCalledWith("fixture", "share", "run_batch");
+    expect(authenticateRequest).not.toHaveBeenCalled();
+    expect(executionExceptionExport).not.toHaveBeenCalled();
+  });
   it.each(["?time_zone=invalid-zone", "?cursor=page-two", "?access_token="])(
     "rejects invalid export queries %s",
     async (query) => {

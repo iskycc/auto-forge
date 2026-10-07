@@ -172,7 +172,13 @@ export class PostgresRunBatchRepository
 {
   async readExceptionRecords(input: Parameters<RunBatchRepository["readExceptionRecords"]>[0]) {
     await this.ready();
-    const queries = executionExceptionQueries(input);
+    // Recovery writes can format TEXT timestamps through timestamptz. Normalize records and
+    // cursors together before sorting, retaining microseconds to avoid skipping or replaying rows.
+    const queries = executionExceptionQueries(
+      input,
+      (timestamp) =>
+        sql`to_char(${timestamp}::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+    );
     const [records, completions] = await Promise.all([
       this.handle.db.execute<ExceptionRecordRow>(queries.records),
       input.includeCompletions === false

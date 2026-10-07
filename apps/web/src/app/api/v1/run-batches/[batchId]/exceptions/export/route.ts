@@ -31,14 +31,15 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request, context: { params: Promise<{ batchId: string }> }) {
   try {
     const { batchId } = await context.params;
-    const input = querySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
+    const parameters = Object.fromEntries(new URL(request.url).searchParams);
     const services = await getPlatformServices();
     const projectIds = await executionExceptionProjectScope(
       request,
       batchId,
-      input.access_token,
+      parameters.access_token || undefined,
       services,
     );
+    const input = querySchema.parse(parameters);
     const prepared = await services.executionExceptionExport({
       batchId,
       ...(projectIds ? { projectIds } : {}),

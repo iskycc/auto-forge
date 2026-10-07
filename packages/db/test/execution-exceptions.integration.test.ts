@@ -5,7 +5,12 @@ import { resolve } from "node:path";
 import { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 import { ADAPTER_FAILURE_RESULT_CODES, aggregateBatchStatus } from "@autoforge/domain";
-import type { RunBatchRepository } from "@autoforge/application";
+import {
+  readExecutionExceptions,
+  prepareExecutionExceptionExport,
+  type RunBatchRepository,
+} from "@autoforge/application";
+import { executionExceptionCursorSchema } from "@autoforge/contracts";
 import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
@@ -102,6 +107,7 @@ async function addRun(
   code: string | null,
   status = "failed",
   round = 1,
+  occurredAt = timestamp,
 ) {
   await fixture.insert("execution_runs", {
     id,
@@ -115,8 +121,8 @@ async function addRun(
     terminal_outcome: code === "QUEUE_TIMEOUT" ? "timed_out" : status,
     terminal_reason_code: code,
     execution_round: round,
-    created_at: timestamp,
-    updated_at: timestamp,
+    created_at: occurredAt,
+    updated_at: occurredAt,
   });
 }
 async function addAttempt(
@@ -146,6 +152,51 @@ for (const dialect of ["sqlite", "postgresql"] as const) {
   describe.skipIf(dialect === "postgresql" && !postgresUrl)(
     `${dialect} execution exception causes`,
     () => {
+      it("pages and exports all evidence through application cursors without losing timestamp precision", async () => {
+        const fixture = await createFixture(dialect);
+        const preciseTimestamp = "2026-10-06T00:00:00.123456Z";
+        try {
+          for (let index = 0; index < 101; index++)
+            await addRun(
+              fixture,
+              `record-${String(index).padStart(3, "0")}`,
+              "QUEUE_TIMEOUT",
+              "failed",
+              1,
+              dialect === "postgresql" && index % 2 === 0
+                ? "2026-10-06 08:00:00.123456+08"
+                : preciseTimestamp,
+            );
+          const first = await readExecutionExceptions(fixture.batches, {
+            batchId: "batch",
+            limit: 50,
+          });
+          expect(first.items).toHaveLength(50);
+          expect(first.items[49]!.occurredAt).toBe(preciseTimestamp);
+          expect(
+            executionExceptionCursorSchema.parse(
+              JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString("utf8")),
+            ),
+          ).toEqual({ occurredAt: preciseTimestamp, id: "run:record-049" });
+          const second = await readExecutionExceptions(fixture.batches, {
+            batchId: "batch",
+            limit: 50,
+            cursor: first.nextCursor!,
+          });
+          expect(second.items).toHaveLength(50);
+          expect(second.items[0]!.id).toBe("run:record-050");
+          const prepared = await prepareExecutionExceptionExport(fixture.batches, {
+            batchId: "batch",
+          });
+          const exported = [];
+          for await (const page of prepared.pages) exported.push(...page.items);
+          expect(exported).toHaveLength(101);
+          expect(new Set(exported.map((item) => item.id)).size).toBe(101);
+          expect(exported.every((item) => item.occurredAt === preciseTimestamp)).toBe(true);
+        } finally {
+          await fixture.close();
+        }
+      });
       it("can page export evidence without repeating the batch completion aggregate", async () => {
         const fixture = await createFixture(dialect);
         try {
