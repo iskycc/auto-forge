@@ -168,9 +168,10 @@ async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<voi
 
 async function importContainerFixture(page: Page): Promise<void> {
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles(requiredEnvironment("E2E_CONTAINER_TEST_JAR"));
+  const jarInput = page.locator('input[type="file"]');
+  // setInputFiles bypasses disabled controls; wait until the upload event handler is ready.
+  await expect(jarInput).toBeEnabled();
+  await jarInput.setInputFiles(requiredEnvironment("E2E_CONTAINER_TEST_JAR"));
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText("com.autoforge.acceptance.ContainerAgentFixture")).toBeVisible({
     timeout: 20_000,
