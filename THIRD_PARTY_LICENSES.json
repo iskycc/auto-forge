@@ -291,14 +291,14 @@
     {
       "ecosystem": "npm",
       "name": "@next/env",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "license": "MIT",
       "homepage": "https://github.com/vercel/next.js#readme"
     },
     {
       "ecosystem": "npm",
       "name": "@next/swc-linux-x64-gnu",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "license": "MIT",
       "homepage": "https://github.com/vercel/next.js#readme"
     },
@@ -1467,7 +1467,7 @@
     {
       "ecosystem": "npm",
       "name": "next",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "license": "MIT",
       "homepage": "https://nextjs.org"
     },

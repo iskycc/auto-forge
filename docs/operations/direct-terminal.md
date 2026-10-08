@@ -99,3 +99,9 @@ location /api/v1/terminal-stream {
 已实际查看八张终端截图，覆盖 1024×768 与 1536×960、深浅色、普通和放大窗口；标题、连接状态、按钮、文本、边框、间距和视口边界正常，无变形或溢出。
 
 本次仅修改 Lite/Full 共用浏览器组件；没有改动数据库、终端票据、网关、Runner 或协议，也没有新增配置或依赖。该按键验收使用 WebSocket 夹具，不等同于真实 Agent PTY 验收；未运行 Full 整体部署、真实 Runner、离线验收或其他浏览器/操作系统的保留快捷键检查。
+
+### v1.19.7 安全补丁复验
+
+准备发布时，依赖安全流水线报告 Next.js 16.3.6 命中图片优化 SSRF 公告。v1.19.6 尚未公开，取消其发布并删除空草稿，保留原标签；终端修复与 Next.js 16.3.8 安全补丁一起纳入 v1.19.7。没有改变终端实现、协议或配置；同步锁定 ESLint 配置与 lockfile，重新生成生产许可证清单，版本变动限于 Next.js 包族，许可证仍为 MIT。
+
+补丁升级后实际运行 `pnpm exec vitest run apps/web/src/lib/terminal-ticket.test.ts apps/web/src/lib/authorization-paths.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=2`：38 项通过；再次运行上述三项终端 Playwright 场景：通过。`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 均通过。`pnpm audit --prod --audit-level high --json` 通过，高危和严重漏洞均为 0。实际复查升级后 1024×768 与 1536×960 的深浅色普通/放大截图，标题、按钮、文本和窗口边界正常。

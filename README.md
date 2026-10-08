@@ -16,7 +16,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
-- Next.js 16.3.3 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
+- Next.js 16.3.8 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
 - UI 离线约束：Ant Design、图标与中文语言资源锁定版本并在构建时打包，完整组件 CSS 从本地 `antd/dist/antd.css` 编译；SSR 首屏样式使用本地 registry 提取。后端离线 Docker tar 必须包含 `.next/static` 的全部脚本、样式和其他静态资源及服务端运行依赖，禁止 CDN、在线字体、Iconfont 在线脚本或运行时下载。全平台支持 Ant Design 浅色/深色切换，包括首页、登录弹窗、控制台和公开分享页；当前浏览器的选择保存一年，并用于服务端首屏，刷新不依赖客户端再次切换。
 - 表单数字、时区候选、多选、字段校验、DDT 拖拽／分栏和分析图片预览统一使用 Ant Design 组件；隐藏字段保留浏览器表单提交语义。补齐的组件范围、保留的业务 DOM 与验证结果见[原生组件修复报告](./docs/design/ant-design-native-component-audit-2026-09-26.md)。
 - 未登录首页采用“可信控制面”浅色产品门户：首屏呈现初始化/登录入口、批次与 Runner 状态及真实执行结果分布，下方展示 TestNG 用例、测试方法、JAR 来源、累计执行和 Lite/Full 部署说明。无执行样本时成功率显示“—”，统计生成中或不可用时不以零值误导；支持手动刷新、单请求串行轮询、15 秒超时及同步失败后保留上次数据，隐藏页面暂停轮询、恢复可见时立即同步。不公开项目、用户或秘密详情。
@@ -408,7 +408,7 @@ queued -> dispatching -> running -> succeeded
 | 校验         | Zod（持久配置、API 输入和消息载荷）                                    |
 | 测试         | Vitest + Playwright + Go test + 双模式集成测试                         |
 
-截至 2026-09-09，当前实现使用 Node.js 24 LTS 与 Next.js 16.3.3。实际依赖均在 `package.json` 中锁定具体版本，并以 `pnpm-lock.yaml` 为准；不得在可复现构建中使用浮动的 `latest` 标签。
+截至 2026-10-08，当前实现使用 Node.js 24 LTS 与 Next.js 16.3.8。实际依赖均在 `package.json` 中锁定具体版本，并以 `pnpm-lock.yaml` 为准；不得在可复现构建中使用浮动的 `latest` 标签。
 
 ## 仓库结构
 

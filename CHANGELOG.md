@@ -6,7 +6,11 @@ and known limitations.
 
 ## Unreleased
 
-## 1.19.6 - 2026-10-08
+## 1.19.7 - 2026-10-08
+
+### Security
+
+- Next.js 从 16.3.6 更新至精确锁定的 16.3.8 安全补丁，同步更新 `eslint-config-next`、lockfile 和生产许可证清单，处理依赖检查报告的图片优化 SSRF [GHSA-cjq9-62q9-8jv4](https://github.com/vercel/next.js/security/advisories/GHSA-cjq9-62q9-8jv4) 及该补丁包含的其他修复。当前平台没有配置 `images.remotePatterns`，仍保持依赖安全门禁并通过补丁清除受影响版本。
 
 ### Fixed
 
@@ -14,14 +18,19 @@ and known limitations.
 
 ### Database, deployment and compatibility
 
-- 无新增数据库迁移、环境变量、生产依赖、持久配置或 Runner 协议变更；沿用 Lite/Full 共用后端离线镜像、内置双架构 Runner Agent、Compose 部署包、Jenkins 插件及签名/SBOM 资产。
+- 无新增数据库迁移、环境变量、持久配置或 Runner 协议变更；Next.js 与 ESLint 配置使用补丁版本升级，没有新增生产依赖。沿用 Lite/Full 共用后端离线镜像、内置双架构 Runner Agent、Compose 部署包、Jenkins 插件及签名/SBOM 资产。
 - 按键处理限定在当前 xterm 实例内，保留读屏支持，不安装全局键盘拦截器；系统、浏览器或扩展提前保留而未交给页面的按键仍由系统控制。
 
 ### Validation
 
 - 本地三项 Lite Chromium 终端 E2E 通过，新回归场景覆盖深浅色、1024×768/1536×960、普通/放大窗口中的 128 次 F1–F12 及组合键输入；序列正确且每次只发送一次，默认动作与冒泡均被取消，无页面导航。普通输入、Tab 补全、工具栏焦点、放大还原、Escape 关闭、初始化失败与重新打开回归通过。
 - 终端票据、访问权限与 UI 使用检查共 38 项通过，`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 通过。已实际查看八张深浅色、普通/放大终端截图，标题、按钮、文本、间距和视口边界正常，无变形或溢出。
+- 更新 Next.js 16.3.8 后重新运行上述 38 项检查、三项终端 E2E、格式、Lint、类型、Web 生产构建和 E2E 矩阵，均通过；`pnpm audit --prod --audit-level high --json` 通过，高危与严重漏洞均为 0，生产许可证清单已重新生成并核对。再次查看 1024×768/1536×960 深浅色终端截图，布局正常。
 - 本地按键场景使用 WebSocket 接收夹具，不等同于真实 Agent PTY 验收；Full 整体部署、真实 Runner 和离线发布包验收由既有 GitHub Actions 执行，未在其他浏览器/操作系统上验收保留快捷键。详见[直连终端与验证记录](./docs/operations/direct-terminal.md)。
+
+### Release status
+
+- v1.19.6 标签保留原提交；依赖安全检查失败后取消其未公开的发布并删除空草稿，没有发布正式资产或改写标签。终端修复与安全补丁合并在 v1.19.7 发布。
 
 ## 1.19.5 - 2026-10-07
 
