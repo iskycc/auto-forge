@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.6 - 2026-10-08
+
+### Fixed
+
+- 修复执行节点浮窗终端在启用读屏支持时，F1–F12 已传入终端却仍触发浏览器默认动作的问题。仅在 xterm 输入区取消功能键事件的默认动作与冒泡，仍由 xterm 生成并发送原序列；包含 Shift/Ctrl/Alt 等组合，普通输入、Tab 补全、工具栏焦点、放大还原和关闭行为保留。Lite/Full 共用 UI，无新增依赖、迁移、配置或 Runner 协议变更；未交给页面的系统/浏览器保留快捷键不属于拦截范围。
+
+### Database, deployment and compatibility
+
+- 无新增数据库迁移、环境变量、生产依赖、持久配置或 Runner 协议变更；沿用 Lite/Full 共用后端离线镜像、内置双架构 Runner Agent、Compose 部署包、Jenkins 插件及签名/SBOM 资产。
+- 按键处理限定在当前 xterm 实例内，保留读屏支持，不安装全局键盘拦截器；系统、浏览器或扩展提前保留而未交给页面的按键仍由系统控制。
+
+### Validation
+
+- 本地三项 Lite Chromium 终端 E2E 通过，新回归场景覆盖深浅色、1024×768/1536×960、普通/放大窗口中的 128 次 F1–F12 及组合键输入；序列正确且每次只发送一次，默认动作与冒泡均被取消，无页面导航。普通输入、Tab 补全、工具栏焦点、放大还原、Escape 关闭、初始化失败与重新打开回归通过。
+- 终端票据、访问权限与 UI 使用检查共 38 项通过，`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 通过。已实际查看八张深浅色、普通/放大终端截图，标题、按钮、文本、间距和视口边界正常，无变形或溢出。
+- 本地按键场景使用 WebSocket 接收夹具，不等同于真实 Agent PTY 验收；Full 整体部署、真实 Runner 和离线发布包验收由既有 GitHub Actions 执行，未在其他浏览器/操作系统上验收保留快捷键。详见[直连终端与验证记录](./docs/operations/direct-terminal.md)。
+
 ## 1.19.5 - 2026-10-07
 
 ### Fixed

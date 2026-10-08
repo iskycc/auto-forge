@@ -5,6 +5,180 @@ import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("Runner terminal sends function keys once and cancels browser actions only inside xterm", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const name = uniqueName("终端功能键节点");
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name,
+      labels: [],
+      capabilities: ["executor:process"],
+      maxConcurrency: 1,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "1.19.5",
+      protocolVersion: 1,
+      terminalEnabled: true,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const receivedInput: string[] = [];
+  await page.routeWebSocket("**/api/v1/terminal-stream", (socket) => {
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as { type: string; data?: string };
+      if (message.type === "input" && message.data)
+        receivedInput.push(Buffer.from(message.data, "base64").toString());
+    });
+    socket.send(JSON.stringify({ schemaVersion: 1, type: "ready" }));
+  });
+  await page.goto(`/runners?query=${encodeURIComponent(name)}`);
+  const entry = page.getByRole("button", { name: "终端浮窗", exact: true });
+  await entry.click();
+  const dialog = page.getByRole("dialog", { name: `${name} 直连终端` });
+  await dialog.getByRole("button", { name: "连接终端", exact: true }).click();
+  await expect(dialog.getByText("已连接", { exact: true })).toBeVisible();
+  const input = dialog.locator(".xterm-helper-textarea");
+  await expect(input).toBeFocused();
+  const probe = await page.evaluateHandle(() => {
+    const captured = {
+      events: [] as KeyboardEvent[],
+      bubbled: [] as string[],
+    };
+    const observe = (event: KeyboardEvent) => {
+      if (!/^F(?:[1-9]|1[0-2])$/u.test(event.key)) return;
+      captured.events.push(event);
+    };
+    for (const type of ["keydown", "keyup"] as const) {
+      document.addEventListener(type, observe, true);
+      document.addEventListener(type, (event) => {
+        if (/^F(?:[1-9]|1[0-2])$/u.test(event.key)) captured.bubbled.push(event.key);
+      });
+    }
+    return captured;
+  });
+  const keys = [
+    ["F1", "\u001bOP"],
+    ["F2", "\u001bOQ"],
+    ["F3", "\u001bOR"],
+    ["F4", "\u001bOS"],
+    ["F5", "\u001b[15~"],
+    ["F6", "\u001b[17~"],
+    ["F7", "\u001b[18~"],
+    ["F8", "\u001b[19~"],
+    ["F9", "\u001b[20~"],
+    ["F10", "\u001b[21~"],
+    ["F11", "\u001b[23~"],
+    ["F12", "\u001b[24~"],
+    ["Shift+F5", "\u001b[15;2~"],
+    ["Control+F5", "\u001b[15;5~"],
+    ["Alt+F1", "\u001b[1;3P"],
+    ["Control+Shift+F12", "\u001b[24;6~"],
+  ] as const;
+  let navigations = 0;
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) navigations++;
+  });
+  for (const theme of ["light", "dark"] as const) {
+    if (theme === "dark") {
+      await dialog.getByRole("button", { name: "关闭终端", exact: true }).click();
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      await entry.click();
+      await dialog.getByRole("button", { name: "连接终端", exact: true }).click();
+      await expect(dialog.getByText("已连接", { exact: true })).toBeVisible();
+      await expect(input).toBeFocused();
+    }
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      for (const expanded of [false, true]) {
+        if (expanded) {
+          await dialog.getByRole("button", { name: "放大终端窗口", exact: true }).click();
+          await input.focus();
+        }
+        for (const [key, sequence] of keys) {
+          const previousInputCount = receivedInput.length;
+          const previousEventCount = await probe.evaluate((captured) => captured.events.length);
+          await page.keyboard.press(key);
+          await expect.poll(() => receivedInput.slice(previousInputCount)).toEqual([sequence]);
+          const functionKey = key.split("+").at(-1)!;
+          expect(
+            await probe.evaluate(
+              (captured, count) =>
+                captured.events.slice(count).map((event) => ({
+                  key: event.key,
+                  type: event.type,
+                  prevented: event.defaultPrevented,
+                })),
+              previousEventCount,
+            ),
+          ).toEqual([
+            { key: functionKey, type: "keydown", prevented: true },
+            { key: functionKey, type: "keyup", prevented: true },
+          ]);
+          expect(await probe.evaluate((captured) => captured.bubbled)).toEqual([]);
+          await expect(input).toBeFocused();
+        }
+        const previousInputCount = receivedInput.length;
+        await page.keyboard.type("echo function-ready");
+        await page.keyboard.press("Enter");
+        await expect
+          .poll(() => receivedInput.slice(previousInputCount).join(""))
+          .toBe("echo function-ready\r");
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(
+              `terminal-function-${theme}-${width}-${expanded ? "expanded" : "window"}.png`,
+            ),
+        });
+        if (expanded) {
+          await dialog.getByRole("button", { name: "还原终端窗口", exact: true }).click();
+          await input.focus();
+        }
+      }
+    }
+  }
+  expect(navigations).toBe(0);
+  const previousInputCount = receivedInput.length;
+  const close = dialog.getByRole("button", { name: "关闭终端", exact: true });
+  await close.focus();
+  const cancelledOnToolbar = await close.evaluate((button) => {
+    const event = new KeyboardEvent("keydown", {
+      key: "F3",
+      code: "F3",
+      keyCode: 114,
+      bubbles: true,
+      cancelable: true,
+    });
+    button.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(cancelledOnToolbar).toBe(false);
+  await close.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(entry).toBeFocused();
+  expect(
+    await entry.evaluate((button) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "F5",
+        code: "F5",
+        keyCode: 116,
+        bubbles: true,
+        cancelable: true,
+      });
+      button.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(false);
+  expect(receivedInput).toHaveLength(previousInputCount);
+  expect(await probe.evaluate((captured) => captured.bubbled)).toEqual(["F3", "F5"]);
+  await probe.dispose();
+});
+
 test("Runner terminal keeps Tab input inside xterm while toolbar focus remains accessible", async ({
   page,
 }) => {

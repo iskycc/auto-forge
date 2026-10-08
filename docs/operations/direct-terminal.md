@@ -67,6 +67,14 @@ location /api/v1/terminal-stream {
 `CloseAll`，随后终止 PTY 与同一终端 session 内的进程。若 Web 副本异常崩溃，Agent 的 ping/读超时负责清理；不会把
 断开的 Shell 保留为可重连孤儿进程。
 
+## 功能键与浏览器快捷键
+
+终端输入区有焦点时，F1–F12 以及 Shift、Ctrl、Alt、Meta 修饰的功能键继续由 xterm.js 生成原终端序列，只发送一次，同时取消页面收到的功能键事件的浏览器默认动作与冒泡。功能键的按下、抬起都在终端实例内处理；浮窗放大、还原和重新打开后沿用同一规则，关闭实例时随终端释放，不安装全局键盘拦截器。
+
+窗口工具栏有焦点或离开终端后，浏览器按键行为保持原样。普通字符、粘贴、Tab 补全、读屏支持和 Escape 的窗口操作保持现有行为。终端采用 xterm 的[自定义按键钩子](https://xtermjs.org/docs/api/terminal/classes/terminal/#attachcustomkeyeventhandler)，取消浏览器默认动作后仍允许 xterm 处理按键。
+
+拦截范围是浏览器实际交给页面且允许取消的键盘事件；操作系统、浏览器或扩展预先保留而没有交给页面的快捷键，以及键盘 Fn 层的硬件动作，页面无法接管。浏览器只允许对可取消事件执行 [`preventDefault()`](https://developer.mozilla.org/en-US/docs/Web/API/Event/preventDefault)。
+
 ## 安全边界
 
 - 终端访问同时要求有效登录会话、独立 `runner.terminal` 权限、同源校验和一次性短时票据；Runner 通道另行使用 Runner 身份签发的票据。
@@ -77,3 +85,17 @@ location /api/v1/terminal-stream {
 - 持久审计记录请求、实际开始、结束、操作者、Runner、会话 ID、断开原因及输入消息数/输入输出字节数。为避免把密码和密文复制到审计库，当前不保存命令内容、终端输出或录屏；需要命令级审计时应使用执行机操作系统的受控提权/会话审计能力。
 
 前端使用固定版本的 `@xterm/xterm` 与 `@xterm/addon-fit`（MIT），控制面使用 `ws`（MIT），Agent 使用 `github.com/coder/websocket`（ISC）和 `github.com/creack/pty`（MIT）。全部依赖在构建时锁定并随离线发布物交付，运行时不访问公网。
+
+## 功能键修复验证（2026-10-08）
+
+修复前先添加 Playwright 回归场景，实际复现 F1 已发送 `ESC OP`，但按下和抬起事件均未取消浏览器默认动作。原因是终端使用 `screenReaderMode: true`，该版本 xterm 对没有 Ctrl/Alt 的按键保留默认动作；修复只在实例的自定义按键钩子中处理 F1–F12，返回 `true` 继续原输入路径。
+
+实际执行的检查：
+
+- `pnpm exec playwright test tests/e2e/runner-telemetry.spec.ts --grep 'Runner terminal'`：本地 Lite 生产服务下三项通过。新场景使用真实 Chromium 键盘事件和 WebSocket 接收夹具，在深浅色、1024×768/1536×960、普通/放大窗口中验证 F1–F12、Shift+F5、Ctrl+F5、Alt+F1、Ctrl+Shift+F12，共 128 次功能键输入；每次只发送一个正确序列，按下/抬起默认动作均被取消，事件不冒泡到页面，没有页面导航，焦点仍在终端。另覆盖普通字符、Enter、工具栏和关闭后的非拦截行为；原 Tab 补全/工具栏焦点、Escape 放大还原/关闭及初始化失败后重开场景均通过。
+- `pnpm exec vitest run` 选择终端票据和访问权限测试：两个文件、21 项通过；`pnpm exec vitest run apps/web/src/components/ui-usage.test.ts --maxWorkers=1`：17 项通过。
+- `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix`、`git diff --check`：通过。
+
+已实际查看八张终端截图，覆盖 1024×768 与 1536×960、深浅色、普通和放大窗口；标题、连接状态、按钮、文本、边框、间距和视口边界正常，无变形或溢出。
+
+本次仅修改 Lite/Full 共用浏览器组件；没有改动数据库、终端票据、网关、Runner 或协议，也没有新增配置或依赖。该按键验收使用 WebSocket 夹具，不等同于真实 Agent PTY 验收；未运行 Full 整体部署、真实 Runner、离线验收或其他浏览器/操作系统的保留快捷键检查。

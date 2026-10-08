@@ -58,6 +58,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Agent 上报 CPU、内存、1 分钟负载与逻辑 CPU 数；调度阈值集中配置，过载或指标过期的节点不会获得新分配。
 - Runner 页面以紧凑行展示状态、Agent/协议、Linux 架构、槽位/资源、心跳和生命周期操作，不重复展示主机 JDK/TestNG 与原始 capability。不可变 `ExecutionSpec` 仍固化运行时要求；接受项目运行时资产的 Agent 使用任务下发的权威 JDK/依赖，不因主机探测版本被阻止。内置 CoTest Adapter 固定由 JDK 8 编译为 Java 8 字节码，同一个 JAR 已验证 JDK 8 + TestNG 6.14.3/7.5.1 和 JDK 21 + TestNG 7.11.0；项目 JDK 与依赖包必须彼此兼容。没有项目运行时资产的旧 Agent 路径仍校验主机 Java 11+ 与 TestNG 7.11.0。协议、平台和执行能力不兼容仍在批次选择、服务端调度、assignment claim 和 Agent 本地校验四层被阻止。
 - 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，支持标题栏一键铺满可用视口并还原；登录会话通过独立 `runner.terminal` 权限换取一次性短时票据，再由同源 WebSocket 中继到 Agent 的受控 PTY；请求、开始、结束、断开原因和有界流量摘要进入持久审计，不记录命令内容或终端输出。
+- 直连终端输入区有焦点时，F1–F12 及其修饰键组合继续发送原终端序列，同时取消页面收到事件的浏览器默认动作，避免刷新、帮助、查找等同时触发。窗口工具栏和其他页面区域沿用原按键行为；保留读屏支持、Tab 补全与普通输入。操作系统或浏览器保留、未交给页面的快捷键仍由系统控制，详见[直连终端](./docs/operations/direct-terminal.md)。
 - Full 模式按需连接 PostgreSQL、NATS、MinIO、Redis，readiness 实际检查四项依赖；Lite 启动不加载 Full 客户端。
 - `/api/v1` 管理接口，以及 liveness/readiness 健康检查。
 - TestNG 解析单元测试、SQLite/PostgreSQL/本地对象/MinIO 集成测试和浏览器管理闭环测试；Agent 安全、日志/spool 与产物矩阵覆盖参数注入、越界 cwd、环境泄漏、失效凭据、资源/进程树清理、跨块、交错流、确认缺口、断线重传、重启、配额、脱敏、恶意路径、摘要冲突和对象故障恢复。

@@ -93,6 +93,14 @@ export function RunnerTerminal({
             white: terminalColor("white"),
           },
         });
+        terminal.attachCustomKeyEventHandler((event) => {
+          // Screen reader mode leaves key defaults enabled; function keys must stay in the PTY.
+          if (/^F(?:[1-9]|1[0-2])$/u.test(event.key)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return true;
+        });
         const fitAddon = new XtermFitAddon();
         terminal.loadAddon(fitAddon);
         terminal.open(viewport);
