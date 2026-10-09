@@ -7,6 +7,7 @@ import type { RuntimeDiagnosticContext } from "@autoforge/contracts/runtime-diag
  */
 export type WorkThreadConfiguration = {
   mode: "lite" | "full";
+  role?: "diagnostics";
   prioritySignal?: SharedArrayBuffer;
   imports?: { maxJarBytes: number; targetJavaVersion: number };
   migrationsFolder: string;
@@ -41,7 +42,13 @@ export type WorkThreadConfiguration = {
   };
 };
 
+export type DiagnosticReadConfiguration =
+  | { mode: "lite"; migrationsFolder: string; databasePath: string }
+  | { mode: "full"; migrationsFolder: string; databaseUrl: string };
+
 export type WorkTask =
+  | { kind: "read-scheduling-events"; input: unknown }
+  | { kind: "read-runner-resource-samples"; input: unknown }
   | { kind: "warmup" }
   | { kind: "trigger-schedules" }
   | { kind: "create-batch"; input: unknown }

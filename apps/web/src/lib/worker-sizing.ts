@@ -49,9 +49,9 @@ export function webResourcePlan(
           "snapshotLanes",
           "maintenanceLanes",
         ] as const);
-  // One additional file-maintenance lane exists in both modes. Minimal isolation
+  // A file-maintenance lane and an independent diagnostic reader exist in both modes. Minimal isolation
   // still uses sleeping/I/O threads on tiny hosts; spare CPU scales the busy lanes.
-  const minimumThreads = mode === "lite" ? 7 : 6;
+  const minimumThreads = mode === "lite" ? 8 : 7;
   const threadBudget = Math.max(
     minimumThreads,
     Math.min(

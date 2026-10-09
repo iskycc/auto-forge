@@ -11,6 +11,8 @@ import {
   workerBackedExecutionControlRepository,
   prioritizedExecutionControlRepository,
   workerBackedBatchCreation,
+  workerBackedSchedulingEventReads,
+  workerBackedRunnerResourceReads,
 } from "./work-dispatch";
 import type { WorkDispatcher } from "./work-runtime";
 
@@ -42,6 +44,37 @@ describe("scheduling coalescing", () => {
 });
 
 describe("execution control work dispatch", () => {
+  it("isolates diagnostic reads while retaining local writes, method binding and fallback", async () => {
+    const localBatches = {
+      listSchedulingEvents: vi.fn(),
+      appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("@autoforge/application").RunBatchRepository;
+    const localRunners = {
+      resourceSamples: vi.fn(),
+      heartbeat: vi.fn().mockResolvedValue({ id: "runner" }),
+    } as unknown as import("@autoforge/application").RunnerRepository;
+    const dispatcher = {
+      listSchedulingEvents: vi.fn().mockResolvedValue({ items: [] }),
+      readRunnerResourceSamples: vi.fn().mockResolvedValue([]),
+    } as unknown as WorkDispatcher;
+    const batches = workerBackedSchedulingEventReads(localBatches, dispatcher);
+    const runners = workerBackedRunnerResourceReads(localRunners, dispatcher);
+    const query = { batchId: "batch", runnerId: "runner", latest: true, limit: 500 };
+    await expect(batches.listSchedulingEvents(query)).resolves.toEqual({ items: [] });
+    expect(dispatcher.listSchedulingEvents).toHaveBeenCalledWith(query);
+    await expect(runners.resourceSamples("runner", "start", "end")).resolves.toEqual([]);
+    expect(dispatcher.readRunnerResourceSamples).toHaveBeenCalledWith({
+      runnerId: "runner",
+      since: "start",
+      until: "end",
+    });
+    expect(localBatches.listSchedulingEvents).not.toHaveBeenCalled();
+    expect(localRunners.resourceSamples).not.toHaveBeenCalled();
+    await batches.appendSchedulingEvents([]);
+    expect(localBatches.appendSchedulingEvents).toHaveBeenCalledWith([]);
+    expect(workerBackedSchedulingEventReads(localBatches, undefined)).toBe(localBatches);
+    expect(workerBackedRunnerResourceReads(localRunners, undefined)).toBe(localRunners);
+  });
   it.each(["local", "ldap"] as const)(
     "preserves a %s initiator through Lite batch dispatch",
     async (source) => {

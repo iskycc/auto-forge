@@ -3,12 +3,14 @@ import { zipSync } from "fflate";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator } from "./support/session";
 import { startBackgroundLoad } from "./support/background-load";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 const CASE_COUNT = 500;
 const RUNNER_COUNT = 8;
@@ -22,7 +24,7 @@ type RunnerIdentity = { runnerId: string; credential: string };
 type ClaimedAssignment = {
   identity: RunnerIdentity;
   assignment: { attemptId: string };
-  lease: { token: string };
+  lease: { token: string; leaseId: string; version: number };
 };
 
 test("control plane completes 500 concurrent protocol slots without blocking reads", async ({
@@ -104,6 +106,8 @@ test("control plane completes 500 concurrent protocol slots without blocking rea
     const claimDurationMs = performance.now() - claimStartedAt;
     expect(claimed).toHaveLength(CASE_COUNT);
 
+    await inspectRunnerDiagnosticsDuringExecution(page, created.body.id, claimed);
+
     const executionStartedAt = performance.now();
     await mapWithConcurrency(claimed, CLIENT_REQUEST_CONCURRENCY, async (claim, index) => {
       await uploadLog(page, claim, index);
@@ -148,6 +152,101 @@ test("control plane completes 500 concurrent protocol slots without blocking rea
     maximumReadLatencyMs: rounded(maximumReadLatencyMs),
   });
 });
+
+/** Keep all 500 real protocol leases alive while a user opens cold diagnostic routes. */
+async function inspectRunnerDiagnosticsDuringExecution(
+  page: Page,
+  batchId: string,
+  claimed: ClaimedAssignment[],
+) {
+  const stop = new AbortController();
+  const renewals: number[] = [];
+  let renewalFailure: unknown;
+  const renew = async () => {
+    await mapWithConcurrency(claimed, CLIENT_REQUEST_CONCURRENCY, async (claim) => {
+      const started = performance.now();
+      const response = await page.request.post(
+        `/api/v1/runner-agents/${claim.identity.runnerId}/leases/${claim.lease.leaseId}/renew`,
+        {
+          headers: { authorization: `Bearer ${claim.identity.credential}` },
+          data: {
+            schemaVersion: 1,
+            requestId: randomUUID(),
+            leaseToken: claim.lease.token,
+            leaseVersion: claim.lease.version,
+          },
+        },
+      );
+      expect(response.status()).toBe(200);
+      const result = (await response.json()) as { leaseVersion: number; instruction: string };
+      expect(result.instruction).toBe("continue");
+      claim.lease.version = result.leaseVersion;
+      renewals.push(performance.now() - started);
+    });
+  };
+  const initial = renew();
+  const keepAlive = (async () => {
+    await initial;
+    while (!stop.signal.aborted) {
+      await delay(12_000, undefined, { signal: stop.signal }).catch((error: unknown) => {
+        if (!stop.signal.aborted) throw error;
+      });
+      if (!stop.signal.aborted) await renew();
+    }
+  })().catch((error: unknown) => {
+    renewalFailure = error;
+  });
+  const openedAt = performance.now();
+  try {
+    await page.goto(`/run-batches/${batchId}`);
+    await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
+    const node = page
+      .getByRole("region", { name: "本轮执行机状态" })
+      .locator(".runner-card")
+      .first();
+    const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+    if (screenshots) await mkdir(screenshots, { recursive: true });
+    for (const appearance of ["light", "dark"] as const) {
+      if (appearance === "dark")
+        await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await node.getByRole("button", { name: "调度日志", exact: true }).click();
+        const logs = page.getByRole("dialog", { name: /调度日志/ });
+        await expect(logs).toContainText("最新日志");
+        await expect(logs.getByRole("log")).not.toHaveAttribute("aria-busy", "true");
+        await expectUiIntegrity(page);
+        if (screenshots)
+          await page.screenshot({
+            path: `${screenshots}/active-scheduling-${appearance}-${width}.png`,
+          });
+        await logs.getByRole("button", { name: "关闭日志终端" }).click();
+        await node.getByRole("button", { name: /的资源监控/ }).click();
+        const telemetry = page.getByRole("dialog", { name: /资源监控/ });
+        await expect(telemetry.getByRole("img", { name: /CPU \/ 内存使用率/ })).toBeVisible();
+        const refreshed = page.waitForResponse((response) => response.url().includes("/telemetry"));
+        await telemetry.getByRole("button", { name: "刷新监控" }).click();
+        expect((await refreshed).status()).toBe(200);
+        await expect(telemetry.getByRole("button", { name: "刷新监控" })).toBeEnabled();
+        await expectUiIntegrity(page);
+        if (screenshots)
+          await page.screenshot({
+            path: `${screenshots}/active-telemetry-${appearance}-${width}.png`,
+          });
+        await telemetry.getByRole("button", { name: /^关闭/ }).click();
+      }
+    }
+    // Cross the original 45-second lease deadline, instead of only testing quick completions.
+    await delay(Math.max(0, 50_000 - (performance.now() - openedAt)));
+  } finally {
+    stop.abort();
+    await keepAlive;
+  }
+  if (renewalFailure) throw renewalFailure;
+  expect(renewals.length).toBeGreaterThanOrEqual(CASE_COUNT * 3);
+  expect(percentile(renewals, 0.95)).toBeLessThan(1_500);
+  expect(Math.max(...renewals)).toBeLessThan(5_000);
+}
 
 async function ensureProjectHierarchy(page: Page): Promise<{ versionId: string; stageId: string }> {
   const structure = await browserJson<{

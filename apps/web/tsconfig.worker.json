@@ -11,6 +11,7 @@
     "server/work-protocol.ts",
     "server/work-thread.ts",
     "server/read-model-thread.ts",
-    "server/attempt-log-thread.ts"
+    "server/attempt-log-thread.ts",
+    "server/runner-diagnostics-process.ts"
   ]
 }

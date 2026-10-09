@@ -590,7 +590,7 @@ function sqliteHandle(): SqliteDatabaseHandle {
   liteDatabase ??= createSqliteDatabase({
     databasePath: sqlite.databasePath,
     migrationsFolder: configuration.migrationsFolder,
-    ...(configuration.prioritySignal ? { busyTimeoutMs: 25 } : {}),
+    busyTimeoutMs: 25,
   });
   return liteDatabase;
 }

@@ -5,6 +5,7 @@ import {
 import { runtimePriority } from "../src/lib/runtime-priority.ts";
 import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { Worker } from "node:worker_threads";
+import { DiagnosticReadProcess } from "./diagnostic-read-process.ts";
 
 import type { WorkDispatcher } from "../src/lib/work-runtime.ts";
 import { logPayloadBytes, MAX_QUEUED_LOG_BYTES } from "../src/lib/log-io-runtime.ts";
@@ -22,6 +23,7 @@ import type {
 } from "./work-protocol.ts";
 
 type PendingRequest = {
+  deadline?: ReturnType<typeof setTimeout>;
   bytes: number;
   finishForeground(): void;
   detachAbort(): void;
@@ -78,6 +80,7 @@ export class WorkerPool implements WorkDispatcher {
   private readonly controlLanes: WorkerLane[];
   private readonly maintenanceLanes: WorkerLane[];
   private readonly logLanes: WorkerLane[];
+  private readonly diagnosticLane: WorkerLane;
   private schedulingCursor = 0;
 
   get backgroundConcurrency(): number {
@@ -96,6 +99,16 @@ export class WorkerPool implements WorkDispatcher {
   ) {
     const laneCount = resourcePlan.schedulingLanes;
     const laneConfiguration = configurationForLane(configuration, laneCount);
+    // Read-only diagnostics may be interrupted safely; control and scheduling never use this lane.
+    this.diagnosticLane = new WorkerLane(
+      {
+        ...configuration,
+        role: "diagnostics",
+        ...(configuration.full ? { full: { ...configuration.full, databasePoolMax: 1 } } : {}),
+      },
+      shutdownGraceMs,
+      resourcePlan.workerHeapMb,
+    );
     this.schedulingLanes = Array.from(
       { length: laneCount },
       (_, index) =>
@@ -144,6 +157,14 @@ export class WorkerPool implements WorkDispatcher {
       kind: "platform-maintenance",
       operation,
     })) as boolean;
+  }
+
+  listSchedulingEvents(input: unknown): Promise<unknown> {
+    return this.diagnosticLane.dispatch({ kind: "read-scheduling-events", input });
+  }
+
+  readRunnerResourceSamples(input: unknown): Promise<unknown> {
+    return this.diagnosticLane.dispatch({ kind: "read-runner-resource-samples", input });
   }
 
   async executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<void> {
@@ -341,6 +362,7 @@ export class WorkerPool implements WorkDispatcher {
         ...this.logLanes,
         ...this.controlLanes,
         ...this.maintenanceLanes,
+        this.diagnosticLane,
       ]),
     ];
   }
@@ -380,12 +402,13 @@ function configurationForLane(
 }
 
 class WorkerLane {
-  private worker: Worker | undefined;
+  private worker: Worker | DiagnosticReadProcess | undefined;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly drainWaiters = new Set<() => void>();
   private closing = false;
   private workerFailed = false;
+  private diagnosticExitError: Error | undefined;
   private pendingBytes = 0;
 
   constructor(
@@ -402,20 +425,30 @@ class WorkerLane {
     if (signal?.aborted) return Promise.reject(signal.reason);
     if (this.closing) return Promise.reject(new Error("Work thread pool is closing."));
     if (this.workerFailed)
-      return Promise.reject(new Error("Work thread is recovering; retry after it exits."));
+      return Promise.reject(
+        this.diagnosticExitError ?? new Error("Work thread is recovering; retry after it exits."),
+      );
     const bytes = task.kind === "append-attempt-log-chunks" ? logPayloadBytes(task.input) : 0;
+    const diagnostic = this.configuration.role === "diagnostics";
     if (
-      this.pending.size >= (task.kind === "append-attempt-log-chunks" ? 64 : 256) ||
+      this.pending.size >=
+        (diagnostic ? 2 : task.kind === "append-attempt-log-chunks" ? 64 : 256) ||
       this.pendingBytes + bytes > MAX_QUEUED_LOG_BYTES
     ) {
-      runtimePriority().report(
-        task.kind === "append-attempt-log-chunks" ? "log_io" : "execution_control",
-      );
+      if (!diagnostic)
+        runtimePriority().report(
+          task.kind === "append-attempt-log-chunks" ? "log_io" : "execution_control",
+        );
       return Promise.reject(
-        Object.assign(new Error("执行控制队列繁忙，请稍后重试。"), {
-          name: "DomainError",
-          code: "PLATFORM_BUSY",
-        }),
+        Object.assign(
+          new Error(
+            diagnostic ? "执行机诊断读取繁忙，请稍后重试。" : "执行控制队列繁忙，请稍后重试。",
+          ),
+          {
+            name: "DomainError",
+            code: "PLATFORM_BUSY",
+          },
+        ),
       );
     }
     const worker = this.ensureWorker();
@@ -425,10 +458,14 @@ class WorkerLane {
       const abort = () => worker.postMessage({ id, cancel: true });
       signal?.addEventListener("abort", abort, { once: true });
       this.pending.set(id, {
+        ...(diagnostic
+          ? { deadline: setTimeout(() => this.expireDiagnosticRead(worker), 5_000) }
+          : {}),
         bytes,
         resolve,
         reject,
         finishForeground:
+          diagnostic ||
           task.kind === "platform-maintenance" ||
           task.kind === "background-job" ||
           task.kind === "search-ddt-values" ||
@@ -461,12 +498,15 @@ class WorkerLane {
     if (this.worker === worker) this.worker = undefined;
   }
 
-  private ensureWorker(): Worker {
+  private ensureWorker(): Worker | DiagnosticReadProcess {
     if (this.worker) return this.worker;
-    const worker = new Worker(workerModuleUrl(), {
-      workerData: this.configuration,
-      resourceLimits: { maxOldGenerationSizeMb: this.heapMb },
-    });
+    const worker =
+      this.configuration.role === "diagnostics"
+        ? new DiagnosticReadProcess(this.configuration, this.heapMb)
+        : new Worker(workerModuleUrl(), {
+            workerData: this.configuration,
+            resourceLimits: { maxOldGenerationSizeMb: this.heapMb },
+          });
     worker.on("message", (response: WorkResponse) => {
       if (this.worker === worker && !this.workerFailed) this.receive(response);
     });
@@ -480,8 +520,12 @@ class WorkerLane {
       this.worker = undefined;
       this.workerFailed = false;
       if (!this.closing && (code !== 0 || this.pending.size > 0)) {
-        this.fail(new Error(`Work thread stopped unexpectedly with exit code ${code}.`));
+        this.fail(
+          this.diagnosticExitError ??
+            new Error(`Work thread stopped unexpectedly with exit code ${code}.`),
+        );
       }
+      this.diagnosticExitError = undefined;
     });
     this.worker = worker;
     return worker;
@@ -492,6 +536,7 @@ class WorkerLane {
     if (!request) return;
     this.pending.delete(response.id);
     this.pendingBytes -= request.bytes;
+    clearTimeout(request.deadline);
     request.finishForeground();
     request.detachAbort();
     if (response.ok) request.resolve(response.value);
@@ -505,11 +550,12 @@ class WorkerLane {
   }
 
   private fail(error: unknown): void {
-    if (!this.closing)
+    if (!this.closing && this.configuration.role !== "diagnostics")
       runtimePriority().report(
         this.configuration.prioritySignal ? "background_refresh" : "execution_control",
       );
     for (const request of this.pending.values()) {
+      clearTimeout(request.deadline);
       request.finishForeground();
       request.detachAbort();
       request.reject(error);
@@ -517,6 +563,17 @@ class WorkerLane {
     this.pending.clear();
     this.pendingBytes = 0;
     this.notifyDrained();
+  }
+
+  private expireDiagnosticRead(worker: Worker | DiagnosticReadProcess): void {
+    if (this.worker !== worker || this.workerFailed) return;
+    this.workerFailed = true;
+    this.diagnosticExitError = Object.assign(new Error("执行机诊断读取超时，请稍后重试。"), {
+      name: "DomainError",
+      code: "PLATFORM_BUSY",
+    });
+    // Reject after exit so an immediate retry cannot target the process still releasing its read locks.
+    void worker.terminate().catch((error: unknown) => this.fail(error));
   }
 
   private async waitForDrain(): Promise<void> {

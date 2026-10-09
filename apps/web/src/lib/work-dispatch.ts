@@ -4,11 +4,51 @@ import {
   type ExecutionControlRepository,
   type RunBatchSchedulingPort,
   type RunBatchSchedulingService,
+  type RunBatchRepository,
+  type RunnerRepository,
 } from "@autoforge/application";
 
 import type { WorkDispatcher } from "./work-runtime";
 
 export { workDispatcher } from "./work-runtime";
+
+/** Diagnostic scans never share the Web event loop or a control/scheduling lane. */
+export function workerBackedSchedulingEventReads<Repository extends RunBatchRepository>(
+  local: Repository,
+  dispatcher: WorkDispatcher | undefined,
+): Repository {
+  const read = dispatcher?.listSchedulingEvents?.bind(dispatcher);
+  if (!read) return local;
+  return new Proxy(local, {
+    get(target, property) {
+      if (property === "listSchedulingEvents")
+        return (input: Parameters<RunBatchRepository["listSchedulingEvents"]>[0]) =>
+          read({
+            ...input,
+            limit: Math.min(Math.max(1, Math.trunc(input.limit)), 500),
+          }) as ReturnType<RunBatchRepository["listSchedulingEvents"]>;
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+export function workerBackedRunnerResourceReads(
+  local: RunnerRepository,
+  dispatcher: WorkDispatcher | undefined,
+): RunnerRepository {
+  const read = dispatcher?.readRunnerResourceSamples?.bind(dispatcher);
+  if (!read) return local;
+  return new Proxy(local, {
+    get(target, property) {
+      if (property === "resourceSamples")
+        return (...[runnerId, since, until]: Parameters<RunnerRepository["resourceSamples"]>) =>
+          read({ runnerId, since, until }) as ReturnType<RunnerRepository["resourceSamples"]>;
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 /** Keep Lite batch writes and DDT JSON snapshots in both modes off the Web event loop. */
 export function workerBackedBatchCreation(

@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { matchRunnerFastPath } from "./runner-fast-path";
 
 describe("runner fast path matching", () => {
+  it("keeps lease renewal outside Next route initialization and decodes both identities", () => {
+    expect(
+      matchRunnerFastPath(
+        "POST",
+        "/api/v1/runner-agents/runner%20one/leases/lease%20two/renew?trace=1",
+      ),
+    ).toEqual({ kind: "renew-lease", runnerId: "runner one", leaseId: "lease two" });
+    expect(matchRunnerFastPath("GET", "/api/v1/runner-agents/r/leases/l/renew")).toBeNull();
+    expect(matchRunnerFastPath("POST", "/api/v1/runner-agents/%zz/leases/l/renew")).toBeNull();
+    expect(matchRunnerFastPath("POST", "/api/v1/runner-agents/r/leases/%zz/renew")).toBeNull();
+    expect(matchRunnerFastPath("POST", "/api/v1/runner-agents/r/leases/l/renew/extra")).toBeNull();
+  });
   it("matches the three hot runner protocol endpoints", () => {
     expect(matchRunnerFastPath("POST", "/api/v1/run-attempts/attempt-1/complete")).toEqual({
       kind: "complete",

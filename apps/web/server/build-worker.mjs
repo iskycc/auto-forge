@@ -1,6 +1,11 @@
 import { build } from "esbuild";
 
-for (const entry of ["work-thread", "read-model-thread", "attempt-log-thread"])
+for (const entry of [
+  "work-thread",
+  "read-model-thread",
+  "attempt-log-thread",
+  "runner-diagnostics-process",
+])
   await build({
     entryPoints: [new URL(`./${entry}.ts`, import.meta.url).pathname],
     bundle: true,

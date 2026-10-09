@@ -6,9 +6,25 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.9 - 2026-10-09
+
 ### Fixed
 
+- 修复任务执行期间查看执行机调度日志或资源监控可能阻塞平台请求并拖延租约续期的问题：Lite/Full 共用独立只读诊断进程、两个请求容量及五秒超时，慢 SQL 超时后终止进程并允许重新读取；续租接入已有 HTTP 协议快路径，保留鉴权、限流、请求体限制、版本和真实超期判定。Lite 执行线程采用短锁等待与既有有界异步重试；新增 SQLite `0077_scheduling_events_batch_runner_index.sql`、PostgreSQL `0075_scheduling_events_batch_runner_index.sql`，按批次及执行机定位日志。无新增生产依赖、配置或 Runner 协议变更；离线包内置并校验诊断进程构建产物。详见[读取隔离与验证](./docs/architecture/runner-diagnostic-isolation.md)。
+
 - 已发布资产生命周期验收在新增删除任务检查后，14 个浏览器场景全部通过仍可能超过八分钟作业预算；仅该分区调整为十二分钟，保留完整检查、关闭与诊断，其他分区仍为八分钟，不增加浏览器重试。验收工具可从默认分支手动复验不可变 Release，不改变已有标签或发布资产。
+
+### Database, deployment and compatibility
+
+- 升级会执行上述 SQLite/PostgreSQL 索引迁移，历史日志与执行记录保留；升级前按现有流程备份并排空任务，大量历史数据需预留索引创建时间。更新主平台镜像并重启后生效，Agent 无需改变协议或重新安装。
+- 离线镜像新增内置只读诊断进程并纳入打包校验与现有资源预算；无新增生产依赖、环境变量或持久配置。Lite/Full 继续共用后端与同一 Runner Protocol。
+
+### Validation
+
+- 最终 `pnpm test` 通过：220 个测试文件、1,288 项 TypeScript 检查、Go Agent 测试及 63 项发布/运维/质量脚本检查全部成功；诊断隔离、续租快路径、仓储代理、权限及资源预算定向回归 51 项通过。
+- 真实 SQLite/PostgreSQL 的七个测试文件共 67 项通过，覆盖慢 SQL 同时续租、读取超时后恢复、只读连接、组合索引查询计划、新建及上一版本迁移、失败回滚和原有日志/资源样本行为。新增契约已接入 Full 适配器及分布式质量门禁。
+- Lite 生产构建下四项 Playwright 场景通过：500 个协议槽位持续执行超过原始 45 秒租约期限后全部成功，2,000 次续租均成功；日志搜索、历史翻页、关闭取消、读取失败重试及资源监控回归通过。实际查看浅色/深色 1024×768、1536×960 的八张截图，无新增变形或溢出。
+- `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 通过。本地未连接用户的局域网实例，未运行 Full 整体部署、真实 Agent 和新离线包验收；发布流水线继续执行对应检查。详细命令与验证边界见[诊断读取隔离](./docs/architecture/runner-diagnostic-isolation.md)。
 
 ## 1.19.8 - 2026-10-09
 

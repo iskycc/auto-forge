@@ -12,9 +12,10 @@ import { getPlatformServices } from "./services";
  * 这里复用与 Route Handler 完全相同的应用服务与规则。
  */
 export interface RunnerFastPathRoute {
-  kind: "complete" | "logs" | "claims";
+  kind: "complete" | "logs" | "claims" | "renew-lease";
   attemptId?: string;
   runnerId?: string;
+  leaseId?: string;
 }
 
 export interface RunnerFastPathContext {
@@ -74,6 +75,23 @@ async function execute(
   }
   const services = await getPlatformServices();
   switch (route.kind) {
+    case "renew-lease": {
+      if (!route.runnerId || !route.leaseId)
+        throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机或租约标识。");
+      rejectRateLimited(
+        await services.runnerRequestLimiter.allow(
+          `runner:lease:v1:${route.runnerId}`,
+          600,
+          RATE_WINDOW_MS,
+        ),
+      );
+      return services.runnerProtocol.renewLease(
+        route.runnerId,
+        context.bearerToken,
+        route.leaseId,
+        parseJsonBody(context.rawBody),
+      );
+    }
     case "claims": {
       const runnerId = route.runnerId;
       if (!runnerId) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机标识。");

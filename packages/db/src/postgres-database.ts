@@ -21,6 +21,8 @@ export function createPostgresDatabase(options: {
   poolMax?: number;
   statementTimeoutMs?: number;
   lockTimeoutMs?: number;
+  /** Attach to a migrated database without DDL or diagnostic write transactions. */
+  access?: "read-write" | "read-only";
 }): PostgresDatabaseHandle {
   const poolMax = options.poolMax ?? 10;
   const pool = new Pool({
@@ -35,6 +37,7 @@ export function createPostgresDatabase(options: {
     // A stalled writer must not occupy all request connections indefinitely.
     statement_timeout: options.statementTimeoutMs ?? 30_000,
     lock_timeout: options.lockTimeoutMs ?? 1_000,
+    ...(options.access === "read-only" ? { options: "-c default_transaction_read_only=on" } : {}),
   });
   // Time samples must not wait behind business transactions, even with poolMax=1.
   // This pool connects lazily and is used only by the platform clock adapter.
@@ -50,9 +53,10 @@ export function createPostgresDatabase(options: {
     pool,
     clockPool,
     db: drizzle(pool, { schema: postgresSchema }),
-    ready: runPostgresMigrations(pool, options.migrationsFolder).then(() =>
-      warmPoolConnections(pool, poolMax),
-    ),
+    ready: (options.access === "read-only"
+      ? Promise.resolve()
+      : runPostgresMigrations(pool, options.migrationsFolder)
+    ).then(() => warmPoolConnections(pool, poolMax)),
     close: async () => {
       await Promise.all([pool.end(), clockPool.end()]);
     },

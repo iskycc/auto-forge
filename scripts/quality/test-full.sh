@@ -294,6 +294,11 @@ run_adapter_tests() {
     pnpm exec vitest run \
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
+      packages/db/test/diagnostic-read-database.integration.test.ts \
+      packages/db/test/scheduling-event-read-plan.integration.test.ts \
+      packages/db/test/scheduling-events.integration.test.ts \
+      packages/db/test/runner-resource-samples.integration.test.ts \
+      apps/web/server/runner-diagnostic-reads.integration.test.ts \
       apps/web/server/log-stream-relay.integration.test.ts \
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
@@ -333,6 +338,11 @@ run_distributed_contract_tests() {
       --outputFile.json="${evidence_directory}/contracts.json" \
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
+      packages/db/test/diagnostic-read-database.integration.test.ts \
+      packages/db/test/scheduling-event-read-plan.integration.test.ts \
+      packages/db/test/scheduling-events.integration.test.ts \
+      packages/db/test/runner-resource-samples.integration.test.ts \
+      apps/web/server/runner-diagnostic-reads.integration.test.ts \
       packages/db/test/attempt-log-store.integration.test.ts \
       packages/db/test/authorization-scope.integration.test.ts \
       packages/db/test/platform-node-transport.test.ts \

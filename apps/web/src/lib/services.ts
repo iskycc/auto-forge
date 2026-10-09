@@ -137,6 +137,8 @@ import {
   workerBackedBatchCreation,
   workDispatcher,
   workerBackedExecutionControlRepository,
+  workerBackedSchedulingEventReads,
+  workerBackedRunnerResourceReads,
 } from "./work-dispatch";
 
 export type PlatformServices = Awaited<ReturnType<typeof createPlatformServices>>;
@@ -431,6 +433,8 @@ async function createPlatformServices() {
     dispatcher,
   );
 
+  batches = workerBackedSchedulingEventReads(batches, dispatcher);
+  runners = workerBackedRunnerResourceReads(runners, dispatcher);
   const caseSuiteActivity = new CaseSuiteActivityService(
     suiteActivityRepository,
     suites,

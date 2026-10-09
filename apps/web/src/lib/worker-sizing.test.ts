@@ -37,13 +37,14 @@ describe("work thread lane sizing", () => {
       );
       const uploadRole = mode === "lite" ? "uploadLanes" : "logWriteLanes";
       expect(small[uploadRole]).toBe(1);
-      expect(medium[uploadRole]).toBeGreaterThan(1);
+      // A dedicated reader consumes part of the same memory budget on smaller hosts.
+      expect(medium[uploadRole]).toBeGreaterThanOrEqual(small[uploadRole]);
       expect(large[uploadRole]).toBeGreaterThan(medium[uploadRole]);
       expect(large.snapshotLanes).toBeGreaterThan(1);
       expect(large.workerHeapMb).toBeGreaterThan(256);
       expect(large.schedulingLanes).toBeLessThanOrEqual(10);
       const count =
-        1 +
+        2 +
         large.schedulingLanes +
         large.controlLanes +
         large.uploadLanes +

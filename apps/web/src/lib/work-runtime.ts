@@ -4,6 +4,8 @@
  */
 export interface WorkDispatcher {
   readonly backgroundConcurrency?: number;
+  listSchedulingEvents?(input: unknown): Promise<unknown>;
+  readRunnerResourceSamples?(input: unknown): Promise<unknown>;
   createBatch?(input: unknown): Promise<unknown>;
   createSingleDdtCase?(input: unknown): Promise<unknown>;
   searchDdtValues?(input: unknown, signal: AbortSignal): Promise<unknown>;

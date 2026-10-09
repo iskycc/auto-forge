@@ -21,6 +21,8 @@ export type SqliteDatabaseHandle = {
 export type CreateSqliteDatabaseOptions = {
   databasePath: string;
   migrationsFolder: string;
+  /** Readers attach only after the owning process has migrated the database. */
+  access?: "read-write" | "read-only";
   /** Applied after migrations; Web/background connections must not sleep for seconds on a writer. */
   busyTimeoutMs?: number;
 };
@@ -38,13 +40,20 @@ const DEFAULT_SQLITE_LOCK_RETRY = {
 } as const;
 
 export function createSqliteDatabase(options: CreateSqliteDatabaseOptions): SqliteDatabaseHandle {
-  mkdirSync(dirname(options.databasePath), { recursive: true });
-  const client = new Database(options.databasePath);
+  const readOnly = options.access === "read-only";
+  if (!readOnly) mkdirSync(dirname(options.databasePath), { recursive: true });
+  const client = new Database(options.databasePath, {
+    readonly: readOnly,
+    fileMustExist: readOnly,
+  });
   client.pragma("foreign_keys = ON");
   client.pragma("busy_timeout = 5000");
-  client.pragma("journal_mode = WAL");
-  client.pragma("synchronous = NORMAL");
-  runSqliteMigrations(client, options.migrationsFolder);
+  if (readOnly) client.pragma("query_only = ON");
+  else {
+    client.pragma("journal_mode = WAL");
+    client.pragma("synchronous = NORMAL");
+    runSqliteMigrations(client, options.migrationsFolder);
+  }
   if (options.busyTimeoutMs !== undefined) {
     if (!Number.isInteger(options.busyTimeoutMs) || options.busyTimeoutMs < 0) {
       client.close();

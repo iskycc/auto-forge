@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 /**
- * 执行机协议高频写路径（领取/日志/完成）的组合根快路径。请求不进入 Next.js
+ * 执行机协议高频写路径（领取/续租/日志/完成）的组合根快路径。请求不进入 Next.js
  * 路由，直接在原始 HTTP 层完成传输处理，再经 globalThis 上注册的桥接器调用
  * 与 Route Handler 相同的应用服务：鉴权、限流、校验、错误结构完全一致。
  * 本模块不得导入工作区包（服务器构建使用 NodeNext，工作区源码为 Bundler 解析），
@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 export type RunnerFastPathRoute =
   | { kind: "complete"; attemptId: string }
   | { kind: "logs"; attemptId: string }
+  | { kind: "renew-lease"; runnerId: string; leaseId: string }
   | { kind: "claims"; runnerId: string };
 
 export interface RunnerFastPathContext {
@@ -36,12 +37,14 @@ export class FastPathUnavailable extends Error {
 const COMPLETE_PATH = /^\/api\/v1\/run-attempts\/([^/]+)\/complete$/;
 const LOGS_PATH = /^\/api\/v1\/run-attempts\/([^/]+)\/logs$/;
 const CLAIMS_PATH = /^\/api\/v1\/runner-agents\/([^/]+)\/claims$/;
+const RENEW_LEASE_PATH = /^\/api\/v1\/runner-agents\/([^/]+)\/leases\/([^/]+)\/renew$/;
 
 // 与 @autoforge/contracts 的 RUNNER_*_BODY_LIMIT_BYTES 保持一致；
 // 本模块无法导入工作区包，常量在此镜像并随协议变更同步更新。
 const COMPLETE_BODY_LIMIT_BYTES = 512 * 1024;
 const LOGS_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
 const CLAIMS_BODY_LIMIT_BYTES = 64 * 1024;
+const RENEW_LEASE_BODY_LIMIT_BYTES = 16 * 1024;
 
 const globalHandles = globalThis as typeof globalThis & {
   __autoforgeRunnerFastPath?: RunnerFastPathBridge;
@@ -54,6 +57,14 @@ export function matchRunnerFastPath(
   if (method !== "POST" || !url) return null;
   const queryIndex = url.indexOf("?");
   const pathname = queryIndex === -1 ? url : url.slice(0, queryIndex);
+  const renewal = RENEW_LEASE_PATH.exec(pathname);
+  if (renewal) {
+    const runnerId = decodeSegment(renewal[1]!);
+    const leaseId = decodeSegment(renewal[2]!);
+    return runnerId === null || leaseId === null
+      ? null
+      : { kind: "renew-lease", runnerId, leaseId };
+  }
   const complete = COMPLETE_PATH.exec(pathname);
   if (complete) {
     const attemptId = decodeSegment(complete[1]!);
@@ -103,6 +114,8 @@ export async function handleRunnerFastPath(
 
 function bodyLimitFor(route: RunnerFastPathRoute): number {
   switch (route.kind) {
+    case "renew-lease":
+      return RENEW_LEASE_BODY_LIMIT_BYTES;
     case "claims":
       return CLAIMS_BODY_LIMIT_BYTES;
     case "logs":
