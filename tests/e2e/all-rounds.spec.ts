@@ -527,7 +527,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     }),
   });
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  const jarInput = page.locator('input[type="file"]');
+  // Streamed navigation can temporarily retain a hidden, disabled importer.
+  const jarInput = page
+    .getByRole("button", { name: /点击选择或拖拽 JAR 文件到此处/u })
+    .getByLabel("选择或拖入 JAR 文件", { exact: true });
   // setInputFiles bypasses disabled controls; wait for the hydrated change handler.
   await expect(jarInput).toBeEnabled();
   await jarInput.setInputFiles({

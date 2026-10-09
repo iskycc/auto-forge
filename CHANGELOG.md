@@ -6,6 +6,10 @@ and known limitations.
 
 ## Unreleased
 
+### Validation tooling
+
+- 跨轮次验收的 JAR 上传控件定位限定为可见上传区域，避免 Next.js 流式导航暂时保留的隐藏加载控件触发 Playwright 严格模式错误；保留控件启用、真实上传和全部后续断言，不增加重试或延长超时。仅修改验收工具，不改变 v1.19.10 标签及发布资产。
+
 ## 1.19.10 - 2026-10-10
 
 ### Fixed
