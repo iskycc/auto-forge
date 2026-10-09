@@ -1015,8 +1015,12 @@ public class MixedVisibleTest {
   await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 
   await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
-  await expectUiConsistency(page);
   await expect(page.getByRole("heading", { name: "1 个用例" })).toBeVisible();
+  // SSR number inputs can precede their themed, hydrated controls during streamed navigation.
+  await expect(
+    page.getByRole("spinbutton", { name: "优先级（-100 到 100）", exact: true }),
+  ).toBeEnabled();
+  await expectUiConsistency(page);
   const taskCaseTree = page.getByRole("tree", { name: "任务用例树" });
   await taskCaseTree.locator(".ui-disclosure-label").first().click();
   await expect(
