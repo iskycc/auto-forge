@@ -104,8 +104,11 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             versionId: randomUUID(),
             updatedAt: now,
           });
-          const created = await service.create({ suiteId });
+          const requestedBy = { username: "task-launcher", source: "ldap" as const };
+          const created = await service.create({ suiteId }, requestedBy);
           const batch = (await fixture.batches.get(created.id))!;
+          expect(created.requestedBy).toEqual(requestedBy);
+          expect(batch.requestedBy).toEqual(requestedBy);
           expect(batch.runs).toHaveLength(2);
           for (const run of batch.runs) {
             const spec = await fixture.assignmentSpec(batch.id, run.id);
@@ -391,8 +394,11 @@ for (const dialect of ["sqlite", "postgres"] as const) {
                 },
               }),
               fixture.ownerId,
+              { username: "debug-launcher", source: "local" },
             );
             const persisted = await batches.get(batch.id);
+            expect(batch.requestedBy).toEqual({ username: "debug-launcher", source: "local" });
+            expect(persisted?.requestedBy).toEqual({ username: "debug-launcher", source: "local" });
             expect(persisted?.suiteName).toMatch(/^用例调试 · /);
             expect(persisted?.runs).toHaveLength(1);
             expect(persisted?.policy?.projectVersionId).toBe(scope.projectVersionId);

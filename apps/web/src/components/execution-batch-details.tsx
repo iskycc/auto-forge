@@ -310,7 +310,9 @@ export function ExecutionBatchDetails({
                 ? "后续调度已停止，等待正在执行的用例自然完成。"
                 : batch.status === "failed"
                   ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
-                  : "再次执行会读取任务当前版本的完整配置并创建新批次。"}
+                  : retrySuiteId
+                    ? "再次执行会读取任务当前版本的完整配置并创建新批次。"
+                    : "本批次的执行记录与配置快照已保留，可继续查看结果和日志。"}
             </span>
           </div>
           <div className={cn("button-row", uiPatterns["button-row"])}>

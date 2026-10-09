@@ -1,3 +1,4 @@
+import { failureAnalysisTaskHistorySql } from "./failure-analysis-task-history";
 import {
   closePostgresAnalysisBatch,
   archivePostgresAnalysisBatch,
@@ -206,7 +207,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
       analysisBatchVisibilitySql(input.view),
-      "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
+      failureAnalysisTaskHistorySql(),
       `EXISTS (SELECT 1 FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
                 AND attempt.execution_round=batch.current_round
@@ -315,7 +316,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
          AND batch.status IN ('succeeded','failed','cancelled')
          AND batch.batch_kind='standard'
          ${visibility === "started" ? "AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)" : ""}
-         AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)`,
+         AND ${failureAnalysisTaskHistorySql()}`,
       [input.batchId, input.projectId, input.projectVersionId],
     );
     return result.rows[0] ? toFailureAnalysisBatch(result.rows[0]) : null;
@@ -343,7 +344,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
       "EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)",
-      "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
+      failureAnalysisTaskHistorySql(),
       "run.terminal_outcome='failed'",
       "COALESCE(attempt.outcome,attempt.status)='failed'",
     ];
@@ -464,7 +465,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
            AND batch.status IN ('succeeded','failed','cancelled')
            AND batch.batch_kind='standard'
              AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)
-           AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)
+           AND ${failureAnalysisTaskHistorySql()}
            AND COALESCE(attempt.outcome,attempt.status)='failed'
          ORDER BY run.id
          ON CONFLICT (execution_run_id) DO NOTHING`,
@@ -1032,7 +1033,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
          AND status IN ('succeeded','failed','cancelled')
          AND batch_kind='standard'
              AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=run_batches.id)
-         AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=run_batches.suite_id)`,
+         AND ${failureAnalysisTaskHistorySql("run_batches")}`,
       [batchId, projectId, projectVersionId],
     );
     return (result.rowCount ?? 0) > 0;

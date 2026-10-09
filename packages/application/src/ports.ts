@@ -1324,6 +1324,7 @@ export interface CaseSuiteRepository {
     ruleIds: readonly string[],
   ): Promise<Record<string, string>>;
   updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite>;
+  deleteSuite(input: { suiteId: string; expectedRevision: number }): Promise<void>;
   copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite>;
   addCases(input: {
     suiteId: string;
@@ -1661,6 +1662,8 @@ export type CreateRunBatchRecord = {
   suiteId: string;
   suiteName: string;
   suiteVersion: number;
+  /** Standard task creation must validate the task under the batch write transaction. */
+  expectedSuiteRevision?: number;
   kind?: RunBatch["kind"];
   parentBatchId?: string;
   sourceExecutionRunId?: string;

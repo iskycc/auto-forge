@@ -42,6 +42,47 @@ describe("scheduling coalescing", () => {
 });
 
 describe("execution control work dispatch", () => {
+  it.each(["local", "ldap"] as const)(
+    "preserves a %s initiator through Lite batch dispatch",
+    async (source) => {
+      const createBatch = vi.fn().mockResolvedValue({ id: "worker-batch" });
+      const local = { create: vi.fn() } as unknown as RunBatchSchedulingService;
+      const dispatcher = { createBatch } as unknown as WorkDispatcher;
+      const requestedBy = { username: "execution-operator", source };
+      const input = { suiteId: "suite" };
+      await workerBackedBatchCreation(local, dispatcher).create(input, requestedBy);
+      expect(createBatch).toHaveBeenCalledWith({ input, requestedBy });
+      expect(local.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["local", "ldap"] as const)(
+    "preserves a %s initiator through DDT dispatch in both modes",
+    async (source) => {
+      const createSingleDdtCase = vi.fn().mockResolvedValue({ id: "ddt-batch" });
+      const local = { createSingleDdtCase: vi.fn() } as unknown as RunBatchSchedulingService;
+      const dispatcher = { createSingleDdtCase } as unknown as WorkDispatcher;
+      const scope = { projectId: "project", projectVersionId: "version", testStageId: "stage" };
+      const input = { runnerIds: ["runner"] };
+      const requestedBy = { username: "execution-operator", source };
+      for (const batchDispatcher of [dispatcher, undefined]) {
+        await workerBackedBatchCreation(local, batchDispatcher, dispatcher).createSingleDdtCase(
+          scope,
+          "DDT-1",
+          input,
+          requestedBy,
+        );
+        expect(createSingleDdtCase).toHaveBeenLastCalledWith({
+          scope,
+          caseId: "DDT-1",
+          input,
+          requestedBy,
+        });
+      }
+      expect(local.createSingleDdtCase).not.toHaveBeenCalled();
+    },
+  );
+
   it("offloads DDT snapshot creation in both modes without sending case data through the Web", async () => {
     const local = {
       create: vi.fn().mockResolvedValue({ id: "full-batch" }),
@@ -75,7 +116,7 @@ describe("execution control work dispatch", () => {
     const service = local as unknown as RunBatchSchedulingService;
     const isolated = workerBackedBatchCreation(service, dispatcher);
     await expect(isolated.create({ suiteId: "suite" })).resolves.toEqual({ id: "worker-batch" });
-    expect(createBatch).toHaveBeenCalledWith({ suiteId: "suite" });
+    expect(createBatch).toHaveBeenCalledWith({ input: { suiteId: "suite" } });
     expect(local.create).not.toHaveBeenCalled();
     await expect(isolated.getSummary("batch")).resolves.toBe("local-summary");
     expect(workerBackedBatchCreation(service, undefined)).toBe(service);

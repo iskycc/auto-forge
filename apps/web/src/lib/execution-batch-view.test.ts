@@ -35,6 +35,7 @@ describe("execution batch public view", () => {
     expect(view).not.toHaveProperty("statusHistory");
     expect(view).not.toHaveProperty("suiteId");
     expect(view).not.toHaveProperty("projectId");
+    expect(view).not.toHaveProperty("requestedBy");
     expect(view).not.toHaveProperty("runs");
     expect(view).not.toHaveProperty("attempts");
   });
@@ -48,6 +49,7 @@ function batchDetails(): RunBatchDetails {
     suiteId: "suite-private",
     suiteName: "回归任务",
     suiteVersion: 3,
+    requestedBy: { username: "private-launcher", source: "ldap" },
     status: "succeeded",
     priority: 0,
     retryLimit: 1,

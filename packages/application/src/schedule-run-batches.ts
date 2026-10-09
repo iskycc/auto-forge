@@ -151,7 +151,10 @@ export class RunBatchSchedulingService {
     private readonly artifactCollectionEnabled: () => boolean = () => true,
   ) {}
 
-  async create(input: CreateRunBatchInput): Promise<RunBatch> {
+  async create(
+    input: CreateRunBatchInput,
+    requestedBy?: RunBatch["requestedBy"],
+  ): Promise<RunBatch> {
     const validated = createRunBatchInputSchema.parse(input);
     const suite = await this.suites.get(validated.suiteId);
     const preflight = await this.preflightValidated(validated, { suite });
@@ -221,6 +224,8 @@ export class RunBatchSchedulingService {
       suiteId: suite.id,
       suiteName: suite.name,
       suiteVersion: suite.version,
+      expectedSuiteRevision: suite.revision,
+      ...(requestedBy ? { requestedBy: { ...requestedBy } } : {}),
       retryLimit: suitePolicy.retryLimit,
       retryMode: suitePolicy.retryMode,
       priority: suitePolicy.priority,
@@ -277,11 +282,16 @@ export class RunBatchSchedulingService {
   async createSingleCase(
     caseDefinitionId: string,
     input: CreateSingleCaseRunInput,
+    requestedBy?: RunBatch["requestedBy"],
   ): Promise<RunBatch> {
-    return this.createSingleExecution(caseDefinitionId, input);
+    return this.createSingleExecution(caseDefinitionId, input, { requestedBy });
   }
 
-  async createDebugCase(input: CreateCaseDebugRunInput, ownerUserId?: string): Promise<RunBatch> {
+  async createDebugCase(
+    input: CreateCaseDebugRunInput,
+    ownerUserId?: string,
+    requestedBy?: RunBatch["requestedBy"],
+  ): Promise<RunBatch> {
     const validated = createCaseDebugRunSchema.parse(input);
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
@@ -314,9 +324,7 @@ export class RunBatchSchedulingService {
     return this.createSingleExecution(
       definition.id,
       { ...validated.execution, projectId: validated.projectId },
-      ddtCase ?? undefined,
-      validated,
-      debugAccess,
+      { ddtCase: ddtCase ?? undefined, debugScope: validated, ddtDebug: debugAccess, requestedBy },
     );
   }
 
@@ -324,6 +332,7 @@ export class RunBatchSchedulingService {
     scope: DdtScope,
     caseId: string,
     input: CreateSingleCaseRunInput,
+    requestedBy?: RunBatch["requestedBy"],
   ): Promise<RunBatch> {
     if (!this.executionInputs?.ddt) {
       throw new DomainError(
@@ -352,17 +361,21 @@ export class RunBatchSchedulingService {
         ...validated,
         projectId: scope.projectId,
       },
-      item,
+      { ddtCase: item, requestedBy },
     );
   }
 
   private async createSingleExecution(
     caseDefinitionId: string,
     input: CreateSingleCaseRunInput,
-    ddtCase?: DdtCase,
-    debugScope?: DdtScope,
-    ddtDebug?: DdtDebugAccess,
+    context: {
+      ddtCase?: DdtCase | undefined;
+      debugScope?: DdtScope;
+      ddtDebug?: DdtDebugAccess | undefined;
+      requestedBy?: RunBatch["requestedBy"];
+    } = {},
   ): Promise<RunBatch> {
+    const { ddtCase, debugScope, ddtDebug, requestedBy } = context;
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
     }
@@ -466,6 +479,7 @@ export class RunBatchSchedulingService {
       ...(ddtDebug ? { ddtDebug } : {}),
       suiteName: `${debugScope ? "用例调试" : "单用例"} · ${ddtCase?.caseId ?? definition.displayName}`,
       suiteVersion: ddtCase?.revision ?? definition.currentVersion,
+      ...(requestedBy ? { requestedBy: { ...requestedBy } } : {}),
       retryLimit: validated.retryLimit ?? defaultCaseSuiteExecutionPolicy.retryLimit,
       retryMode: validated.retryMode ?? defaultCaseSuiteExecutionPolicy.retryMode,
       priority,

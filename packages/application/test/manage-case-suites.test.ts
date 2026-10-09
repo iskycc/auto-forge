@@ -14,6 +14,43 @@ import type {
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("case suite update and copy", () => {
+  it("deletes only an authorized task at the reviewed revision without loading its members", async () => {
+    const suites = suiteRepositoryFake();
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+    expect(await service.delete("suite-1", { expectedRevision: 2 }, ["project-1"])).toMatchObject({
+      id: "suite-1",
+      projectId: "project-1",
+    });
+    expect(suites.getSummary).toHaveBeenCalledWith("suite-1", ["project-1"]);
+    expect(suites.deleteSuite).toHaveBeenCalledWith({ suiteId: "suite-1", expectedRevision: 2 });
+    expect(suites.get).not.toHaveBeenCalled();
+    expect(suites.removeCases).not.toHaveBeenCalled();
+  });
+
+  it("rejects inaccessible tasks and stale deletion confirmations before persistence", async () => {
+    const suites = suiteRepositoryFake();
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+    await expect(service.delete("suite-1", { expectedRevision: 1 })).rejects.toMatchObject({
+      code: "CASE_SUITE_REVISION_CONFLICT",
+    });
+    suites.getSummary.mockResolvedValue(null);
+    await expect(
+      service.delete("suite-1", { expectedRevision: 2 }, ["other-project"]),
+    ).rejects.toMatchObject({ code: "CASE_SUITE_NOT_FOUND" });
+    expect(suites.deleteSuite).not.toHaveBeenCalled();
+  });
   it("creates a version-bound suite with round retries disabled until a retry limit is set", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(
@@ -519,6 +556,7 @@ function suiteRepositoryFake() {
     get: vi.fn().mockResolvedValue(suite),
     getSummary: vi.fn().mockResolvedValue(suite),
     updateSuite: vi.fn().mockResolvedValue(suite),
+    deleteSuite: vi.fn().mockResolvedValue(undefined),
     copySuite: vi.fn().mockResolvedValue(suite),
     addCases: vi.fn().mockResolvedValue(suite),
     removeCases: vi.fn().mockResolvedValue(suite),
@@ -532,6 +570,8 @@ function suiteRepositoryFake() {
     create: ReturnType<typeof vi.fn>;
     getSummary: ReturnType<typeof vi.fn>;
     updateSuite: ReturnType<typeof vi.fn>;
+    deleteSuite: ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
     copySuite: ReturnType<typeof vi.fn>;
     addCases: ReturnType<typeof vi.fn>;
     removeCases: ReturnType<typeof vi.fn>;

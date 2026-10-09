@@ -25,6 +25,7 @@ import {
   DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteRevision,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
   normalizeStoredRetryConcurrencyRules,
@@ -107,6 +108,7 @@ import {
   runBatchRetryConcurrencyStates,
   runBatchRoundConcurrencies,
   runBatches,
+  caseSuites,
   runBatchStatusEvents,
   runners,
 } from "./schema";
@@ -214,6 +216,14 @@ export class SqliteRunBatchRepository
     if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
     await retrySqliteLockContention(() =>
       runSqliteWriteTransaction(this.handle, () => {
+        if (record.expectedSuiteRevision !== undefined) {
+          const suite = this.handle.db
+            .select({ revision: caseSuites.revision })
+            .from(caseSuites)
+            .where(eq(caseSuites.id, record.suiteId))
+            .get();
+          assertCaseSuiteRevision(suite?.revision, record.expectedSuiteRevision);
+        }
         // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
         const nextSequence = (
           this.handle.client

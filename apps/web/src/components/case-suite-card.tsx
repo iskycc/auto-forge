@@ -21,6 +21,7 @@ import { useId, useState } from "react";
 import { Button, Input } from "@/components/ui";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { CaseSuiteRecentExecutions } from "./case-suite-recent-executions";
+import { DeleteCaseSuiteButton } from "./delete-case-suite-button";
 
 const statisticNumber = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 
@@ -28,6 +29,8 @@ export function CaseSuiteCard({
   suite,
   statistics,
   canReadExecutions,
+  canManage,
+  onDeleted,
   exporting,
   exportDisabled,
   onExport,
@@ -38,6 +41,8 @@ export function CaseSuiteCard({
   suite: CaseSuite;
   statistics?: CaseSuiteExecutionStatistics | undefined;
   canReadExecutions: boolean;
+  canManage: boolean;
+  onDeleted: () => void;
   exporting: boolean;
   exportDisabled: boolean;
   onExport: () => void;
@@ -190,6 +195,15 @@ export function CaseSuiteCard({
           {exporting ? <LoadingIcon size={15} /> : <Download size={15} />}
           {exporting ? "导出中" : "导出用例"}
         </Button>
+        {canManage ? (
+          <DeleteCaseSuiteButton
+            suiteId={suite.id}
+            suiteName={suite.name}
+            revision={suite.revision}
+            presentation="icon"
+            onDeleted={onDeleted}
+          />
+        ) : null}
       </footer>
       <div hidden={!expanded} id={historyId}>
         {expanded && projectVersionId ? (
@@ -211,7 +225,7 @@ const caseSuiteCardStyles = {
   "suite-card":
     "grid min-w-0 grid-cols-[minmax(0,_1fr)] p-0 overflow-hidden transition-colors duration-150 motion-reduce:transition-none [&:hover]:shadow-xs [:is(&,_.suite-schedule-dialog)_.status-badge]:shrink-0 [:is(&,_.suite-schedule-dialog)_.status-badge]:bg-success/10 [:is(&,_.suite-schedule-dialog)_.status-badge]:text-success [:is(&,_.suite-schedule-dialog)_.status-badge.info]:bg-info/10 [:is(&,_.suite-schedule-dialog)_.status-badge.info]:text-info [:is(&,_.suite-schedule-dialog)_.status-badge.warning]:bg-warning/10 [:is(&,_.suite-schedule-dialog)_.status-badge.warning]:text-warning [:is(&,_.suite-schedule-dialog)_.status-badge.danger]:bg-destructive/10 [:is(&,_.suite-schedule-dialog)_.status-badge.danger]:text-destructive",
   "suite-card-actions":
-    "flex items-center gap-2 justify-between border-t border-solid border-border py-2 px-4",
+    "flex flex-wrap items-center gap-2 justify-between border-t border-solid border-border py-2 px-4",
   "suite-card-archived": "bg-muted [&_.suite-icon]:bg-muted [&_.suite-icon]:text-muted-foreground",
   "suite-card-disabled": "bg-muted [&_.suite-icon]:bg-muted [&_.suite-icon]:text-muted-foreground",
   "suite-card-export": "whitespace-nowrap",

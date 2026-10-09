@@ -275,6 +275,11 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   async upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number) {
     await this.ready();
     return withTransaction(this.handle, async (client) => {
+      const suite = await client.query("SELECT id FROM case_suites WHERE id=$1 FOR SHARE", [
+        record.suiteId,
+      ]);
+      if (suite.rowCount !== 1)
+        throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
       const currentResult = await client.query<ScheduleRow>(
         "SELECT * FROM case_suite_schedules WHERE suite_id=$1 FOR UPDATE",
         [record.suiteId],

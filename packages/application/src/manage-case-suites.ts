@@ -3,6 +3,7 @@ import type {
   CreateFailureCaseSuiteInput,
   CreateCaseSuiteInput,
   UpdateCaseSuiteInput,
+  DeleteCaseSuiteInput,
   SetCaseSuitePinInput,
   RoundRecoveryCredentialSourcesPage,
 } from "@autoforge/contracts";
@@ -10,6 +11,7 @@ import { roundRecoveryCredentialSourceCursorSchema } from "@autoforge/contracts"
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteRevision,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
   isTerminalRunBatchStatus,
@@ -132,6 +134,13 @@ export class CaseSuiteService {
     return suite;
   }
 
+  async delete(suiteId: string, input: DeleteCaseSuiteInput, projectIds?: readonly string[]) {
+    const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteRevision(suite.revision, input.expectedRevision);
+    await this.suites.deleteSuite({ suiteId, expectedRevision: input.expectedRevision });
+    return suite;
+  }
+
   /**
    * 为 XLSX 导出提供轻量、游标分页的数据流。先读取任务摘要完成项目授权，之后按
    * 普通用例、DDT 用例的固定顺序输出，避免通过 get() 加载每个用例的测试方法。
@@ -174,9 +183,7 @@ export class CaseSuiteService {
     projectIds?: readonly string[],
   ) {
     const suite = await this.getSummary(suiteId, projectIds);
-    if (input.expectedRevision !== suite.revision) {
-      throw new DomainError("CASE_SUITE_REVISION_CONFLICT", "用例任务已被他人修改，请刷新后重试。");
-    }
+    assertCaseSuiteRevision(suite.revision, input.expectedRevision);
     const name = input.name?.trim();
     const policyUpdate = input.policy
       ? await this.preparePolicyUpdate(suite, input.policy, projectIds)

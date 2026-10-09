@@ -1,4 +1,5 @@
 import { Notice } from "@/components/ui/notice";
+import { Tooltip } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { ArrowLeft, Clock3, Link2 } from "lucide-react";
@@ -11,6 +12,7 @@ export function RunBatchDetailHero({
   suiteName,
   suiteVersion,
   projectVersionName,
+  requestedByUsername,
   shared = false,
 }: {
   batchId: string;
@@ -18,6 +20,7 @@ export function RunBatchDetailHero({
   suiteName: string;
   suiteVersion: number;
   projectVersionName?: string;
+  requestedByUsername?: string;
   shared?: boolean;
 }) {
   return (
@@ -53,10 +56,26 @@ export function RunBatchDetailHero({
         <div className="min-w-0 flex-1">
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Execution Batch</span>
           <h1>{suiteName}</h1>
-          <p title={batchId}>
-            批次 #{sequenceNumber} · 任务版本 v{suiteVersion} · 项目版本
-            {projectVersionName ? `「${projectVersionName}」` : "未关联"}
-          </p>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <p className="!m-0" title={batchId}>
+              批次 #{sequenceNumber} · 任务版本 v{suiteVersion} · 项目版本
+              {projectVersionName ? `「${projectVersionName}」` : "未关联"}
+            </p>
+            {!shared ? (
+              <div className="execution-batch-initiator flex min-w-0 max-w-full items-center gap-1">
+                <span className="shrink-0">拉起人：</span>
+                <Tooltip title={requestedByUsername} trigger={["hover", "focus"]}>
+                  <span
+                    className="execution-batch-initiator-username min-w-0 max-w-64 truncate text-foreground"
+                    title={requestedByUsername}
+                    tabIndex={requestedByUsername ? 0 : undefined}
+                  >
+                    {requestedByUsername ?? "未记录"}
+                  </span>
+                </Tooltip>
+              </div>
+            ) : null}
+          </div>
         </div>
         {shared ? (
           <ColorModeToggle />

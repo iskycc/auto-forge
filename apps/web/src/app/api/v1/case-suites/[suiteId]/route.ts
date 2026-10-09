@@ -1,4 +1,4 @@
-import { updateCaseSuiteInputSchema } from "@autoforge/contracts";
+import { deleteCaseSuiteInputSchema, updateCaseSuiteInputSchema } from "@autoforge/contracts";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
@@ -6,6 +6,30 @@ import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { boundedDetailResponse, detailViewSchema } from "@/lib/bounded-detail-response";
 
 type Context = { params: Promise<{ suiteId: string }> };
+
+export async function DELETE(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authenticateRequest(request);
+    const { suiteId } = await context.params;
+    const input = deleteCaseSuiteInputSchema.parse(await readJsonBody(request, 1024));
+    const services = await getPlatformServices();
+    const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
+    const suite = await services.caseSuites.delete(suiteId, input, projectIds);
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "case_suite.delete",
+      resourceType: "case_suite",
+      resourceId: suiteId,
+      projectId: suite.projectId,
+      requestId: currentRequestId,
+      details: { name: suite.name, version: suite.version, revision: suite.revision },
+    });
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
+  }
+}
 
 export async function GET(request: Request, context: Context): Promise<Response> {
   try {

@@ -436,6 +436,125 @@ test("batch runner panel separates round attempts from resource snapshots and co
   await expect(panel.locator(".runner-card")).toHaveCount(0);
 });
 
+test("execution details show the recorded initiator without stretching the header or sharing account metadata", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("execution-initiator");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const scenarios = [
+    { name: "local", username: "recorded-launcher", source: "local" },
+    {
+      name: "ldap",
+      username: `ldap.${"execution.regression.operator.".repeat(4)}`,
+      source: "ldap",
+    },
+    { name: "historical", username: undefined, source: undefined },
+  ].map((scenario) => ({
+    ...scenario,
+    fixture: insertFailureAnalysisFixture(directory, version.body.id, `${suffix}-${scenario.name}`),
+  }));
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    for (const scenario of scenarios) {
+      database
+        .prepare(
+          "UPDATE run_batches SET scheduled_for = created_at, requested_by_username = ?, requested_by_source = ?, suite_name = ? WHERE id = ?",
+        )
+        .run(
+          scenario.username ?? null,
+          scenario.source ?? null,
+          scenario.name === "ldap"
+            ? `支付回归_${"PaymentRegression".repeat(8)}`
+            : scenario.fixture.suiteName,
+          scenario.fixture.batchId,
+        );
+      database
+        .prepare(
+          "UPDATE run_attempts SET started_at = created_at WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id = ?)",
+        )
+        .run(scenario.fixture.batchId);
+    }
+  } finally {
+    database.close();
+  }
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    for (const scenario of scenarios) {
+      await page.goto(`/run-batches/${scenario.fixture.batchId}`);
+      const initiator = page.locator(".execution-batch-initiator");
+      const username = initiator.locator(".execution-batch-initiator-username");
+      await expect(initiator).toContainText("拉起人：");
+      await expect(username).toHaveText(scenario.username ?? "未记录");
+      await expect(initiator).not.toContainText("e2e-admin");
+      await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await waitForUiTransitions(page);
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(`initiator-${scenario.name}-${appearance}-${viewport.width}.png`),
+        });
+        if (scenario.name === "ldap") {
+          expect(
+            await username.evaluate((element) => element.scrollWidth > element.clientWidth),
+          ).toBe(true);
+          await username.focus();
+          await expect(page.getByRole("tooltip")).toHaveText(scenario.username!);
+          await username.evaluate((element) => (element as HTMLElement).blur());
+          await expect(page.getByRole("tooltip")).not.toBeVisible();
+        }
+      }
+      await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+      await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
+      await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+      await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
+      await expect(username).toHaveText(scenario.username ?? "未记录");
+      await page.reload();
+      await expect(username).toHaveText(scenario.username ?? "未记录");
+    }
+  }
+  const recorded = scenarios[0]!;
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${recorded.fixture.batchId}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  const anonymous = await browser.newContext();
+  try {
+    const sharedPage = await anonymous.newPage();
+    await sharedPage.goto(share.body.shareUrl);
+    await expect(sharedPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+    await expect(sharedPage.locator(".execution-batch-initiator")).toHaveCount(0);
+    expect(await sharedPage.content()).not.toContain(recorded.username);
+  } finally {
+    await anonymous.close();
+  }
+});
+
 test("anonymous execution details keep tables and actions within the page", async ({
   page,
   browser,

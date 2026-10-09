@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { ArrowLeft, BookOpenText } from "lucide-react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { LinkButton } from "@/components/ui/link-button";
 
 import { CachedSuiteDirectory } from "@/components/cached-suite-directory";
@@ -12,7 +13,7 @@ import { CaseSuiteWebhookBindings } from "@/components/case-suite-webhook-bindin
 import { CaseSuiteSchedulePanel } from "@/components/case-suite-schedule-panel";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
-import { hasPermission } from "@autoforge/domain";
+import { isDomainError, hasPermission } from "@autoforge/domain";
 import { selectedProjectHierarchy } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,12 @@ export default async function CaseSuitePage({ params }: Props) {
   const { identity, projectIds } = await requirePageProjectScope("case_suite.read");
   const { suiteId } = await params;
   const services = await getPlatformServices();
-  const suite = await services.caseSuites.getSummary(suiteId, projectIds);
+  const suite = await services.caseSuites
+    .getSummary(suiteId, projectIds)
+    .catch((error: unknown) => {
+      if (isDomainError(error) && error.code === "CASE_SUITE_NOT_FOUND") notFound();
+      throw error;
+    });
   const directory = await services.readModels.read({
     kind: "suite_directory",
     projectId: suite.projectId,

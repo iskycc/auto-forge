@@ -299,12 +299,16 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number) {
-    const current = this.handle.client
-      .prepare("SELECT * FROM case_suite_schedules WHERE suite_id = ?")
-      .get(record.suiteId) as ScheduleRow | undefined;
-    if (!current) {
-      if (expectedRevision !== undefined) versionConflict();
-      await retrySqliteLockContention(() =>
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const suite = this.handle.client
+        .prepare("SELECT id FROM case_suites WHERE id = ?")
+        .get(record.suiteId);
+      if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+      const current = this.handle.client
+        .prepare("SELECT * FROM case_suite_schedules WHERE suite_id = ?")
+        .get(record.suiteId) as ScheduleRow | undefined;
+      if (!current) {
+        if (expectedRevision !== undefined) versionConflict();
         this.handle.client
           .prepare(
             `INSERT INTO case_suite_schedules
@@ -324,13 +328,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
             record.lastTriggerAt ?? null,
             record.createdAt,
             record.updatedAt,
-          ),
-      );
-    } else {
-      if (expectedRevision === undefined || expectedRevision !== current.revision)
-        versionConflict();
-      const result = await retrySqliteLockContention(() =>
-        this.handle.client
+          );
+      } else {
+        if (expectedRevision === undefined || expectedRevision !== current.revision)
+          versionConflict();
+        const updated = this.handle.client
           .prepare(
             `UPDATE case_suite_schedules
            SET cron_expression = ?, time_zone = ?, missed_run_policy = ?, enabled = ?,
@@ -346,11 +348,14 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
             record.updatedAt,
             current.id,
             expectedRevision,
-          ),
-      );
-      if (result.changes !== 1) versionConflict();
-    }
-    return (await this.findScheduleBySuite(record.suiteId)) as CaseSuiteSchedule;
+          );
+        if (updated.changes !== 1) versionConflict();
+      }
+      const saved = this.handle.client
+        .prepare(`${SCHEDULE_WITH_LAST_TRIGGER_SELECT} WHERE s.suite_id = ?`)
+        .get(record.suiteId) as ScheduleRow;
+      return mapSchedule(saved);
+    });
   }
 
   async deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void> {

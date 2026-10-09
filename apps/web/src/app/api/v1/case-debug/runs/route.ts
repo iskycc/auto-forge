@@ -29,7 +29,10 @@ export async function POST(request: Request) {
     }
     if (identity.sessionId.startsWith("api-token:"))
       throw new DomainError("DDT_DEBUG_USER_REQUIRED", "请使用个人用户账号进行调试。");
-    const batch = await services.runBatches.createDebugCase(input, identity.user.id);
+    const batch = await services.runBatches.createDebugCase(input, identity.user.id, {
+      username: identity.user.username,
+      source: identity.user.source,
+    });
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "execution.case_debug_create",
       resourceType: "run_batch",

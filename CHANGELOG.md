@@ -6,6 +6,29 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.8 - 2026-10-09
+
+### Added
+
+- 任务卡片和详情增加“删除任务”，仅删除任务与配置关联，保留用例、执行记录、公开日志、产物和分析结果，在途批次继续运行。删除使用项目 `case_suite.manage` 权限、版本条件、确认弹窗与安全审计；历史批次仍支持以失败用例创建任务，原任务已删除时隐藏“再次执行”。Lite 新增 `0076_preserve_case_suite_history.sql`、Full 新增 `0074_preserve_case_suite_history.sql`，将不可变任务版本保留为执行历史；删除与新建执行、保存计划在事务内协调，无新增依赖、配置或 Runner 协议变更。备份与恢复说明见 `docs/architecture/case-suite-deletion.md`。
+
+- 登录后的执行任务详情增加“拉起人”用户名，保存普通任务、Jenkins API、普通/DDT 单用例和调试的已认证账号快照，重跑沿用实际操作者。历史缺失及系统计划显示“未记录”，长用户名可悬浮或聚焦查看全文，匿名分享不展示账号。Lite/Full 共用入口与现有持久化字段，无新增数据库迁移、依赖、配置或 Runner 协议变更。
+
+### Fixed
+
+- 补齐 Lite 任务创建与 Lite/Full DDT 单用例创建经过后台工作线程时的拉起人传递和接收校验，避免已认证用户名丢失后显示“未记录”。线程消息将操作者放在受信任上下文，HTTP 任务输入仍拒绝伪造账号字段。
+
+### Validation
+
+- 发布前 `pnpm test` 完整通过：219 个测试文件、1277 项 TypeScript 检查、Go Agent 测试，以及 63 项发布/运维/质量脚本检查均成功。
+
+- 删除任务的应用/API 检查 97 项、任务仓储回归 61 项、分析回归 32 项通过；最终 SQLite/PostgreSQL 删除契约 10 项通过，涵盖上一版迁移及失败回滚、成员与计划清理、历史逐行保留、过期确认和事务内版本复核。原有十万失败用例复制在两个数据库中均通过；普通/DDT 任务及调试的拉起人快照补测 4 项在 SQLite/PostgreSQL 均通过。具体命令与范围见[删除任务验证记录](./docs/architecture/case-suite-deletion.md#验证范围)。
+- Lite Playwright 的删除闭环、新建任务立即删除和原有置顶三项通过；补齐线程传递后，相关单元/API 回归 70 项通过，最终生产构建再次通过两项删除场景，验证真实拉起人在删除前后保留。已实际查看 1024×768、1536×960 深浅色的列表、确认框、历史执行详情和任务详情，以及失败与版本冲突截图，无新增变形或溢出。
+
+- 拉起人功能的 `pnpm exec vitest run` 针对任务调度、重跑、普通/DDT 单用例与调试、拉起人 API、公开 DTO、权限路径、UI 使用及调试契约的八个测试文件，共 128 项通过；`pnpm exec vitest run packages/db/test/case-debug.integration.test.ts -t 'isolates DDT API|persists formal TestNG'` 两项真实 SQLite 检查通过，验证普通/DDT 混合任务和调试的拉起人快照写入、调度返回及重新读取。初次验证时未配置 PostgreSQL，本次删除功能回归已补测对应场景。
+- `pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'execution details show the recorded initiator|anonymous execution details keep tables and actions within the page|execution case actions stay on one line'` 在 Lite 生产构建下三项通过，覆盖本地/LDAP/历史无记录、长任务名与用户名、聚焦查看全文、轮次切换、刷新、匿名账号信息隔离，以及原有表格、日志和详情操作。已实际查看 1024×768、1536×960 深浅色的十二张拉起人截图，并复查匿名详情与用例操作截图，未发现新增挤压、变形或溢出。
+- `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 通过；最终调整后的测试文件再次通过对应 ESLint、Prettier 和 E2E 类型检查。本地未重跑 Full 整体部署、真实 Runner、真实 LDAP 登录及完整离线验收；删除功能的 SQLite/PostgreSQL 适配器使用真实数据库验证，执行协议未变更。
+
 ## 1.19.7 - 2026-10-08
 
 ### Security

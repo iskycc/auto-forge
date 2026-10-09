@@ -9,6 +9,7 @@ import {
   acceptSystemDialog,
   browserJson,
   ensureAdministrator,
+  E2E_ADMIN_USERNAME,
   login,
   selectProjectContext,
   uniqueName,
@@ -143,6 +144,414 @@ test("case detail and preview list only completed executions and keep filtered p
     );
   await captureUi(page, "completed-history-empty-1024");
 });
+
+test("task deletion preserves history, public logs, analysis and in-flight execution with reviewable confirmations", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("delete-task");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const className = `example.DeleteTask${Date.now()}Test`;
+  await importJar(page, project, `${suffix}.jar`, className, ["verify"]);
+  const definition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    className,
+  );
+  const name = `删除任务 ${suffix} ${"保留历史".repeat(12)}`;
+  const suite = await createVersionSuite(page, project.id, project.versionId, name, definition.id);
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id, {
+    concurrency: 1,
+    retryLimit: 0,
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  const completed = await createTaskRun(page, suite.id);
+  const batchBeforeDeletion = await browserJson(
+    page,
+    `/api/v1/run-batches/${completed.id}?view=summary`,
+  );
+  expect(batchBeforeDeletion.body).toMatchObject({
+    requestedBy: { username: E2E_ADMIN_USERNAME, source: "local" },
+  });
+  const completedClaim = await claimDeletionAttempt(page, runner);
+  const marker = `preserved-task-log-${suffix}`;
+  await uploadDeletionLog(page, runner, completedClaim, marker);
+  await completeDeletionAttempt(page, runner, completedClaim, "failed");
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-attempts/${completedClaim.assignment.attemptId}/log-share`,
+    { method: "POST", body: {} },
+  );
+  expect(share.status).toBe(200);
+  const analysisScope = {
+    projectId: project.id,
+    projectVersionId: project.versionId,
+    batchId: completed.id,
+  };
+  expect(
+    (
+      await browserJson(page, "/api/v1/failure-analysis/batches", {
+        method: "POST",
+        body: analysisScope,
+      })
+    ).status,
+  ).toBe(201);
+  const analysisEndpoint = `/api/v1/failure-analysis/candidates?${new URLSearchParams(analysisScope)}`;
+  const analysisBefore = await browserJson<{ items: unknown[] }>(page, analysisEndpoint);
+  expect(analysisBefore.status).toBe(200);
+  expect(analysisBefore.body.items).toHaveLength(1);
+  const active = await createTaskRun(page, suite.id);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.id}/schedule`, {
+        method: "PUT",
+        body: {
+          cronExpression: "0 9 * * *",
+          timeZone: "Asia/Shanghai",
+          missedRunPolicy: "skip",
+          enabled: true,
+        },
+      })
+    ).status,
+  ).toBe(200);
+
+  const card = page.getByRole("article", { name: `任务 ${name}`, exact: true });
+  const trigger = () => card.getByRole("button", { name: `删除任务 ${name}`, exact: true });
+  const dialog = page.getByRole("dialog", { name: "删除任务", exact: true });
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+      ]);
+    await page.goto("/case-suites");
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await card.scrollIntoViewIfNeeded();
+      await expect(trigger()).toBeEnabled();
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-delete-list-${theme}-${width}`);
+      await trigger().click();
+      await expect(dialog).toContainText(name);
+      await expect(dialog).toContainText("历史执行记录、日志、产物和分析结果都会保留");
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-delete-confirm-${theme}-${width}`);
+      if (width === 1536) await page.keyboard.press("Escape");
+      else await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      await expect(dialog).not.toBeVisible();
+      await expect(trigger()).toBeFocused();
+    }
+  }
+  expect((await browserJson(page, `/api/v1/case-suites/${suite.id}`)).status).toBe(200);
+  const taskPath = `/api/v1/case-suites/${suite.id}`;
+  let releaseDeletionFailure!: () => void;
+  const deletionFailureGate = new Promise<void>((resolve) => {
+    releaseDeletionFailure = resolve;
+  });
+  await page.route(`**${taskPath}`, async (route) => {
+    if (route.request().method() === "DELETE") {
+      await deletionFailureGate;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "UNAVAILABLE", message: "暂时无法删除，请重试。" } }),
+      });
+    } else await route.continue();
+  });
+  await trigger().click();
+  try {
+    await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: /确认删除/u })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "取消", exact: true })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+  } finally {
+    releaseDeletionFailure();
+  }
+  await expect(dialog.getByRole("alert")).toContainText("暂时无法删除");
+  await expect(dialog.getByRole("button", { name: "确认删除" })).toBeEnabled();
+  await expectUiIntegrity(page);
+  await captureUi(page, "task-delete-failed-1536");
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.unroute(`**${taskPath}`);
+
+  const beforeUpdate = await browserJson<{ revision: number }>(page, taskPath);
+  expect(
+    (
+      await browserJson(page, taskPath, {
+        method: "PATCH",
+        body: {
+          description: "Concurrent saved edit",
+          expectedRevision: beforeUpdate.body.revision,
+        },
+      })
+    ).status,
+  ).toBe(200);
+  await trigger().click();
+  await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
+  const conflict = page.getByRole("dialog", { name: "用例任务已被其他人修改", exact: true });
+  await expect(conflict).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expectUiIntegrity(page);
+  await captureUi(page, "task-delete-conflict-1536");
+  await conflict.getByRole("button", { name: "重新加载最新内容", exact: true }).click();
+  await expect(card).toContainText("Concurrent saved edit");
+  const activeClaim = await claimDeletionAttempt(page, runner);
+  await trigger().click();
+  const deletion = page.waitForResponse(
+    (response) =>
+      response.request().method() === "DELETE" && new URL(response.url()).pathname === taskPath,
+  );
+  await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
+  expect((await deletion).status()).toBe(204);
+  await expect(card).toHaveCount(0);
+  await page.reload();
+  await expect(card).toHaveCount(0);
+  expect((await browserJson(page, taskPath)).status).toBe(404);
+  expect((await browserJson(page, `${taskPath}/schedule`)).status).toBe(404);
+  expect(
+    (
+      await browserJson(page, "/api/v1/run-batches", {
+        method: "POST",
+        body: { suiteId: suite.id },
+      })
+    ).status,
+  ).toBe(404);
+  expect((await browserJson(page, `/api/v1/case-definitions/${definition.id}`)).status).toBe(200);
+  const analysisAfter = await browserJson(page, analysisEndpoint);
+  expect(analysisAfter.status).toBe(200);
+  expect(analysisAfter.body).toEqual(analysisBefore.body);
+
+  // A previously claimed assignment continues to accept logs and completion after task deletion.
+  await uploadDeletionLog(page, runner, activeClaim, "after-task-deletion");
+  await completeDeletionAttempt(page, runner, activeClaim, "succeeded");
+  const finished = await browserJson<{ status: string }>(
+    page,
+    `/api/v1/run-batches/${active.id}?view=summary`,
+  );
+  expect(finished.body.status).toBe("succeeded");
+  const logs = await browserJson<{ items: Array<{ content: string }> }>(
+    page,
+    `/api/v1/run-attempts/${completedClaim.assignment.attemptId}/logs?stream=stdout`,
+  );
+  expect(logs.status).toBe(200);
+  expect(logs.body.items.map((chunk) => chunk.content).join("")).toContain(marker);
+  const exportedLogUrls: string[] = [];
+  for (const template of ["results", "failure-analysis"]) {
+    const exported = await page.request.get(
+      `/api/v1/run-batches/${completed.id}/export?scope=final&template=${template}&outcomes=failed`,
+    );
+    expect(exported.status(), exported.ok() ? undefined : await exported.text()).toBe(200);
+    const files = unzipSync(new Uint8Array(await exported.body()));
+    const worksheet = new TextDecoder().decode(files["xl/worksheets/sheet1.xml"]);
+    const strings = new TextDecoder().decode(
+      files["xl/sharedStrings.xml"] ?? files["xl/worksheets/sheet1.xml"],
+    );
+    expect(strings).toContain(className);
+    expect(worksheet).toContain('row r="2"');
+    const relationships = new TextDecoder().decode(files["xl/worksheets/_rels/sheet1.xml.rels"]);
+    const logUrl = relationships.match(
+      /Target="([^"]+\/share\/attempt-log\/[A-Za-z0-9_-]+)"/u,
+    )?.[1];
+    expect(logUrl).toBeDefined();
+    exportedLogUrls.push(logUrl!);
+  }
+  const anonymous = await browser.newPage();
+  for (const logUrl of [new URL(share.body.shareUrl, page.url()).toString(), ...exportedLogUrls]) {
+    await anonymous.goto(logUrl);
+    await expect(anonymous.locator(".execution-log")).toContainText(marker);
+  }
+  await anonymous.close();
+  await page.goto(`/run-batches/${completed.id}`);
+  await expect(page.locator(".page-hero")).toContainText(`拉起人：${E2E_ADMIN_USERNAME}`);
+  await expect(page.getByRole("button", { name: "再次执行", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "批次操作", exact: true })).toContainText(
+    "本批次的执行记录与配置快照已保留",
+  );
+  await expect(page.getByRole("button", { name: "以失败用例创建任务", exact: true })).toBeVisible();
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+      ]);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.getByRole("region", { name: "批次操作", exact: true }).scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-delete-preserved-execution-${theme}-${width}`);
+    }
+  }
+  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  const copyDialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+  const copiedResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/run-batches/${completed.id}/failure-case-suite`),
+  );
+  await copyDialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const copied = await copiedResponse;
+  expect(copied.status()).toBe(201);
+  const recreated = (await copied.json()) as {
+    id: string;
+    caseCount: number;
+    policy: { concurrency: number };
+  };
+  expect(recreated).toMatchObject({ caseCount: 1, policy: { concurrency: 1 } });
+  await expect(page).toHaveURL(new RegExp(`/case-suites/${recreated.id}$`));
+  await page.goto(`/case-suites/${suite.id}`);
+  await expect(page.getByRole("heading", { name: "页面不存在", exact: true })).toBeVisible();
+
+  // Exercise deletion from the details of a newly created, never-executed task as well.
+  const emptyName = `空任务 ${suffix}`;
+  const empty = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: { projectId: project.id, projectVersionId: project.versionId, name: emptyName },
+  });
+  expect(empty.status).toBe(201);
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+      ]);
+    await page.goto(`/case-suites/${empty.body.id}`);
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      const detailAction = page.getByRole("button", { name: `删除任务 ${emptyName}`, exact: true });
+      await detailAction.scrollIntoViewIfNeeded();
+      await expect(detailAction).toBeEnabled();
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-delete-detail-${theme}-${width}`);
+    }
+  }
+  await page.getByRole("button", { name: `删除任务 ${emptyName}`, exact: true }).click();
+  await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page).toHaveURL(/\/case-suites$/u);
+  await expect(page.getByRole("article", { name: `任务 ${emptyName}`, exact: true })).toHaveCount(
+    0,
+  );
+  expect((await browserJson(page, `/api/v1/case-suites/${empty.body.id}`)).status).toBe(404);
+});
+
+test("newly created tasks can be deleted immediately without reappearing after refresh", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("delete-new-task");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  await page.goto("/case-suites");
+  await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  const creationDialog = page.getByRole("dialog", { name: "创建用例任务", exact: true });
+  await creationDialog.getByLabel("任务名称", { exact: true }).fill(suffix);
+  const creationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/case-suites",
+  );
+  await creationDialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const created = await creationResponse;
+  expect(created.status()).toBe(201);
+  const suite = (await created.json()) as { id: string };
+  const card = page.getByRole("article", { name: `任务 ${suffix}`, exact: true });
+  await card.getByRole("button", { name: `删除任务 ${suffix}`, exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "删除任务", exact: true })
+    .getByRole("button", { name: "确认删除", exact: true })
+    .click();
+  await expect(card).toHaveCount(0);
+  await page.reload();
+  await expect(card).toHaveCount(0);
+  expect((await browserJson(page, `/api/v1/case-suites/${suite.id}`)).status).toBe(404);
+});
+
+type DeletionClaim = { assignment: { attemptId: string }; lease: { token: string } };
+type DeletionRunner = { id: string; credential: string };
+
+async function claimDeletionAttempt(page: Page, runner: DeletionRunner): Promise<DeletionClaim> {
+  let claim: DeletionClaim | undefined;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.post(`/api/v1/runner-agents/${runner.id}/claims`, {
+          headers: { authorization: `Bearer ${runner.credential}` },
+          data: {
+            schemaVersion: 1,
+            requestId: uniqueName("delete-claim"),
+            availableSlots: 1,
+            waitSeconds: 0,
+            labels: ["linux", "java", "testng"],
+            capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+          },
+        });
+        expect(response.status()).toBe(200);
+        claim = ((await response.json()) as { assignments: DeletionClaim[] }).assignments[0];
+        return Boolean(claim);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  return claim!;
+}
+
+async function uploadDeletionLog(
+  page: Page,
+  runner: DeletionRunner,
+  claim: DeletionClaim,
+  content: string,
+): Promise<void> {
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${claim.assignment.attemptId}/logs`,
+    {
+      headers: { authorization: `Bearer ${runner.credential}`, "x-autoforge-runner-id": runner.id },
+      data: {
+        schemaVersion: 1,
+        requestId: uniqueName("delete-log"),
+        leaseToken: claim.lease.token,
+        chunks: [{ stream: "stdout", sequence: 0, content, recordedAt: new Date().toISOString() }],
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+}
+
+async function completeDeletionAttempt(
+  page: Page,
+  runner: DeletionRunner,
+  claim: DeletionClaim,
+  status: "succeeded" | "failed",
+): Promise<void> {
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${claim.assignment.attemptId}/complete`,
+    {
+      headers: { authorization: `Bearer ${runner.credential}`, "x-autoforge-runner-id": runner.id },
+      data: {
+        schemaVersion: 1,
+        completionId: uniqueName("delete-complete"),
+        leaseToken: claim.lease.token,
+        result: {
+          status,
+          resultCode: status === "succeeded" ? "TESTNG_SUCCEEDED" : "TESTNG_ASSERTIONS_FAILED",
+          summary: status,
+          durationMs: 100,
+          logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
+          artifacts: [],
+        },
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+}
 
 test("personal task pins persist across browsers, sort naturally and recover after failed changes", async ({
   page,

@@ -41,6 +41,7 @@ import { useToast } from "@/components/ui-feedback";
 import { throwApiErrorResponse } from "@/lib/client-api";
 import { caseSuiteAdapterDefaults } from "@/lib/case-suite-adapter-defaults";
 import { RoundRecoveryCredentialDialog } from "./round-recovery-credential-dialog";
+import { DeleteCaseSuiteButton } from "./delete-case-suite-button";
 import {
   canReuseRecoveryCredential,
   recoveryInspectionCredential,
@@ -1076,7 +1077,7 @@ export function CaseSuiteEditor({
               </Button>
             </div>
           </form>
-          <div className={"suite-secondary-actions"}>
+          <div className="suite-secondary-actions flex flex-wrap items-center gap-2">
             <Button
               onClick={() => {
                 setCopyError(null);
@@ -1086,6 +1087,7 @@ export function CaseSuiteEditor({
             >
               <Copy size={15} /> 复制任务
             </Button>
+            <DeleteCaseSuiteButton suiteId={suite.id} suiteName={suite.name} revision={revision} />
           </div>
           <ActionDialog
             description="复制已保存的任务配置，可选择是否包含用例；历史执行记录不会复制。"

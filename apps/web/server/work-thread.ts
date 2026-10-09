@@ -96,6 +96,12 @@ import type {
 
 const port = parentPort;
 if (!port) throw new Error("Work thread requires a parent port.");
+const runInitiatorSchema = z
+  .object({
+    username: z.string().min(1).max(256),
+    source: z.enum(["local", "ldap"]),
+  })
+  .strict();
 const configuration = workerData as WorkThreadConfiguration;
 const platformConfigurationStore = new PlatformConfigurationStore(configuration.dataDirectory);
 
@@ -259,17 +265,26 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
         actorId,
       );
     }
-    case "create-batch":
-      return schedulingService().create(createRunBatchInputSchema.parse(task.input));
+    case "create-batch": {
+      const { input, requestedBy } = z
+        .object({
+          input: createRunBatchInputSchema,
+          requestedBy: runInitiatorSchema.optional(),
+        })
+        .strict()
+        .parse(task.input);
+      return schedulingService().create(input, requestedBy);
+    }
     case "create-single-ddt-case": {
-      const { scope, caseId, input } = z
+      const { scope, caseId, input, requestedBy } = z
         .object({
           scope: ddtScopeSchema,
           caseId: z.string().trim().min(1).max(512),
           input: createSingleCaseRunInputSchema,
+          requestedBy: runInitiatorSchema.optional(),
         })
         .parse(task.input);
-      return schedulingService().createSingleDdtCase(scope, caseId, input);
+      return schedulingService().createSingleDdtCase(scope, caseId, input, requestedBy);
     }
     case "trigger-schedules":
       return platformOperations().triggerDueSchedules(

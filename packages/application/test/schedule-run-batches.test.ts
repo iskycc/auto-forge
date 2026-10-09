@@ -417,88 +417,99 @@ describe("run batch preflight", () => {
 });
 
 describe("run batch creation with suite policy", () => {
-  it("merges omitted execution settings from the suite policy and freezes them", async () => {
-    const suite = readySuite({
-      policy: {
+  it.each([undefined, "local", "ldap"] as const)(
+    "freezes suite policy and initiator snapshot (%s)",
+    async (source) => {
+      const requestedBy = source ? { username: "launcher", source } : undefined;
+      const suite = readySuite({
+        policy: {
+          priority: 3,
+          concurrency: 2,
+          retryLimit: 2,
+          queueTimeoutMs: 60_000,
+          runnerLabels: [],
+          artifactPatterns: ["reports/**"],
+          retryMode: "round",
+          roundRecoveryRules: [
+            {
+              id: "recovery-app",
+              afterRound: 1,
+              jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
+              waitMinutes: 3,
+              apiKeyConfigured: true,
+            },
+            {
+              id: "recovery-database",
+              afterRound: 1,
+              jenkinsJobUrl: "https://jenkins.internal/job/reset-database/",
+              waitMinutes: 7,
+              apiKeyConfigured: true,
+            },
+          ],
+        },
+      });
+      const suites = {
+        get: vi.fn().mockResolvedValue(suite),
+        getRoundRecoveryCredentials: vi.fn().mockResolvedValue({
+          "recovery-app": "encrypted-app",
+          "recovery-database": "encrypted-database",
+        }),
+      } as unknown as CaseSuiteRepository;
+      const created: unknown[] = [];
+      const batches = {
+        create: vi.fn(async (record: unknown) => {
+          created.push(record);
+          return { id: "batch-1" };
+        }),
+        hasSchedulableRuns: vi.fn().mockResolvedValue(true),
+        getSchedulingSnapshot: vi.fn().mockResolvedValue({
+          batch: { assignedRuns: 0, secretBindings: [] },
+          queuedRuns: [],
+          candidates: [],
+          projectActiveRuns: 0,
+        }),
+        getSummary: vi.fn().mockResolvedValue({ id: "batch-1" }),
+        get: vi.fn().mockResolvedValue({ id: "batch-1" }),
+      } as unknown as RunBatchRepository;
+      const service = new RunBatchSchedulingService(
+        batches,
+        suites,
+        runnersFake(),
+        { now: () => new Date(timestamp) },
+        { next: () => "generated-id" },
+        {
+          maximumCpuUtilizationPercent: 85,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        45,
+        { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+      );
+
+      await service.create({ suiteId: "suite-1" }, requestedBy);
+
+      expect(created).toHaveLength(1);
+      expect(created[0]).toMatchObject({
+        expectedSuiteRevision: suite.revision,
         priority: 3,
-        concurrency: 2,
         retryLimit: 2,
         queueTimeoutMs: 60_000,
-        runnerLabels: [],
-        artifactPatterns: ["reports/**"],
-        retryMode: "round",
-        roundRecoveryRules: [
-          {
-            id: "recovery-app",
-            afterRound: 1,
-            jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
-            waitMinutes: 3,
-            apiKeyConfigured: true,
-          },
-          {
-            id: "recovery-database",
-            afterRound: 1,
-            jenkinsJobUrl: "https://jenkins.internal/job/reset-database/",
-            waitMinutes: 7,
-            apiKeyConfigured: true,
-          },
+        executionTimeoutMs: 600_000,
+        policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
+        roundRecoveries: [
+          expect.objectContaining({ ruleId: "recovery-app", afterRound: 1, waitMinutes: 3 }),
+          expect.objectContaining({ ruleId: "recovery-database", afterRound: 1, waitMinutes: 7 }),
         ],
-      },
-    });
-    const suites = {
-      get: vi.fn().mockResolvedValue(suite),
-      getRoundRecoveryCredentials: vi.fn().mockResolvedValue({
-        "recovery-app": "encrypted-app",
-        "recovery-database": "encrypted-database",
-      }),
-    } as unknown as CaseSuiteRepository;
-    const created: unknown[] = [];
-    const batches = {
-      create: vi.fn(async (record: unknown) => {
-        created.push(record);
-        return { id: "batch-1" };
-      }),
-      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
-      getSchedulingSnapshot: vi.fn().mockResolvedValue({
-        batch: { assignedRuns: 0, secretBindings: [] },
-        queuedRuns: [],
-        candidates: [],
-        projectActiveRuns: 0,
-      }),
-      getSummary: vi.fn().mockResolvedValue({ id: "batch-1" }),
-      get: vi.fn().mockResolvedValue({ id: "batch-1" }),
-    } as unknown as RunBatchRepository;
-    const service = new RunBatchSchedulingService(
-      batches,
-      suites,
-      runnersFake(),
-      { now: () => new Date(timestamp) },
-      { next: () => "generated-id" },
-      {
-        maximumCpuUtilizationPercent: 85,
-        maximumMemoryUtilizationPercent: 85,
-        maximumLoadPerCpu: 1,
-      },
-      45,
-      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
-    );
-
-    await service.create({ suiteId: "suite-1" });
-
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({
-      priority: 3,
-      retryLimit: 2,
-      queueTimeoutMs: 60_000,
-      executionTimeoutMs: 600_000,
-      policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
-      roundRecoveries: [
-        expect.objectContaining({ ruleId: "recovery-app", afterRound: 1, waitMinutes: 3 }),
-        expect.objectContaining({ ruleId: "recovery-database", afterRound: 1, waitMinutes: 7 }),
-      ],
-      runs: [{ parameters: { SHARED: "case" } }],
-    });
-  });
+        runs: [{ parameters: { SHARED: "case" } }],
+      });
+      if (requestedBy) {
+        requestedBy.username = "renamed-after-execution";
+        expect(created[0]).toMatchObject({ requestedBy: { username: "launcher", source } });
+      } else {
+        expect(created[0]).not.toHaveProperty("requestedBy");
+      }
+    },
+  );
 
   it("persists an authoritative delayed start and refuses early direct scheduling", async () => {
     const created: Array<{ scheduledFor: string }> = [];
@@ -952,73 +963,81 @@ describe("run batch creation with suite policy", () => {
     expect(batches.reserveAssignments).not.toHaveBeenCalled();
   });
 
-  it("creates a single-case batch through the shared scheduling path", async () => {
-    const catalog = {
-      ...readyCatalogFake(),
-      getCaseDefinition: vi.fn().mockResolvedValue({
-        id: "case-1",
-        projectId: "project-1",
-        projectVersionId: "version-1",
-        sourceId: "source-1",
-        className: "com.example.SmokeTest",
-        displayName: "Smoke",
-        enabled: true,
-        archived: false,
-        parameters: { CASE_DEFAULT: "yes" },
-        currentVersion: 3,
-        methods: [{ enabled: true }],
-      }),
-    } as unknown as CaseCatalogRepository;
-    const create = vi.fn();
-    const batches = {
-      create,
-      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
-      getSchedulingSnapshot: vi.fn().mockResolvedValue({
-        batch: { assignedRuns: 0, secretBindings: [] },
-        queuedRuns: [],
-        candidates: [],
-        projectActiveRuns: 0,
-      }),
-      getSummary: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
-      get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
-    } as unknown as RunBatchRepository;
-    const service = new RunBatchSchedulingService(
-      batches,
-      {} as CaseSuiteRepository,
-      runnersFake(),
-      { now: () => new Date(timestamp) },
-      { next: () => "generated-id" },
-      {
-        maximumCpuUtilizationPercent: 85,
-        maximumMemoryUtilizationPercent: 85,
-        maximumLoadPerCpu: 1,
-      },
-      45,
-      { catalog, objectStore: objectStoreFake() },
-    );
+  it.each([undefined, "local", "ldap"] as const)(
+    "creates a single-case batch with its initiator (%s)",
+    async (source) => {
+      const catalog = {
+        ...readyCatalogFake(),
+        getCaseDefinition: vi.fn().mockResolvedValue({
+          id: "case-1",
+          projectId: "project-1",
+          projectVersionId: "version-1",
+          sourceId: "source-1",
+          className: "com.example.SmokeTest",
+          displayName: "Smoke",
+          enabled: true,
+          archived: false,
+          parameters: { CASE_DEFAULT: "yes" },
+          currentVersion: 3,
+          methods: [{ enabled: true }],
+        }),
+      } as unknown as CaseCatalogRepository;
+      const create = vi.fn();
+      const batches = {
+        create,
+        hasSchedulableRuns: vi.fn().mockResolvedValue(true),
+        getSchedulingSnapshot: vi.fn().mockResolvedValue({
+          batch: { assignedRuns: 0, secretBindings: [] },
+          queuedRuns: [],
+          candidates: [],
+          projectActiveRuns: 0,
+        }),
+        getSummary: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
+        get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
+      } as unknown as RunBatchRepository;
+      const service = new RunBatchSchedulingService(
+        batches,
+        {} as CaseSuiteRepository,
+        runnersFake(),
+        { now: () => new Date(timestamp) },
+        { next: () => "generated-id" },
+        {
+          maximumCpuUtilizationPercent: 85,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        45,
+        { catalog, objectStore: objectStoreFake() },
+      );
 
-    await service.createSingleCase("case-1", {
-      projectId: "project-1",
-      runnerIds: ["runner-1"],
-    });
+      await service.createSingleCase(
+        "case-1",
+        {
+          projectId: "project-1",
+          runnerIds: ["runner-1"],
+        },
+        source ? { username: "single-case-launcher", source } : undefined,
+      );
 
-    expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "project-1",
-        suiteId: "single:case-1",
-        retryMode: "round",
-        retryLimit: 0,
-        policy: expect.objectContaining({ concurrency: 1 }),
-        runs: [
-          expect.objectContaining({
-            caseDefinitionId: "case-1",
-            caseVersion: 3,
-            parameters: { CASE_DEFAULT: "yes" },
-          }),
-        ],
-      }),
-    );
-  });
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "project-1",
+          suiteId: "single:case-1",
+          ...(source ? { requestedBy: { username: "single-case-launcher", source } } : {}),
+          retryMode: "round",
+          retryLimit: 0,
+          policy: expect.objectContaining({ concurrency: 1 }),
+          runs: [
+            expect.objectContaining({
+              caseDefinitionId: "case-1",
+              caseVersion: 3,
+              parameters: { CASE_DEFAULT: "yes" },
+            }),
+          ],
+        }),
+      );
+    },
+  );
 
   it("resolves a runner group once and persists its sorted member snapshot", async () => {
     const create = vi.fn();

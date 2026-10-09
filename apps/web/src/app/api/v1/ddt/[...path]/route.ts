@@ -292,7 +292,10 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       }
       if (isCaseAction(path, "execute")) {
         const input = createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1_024));
-        const batch = await services.runBatches.createSingleDdtCase(scope, path[1]!, input);
+        const batch = await services.runBatches.createSingleDdtCase(scope, path[1]!, input, {
+          username: identity.user.username,
+          source: identity.user.source,
+        });
         await services.identityAccess.recordAuthorizedOperation(identity, {
           action: "execution.single_ddt_case_create",
           resourceType: "run_batch",

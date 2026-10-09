@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { Pool } from "pg";
@@ -9,12 +9,21 @@ import {
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type ProjectStructureRepository,
+  type RunBatchRepository,
+  type PlatformOperationsRepository,
+  type FailureAnalysisRepository,
 } from "@autoforge/application";
 import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
 
 import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
+import { SqliteFailureAnalysisRepository } from "../src/sqlite-failure-analysis";
+import { PostgresFailureAnalysisRepository } from "../src/postgres-failure-analysis";
+import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
+import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
+import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
+import { PostgresPlatformOperationsRepository } from "../src/postgres-platform-operations";
 import { PostgresCaseSuiteRepository } from "../src/postgres-platform-repository";
 
 const timestamp = "2026-10-06T00:00:00.000Z";
@@ -22,19 +31,28 @@ const postgresUrl = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 
 type Fixture = {
   suites: CaseSuiteRepository;
+  batches: RunBatchRepository;
+  operations: PlatformOperationsRepository;
+  analysis: FailureAnalysisRepository;
+  rows: (statement: string) => Promise<Record<string, unknown>[]>;
   execute: (statement: string, parameters?: Array<string | number>) => Promise<void>;
   close: () => Promise<void>;
 };
 
-async function fixture(mode: "sqlite" | "postgres"): Promise<Fixture> {
+async function fixture(mode: "sqlite" | "postgres", migrationsFolder?: string): Promise<Fixture> {
   if (mode === "sqlite") {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-failure-copy-"));
     const handle = createSqliteDatabase({
       databasePath: resolve(directory, "test.sqlite"),
-      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+      migrationsFolder: migrationsFolder ?? resolve(import.meta.dirname, "../drizzle/sqlite"),
     });
     return {
       suites: new SqliteCaseSuiteRepository(handle),
+      batches: new SqliteRunBatchRepository(handle),
+      operations: new SqlitePlatformOperationsRepository(handle),
+      analysis: new SqliteFailureAnalysisRepository(handle),
+      rows: async (statement) =>
+        handle.client.prepare(statement).all() as Record<string, unknown>[],
       execute: async (statement, parameters = []) => {
         handle.client.prepare(statement).run(...parameters);
       },
@@ -51,12 +69,16 @@ async function fixture(mode: "sqlite" | "postgres"): Promise<Fixture> {
   url.searchParams.set("options", `-c search_path=${schema}`);
   const handle = createPostgresDatabase({
     connectionString: url.toString(),
-    migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
-    poolMax: 2,
+    migrationsFolder: migrationsFolder ?? resolve(import.meta.dirname, "../drizzle/postgresql"),
+    poolMax: migrationsFolder ? 1 : 2,
   });
   await handle.ready;
   return {
     suites: new PostgresCaseSuiteRepository(handle),
+    batches: new PostgresRunBatchRepository(handle),
+    operations: new PostgresPlatformOperationsRepository(handle),
+    analysis: new PostgresFailureAnalysisRepository(handle),
+    rows: async (statement) => (await handle.pool.query<Record<string, unknown>>(statement)).rows,
     execute: async (statement, parameters = []) => {
       let index = 0;
       await handle.pool.query(
@@ -198,6 +220,306 @@ async function seed({ suites, execute }: Fixture) {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} failure task copy contract`, () => {
+    it("upgrades the previous schema without losing snapshots and rolls back failed history DDL", async () => {
+      const directory = await mkdtemp(resolve(tmpdir(), "suite-history-upgrade-"));
+      const folder = resolve(
+        import.meta.dirname,
+        `../drizzle/${mode === "sqlite" ? "sqlite" : "postgresql"}`,
+      );
+      const migration =
+        mode === "sqlite"
+          ? "0076_preserve_case_suite_history.sql"
+          : "0074_preserve_case_suite_history.sql";
+      for (const name of (await readdir(folder)).filter(
+        (name) => name.endsWith(".sql") && name < migration,
+      )) {
+        await writeFile(resolve(directory, name), await readFile(resolve(folder, name)));
+      }
+      const context = await fixture(mode, directory);
+      try {
+        const { service } = await seed(context);
+        const versions = await context.rows("SELECT * FROM case_suite_versions ORDER BY id");
+        const batches = await context.rows("SELECT * FROM run_batches ORDER BY id");
+        const statements = (await readFile(resolve(folder, migration), "utf8"))
+          .split(";")
+          .map((statement) => statement.trim())
+          .filter(Boolean);
+        await context.execute("BEGIN");
+        for (const statement of statements) await context.execute(statement);
+        await expect(
+          context.rows("SELECT * FROM missing_history_migration_table"),
+        ).rejects.toThrow();
+        await context.execute("ROLLBACK");
+        expect(await context.rows("SELECT * FROM case_suite_versions ORDER BY id")).toEqual(
+          versions,
+        );
+        // A rolled-back migration retains the original foreign-key behavior.
+        await context.execute("BEGIN");
+        await context.execute("DELETE FROM case_suites WHERE id = 'suite-1'");
+        expect(await context.rows("SELECT * FROM case_suite_versions")).toEqual([]);
+        await context.execute("ROLLBACK");
+        await context.execute("BEGIN");
+        for (const statement of statements) await context.execute(statement);
+        await context.execute("COMMIT");
+        expect(await context.rows("SELECT * FROM case_suite_versions ORDER BY id")).toEqual(
+          versions,
+        );
+        await service.delete("suite-1", { expectedRevision: 2 });
+        expect(await context.rows("SELECT * FROM case_suite_versions ORDER BY id")).toEqual(
+          versions,
+        );
+        expect(await context.rows("SELECT * FROM run_batches ORDER BY id")).toEqual(batches);
+        expect((await service.createFromFinalFailures("batch-1", {})).caseCount).toBe(3);
+      } finally {
+        await context.close();
+        await rm(directory, { recursive: true, force: true });
+      }
+    }, 15_000);
+
+    it("deletes configuration and triggers while retaining mixed execution history and failure-task creation", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service } = await seed(context);
+        await seedDeletionAssociations(context);
+        const historyTables = [
+          "run_batches",
+          "execution_runs",
+          "run_attempts",
+          "run_batch_status_events",
+          "run_batch_round_recoveries",
+          "attempt_log_watermarks",
+          "attempt_artifacts",
+          "attempt_log_shares",
+          "analytics_facts",
+          "case_definitions",
+          "ddt_cases",
+          "case_suite_versions",
+          "webhook_configurations",
+        ];
+        const before = await Promise.all(
+          historyTables.map((table) => context.rows(`SELECT * FROM ${table} ORDER BY 1`)),
+        );
+        const details = await context.batches.get("batch-1");
+        await service.delete("suite-1", { expectedRevision: 2 }, [DEFAULT_PROJECT_ID]);
+        expect(await context.suites.getSummary("suite-1")).toBeNull();
+        expect(await context.suites.get("suite-1")).toBeNull();
+        expect(await context.suites.list(100)).toEqual([]);
+        for (const table of [
+          "case_suite_items",
+          "case_suite_ddt_items",
+          "case_suite_pins",
+          "case_suite_round_recovery_credentials",
+          "case_suite_webhook_bindings",
+          "case_suite_schedules",
+          "schedule_trigger_claims",
+        ]) {
+          expect(await context.rows(`SELECT * FROM ${table}`), table).toEqual([]);
+        }
+        for (const [index, table] of historyTables.entries()) {
+          expect(await context.rows(`SELECT * FROM ${table} ORDER BY 1`), table).toEqual(
+            before[index],
+          );
+        }
+        expect(await context.batches.get("batch-1")).toEqual(details);
+        expect(await context.batches.getSummary("active-batch")).toMatchObject({
+          status: "running",
+          suiteId: "suite-1",
+        });
+        expect(await context.operations.listDueSchedules(timestamp, 10)).toEqual([]);
+        await expect(context.operations.upsertSchedule(deletionSchedule())).rejects.toMatchObject({
+          code: "CASE_SUITE_NOT_FOUND",
+        });
+        await expect(service.delete("suite-1", { expectedRevision: 2 })).rejects.toMatchObject({
+          code: "CASE_SUITE_NOT_FOUND",
+        });
+        const copy = await service.createFromFinalFailures("batch-1", {});
+        expect(copy).toMatchObject({
+          caseCount: 3,
+          policy: { concurrency: 17 },
+          description: "Original description",
+        });
+        const members = await context.suites.listMemberPage({ suiteId: copy.id, limit: 10 });
+        expect(members!.items.map((member) => member.caseDefinition.id).sort()).toEqual([
+          "failure",
+          "timeout",
+        ]);
+        expect(members!.ddtItems.map((member) => member.ddtCase.id)).toEqual(["ddt-1"]);
+      } finally {
+        await context.close();
+      }
+    });
+
+    it("retains analysis lists and completed conclusions and permits remaining claims after task deletion", async () => {
+      const context = await fixture(mode);
+      try {
+        await seed(context);
+        await seedDeletionAssociations(context);
+        for (const caseId of ["failure", "ddt-1"]) {
+          await context.execute(
+            "INSERT INTO run_attempts (id, execution_run_id, runner_id, attempt_number, status, outcome, scheduling_score, created_at) VALUES (?, ?, 'runner-1', 1, 'failed', 'failed', 1, ?)",
+            [`attempt-${caseId}`, `run-${caseId}`, timestamp],
+          );
+        }
+        const scope = {
+          projectId: DEFAULT_PROJECT_ID,
+          projectVersionId: "version-1",
+          batchId: "batch-1",
+        };
+        expect(
+          await context.analysis.startBatch({
+            ...scope,
+            startedBy: "user-1",
+            startedAt: timestamp,
+          }),
+        ).toMatchObject({ created: true });
+        const claimant = {
+          ...scope,
+          claimantId: "user-1",
+          claimantUsername: "user-1",
+          claimantDisplayName: "User",
+          claimedAt: timestamp,
+        };
+        const completion = {
+          projectId: DEFAULT_PROJECT_ID,
+          claimantId: "user-1",
+          category: "code_issue_filed" as const,
+          issueDescription: "Retained conclusion",
+          ticketReference: "BUG-1",
+          completedAt: timestamp,
+          rerunProofs: new Map<string, { attemptId: string; url: string }>(),
+        };
+        await context.analysis.claim({
+          ...claimant,
+          executionRunIds: ["run-failure"],
+          claims: [{ id: "analysis-1", executionRunId: "run-failure" }],
+        });
+        await context.analysis.complete({ ...completion, analysisIds: ["analysis-1"] });
+        const candidateQuery = {
+          ...scope,
+          sort: "class_path" as const,
+          direction: "asc" as const,
+          limit: 10,
+        };
+        const candidates = await context.analysis.listCandidates(candidateQuery);
+        const batches = await context.analysis.listBatches({ ...scope, limit: 10 });
+        const conclusion = await context.analysis.getClaim("analysis-1", DEFAULT_PROJECT_ID);
+        const batch = await context.analysis.getBatch(scope);
+        await context.suites.deleteSuite({ suiteId: "suite-1", expectedRevision: 2 });
+        expect(await context.analysis.listCandidates(candidateQuery)).toEqual(candidates);
+        expect(await context.analysis.listBatches({ ...scope, limit: 10 })).toEqual(batches);
+        expect(await context.analysis.getBatch(scope)).toEqual(batch);
+        expect(await context.analysis.getClaim("analysis-1", DEFAULT_PROJECT_ID)).toEqual(
+          conclusion,
+        );
+        expect(
+          await context.analysis.claim({
+            ...claimant,
+            executionRunIds: ["run-ddt-1"],
+            claims: [{ id: "analysis-2", executionRunId: "run-ddt-1" }],
+          }),
+        ).toMatchObject({ unavailableExecutionRunIds: [], claims: [{ id: "analysis-2" }] });
+        await context.analysis.complete({ ...completion, analysisIds: ["analysis-2"] });
+        expect(await context.analysis.getClaim("analysis-2", DEFAULT_PROJECT_ID)).toMatchObject({
+          status: "completed",
+          issueDescription: "Retained conclusion",
+        });
+      } finally {
+        await context.close();
+      }
+    });
+
+    it("rejects stale deletion and rolls back every association when schedule cleanup fails", async () => {
+      const context = await fixture(mode);
+      try {
+        await seed(context);
+        await seedDeletionAssociations(context);
+        const tables = [
+          "case_suites",
+          "case_suite_items",
+          "case_suite_ddt_items",
+          "case_suite_pins",
+          "case_suite_round_recovery_credentials",
+          "case_suite_webhook_bindings",
+          "case_suite_schedules",
+          "schedule_trigger_claims",
+        ];
+        const before = await Promise.all(
+          tables.map((table) => context.rows(`SELECT * FROM ${table} ORDER BY 1`)),
+        );
+        await expect(
+          context.suites.deleteSuite({ suiteId: "suite-1", expectedRevision: 1 }),
+        ).rejects.toMatchObject({ code: "CASE_SUITE_REVISION_CONFLICT" });
+        if (mode === "sqlite") {
+          await context.execute(`CREATE TRIGGER reject_schedule_cleanup BEFORE DELETE ON case_suite_schedules
+            BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END`);
+        } else {
+          await context.execute(`CREATE FUNCTION reject_schedule_cleanup() RETURNS trigger LANGUAGE plpgsql
+            AS $$ BEGIN RAISE EXCEPTION 'cleanup failed'; END $$`);
+          await context.execute(`CREATE TRIGGER reject_schedule_cleanup BEFORE DELETE ON case_suite_schedules
+            FOR EACH ROW EXECUTE FUNCTION reject_schedule_cleanup()`);
+        }
+        await expect(
+          context.suites.deleteSuite({ suiteId: "suite-1", expectedRevision: 2 }),
+        ).rejects.toThrow();
+        for (const [index, table] of tables.entries()) {
+          expect(await context.rows(`SELECT * FROM ${table} ORDER BY 1`), table).toEqual(
+            before[index],
+          );
+        }
+      } finally {
+        await context.close();
+      }
+    });
+
+    it("revalidates task creation in the batch transaction and permits reruns from preserved history", async () => {
+      const context = await fixture(mode);
+      try {
+        await seed(context);
+        const record = {
+          id: "guarded-batch",
+          projectId: DEFAULT_PROJECT_ID,
+          suiteId: "suite-1",
+          suiteName: "Original",
+          suiteVersion: 2,
+          retryLimit: 0,
+          environmentVariables: [],
+          runnerIds: ["runner-1"],
+          runs: [
+            {
+              id: "guarded-run",
+              caseDefinitionId: "failure",
+              caseVersion: 1,
+              displayName: "Failure",
+              className: "example.failure",
+            },
+          ],
+          createdAt: timestamp,
+        };
+        await expect(
+          context.batches.create({ ...record, expectedSuiteRevision: 1 }),
+        ).rejects.toMatchObject({ code: "CASE_SUITE_REVISION_CONFLICT" });
+        const started = await context.batches.create({ ...record, expectedSuiteRevision: 2 });
+        await context.suites.deleteSuite({ suiteId: "suite-1", expectedRevision: 2 });
+        expect(await context.batches.getSummary(started.id)).toEqual(started);
+        await expect(
+          context.batches.create({ ...record, id: "deleted-task-batch", expectedSuiteRevision: 2 }),
+        ).rejects.toMatchObject({ code: "CASE_SUITE_NOT_FOUND" });
+        expect(await context.batches.getSummary("deleted-task-batch")).toBeNull();
+        expect(
+          await context.batches.create({
+            ...record,
+            id: "historical-rerun",
+            kind: "case_log_rerun",
+            parentBatchId: "batch-1",
+            sourceExecutionRunId: "run-recovered",
+            runs: [{ ...record.runs[0]!, id: "historical-rerun-run" }],
+          }),
+        ).toMatchObject({ id: "historical-rerun", kind: "case_log_rerun", suiteId: "suite-1" });
+      } finally {
+        await context.close();
+      }
+    });
+
     it("allocates distinct automatic names for simultaneous copies and preserves custom names", async () => {
       const context = await fixture(mode);
       try {
@@ -394,4 +716,87 @@ for (const mode of ["sqlite", "postgres"] as const) {
       }
     });
   });
+}
+
+function deletionSchedule() {
+  return {
+    id: "schedule-1",
+    suiteId: "suite-1",
+    projectId: DEFAULT_PROJECT_ID,
+    cronExpression: "0 9 * * *",
+    timeZone: "Asia/Shanghai",
+    missedRunPolicy: "skip" as const,
+    enabled: true,
+    nextTriggerAt: timestamp,
+    revision: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+async function seedDeletionAssociations(context: Fixture): Promise<void> {
+  const { execute, suites } = context;
+  await execute(
+    "INSERT INTO case_suite_items (id, suite_id, case_definition_id, added_at) VALUES ('item-1', 'suite-1', 'failure', ?)",
+    [timestamp],
+  );
+  await execute(
+    "INSERT INTO case_suite_ddt_items (id, suite_id, ddt_case_id, added_at) VALUES ('ddt-item-1', 'suite-1', 'ddt-1', ?)",
+    [timestamp],
+  );
+  await execute(
+    "INSERT INTO users (id, username, normalized_username, display_name, source, status, created_at, updated_at) VALUES ('user-1', 'user-1', 'user-1', 'User', 'local', 'active', ?, ?)",
+    [timestamp, timestamp],
+  );
+  await suites.setPinned({
+    userId: "user-1",
+    suiteId: "suite-1",
+    pinned: true,
+    createdAt: timestamp,
+  });
+  await execute(
+    "INSERT INTO case_suite_round_recovery_credentials (suite_id, rule_id, api_key_ciphertext, updated_at) VALUES ('suite-1', 'rule-1', 'test-ciphertext', ?)",
+    [timestamp],
+  );
+  await execute(
+    "INSERT INTO webhook_configurations (id, project_id, name, normalized_name, target_url, method, created_at, updated_at) VALUES ('webhook-1', ?, 'Webhook', 'webhook', 'https://internal.example', 'GET', ?, ?)",
+    [DEFAULT_PROJECT_ID, timestamp, timestamp],
+  );
+  await execute(
+    "INSERT INTO case_suite_webhook_bindings (suite_id, webhook_id, created_at) VALUES ('suite-1', 'webhook-1', ?)",
+    [timestamp],
+  );
+  await context.operations.upsertSchedule(deletionSchedule());
+  await execute(
+    "INSERT INTO schedule_trigger_claims (schedule_id, scheduled_for, claim_id, lease_expires_at, claimed_at) VALUES ('schedule-1', ?, 'claim-1', ?, ?)",
+    [timestamp, timestamp, timestamp],
+  );
+  await execute(
+    "INSERT INTO run_batches (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json, total_runs, created_at, updated_at) VALUES ('active-batch', 'suite-1', 'Original', 2, 'running', 0, '[]', 1, ?, ?)",
+    [timestamp, timestamp],
+  );
+  await execute(
+    "INSERT INTO run_batch_round_recoveries (batch_id, rule_id, after_round, next_round, jenkins_job_url, api_key_ciphertext, wait_minutes, available_at, created_at, updated_at) VALUES ('active-batch', 'rule-1', 1, 2, 'https://jenkins.internal/job/reset/', 'in-flight-test-ciphertext', 1, ?, ?, ?)",
+    [timestamp, timestamp, timestamp],
+  );
+  await execute(
+    "INSERT INTO run_batch_status_events (id, batch_id, to_status, batch_version, reason, recorded_at) VALUES ('event-1', 'batch-1', 'succeeded', 1, 'Completed', ?)",
+    [timestamp],
+  );
+  await execute(
+    "INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at) VALUES ('attempt-1', 'stdout', 5, ?)",
+    [timestamp],
+  );
+  await execute(
+    "INSERT INTO attempt_artifacts (id, attempt_id, relative_path, object_key, media_type, size_bytes, sha256, status, created_at, updated_at) VALUES ('artifact-1', 'attempt-1', 'reports/result.xml', 'artifacts/result.xml', 'application/xml', 1, ?, 'uploaded', ?, ?)",
+    ["b".repeat(64), timestamp, timestamp],
+  );
+  await execute(
+    "INSERT INTO attempt_log_shares (id, token_hash, attempt_id, batch_id, created_by, created_at, expires_at) VALUES ('share-1', ?, 'attempt-1', 'batch-1', 'user-1', ?, '9999-12-31T23:59:59.999Z')",
+    ["c".repeat(64), timestamp],
+  );
+  await execute(
+    "INSERT INTO analytics_facts (attempt_id, project_id, batch_id, run_id, suite_id, case_definition_id, case_version, runner_id, outcome, completed_at) VALUES ('attempt-1', ?, 'batch-1', 'run-recovered', 'suite-1', 'recovered', 1, 'runner-1', 'failed', ?)",
+    [DEFAULT_PROJECT_ID, timestamp],
+  );
 }

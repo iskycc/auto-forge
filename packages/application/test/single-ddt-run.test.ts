@@ -66,10 +66,12 @@ describe("single DDT execution", () => {
   });
   it("snapshots the DDT CaseID and associated class without creating a JSON data file", async () => {
     const { service, getCase, create, item } = fixture();
-    await service.createSingleDdtCase(scope, item.caseId, {
-      ...input,
-      projectId: "untrusted-project",
-    });
+    await service.createSingleDdtCase(
+      scope,
+      item.caseId,
+      { ...input, projectId: "untrusted-project" },
+      { username: "ddt-launcher", source: "ldap" },
+    );
     expect(getCase).toHaveBeenCalledWith(scope, item.caseId);
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -77,6 +79,7 @@ describe("single DDT execution", () => {
         suiteId: `single:${item.id}`,
         suiteName: `单用例 · ${item.caseId}`,
         suiteVersion: item.revision,
+        requestedBy: { username: "ddt-launcher", source: "ldap" },
         retryMode: "round",
         retryLimit: 0,
         policy: expect.objectContaining({
@@ -163,11 +166,13 @@ describe("case debug execution", () => {
         execution: input,
       }),
       "owner",
+      { username: "debug-launcher", source: "local" },
     );
     expect(item.executionClass).toBeUndefined();
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         suiteName: `用例调试 · ${item.caseId}`,
+        requestedBy: { username: "debug-launcher", source: "local" },
         runs: [
           expect.objectContaining({
             displayName: item.caseId,

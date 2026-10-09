@@ -69,6 +69,7 @@ import {
   caseSuites,
   caseSuitePins,
   caseSuiteVersions,
+  caseSuiteSchedules,
   ddtCases,
   runBatches,
   testMethods,
@@ -856,6 +857,24 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
+  }
+
+  async deleteSuite(input: { suiteId: string; expectedRevision: number }): Promise<void> {
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const deleted = this.handle.db
+        .delete(caseSuites)
+        .where(
+          and(eq(caseSuites.id, input.suiteId), eq(caseSuites.revision, input.expectedRevision)),
+        )
+        .run();
+      if (deleted.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
+      this.handle.db
+        .delete(caseSuiteSchedules)
+        .where(eq(caseSuiteSchedules.suiteId, input.suiteId))
+        .run();
+      // Version snapshots belong to execution history: failure-task creation still reads them.
+      // Member, pin, credential and webhook associations are removed by foreign-key cascades.
+    });
   }
 
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {

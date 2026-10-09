@@ -17,10 +17,11 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const definition = await services.caseDefinitions.get(caseDefinitionId);
     services.identityAccess.authorize(identity, "run.create", definition.projectId);
     const input = createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1024));
-    const batch = await services.runBatches.createSingleCase(caseDefinitionId, {
-      ...input,
-      projectId: definition.projectId,
-    });
+    const batch = await services.runBatches.createSingleCase(
+      caseDefinitionId,
+      { ...input, projectId: definition.projectId },
+      { username: identity.user.username, source: identity.user.source },
+    );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "execution.single_case_create",
       resourceType: "run_batch",

@@ -8,6 +8,7 @@ import type { RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { hasPermissionInAnyScope, requirePageProjectScope } from "@/lib/auth";
 import { toExecutionBatchView } from "@/lib/execution-batch-view";
 import { getPlatformServices } from "@/lib/services";
+import { isDomainError } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,12 @@ export default async function RunBatchDetailsPage({
     notFound();
   }
   const batch = overview.batch;
+  const retrySuite = batch.suiteId.startsWith("single:")
+    ? null
+    : await services.caseSuites.getSummary(batch.suiteId, projectIds).catch((error: unknown) => {
+        if (isDomainError(error) && error.code === "CASE_SUITE_NOT_FOUND") return null;
+        throw error;
+      });
   const projectVersion = batch.policy?.projectVersionId
     ? (await services.projectStructures.list(batch.projectId)).versions.find(
         (version) => version.id === batch.policy?.projectVersionId,
@@ -53,11 +60,12 @@ export default async function RunBatchDetailsPage({
         sequenceNumber={batch.sequenceNumber}
         suiteName={batch.suiteName}
         suiteVersion={batch.suiteVersion}
+        {...(batch.requestedBy ? { requestedByUsername: batch.requestedBy.username } : {})}
         {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
       />
       <ExecutionBatchDetails
         batch={toExecutionBatchView(overview)}
-        retrySuiteId={batch.suiteId}
+        {...(retrySuite ? { retrySuiteId: retrySuite.id } : {})}
         {...(batch.kind !== "case_log_rerun" &&
         !batch.suiteId.startsWith("single:") &&
         batch.policy?.projectVersionId &&

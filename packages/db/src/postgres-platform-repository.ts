@@ -123,6 +123,7 @@ import {
   pgCaseSuites,
   pgCaseSuitePins,
   pgCaseSuiteVersions,
+  pgCaseSuiteSchedules,
   pgCaseVersions,
   pgCleanupJobs,
   pgDdtCases,
@@ -2773,6 +2774,26 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
+  }
+
+  async deleteSuite(input: { suiteId: string; expectedRevision: number }): Promise<void> {
+    await this.ready();
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      const deleted = await transaction
+        .delete(pgCaseSuites)
+        .where(
+          and(
+            eq(pgCaseSuites.id, input.suiteId),
+            eq(pgCaseSuites.revision, input.expectedRevision),
+          ),
+        )
+        .returning({ id: pgCaseSuites.id });
+      if (deleted.length !== 1) await throwPostgresSuiteConflict(transaction, input.suiteId);
+      await transaction
+        .delete(pgCaseSuiteSchedules)
+        .where(eq(pgCaseSuiteSchedules.suiteId, input.suiteId));
+      // Keep immutable versions for existing batches, including failure-task creation.
+    });
   }
 
   async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {

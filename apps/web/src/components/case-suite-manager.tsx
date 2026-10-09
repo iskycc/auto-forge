@@ -48,6 +48,7 @@ export function CaseSuiteManager({
 }) {
   const router = useRouter();
   const [createdSuites, setCreatedSuites] = useState<CaseSuite[]>([]);
+  const [deletedSuiteIds, setDeletedSuiteIds] = useState<ReadonlySet<string>>(new Set());
   const [pinning, startPinChange] = useTransition();
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinnedSuiteIds, changeOptimisticPin] = useOptimistic(
@@ -64,10 +65,12 @@ export function CaseSuiteManager({
   const suitesByUpdatedAt = [
     ...createdSuites.filter((suite) => !initialSuiteIds.has(suite.id)),
     ...initialSuites,
-  ].sort(
-    (left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
-  );
+  ]
+    .filter((suite) => !deletedSuiteIds.has(suite.id))
+    .sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
+    );
   const suites = orderCaseSuitesByPins(suitesByUpdatedAt, pinnedIds);
   const statisticsBySuite = new Map(activitySummary?.items.map((entry) => [entry.suiteId, entry]));
   const [refreshing, startRefresh] = useTransition();
@@ -484,6 +487,8 @@ export function CaseSuiteManager({
               suite={suite}
               statistics={statisticsBySuite.get(suite.id)}
               canReadExecutions={canReadExecutions}
+              canManage={canManage}
+              onDeleted={() => setDeletedSuiteIds((current) => new Set([...current, suite.id]))}
               exporting={exportingSuiteId === suite.id}
               exportDisabled={exportingSuiteId !== null}
               onExport={() => void exportSuiteCases(suite)}

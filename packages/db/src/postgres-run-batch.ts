@@ -26,6 +26,7 @@ import {
   DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteRevision,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
   normalizeStoredRetryConcurrencyRules,
@@ -93,6 +94,7 @@ import {
   pgRunBatchRetryConcurrencyStates,
   pgRunBatchRoundConcurrencies,
   pgRunBatches,
+  pgCaseSuites,
   pgRunBatchStatusEvents,
   pgRunners,
   pgProjects,
@@ -212,6 +214,15 @@ export class PostgresRunBatchRepository
     if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
     let createdRow: typeof pgRunBatches.$inferSelect | undefined;
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      if (record.expectedSuiteRevision !== undefined) {
+        // Hold the task until the snapshot commits, so deletion and start have a defined order.
+        const [suite] = await transaction
+          .select({ revision: pgCaseSuites.revision })
+          .from(pgCaseSuites)
+          .where(eq(pgCaseSuites.id, record.suiteId))
+          .for("share");
+        assertCaseSuiteRevision(suite?.revision, record.expectedSuiteRevision);
+      }
       // 展示编号在同一插入语句内取序列（nextval 不参与回滚，空洞不影响展示），
       // RETURNING 直接带回完整批次行，创建完成后无需再往返读取摘要。
       const insertedRows = await transaction

@@ -1,5 +1,18 @@
 import type { CaseDefinitionWithMethods } from "./case-definition";
 import type { DdtCase } from "./ddt";
+import { DomainError } from "./errors";
+
+export function assertCaseSuiteRevision(
+  currentRevision: number | undefined,
+  expectedRevision: number,
+): void {
+  if (currentRevision === undefined) {
+    throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+  }
+  if (currentRevision !== expectedRevision) {
+    throw new DomainError("CASE_SUITE_REVISION_CONFLICT", "用例任务已被他人修改，请刷新后重试。");
+  }
+}
 
 export type CaseSuite = {
   id: string;

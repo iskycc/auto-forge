@@ -393,6 +393,10 @@ export const copyCaseSuiteInputSchema = z.object({
   includeCases: z.boolean().optional(),
 });
 
+export const deleteCaseSuiteInputSchema = z
+  .object({ expectedRevision: z.number().int().min(1) })
+  .strict();
+
 export const createFailureCaseSuiteInputSchema = z
   .object({ name: z.string().trim().min(1).max(120).optional() })
   .strict();
@@ -728,6 +732,7 @@ export type CaseSuiteAdapterConfigurationInput = z.infer<
 >;
 export type CaseSuiteExecutionPolicyInput = z.infer<typeof caseSuiteExecutionPolicySchema>;
 export type UpdateCaseSuiteInput = z.infer<typeof updateCaseSuiteInputSchema>;
+export type DeleteCaseSuiteInput = z.infer<typeof deleteCaseSuiteInputSchema>;
 export type InspectRoundRecoveryConfigurationInput = z.infer<
   typeof inspectRoundRecoveryConfigurationInputSchema
 >;

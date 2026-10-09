@@ -22,15 +22,22 @@ export function workerBackedBatchCreation(
   return new Proxy(local, {
     get(target, property) {
       if (property === "create" && create)
-        return (input: Parameters<RunBatchSchedulingService["create"]>[0]) =>
-          create(input) as ReturnType<RunBatchSchedulingService["create"]>;
+        return (...[input, requestedBy]: Parameters<RunBatchSchedulingService["create"]>) =>
+          create({ input, ...(requestedBy ? { requestedBy } : {}) }) as ReturnType<
+            RunBatchSchedulingService["create"]
+          >;
       if (property === "createSingleDdtCase" && createSingleDdtCase)
         return (
-          ...[scope, caseId, input]: Parameters<RunBatchSchedulingService["createSingleDdtCase"]>
-        ) =>
-          createSingleDdtCase({ scope, caseId, input }) as ReturnType<
+          ...[scope, caseId, input, requestedBy]: Parameters<
             RunBatchSchedulingService["createSingleDdtCase"]
-          >;
+          >
+        ) =>
+          createSingleDdtCase({
+            scope,
+            caseId,
+            input,
+            ...(requestedBy ? { requestedBy } : {}),
+          }) as ReturnType<RunBatchSchedulingService["createSingleDdtCase"]>;
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },
