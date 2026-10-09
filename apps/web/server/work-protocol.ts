@@ -47,6 +47,8 @@ export type DiagnosticReadConfiguration =
   | { mode: "full"; migrationsFolder: string; databaseUrl: string };
 
 export type WorkTask =
+  | { kind: "cancel-run"; input: unknown }
+  | { kind: "read-execution-view"; input: unknown }
   | { kind: "read-scheduling-events"; input: unknown }
   | { kind: "read-runner-resource-samples"; input: unknown }
   | { kind: "warmup" }

@@ -1,6 +1,6 @@
 import type { RunBatchRepository } from "@autoforge/application";
 import { DomainError, type RunBatchDetails } from "@autoforge/domain";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildRunBatchExportRows, RunBatchExportService } from "../src/export-run-batch-results";
 
@@ -268,6 +268,40 @@ describe("buildRunBatchExportRows", () => {
 });
 
 describe("RunBatchExportService", () => {
+  it("reads bounded pages lazily without loading batch details, including pages with no matching outcomes", async () => {
+    const readExportPage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [{ run: run("run-a", "succeeded"), attempt: attempt("a", "run-a", 1, "succeeded") }],
+        next: { className: "A", displayName: "A", runId: "run-a", round: 1 },
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            run: run("run-b", "failed"),
+            attempt: attempt("b", "run-b", 1, "failed", { resultCode: "TESTNG_ASSERTIONS_FAILED" }),
+          },
+        ],
+      });
+    const get = vi.fn();
+    const batches = {
+      getMetadata: async () => makeDetails({ totalRuns: 100_000 }),
+      readExportPage,
+      get,
+    } as unknown as RunBatchRepository;
+    const prepared = await new RunBatchExportService(batches).prepare({
+      batchId: "batch-1",
+      scope: "final",
+      outcomes: ["failed"],
+      projectIds: ["project-1"],
+    });
+    expect(readExportPage).not.toHaveBeenCalled();
+    const pages = [];
+    for await (const page of prepared.pages) pages.push(page);
+    expect(pages).toMatchObject([[], [{ attemptId: "b", outcome: "failed" }]]);
+    expect(readExportPage.mock.calls.every(([input]) => input.limit === 200)).toBe(true);
+    expect(get).not.toHaveBeenCalled();
+  });
   it("maps missing or inaccessible batches to BATCH_NOT_FOUND", async () => {
     const repository = {
       get: async () => null,

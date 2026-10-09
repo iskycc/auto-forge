@@ -8,6 +8,9 @@ import {
 } from "@autoforge/contracts";
 import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
 import ExcelJS from "exceljs";
+import { PassThrough } from "node:stream";
+import { once } from "node:events";
+import { setImmediate } from "node:timers/promises";
 import {
   exportColumnWidth,
   EXPORT_WIDTH_SAMPLE_ROWS,
@@ -99,9 +102,11 @@ export async function buildRunBatchExportWorkbook(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AutoForge";
   if (input.template === "failure-analysis") {
-    buildFailureAnalysisSheet(workbook, input);
+    const sheet = buildFailureAnalysisSheet(workbook, input);
+    appendFailureAnalysisRows(sheet, input);
   } else {
-    buildExecutionResultsSheet(workbook, input);
+    const sheet = buildExecutionResultsSheet(workbook, input);
+    appendExecutionResultsRows(sheet, input);
   }
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   return {
@@ -110,41 +115,98 @@ export async function buildRunBatchExportWorkbook(
   };
 }
 
+/** Consume one bounded page at a time; committed rows and hyperlinks are released by the writer. */
+export async function createRunBatchExportWorkbookStream(
+  pages: AsyncIterable<RunBatchExportWorkbookInput>,
+  signal: AbortSignal,
+): Promise<{ stream: PassThrough; filename: string }> {
+  const iterator = pages[Symbol.asyncIterator]();
+  const loadFirstPage = async () => {
+    try {
+      signal.throwIfAborted();
+      const first = await iterator.next();
+      if (first.done)
+        throw new Error("Export requires an initial page, even when there are no results.");
+      signal.throwIfAborted();
+      return first;
+    } catch (cause) {
+      await iterator.return?.();
+      throw cause;
+    }
+  };
+  const first = await loadFirstPage();
+  const input = first.value;
+  const stream = new PassThrough({ highWaterMark: 256 * 1024 });
+  const controller = new AbortController();
+  const abort = () => {
+    controller.abort(signal.reason ?? new Error("执行结果导出已取消。"));
+    stream.destroy(controller.signal.reason as Error);
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  stream.once("close", () => controller.abort(new Error("导出下载连接已关闭。")));
+  const write = async () => {
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+      stream,
+      useStyles: true,
+      useSharedStrings: false,
+    });
+    workbook.creator = "AutoForge";
+    const sheet =
+      input.template === "failure-analysis"
+        ? buildFailureAnalysisSheet(workbook, input)
+        : buildExecutionResultsSheet(workbook, input);
+    sheet.getRow(1).commit();
+    let page: IteratorResult<RunBatchExportWorkbookInput, unknown> = first;
+    while (!page.done) {
+      controller.signal.throwIfAborted();
+      const append =
+        input.template === "failure-analysis"
+          ? appendFailureAnalysisRows
+          : appendExecutionResultsRows;
+      // Yield every 25 rows, including within a page of long failure descriptions.
+      for (let offset = 0; offset < page.value.rows.length; offset += 25) {
+        append(sheet, { ...page.value, rows: page.value.rows.slice(offset, offset + 25) }, (row) =>
+          row.commit(),
+        );
+        await setImmediate(undefined, { signal: controller.signal });
+        if (stream.writableNeedDrain) await once(stream, "drain", { signal: controller.signal });
+      }
+      await setImmediate(undefined, { signal: controller.signal });
+      controller.signal.throwIfAborted();
+      page = await iterator.next();
+    }
+    sheet.commit();
+    await workbook.commit();
+  };
+  void write()
+    .catch((cause: unknown) =>
+      stream.destroy(cause instanceof Error ? cause : new Error("执行结果导出失败。", { cause })),
+    )
+    .finally(async () => {
+      signal.removeEventListener("abort", abort);
+      await iterator.return?.();
+    })
+    .catch((cause: unknown) =>
+      stream.destroy(cause instanceof Error ? cause : new Error("导出关闭失败。", { cause })),
+    );
+  return {
+    stream,
+    filename: exportFilename(input.batchId, input.scope, input.round, input.template ?? "results"),
+  };
+}
+
 function buildExecutionResultsSheet(
-  workbook: ExcelJS.Workbook,
+  workbook: Pick<ExcelJS.Workbook, "addWorksheet">,
   input: RunBatchExportWorkbookInput,
-): void {
+): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet("执行结果", exportWorksheetOptions());
   // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
   const includeRound = input.scope === "all";
-  const timestampFormatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: input.timeZone ?? DEFAULT_PLATFORM_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    fractionalSecondDigits: 3,
-    hourCycle: "h23",
-  });
+  const timestampFormatter = exportTimestampFormatter(input);
   const columns = includeRound
     ? [{ header: "轮次", minimum: 6, maximum: 8 }, ...EXPORT_COLUMNS]
     : EXPORT_COLUMNS;
-  const cellsFor = (row: RunBatchExportRow): ExcelJS.CellValue[] => {
-    const shareLink = row.attemptId ? input.shareLinks.get(row.attemptId) : undefined;
-    return [
-      ...(includeRound ? [row.round] : []),
-      row.casePath,
-      row.displayName,
-      OUTCOME_LABELS[row.outcome],
-      row.summary ?? "",
-      formatExportTimestamp(row.startedAt, timestampFormatter),
-      formatExportTimestamp(row.finishedAt, timestampFormatter),
-      row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
-      shareLink ? { text: shareLink, hyperlink: shareLink } : "",
-    ];
-  };
+  const cellsFor = (row: RunBatchExportRow) => executionResultCells(row, input, timestampFormatter);
   const samples = input.rows.slice(0, EXPORT_WIDTH_SAMPLE_ROWS).map(cellsFor);
   sheet.columns = columns.map((column, index) => ({
     header: column.header,
@@ -162,11 +224,57 @@ function buildExecutionResultsSheet(
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
   styleExportHeader(sheet.getRow(1));
 
+  return sheet;
+}
+
+function exportTimestampFormatter(input: RunBatchExportWorkbookInput) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: input.timeZone ?? DEFAULT_PLATFORM_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    hourCycle: "h23",
+  });
+}
+
+function executionResultCells(
+  row: RunBatchExportRow,
+  input: RunBatchExportWorkbookInput,
+  timestampFormatter: Intl.DateTimeFormat,
+): ExcelJS.CellValue[] {
+  const includeRound = input.scope === "all";
+  const shareLink = row.attemptId ? input.shareLinks.get(row.attemptId) : undefined;
+  return [
+    ...(includeRound ? [row.round] : []),
+    row.casePath,
+    row.displayName,
+    OUTCOME_LABELS[row.outcome],
+    row.summary ?? "",
+    formatExportTimestamp(row.startedAt, timestampFormatter),
+    formatExportTimestamp(row.finishedAt, timestampFormatter),
+    row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
+    shareLink ? { text: shareLink, hyperlink: shareLink } : "",
+  ];
+}
+
+function appendExecutionResultsRows(
+  sheet: ExcelJS.Worksheet,
+  input: RunBatchExportWorkbookInput,
+  commit: (row: ExcelJS.Row) => void = () => undefined,
+): void {
+  const includeRound = input.scope === "all";
+  const columns = includeRound ? EXPORT_COLUMNS.length + 1 : EXPORT_COLUMNS.length;
+  const formatter = exportTimestampFormatter(input);
   for (const row of input.rows) {
-    const exportedRow = sheet.addRow(cellsFor(row));
-    styleExportRow(exportedRow, columns.length);
+    const exportedRow = sheet.addRow(executionResultCells(row, input, formatter));
+    styleExportRow(exportedRow, columns);
     styleExportResult(exportedRow.getCell(includeRound ? 4 : 3), OUTCOME_TONES[row.outcome]);
     exportedRow.getCell(includeRound ? 8 : 7).numFmt = "0.0";
+    commit(exportedRow);
   }
 }
 
@@ -181,9 +289,9 @@ function formatExportTimestamp(value: string | null, formatter: Intl.DateTimeFor
 }
 
 function buildFailureAnalysisSheet(
-  workbook: ExcelJS.Workbook,
+  workbook: Pick<ExcelJS.Workbook, "addWorksheet">,
   input: RunBatchExportWorkbookInput,
-): void {
+): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet("失败用例分析清单", exportWorksheetOptions(2));
   const logColumnIndex = FAILURE_ANALYSIS_HEADERS.length - 1;
   const logColumnWidth = exportColumnWidth(
@@ -200,6 +308,14 @@ function buildFailureAnalysisSheet(
   sheet.autoFilter = { from: "A1", to: "J1" };
   styleExportHeader(sheet.getRow(1));
 
+  return sheet;
+}
+
+function appendFailureAnalysisRows(
+  sheet: ExcelJS.Worksheet,
+  input: RunBatchExportWorkbookInput,
+  commit: (row: ExcelJS.Row) => void = () => undefined,
+): void {
   for (const item of input.rows) {
     const shareLink = item.attemptId ? input.shareLinks.get(item.attemptId) : undefined;
     const claim = item.attemptId ? input.analysisClaims?.get(item.attemptId) : undefined;
@@ -231,6 +347,7 @@ function buildFailureAnalysisSheet(
       shareLink ? { text: shareLink, hyperlink: shareLink } : "",
     ]);
     styleFailureAnalysisRow(row, completedClaim?.category);
+    commit(row);
   }
 }
 

@@ -9,24 +9,28 @@ import {
 } from "@autoforge/application";
 
 import type { WorkDispatcher } from "./work-runtime";
+import { EXECUTION_VIEW_READ_METHODS } from "./execution-view-reads";
 
 export { workDispatcher } from "./work-runtime";
 
 /** Diagnostic scans never share the Web event loop or a control/scheduling lane. */
-export function workerBackedSchedulingEventReads<Repository extends RunBatchRepository>(
+export function workerBackedExecutionViewReads<Repository extends RunBatchRepository>(
   local: Repository,
   dispatcher: WorkDispatcher | undefined,
 ): Repository {
   const read = dispatcher?.listSchedulingEvents?.bind(dispatcher);
-  if (!read) return local;
+  const readView = dispatcher?.readExecutionView?.bind(dispatcher);
+  if (!read && !readView) return local;
   return new Proxy(local, {
     get(target, property) {
-      if (property === "listSchedulingEvents")
+      if (property === "listSchedulingEvents" && read)
         return (input: Parameters<RunBatchRepository["listSchedulingEvents"]>[0]) =>
           read({
             ...input,
             limit: Math.min(Math.max(1, Math.trunc(input.limit)), 500),
           }) as ReturnType<RunBatchRepository["listSchedulingEvents"]>;
+      if (readView && EXECUTION_VIEW_READ_METHODS.some((method) => method === property))
+        return (...args: unknown[]) => readView({ method: property, args });
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -98,6 +102,7 @@ export function prioritizedExecutionControlRepository(
     "declareArtifacts",
     "recoverExpired",
     "terminateBatch",
+    "cancelRun",
   ]);
   return new Proxy(repository, {
     get(target, property) {
@@ -128,9 +133,15 @@ export function workerBackedExecutionControlRepository(
   dispatcher: WorkDispatcher | undefined,
 ): ExecutionControlRepository {
   if (!dispatcher) return local;
+  const cancel = dispatcher.cancelExecutionRun?.bind(dispatcher);
   return new Proxy(local, {
     get(target, property) {
       switch (property) {
+        case "cancelRun":
+          if (cancel)
+            return (input: Parameters<ExecutionControlRepository["cancelRun"]>[0]) =>
+              cancel(input) as ReturnType<ExecutionControlRepository["cancelRun"]>;
+          break;
         case "reconcile":
           return (input: Parameters<ExecutionControlRepository["reconcile"]>[0]) =>
             dispatcher.reconcileAttempts(input) as ReturnType<

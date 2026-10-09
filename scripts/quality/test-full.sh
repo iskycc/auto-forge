@@ -295,6 +295,8 @@ run_adapter_tests() {
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
       packages/db/test/diagnostic-read-database.integration.test.ts \
+      packages/db/test/run-batch-export-page.integration.test.ts \
+      packages/db/test/attempt-log-snapshot.integration.test.ts \
       packages/db/test/scheduling-event-read-plan.integration.test.ts \
       packages/db/test/scheduling-events.integration.test.ts \
       packages/db/test/runner-resource-samples.integration.test.ts \
@@ -339,6 +341,8 @@ run_distributed_contract_tests() {
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
       packages/db/test/diagnostic-read-database.integration.test.ts \
+      packages/db/test/run-batch-export-page.integration.test.ts \
+      packages/db/test/attempt-log-snapshot.integration.test.ts \
       packages/db/test/scheduling-event-read-plan.integration.test.ts \
       packages/db/test/scheduling-events.integration.test.ts \
       packages/db/test/runner-resource-samples.integration.test.ts \

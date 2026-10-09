@@ -2130,6 +2130,9 @@ export type RunBatchMetadata = Omit<RunBatch, keyof RunBatchCounters>;
 export type ExecutionCasePageKey = { runId: string; attemptId?: string; round: number };
 
 export interface RunBatchRepository {
+  readExportPage(
+    input: import("./export-run-batch-results").RunBatchExportPageQuery,
+  ): Promise<import("./export-run-batch-results").RunBatchExportPage>;
   readExceptionRecords(input: {
     batchId: string;
     scope?: "all" | "terminal";
@@ -2159,11 +2162,12 @@ export interface RunBatchRepository {
     batchId: string,
     selection: { executionRunId?: string; finalFailuresOnly?: boolean },
   ): Promise<RunBatchRerunSnapshot | null>;
+  /** Public log history excludes batch snapshots, case data and detailed TestNG reports. */
   listCaseLogRerunBatches(
     parentBatchId: string,
     sourceExecutionRunId: string,
     limit: number,
-  ): Promise<RunBatchDetails[]>;
+  ): Promise<Array<Pick<RunBatchDetails, "id" | "requestedBy" | "attempts">>>;
   /**
    * 公开日志只读取单个 ExecutionRun 的轮次，避免为一个用例加载十万行批次明细。
    * 适配器未实现时应用层保留兼容回退，生产 Lite/Full 适配器都必须实现。

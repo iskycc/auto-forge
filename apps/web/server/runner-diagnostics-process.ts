@@ -2,6 +2,11 @@ import { DomainError, isDomainError } from "@autoforge/domain";
 import { z } from "zod";
 import type { RunBatchRepository, RunnerRepository } from "@autoforge/application";
 import type { WorkRequest, WorkResponse, DiagnosticReadConfiguration } from "./work-protocol.ts";
+import { readExecutionView } from "../src/lib/execution-view-reads.ts";
+import {
+  isRuntimeDatabaseContention,
+  runtimeDiagnosticContext,
+} from "@autoforge/contracts/runtime-diagnostics";
 
 const identifier = z.string().min(1).max(128);
 const querySchema = z
@@ -86,14 +91,22 @@ async function respond(request: WorkRequest): Promise<void> {
 
 async function read({ task }: WorkRequest): Promise<unknown> {
   if (task.kind === "warmup") return;
-  if (task.kind !== "read-scheduling-events" && task.kind !== "read-runner-resource-samples")
-    throw new DomainError("VALIDATION_FAILED", "诊断进程只接受日志和资源监控读取。");
+  if (
+    task.kind !== "read-scheduling-events" &&
+    task.kind !== "read-runner-resource-samples" &&
+    task.kind !== "read-execution-view"
+  )
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "只读进程只接受已声明的执行视图、日志和资源监控读取。",
+    );
   repositories ??= openRepositories().catch((error: unknown) => {
     repositories = undefined;
     throw error;
   });
   const { batches, runners } = await repositories;
   try {
+    if (task.kind === "read-execution-view") return await readExecutionView(batches, task.input);
     if (task.kind === "read-scheduling-events") {
       const input = querySchema.parse(task.input);
       return await batches.listSchedulingEvents({
@@ -109,8 +122,14 @@ async function read({ task }: WorkRequest): Promise<unknown> {
     const input = sampleSchema.parse(task.input);
     return await runners.resourceSamples(input.runnerId, input.since, input.until);
   } catch (error) {
-    if (error instanceof Error && Reflect.get(error, "code") === "57014")
-      throw new DomainError("PLATFORM_BUSY", "执行机诊断读取超时，请稍后重试。", { cause: error });
+    if (
+      isRuntimeDatabaseContention(
+        runtimeDiagnosticContext(error, { operation: "execution-view.read" }),
+      )
+    )
+      throw new DomainError("PLATFORM_BUSY", "执行信息读取暂时繁忙，请稍后重试。", {
+        cause: error,
+      });
     throw error;
   }
 }

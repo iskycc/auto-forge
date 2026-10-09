@@ -9,6 +9,62 @@ import { describe, expect, it, vi } from "vitest";
 import { LogIoPool } from "./log-io-pool";
 
 describe("isolated log disk I/O", () => {
+  it("interrupts native SQLite reads and keeps completion watermarks away from viewer searches", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "log-native-read-"));
+    const batchId = randomUUID();
+    const pool = new LogIoPool(directory, () => undefined);
+    let database: Database.Database | undefined;
+    try {
+      await pool.call("appendChunks", [
+        {
+          batchId,
+          attemptId: "attempt",
+          receivedAt: "2026-10-10T00:00:00.000Z",
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 0,
+              content: "committed",
+              recordedAt: "2026-10-10T00:00:00.000Z",
+            },
+          ],
+        },
+      ]);
+      await pool.call("listChunks", [
+        { batchId, attemptId: "attempt", stream: "stdout", afterSequence: -1, limit: 1 },
+      ]);
+      database = new Database(join(directory, `${batchId}.sqlite`));
+      database.exec(`ALTER TABLE attempt_log_chunks RENAME TO fixture_chunks;
+        CREATE VIEW attempt_log_chunks AS WITH RECURSIVE counter(sequence) AS
+        (SELECT 0 UNION ALL SELECT sequence+1 FROM counter WHERE sequence<1000000000)
+        SELECT 'attempt' AS attempt_id,'stdout' AS stream,sequence,'blocked' AS content,
+          'identity' AS content_encoding,7 AS size_bytes,'2026-10-10T00:00:00.000Z' AS recorded_at,
+          '2026-10-10T00:00:00.000Z' AS received_at FROM counter;`);
+      const blocked = Promise.allSettled([
+        pool.call("listChunks", [
+          { batchId, attemptId: "attempt", stream: "stdout", afterSequence: -1, limit: 1 },
+        ]),
+      ]);
+      const started = performance.now();
+      await expect(pool.call("acknowledgedSequence", [batchId, "attempt", "stdout"])).resolves.toBe(
+        0,
+      );
+      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(await blocked).toMatchObject([{ status: "rejected" }]);
+      database.exec(
+        "DROP VIEW attempt_log_chunks; ALTER TABLE fixture_chunks RENAME TO attempt_log_chunks;",
+      );
+      await expect(
+        pool.call("listChunks", [
+          { batchId, attemptId: "attempt", stream: "stdout", afterSequence: -1, limit: 1 },
+        ]),
+      ).resolves.toMatchObject({ items: [{ content: "committed" }] });
+    } finally {
+      await pool.close();
+      database?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 15_000);
   it("runs separate attempts on different threads while preserving each attempt's write order", async () => {
     const fixture = new URL(
       `data:text/javascript,${encodeURIComponent(`

@@ -1,3 +1,4 @@
+import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -1630,10 +1631,8 @@ public class MixedVisibleTest {
   const exportBody = new Uint8Array(await readFile(await download.path()));
   // xlsx 即 zip，首 4 字节必须是 PK\x03\x04 本地文件头。
   expect(Array.from(exportBody.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
-  const sharedStrings = new TextDecoder("utf-8").decode(
-    unzipSync(exportBody)["xl/sharedStrings.xml"],
-  );
-  const sharePath = /\/share\/attempt-log\/[\w-]+/.exec(sharedStrings)?.[0];
+  const exportedText = await readExportedWorkbookText(Buffer.from(exportBody));
+  const sharePath = /\/share\/attempt-log\/[\w-]+/.exec(exportedText)?.[0];
   expect(sharePath).toBeTruthy();
   const failureShareResponse = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/log-share`,
@@ -1671,8 +1670,9 @@ public class MixedVisibleTest {
   expect((await analysisResponsePromise).status()).toBe(200);
   const analysisDownload = await analysisDownloadPromise;
   expect(analysisDownload.suggestedFilename()).toContain("failure-analysis-round-1.xlsx");
-  const analysisArchive = unzipSync(new Uint8Array(await readFile(await analysisDownload.path())));
-  const analysisStrings = new TextDecoder("utf-8").decode(analysisArchive["xl/sharedStrings.xml"]);
+  const analysisBuffer = await readFile(await analysisDownload.path());
+  const analysisArchive = unzipSync(new Uint8Array(analysisBuffer));
+  const analysisStrings = await readExportedWorkbookText(analysisBuffer);
   const analysisSheet = new TextDecoder("utf-8").decode(
     analysisArchive["xl/worksheets/sheet1.xml"],
   );

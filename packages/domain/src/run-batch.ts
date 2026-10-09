@@ -466,7 +466,9 @@ export function finalRunAttemptByExecutionRun(
 
 // 终态 attempt 的不变量保证 outcome 与 status 一致；防御性回退到 status 以覆盖历史数据。
 // 导出与轮次统计共用同一判定，避免两处对 outcome/status 的回退规则漂移。
-export function runAttemptOutcome(attempt: RunAttempt): RunAttempt["outcome"] {
+export function runAttemptOutcome(
+  attempt: Pick<RunAttempt, "status" | "outcome">,
+): RunAttempt["outcome"] {
   if (attempt.outcome) return attempt.outcome;
   const status = attempt.status;
   if (

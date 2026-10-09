@@ -11,6 +11,7 @@ import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator } from "./support/session";
 import { startBackgroundLoad } from "./support/background-load";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { readExportedWorkbookText } from "./support/export-workbook";
 
 const CASE_COUNT = 500;
 const RUNNER_COUNT = 8;
@@ -106,12 +107,21 @@ test("control plane completes 500 concurrent protocol slots without blocking rea
     const claimDurationMs = performance.now() - claimStartedAt;
     expect(claimed).toHaveLength(CASE_COUNT);
 
-    await inspectRunnerDiagnosticsDuringExecution(page, created.body.id, claimed);
+    const firstCompleted = claimed[0]!;
+    await uploadLog(page, firstCompleted, 0);
+    await completeAttempt(page, firstCompleted, 0);
+    const remaining = claimed.slice(1);
+    await inspectRunnerDiagnosticsDuringExecution(
+      page,
+      created.body.id,
+      remaining,
+      firstCompleted.assignment.attemptId,
+    );
 
     const executionStartedAt = performance.now();
-    await mapWithConcurrency(claimed, CLIENT_REQUEST_CONCURRENCY, async (claim, index) => {
-      await uploadLog(page, claim, index);
-      await completeAttempt(page, claim, index);
+    await mapWithConcurrency(remaining, CLIENT_REQUEST_CONCURRENCY, async (claim, index) => {
+      await uploadLog(page, claim, index + 1);
+      await completeAttempt(page, claim, index + 1);
     });
     const executionDurationMs = performance.now() - executionStartedAt;
 
@@ -158,6 +168,7 @@ async function inspectRunnerDiagnosticsDuringExecution(
   page: Page,
   batchId: string,
   claimed: ClaimedAssignment[],
+  completedAttemptId: string,
 ) {
   const stop = new AbortController();
   const renewals: number[] = [];
@@ -236,6 +247,7 @@ async function inspectRunnerDiagnosticsDuringExecution(
         await telemetry.getByRole("button", { name: /^关闭/ }).click();
       }
     }
+    await inspectCommonExecutionReads(page, batchId, completedAttemptId);
     // Cross the original 45-second lease deadline, instead of only testing quick completions.
     await delay(Math.max(0, 50_000 - (performance.now() - openedAt)));
   } finally {
@@ -243,9 +255,64 @@ async function inspectRunnerDiagnosticsDuringExecution(
     await keepAlive;
   }
   if (renewalFailure) throw renewalFailure;
-  expect(renewals.length).toBeGreaterThanOrEqual(CASE_COUNT * 3);
+  expect(renewals.length).toBeGreaterThanOrEqual(claimed.length * 3);
   expect(percentile(renewals, 0.95)).toBeLessThan(1_500);
   expect(Math.max(...renewals)).toBeLessThan(5_000);
+}
+
+async function inspectCommonExecutionReads(
+  page: Page,
+  batchId: string,
+  completedAttemptId: string,
+): Promise<void> {
+  const paths = [
+    "/api/v1/run-batches?limit=20",
+    `/api/v1/run-batches/${batchId}?view=summary`,
+    `/api/v1/run-batches/${batchId}/overview`,
+    `/api/v1/run-batches/${batchId}/cases?scope=1&sort=status&direction=asc&pageSize=50&query=ConcurrencyProbe`,
+    `/api/v1/run-batches/${batchId}/cases?scope=summary&sort=duration&direction=desc&pageSize=50`,
+    `/api/v1/run-batches/${batchId}/cases?scope=all&sort=name&direction=asc&pageSize=50&cached=1`,
+    `/api/v1/run-batches/${batchId}/exceptions?scope=all&limit=50`,
+  ];
+  for (const path of paths) {
+    const response = await page.request.get(path);
+    expect(response.status(), path).toBe(200);
+    await response.body();
+  }
+  for (const template of ["results", "failure-analysis"]) {
+    const response = await page.request.get(
+      `/api/v1/run-batches/${batchId}/export?scope=final&outcomes=succeeded,failed,blocked&template=${template}`,
+    );
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("spreadsheetml");
+    const workbook = await response.body();
+    expect(workbook.subarray(0, 2).toString()).toBe("PK");
+    expect(workbook.length).toBeGreaterThan(1_000);
+    const exported = await readExportedWorkbookText(workbook);
+    if (template === "results") expect(exported).toContain(CLASS_PREFIX);
+    else expect(exported).not.toContain(CLASS_PREFIX);
+  }
+  const shared = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-attempts/${completedAttemptId}/log-share`,
+    { method: "POST" },
+  );
+  expect(shared.status).toBe(200);
+  const logPage = await page.context().newPage();
+  try {
+    await logPage.goto(shared.body.shareUrl);
+    await expect(logPage.locator(".execution-log")).toContainText("concurrency probe 0 passed");
+    for (const width of [1024, 1536]) {
+      await logPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(logPage);
+      if (process.env.AUTOFORGE_UI_SCREENSHOT_DIR)
+        await logPage.screenshot({
+          path: `${process.env.AUTOFORGE_UI_SCREENSHOT_DIR}/active-completed-log-${width}.png`,
+        });
+    }
+  } finally {
+    await logPage.close();
+  }
 }
 
 async function ensureProjectHierarchy(page: Page): Promise<{ versionId: string; stageId: string }> {

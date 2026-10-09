@@ -1,4 +1,5 @@
 import { finalFailureRunCondition } from "./final-failure-selection";
+import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
 import {
   executionExceptionQueries,
   mapExecutionExceptionRecords,
@@ -172,6 +173,14 @@ const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
 export class PostgresRunBatchRepository
   implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
 {
+  async readExportPage(input: Parameters<RunBatchRepository["readExportPage"]>[0]) {
+    await this.handle.ready;
+    const result = await this.handle.db.execute(runBatchExportPageQuery(input));
+    return mapRunBatchExportPage(
+      result.rows as unknown as Parameters<typeof mapRunBatchExportPage>[0],
+      input.limit,
+    );
+  }
   async readExceptionRecords(input: Parameters<RunBatchRepository["readExceptionRecords"]>[0]) {
     await this.ready();
     // Recovery writes can format TEXT timestamps through timestamptz. Normalize records and
@@ -398,9 +407,8 @@ export class PostgresRunBatchRepository
     return this.mapBatches(rows);
   }
 
-  private async readBatchPageRows(input: RunBatchListQuery) {
-    await this.ready();
-    if (input.projectIds?.length === 0) return [];
+  private batchPageCondition(input: RunBatchListQuery) {
+    if (input.projectIds?.length === 0) return sql`FALSE`;
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
       sql`${pgRunBatches.batchKind} <> 'case_log_rerun'`,
@@ -436,6 +444,11 @@ export class PostgresRunBatchRepository
     ];
     // 页内批次的选定执行机随页查询一次取回（有序数组聚合），列表探针往返
     // 由“页 + 执行机 + 计数预检 + 计数”收敛为“页 + 计数”两次。
+    return and(...conditions);
+  }
+
+  private async readBatchPageRows(input: RunBatchListQuery) {
+    await this.ready();
     const rows = await this.handle.db
       .select({
         ...getTableColumns(pgRunBatches),
@@ -444,7 +457,7 @@ export class PostgresRunBatchRepository
         ) FROM run_batch_runners br WHERE br.batch_id = ${pgRunBatches.id})`,
       })
       .from(pgRunBatches)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(this.batchPageCondition(input))
       .orderBy(desc(pgRunBatches.createdAt), desc(pgRunBatches.id))
       .limit(input.limit + 1);
     return rows;
@@ -468,7 +481,23 @@ export class PostgresRunBatchRepository
   }
 
   async listMetadataPage(input: RunBatchListQuery) {
-    const rows = await this.readBatchPageRows(input);
+    await this.ready();
+    const columns = getTableColumns(pgRunBatches);
+    const metadataColumns = Object.fromEntries(
+      Object.entries(columns).filter(([name]) => name !== "adapterRuntimeJson"),
+    ) as Omit<typeof columns, "adapterRuntimeJson">;
+    const rows = await this.handle.db
+      .select({
+        ...metadataColumns,
+        selectedRunnerIds: sql<
+          string[]
+        >`(SELECT COALESCE(array_agg(br.runner_id ORDER BY br.runner_id), ARRAY[]::text[])
+        FROM run_batch_runners br WHERE br.batch_id=${pgRunBatches.id})`,
+      })
+      .from(pgRunBatches)
+      .where(this.batchPageCondition(input))
+      .orderBy(desc(pgRunBatches.createdAt), desc(pgRunBatches.id))
+      .limit(input.limit + 1);
     const pageRows = rows.slice(0, input.limit);
     const items = pageRows.map((row) => this.mapBatchMetadataRow(row, row.selectedRunnerIds ?? []));
     const last = pageRows.at(-1);
@@ -658,10 +687,14 @@ export class PostgresRunBatchRepository
     parentBatchId: string,
     sourceExecutionRunId: string,
     limit: number,
-  ): Promise<RunBatchDetails[]> {
+  ): ReturnType<RunBatchRepository["listCaseLogRerunBatches"]> {
     await this.ready();
     const rows = await this.handle.db
-      .select({ id: pgRunBatches.id })
+      .select({
+        id: pgRunBatches.id,
+        requestedByUsername: pgRunBatches.requestedByUsername,
+        requestedBySource: pgRunBatches.requestedBySource,
+      })
       .from(pgRunBatches)
       .where(
         and(
@@ -672,18 +705,49 @@ export class PostgresRunBatchRepository
       )
       .orderBy(pgRunBatches.createdAt, pgRunBatches.id)
       .limit(Math.min(Math.max(1, limit), 500));
-    const batches = await Promise.all(rows.map(({ id }) => this.get(id)));
-    return batches.filter((batch): batch is RunBatchDetails => batch !== null);
+    if (rows.length === 0) return [];
+    const history = await this.handle.db
+      .select({ ...this.attemptLogHistoryColumns(), batchId: pgExecutionRuns.batchId })
+      .from(pgRunAttempts)
+      .innerJoin(pgExecutionRuns, eq(pgRunAttempts.executionRunId, pgExecutionRuns.id))
+      .where(
+        inArray(
+          pgExecutionRuns.batchId,
+          rows.map((row) => row.id),
+        ),
+      )
+      .orderBy(pgRunAttempts.createdAt, pgRunAttempts.id);
+    const attemptsByBatch = new Map<string, RunAttempt[]>();
+    for (const row of history) {
+      const attempts = attemptsByBatch.get(row.batchId) ?? [];
+      attempts.push(toRunAttempt({ ...row, testNgResultJson: null }));
+      attemptsByBatch.set(row.batchId, attempts);
+    }
+    return rows.map((row) => ({
+      id: row.id,
+      attempts: attemptsByBatch.get(row.id) ?? [],
+      ...(row.requestedByUsername && row.requestedBySource
+        ? { requestedBy: { username: row.requestedByUsername, source: row.requestedBySource } }
+        : {}),
+    }));
+  }
+
+  private attemptLogHistoryColumns() {
+    const columns = getTableColumns(pgRunAttempts);
+    return Object.fromEntries(
+      Object.entries(columns).filter(([column]) => column !== "testNgResultJson"),
+    ) as Omit<typeof columns, "testNgResultJson">;
   }
 
   async listAttemptsForExecutionRun(executionRunId: string): Promise<RunAttempt[]> {
     await this.ready();
+    // Public log history only needs attempt facts; detailed TestNG reports stay in their own views.
     const rows = await this.handle.db
-      .select()
+      .select(this.attemptLogHistoryColumns())
       .from(pgRunAttempts)
       .where(eq(pgRunAttempts.executionRunId, executionRunId))
       .orderBy(pgRunAttempts.createdAt, pgRunAttempts.id);
-    return rows.map(toRunAttempt);
+    return rows.map((row) => toRunAttempt({ ...row, testNgResultJson: null }));
   }
 
   async getMetadata(batchId: string, projectIds?: readonly string[]) {

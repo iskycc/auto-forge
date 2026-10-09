@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { unzipSync, zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { readExportedWorkbookText } from "./support/export-workbook";
 import { selectJarForInspection } from "./support/jar-import";
 import { dropCaseListFiles } from "./support/case-list-upload";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
@@ -940,6 +941,51 @@ test("execution export dialog keeps choices readable and downloads the selected 
   const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
   const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const analysisScope = {
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: version.body.id,
+    batchId: fixture.batchId,
+  };
+  expect(
+    (
+      await browserJson(page, "/api/v1/failure-analysis/batches", {
+        method: "POST",
+        body: analysisScope,
+      })
+    ).status,
+  ).toBe(201);
+  const claimed = await browserJson<{ claimed: Array<{ id: string }> }>(
+    page,
+    "/api/v1/failure-analysis/claims",
+    { method: "POST", body: { ...analysisScope, executionRunIds: [`run-failed-1-${suffix}`] } },
+  );
+  expect(claimed.status).toBe(201);
+  const analysisId = claimed.body.claimed[0]!.id;
+  expect(
+    (
+      await browserJson(page, `/api/v1/failure-analysis/claims/${analysisId}/start`, {
+        method: "POST",
+        body: { projectId: DEFAULT_PROJECT_ID, category: "case_fixed" },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await browserJson(page, "/api/v1/failure-analysis/claims/complete", {
+        method: "POST",
+        body: {
+          projectId: DEFAULT_PROJECT_ID,
+          analysisIds: [analysisId],
+          category: "case_fixed",
+          caseIssueConfirmed: true,
+          issueDescription: "导出回归：断言数据过期",
+          caseFixEvidence: "commit export-audit",
+          remark: "保留已完成的分析信息",
+        },
+      })
+    ).status,
+  ).toBe(200);
+
   const exportDatabase = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
   try {
     exportDatabase.exec("PRAGMA busy_timeout = 5000");
@@ -1024,7 +1070,7 @@ test("execution export dialog keeps choices readable and downloads the selected 
   const standardWorkbookPath = test.info().outputPath("execution-results.xlsx");
   await standardDownload.saveAs(standardWorkbookPath);
   const standardArchive = unzipSync(await readFile(standardWorkbookPath));
-  const standardStrings = new TextDecoder().decode(standardArchive["xl/sharedStrings.xml"]);
+  const standardStrings = await readExportedWorkbookText(await readFile(standardWorkbookPath));
   expect(standardStrings).toContain(fixture.passedName);
   expect(standardStrings).toContain(fixture.failedNames[0]);
   expect(standardStrings).toContain("2026-10-07 00:00:00.123");
@@ -1089,9 +1135,17 @@ test("execution export dialog keeps choices readable and downloads the selected 
   const analysisWorkbookPath = test.info().outputPath("failure-analysis.xlsx");
   await analysisDownload.saveAs(analysisWorkbookPath);
   const analysisArchive = unzipSync(await readFile(analysisWorkbookPath));
-  const analysisStrings = new TextDecoder().decode(analysisArchive["xl/sharedStrings.xml"]);
+  const analysisStrings = await readExportedWorkbookText(await readFile(analysisWorkbookPath));
   expect(analysisStrings).toContain(fixture.failedNames[0]);
   expect(analysisStrings).not.toContain(fixture.passedName);
+  for (const persisted of [
+    "E2E Administrator（e2e-admin）",
+    "用例问题已修改",
+    "导出回归：断言数据过期",
+    "commit export-audit",
+    "保留已完成的分析信息",
+  ])
+    expect(analysisStrings).toContain(persisted);
   expect(new TextDecoder().decode(analysisArchive["xl/styles.xml"])).not.toMatch(
     /\bindent="[1-9]\d*"/u,
   );

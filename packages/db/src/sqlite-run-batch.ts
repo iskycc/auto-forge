@@ -1,4 +1,5 @@
 import { finalFailureRunCondition } from "./final-failure-selection";
+import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
 import {
   executionExceptionQueries,
   mapExecutionExceptionRecords,
@@ -183,6 +184,9 @@ const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS (
 export class SqliteRunBatchRepository
   implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
 {
+  async readExportPage(input: Parameters<RunBatchRepository["readExportPage"]>[0]) {
+    return mapRunBatchExportPage(this.handle.db.all(runBatchExportPageQuery(input)), input.limit);
+  }
   async readExceptionRecords(input: Parameters<RunBatchRepository["readExceptionRecords"]>[0]) {
     const queries = executionExceptionQueries(input);
     return mapExecutionExceptionRecords(
@@ -411,8 +415,8 @@ export class SqliteRunBatchRepository
     return this.mapBatches(rows);
   }
 
-  private async readBatchPageRows(input: RunBatchListQuery) {
-    if (input.projectIds?.length === 0) return [];
+  private batchPageCondition(input: RunBatchListQuery) {
+    if (input.projectIds?.length === 0) return sql`FALSE`;
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
       sql`${runBatches.batchKind} <> 'case_log_rerun'`,
@@ -446,10 +450,14 @@ export class SqliteRunBatchRepository
           ]
         : []),
     ];
+    return and(...conditions);
+  }
+
+  private async readBatchPageRows(input: RunBatchListQuery) {
     const rows = this.handle.db
       .select()
       .from(runBatches)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(this.batchPageCondition(input))
       .orderBy(desc(runBatches.createdAt), desc(runBatches.id))
       .limit(input.limit + 1)
       .all();
@@ -471,7 +479,17 @@ export class SqliteRunBatchRepository
   }
 
   async listMetadataPage(input: RunBatchListQuery) {
-    const rows = await this.readBatchPageRows(input);
+    const columns = getTableColumns(runBatches);
+    const metadataColumns = Object.fromEntries(
+      Object.entries(columns).filter(([name]) => name !== "adapterRuntimeJson"),
+    ) as Omit<typeof columns, "adapterRuntimeJson">;
+    const rows = await this.handle.db
+      .select(metadataColumns)
+      .from(runBatches)
+      .where(this.batchPageCondition(input))
+      .orderBy(desc(runBatches.createdAt), desc(runBatches.id))
+      .limit(input.limit + 1)
+      .all();
     const pageRows = rows.slice(0, input.limit);
     const runnerRows = pageRows.length
       ? this.handle.db
@@ -685,9 +703,13 @@ export class SqliteRunBatchRepository
     parentBatchId: string,
     sourceExecutionRunId: string,
     limit: number,
-  ): Promise<RunBatchDetails[]> {
+  ): ReturnType<RunBatchRepository["listCaseLogRerunBatches"]> {
     const rows = this.handle.db
-      .select({ id: runBatches.id })
+      .select({
+        id: runBatches.id,
+        requestedByUsername: runBatches.requestedByUsername,
+        requestedBySource: runBatches.requestedBySource,
+      })
       .from(runBatches)
       .where(
         and(
@@ -699,18 +721,50 @@ export class SqliteRunBatchRepository
       .orderBy(runBatches.createdAt, runBatches.id)
       .limit(Math.min(Math.max(1, limit), 500))
       .all();
-    const batches = await Promise.all(rows.map(({ id }) => this.get(id)));
-    return batches.filter((batch): batch is RunBatchDetails => batch !== null);
+    if (rows.length === 0) return [];
+    const history = this.handle.db
+      .select({ ...this.attemptLogHistoryColumns(), batchId: executionRuns.batchId })
+      .from(runAttempts)
+      .innerJoin(executionRuns, eq(runAttempts.executionRunId, executionRuns.id))
+      .where(
+        inArray(
+          executionRuns.batchId,
+          rows.map((row) => row.id),
+        ),
+      )
+      .orderBy(runAttempts.createdAt, runAttempts.id)
+      .all();
+    const attemptsByBatch = new Map<string, RunAttempt[]>();
+    for (const row of history) {
+      const attempts = attemptsByBatch.get(row.batchId) ?? [];
+      attempts.push(toRunAttempt({ ...row, testNgResultJson: null }));
+      attemptsByBatch.set(row.batchId, attempts);
+    }
+    return rows.map((row) => ({
+      id: row.id,
+      attempts: attemptsByBatch.get(row.id) ?? [],
+      ...(row.requestedByUsername && row.requestedBySource
+        ? { requestedBy: { username: row.requestedByUsername, source: row.requestedBySource } }
+        : {}),
+    }));
+  }
+
+  private attemptLogHistoryColumns() {
+    const columns = getTableColumns(runAttempts);
+    return Object.fromEntries(
+      Object.entries(columns).filter(([column]) => column !== "testNgResultJson"),
+    ) as Omit<typeof columns, "testNgResultJson">;
   }
 
   async listAttemptsForExecutionRun(executionRunId: string): Promise<RunAttempt[]> {
-    return this.handle.db
-      .select()
+    // Public log history only needs attempt facts; detailed TestNG reports stay in their own views.
+    const rows = this.handle.db
+      .select(this.attemptLogHistoryColumns())
       .from(runAttempts)
       .where(eq(runAttempts.executionRunId, executionRunId))
       .orderBy(runAttempts.createdAt, runAttempts.id)
-      .all()
-      .map(toRunAttempt);
+      .all();
+    return rows.map((row) => toRunAttempt({ ...row, testNgResultJson: null }));
   }
 
   async getMetadata(batchId: string, projectIds?: readonly string[]) {

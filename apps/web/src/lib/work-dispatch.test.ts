@@ -11,7 +11,7 @@ import {
   workerBackedExecutionControlRepository,
   prioritizedExecutionControlRepository,
   workerBackedBatchCreation,
-  workerBackedSchedulingEventReads,
+  workerBackedExecutionViewReads,
   workerBackedRunnerResourceReads,
 } from "./work-dispatch";
 import type { WorkDispatcher } from "./work-runtime";
@@ -44,6 +44,46 @@ describe("scheduling coalescing", () => {
 });
 
 describe("execution control work dispatch", () => {
+  it("dispatches individual cancellation to control without using a read process", async () => {
+    const cancelRun = vi.fn();
+    const cancelExecutionRun = vi.fn().mockResolvedValue(true);
+    const input = {
+      runId: "run",
+      actorId: "actor",
+      eventId: "event",
+      reason: "cancel",
+      requestedAt: "2026-10-10T00:00:00.000Z",
+    };
+    const local = { cancelRun } as unknown as ExecutionControlRepository;
+    const dispatcher = { cancelExecutionRun } as unknown as WorkDispatcher;
+    await expect(
+      workerBackedExecutionControlRepository(local, dispatcher).cancelRun(input),
+    ).resolves.toBe(true);
+    expect(cancelExecutionRun).toHaveBeenCalledWith(input);
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+  it.each([
+    "readExceptionRecords",
+    "getAttemptLogSnapshot",
+    "listAttemptsForExecutionRun",
+    "listCaseLogRerunBatches",
+    "listCasePage",
+    "listMetadataPage",
+    "getSummary",
+    "get",
+  ] as const)("moves %s scans away from HTTP and execution control", async (method) => {
+    const local = {
+      [method]: vi.fn(),
+    } as unknown as import("@autoforge/application").RunBatchRepository;
+    const readExecutionView = vi.fn().mockResolvedValue({ id: "isolated" });
+    const dispatcher = { readExecutionView } as unknown as WorkDispatcher;
+    const isolated = workerBackedExecutionViewReads(local, dispatcher);
+    const input = { batchId: "batch", limit: 50 };
+    const operation = Reflect.get(isolated, method) as (input: unknown) => Promise<unknown>;
+    await expect(operation(input)).resolves.toEqual({ id: "isolated" });
+    expect(readExecutionView).toHaveBeenCalledWith({ method, args: [input] });
+    expect(Reflect.get(local, method)).not.toHaveBeenCalled();
+  });
   it("isolates diagnostic reads while retaining local writes, method binding and fallback", async () => {
     const localBatches = {
       listSchedulingEvents: vi.fn(),
@@ -57,7 +97,7 @@ describe("execution control work dispatch", () => {
       listSchedulingEvents: vi.fn().mockResolvedValue({ items: [] }),
       readRunnerResourceSamples: vi.fn().mockResolvedValue([]),
     } as unknown as WorkDispatcher;
-    const batches = workerBackedSchedulingEventReads(localBatches, dispatcher);
+    const batches = workerBackedExecutionViewReads(localBatches, dispatcher);
     const runners = workerBackedRunnerResourceReads(localRunners, dispatcher);
     const query = { batchId: "batch", runnerId: "runner", latest: true, limit: 500 };
     await expect(batches.listSchedulingEvents(query)).resolves.toEqual({ items: [] });
@@ -72,7 +112,7 @@ describe("execution control work dispatch", () => {
     expect(localRunners.resourceSamples).not.toHaveBeenCalled();
     await batches.appendSchedulingEvents([]);
     expect(localBatches.appendSchedulingEvents).toHaveBeenCalledWith([]);
-    expect(workerBackedSchedulingEventReads(localBatches, undefined)).toBe(localBatches);
+    expect(workerBackedExecutionViewReads(localBatches, undefined)).toBe(localBatches);
     expect(workerBackedRunnerResourceReads(localRunners, undefined)).toBe(localRunners);
   });
   it.each(["local", "ldap"] as const)(

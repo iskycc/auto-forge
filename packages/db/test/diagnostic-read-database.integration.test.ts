@@ -96,46 +96,55 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         }
       });
 
-      it("upgrades the previous schema, rolls back failed index creation and preserves history", async () => {
-        const database = await legacyDatabase(dialect);
-        const migrations = resolve(
-          `packages/db/drizzle/${dialect === "sqlite" ? "sqlite" : "postgresql"}`,
-        );
-        const migrationName =
-          dialect === "sqlite"
-            ? "0077_scheduling_events_batch_runner_index.sql"
-            : "0075_scheduling_events_batch_runner_index.sql";
-        try {
-          for (const file of (await readdir(migrations))
-            .filter((name) => name.endsWith(".sql") && name < migrationName)
-            .sort())
-            await database.execute(await readFile(join(migrations, file), "utf8"));
-          await database.execute(
-            "INSERT INTO scheduling_events (id, batch_id, runner_id, event_type, message, recorded_at) VALUES ('old-event', 'batch', 'runner', 'run_assigned', 'historical log', '2026-10-09T00:00:00.000Z')",
+      it.each([
+        {
+          sqlite: "0077_scheduling_events_batch_runner_index.sql",
+          postgres: "0075_scheduling_events_batch_runner_index.sql",
+          index: "scheduling_events_batch_runner_idx",
+        },
+        {
+          sqlite: "0078_execution_export_order_index.sql",
+          postgres: "0076_execution_export_order_index.sql",
+          index: "execution_runs_batch_export_order_idx",
+        },
+      ])(
+        "upgrades $index, rolls back failed creation and preserves history",
+        async (indexMigration) => {
+          const database = await legacyDatabase(dialect);
+          const migrations = resolve(
+            `packages/db/drizzle/${dialect === "sqlite" ? "sqlite" : "postgresql"}`,
           );
-          const previous = await database.query("SELECT * FROM scheduling_events");
-          const migration = await readFile(join(migrations, migrationName), "utf8");
-          const indexes =
-            dialect === "sqlite"
-              ? "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'scheduling_events_batch_runner_idx'"
-              : "SELECT indexname AS name FROM pg_indexes WHERE indexname = 'scheduling_events_batch_runner_idx'";
-          await database.execute("BEGIN");
-          await database.execute(migration);
-          await expect(
-            database.execute("SELECT * FROM diagnostic_migration_failure_fixture"),
-          ).rejects.toThrow();
-          await database.execute("ROLLBACK");
-          expect(await database.query(indexes)).toEqual([]);
-          expect(await database.query("SELECT * FROM scheduling_events")).toEqual(previous);
-          await database.execute(migration);
-          expect(await database.query(indexes)).toEqual([
-            { name: "scheduling_events_batch_runner_idx" },
-          ]);
-          expect(await database.query("SELECT * FROM scheduling_events")).toEqual(previous);
-        } finally {
-          await database.close();
-        }
-      });
+          const migrationName = indexMigration[dialect];
+          try {
+            for (const file of (await readdir(migrations))
+              .filter((name) => name.endsWith(".sql") && name < migrationName)
+              .sort())
+              await database.execute(await readFile(join(migrations, file), "utf8"));
+            await database.execute(
+              "INSERT INTO scheduling_events (id, batch_id, runner_id, event_type, message, recorded_at) VALUES ('old-event', 'batch', 'runner', 'run_assigned', 'historical log', '2026-10-09T00:00:00.000Z')",
+            );
+            const previous = await database.query("SELECT * FROM scheduling_events");
+            const migration = await readFile(join(migrations, migrationName), "utf8");
+            const indexes =
+              dialect === "sqlite"
+                ? `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${indexMigration.index}'`
+                : `SELECT indexname AS name FROM pg_indexes WHERE indexname = '${indexMigration.index}'`;
+            await database.execute("BEGIN");
+            await database.execute(migration);
+            await expect(
+              database.execute("SELECT * FROM diagnostic_migration_failure_fixture"),
+            ).rejects.toThrow();
+            await database.execute("ROLLBACK");
+            expect(await database.query(indexes)).toEqual([]);
+            expect(await database.query("SELECT * FROM scheduling_events")).toEqual(previous);
+            await database.execute(migration);
+            expect(await database.query(indexes)).toEqual([{ name: indexMigration.index }]);
+            expect(await database.query("SELECT * FROM scheduling_events")).toEqual(previous);
+          } finally {
+            await database.close();
+          }
+        },
+      );
     },
   );
 }

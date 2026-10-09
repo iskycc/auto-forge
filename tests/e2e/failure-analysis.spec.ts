@@ -1,3 +1,4 @@
+import { readExportedWorkbookText } from "./support/export-workbook";
 import { insertAnalysisConclusionScopeFixture } from "./support/analysis-conclusion-scope-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { insertAnalysisExecutionHistory } from "./support/analysis-execution-history-fixture";
@@ -5,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { unzipSync } from "fflate";
 
 import {
@@ -404,6 +406,74 @@ async function expectLongAnalysisDialog(
     await captureUi(page, `analysis-long-name-${state}-bottom-${viewport.width}`);
   }
 }
+
+test("analysis cards keep full double-digit dates on one line at desktop widths", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("analysis-date-width");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: suffix } },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const directory = requiredEnvironment("AUTOFORGE_E2E_DATA_DIR");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const scope = {
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: version.body.id,
+    batchId: fixture.batchId,
+  };
+  expect(
+    (await browserJson(page, "/api/v1/failure-analysis/batches", { method: "POST", body: scope }))
+      .status,
+  ).toBe(201);
+  expect(
+    (
+      await browserJson(page, "/api/v1/failure-analysis/claims", {
+        method: "POST",
+        body: { ...scope, executionRunIds: [`run-failed-0-${suffix}`] },
+      })
+    ).status,
+  ).toBe(201);
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    // A fixed two-digit month/day reproduces the narrow-column bug on every calendar date.
+    database
+      .prepare("UPDATE failure_analysis_claims SET claimed_at = ? WHERE batch_id = ?")
+      .run("2026-12-31T15:59:59.000Z", fixture.batchId);
+  } finally {
+    database.close();
+  }
+  await page.goto(`/case-analysis/${fixture.batchId}?view=workbench`);
+  const card = analysisCard(page, fixture.failedNames[0]);
+  await expect(card).toBeVisible();
+  for (const appearance of ["light", "dark"] as const) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      const timestamp = card.locator("dd").first();
+      await expect(timestamp).toHaveText("2026/12/31 23:59:59");
+      const bounds = await timestamp.evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+        overflow: element.scrollWidth - element.clientWidth,
+      }));
+      expect(bounds.height).toBeLessThanOrEqual(bounds.lineHeight + 1);
+      expect(bounds.overflow).toBeLessThanOrEqual(1);
+      expect((await card.boundingBox())!.height).toBeLessThanOrEqual(92);
+      await captureUi(page, `analysis-date-width-${appearance}-${viewport.width}`);
+    }
+  }
+});
 
 test("terminal task failures support durable single and batch analysis with evidence", async ({
   page,
@@ -1190,10 +1260,9 @@ test("terminal task failures support durable single and batch analysis with evid
   expect((await exportResponsePromise).status()).toBe(200);
   const analysisDownload = await analysisDownloadPromise;
   expect(analysisDownload.suggestedFilename()).toContain("failure-analysis-final.xlsx");
-  const analysisArchive = unzipSync(
-    new Uint8Array(await readFile((await analysisDownload.path())!)),
-  );
-  const analysisStrings = new TextDecoder("utf-8").decode(analysisArchive["xl/sharedStrings.xml"]);
+  const analysisBuffer = await readFile((await analysisDownload.path())!);
+  const analysisArchive = unzipSync(new Uint8Array(analysisBuffer));
+  const analysisStrings = await readExportedWorkbookText(analysisBuffer);
   for (const persistedValue of [
     "E2E Administrator（e2e-admin）",
     "用例问题已修改",

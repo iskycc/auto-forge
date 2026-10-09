@@ -163,6 +163,17 @@ export class WorkerPool implements WorkDispatcher {
     return this.diagnosticLane.dispatch({ kind: "read-scheduling-events", input });
   }
 
+  readExecutionView(input: unknown): Promise<unknown> {
+    return this.diagnosticLane.dispatch({ kind: "read-execution-view", input });
+  }
+
+  cancelExecutionRun(input: unknown): Promise<unknown> {
+    return this.keyedControlLane(`run:${stringProperty(input, "runId")}`).dispatch({
+      kind: "cancel-run",
+      input,
+    });
+  }
+
   readRunnerResourceSamples(input: unknown): Promise<unknown> {
     return this.diagnosticLane.dispatch({ kind: "read-runner-resource-samples", input });
   }

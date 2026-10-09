@@ -4,6 +4,7 @@ for (const entry of [
   "work-thread",
   "read-model-thread",
   "attempt-log-thread",
+  "attempt-log-process",
   "runner-diagnostics-process",
 ])
   await build({

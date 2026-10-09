@@ -366,6 +366,19 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
       return executionRepository().terminateBatch(
         task.input as Parameters<ExecutionControlRepository["terminateBatch"]>[0],
       );
+    case "cancel-run":
+      return executionRepository().cancelRun(
+        z
+          .object({
+            runId: z.string().min(1).max(160),
+            actorId: z.string().min(1).max(160),
+            reason: z.string().max(2048),
+            eventId: z.string().min(1).max(160),
+            requestedAt: z.iso.datetime(),
+          })
+          .strict()
+          .parse(task.input),
+      );
     case "append-attempt-log-chunks":
       return executionRepository().appendLogChunks(
         task.input as Parameters<ExecutionControlRepository["appendLogChunks"]>[0],

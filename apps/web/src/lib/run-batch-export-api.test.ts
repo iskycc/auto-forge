@@ -15,7 +15,7 @@ vi.mock("./auth", () => ({ authenticateRequest }));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
     identityAccess: { projectScope },
-    runBatchExport: { build: buildExport },
+    runBatchExport: { prepare: buildExport },
     attemptLogShares: { ensureSharesForAttemptsInBatch: ensureShares },
     configurationStore: { read: readConfiguration },
   }),
@@ -41,7 +41,12 @@ beforeEach(() => {
   vi.resetAllMocks();
   authenticateRequest.mockResolvedValue({ user: { id: "reader" } });
   projectScope.mockReturnValue(["project"]);
-  buildExport.mockResolvedValue({ projectId: "project", rows: [row] });
+  buildExport.mockImplementation(async () => ({
+    projectId: "project",
+    pages: (async function* () {
+      yield [row];
+    })(),
+  }));
   ensureShares.mockResolvedValue(new Map());
 });
 

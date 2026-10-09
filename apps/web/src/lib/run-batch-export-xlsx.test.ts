@@ -6,9 +6,11 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 let buildRunBatchExportWorkbook: typeof import("./run-batch-export-xlsx").buildRunBatchExportWorkbook;
+let createRunBatchExportWorkbookStream: typeof import("./run-batch-export-xlsx").createRunBatchExportWorkbookStream;
 
 beforeAll(async () => {
-  ({ buildRunBatchExportWorkbook } = await import("./run-batch-export-xlsx"));
+  ({ buildRunBatchExportWorkbook, createRunBatchExportWorkbookStream } =
+    await import("./run-batch-export-xlsx"));
 });
 
 const failedRow: RunBatchExportRow = {
@@ -51,6 +53,106 @@ const completedClaim: FailureAnalysisClaim = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
+  it.each(["results", "failure-analysis"] as const)(
+    "streams %s pages with the existing spreadsheet styles, links and time zone",
+    async (template) => {
+      const second = { ...failedRow, attemptId: "attempt-second" };
+      const shareLinks = new Map([
+        [failedRow.attemptId!, "http://autoforge.local/log/first"],
+        [second.attemptId, "http://autoforge.local/log/second"],
+      ]);
+      const input = {
+        batchId: "batch-123",
+        scope: "final" as const,
+        template,
+        timeZone: "Asia/Shanghai",
+        shareLinks,
+        analysisClaims: new Map([[failedRow.attemptId!, completedClaim]]),
+      };
+      const normal = await buildRunBatchExportWorkbook({ ...input, rows: [failedRow, second] });
+      const controller = new AbortController();
+      const pages = (async function* () {
+        yield { ...input, rows: [failedRow] };
+        yield { ...input, rows: [second] };
+      })();
+      const streamed = await createRunBatchExportWorkbookStream(pages, controller.signal);
+      const parts: Buffer[] = [];
+      for await (const part of streamed.stream) parts.push(Buffer.from(part));
+      const expected = await loadWorkbook(normal.buffer);
+      const actual = await loadWorkbook(Buffer.concat(parts));
+      const first = expected.worksheets[0]!;
+      const result = actual.worksheets[0]!;
+      expect(result.rowCount).toBe(3);
+      expect(streamed.filename).toBe(normal.filename);
+      expect(result.columns.map((column) => column.width)).toEqual(
+        first.columns.map((column) => column.width),
+      );
+      for (let row = 1; row <= 3; row++)
+        for (let column = 1; column <= first.columnCount; column++) {
+          // Excel's streaming writer serializes an empty string as a blank cell.
+          expect(result.getCell(row, column).value ?? "").toEqual(
+            first.getCell(row, column).value ?? "",
+          );
+          expect(result.getCell(row, column).alignment).toEqual(
+            first.getCell(row, column).alignment,
+          );
+          expect(result.getCell(row, column).numFmt).toEqual(first.getCell(row, column).numFmt);
+        }
+      expect(result.autoFilter).toEqual(first.autoFilter);
+      expect(result.getCell(1, 1).fill).toEqual(first.getCell(1, 1).fill);
+    },
+  );
+  it("releases the iterator when cancellation arrives while loading the initial page", async () => {
+    const controller = new AbortController();
+    let closed = false;
+    const pages = (async function* () {
+      try {
+        controller.abort(new Error("cancelled before headers"));
+        yield {
+          batchId: "batch",
+          scope: "final" as const,
+          rows: [failedRow],
+          shareLinks: new Map<string, string>(),
+        };
+      } finally {
+        closed = true;
+      }
+    })();
+    await expect(createRunBatchExportWorkbookStream(pages, controller.signal)).rejects.toThrow(
+      "cancelled before headers",
+    );
+    expect(closed).toBe(true);
+  });
+  it("closes an aborted export before reading subsequent pages", async () => {
+    let readPages = 0;
+    let closed = false;
+    const pages = (async function* () {
+      try {
+        for (let page = 0; page < 100; page++) {
+          readPages++;
+          yield {
+            batchId: "batch",
+            scope: "final" as const,
+            rows: Array.from({ length: 200 }, () => failedRow),
+            shareLinks: new Map<string, string>(),
+          };
+        }
+      } finally {
+        closed = true;
+      }
+    })();
+    const controller = new AbortController();
+    const { stream } = await createRunBatchExportWorkbookStream(pages, controller.signal);
+    const errors: unknown[] = [];
+    stream.on("error", (error) => errors.push(error));
+    const closure = new Promise<void>((resolve) => stream.once("close", resolve));
+    controller.abort(new Error("user cancelled"));
+    await closure;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(errors).toHaveLength(1);
+    expect(readPages).toBe(1);
+    expect(closed).toBe(true);
+  });
   it.each(["round", "final", "all"] as const)(
     "exports %s execution timestamps in Beijing time by default",
     async (scope) => {

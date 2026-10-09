@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { InterruptibleReadProcess } from "./interruptible-read-process.ts";
 import type { LogIoDispatcher, LogIoMethod } from "../src/lib/log-io-runtime.ts";
 import { logPayloadBytes, MAX_QUEUED_LOG_BYTES } from "../src/lib/log-io-runtime.ts";
 import { stableLaneIndex } from "../src/lib/worker-sizing.ts";
@@ -60,9 +61,16 @@ export class LogIoPool implements LogIoDispatcher {
 
   call(method: LogIoMethod, args: unknown[]): Promise<unknown> {
     const lane =
-      method === "appendChunks" || method === "recordWatermarks"
-        ? this.writes[stableLaneIndex(attemptKey(args[0]), this.writes.length)]!
-        : method === "listChunks" || method === "acknowledgedSequence"
+      method === "appendChunks" ||
+      method === "recordWatermarks" ||
+      method === "acknowledgedSequence"
+        ? this.writes[
+            stableLaneIndex(
+              method === "acknowledgedSequence" ? String(args[1]) : attemptKey(args[0]),
+              this.writes.length,
+            )
+          ]!
+        : method === "listChunks"
           ? this.reads.reduce((least, candidate) =>
               candidate.pendingCount < least.pendingCount ? candidate : least,
             )
@@ -78,7 +86,7 @@ export class LogIoPool implements LogIoDispatcher {
 }
 
 class LogIoLane {
-  private worker: Worker | undefined;
+  private worker: Worker | InterruptibleReadProcess | undefined;
   private active: PendingLogOperation | undefined;
   private readonly queued: PendingLogOperation[] = [];
   private nextId = 0;
@@ -101,6 +109,8 @@ class LogIoLane {
   }
 
   call(method: LogIoMethod, args: unknown[]): Promise<unknown> {
+    if (this.terminating)
+      return Promise.reject(logIoError("PLATFORM_LOG_BUSY", "日志读取正在恢复，请稍后重试。"));
     if (this.stopped)
       return Promise.reject(
         logIoError("PLATFORM_LOG_UNAVAILABLE", "日志服务正在关闭，请稍后重试。"),
@@ -141,11 +151,18 @@ class LogIoLane {
     }
   }
 
-  private startWorker(): Worker {
-    const worker = new Worker(this.workerUrl, {
-      workerData: { directory: this.directory },
-      resourceLimits: { maxOldGenerationSizeMb: this.heapMb },
-    });
+  private startWorker(): Worker | InterruptibleReadProcess {
+    const worker =
+      this.interruptible && this.workerUrl.protocol === "file:"
+        ? new InterruptibleReadProcess(
+            new URL("./attempt-log-process.js", this.workerUrl),
+            { directory: this.directory },
+            this.heapMb,
+          )
+        : new Worker(this.workerUrl, {
+            workerData: { directory: this.directory },
+            resourceLimits: { maxOldGenerationSizeMb: this.heapMb },
+          });
     worker.on("message", (response: LogIoResponse) => {
       if (worker !== this.worker || response.id !== this.active?.request.id) return;
       const pending = this.active;
@@ -177,13 +194,17 @@ class LogIoLane {
       "PLATFORM_LOG_TIMEOUT",
       "日志操作超时，请稍后重试；搜索时可缩小时间范围。",
     );
-    pending.reject(error);
-    this.reportError(error);
     if (this.active === pending) {
       // A timed-out write may still commit. Keep its slot until completion and let
       // the Runner retry idempotently; never kill a writer as a read cancellation.
       if (this.interruptible) this.fail(error);
+      else {
+        pending.reject(error);
+        this.reportError(error);
+      }
     } else {
+      pending.reject(error);
+      this.reportError(error);
       const index = this.queued.indexOf(pending);
       if (index >= 0) {
         this.queued.splice(index, 1);
@@ -195,17 +216,23 @@ class LogIoLane {
   private fail(cause: Error): void {
     const error = logIoError("PLATFORM_LOG_UNAVAILABLE", "日志服务暂不可用，请稍后重试。", cause);
     this.reportError(error);
-    this.rejectPending(error);
     const worker = this.worker;
     this.worker = undefined;
     if (worker)
       this.terminating = worker
         .terminate()
-        .then(() => undefined, this.reportError)
+        .then(
+          () => this.rejectPending(error),
+          (cause: Error) => {
+            this.reportError(cause);
+            this.rejectPending(error);
+          },
+        )
         .finally(() => {
           this.terminating = undefined;
           this.startNext();
         });
+    else this.rejectPending(error);
   }
 
   private rejectPending(error: Error): void {

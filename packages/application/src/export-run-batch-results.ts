@@ -48,8 +48,67 @@ export type RunBatchExportData = {
   rows: RunBatchExportRow[];
 };
 
+export type RunBatchExportCursor = {
+  className: string;
+  displayName: string;
+  runId: string;
+  round: number;
+};
+export type RunBatchExportPageQuery = Pick<RunBatchExportQuery, "batchId" | "scope" | "round"> & {
+  after?: RunBatchExportCursor;
+  limit: number;
+};
+export type RunBatchExportPage = {
+  items: Array<{
+    run: Pick<ExecutionRun, "id" | "className" | "displayName">;
+    attempt: Pick<
+      RunAttempt,
+      | "id"
+      | "executionRunId"
+      | "attemptNumber"
+      | "executionRound"
+      | "status"
+      | "outcome"
+      | "resultCode"
+      | "resultSummary"
+      | "startedAt"
+      | "finishedAt"
+      | "durationMs"
+    >;
+  }>;
+  next?: RunBatchExportCursor;
+};
+
 export class RunBatchExportService {
   constructor(private readonly batches: RunBatchRepository) {}
+
+  /** Export only bounded result pages; no batch-wide runs, class data or TestNG reports enter HTTP. */
+  async prepare(
+    query: RunBatchExportQuery,
+  ): Promise<{ projectId: string; pages: AsyncIterable<RunBatchExportRow[]> }> {
+    const outcomes = validatedOutcomes(query.outcomes);
+    if (query.scope === "round") requiredRound(query.round);
+    const metadata = await this.batches.getMetadata(query.batchId, query.projectIds);
+    if (!metadata) throw new DomainError("BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    const batches = this.batches;
+    async function* pages(): AsyncGenerator<RunBatchExportRow[]> {
+      let after: RunBatchExportCursor | undefined;
+      do {
+        const page = await batches.readExportPage({
+          batchId: query.batchId,
+          scope: query.scope,
+          limit: 200,
+          ...(query.round !== undefined ? { round: query.round } : {}),
+          ...(after ? { after } : {}),
+        });
+        yield page.items.flatMap(({ run, attempt }) =>
+          matchesOutcomeFilter(attempt, outcomes) ? [attemptRow(attempt, run)] : [],
+        );
+        after = page.next;
+      } while (after);
+    }
+    return { projectId: metadata.projectId, pages: pages() };
+  }
 
   async buildRows(query: RunBatchExportQuery): Promise<RunBatchExportRow[]> {
     return (await this.build(query)).rows;
@@ -175,7 +234,7 @@ const CANCELLED_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([
 ]);
 
 function matchesOutcomeFilter(
-  attempt: RunAttempt,
+  attempt: Pick<RunAttempt, "status" | "outcome" | "resultCode">,
   outcomes: ReadonlySet<ExportOutcomeFilter>,
 ): boolean {
   const outcome = runAttemptOutcome(attempt);
@@ -203,7 +262,10 @@ function matchesOutcomeFilter(
   return false;
 }
 
-function attemptRow(attempt: RunAttempt, run: ExecutionRun | undefined): RunBatchExportRow {
+function attemptRow(
+  attempt: RunBatchExportPage["items"][number]["attempt"],
+  run: Pick<ExecutionRun, "className" | "displayName"> | undefined,
+): RunBatchExportRow {
   const outcome = runAttemptOutcome(attempt);
   if (!outcome) throw new DomainError("INVALID_OUTCOMES", "进行中的执行尝试不能导出。");
   const category: AttemptResultCategory = classifyAttemptResult({

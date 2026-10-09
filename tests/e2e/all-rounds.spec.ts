@@ -1,5 +1,6 @@
+import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { unzipSync, zipSync } from "fflate";
+import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -1092,10 +1093,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(download.suggestedFilename()).toContain("all-rounds");
   const exportBody = new Uint8Array(await readFile(await download.path()));
   expect(Array.from(exportBody.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
-  const sharedStrings = new TextDecoder("utf-8").decode(
-    unzipSync(exportBody)["xl/sharedStrings.xml"],
-  );
-  expect(sharedStrings).toContain("轮次");
+  const exportedText = await readExportedWorkbookText(Buffer.from(exportBody));
+  expect(exportedText).toContain("轮次");
 
   // Jenkins 的两个 Pipeline 步骤使用同一种 API Key：依赖按项目版本替换，执行接口
   // 开始时与终态返回同一个免登录完整执行详情链接，机器轮询仍使用独立进度 API。

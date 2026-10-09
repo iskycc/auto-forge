@@ -26,6 +26,11 @@ declare module "exceljs" {
   const ExcelJS: {
     Workbook: new () => {
       xlsx: { load(buffer: Uint8Array): Promise<void> };
+      worksheets: Array<{
+        eachRow(
+          callback: (row: { eachCell(callback: (cell: { text: string }) => void): void }) => void,
+        ): void;
+      }>;
       getWorksheet(name: string):
         | {
             getCell(reference: string): { value: unknown };
