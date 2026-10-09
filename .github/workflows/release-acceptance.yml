@@ -128,7 +128,7 @@ jobs:
     name: Published offline · ${{ matrix.name }}
     needs: [prepare, asset-integrity]
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: ${{ matrix.phase == 'business-assets' && 12 || 8 }}
     strategy:
       fail-fast: false
       matrix:
