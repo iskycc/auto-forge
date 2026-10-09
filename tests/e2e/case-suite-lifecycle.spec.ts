@@ -369,7 +369,9 @@ test("task deletion preserves history, public logs, analysis and in-flight execu
   }
   await anonymous.close();
   await page.goto(`/run-batches/${completed.id}`);
-  await expect(page.locator(".page-hero")).toContainText(`拉起人：${E2E_ADMIN_USERNAME}`);
+  await expect(page.locator(".execution-batch-initiator")).toContainText(
+    `拉起人：${E2E_ADMIN_USERNAME}`,
+  );
   await expect(page.getByRole("button", { name: "再次执行", exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "批次操作", exact: true })).toContainText(
     "本批次的执行记录与配置快照已保留",
