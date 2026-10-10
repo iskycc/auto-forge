@@ -26,10 +26,12 @@ import { downloadExecutionExceptions } from "@/lib/download-execution-exceptions
 export function ExecutionExceptionsDialog({
   batchId,
   accessToken,
+  publicAccess = false,
   onClose,
 }: {
   batchId: string;
   accessToken?: string | undefined;
+  publicAccess?: boolean;
   onClose: () => void;
 }) {
   const [result, setResult] = useState<ExecutionExceptionPage | null>(null);
@@ -40,7 +42,7 @@ export function ExecutionExceptionsDialog({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const exportController = useRef<AbortController | null>(null);
-  useEffect(() => () => exportController.current?.abort(), [batchId, accessToken]);
+  useEffect(() => () => exportController.current?.abort(), [batchId, accessToken, publicAccess]);
   async function exportReasons() {
     if (exportController.current) return;
     const controller = new AbortController();
@@ -48,7 +50,7 @@ export function ExecutionExceptionsDialog({
     setExporting(true);
     setExportError("");
     try {
-      await downloadExecutionExceptions(batchId, accessToken, controller.signal);
+      await downloadExecutionExceptions(batchId, accessToken, controller.signal, publicAccess);
     } catch (cause) {
       if (!controller.signal.aborted)
         setExportError(cause instanceof Error ? cause.message : "导出异常原因失败，请重试。");
@@ -67,6 +69,7 @@ export function ExecutionExceptionsDialog({
         const parameters = new URLSearchParams({ limit: "50" });
         if (cursor) parameters.set("cursor", cursor);
         if (accessToken) parameters.set("access_token", accessToken);
+        if (publicAccess) parameters.set("public", "1");
         const response = await fetch(
           `/api/v1/run-batches/${encodeURIComponent(batchId)}/exceptions?${parameters}`,
           { cache: "no-store", signal: controller.signal },
@@ -82,7 +85,7 @@ export function ExecutionExceptionsDialog({
     };
     void load();
     return () => controller.abort();
-  }, [batchId, accessToken, cursor, retry]);
+  }, [batchId, accessToken, publicAccess, cursor, retry]);
 
   function nextPage() {
     if (!result?.nextCursor) return;

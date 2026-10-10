@@ -301,12 +301,12 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
     expect((await sharedPage.request.get(new URL(endpoint, page.url()).toString())).status()).toBe(
       401,
     );
-    const token = decodeURIComponent(new URL(share.body.shareUrl).pathname.split("/").at(-1)!);
+    expect(new URL(share.body.shareUrl).searchParams.get("BatchId")).toBe(queueBatch);
     expect(
       (
         await sharedPage.request.get(
           new URL(
-            `/api/v1/run-batches/${capacityBatch}/exceptions/export?access_token=${encodeURIComponent(token)}`,
+            `/api/v1/run-batches/${capacityBatch}/exceptions/export?public=1`,
             page.url(),
           ).toString(),
         )
@@ -316,7 +316,7 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
       (
         await sharedPage.request.get(
           new URL(
-            `/api/v1/run-batches/${capacityBatch}/exceptions?access_token=${encodeURIComponent(token)}`,
+            `/api/v1/run-batches/${capacityBatch}/exceptions?public=1`,
             page.url(),
           ).toString(),
         )

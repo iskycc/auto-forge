@@ -1,4 +1,5 @@
 "use client";
+import { publicCaseLogPath } from "@autoforge/contracts";
 import { LoadingIcon } from "./ui/loading-icon";
 import { Timeline } from "antd";
 
@@ -1478,9 +1479,11 @@ function RoundCasesTable({
     if (statusFilter !== "all") parameters.set("status", statusFilter);
     if (debouncedNameQuery) parameters.set("query", debouncedNameQuery);
     if (batch.accessToken) parameters.set("access_token", batch.accessToken);
+    if (batch.publicAccess) parameters.set("public", "1");
     return `/api/v1/run-batches/${encodeURIComponent(batch.id)}/cases?${parameters.toString()}`;
   }, [
     batch.accessToken,
+    batch.publicAccess,
     batch.id,
     debouncedNameQuery,
     page,
@@ -1560,7 +1563,7 @@ function RoundCasesTable({
   const columnLayout = executionCaseColumnLayout({
     widths: columnWidths,
     showRoundColumn,
-    access: batch.accessToken ? "public" : "console",
+    access: batch.accessToken || batch.publicAccess ? "public" : "console",
   });
 
   const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -1709,6 +1712,7 @@ function RoundCasesTable({
                   canCancelRuns={canCancelRuns}
                   canReadLogs={canReadLogs}
                   {...(batch.accessToken ? { publicRunShareToken: batch.accessToken } : {})}
+                  publicLogAccess={batch.publicAccess ?? false}
                   canReadAttemptEvents={canReadAttemptEvents}
                   canReadArtifacts={canReadArtifacts}
                   artifactsEnabled={artifactsEnabled}
@@ -1820,6 +1824,7 @@ function RoundCaseRow({
   canCancelRuns,
   canReadLogs,
   publicRunShareToken,
+  publicLogAccess,
   canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
@@ -1838,6 +1843,7 @@ function RoundCaseRow({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   publicRunShareToken?: string;
+  publicLogAccess: boolean;
   canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
@@ -1978,7 +1984,7 @@ function RoundCaseRow({
                 <Eye size={15} /> 查看日志
               </Button>
             ) : null}
-            {attempt && publicRunShareToken ? (
+            {attempt && (publicRunShareToken || publicLogAccess) ? (
               <LinkButton
                 aria-label="查看公开日志"
                 className={cn(
@@ -1987,7 +1993,11 @@ function RoundCaseRow({
                   uiPatterns["button-secondary"],
                   uiPatterns["compact-button"],
                 )}
-                href={`/share/run/${encodeURIComponent(publicRunShareToken)}/attempt/${encodeURIComponent(attempt.id)}`}
+                href={
+                  publicLogAccess
+                    ? publicCaseLogPath(attempt.id)
+                    : `/share/run/${encodeURIComponent(publicRunShareToken!)}/attempt/${encodeURIComponent(attempt.id)}`
+                }
                 prefetch={false}
               >
                 <Eye size={15} /> 公开日志

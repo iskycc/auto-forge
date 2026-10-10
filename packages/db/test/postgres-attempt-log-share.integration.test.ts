@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe } from "vitest";
 
 import { PostgresAttemptLogShareRepository } from "../src/postgres-attempt-log-share";
+import { PostgresPublicExecutionAccessRepository } from "../src/postgres-public-execution-access";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { attemptLogShareContract, type AttemptLogShareHarness } from "./attempt-log-share.contract";
 
@@ -64,6 +65,24 @@ async function createHarness(): Promise<AttemptLogShareHarness> {
   );
   return {
     repository: new PostgresAttemptLogShareRepository(handle),
+    publicAccess: new PostgresPublicExecutionAccessRepository(handle),
+    async readPublicAccess() {
+      const batches = await handle.pool.query<{ createdBy: string; createdAt: string }>(
+        'SELECT created_by AS "createdBy", created_at AS "createdAt" FROM public_batch_access WHERE batch_id = $1',
+        [batchId],
+      );
+      const attempts = await handle.pool.query<{ createdBy: string; createdAt: string }>(
+        'SELECT created_by AS "createdBy", created_at AS "createdAt" FROM public_attempt_access WHERE attempt_id = ANY($1::text[])',
+        [[...attemptIds]],
+      );
+      return { batches: batches.rows, attempts: attempts.rows };
+    },
+    async deleteAttempt(attemptId) {
+      await handle.pool.query("DELETE FROM run_attempts WHERE id = $1", [attemptId]);
+    },
+    async deleteBatch() {
+      await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
+    },
     fixture: { batchId, attemptIds },
     async dispose() {
       // 共享测试库必须带走夹具行，避免残留 running 批次影响其他测试的调度视图。

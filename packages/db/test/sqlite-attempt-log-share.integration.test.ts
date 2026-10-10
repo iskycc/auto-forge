@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createSqliteDatabase } from "../src/database";
 import { SqliteAttemptLogShareRepository } from "../src/sqlite-attempt-log-share";
+import { SqlitePublicExecutionAccessRepository } from "../src/sqlite-public-execution-access";
 import { attemptLogShareContract, type AttemptLogShareHarness } from "./attempt-log-share.contract";
 
 const temporaryDirectories: string[] = [];
@@ -87,6 +88,27 @@ function sqliteHarness(): Promise<AttemptLogShareHarness> {
     const contention = new SqliteWriterContention(handle);
     return {
       repository: contention.wrap(new SqliteAttemptLogShareRepository(handle)),
+      publicAccess: contention.wrap(new SqlitePublicExecutionAccessRepository(handle)),
+      async readPublicAccess() {
+        return {
+          batches: handle.client
+            .prepare(
+              "SELECT created_by AS createdBy, created_at AS createdAt FROM public_batch_access",
+            )
+            .all() as Array<{ createdBy: string; createdAt: string }>,
+          attempts: handle.client
+            .prepare(
+              "SELECT created_by AS createdBy, created_at AS createdAt FROM public_attempt_access",
+            )
+            .all() as Array<{ createdBy: string; createdAt: string }>,
+        };
+      },
+      async deleteAttempt(attemptId) {
+        handle.client.prepare("DELETE FROM run_attempts WHERE id = ?").run(attemptId);
+      },
+      async deleteBatch() {
+        handle.client.prepare("DELETE FROM run_batches WHERE id = 'batch-1'").run();
+      },
       fixture: { batchId: "batch-1", attemptIds: ["attempt-1", "attempt-2"] },
       async dispose() {
         await contention.close();

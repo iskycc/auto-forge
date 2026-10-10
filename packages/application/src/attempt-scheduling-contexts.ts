@@ -5,7 +5,10 @@ import type { AttemptSchedulingContext, ExecutionControlRepository } from "./por
  * 但仍并行解析，避免把数据库往返串行放大为领取延迟。
  */
 export async function resolveAttemptSchedulingContexts(
-  executions: ExecutionControlRepository,
+  executions: Pick<
+    ExecutionControlRepository,
+    "resolveAttemptSchedulingContext" | "resolveAttemptSchedulingContexts"
+  >,
   attemptIds: readonly string[],
 ): Promise<Map<string, AttemptSchedulingContext>> {
   if (attemptIds.length === 0) return new Map();

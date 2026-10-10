@@ -23,6 +23,7 @@ import { join } from "node:path";
 
 import {
   AttemptLogShareService,
+  PublicExecutionAccessService,
   RuntimeNotificationService,
   CaseDefinitionService,
   CaseSourceService,
@@ -55,6 +56,7 @@ import {
   WebhookNotificationService,
   type ManagedPlatformClock,
   type AttemptLogShareRepository,
+  type PublicExecutionAccessRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type CaseSuiteActivityRepository,
@@ -83,6 +85,7 @@ import {
   createSqliteDatabase,
   isSqliteLockContentionError,
   SqliteAttemptLogShareRepository,
+  SqlitePublicExecutionAccessRepository,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
   SqliteCaseSuiteActivityRepository,
@@ -172,6 +175,7 @@ async function createPlatformServices() {
   let batches: RunBatchRepository & RunBatchDisplayIdentityLookupPort;
   let roundRecoveries: RoundRecoveryRepository;
   let attemptLogSharesRepository: AttemptLogShareRepository;
+  let publicExecutionAccessRepository: PublicExecutionAccessRepository;
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
@@ -221,6 +225,7 @@ async function createPlatformServices() {
     batches = new SqliteRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new SqliteRoundRecoveryRepository(database);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
+    publicExecutionAccessRepository = new SqlitePublicExecutionAccessRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
@@ -243,6 +248,7 @@ async function createPlatformServices() {
         NodeAttemptLogStore,
         createNodeLogTransport,
         PostgresAttemptLogShareRepository,
+        PostgresPublicExecutionAccessRepository,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
         PostgresCaseSuiteActivityRepository,
@@ -420,6 +426,7 @@ async function createPlatformServices() {
     batches = new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
+    publicExecutionAccessRepository = new PostgresPublicExecutionAccessRepository(database);
     objectStore = new MinioObjectStore(config.minio);
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
@@ -567,24 +574,29 @@ async function createPlatformServices() {
     dispatcher,
   );
   const runScheduling = new CoalescingSchedulingPort(runBatches, dispatcher);
-  // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
+  // Legacy opaque log URLs remain readable; new URLs use persisted business-ID grants.
   const attemptLogShares = new AttemptLogShareService(
     attemptLogSharesRepository,
     batches,
     executions,
     {
-      issue: () => randomBytes(32).toString("base64url"),
       hash: (value) => createHash("sha256").update(value).digest("hex"),
     },
     clock,
-    ids,
+  );
+  const publicExecutionAccess = new PublicExecutionAccessService(
+    publicExecutionAccessRepository,
+    batches,
+    executions,
+    attemptLogShares,
+    clock,
   );
   const failureAnalysis = new FailureAnalysisService(
     failureAnalysisRepository,
     clock,
     ids,
     objectStore,
-    attemptLogShares,
+    publicExecutionAccess,
   );
   const roundRecovery = new RoundRecoveryService(
     roundRecoveries,
@@ -947,6 +959,7 @@ async function createPlatformServices() {
     executionControl,
     runnerProtocol,
     attemptLogShares,
+    publicExecutionAccess,
     runBatchExport,
     publicStatistics,
     dashboardSnapshots,

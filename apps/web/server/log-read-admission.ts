@@ -11,7 +11,8 @@ export class LogReadAdmission {
     const path = (rawUrl ?? "").split("?", 1)[0]!;
     const logRead =
       (method === "GET" || method === "HEAD") &&
-      (path.startsWith("/share/attempt-log/") ||
+      (path === "/CaseLog" ||
+        path.startsWith("/share/attempt-log/") ||
         /^\/share\/run\/[^/]+\/attempt\//.test(path) ||
         /^\/api\/v1\/run-attempts\/[^/]+\/logs$/.test(path));
     if (!logRead) return { admitted: true, release() {} };

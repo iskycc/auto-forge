@@ -357,7 +357,7 @@ test("task deletion preserves history, public logs, analysis and in-flight execu
     expect(worksheet).toContain('row r="2"');
     const relationships = new TextDecoder().decode(files["xl/worksheets/_rels/sheet1.xml.rels"]);
     const logUrl = relationships.match(
-      /Target="([^"]+\/share\/attempt-log\/[A-Za-z0-9_-]+)"/u,
+      /Target="([^"]+\/CaseLog\?ExecutionId=[A-Za-z0-9_-]+)"/u,
     )?.[1];
     expect(logUrl).toBeDefined();
     exportedLogUrls.push(logUrl!);

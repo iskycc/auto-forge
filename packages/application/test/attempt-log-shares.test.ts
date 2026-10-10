@@ -251,18 +251,14 @@ function makeService(
       };
     },
   } as unknown as ExecutionControlRepository;
-  let tokenCounter = 0;
-  let idCounter = 0;
   return new AttemptLogShareService(
     shares,
     batches,
     executions,
     {
-      issue: () => `token-${++tokenCounter}`,
       hash: (value) => `hashed-${value}`,
     },
     { now: () => new Date("2026-08-17T00:00:00.000Z") },
-    { next: () => `share-id-${++idCounter}` },
   );
 }
 
@@ -275,7 +271,7 @@ describe("AttemptLogShareService", () => {
       totalRuns: 100_000,
     };
     const service = makeService(state, batch);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
 
     expect(await service.getSharedAttemptLog("token-1")).toMatchObject({
       attemptId: "attempt-1",
@@ -295,13 +291,13 @@ describe("AttemptLogShareService", () => {
       })),
     });
     const service = makeService(state);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
     const view = await service.getSharedAttemptLog("token-1");
     expect(view?.logText).toBe(state.logChunks.map((chunk) => chunk.content).join(""));
     expect(state.logReadCalls.filter((call) => call.stream === "stdout")).toHaveLength(4);
     expect(state.logReadCalls.every((call) => call.limit <= 128)).toBe(true);
   });
-  it("issues a new share per attempt and merges stdout/stderr into one ordered log", async () => {
+  it("reads an existing legacy link and merges stdout/stderr into one ordered log", async () => {
     const state = makeState({
       logChunks: [
         {
@@ -320,12 +316,7 @@ describe("AttemptLogShareService", () => {
       ],
     });
     const service = makeService(state);
-    const tokens = await service.ensureSharesForAttempts(["attempt-1", "attempt-1"], "user-1");
-    // 重复 attemptId 复用同一条记录，只落库一次。
-    expect(state.records).toHaveLength(1);
-    // 新链接永久有效：expiresAt 固定为哨兵值而不是有限 TTL。
-    expect(state.records[0]!.expiresAt).toBe(PERMANENT_LOG_ACCESS_EXPIRY);
-    expect(tokens.get("attempt-1")).toBe("token-1");
+    seedLegacyShare(state);
 
     const view = await service.getSharedAttemptLog("token-1");
     expect(view).toMatchObject({
@@ -335,19 +326,6 @@ describe("AttemptLogShareService", () => {
       summary: "at com.example.Main(Main.java:10)",
     });
     expect(view?.logText).toBe("start\nboom\nend\n");
-  });
-
-  it("creates proof links for a bounded analysis selection in one bulk write", async () => {
-    const attemptIds = Array.from({ length: 100 }, (_, index) => `attempt-${index + 1}`);
-    const state = makeState({ knownAttemptIds: new Set(attemptIds) });
-    const service = makeService(state);
-
-    const tokens = await service.ensureSharesForAttempts(attemptIds, "analyst-1");
-
-    expect(tokens.size).toBe(100);
-    expect(state.records).toHaveLength(100);
-    expect(state.createManyCalls).toEqual([100]);
-    expect(new Set(state.records.map((record) => record.id)).size).toBe(100);
   });
 
   it("bounds public log payloads before returning them to the page", async () => {
@@ -362,7 +340,7 @@ describe("AttemptLogShareService", () => {
       ],
     });
     const service = makeService(state);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
 
     const view = await service.getSharedAttemptLog("token-1");
 
@@ -376,7 +354,7 @@ describe("AttemptLogShareService", () => {
   it("returns null for unknown or expired tokens without distinguishing the reason", async () => {
     const state = makeState();
     const service = makeService(state);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
     expect(await service.getSharedAttemptLog("token-missing")).toBeNull();
 
     state.records[0]!.expiresAt = "2026-08-16T00:00:00.000Z";
@@ -403,7 +381,7 @@ describe("AttemptLogShareService", () => {
       ],
     });
     const service = makeService(state, makeMultiRoundBatchDetails());
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
 
     const view = await service.getSharedAttemptLog("token-1", "attempt-3");
 
@@ -487,8 +465,9 @@ describe("AttemptLogShareService", () => {
       id: "ddt-attempt",
       executionRunId: "ddt-rerun",
     };
-    const service = makeService(makeState(), source, [diagnostic]);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    const state = makeState();
+    const service = makeService(state, source, [diagnostic]);
+    seedLegacyShare(state);
     expect(await service.getSharedAttemptLog("token-1")).toMatchObject({
       displayName: "WALLET-001",
       casePath: "example.WalletTest",
@@ -537,7 +516,7 @@ describe("AttemptLogShareService", () => {
       [source.id]: sourcePublication,
       [diagnostic.id]: diagnosticPublication,
     });
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
     expect((await service.getSharedAttemptLog("token-1"))?.dependencyUpdatedAt).toBe(
       sourcePublication,
     );
@@ -602,7 +581,7 @@ describe("AttemptLogShareService", () => {
       createdAt: "2026-08-17T00:07:30.000Z",
     };
     const service = makeService(state, source, [diagnostic]);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+    seedLegacyShare(state);
 
     const view = await service.getSharedAttemptLog("token-1", "manual-running-attempt");
 
@@ -622,131 +601,24 @@ describe("AttemptLogShareService", () => {
     });
   });
 
-  it("reuses an existing active record's expiry instead of recomputing it", async () => {
+  it("preserves expiry checks on historical log URLs", async () => {
     const state = makeState();
-    const service = makeService(state);
-    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
-    const originalExpiry = state.records[0]!.expiresAt;
-
-    const secondTokens = await service.ensureSharesForAttempts(["attempt-1"], "user-2");
-    expect(state.records).toHaveLength(2);
-    // 新链接沿用现有记录的过期时间（当前均为永久哨兵），同一 attempt 的有效期保持一致。
-    expect(state.records[1]!.expiresAt).toBe(originalExpiry);
-    expect(secondTokens.get("attempt-1")).toBe("token-2");
-  });
-
-  it("rejects unknown attempts with RUN_ATTEMPT_NOT_FOUND", async () => {
-    const state = makeState();
-    const service = makeService(state);
-    await expect(service.ensureSharesForAttempts(["missing"], "user-1")).rejects.toMatchObject({
-      code: "RUN_ATTEMPT_NOT_FOUND",
-    });
-  });
-
-  describe("ensureSharesForAttemptsInBatch", () => {
-    it("issues one share per attempt in a single createMany call", async () => {
-      const state = makeState({
-        knownAttemptIds: new Set(["attempt-1", "attempt-2"]),
-      });
-      const service = makeService(state);
-      // 重复 attemptId 先经 Set 去重，只落库一次。
-      const tokens = await service.ensureSharesForAttemptsInBatch(
-        ["attempt-1", "attempt-2", "attempt-1"],
-        "batch-1",
-        "user-1",
-      );
-      expect(tokens).toHaveLength(2);
-      expect(state.records).toHaveLength(2);
-      // 批量写入是一次 createMany 调用，而不是逐条 create。
-      expect(state.createManyCalls).toEqual([2]);
-      expect(state.records.map((record) => record.batchId)).toEqual(["batch-1", "batch-1"]);
-      // 批量路径同样签发永久链接。
-      expect(
-        state.records.every((record) => record.expiresAt === PERMANENT_LOG_ACCESS_EXPIRY),
-      ).toBe(true);
-      expect(new Set(tokens.values()).size).toBe(2);
-    });
-
-    it("reuses an existing active record's expiry and ignores stale records", async () => {
-      const state = makeState();
-      const service = makeService(state);
-      await service.ensureSharesForAttemptsInBatch(["attempt-1"], "batch-1", "user-1");
-      const originalExpiry = state.records[0]!.expiresAt;
-      // 手工插入一条更早的已失效记录（有限过期时间，覆盖旧版数据）：不应被沿用。
-      state.records.push({
-        ...state.records[0]!,
-        id: "share-stale",
-        tokenHash: "hashed-stale",
-        createdAt: "2026-08-01T00:00:00.000Z",
-        expiresAt: "2026-08-02T00:00:00.000Z",
-      });
-
-      const secondTokens = await service.ensureSharesForAttemptsInBatch(
-        ["attempt-1"],
-        "batch-1",
-        "user-2",
-      );
-      expect(state.createManyCalls).toEqual([1, 1]);
-      const latest = state.records.find((record) => record.tokenHash === "hashed-token-2");
-      expect(latest?.expiresAt).toBe(originalExpiry);
-      expect(secondTokens.get("attempt-1")).toBe("token-2");
-    });
-
-    it("rejects the whole batch when any attempt is missing", async () => {
-      const state = makeState({
-        knownAttemptIds: new Set(["attempt-1"]),
-      });
-      const service = makeService(state);
-      await expect(
-        service.ensureSharesForAttemptsInBatch(["attempt-1", "missing"], "batch-1", "user-1"),
-      ).rejects.toMatchObject({ code: "RUN_ATTEMPT_NOT_FOUND" });
-      // 校验失败时不写入任何公开访问记录。
-      expect(state.records).toHaveLength(0);
-    });
-
-    it("returns an empty map for an empty attempt list", async () => {
-      const state = makeState();
-      const service = makeService(state);
-      await expect(
-        service.ensureSharesForAttemptsInBatch([], "batch-1", "user-1"),
-      ).resolves.toEqual(new Map());
-      expect(state.createManyCalls).toEqual([]);
-    });
-  });
-
-  describe("ensureShareForAttempt", () => {
-    it("issues a share token for an attempt inside the caller's project scope", async () => {
-      const state = makeState();
-      const service = makeService(state);
-      const token = await service.ensureShareForAttempt("attempt-1", "user-1", ["project-1"]);
-      expect(token).toBe("token-1");
-      expect(state.records).toHaveLength(1);
-    });
-
-    it("skips the scope check when the caller has access to every project", async () => {
-      const state = makeState();
-      const service = makeService(state);
-      await expect(service.ensureShareForAttempt("attempt-1", "user-1")).resolves.toBe("token-1");
-    });
-
-    it("reports attempts outside the caller's project scope as not found", async () => {
-      const state = makeState();
-      const service = makeService(state);
-      await expect(
-        service.ensureShareForAttempt("attempt-1", "user-1", ["other-project"]),
-      ).rejects.toMatchObject({ code: "RUN_ATTEMPT_NOT_FOUND" });
-      expect(state.records).toHaveLength(0);
-    });
-
-    it("rejects unknown attempts before issuing a token", async () => {
-      const state = makeState();
-      const service = makeService(state);
-      await expect(
-        service.ensureShareForAttempt("missing", "user-1", ["project-1"]),
-      ).rejects.toMatchObject({ code: "RUN_ATTEMPT_NOT_FOUND" });
-    });
+    seedLegacyShare(state, "2026-08-16T00:00:00.000Z");
+    expect(await makeService(state).getSharedAttemptLog("token-1")).toBeNull();
   });
 });
+
+function seedLegacyShare(state: FakeState, expiresAt = PERMANENT_LOG_ACCESS_EXPIRY): void {
+  state.records.push({
+    id: "legacy-share",
+    tokenHash: "hashed-token-1",
+    attemptId: "attempt-1",
+    batchId: "batch-1",
+    createdBy: "historical-reader",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    expiresAt,
+  });
+}
 
 function makeMultiRoundBatchDetails(): RunBatchDetails {
   const batch = makeBatchDetails("failed");

@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DomainError } from "@autoforge/domain";
 vi.mock("server-only", () => ({}));
-const { authenticateRequest, projectScope, executionExceptions, readToken } = vi.hoisted(() => ({
-  authenticateRequest: vi.fn(),
-  projectScope: vi.fn(),
-  executionExceptions: vi.fn(),
-  readToken: vi.fn(),
-}));
+const { authenticateRequest, projectScope, executionExceptions, readToken, isBatchPublic } =
+  vi.hoisted(() => ({
+    authenticateRequest: vi.fn(),
+    projectScope: vi.fn(),
+    executionExceptions: vi.fn(),
+    readToken: vi.fn(),
+    isBatchPublic: vi.fn(),
+  }));
 vi.mock("./auth", () => ({ authenticateRequest }));
 vi.mock("./permanent-share-token", () => ({ readPermanentShareToken: readToken }));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
     config: { masterKey: "fixture" },
     identityAccess: { projectScope },
+    publicExecutionAccess: { isBatchPublic },
     executionExceptions,
   }),
 }));
@@ -64,6 +67,21 @@ describe("execution exception read authorization", () => {
     authenticateRequest.mockRejectedValue(new DomainError("AUTH_REQUIRED", "需要登录。"));
     expect((await GET(request(), context)).status).toBe(401);
     expect((await GET(request("?limit=101"), context)).status).toBe(400);
+    expect(executionExceptions).not.toHaveBeenCalled();
+  });
+});
+
+describe("business-ID public executionExceptions", () => {
+  it("accepts only published batches and preserves anonymous read-only access", async () => {
+    isBatchPublic.mockResolvedValue(true);
+    const response = await GET(request("?public=1"), context);
+    expect(response.status).toBe(200);
+    await response.arrayBuffer();
+    expect(authenticateRequest).not.toHaveBeenCalled();
+    expect(isBatchPublic).toHaveBeenCalledWith("batch");
+    executionExceptions.mockClear();
+    isBatchPublic.mockResolvedValue(false);
+    expect((await GET(request("?public=1"), context)).status).toBe(400);
     expect(executionExceptions).not.toHaveBeenCalled();
   });
 });

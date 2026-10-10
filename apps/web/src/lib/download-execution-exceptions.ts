@@ -6,11 +6,13 @@ export async function downloadExecutionExceptions(
   batchId: string,
   accessToken: string | undefined,
   signal: AbortSignal,
+  publicAccess = false,
 ): Promise<void> {
   const query = new URLSearchParams({
     time_zone: activePlatformTimeZone(),
   });
   if (accessToken) query.set("access_token", accessToken);
+  if (publicAccess) query.set("public", "1");
   const response = await fetch(
     `/api/v1/run-batches/${encodeURIComponent(batchId)}/exceptions/export?${query}`,
     { cache: "no-store", signal },

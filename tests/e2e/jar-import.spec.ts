@@ -1,3 +1,4 @@
+import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
 import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
@@ -1636,17 +1637,22 @@ public class MixedVisibleTest {
   // xlsx 即 zip，首 4 字节必须是 PK\x03\x04 本地文件头。
   expect(Array.from(exportBody.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
   const exportedText = await readExportedWorkbookText(Buffer.from(exportBody));
-  const sharePath = /\/share\/attempt-log\/[\w-]+/.exec(exportedText)?.[0];
+  const sharePath = /\/CaseLog\?ExecutionId=[\w-]+/.exec(exportedText)?.[0];
   expect(sharePath).toBeTruthy();
   const failureShareResponse = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/log-share`,
     { headers: { ...userHeaders, origin: new URL(page.url()).origin } },
   );
   expect(failureShareResponse.status()).toBe(200);
-  const failureSharePath = new URL(
-    ((await failureShareResponse.json()) as { shareUrl: string }).shareUrl,
-    page.url(),
-  ).pathname;
+  const failureSharePath = ((await failureShareResponse.json()) as { shareUrl: string }).shareUrl;
+  expect(failureSharePath).toBe(`/CaseLog?ExecutionId=${firstAttemptId}`);
+  const sameLogResponse = await page.request.post(
+    `/api/v1/run-attempts/${firstAttemptId}/log-share`,
+    { headers: { ...userHeaders, origin: new URL(page.url()).origin } },
+  );
+  expect(sameLogResponse.status()).toBe(200);
+  expect((await sameLogResponse.json()).shareUrl).toBe(failureSharePath);
+  const historicalLogPath = await legacyAttemptLogPath(firstAttemptId);
   // 下载成功后弹窗自动关闭。
   await expect(page.getByRole("dialog", { name: "导出执行结果" })).toHaveCount(0);
 
@@ -1707,7 +1713,7 @@ public class MixedVisibleTest {
   try {
     const anonymousPage = await anonymousContext.newPage();
     await anonymousPage.goto(sharePath!);
-    expect(anonymousPage.url()).toContain("/share/attempt-log/");
+    expect(anonymousPage.url()).toContain("/CaseLog?ExecutionId=");
     await expect(anonymousPage.getByText("执行类路径", { exact: true }).first()).toBeVisible();
     const loginToRerun = anonymousPage.getByRole("link", { name: "登录后执行此用例" });
     await expect(loginToRerun).toBeVisible();
@@ -1715,6 +1721,23 @@ public class MixedVisibleTest {
     await expect(anonymousPage.locator(".share-log-output")).toContainText(
       /first attempt assertion failed|retry passed/,
     );
+    // Business IDs alone do not publish an execution batch; export only publishes the selected logs.
+    await anonymousPage.goto(`/Execution?BatchId=${batch.id}`);
+    await expect(anonymousPage.getByRole("heading", { name: "链接无效" })).toBeVisible();
+    const unpublishedOverview = await anonymousContext.request.get(
+      `/api/v1/run-batches/${batch.id}/overview?public=1`,
+    );
+    expect(unpublishedOverview.status()).toBe(400);
+    // The previous signed detail URL is still accepted without a new grant.
+    await anonymousPage.goto(legacyExecutionPath(batch.id));
+    await expect(anonymousPage.getByText("永久匿名只读执行详情")).toBeVisible();
+    await anonymousPage.goto(historicalLogPath);
+    await expect(anonymousPage.locator(".share-log-output")).toContainText(
+      "first attempt assertion failed",
+    );
+    const historicalRounds = anonymousPage.getByRole("navigation", { name: "同一用例的执行历史" });
+    await historicalRounds.getByRole("link", { name: /第 2 轮.*通过/u }).click();
+    await expect(anonymousPage.locator(".share-log-output")).toContainText("retry passed");
     await anonymousPage.goto(failureSharePath);
     const sharedSummary = anonymousPage.locator(".share-log-summary");
     await expect(sharedSummary).toBeVisible();
@@ -1722,6 +1745,11 @@ public class MixedVisibleTest {
     await expect(anonymousPage.locator(".share-log-output")).not.toContainText(
       "TestCase Run Failed Stack Base64",
     );
+    for (const width of [1024, 1536]) {
+      await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(anonymousPage);
+      await captureUi(anonymousPage, `public-case-log-${width}`);
+    }
     await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
     for (const width of [1024, 1536]) {
       await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -1748,7 +1776,8 @@ public class MixedVisibleTest {
     await expect(secondRoundLink).toHaveAttribute("aria-current", "page");
     await expect(anonymousPage.locator(".share-log-output")).toContainText("retry passed");
     expect(anonymousContext.pages()).toHaveLength(1);
-    expect(new URL(anonymousPage.url()).pathname).toBe(failureSharePath);
+    expect(new URL(anonymousPage.url()).pathname).toBe("/CaseLog");
+    expect(new URL(anonymousPage.url()).searchParams.get("ExecutionId")).toBe(firstAttemptId);
     await anonymousPage.goto("/share/attempt-log/e2e-invalid-token");
     await expect(anonymousPage.getByRole("heading", { name: "链接无效" })).toBeVisible();
   } finally {

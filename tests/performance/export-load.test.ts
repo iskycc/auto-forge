@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -8,6 +8,7 @@ import {
   createAttemptLogStore,
   createSqliteDatabase,
   SqliteAttemptLogShareRepository,
+  SqlitePublicExecutionAccessRepository,
   SqliteExecutionControlRepository,
   SqliteRunBatchRepository,
 } from "@autoforge/db/sqlite";
@@ -17,6 +18,7 @@ import { buildRunBatchExportWorkbook } from "@/export-workbook";
 import ExcelJS from "exceljs";
 import { afterAll, describe, expect, it } from "vitest";
 
+import { PublicExecutionAccessService } from "../../packages/application/src/public-execution-access";
 import { AttemptLogShareService } from "../../packages/application/src/attempt-log-shares";
 import { buildRunBatchExportRows } from "../../packages/application/src/export-run-batch-results";
 
@@ -46,18 +48,23 @@ describe("run batch export performance", () => {
       seedLoadFixture(handle.client, RUN_COUNT);
 
       const batches = new SqliteRunBatchRepository(handle);
-      const shares = new AttemptLogShareService(
+      const legacyLogs = new AttemptLogShareService(
         new SqliteAttemptLogShareRepository(handle),
         batches,
         new SqliteExecutionControlRepository(handle, attemptLogs),
         {
-          issue: () => randomBytes(32).toString("base64url"),
           hash: (value) => createHash("sha256").update(value).digest("hex"),
         },
         { now: () => new Date("2026-08-17T12:00:00.000Z") },
-        { next: shareIdGenerator() },
       );
 
+      const shares = new PublicExecutionAccessService(
+        new SqlitePublicExecutionAccessRepository(handle),
+        batches,
+        new SqliteExecutionControlRepository(handle, attemptLogs),
+        legacyLogs,
+        { now: () => new Date("2026-08-17T12:00:00.000Z") },
+      );
       const startedAt = performance.now();
       const details = await batches.get(BATCH_ID);
       expect(details).not.toBeNull();
@@ -66,12 +73,9 @@ describe("run batch export performance", () => {
         outcomes: ["succeeded", "failed", "timed_out", "cancelled", "blocked"],
       });
       const attemptIds = rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
-      const tokens = await shares.ensureSharesForAttemptsInBatch(attemptIds, BATCH_ID, "user-load");
+      const links = await shares.ensureLinksForAttemptsInBatch(attemptIds, BATCH_ID, "user-load");
       const shareLinks = new Map(
-        [...tokens.entries()].map(([attemptId, token]) => [
-          attemptId,
-          `http://localhost/share/attempt-log/${token}`,
-        ]),
+        [...links.entries()].map(([attemptId, path]) => [attemptId, `http://localhost${path}`]),
       );
       const { buffer } = await buildRunBatchExportWorkbook({
         batchId: BATCH_ID,
@@ -82,7 +86,7 @@ describe("run batch export performance", () => {
       const durationMs = performance.now() - startedAt;
 
       expect(rows).toHaveLength(RUN_COUNT);
-      expect(tokens.size).toBe(RUN_COUNT);
+      expect(links.size).toBe(RUN_COUNT);
 
       // 读回生成的 xlsx 校验表头与行数，确保不是只计时了空壳。
       const workbook = new ExcelJS.Workbook();
@@ -171,11 +175,6 @@ function seedLoadFixture(
       );
     }
   })();
-}
-
-function shareIdGenerator(): () => string {
-  let counter = 0;
-  return () => `share-${counter++}`;
 }
 
 type StatementLike = {

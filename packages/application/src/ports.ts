@@ -2607,6 +2607,17 @@ export interface AttemptLogShareRepository {
   findActiveByTokenHash(tokenHash: string, now: string): Promise<AttemptLogShareRecord | null>;
 }
 
+export type PublicBatchAccessRecord = { batchId: string; createdBy: string; createdAt: string };
+export type PublicAttemptAccessRecord = { attemptId: string; createdBy: string; createdAt: string };
+
+/** Explicit, permanent publication. Duplicate writes preserve the first publisher and timestamp. */
+export interface PublicExecutionAccessRepository {
+  publishBatch(record: PublicBatchAccessRecord): Promise<void>;
+  publishAttempts(records: readonly PublicAttemptAccessRecord[]): Promise<void>;
+  isBatchPublic(batchId: string): Promise<boolean>;
+  isAttemptPublic(attemptId: string): Promise<boolean>;
+}
+
 export interface WebhookRepository {
   listConfigurations(projectId: string): Promise<WebhookConfiguration[]>;
   getConfiguration(

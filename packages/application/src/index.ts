@@ -1,4 +1,5 @@
 export * from "./attempt-log-shares";
+export * from "./public-execution-access";
 export * from "./attempt-scheduling-contexts";
 export * from "./coalesced-operation";
 export * from "./ddt-types";

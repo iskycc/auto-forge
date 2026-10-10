@@ -53,6 +53,7 @@ export function RunnerTimeoutDialog({
     pageSize: String(PAGE_SIZE),
   });
   if (batch.accessToken) parameters.set("access_token", batch.accessToken);
+  if (batch.publicAccess) parameters.set("public", "1");
   const url = `/api/v1/run-batches/${encodeURIComponent(batch.id)}/cases?${parameters}`;
   const revision = `${batch.updatedAt}\u0000${batch.statistics?.generation ?? ""}`;
   const key = `${url}\u0000${revision}\u0000${retry}`;

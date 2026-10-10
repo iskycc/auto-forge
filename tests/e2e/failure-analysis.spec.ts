@@ -328,14 +328,16 @@ async function expectCopiedAnalysisLogs(
   for (const output of [content.text, content.html]) {
     expect(output).not.toContain("用例 ID");
     expect(output).not.toContain("执行记录");
-    expect(output).not.toContain("run-failed-");
-    expect(output).not.toContain("attempt-failed-");
   }
+  const metadataText = content.text.replace(/^日志链接：.+$/gmu, "");
+  expect(metadataText).not.toContain("run-failed-");
+  expect(metadataText).not.toContain("attempt-failed-");
   const links = [...content.text.matchAll(/^日志链接：(.+)$/gmu)].map((match) => match[1]!);
   for (const link of links) {
     const url = new URL(link);
     expect(url.origin).toBe(new URL(page.url()).origin);
-    expect(url.pathname).toMatch(/^\/share\/attempt-log\/[^/]+$/u);
+    expect(url.pathname).toBe("/CaseLog");
+    expect(url.searchParams.get("ExecutionId")).toBeTruthy();
   }
   const anchors = await page.evaluate(
     (html) =>
@@ -800,7 +802,7 @@ test("terminal task failures support durable single and batch analysis with evid
   const popupPromise = page.waitForEvent("popup");
   await batchDialog.getByRole("button", { name: "公开日志" }).first().click();
   const publicLogPage = await popupPromise;
-  await expect(publicLogPage).toHaveURL(/\/share\/attempt-log\//u);
+  await expect(publicLogPage).toHaveURL(/\/CaseLog\?ExecutionId=/u);
   await publicLogPage.close();
   await batchDialog.getByLabel("重跑通过", { exact: false }).check();
   const batchSubmit = batchDialog.getByRole("button", { name: "提交分析" });
@@ -815,7 +817,7 @@ test("terminal task failures support durable single and batch analysis with evid
     batchDialog.getByRole("link", {
       name: new RegExp(`${fixture.failedNames[0]}.*查看重跑通过日志`, "u"),
     }),
-  ).toHaveAttribute("href", /\/share\/attempt-log\//u);
+  ).toHaveAttribute("href", /\/CaseLog\?ExecutionId=/u);
   await expect(batchDialog).toContainText("1 个用例未找到成功重跑记录，必须提交截图");
   await expect(batchSubmit).toBeDisabled();
   await batchDialog.getByLabel("用例问题已修改", { exact: false }).check();
@@ -1281,7 +1283,7 @@ test("terminal task failures support durable single and batch analysis with evid
     analysisArchive["xl/worksheets/_rels/sheet1.xml.rels"],
   );
   expect(relationshipXml).toContain("/api/v1/failure-analysis/claims/");
-  expect(relationshipXml).toContain("/share/attempt-log/");
+  expect(relationshipXml).toContain("/CaseLog?ExecutionId=");
   const evidenceLink = /Target="([^"]*\/api\/v1\/failure-analysis\/claims\/[^"]*\/evidence[^"]*)"/u
     .exec(relationshipXml)?.[1]
     ?.replaceAll("&amp;", "&");

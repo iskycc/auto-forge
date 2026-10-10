@@ -33,6 +33,7 @@ export type ExecutionBatchView = Pick<
     | "finishedAt"
   > & {
     accessToken?: string;
+    publicAccess?: boolean;
     statistics?: ReadModelStatus;
     runnerNames?: { id: string; name: string }[];
   };

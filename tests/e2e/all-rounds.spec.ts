@@ -1139,7 +1139,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(jenkinsRun.pollIntervalSeconds).toBe(30);
   expect(jenkinsRun.completionTimeoutSeconds).toBe(7 * 24 * 60 * 60);
   expect(jenkinsRun.progressUrl).toBe(jenkinsRun.resultUrl);
-  expect(jenkinsRun.resultUrl).toContain("/share/run/");
+  expect(jenkinsRun.resultUrl).toContain("/Execution?BatchId=");
   const anonymousContext = await browser.newContext();
   const anonymousProgressPage = await anonymousContext.newPage();
   const progressPageResponse = await anonymousProgressPage.goto(jenkinsRun.progressUrl);
@@ -1288,7 +1288,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const sharedLogLinks = anonymousResultPage.getByRole("link", { name: "查看公开日志" });
   await expect(sharedLogLinks).toHaveCount(2);
   const sharedLogHref = await sharedLogLinks.first().getAttribute("href");
-  expect(sharedLogHref).toMatch(/^\/share\/run\/[^/]+\/attempt\/[^/]+$/u);
+  expect(sharedLogHref).toMatch(/^\/CaseLog\?ExecutionId=[\w-]+$/u);
   const anonymousLogPage = await anonymousContext.newPage();
   const anonymousLogNavigation = anonymousLogPage.goto(sharedLogHref!);
   const platformHealthStartedAt = performance.now();
@@ -1333,6 +1333,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     );
     await captureUi(anonymousResultPage, `shared-run-details-${viewport.width}`);
   }
+  await anonymousResultPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  for (const width of [1024, 1536]) {
+    await anonymousResultPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(anonymousResultPage);
+    await captureUi(anonymousResultPage, `dark-public-execution-${width}`);
+  }
   await anonymousContext.close();
 
   // 执行记录真机布局：一个极端长值只能在自身单元格内截断，不能改变列宽或整表宽度。
@@ -1359,13 +1365,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       new URL(response.url()).pathname === `/api/v1/run-batches/${jenkinsRun.batchId}/share`,
   );
   await jenkinsRecord
-    .getByRole("button", { name: new RegExp(`生成批次 #\\d+ 永久分享链接`) })
+    .getByRole("button", { name: new RegExp(`生成批次 #\\d+ 公开访问地址`) })
     .click();
   expect((await shareResponse).status()).toBe(200);
   const sharedResultHref = await jenkinsRecord
-    .getByRole("link", { name: /打开批次 #\d+ 永久分享链接/ })
+    .getByRole("link", { name: /打开批次 #\d+ 公开访问地址/ })
     .getAttribute("href");
-  expect(sharedResultHref).toContain("/share/run/");
+  expect(sharedResultHref).toContain("/Execution?BatchId=");
   await page.evaluate(() => {
     Object.defineProperty(window.navigator, "clipboard", {
       configurable: true,
@@ -1385,8 +1391,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       { once: true },
     );
   });
-  await jenkinsRecord.getByRole("button", { name: /复制批次 #\d+ 永久分享链接/ }).click();
-  await expect(jenkinsRecord.getByRole("status")).toHaveText("永久分享链接已复制");
+  await jenkinsRecord.getByRole("button", { name: /复制批次 #\d+ 公开访问地址/ }).click();
+  await expect(jenkinsRecord.getByRole("status")).toHaveText("公开访问地址已复制");
   expect(
     await page.evaluate(() => Reflect.get(window, "__autoforgeCopiedText") as string | undefined),
   ).toBe(sharedResultHref);
@@ -1690,7 +1696,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(dependencyTime).toHaveAttribute("title", `UTC ${currentDependencyUpdatedAt}`);
   expect(publicLogPage.context().pages()).toHaveLength(openPageCount);
   expect(publicLogPage.url()).toContain(
-    `attempt=${encodeURIComponent(diagnosticClaim.assignment.attemptId)}`,
+    `AttemptId=${encodeURIComponent(diagnosticClaim.assignment.attemptId)}`,
   );
 
   // 从公开日志页再次执行后，新记录必须在同一页面自动进入执行历史，不能依赖手动刷新。
@@ -1716,7 +1722,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const publicPageRerunClaim = await claimAssignment(page, identity);
   expect(dependencyInputId(publicPageRerunClaim)).toBe(currentDependencyId);
   const latestManualRerunLink = executionHistory.locator(
-    `a[href$="?attempt=${encodeURIComponent(publicPageRerunClaim.assignment.attemptId)}"]`,
+    `a[href$="AttemptId=${encodeURIComponent(publicPageRerunClaim.assignment.attemptId)}"]`,
   );
   await expect(latestManualRerunLink).toBeVisible({ timeout: 10_000 });
   await expect(latestManualRerunLink).toContainText("手动重跑");

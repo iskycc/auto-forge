@@ -10,6 +10,7 @@ export * from "./platform-node";
 export * from "./operations";
 export * from "./project-structure";
 export * from "./attempt-log-share";
+export * from "./public-execution-links";
 export * from "./ddt";
 export * from "./runner-group";
 export * from "./case-suite-activity";

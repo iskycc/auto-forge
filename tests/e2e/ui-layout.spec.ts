@@ -379,9 +379,8 @@ test("batch runner panel separates round attempts from resource snapshots and co
     expect(
       (await anonymous.request.get(`http://127.0.0.1:3100${casesUrl}?${timeoutQuery}`)).status(),
     ).toBe(401);
-    const token = new URL(share.body.shareUrl, "http://127.0.0.1:3100").pathname.split("/").at(-1)!;
     const sharedQuery = new URLSearchParams(timeoutQuery);
-    sharedQuery.set("access_token", token);
+    sharedQuery.set("public", "1");
     const shared = await anonymous.request.get(`http://127.0.0.1:3100${casesUrl}?${sharedQuery}`);
     expect(shared.status()).toBe(200);
     expect(await shared.json()).toMatchObject({ total: 1 });
@@ -636,9 +635,8 @@ test("anonymous execution details keep tables and actions within the page", asyn
     }
     await anonymousPage.getByRole("button", { name: "刷新", exact: true }).click();
     await expect(anonymousPage.locator(".execution-case-table")).toContainText(renamedRunner);
-    const shareToken = new URL(share.body.shareUrl).pathname.split("/").at(-1)!;
     const overviewResponse = await anonymousPage.request.get(
-      `/api/v1/run-batches/${fixture.batchId}/overview?access_token=${encodeURIComponent(shareToken)}`,
+      `/api/v1/run-batches/${fixture.batchId}/overview?public=1`,
     );
     expect(overviewResponse.status()).toBe(200);
     expect((await overviewResponse.json()).runnerNames).toEqual([
@@ -694,7 +692,7 @@ test("anonymous execution details keep tables and actions within the page", asyn
       .getByRole("link", { name: "查看公开日志", exact: true })
       .first();
     await publicLog.click();
-    await expect(anonymousPage).toHaveURL(/\/share\/run\/[^/]+\/attempt\//);
+    await expect(anonymousPage).toHaveURL(/\/CaseLog\?ExecutionId=/u);
     await expect(anonymousPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
     await page.goto(share.body.shareUrl);
     await expect(page).toHaveURL(`/run-batches/${fixture.batchId}`);
@@ -2999,7 +2997,15 @@ test("global dark appearance persists in SSR, login dialogs and public pages wit
     }
     return route.continue();
   });
-  for (const route of ["/share/case/invalid", "/share/run/invalid", "/share/attempt-log/invalid"]) {
+  for (const route of [
+    "/share/case/invalid",
+    "/share/run/invalid",
+    "/share/attempt-log/invalid",
+    "/CaseLog",
+    "/CaseLog?ExecutionId=missing",
+    "/Execution",
+    "/Execution?BatchId=missing",
+  ]) {
     await page.goto(route);
     await expect(page.getByRole("heading", { name: "链接无效" })).toBeVisible();
     await expect(page.getByRole("button", { name: "切换到浅色模式" })).toBeVisible();
@@ -4649,7 +4655,7 @@ test("execution record actions stay on one line after sharing and resizing saved
       await handle.press("ArrowRight");
       const resizedWidth = await handle.getAttribute("aria-valuenow");
       await failedRow.getByRole("button", { name: /复制批次/ }).click();
-      await expect(failedRow.getByRole("status")).toHaveText("永久分享链接已复制");
+      await expect(failedRow.getByRole("status")).toHaveText("公开访问地址已复制");
       await failedRow.scrollIntoViewIfNeeded();
       await captureUi(page, `record-actions-shared-${appearance}`, width, false);
       await expectUiIntegrity(page);

@@ -20,7 +20,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const { attemptId } = await context.params;
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "log.read");
-    const token = await services.attemptLogShares.ensureShareForAttempt(
+    const shareUrl = await services.publicExecutionAccess.ensureLinkForAttempt(
       attemptId,
       identity.user.id,
       projectIds,
@@ -31,7 +31,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       resourceId: attemptId,
       requestId: currentRequestId,
     });
-    return NextResponse.json({ attemptId, shareUrl: `/share/attempt-log/${token}` });
+    return NextResponse.json({ attemptId, shareUrl });
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }

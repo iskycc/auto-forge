@@ -1,15 +1,12 @@
 import type { SharedAttemptLogOutcome, SharedAttemptLogView } from "@autoforge/contracts";
-import { DomainError, runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
+import { runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
 
 import type {
-  AttemptLogShareRecord,
   AttemptLogShareRepository,
   Clock,
   ExecutionControlRepository,
-  IdGenerator,
   RunBatchRepository,
 } from "./ports";
-import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
 
 /**
  * 日志公开访问链接永久有效：离线部署没有外部吊销通道，链接一旦泄露只能靠删除对应
@@ -25,8 +22,6 @@ const LOG_PAGE_LIMIT = 128;
 const SHARED_LOG_MAX_BYTES = 512 * 1024;
 
 export type AttemptLogShareTokenPort = {
-  /** 生成 32 字节随机数的 base64url 字符串作为链接 token。 */
-  issue(): string;
   /** SHA-256 hex；库中只存哈希，明文不出现在持久层。 */
   hash(value: string): string;
 };
@@ -38,7 +33,6 @@ export class AttemptLogShareService {
     private readonly executions: ExecutionControlRepository,
     private readonly tokens: AttemptLogShareTokenPort,
     private readonly clock: Clock,
-    private readonly ids: IdGenerator,
   ) {}
 
   /**
@@ -65,7 +59,7 @@ export class AttemptLogShareService {
   }
 
   /**
-   * 永久批次分享页复用其 HMAC 授权读取该批次中的用例日志。anchorAttemptId 必须
+   * 已授权公开批次或日志入口复用有界读取与同用例历史边界。anchorAttemptId 必须
    * 直接属于已分享批次；selectedAttemptId 只能在同一 ExecutionRun 的轮次/诊断
    * 重跑家族内切换，避免通过猜测 attemptId 越过批次边界。
    */
@@ -193,113 +187,6 @@ export class AttemptLogShareService {
       ),
       expiresAt,
     };
-  }
-
-  /**
-   * 为一组 attempt 准备日志公开访问链接，返回 attemptId 到明文 token 的映射。
-   * token 只存哈希、无法还原，因此已存在有效链接时不能复用旧链接；新链接沿用该 attempt
-   * 现有有效链接的过期时间（当前均为永久哨兵值），保持同一 attempt 的链接有效期一致。
-   * 同一调用内重复的 attemptId 复用同一条记录。
-   */
-  async ensureSharesForAttempts(
-    attemptIds: readonly string[],
-    createdBy: string,
-  ): Promise<Map<string, string>> {
-    const now = this.clock.now();
-    const uniqueAttemptIds = [...new Set(attemptIds)];
-    if (uniqueAttemptIds.length === 0) return new Map();
-    const [contextsByAttempt, activeShares] = await Promise.all([
-      resolveAttemptSchedulingContexts(this.executions, uniqueAttemptIds),
-      this.shares.findActiveByAttemptIds(uniqueAttemptIds, now.toISOString()),
-    ]);
-    if (contextsByAttempt.size !== uniqueAttemptIds.length) {
-      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    }
-    const activeExpiryByAttempt = new Map(
-      activeShares.map((share) => [share.attemptId, share.expiresAt]),
-    );
-    const tokensByAttempt = new Map<string, string>();
-    const records = uniqueAttemptIds.map((attemptId): AttemptLogShareRecord => {
-      const context = contextsByAttempt.get(attemptId)!;
-      const token = this.tokens.issue();
-      tokensByAttempt.set(attemptId, token);
-      return {
-        id: this.ids.next(),
-        tokenHash: this.tokens.hash(token),
-        attemptId,
-        batchId: context.batchId,
-        createdBy,
-        createdAt: now.toISOString(),
-        expiresAt: activeExpiryByAttempt.get(attemptId) ?? PERMANENT_LOG_ACCESS_EXPIRY,
-      };
-    });
-    await this.shares.createMany(records);
-    return tokensByAttempt;
-  }
-
-  /**
-   * 为单个 attempt 创建日志公开访问链接并返回明文 token；projectIds 为调用方的日志读取范围，
-   * attempt 不在范围内按不存在处理，与日志读取接口的越权语义保持一致。
-   */
-  async ensureShareForAttempt(
-    attemptId: string,
-    createdBy: string,
-    projectIds?: readonly string[],
-  ): Promise<string> {
-    if (projectIds) {
-      const projectId = await this.executions.resolveAttemptProjectId(attemptId);
-      if (!projectId || !projectIds.includes(projectId)) {
-        throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-      }
-    }
-    const tokens = await this.ensureSharesForAttempts([attemptId], createdBy);
-    const token = tokens.get(attemptId);
-    if (!token) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    return token;
-  }
-
-  /**
-   * 为同一批次的全部 attempt 批量准备日志公开访问链接，返回 attemptId 到明文 token 的映射。
-   * 与逐条版语义一致（token 只存哈希、已有有效链接沿用过期时间），但把 3N 次串行
-   * 查询收敛为分批存在性校验、分批查有效链接与单事务批量写入，供 5 万行级导出使用；
-   * 详情页的单个链接仍走 ensureSharesForAttempts。
-   */
-  async ensureSharesForAttemptsInBatch(
-    attemptIds: readonly string[],
-    batchId: string,
-    createdBy: string,
-  ): Promise<Map<string, string>> {
-    const uniqueAttemptIds = [...new Set(attemptIds)];
-    if (uniqueAttemptIds.length === 0) return new Map();
-    const now = this.clock.now();
-    const existingCount = await this.executions.countExistingAttemptIds(uniqueAttemptIds);
-    if (existingCount !== uniqueAttemptIds.length) {
-      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    }
-    const activeShares = await this.shares.findActiveByAttemptIds(
-      uniqueAttemptIds,
-      now.toISOString(),
-    );
-    const activeExpiryByAttempt = new Map(
-      activeShares.map((share) => [share.attemptId, share.expiresAt]),
-    );
-    const tokensByAttempt = new Map<string, string>();
-    const newShares: AttemptLogShareRecord[] = [];
-    for (const attemptId of uniqueAttemptIds) {
-      const token = this.tokens.issue();
-      tokensByAttempt.set(attemptId, token);
-      newShares.push({
-        id: this.ids.next(),
-        tokenHash: this.tokens.hash(token),
-        attemptId,
-        batchId,
-        createdBy,
-        createdAt: now.toISOString(),
-        expiresAt: activeExpiryByAttempt.get(attemptId) ?? PERMANENT_LOG_ACCESS_EXPIRY,
-      });
-    }
-    await this.shares.createMany(newShares);
-    return tokensByAttempt;
   }
 
   /** 复用执行控制仓储的分页读取；每条流有界读取，合并后再按 UTF-8 边界截断。 */

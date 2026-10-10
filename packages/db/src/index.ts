@@ -19,6 +19,8 @@ export * from "./postgres-runner-group";
 export * from "./postgres-runner-installation-profile";
 export * from "./sqlite-project-structure";
 export * from "./sqlite-attempt-log-share";
+export * from "./sqlite-public-execution-access";
+export * from "./postgres-public-execution-access";
 export * from "./sqlite-webhook";
 export * from "./postgres-attempt-log-share";
 export * from "./postgres-webhook";

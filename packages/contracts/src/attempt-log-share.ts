@@ -8,9 +8,9 @@
  *   &outcomes=succeeded,failed,timed_out,cancelled,blocked
  * 响应：200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet 附件。
  *
- * 免登日志页：/share/attempt-log/[token]
- * token 在导出时由服务端生成并持久化（存 SHA-256 哈希），链接永久有效；token
- * 以签发 attempt 为锚点，可访问同一批次、同一用例的其他轮次和手动诊断重跑。
+ * 免登日志页：/CaseLog?ExecutionId=<attemptId>，由持久化公开授权控制访问。
+ * 以具体 attempt 为锚点，同用例轮次/手动诊断重跑通过 AttemptId 切换。
+ * 旧 /share/attempt-log/[token] 仅保留读取兼容，不再签发旧式链接。
  */
 
 /** 导出筛选项；blocked 表示 Adapter 未正常完成的超时、取消或基础设施异常。 */

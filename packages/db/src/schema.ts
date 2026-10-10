@@ -1213,8 +1213,23 @@ export const attemptArtifacts = sqliteTable(
   ],
 );
 
-// 日志公开访问：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
-// expires_at 对新记录为永久哨兵值（应用层 PERMANENT_LOG_ACCESS_EXPIRY），列保持 NOT NULL。
+export const publicBatchAccess = sqliteTable("public_batch_access", {
+  batchId: text("batch_id")
+    .primaryKey()
+    .references(() => runBatches.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const publicAttemptAccess = sqliteTable("public_attempt_access", {
+  attemptId: text("attempt_id")
+    .primaryKey()
+    .references(() => runAttempts.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+// Legacy log-token records are read for compatibility; new access uses the grants above.
 export const attemptLogShares = sqliteTable(
   "attempt_log_shares",
   {
@@ -2142,6 +2157,8 @@ export const schema = {
   attemptLogWatermarks,
   attemptArtifacts,
   attemptLogShares,
+  publicBatchAccess,
+  publicAttemptAccess,
   caseSourceComparisons,
   caseSuiteVersions,
   caseSuiteSchedules,

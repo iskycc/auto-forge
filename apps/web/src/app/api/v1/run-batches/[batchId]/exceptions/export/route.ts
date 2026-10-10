@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { Readable } from "node:stream";
 import { z } from "zod";
 import { apiErrorResponse } from "@/lib/api-response";
-import { executionExceptionProjectScope } from "@/lib/execution-exceptions-access";
+import { executionReadProjectScope } from "@/lib/execution-public-access";
 import { createExecutionExceptionWorkbookStream } from "@/lib/execution-exceptions-export-xlsx";
 import { exportContentDisposition } from "@/lib/run-batch-export-xlsx";
 import { getPlatformServices } from "@/lib/services";
 
 const querySchema = z
   .object({
+    public: z.literal("1").optional(),
     access_token: z.string().min(1).optional(),
     time_zone: z
       .string()
@@ -33,10 +34,13 @@ export async function GET(request: Request, context: { params: Promise<{ batchId
     const { batchId } = await context.params;
     const parameters = Object.fromEntries(new URL(request.url).searchParams);
     const services = await getPlatformServices();
-    const projectIds = await executionExceptionProjectScope(
+    const projectIds = await executionReadProjectScope(
       request,
       batchId,
-      parameters.access_token || undefined,
+      {
+        accessToken: parameters.access_token || undefined,
+        publicAccess: parameters.public === "1",
+      },
       services,
     );
     const input = querySchema.parse(parameters);

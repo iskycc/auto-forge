@@ -20,7 +20,7 @@ import {
   type FailureAnalysisScreenshot,
 } from "@autoforge/domain";
 
-import type { AttemptLogShareService } from "./attempt-log-shares";
+import type { PublicExecutionAccessService } from "./public-execution-access";
 import type { Clock, FailureAnalysisRepository, IdGenerator, JarObjectStorePort } from "./ports";
 
 const MAXIMUM_PAGE_SIZE = 100;
@@ -42,7 +42,10 @@ export class FailureAnalysisService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly objectStore?: Pick<JarObjectStorePort, "putObject" | "read" | "delete">,
-    private readonly attemptLogShares?: Pick<AttemptLogShareService, "ensureSharesForAttempts">,
+    private readonly publicExecutionAccess?: Pick<
+      PublicExecutionAccessService,
+      "ensureLinksForAttempts"
+    >,
   ) {}
 
   private async readRecentSuccesses(
@@ -700,25 +703,25 @@ export class FailureAnalysisService {
     if (successfulAttempts.size === 0) {
       return claims.map((claim) => ({ analysisId: claim.id, status: "missing" as const }));
     }
-    if (!this.attemptLogShares) {
+    if (!this.publicExecutionAccess) {
       throw new DomainError("FAILURE_ANALYSIS_LOG_SHARE_UNAVAILABLE", "当前无法生成重跑日志证明。");
     }
-    const tokensByAttempt = await this.attemptLogShares.ensureSharesForAttempts(
+    const linksByAttempt = await this.publicExecutionAccess.ensureLinksForAttempts(
       [...new Set(successfulAttempts.values())],
       claimantId,
     );
     return claims.map((claim) => {
       const attemptId = successfulAttempts.get(claim.id);
       if (!attemptId) return { analysisId: claim.id, status: "missing" as const };
-      const token = tokensByAttempt.get(attemptId);
-      if (!token) {
+      const url = linksByAttempt.get(attemptId);
+      if (!url) {
         throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "重跑通过日志不存在或已被删除。");
       }
       return {
         analysisId: claim.id,
         status: "found" as const,
         attemptId,
-        url: `/share/attempt-log/${token}`,
+        url,
       };
     });
   }

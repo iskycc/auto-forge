@@ -61,6 +61,7 @@ export function ExecutionBatchDetails({
   artifactsEnabled,
   runnerDirectory,
   accessToken,
+  publicAccess = false,
 }: {
   batch: ExecutionBatchView;
   retrySuiteId?: string;
@@ -79,6 +80,7 @@ export function ExecutionBatchDetails({
   artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
   accessToken?: string;
+  publicAccess?: boolean;
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
@@ -113,6 +115,7 @@ export function ExecutionBatchDetails({
     async (signal?: AbortSignal): Promise<void> => {
       const parameters = new URLSearchParams();
       if (accessToken) parameters.set("access_token", accessToken);
+      if (publicAccess) parameters.set("public", "1");
       const response = await fetch(
         `/api/v1/run-batches/${encodeURIComponent(initialBatch.id)}/overview${parameters.size > 0 ? `?${parameters.toString()}` : ""}`,
         { cache: "no-store", ...(signal ? { signal } : {}) },
@@ -121,7 +124,11 @@ export function ExecutionBatchDetails({
         throw new Error((await readApiErrorMessage(response, "刷新执行详情失败。"))!);
       }
       const latest = (await response.json()) as ExecutionBatchView;
-      const next = accessToken ? { ...latest, accessToken } : latest;
+      const next = {
+        ...latest,
+        ...(accessToken ? { accessToken } : {}),
+        ...(publicAccess ? { publicAccess } : {}),
+      };
       setBatch((current) =>
         current.updatedAt === next.updatedAt &&
         current.finishedAt === next.finishedAt &&
@@ -133,7 +140,7 @@ export function ExecutionBatchDetails({
           : next,
       );
     },
-    [accessToken, initialBatch.id],
+    [accessToken, publicAccess, initialBatch.id],
   );
 
   // 只拉取有界概要并更新当前组件，不再 router.refresh() 重跑整页 Server Component。
@@ -406,11 +413,16 @@ export function ExecutionBatchDetails({
         <ExecutionExceptionsDialog
           batchId={batch.id}
           accessToken={accessToken}
+          publicAccess={publicAccess}
           onClose={() => setExceptionsDialogOpen(false)}
         />
       ) : null}
       <RunBatchRounds
-        batch={accessToken ? { ...batch, accessToken } : batch}
+        batch={{
+          ...batch,
+          ...(accessToken ? { accessToken } : {}),
+          ...(publicAccess ? { publicAccess } : {}),
+        }}
         canCancelRuns={canCancelRuns}
         canReadLogs={canReadLogs}
         canRetryRuns={canRetryRuns}

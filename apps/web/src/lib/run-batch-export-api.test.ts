@@ -16,7 +16,7 @@ vi.mock("./services", () => ({
   getPlatformServices: async () => ({
     identityAccess: { projectScope },
     runBatchExport: { prepare: buildExport },
-    attemptLogShares: { ensureSharesForAttemptsInBatch: ensureShares },
+    publicExecutionAccess: { ensureLinksForAttemptsInBatch: ensureShares },
     configurationStore: { read: readConfiguration },
   }),
 }));
@@ -47,7 +47,9 @@ beforeEach(() => {
       yield [row];
     })(),
   }));
-  ensureShares.mockResolvedValue(new Map());
+  ensureShares.mockResolvedValue(
+    new Map([["attempt-failed", "/CaseLog?ExecutionId=attempt-failed"]]),
+  );
 });
 
 describe("execution result export time zone", () => {
@@ -73,6 +75,9 @@ describe("execution result export time zone", () => {
       expect(sheet.getCell("E2").value).toBe(start);
       expect(sheet.getCell("F2").value).toBe(end);
       expect(sheet.getCell("G2").value).toBe(60);
+      expect(sheet.getCell("H2").hyperlink).toBe(
+        "http://localhost/CaseLog?ExecutionId=attempt-failed",
+      );
       expect(buildExport).toHaveBeenCalledWith({
         batchId: "batch",
         scope: "final",

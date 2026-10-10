@@ -1,4 +1,7 @@
-import type { AttemptLogShareRepository } from "@autoforge/application";
+import type {
+  AttemptLogShareRepository,
+  PublicExecutionAccessRepository,
+} from "@autoforge/application";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -8,6 +11,13 @@ import { describe, expect, it } from "vitest";
  */
 export type AttemptLogShareHarness = {
   repository: AttemptLogShareRepository;
+  publicAccess: PublicExecutionAccessRepository;
+  readPublicAccess(): Promise<{
+    batches: Array<{ createdBy: string; createdAt: string }>;
+    attempts: Array<{ createdBy: string; createdAt: string }>;
+  }>;
+  deleteAttempt(attemptId: string): Promise<void>;
+  deleteBatch(): Promise<void>;
   fixture: { batchId: string; attemptIds: readonly [string, string] };
   dispose(): Promise<void>;
 };
@@ -103,6 +113,98 @@ export function attemptLogShareContract(adapterName: string, createHarness: Harn
         await repository.createMany([]);
         await expect(repository.findActiveByAttemptIds([], REFERENCE_TIME)).resolves.toEqual([]);
       });
+    });
+
+    it("requires explicit publication and persists grants independently of legacy tokens", async () => {
+      await withHarness(createHarness, async ({ publicAccess, fixture, repository }) => {
+        expect(await publicAccess.isBatchPublic(fixture.batchId)).toBe(false);
+        expect(await publicAccess.isAttemptPublic(fixture.attemptIds[0])).toBe(false);
+        await publicAccess.publishBatch({
+          batchId: fixture.batchId,
+          createdBy: "reader",
+          createdAt: REFERENCE_TIME,
+        });
+        await publicAccess.publishAttempts(
+          fixture.attemptIds.map((attemptId) => ({
+            attemptId,
+            createdBy: "reader",
+            createdAt: REFERENCE_TIME,
+          })),
+        );
+        expect(await publicAccess.isBatchPublic(fixture.batchId)).toBe(true);
+        for (const attemptId of fixture.attemptIds)
+          expect(await publicAccess.isAttemptPublic(attemptId)).toBe(true);
+        expect(await repository.findActiveByAttemptIds(fixture.attemptIds, REFERENCE_TIME)).toEqual(
+          [],
+        );
+        expect(await publicAccess.isBatchPublic("missing")).toBe(false);
+      });
+    });
+
+    it("idempotently preserves the first publisher and timestamp under duplicate writes", async () => {
+      await withHarness(createHarness, async ({ publicAccess, fixture, readPublicAccess }) => {
+        const batch = { batchId: fixture.batchId, createdBy: "first", createdAt: REFERENCE_TIME };
+        const attempt = {
+          attemptId: fixture.attemptIds[0],
+          createdBy: "first",
+          createdAt: REFERENCE_TIME,
+        };
+        await publicAccess.publishBatch(batch);
+        await publicAccess.publishAttempts([attempt, attempt]);
+        await Promise.all([
+          publicAccess.publishBatch({ ...batch, createdBy: "second" }),
+          publicAccess.publishAttempts([{ ...attempt, createdBy: "second" }]),
+        ]);
+        expect(await readPublicAccess()).toEqual({
+          batches: [{ createdBy: "first", createdAt: REFERENCE_TIME }],
+          attempts: [{ createdBy: "first", createdAt: REFERENCE_TIME }],
+        });
+      });
+    });
+
+    it("rolls back publication when any attempt is missing", async () => {
+      await withHarness(createHarness, async ({ publicAccess, fixture }) => {
+        await expect(
+          publicAccess.publishAttempts([
+            { attemptId: fixture.attemptIds[0], createdBy: "reader", createdAt: REFERENCE_TIME },
+            { attemptId: "missing", createdBy: "reader", createdAt: REFERENCE_TIME },
+          ]),
+        ).rejects.toThrow();
+        expect(await publicAccess.isAttemptPublic(fixture.attemptIds[0])).toBe(false);
+        await expect(
+          publicAccess.publishBatch({
+            batchId: "missing",
+            createdBy: "reader",
+            createdAt: REFERENCE_TIME,
+          }),
+        ).rejects.toThrow();
+      });
+    });
+
+    it("removes publication when its attempt or batch is deleted", async () => {
+      await withHarness(
+        createHarness,
+        async ({ publicAccess, fixture, deleteAttempt, deleteBatch }) => {
+          await publicAccess.publishBatch({
+            batchId: fixture.batchId,
+            createdBy: "reader",
+            createdAt: REFERENCE_TIME,
+          });
+          await publicAccess.publishAttempts(
+            fixture.attemptIds.map((attemptId) => ({
+              attemptId,
+              createdBy: "reader",
+              createdAt: REFERENCE_TIME,
+            })),
+          );
+          await deleteAttempt(fixture.attemptIds[0]);
+          expect(await publicAccess.isAttemptPublic(fixture.attemptIds[0])).toBe(false);
+          expect(await publicAccess.isBatchPublic(fixture.batchId)).toBe(true);
+          await deleteBatch();
+          expect(await publicAccess.isBatchPublic(fixture.batchId)).toBe(false);
+          expect(await publicAccess.isAttemptPublic(fixture.attemptIds[1])).toBe(false);
+        },
+      );
     });
   });
 }

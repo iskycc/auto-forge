@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 用例公开日志使用 `/CaseLog?ExecutionId=<实际执行ID>`，公开执行详情使用 `/Execution?BatchId=<批次ID>`；日志历史保留执行锚点并用 `AttemptId` 切换轮次或诊断重跑。按钮、Excel、分析重跑证明和 Jenkins 返回地址统一采用业务路径，重复生成地址固定。匿名读取必须存在持久化公开授权，单个日志导出不会公开整个批次；旧令牌日志和签名详情链接继续可读。Lite/Full 新增公开授权表，升级与兼容说明见[执行公开地址](./docs/architecture/public-execution-urls.md)。
+
 - Next.js 16.3.8 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
 - 登录后的执行任务详情在标题下显示“拉起人”用户名，读取执行时保存的账号快照；普通任务、Jenkins API、单用例与调试入口从已认证身份写入，不接受请求指定拉起人，重跑继续记录实际重跑账号。长用户名省略显示，可悬浮或聚焦查看全文；历史缺失记录及没有人工账号的系统计划显示“未记录”。匿名永久分享不展示该账号信息。Lite/Full 使用现有批次字段，无需数据库迁移。
 - UI 离线约束：Ant Design、图标与中文语言资源锁定版本并在构建时打包，完整组件 CSS 从本地 `antd/dist/antd.css` 编译；SSR 首屏样式使用本地 registry 提取。后端离线 Docker tar 必须包含 `.next/static` 的全部脚本、样式和其他静态资源及服务端运行依赖，禁止 CDN、在线字体、Iconfont 在线脚本或运行时下载。全平台支持 Ant Design 浅色/深色切换，包括首页、登录弹窗、控制台和公开分享页；当前浏览器的选择保存一年，并用于服务端首屏，刷新不依赖客户端再次切换。

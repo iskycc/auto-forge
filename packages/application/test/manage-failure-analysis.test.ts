@@ -495,8 +495,9 @@ describe("FailureAnalysisService", () => {
   it("uses a successful public-log rerun as the permanent rerun proof", async () => {
     const ownedClaim = failureAnalysisClaim();
     const complete = vi.fn(async () => [ownedClaim]);
-    const ensureSharesForAttempts = vi.fn(
-      async () => new Map([["successful-rerun-attempt", "permanent-token"]]),
+    const ensureLinksForAttempts = vi.fn(
+      async () =>
+        new Map([["successful-rerun-attempt", "/CaseLog?ExecutionId=successful-rerun-attempt"]]),
     );
     const service = createService(
       {
@@ -508,7 +509,7 @@ describe("FailureAnalysisService", () => {
       },
       undefined,
       undefined,
-      { ensureSharesForAttempts },
+      { ensureLinksForAttempts },
     );
 
     await service.complete({
@@ -520,7 +521,7 @@ describe("FailureAnalysisService", () => {
       caseIssueConfirmed: false,
     });
 
-    expect(ensureSharesForAttempts).toHaveBeenCalledWith(
+    expect(ensureLinksForAttempts).toHaveBeenCalledWith(
       ["successful-rerun-attempt"],
       ownedClaim.claimantId,
     );
@@ -532,7 +533,7 @@ describe("FailureAnalysisService", () => {
             ownedClaim.id,
             {
               attemptId: "successful-rerun-attempt",
-              url: "/share/attempt-log/permanent-token",
+              url: "/CaseLog?ExecutionId=successful-rerun-attempt",
             },
           ],
         ]),
@@ -548,8 +549,9 @@ describe("FailureAnalysisService", () => {
       caseDefinitionId: "case-b",
       caseName: "失败用例 B",
     });
-    const ensureSharesForAttempts = vi.fn(
-      async () => new Map([["successful-rerun-attempt", "permanent-token"]]),
+    const ensureLinksForAttempts = vi.fn(
+      async () =>
+        new Map([["successful-rerun-attempt", "/CaseLog?ExecutionId=successful-rerun-attempt"]]),
     );
     const service = createService(
       {
@@ -560,7 +562,7 @@ describe("FailureAnalysisService", () => {
       },
       undefined,
       undefined,
-      { ensureSharesForAttempts },
+      { ensureLinksForAttempts },
     );
 
     await expect(
@@ -574,11 +576,11 @@ describe("FailureAnalysisService", () => {
         analysisId: first.id,
         status: "found",
         attemptId: "successful-rerun-attempt",
-        url: "/share/attempt-log/permanent-token",
+        url: "/CaseLog?ExecutionId=successful-rerun-attempt",
       },
       { analysisId: second.id, status: "missing" },
     ]);
-    expect(ensureSharesForAttempts).toHaveBeenCalledWith(
+    expect(ensureLinksForAttempts).toHaveBeenCalledWith(
       ["successful-rerun-attempt"],
       first.claimantId,
     );
@@ -845,7 +847,7 @@ function createService(
   nextId: (() => string) | undefined = () => "analysis-a",
   objectStore?: Pick<JarObjectStorePort, "putObject" | "read" | "delete">,
   attemptLogShares?: {
-    ensureSharesForAttempts: (
+    ensureLinksForAttempts: (
       attemptIds: readonly string[],
       actorId: string,
     ) => Promise<Map<string, string>>;

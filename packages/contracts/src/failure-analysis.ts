@@ -297,7 +297,16 @@ export const failureAnalysisRerunProofLookupItemSchema = z.discriminatedUnion("s
     analysisId: z.string().min(1),
     status: z.literal("found"),
     attemptId: z.string().min(1),
-    url: z.string().startsWith("/share/attempt-log/").max(2_048),
+    // Persisted proofs issued before the business-ID routes remain valid.
+    url: z
+      .string()
+      .max(2_048)
+      .refine(
+        (value) =>
+          value.startsWith("/share/attempt-log/") ||
+          /^\/CaseLog\?ExecutionId=[^&]+(?:&AttemptId=[^&]+)?$/.test(value),
+        "重跑日志地址无效。",
+      ),
   }),
   z.object({
     analysisId: z.string().min(1),

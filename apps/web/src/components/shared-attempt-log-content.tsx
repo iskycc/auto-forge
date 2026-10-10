@@ -34,7 +34,7 @@ export function SharedAttemptLogContent({
   view: SharedAttemptLogView;
   timeZone: string;
   rerunAccess: SharedLogRerunAccess;
-  /** 不包含 query 的当前分享入口，用于同标签页切换同一用例的其他轮次。 */
+  /** 当前公开入口，保留定位参数并在同标签页切换同一用例的其他轮次。 */
   historyHref: string;
 }) {
   const bounded = truncateSharedLogText(visibleAttemptLogText(view.logText));
@@ -61,7 +61,7 @@ export function SharedAttemptLogContent({
                 sharedAttemptLogContentStyles["share-log-aside-content"],
               )}
             >
-              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Shared Attempt Log</p>
+              <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Case Execution Log</p>
               <div
                 className={cn(
                   "share-log-heading",
@@ -307,7 +307,7 @@ function RoundLogNavigation({
                   sharedAttemptLogContentStyles["share-log-round-link"],
                   `share-log-round-link${active ? " active" : ""}`,
                 )}
-                href={`${historyHref}?attempt=${encodeURIComponent(round.attemptId)}`}
+                href={attemptHistoryHref(historyHref, round.attemptId)}
                 prefetch={false}
               >
                 <span
@@ -440,7 +440,7 @@ export function SharedAttemptLogLoadingView() {
     >
       <LoadingState
         label="正在加载执行日志"
-        description="正在校验永久分享凭据并读取有界日志内容。"
+        description="正在校验公开访问授权并读取有界日志内容。"
       />
     </main>
   );
@@ -492,3 +492,9 @@ const sharedAttemptLogContentStyles = {
   "status-warning":
     "[margin:0_0_10px] border border-solid border-transparent rounded-lg py-2 px-2.5 text-warning bg-warning/10 text-xs",
 } as const;
+
+function attemptHistoryHref(historyHref: string, attemptId: string): string {
+  const url = new URL(historyHref, "http://localhost");
+  url.searchParams.set(url.pathname === "/CaseLog" ? "AttemptId" : "attempt", attemptId);
+  return `${url.pathname}${url.search}`;
+}

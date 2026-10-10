@@ -65,15 +65,15 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         const attemptIds = rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
         // 分页中的 attempt 归属已鉴权的 batchId，
         // 走批量路径避免 5 万行导出时的逐条链接查询。
-        const tokens = await services.attemptLogShares.ensureSharesForAttemptsInBatch(
+        const links = await services.publicExecutionAccess.ensureLinksForAttemptsInBatch(
           attemptIds,
           batchId,
           identity.user.id,
         );
         const shareLinks = new Map(
-          [...tokens.entries()].map(([attemptId, token]) => [
+          [...links.entries()].map(([attemptId, path]) => [
             attemptId,
-            `${base}/share/attempt-log/${token}`,
+            new URL(path, `${base}/`).toString(),
           ]),
         );
         const analysisClaims =

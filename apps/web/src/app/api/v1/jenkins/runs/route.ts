@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
-import { issuePermanentShareToken } from "@/lib/permanent-share-token";
 import { publicLinkBase } from "@/lib/public-link-base";
 import { issueRunProgressToken, RUN_PROGRESS_TOKEN_TTL_SECONDS } from "@/lib/run-progress-token";
 import { getPlatformServices } from "@/lib/services";
@@ -28,9 +27,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       batch.id,
       services.clock.now(),
     );
-    const resultToken = issuePermanentShareToken(services.config.masterKey, "run_batch", batch.id);
+    const resultPath = await services.publicExecutionAccess.publishBatch(
+      batch.id,
+      identity.user.id,
+      projectScope,
+    );
     const baseUrl = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
-    const resultUrl = new URL(`/share/run/${encodeURIComponent(resultToken)}`, baseUrl).toString();
+    const resultUrl = new URL(resultPath, baseUrl).toString();
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "jenkins.run_batch.create",
       resourceType: "run_batch",

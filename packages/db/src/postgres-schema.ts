@@ -1189,8 +1189,23 @@ export const pgFailureAnalysisClaimReleases = pgTable(
   ],
 );
 
-// 日志公开访问：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
-// expires_at 对新记录为永久哨兵值（应用层 PERMANENT_LOG_ACCESS_EXPIRY），列保持 NOT NULL。
+export const pgPublicBatchAccess = pgTable("public_batch_access", {
+  batchId: text("batch_id")
+    .primaryKey()
+    .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const pgPublicAttemptAccess = pgTable("public_attempt_access", {
+  attemptId: text("attempt_id")
+    .primaryKey()
+    .references(() => pgRunAttempts.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+// Legacy log-token records are read for compatibility; new access uses the grants above.
 export const pgAttemptLogShares = pgTable(
   "attempt_log_shares",
   {
@@ -2166,6 +2181,8 @@ export const postgresSchema = {
   attemptStateEvents: pgAttemptStateEvents,
   attemptLogWatermarks: pgAttemptLogWatermarks,
   attemptLogShares: pgAttemptLogShares,
+  publicBatchAccess: pgPublicBatchAccess,
+  publicAttemptAccess: pgPublicAttemptAccess,
   attemptArtifacts: pgAttemptArtifacts,
   caseSourceComparisons: pgCaseSourceComparisons,
   caseSuiteVersions: pgCaseSuiteVersions,
