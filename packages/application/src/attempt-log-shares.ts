@@ -1,5 +1,5 @@
 import type { SharedAttemptLogOutcome, SharedAttemptLogView } from "@autoforge/contracts";
-import { runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
+import { isManualCaseExecution, runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
 
 import type {
   AttemptLogShareRepository,
@@ -93,6 +93,9 @@ export class AttemptLogShareService {
         ? anchorBatch.sourceExecutionRunId
         : anchorContext.executionRunId;
     if (!rootBatchId || !rootExecutionRunId) return null;
+    const rootBatch =
+      rootBatchId === anchorBatch.id ? anchorBatch : await this.batches.getMetadata(rootBatchId);
+    if (!rootBatch) return null;
     const rootSnapshot = await this.batches.getAttemptLogSnapshot(rootBatchId, rootExecutionRunId);
     if (!rootSnapshot) return null;
     // 生产 Lite/Full 仓储只查当前 ExecutionRun 的 attempts。兼容回退仅供仍使用旧
@@ -112,6 +115,7 @@ export class AttemptLogShareService {
         attempt,
         batchId: rootBatchId,
         kind: "round" as const,
+        manualExecution: isManualCaseExecution(rootBatch),
         requestedBy: null,
       })),
       ...diagnosticBatches.flatMap((diagnosticBatch) =>
@@ -119,6 +123,7 @@ export class AttemptLogShareService {
           attempt,
           batchId: diagnosticBatch.id,
           kind: "manual_rerun" as const,
+          manualExecution: true,
           requestedBy: diagnosticBatch.requestedBy ?? null,
         })),
       ),
@@ -128,6 +133,7 @@ export class AttemptLogShareService {
       batchId: string;
       outcome: SharedAttemptLogOutcome;
       kind: "round" | "manual_rerun";
+      manualExecution: boolean;
       requestedBy: { username: string; source: "local" | "ldap" } | null;
     }> = familyAttempts
       .flatMap((candidate) => {
@@ -144,7 +150,7 @@ export class AttemptLogShareService {
       ({ attempt }) => attempt.id === (selectedAttemptId ?? anchorAttemptId),
     );
     if (!selected) return null;
-    const { attempt, outcome, kind, requestedBy } = selected;
+    const { attempt, outcome, kind, requestedBy, manualExecution } = selected;
     const selectedSnapshot =
       selected.batchId === rootBatchId
         ? rootSnapshot
@@ -168,6 +174,7 @@ export class AttemptLogShareService {
       finishedAt: attempt.finishedAt ?? null,
       durationMs: attempt.durationMs ?? null,
       kind,
+      manualExecution,
       requestedBy,
       logText: log.text,
       ...(log.truncated ? { logTruncated: true } : {}),

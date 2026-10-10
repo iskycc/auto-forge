@@ -1,4 +1,4 @@
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isTerminalAttemptStatus } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
@@ -16,13 +16,20 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const { attemptId } = await context.params;
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "log.read");
-    await services.executionControl.listLogs({
-      attemptId,
-      stream: "stdout",
-      afterSequence: -1,
-      limit: 1,
-      ...(projectIds ? { projectIds } : {}),
-    });
+    if (new URL(request.url).searchParams.get("manualOnly") === "1") {
+      const attempt = await services.runBatches.getManualAttemptContext(attemptId);
+      services.identityAccess.authorize(identity, "log.read", attempt.projectId);
+      if (isTerminalAttemptStatus(attempt.status)) {
+        throw new DomainError("RUN_ATTEMPT_NOT_ACTIVE", "该手动执行已经结束，无需实时日志连接。");
+      }
+    } else
+      await services.executionControl.listLogs({
+        attemptId,
+        stream: "stdout",
+        afterSequence: -1,
+        limit: 1,
+        ...(projectIds ? { projectIds } : {}),
+      });
     const secret = services.config.terminalAccessToken;
     if (!secret) {
       throw new DomainError(

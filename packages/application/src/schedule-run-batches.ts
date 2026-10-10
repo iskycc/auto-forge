@@ -20,6 +20,7 @@ import {
   defaultCaseSuiteExecutionPolicy,
   DEFAULT_PROJECT_ID,
   DomainError,
+  isManualCaseExecution,
   REQUIRED_EXECUTION_LABELS,
   retryConcurrencyDecisionForRound,
   scheduleExecutionRuns,
@@ -692,6 +693,30 @@ export class RunBatchSchedulingService {
     const parent = await this.batches.getMetadata(batch.parentBatchId);
     if (!parent) throw new DomainError("RUN_BATCH_NOT_FOUND", "原始执行批次不存在。");
     return { projectId: parent.projectId };
+  }
+
+  /** 只读单行状态和批次元数据，不能为详情页轮询加载任务成员或日志正文。 */
+  async getManualAttemptContext(attemptId: string): Promise<{
+    projectId: string;
+    batchId: string;
+    executionRunId: string;
+    attemptId: string;
+    status: RunAttemptStatus;
+  }> {
+    const source = await this.batches.resolveAttemptRerunSource(attemptId);
+    if (!source) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
+    const batch = await this.batches.getMetadata(source.batchId);
+    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    if (!isManualCaseExecution(batch)) {
+      throw new DomainError("MANUAL_EXECUTION_REQUIRED", "该操作仅适用于手动执行的用例。");
+    }
+    return {
+      projectId: batch.projectId,
+      batchId: batch.id,
+      executionRunId: source.executionRunId,
+      attemptId,
+      status: source.attemptStatus,
+    };
   }
 
   /**

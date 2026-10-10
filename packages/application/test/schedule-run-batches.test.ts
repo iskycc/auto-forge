@@ -16,6 +16,70 @@ import type {
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("public log rerun authorization context", () => {
+  it.each(["case_log_rerun", "standard"] as const)(
+    "reads a %s manual attempt state without loading the batch snapshot",
+    async (kind) => {
+      const batches = {
+        resolveAttemptRerunSource: vi.fn().mockResolvedValue({
+          batchId: "manual-batch",
+          executionRunId: "manual-run",
+          attemptStatus: "running",
+        }),
+        getMetadata: vi.fn().mockResolvedValue({
+          id: "manual-batch",
+          kind,
+          suiteId: "single:case",
+          projectId: "project",
+        }),
+        get: vi.fn(),
+        getSummary: vi.fn(),
+      } as unknown as RunBatchRepository;
+      const service = new RunBatchSchedulingService(
+        batches,
+        {} as CaseSuiteRepository,
+        {} as RunnerRepository,
+        { now: () => new Date(timestamp) },
+        { next: () => "unused" },
+        {
+          maximumCpuUtilizationPercent: 90,
+          maximumMemoryUtilizationPercent: 90,
+          maximumLoadPerCpu: 2,
+        },
+        45,
+      );
+      expect(await service.getManualAttemptContext("attempt")).toEqual({
+        projectId: "project",
+        batchId: "manual-batch",
+        executionRunId: "manual-run",
+        attemptId: "attempt",
+        status: "running",
+      });
+      expect(batches.get).not.toHaveBeenCalled();
+      expect(batches.getSummary).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects a task attempt rather than enabling manual live controls", async () => {
+    const batches = {
+      resolveAttemptRerunSource: vi.fn().mockResolvedValue({ batchId: "task-batch" }),
+      getMetadata: vi.fn().mockResolvedValue({ kind: "standard", suiteId: "suite-1" }),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+      {
+        maximumCpuUtilizationPercent: 90,
+        maximumMemoryUtilizationPercent: 90,
+        maximumLoadPerCpu: 2,
+      },
+      45,
+    );
+    await expect(service.getManualAttemptContext("attempt")).rejects.toMatchObject({
+      code: "MANUAL_EXECUTION_REQUIRED",
+    });
+  });
   it.each(["standard", "case_log_rerun"] as const)(
     "checks the project of a %s attempt without aggregating execution counters",
     async (kind) => {

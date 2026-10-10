@@ -5,15 +5,17 @@ export const SHARED_LOG_MAX_BYTES = 512 * 1024;
 
 /**
  * 按 UTF-8 字节数截断日志，回退到完整字符边界。
- * Buffer.toString 会把截断处的残缺字节渲染为 U+FFFD，截断后统一剥掉结尾替换字符。
+ * 服务端与浏览器共用；stream 解码丢弃末尾不完整字符，不产生替换符号。
  */
 export function truncateSharedLogText(logText: string): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(logText, "utf8") <= SHARED_LOG_MAX_BYTES) {
+  const encoded = new TextEncoder().encode(logText);
+  if (encoded.byteLength <= SHARED_LOG_MAX_BYTES) {
     return { text: logText, truncated: false };
   }
-  let text = Buffer.from(logText, "utf8").subarray(0, SHARED_LOG_MAX_BYTES).toString("utf8");
-  while (text.endsWith("\uFFFD")) text = text.slice(0, -1);
-  return { text, truncated: true };
+  return {
+    text: new TextDecoder().decode(encoded.subarray(0, SHARED_LOG_MAX_BYTES), { stream: true }),
+    truncated: true,
+  };
 }
 
 const OUTCOME_LABELS: Record<SharedAttemptLogView["outcome"], string> = {

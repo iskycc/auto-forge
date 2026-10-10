@@ -7,7 +7,7 @@ import {
 } from "@/components/shared-attempt-log-content";
 import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { sharedLogRerunAccess } from "@/lib/shared-attempt-log-access";
+import { sharedLogAccess } from "@/lib/shared-attempt-log-access";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "用例执行日志" };
@@ -29,9 +29,15 @@ export default async function PublicCaseLogPage({
     query.data.AttemptId,
   );
   if (!view) return <InvalidAttemptLogShareView />;
-  const rerunAccess = await sharedLogRerunAccess(services, await currentIdentity(), view.attemptId);
+  const { rerunAccess, canCancelRuns } = await sharedLogAccess(
+    services,
+    await currentIdentity(),
+    view.attemptId,
+  );
   return (
     <SharedAttemptLogContent
+      key={view.attemptId}
+      canCancelRuns={canCancelRuns}
       historyHref={publicCaseLogPath(query.data.ExecutionId)}
       rerunAccess={rerunAccess}
       timeZone={services.configurationStore.read().web.timeZone}

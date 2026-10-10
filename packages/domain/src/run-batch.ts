@@ -13,6 +13,14 @@ export type RunBatchStatus =
  */
 export type RunBatchKind = "standard" | "final_failure_rerun" | "case_log_rerun";
 
+/** 单用例快捷执行/调试与日志诊断重跑可实时查看；任务及最后失败批跑保持快照读取。 */
+export function isManualCaseExecution(batch: { kind?: RunBatchKind; suiteId: string }): boolean {
+  return (
+    batch.kind === "case_log_rerun" ||
+    ((batch.kind ?? "standard") === "standard" && batch.suiteId.startsWith("single:"))
+  );
+}
+
 export type ExecutionRunStatus =
   "queued" | "assigned" | "running" | "succeeded" | "failed" | "cancelled";
 

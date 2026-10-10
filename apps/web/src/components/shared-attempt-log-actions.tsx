@@ -10,15 +10,20 @@ import { useCallback, useState } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { AttemptRerunAction, type LiveLogAttempt } from "@/components/attempt-rerun-action";
+import { ManualAttemptStopAction } from "@/components/manual-attempt-stop-action";
 import { Button } from "@/components/ui";
 
 /** 登录用户在永久日志详情页直接打开当前手动执行或新提交重跑的实时日志。 */
 export function SharedAttemptLogActions({
   attempt,
   canRetryRuns,
+  canCancelRuns,
+  manualExecution,
 }: {
   attempt: Pick<RunAttempt, "id" | "status">;
   canRetryRuns: boolean;
+  canCancelRuns: boolean;
+  manualExecution: boolean;
 }) {
   const router = useRouter();
   const [openAttempt, setOpenAttempt] = useState<LiveLogAttempt | null>(null);
@@ -45,6 +50,9 @@ export function SharedAttemptLogActions({
           <Radio size={15} /> 查看实时日志
         </Button>
       ) : null}
+      {!terminal && manualExecution && canCancelRuns ? (
+        <ManualAttemptStopAction attemptId={attempt.id} onCancelled={refreshExecutionHistory} />
+      ) : null}
       {terminal && canRetryRuns ? (
         <AttemptRerunAction
           attemptId={attempt.id}
@@ -66,5 +74,6 @@ export function SharedAttemptLogActions({
 }
 
 const sharedAttemptLogActionsStyles = {
-  "shared-attempt-log-actions": "[&_>_.button]:mb-4.5",
+  "shared-attempt-log-actions":
+    "flex flex-wrap items-center gap-2 mb-4.5 [&_.attempt-rerun-action]:mb-0",
 } as const;

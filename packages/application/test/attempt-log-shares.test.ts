@@ -530,6 +530,7 @@ describe("AttemptLogShareService", () => {
     expect(view).toMatchObject({
       attemptId: "manual-attempt",
       kind: "manual_rerun",
+      manualExecution: true,
       requestedBy: { username: "c12345678", source: "ldap" },
       logText: "manual rerun\n",
       rounds: [
@@ -589,6 +590,7 @@ describe("AttemptLogShareService", () => {
       attemptId: "manual-running-attempt",
       outcome: "running",
       kind: "manual_rerun",
+      manualExecution: true,
       logText: "manual rerun is still running\n",
       rounds: [
         expect.objectContaining({ attemptId: "attempt-1", outcome: "failed" }),

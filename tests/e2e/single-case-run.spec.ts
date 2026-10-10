@@ -132,12 +132,14 @@ test("global execution dialog schedules one case through a runner group with Ada
   const body = (await claim.json()) as {
     assignments: Array<{
       assignment: {
+        attemptId: string;
         executionSpec: {
           className: string;
           parameters: Record<string, string>;
           adapter?: { suiteName: string; testName: string; environmentAddress: string };
         };
       };
+      lease: { token: string };
     }>;
   };
   expect(body.assignments).toHaveLength(1);
@@ -151,6 +153,45 @@ test("global execution dialog schedules one case through a runner group with Ada
     },
   });
   expect(body.assignments[0]!.assignment.executionSpec.adapter).not.toHaveProperty("ddtScope");
+
+  const assigned = body.assignments[0]!;
+  const logLink = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-attempts/${assigned.assignment.attemptId}/log-share`,
+    { method: "POST" },
+  );
+  expect(logLink.status).toBe(200);
+  await page.goto(logLink.body.shareUrl);
+  await expect(page.getByText("实时日志", { exact: true })).toBeVisible();
+  const logResponse = await page.request.post(
+    `/api/v1/run-attempts/${assigned.assignment.attemptId}/logs`,
+    {
+      headers: {
+        authorization: `Bearer ${runner.credential}`,
+        "x-autoforge-runner-id": runner.runnerId,
+      },
+      data: {
+        schemaVersion: 1,
+        requestId: randomUUID(),
+        leaseToken: assigned.lease.token,
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "single-case detail live update\n",
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  );
+  expect(logResponse.status()).toBe(200);
+  await expect(page.locator(".share-log-output")).toContainText("single-case detail live update");
+  await page.getByRole("button", { name: "强行中断", exact: true }).click();
+  const stopWarning = page.getByRole("dialog", { name: "中断手动执行" });
+  await expect(stopWarning).toContainText("环境脏数据");
+  await stopWarning.getByRole("button", { name: "继续执行", exact: true }).click();
+  await expect(stopWarning).toHaveCount(0);
 });
 
 async function selectOptionContaining(select: Locator, text: string): Promise<void> {

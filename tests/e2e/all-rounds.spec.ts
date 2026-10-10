@@ -1,4 +1,5 @@
 import { readExportedWorkbookText } from "./support/export-workbook";
+import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
@@ -36,7 +37,11 @@ async function captureUi(page: Page, name: string): Promise<void> {
   if (!screenshotDirectory) return;
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
-  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
+  await page.screenshot({
+    path: resolve(absoluteDirectory, `${name}.png`),
+    fullPage: true,
+    animations: "disabled",
+  });
 }
 
 async function expectConsoleRunDetails(page: Page, batchId: string, suiteName: string) {
@@ -148,7 +153,7 @@ type ClaimedAssignment = {
       inputs: Array<{ inputId: string; kind: string }>;
     };
   };
-  lease: { token: string };
+  lease: { token: string; leaseId: string; version: number };
 };
 
 type FakeJenkins = { baseUrl: string; close: () => Promise<void> };
@@ -420,7 +425,7 @@ async function completeAttempt(
   claim: ClaimedAssignment,
   result: {
     completionId: string;
-    status: "succeeded" | "failed";
+    status: "succeeded" | "failed" | "cancelled";
     resultCode: string;
     summary: string;
     stdoutWatermark?: number;
@@ -453,6 +458,7 @@ async function uploadAttemptLog(
   identity: RunnerIdentity,
   claim: ClaimedAssignment,
   content: string,
+  sequence = 0,
 ): Promise<void> {
   const response = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/logs`,
@@ -465,7 +471,7 @@ async function uploadAttemptLog(
         chunks: [
           {
             stream: "stdout",
-            sequence: 0,
+            sequence,
             content,
             recordedAt: new Date().toISOString(),
           },
@@ -1623,6 +1629,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const runningPublicLogPopupPromise = page.waitForEvent("popup");
   await runningSourceRow.getByRole("button", { name: "公开日志" }).click();
   const runningPublicLogPage = await runningPublicLogPopupPromise;
+  let detailSocketCount = 0;
+  runningPublicLogPage.on("websocket", () => {
+    detailSocketCount += 1;
+  });
   await runningPublicLogPage.waitForLoadState("domcontentloaded");
   const runningHistory = runningPublicLogPage.getByRole("navigation", {
     name: "同一用例的执行历史",
@@ -1631,7 +1641,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     name: /手动重跑.*执行中/u,
   });
   await expect(runningManualLink).toBeVisible();
+  expect(detailSocketCount).toBe(0);
   await runningManualLink.click();
+  await expect(runningPublicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+  expect(detailSocketCount).toBe(1);
+  await expect(
+    runningPublicLogPage.getByRole("button", { name: "强行中断", exact: true }),
+  ).toBeVisible();
   const sharedRealtimeButton = runningPublicLogPage.getByRole("button", {
     name: "查看实时日志",
     exact: true,
@@ -1644,6 +1660,20 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   );
   await expectDialogFitsViewport(runningPublicLogPage, sharedLiveLogDialog);
   await runningPublicLogPage.getByRole("button", { name: "关闭日志终端" }).click();
+  const historicalLogPath = await legacyAttemptLogPath(sharedAttemptId);
+  for (const path of [
+    historicalLogPath,
+    `${legacyExecutionPath(failedSourceBatch.id)}/attempt/${sharedAttemptId}`,
+  ]) {
+    await runningPublicLogPage.goto(`${path}?attempt=${diagnosticClaim.assignment.attemptId}`);
+    await expect(runningPublicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+    await expect(runningPublicLogPage.locator(".share-log-output")).toContainText(
+      realtimeMarker.trim(),
+    );
+    await expect(
+      runningPublicLogPage.getByRole("button", { name: "强行中断", exact: true }),
+    ).toBeVisible();
+  }
   await runningPublicLogPage.close();
 
   await completeAttempt(page, identity, diagnosticClaim, {
@@ -1727,15 +1757,58 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(latestManualRerunLink).toBeVisible({ timeout: 10_000 });
   await expect(latestManualRerunLink).toContainText("手动重跑");
   await expect(latestManualRerunLink).toContainText(`by ${E2E_ADMIN_USERNAME}（本地）`);
+  const detailSocketPromise = publicLogPage.waitForEvent("websocket");
   await latestManualRerunLink.click();
+  const detailSocket = await detailSocketPromise;
   await expect(latestManualRerunLink).toHaveAttribute("aria-current", "page");
   await expect(dependencyTime).toHaveAttribute("title", `UTC ${currentDependencyUpdatedAt}`);
   await expect(publicLogPage.locator(".share-log-output")).toContainText("本次尝试暂无日志内容。");
+  await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
   await uploadAttemptLog(page, identity, publicPageRerunClaim, "public rerun first upload\n");
-  await publicLogPage.reload();
   await expect(publicLogPage.locator(".share-log-output")).toContainText(
     "public rerun first upload",
   );
+  // Hidden log details release their socket; returning backfills logs received meanwhile.
+  await publicLogPage.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => detailSocket.isClosed()).toBe(true);
+  await uploadAttemptLog(
+    page,
+    identity,
+    publicPageRerunClaim,
+    "public rerun hidden-page upload\n",
+    1,
+  );
+  await expect(publicLogPage.locator(".share-log-output")).not.toContainText(
+    "public rerun hidden-page upload",
+  );
+  const resumedSocketPromise = publicLogPage.waitForEvent("websocket");
+  await publicLogPage.evaluate(() => {
+    delete (document as { hidden?: boolean }).hidden;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await resumedSocketPromise;
+  await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+  await expect(publicLogPage.locator(".share-log-output")).toContainText(
+    "public rerun hidden-page upload",
+  );
+  const anonymousManualContext = await publicLogPage.context().browser()!.newContext();
+  const anonymousManualPage = await anonymousManualContext.newPage();
+  let anonymousSockets = 0;
+  anonymousManualPage.on("websocket", () => {
+    anonymousSockets += 1;
+  });
+  await anonymousManualPage.goto(publicLogPage.url());
+  await expect(anonymousManualPage.getByRole("link", { name: "登录后执行此用例" })).toBeVisible();
+  await expect(anonymousManualPage.getByText("只读日志", { exact: true })).toBeVisible();
+  await expect(
+    anonymousManualPage.getByRole("button", { name: "强行中断", exact: true }),
+  ).toHaveCount(0);
+  expect(anonymousSockets).toBe(0);
+  await anonymousManualContext.close();
+  await publicLogPage.bringToFront();
   await expectUiIntegrity(publicLogPage);
   await captureUi(publicLogPage, "shared-diagnostic-history-live-update");
   expect(publicLogPage.context().pages()).toHaveLength(openPageCount);
@@ -1744,8 +1817,129 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     status: "succeeded",
     resultCode: "TESTNG_SUCCEEDED",
     summary: "public page diagnostic rerun passed",
+    stdoutWatermark: 1,
   });
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  await expect(
+    publicLogPage.getByRole("button", { name: "执行此用例", exact: true }),
+  ).toBeVisible();
+  await expect(publicLogPage.getByRole("button", { name: "强行中断", exact: true })).toHaveCount(0);
+
+  // The warning is cancellable; acknowledgement only persists after an accepted stop.
+  for (let stopIndex = 0; stopIndex < 2; stopIndex += 1) {
+    const rerunResponsePromise = publicLogPage.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/rerun"),
+    );
+    await publicLogPage.getByRole("button", { name: "执行此用例", exact: true }).click();
+    expect((await rerunResponsePromise).status()).toBe(201);
+    expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+    const stopClaim = await claimAssignment(page, identity);
+    const stopAttemptId = stopClaim.assignment.attemptId;
+    const stopLink = executionHistory.locator(`a[href*="AttemptId=${stopAttemptId}"]`);
+    await expect(stopLink).toBeVisible();
+    await stopLink.click();
+    const stopButton = publicLogPage.getByRole("button", { name: "强行中断", exact: true });
+    await expect(stopButton).toBeVisible();
+    await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+    await uploadAttemptLog(page, identity, stopClaim, `manual stop scenario ${stopIndex}\n`);
+    await expect(publicLogPage.locator(".share-log-output")).toContainText(
+      `manual stop scenario ${stopIndex}`,
+    );
+    const stopPath = `/api/v1/run-attempts/${encodeURIComponent(stopAttemptId)}/cancel`;
+    let stopRequests = 0;
+    const trackStop = (request: import("@playwright/test").Request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === stopPath)
+        stopRequests += 1;
+    };
+    publicLogPage.on("request", trackStop);
+    if (stopIndex === 0) {
+      for (const dark of [false, true]) {
+        const toggle = publicLogPage.getByRole("button", {
+          name: dark ? "切换到深色模式" : "切换到浅色模式",
+          exact: true,
+        });
+        if (await toggle.isVisible()) await toggle.click();
+        for (const viewport of [
+          { width: 1024, height: 768 },
+          { width: 1536, height: 960 },
+        ]) {
+          await publicLogPage.setViewportSize(viewport);
+          await expectUiIntegrity(publicLogPage);
+          await captureUi(
+            publicLogPage,
+            `manual-log-live-${dark ? "dark" : "light"}-${viewport.width}`,
+          );
+          await stopButton.click();
+          const warning = publicLogPage.getByRole("dialog", { name: "中断手动执行" });
+          await expect(warning).toContainText("脏数据");
+          await expect(warning).not.toHaveClass(/(?:^|\s)ant-zoom-(?:appear|enter)/u);
+          await expect(warning).toHaveCSS("opacity", "1");
+          await expectDialogFitsViewport(publicLogPage, warning);
+          await captureUi(
+            publicLogPage,
+            `manual-stop-warning-${dark ? "dark" : "light"}-${viewport.width}`,
+          );
+          await warning.getByRole("button", { name: "继续执行", exact: true }).click();
+          await expect(warning).toHaveCount(0);
+          expect(stopRequests).toBe(0);
+        }
+      }
+      await stopButton.click();
+      const warning = publicLogPage.getByRole("dialog", { name: "中断手动执行" });
+      await warning.getByLabel("后续中断操作不再提醒").check();
+      const stopped = publicLogPage.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === stopPath && response.request().method() === "POST",
+      );
+      await warning.getByRole("button", { name: "确认中断", exact: true }).click();
+      expect((await stopped).status()).toBe(200);
+    } else {
+      // A reload must retain this browser's choice and still require the stop click.
+      await publicLogPage.reload();
+      await expect(stopButton).toBeVisible();
+      expect(stopRequests).toBe(0);
+      const stopped = publicLogPage.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === stopPath && response.request().method() === "POST",
+      );
+      await stopButton.click();
+      expect((await stopped).status()).toBe(200);
+      await expect(publicLogPage.getByRole("dialog", { name: "中断手动执行" })).toHaveCount(0);
+    }
+    expect(stopRequests).toBe(1);
+    await expect(
+      publicLogPage.getByRole("button", { name: "中断中…", exact: true }),
+    ).toBeDisabled();
+    publicLogPage.off("request", trackStop);
+    const renewed = await page.request.post(
+      `/api/v1/runner-agents/${identity.runnerId}/leases/${stopClaim.lease.leaseId}/renew`,
+      {
+        headers: runnerHeaders(identity),
+        data: {
+          schemaVersion: 1,
+          requestId: randomUUID(),
+          leaseToken: stopClaim.lease.token,
+          leaseVersion: stopClaim.lease.version,
+        },
+      },
+    );
+    expect(renewed.status()).toBe(200);
+    expect(await renewed.json()).toMatchObject({ instruction: "cancel" });
+    await completeAttempt(page, identity, stopClaim, {
+      completionId: `e2e-manual-stop-${stopIndex}`,
+      status: "cancelled",
+      resultCode: "CANCELLED_BY_USER",
+      summary: "Agent stopped the manually cancelled case",
+    });
+    await expect(publicLogPage.getByRole("button", { name: "中断中…", exact: true })).toHaveCount(
+      0,
+    );
+    await expect(executionHistory.locator(`a[href*="AttemptId=${stopAttemptId}"]`)).toContainText(
+      "已取消",
+    );
+  }
   await publicLogPage.close();
 
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);

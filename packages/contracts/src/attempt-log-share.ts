@@ -76,6 +76,8 @@ export interface SharedAttemptLogView {
   finishedAt: string | null;
   durationMs: number | null;
   kind?: "round" | "manual_rerun";
+  /** 服务端按批次来源判定；仅手动单用例执行允许详情页实时读取和中断控制。 */
+  manualExecution?: boolean;
   requestedBy?: { username: string; source: "local" | "ldap" } | null;
   /** adapter 执行该用例的输出流日志；公开页最多读取前 512 KiB。 */
   logText: string;
