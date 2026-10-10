@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearBrowserSnapshots } from "./browser-read-cache";
+import { clearBrowserSnapshots, writeBrowserSnapshot } from "./browser-read-cache";
 import { loadExecutionCasePage } from "./execution-case-page-client";
 
 beforeEach(clearBrowserSnapshots);
 afterEach(() => vi.unstubAllGlobals());
 
 describe("execution case page loading", () => {
+  it("discards pages cached before ordinary cases were sorted by class path", async () => {
+    const url = "/cases?sort=name&direction=asc";
+    writeBrowserSnapshot(`batch-case-page:v1:${url}\u0000g1`, { items: [], total: 99 });
+    const fetch = vi.fn(async () => Response.json({ items: [], total: 2 }));
+    vi.stubGlobal("fetch", fetch);
+    const result = await loadExecutionCasePage(url, "g1", new AbortController().signal);
+    expect(result.total).toBe(2);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("reuses a page only within the same scope and statistics generation", async () => {
     const fetch = vi.fn(async () => Response.json({ items: [], total: 2 }));
     vi.stubGlobal("fetch", fetch);

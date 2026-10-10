@@ -2036,6 +2036,7 @@ export type FailureAnalysisHistoryPage = {
 
 export type RunBatchCaseScope = number | "all" | "summary" | "attempts";
 export type RunBatchCaseStatusFilter = RunAttempt["status"] | "pending";
+/** The case column orders TestNG class paths and DDT display names from the execution snapshot. */
 export type RunBatchCaseSort = "none" | "name" | "status" | "runner" | "duration";
 
 export type RunBatchCasePageQuery = {

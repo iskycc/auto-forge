@@ -1,4 +1,5 @@
 import { finalFailureRunCondition } from "./final-failure-selection";
+import { EXECUTION_CASE_IDENTITY_SORT_SQL } from "./execution-case-sort-query";
 import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
 import {
   executionExceptionQueries,
@@ -2236,7 +2237,7 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
   const direction = input.direction === "desc" ? "DESC" : "ASC";
   const sortExpression = {
     none: "run.created_at ASC,run.id ASC,scope.round ASC",
-    name: `run.display_name ${direction},run.id ${direction},scope.round ${direction}`,
+    name: `${EXECUTION_CASE_IDENTITY_SORT_SQL} ${direction},run.id ${direction},scope.round ${direction}`,
     status: `CASE COALESCE(attempt.status,'pending')
       WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 WHEN 'timed_out' THEN 2
       WHEN 'cancelled' THEN 3 WHEN 'running' THEN 4 WHEN 'assigned' THEN 5 ELSE 6 END ${direction},

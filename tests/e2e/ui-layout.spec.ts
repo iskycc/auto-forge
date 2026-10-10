@@ -10,6 +10,7 @@ import { dropCaseListFiles } from "./support/case-list-upload";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
 import { attachCaseDetailHistoryFixture } from "./support/case-detail-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
+import { insertExecutionCaseSortFixture } from "./support/execution-case-sort-fixture";
 import {
   insertBatchRunnerFixture,
   insertSchedulingLogFixture,
@@ -63,6 +64,100 @@ const primaryRoutes = [
   "/settings/platform?section=storage",
   "/account/security",
 ] as const;
+
+test("execution case column sorts ordinary class paths and preserves desktop table layout", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("class-path-sort");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: suffix },
+    },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertExecutionCaseSortFixture(directory, version.body.id, suffix);
+  const caseNames = page.locator(".execution-case-table tbody tr .execution-case-heading strong");
+  await page.goto(`/run-batches/${fixture.batchId}`);
+  for (const round of ["初始轮次", "总结", "全部轮次"]) {
+    await page.getByRole("button", { name: round, exact: true }).click();
+    await expect(caseNames).toHaveText(fixture.originalNames);
+    const sortButton = page
+      .locator(".execution-case-table")
+      .getByRole("button", { name: "用例", exact: true });
+    await sortButton.click();
+    await expect(caseNames).toHaveText(fixture.ascendingNames);
+    await expect(page.locator('.execution-case-table th[aria-sort="ascending"]')).toContainText(
+      "用例",
+    );
+    await sortButton.click();
+    await expect(caseNames).toHaveText([...fixture.ascendingNames].reverse());
+    await sortButton.click();
+    await expect(caseNames).toHaveText(fixture.originalNames);
+  }
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+    await page.goto(`/run-batches/${fixture.batchId}`);
+    await expect(caseNames).toHaveCount(5);
+    await page
+      .locator(".execution-case-table")
+      .getByRole("button", { name: "用例", exact: true })
+      .click();
+    await expect(caseNames).toHaveText(fixture.ascendingNames);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await waitForUiTransitions(page);
+      await captureUi(page, `execution-class-path-sort-${theme}`, viewport.width);
+    }
+  }
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${fixture.batchId}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  const context = await browser.newContext();
+  try {
+    const publicPage = await context.newPage();
+    await publicPage.goto(share.body.shareUrl);
+    const publicNames = publicPage.locator(
+      ".execution-case-table tbody tr .execution-case-heading strong",
+    );
+    await expect(publicNames).toHaveCount(5);
+    const publicSort = publicPage
+      .locator(".execution-case-table")
+      .getByRole("button", { name: "用例", exact: true });
+    await publicSort.click();
+    await expect(publicNames).toHaveText(fixture.ascendingNames);
+    await publicSort.click();
+    await expect(publicNames).toHaveText([...fixture.ascendingNames].reverse());
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await publicPage.setViewportSize(viewport);
+      await expectUiIntegrity(publicPage);
+      await publicPage.evaluate(() => window.scrollTo(0, 0));
+      await waitForUiTransitions(publicPage);
+      await captureUi(publicPage, "public-execution-class-path-sort", viewport.width);
+    }
+  } finally {
+    await context.close();
+  }
+});
 
 test("global search popover wraps long result titles without losing keyboard navigation", async ({
   page,

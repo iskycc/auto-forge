@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 执行详情的“用例”列排序使用执行时保存的身份：普通 TestNG 用例按完整类路径（包名与类名）升降序排列，DDT 沿用显示名称排序；初始/重跑轮次、总结、全部轮次和公开详情共用服务端分页排序，相同排序值以执行记录 ID 稳定区分。升级后排序缓存重新生成，无需数据库迁移。
+
 - 用例公开日志使用 `/CaseLog?ExecutionId=<实际执行ID>`，公开执行详情使用 `/Execution?BatchId=<批次ID>`；日志历史保留执行锚点并用 `AttemptId` 切换轮次或诊断重跑。按钮、Excel、分析重跑证明和 Jenkins 返回地址统一采用业务路径，重复生成地址固定。匿名读取必须存在持久化公开授权，单个日志导出不会公开整个批次；旧令牌日志和签名详情链接继续可读。Lite/Full 新增公开授权表，升级与兼容说明见[执行公开地址](./docs/architecture/public-execution-urls.md)。
 
 - Next.js 16.3.8 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。

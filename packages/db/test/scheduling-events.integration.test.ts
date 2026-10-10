@@ -75,6 +75,93 @@ async function createSqliteHarness(): Promise<SchedulingEventHarness> {
 }
 
 function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarness>): void {
+  it("sorts ordinary cases by full class path and DDT cases by display name across paginated scopes", async () => {
+    const harness = await createHarness();
+    const timestamp = "2026-08-10T00:00:02.000Z";
+    const cases = [
+      { suffix: "ddt-a", caseType: "ddt", displayName: "a DDT", className: "zz.adapter.ZTest" },
+      { suffix: "ddt-b", caseType: "ddt", displayName: "b DDT", className: "aa.adapter.ATest" },
+      {
+        suffix: "path-a",
+        caseType: "testng",
+        displayName: "Z display name",
+        className: "com.alpha.ZTest",
+      },
+      {
+        suffix: "path-b",
+        caseType: "testng",
+        displayName: "A display name",
+        className: "com.beta.ATest",
+      },
+      {
+        suffix: "tie-a",
+        caseType: "testng",
+        displayName: "Z tie name",
+        className: "com.same.Test",
+      },
+      {
+        suffix: "tie-b",
+        caseType: "testng",
+        displayName: "A tie name",
+        className: "com.same.Test",
+      },
+    ];
+    try {
+      await harness.rawQuery("DELETE FROM run_attempts WHERE execution_run_id=?", [
+        harness.executionRunId,
+      ]);
+      await harness.rawQuery("DELETE FROM execution_runs WHERE id=?", [harness.executionRunId]);
+      for (const entry of cases) {
+        const runId = `${harness.eventPrefix}-${entry.suffix}`;
+        await harness.rawQuery(
+          `INSERT INTO execution_runs
+             (id,batch_id,case_definition_id,case_version,case_type,display_name,class_name,status,
+              attempt_count,created_at,updated_at)
+           VALUES (?,?,?,1,?,?,?,'succeeded',1,?,?)`,
+          [
+            runId,
+            harness.batchIdA,
+            runId,
+            entry.caseType,
+            entry.displayName,
+            entry.className,
+            timestamp,
+            timestamp,
+          ],
+        );
+        await harness.rawQuery(
+          `INSERT INTO run_attempts
+             (id,execution_run_id,runner_id,attempt_number,execution_round,status,outcome,scheduling_score,created_at)
+           VALUES (?,?,?,1,1,'succeeded','succeeded',1,?)`,
+          [`attempt-${runId}`, runId, harness.runnerIdA, timestamp],
+        );
+      }
+      const ascendingIds = cases.map((entry) => `${harness.eventPrefix}-${entry.suffix}`);
+      for (const scope of [1, "all", "summary", "attempts"] as const) {
+        for (const direction of ["asc", "desc"] as const) {
+          const expectedIds = direction === "asc" ? ascendingIds : [...ascendingIds].reverse();
+          const actualIds: string[] = [];
+          for (let offset = 0; offset < cases.length; offset += 2) {
+            const result = await harness.batches.listCasePage({
+              batchId: harness.batchIdA,
+              scope,
+              sort: "name",
+              direction,
+              offset,
+              limit: 2,
+            });
+            expect(result?.total).toBe(cases.length);
+            actualIds.push(...result!.items.map(({ run }) => run.id));
+          }
+          expect(actualIds).toEqual(expectedIds);
+        }
+      }
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("keeps timeouts separate and exposes earlier attempts after a successful reschedule", async () => {
     const harness = await createHarness();
     try {

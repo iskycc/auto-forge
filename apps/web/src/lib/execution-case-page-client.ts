@@ -8,7 +8,7 @@ export async function loadExecutionCasePage(
   revision: string,
   signal: AbortSignal,
 ): Promise<RunBatchCasePage> {
-  const key = `batch-case-page:v1:${url}\u0000${revision}`;
+  const key = `batch-case-page:v2:${url}\u0000${revision}`;
   const cached = readBrowserSnapshot(key) as RunBatchCasePage | undefined;
   if (cached) return cached;
   const epoch = browserCacheEpoch();

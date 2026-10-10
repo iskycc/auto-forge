@@ -50,6 +50,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           services.readModels,
           {
             kind: "execution_case_page",
+            snapshotVersion: 2,
             projectId: batch.projectId,
             batchId,
             ...(["succeeded", "failed", "cancelled"].includes(batch.status)

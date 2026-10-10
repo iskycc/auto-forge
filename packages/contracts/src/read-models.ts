@@ -42,6 +42,8 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
   analysisScope.extend({
     kind: z.literal("execution_case_page"),
     batchId: identifier,
+    // Rebuild persisted pages when the case-column sorting semantics change.
+    snapshotVersion: z.literal(2).optional(),
     terminalVersion: z.number().int().nonnegative().optional(),
     filter: executionCasePageFilterSchema,
   }),
