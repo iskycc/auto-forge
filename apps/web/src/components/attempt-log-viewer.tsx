@@ -11,7 +11,7 @@ import type { AttemptLogPage, LogChunk } from "@autoforge/contracts";
 import type { RunAttempt } from "@autoforge/domain";
 import { isTerminalAttemptStatus } from "@autoforge/domain";
 import { RefreshCw, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TerminalLogViewer } from "@/components/terminal-log-viewer";
 import { AttemptRerunAction, type LiveLogAttempt } from "@/components/attempt-rerun-action";
@@ -99,6 +99,7 @@ export function AttemptLogViewer({
   const [loading, setLoading] = useState(false);
   const [liveLogs, setLiveLogs] = useState(false);
   const [error, setError] = useState("");
+  const pendingLogReads = useRef(new Set<AbortController>());
   const [activeAttempt, setActiveAttempt] = useState<LiveLogAttempt>({
     id: attemptId,
     status: attemptStatus,
@@ -113,7 +114,11 @@ export function AttemptLogViewer({
       timeRange: { after: string; before: string },
       afterSequence: number,
     ) => {
+      const controller = new AbortController();
+      const pending = pendingLogReads.current;
+      pending.add(controller);
       await Promise.resolve();
+      if (controller.signal.aborted) return;
       setLoading(true);
       setError("");
       try {
@@ -129,19 +134,22 @@ export function AttemptLogViewer({
         if (beforeTimestamp) parameters.set("recordedBefore", beforeTimestamp);
         const response = await fetch(
           `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/logs?${parameters}`,
-          { cache: "no-store" },
+          { cache: "no-store", signal: controller.signal },
         );
         if (!response.ok) {
           throw new Error((await readApiErrorMessage(response, "读取日志失败。"))!);
         }
         const logPage = (await response.json()) as AttemptLogPage;
+        if (controller.signal.aborted) return;
         setLogs((current) => mergeLogChunks(current, logPage.items));
         setNextSequence(logPage.nextSequence);
         setLogsTruncated(logPage.truncated);
       } catch (loadError) {
+        if (controller.signal.aborted) return;
         setError(loadError instanceof Error ? loadError.message : "读取日志失败。");
       } finally {
-        setLoading(false);
+        pending.delete(controller);
+        if (!controller.signal.aborted) setLoading(false);
       }
     },
     [activeAttempt.id],
@@ -149,13 +157,19 @@ export function AttemptLogViewer({
 
   useEffect(() => {
     if (!canReadLogs) return;
+    const pending = pendingLogReads.current;
     const scheduledLoad = window.setTimeout(() => {
       setLogs([]);
       setNextSequence(undefined);
       setLogsTruncated(false);
       void loadLogs(stream, activeQuery, activeTimeRange, -1);
     }, 0);
-    return () => window.clearTimeout(scheduledLoad);
+    return () => {
+      window.clearTimeout(scheduledLoad);
+      // Requests from the previous stream, filters or attempt must not update this view.
+      for (const controller of pending) controller.abort();
+      pending.clear();
+    };
   }, [activeQuery, activeTimeRange, canReadLogs, loadLogs, stream]);
 
   useEffect(() => {
@@ -186,10 +200,12 @@ export function AttemptLogViewer({
           `autoforge-log.${payload.ticket}`,
         );
         socket.onopen = () => {
+          if (disposed) return;
           setLiveLogs(true);
           void loadLogs(stream, "", { after: "", before: "" }, -1);
         };
         socket.onmessage = (event) => {
+          if (disposed) return;
           const message = parseLiveLogMessage(event.data);
           if (!message) return;
           const incoming = message.chunks.filter((chunk) => chunk.stream === stream);
@@ -197,13 +213,15 @@ export function AttemptLogViewer({
           setLogs((current) => mergeLogChunks(current, incoming));
         };
         socket.onclose = () => {
+          if (disposed) return;
           setLiveLogs(false);
-          if (!disposed) reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
         };
         socket.onerror = () => socket?.close();
       } catch {
+        if (disposed) return;
         setLiveLogs(false);
-        if (!disposed) reconnectTimer = window.setTimeout(() => void connect(), 5_000);
+        reconnectTimer = window.setTimeout(() => void connect(), 5_000);
       }
     };
     void connect();

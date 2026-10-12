@@ -139,7 +139,7 @@ jobs:
           - scenario: execution
             specs: tests/e2e/execution-recovery.spec.ts tests/e2e/single-case-run.spec.ts tests/e2e/case-debug.spec.ts
             project_maximum_concurrency: "1"
-            screenshots: false
+            screenshots: true
           - scenario: identity
             specs: tests/e2e/identity-rbac.spec.ts tests/e2e/all-rounds.spec.ts
             project_maximum_concurrency: ""

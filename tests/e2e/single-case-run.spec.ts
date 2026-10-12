@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -26,7 +26,7 @@ const runnerCapabilities = [
 
 test("global execution dialog schedules one case through a runner group with Adapter IP", async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(300_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
@@ -183,18 +183,101 @@ test("global execution dialog schedules one case through a runner group with Ada
             content: "single-case detail live update\n",
             recordedAt: new Date().toISOString(),
           },
+          {
+            stream: "agent",
+            sequence: 0,
+            content: "single-case Agent diagnostics\n",
+            recordedAt: new Date().toISOString(),
+          },
         ],
       },
     },
   );
   expect(logResponse.status()).toBe(200);
   await expect(page.locator(".share-log-output")).toContainText("single-case detail live update");
+  await verifyLogStreamIsolation(page, batch.id, assigned.assignment.attemptId, testInfo);
+  await page.goto(logLink.body.shareUrl);
   await page.getByRole("button", { name: "强行中断", exact: true }).click();
   const stopWarning = page.getByRole("dialog", { name: "中断手动执行" });
   await expect(stopWarning).toContainText("环境脏数据");
   await stopWarning.getByRole("button", { name: "继续执行", exact: true }).click();
   await expect(stopWarning).toHaveCount(0);
 });
+
+async function verifyLogStreamIsolation(
+  page: Page,
+  batchId: string,
+  attemptId: string,
+  testInfo: TestInfo,
+): Promise<void> {
+  let releaseStdout!: () => void;
+  let markStdoutReceived!: () => void;
+  let markStdoutFinished!: () => void;
+  const stdoutReleased = new Promise<void>((resolve) => {
+    releaseStdout = resolve;
+  });
+  const stdoutReceived = new Promise<void>((resolve) => {
+    markStdoutReceived = resolve;
+  });
+  const stdoutFinished = new Promise<void>((resolve) => {
+    markStdoutFinished = resolve;
+  });
+  let delayed = false;
+  const logUrl = `**/api/v1/run-attempts/${attemptId}/logs?*`;
+  await page.route(logUrl, async (route) => {
+    if (delayed || new URL(route.request().url()).searchParams.get("stream") !== "stdout") {
+      await route.continue();
+      return;
+    }
+    delayed = true;
+    const response = await route.fetch();
+    markStdoutReceived();
+    await stdoutReleased;
+    await route.fulfill({ response });
+    markStdoutFinished();
+  });
+  try {
+    await page.goto(`/run-batches/${batchId}`);
+    await page.getByRole("button", { name: "查看日志", exact: true }).click();
+    await stdoutReceived;
+    await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();
+    await expect(page.locator(".execution-log")).toContainText("single-case Agent diagnostics");
+    releaseStdout();
+    await stdoutFinished;
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await expect(page.getByRole("radio", { name: "agent", exact: true })).toBeChecked();
+    await expect(page.locator(".execution-log")).toContainText("single-case Agent diagnostics");
+    await expect(page.locator(".execution-log")).not.toContainText(
+      "single-case detail live update",
+    );
+    const screenshotDirectory =
+      process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+    await mkdir(screenshotDirectory, { recursive: true });
+    for (const theme of ["light", "dark"] as const) {
+      if (theme === "dark")
+        await page.getByRole("button", { name: "深色日志", exact: true }).click();
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: resolve(screenshotDirectory, `log-stream-isolation-${theme}-${viewport.width}.png`),
+          animations: "disabled",
+        });
+      }
+    }
+  } finally {
+    releaseStdout();
+    await page.unroute(logUrl);
+  }
+}
 
 test("log detail reruns a completed case from an active 501-case batch and its manual rerun", async ({
   page,
@@ -270,6 +353,17 @@ test("log detail reruns a completed case from an active 501-case batch and its m
     const response = await submission;
     expect(response.status(), await response.text()).toBe(201);
     const manual = (await response.json()) as { batchId: string };
+    if (execution === 0) {
+      const activeSource = await browserJson<{ status: string }>(page, summaryUrl);
+      expect(["dispatching", "scheduled", "running"]).toContain(activeSource.body.status);
+      // CI also runs with one project execution slot. After proving that rerun
+      // creation works during the source batch, release its slot for the manual run.
+      const cancelled = await browserJson(page, `/api/v1/run-batches/${sourceBatch.id}/cancel`, {
+        method: "POST",
+        body: { reason: "Release the source batch slot for log rerun acceptance" },
+      });
+      expect(cancelled.status).toBe(200);
+    }
     let manualClaim: ClaimAssignmentsResponse["assignments"][number] | undefined;
     await expect
       .poll(
@@ -302,7 +396,7 @@ test("log detail reruns a completed case from an active 501-case batch and its m
 
   const finalSource = await browserJson<{ status: string; totalRuns: number }>(page, summaryUrl);
   expect(finalSource.body.totalRuns).toBe(501);
-  expect(["dispatching", "scheduled", "running"]).toContain(finalSource.body.status);
+  expect(finalSource.body.status).toBe("cancelled");
   for (const theme of ["light", "dark"] as const) {
     await page
       .context()
@@ -330,11 +424,6 @@ test("log detail reruns a completed case from an active 501-case batch and its m
       }
     }
   }
-  const cancelled = await browserJson(page, `/api/v1/run-batches/${sourceBatch.id}/cancel`, {
-    method: "POST",
-    body: { reason: "Large-batch log rerun acceptance cleanup" },
-  });
-  expect(cancelled.status).toBe(200);
 });
 
 async function listCaseIds(
