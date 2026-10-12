@@ -5,7 +5,9 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import type { ClaimAssignmentsResponse } from "@autoforge/contracts";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
 import {
   browserJson,
@@ -31,7 +33,7 @@ test("global execution dialog schedules one case through a runner group with Ada
   const project = await createProject(page);
   await selectProjectContext(page, project.id);
   await uploadAdapterDependencies(page, project.id);
-  await importSingleCase(page, project);
+  await importCases(page, project, ["com.example.SingleCaseFixture"]);
 
   const runner = await registerRunner(page);
   const groupName = `单用例执行池-${randomUUID().slice(0, 8)}`;
@@ -194,6 +196,220 @@ test("global execution dialog schedules one case through a runner group with Ada
   await expect(stopWarning).toHaveCount(0);
 });
 
+test("log detail reruns a completed case from an active 501-case batch and its manual rerun", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const project = await createProject(page);
+  await selectProjectContext(page, project.id);
+  await uploadAdapterDependencies(page, project.id);
+  const classNames = Array.from(
+    { length: 501 },
+    (_, index) => `com.example.LogRerun${String(index).padStart(3, "0")}`,
+  );
+  await importCases(page, project, classNames);
+  const caseDefinitionIds = await listCaseIds(page, project);
+  expect(caseDefinitionIds).toHaveLength(501);
+  const runner = await registerRunner(page);
+  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      name: uniqueName("large-log-rerun"),
+    },
+  });
+  expect(suite.status).toBe(201);
+  await configureTaskExecution(page, suite.body.id, runner.runnerId, {
+    concurrency: 1,
+    retryLimit: 0,
+    adapter: {
+      enabled: true,
+      suiteName: "Large batch log rerun",
+      testName: "Log rerun case",
+      environmentAddresses: ["10.0.0.21"],
+    },
+  });
+  const members = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
+    method: "POST",
+    body: { caseDefinitionIds },
+  });
+  expect(members.status).toBe(200);
+  const sourceBatch = await createTaskRun(page, suite.body.id);
+  const sourceClaims = await claimAvailableAttempts(page, runner);
+  expect(sourceClaims).toHaveLength(1);
+  const sourceClaim = sourceClaims[0]!;
+  await finishSuccessfulAttempt(page, runner, sourceClaim);
+
+  const summaryUrl = `/api/v1/run-batches/${sourceBatch.id}?view=summary`;
+  const sourceSummary = await browserJson<{ status: string; totalRuns: number }>(page, summaryUrl);
+  expect(sourceSummary.status).toBe(200);
+  expect(sourceSummary.body.totalRuns).toBe(501);
+  expect(["dispatching", "scheduled", "running"]).toContain(sourceSummary.body.status);
+  const fullDetails = await browserJson<{ error: { code: string } }>(
+    page,
+    `/api/v1/run-batches/${sourceBatch.id}`,
+  );
+  expect(fullDetails.body.error.code).toBe("DETAIL_RESPONSE_TOO_LARGE");
+
+  const originalLog = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-attempts/${sourceClaim.assignment.attemptId}/log-share`,
+    { method: "POST" },
+  );
+  expect(originalLog.status).toBe(200);
+  await page.goto(originalLog.body.shareUrl);
+  for (let execution = 0; execution < 2; execution += 1) {
+    const submission = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/rerun"),
+    );
+    await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+    const response = await submission;
+    expect(response.status(), await response.text()).toBe(201);
+    const manual = (await response.json()) as { batchId: string };
+    let manualClaim: ClaimAssignmentsResponse["assignments"][number] | undefined;
+    await expect
+      .poll(
+        async () => {
+          const claims = await claimAvailableAttempts(page, runner);
+          manualClaim = claims.find(
+            (claim) => claim.assignment.executionSpec.batchId === manual.batchId,
+          );
+          return manualClaim?.assignment.executionSpec.className;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(sourceClaim.assignment.executionSpec.className);
+    expect(manualClaim!.assignment.executionSpec.adapter).toMatchObject({
+      suiteName: "Large batch log rerun",
+      testName: "Log rerun case",
+      environmentAddress: "10.0.0.21",
+    });
+    await finishSuccessfulAttempt(page, runner, manualClaim!);
+
+    const manualLog = await browserJson<{ shareUrl: string }>(
+      page,
+      `/api/v1/run-attempts/${manualClaim!.assignment.attemptId}/log-share`,
+      { method: "POST" },
+    );
+    expect(manualLog.status).toBe(200);
+    await page.goto(manualLog.body.shareUrl);
+    await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
+  }
+
+  const finalSource = await browserJson<{ status: string; totalRuns: number }>(page, summaryUrl);
+  expect(finalSource.body.totalRuns).toBe(501);
+  expect(["dispatching", "scheduled", "running"]).toContain(finalSource.body.status);
+  for (const theme of ["light", "dark"] as const) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+      ]);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+      if (screenshotDirectory) {
+        await mkdir(screenshotDirectory, { recursive: true });
+        await page.screenshot({
+          path: resolve(
+            screenshotDirectory,
+            `large-batch-log-rerun-${theme}-${viewport.width}.png`,
+          ),
+          animations: "disabled",
+        });
+      }
+    }
+  }
+  const cancelled = await browserJson(page, `/api/v1/run-batches/${sourceBatch.id}/cancel`, {
+    method: "POST",
+    body: { reason: "Large-batch log rerun acceptance cleanup" },
+  });
+  expect(cancelled.status).toBe(200);
+});
+
+async function listCaseIds(
+  page: Page,
+  project: { id: string; versionId: string },
+): Promise<string[]> {
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const parameters = new URLSearchParams({
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      limit: "100",
+      ...(cursor ? { cursor } : {}),
+    });
+    const response = await browserJson<{ items: Array<{ id: string }>; nextCursor?: string }>(
+      page,
+      `/api/v1/case-definitions?${parameters}`,
+    );
+    expect(response.status).toBe(200);
+    ids.push(...response.body.items.map((item) => item.id));
+    cursor = response.body.nextCursor;
+  } while (cursor);
+  return ids;
+}
+
+async function claimAvailableAttempts(
+  page: Page,
+  runner: { runnerId: string; credential: string },
+): Promise<ClaimAssignmentsResponse["assignments"]> {
+  const response = await page.request.post(`/api/v1/runner-agents/${runner.runnerId}/claims`, {
+    headers: { authorization: `Bearer ${runner.credential}` },
+    data: {
+      schemaVersion: 1,
+      requestId: randomUUID(),
+      availableSlots: 2,
+      labels: ["linux", "java", "testng"],
+      capabilities: runnerCapabilities,
+      waitSeconds: 0,
+    },
+  });
+  expect(response.status()).toBe(200);
+  return ((await response.json()) as ClaimAssignmentsResponse).assignments;
+}
+
+async function finishSuccessfulAttempt(
+  page: Page,
+  runner: { runnerId: string; credential: string },
+  claim: ClaimAssignmentsResponse["assignments"][number],
+): Promise<void> {
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${claim.assignment.attemptId}/complete`,
+    {
+      headers: {
+        authorization: `Bearer ${runner.credential}`,
+        "x-autoforge-runner-id": runner.runnerId,
+      },
+      data: {
+        schemaVersion: 1,
+        completionId: randomUUID(),
+        leaseToken: claim.lease.token,
+        result: {
+          status: "succeeded",
+          resultCode: "TESTNG_SUCCEEDED",
+          summary: "Log rerun acceptance passed",
+          durationMs: 100,
+          logWatermarks: { stdout: -1, stderr: -1, agent: -1 },
+          artifacts: [],
+        },
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+}
+
 async function selectOptionContaining(select: Locator, text: string): Promise<void> {
   const option = select.locator("option").filter({ hasText: text });
   await expect(option).toHaveCount(1);
@@ -258,16 +474,22 @@ async function uploadAdapterDependencies(page: Page, projectId: string): Promise
   ).toHaveAttribute("aria-valuenow", "100");
 }
 
-async function importSingleCase(
+async function importCases(
   page: Page,
   project: { id: string; name: string; versionId: string; stageId: string },
+  classNames: string[],
 ): Promise<void> {
-  const jar = zipSync({
-    "com/example/SingleCaseFixture.class": buildClassFile({
-      className: "com.example.SingleCaseFixture",
-      methods: [{ name: "runsOnce", annotations: [{ type: "Test", values: {} }] }],
-    }),
-  });
+  const jar = zipSync(
+    Object.fromEntries(
+      classNames.map((className) => [
+        `${className.replaceAll(".", "/")}.class`,
+        buildClassFile({
+          className,
+          methods: [{ name: "runsOnce", annotations: [{ type: "Test", values: {} }] }],
+        }),
+      ]),
+    ),
+  );
   await page.goto(
     `/cases/import?${new URLSearchParams({
       projectVersionId: project.versionId,
@@ -281,9 +503,11 @@ async function importSingleCase(
     buffer: Buffer.from(jar),
   });
   await page.getByRole("button", { name: "扫描测试类" }).click();
-  await expect(page.getByText("com.example.SingleCaseFixture")).toBeVisible({ timeout: 20_000 });
+  await expect(
+    page.getByText(`将创建 ${classNames.length} 个用例定义`, { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/u, {
+  await expect(page.getByRole("status").filter({ hasText: /已导入|已返回现有用例/u })).toBeVisible({
     timeout: 60_000,
   });
 }

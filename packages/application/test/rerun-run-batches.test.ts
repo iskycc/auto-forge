@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { RunBatchDetails } from "@autoforge/domain";
+import { DomainError, type RunBatchDetails } from "@autoforge/domain";
 
 import { RunBatchSchedulingService } from "../src/schedule-run-batches";
 import type {
@@ -14,6 +14,101 @@ import type {
 const now = "2026-08-26T02:00:00.000Z";
 
 describe("derived run batches", () => {
+  it.each([500, 501, 100_000])(
+    "reruns a completed case from an active %i-case batch without reading full details",
+    async (totalRuns) => {
+      const snapshot = rerunSnapshot();
+      snapshot.batch.totalRuns = totalRuns;
+      snapshot.batch.status = "running";
+      const { batches, created } = rerunRepository(snapshot, {
+        batchId: snapshot.batch.id,
+        executionRunId: "run-failed",
+        attemptStatus: "failed",
+      });
+      const fullDetails = vi
+        .spyOn(batches, "get")
+        .mockRejectedValue(
+          new DomainError("DETAIL_RESPONSE_TOO_LARGE", "请使用摘要及分页接口读取大批次。"),
+        );
+
+      await schedulingService(batches).rerunCaseFromAttempt("attempt-failed", {
+        username: "operator",
+        source: "local",
+      });
+
+      expect(fullDetails).not.toHaveBeenCalled();
+      expect(batches.getMetadata).toHaveBeenCalledWith(snapshot.batch.id);
+      expect(batches.getRerunSnapshot).toHaveBeenCalledWith(snapshot.batch.id, {
+        executionRunId: "run-failed",
+      });
+      expect(created).toHaveLength(1);
+      expect(created[0]).toMatchObject({
+        kind: "case_log_rerun",
+        parentBatchId: snapshot.batch.id,
+        sourceExecutionRunId: "run-failed",
+        runs: [expect.objectContaining({ caseDefinitionId: "case-failed" })],
+      });
+    },
+  );
+
+  it("keeps repeated manual executions anchored to the original large batch and case", async () => {
+    const snapshot = rerunSnapshot();
+    snapshot.batch.totalRuns = 100_000;
+    const { batches, created } = rerunRepository(snapshot, {
+      batchId: "previous-diagnostic-batch",
+      executionRunId: "previous-diagnostic-run",
+      attemptStatus: "failed",
+    });
+    vi.spyOn(batches, "getMetadata").mockResolvedValue({
+      ...snapshot.batch,
+      id: "previous-diagnostic-batch",
+      kind: "case_log_rerun",
+      parentBatchId: snapshot.batch.id,
+      sourceExecutionRunId: "run-failed",
+      totalRuns: 1,
+    });
+    const fullDetails = vi
+      .spyOn(batches, "get")
+      .mockRejectedValue(
+        new DomainError("DETAIL_RESPONSE_TOO_LARGE", "请使用摘要及分页接口读取大批次。"),
+      );
+
+    await schedulingService(batches).rerunCaseFromAttempt("previous-diagnostic-attempt", {
+      username: "operator",
+      source: "local",
+    });
+
+    expect(fullDetails).not.toHaveBeenCalled();
+    expect(batches.getRerunSnapshot).toHaveBeenCalledWith(snapshot.batch.id, {
+      executionRunId: "run-failed",
+    });
+    expect(created[0]).toMatchObject({
+      parentBatchId: snapshot.batch.id,
+      sourceExecutionRunId: "run-failed",
+      runs: [expect.objectContaining({ caseDefinitionId: "case-failed" })],
+    });
+  });
+
+  it.each(["assigned", "running"] as const)(
+    "rejects a %s attempt before reading its batch or creating a rerun",
+    async (attemptStatus) => {
+      const { batches, created } = rerunRepository(rerunSnapshot(), {
+        batchId: "batch-source",
+        executionRunId: "run-failed",
+        attemptStatus,
+      });
+      await expect(
+        schedulingService(batches).rerunCaseFromAttempt("attempt-live", {
+          username: "operator",
+          source: "local",
+        }),
+      ).rejects.toMatchObject({ code: "RUN_ATTEMPT_NOT_TERMINAL" });
+      expect(batches.getMetadata).not.toHaveBeenCalled();
+      expect(batches.get).not.toHaveBeenCalled();
+      expect(created).toEqual([]);
+    },
+  );
+
   it("keeps the personal DDT API on both diagnostic and final-failure reruns", async () => {
     const snapshot = rerunSnapshot();
     const debug = {
@@ -200,7 +295,7 @@ function rerunRepository(
   attemptSource?: {
     batchId: string;
     executionRunId: string;
-    attemptStatus: "failed";
+    attemptStatus: "failed" | "assigned" | "running";
   },
 ): { batches: RunBatchRepository; created: CreateRunBatchRecord[] } {
   const created: CreateRunBatchRecord[] = [];
@@ -214,6 +309,9 @@ function rerunRepository(
   });
   const batches = {
     resolveAttemptRerunSource: vi.fn().mockResolvedValue(attemptSource ?? null),
+    getMetadata: vi.fn(async (batchId: string) =>
+      batchId === snapshot.batch.id ? snapshot.batch : derivedSummary(),
+    ),
     getRerunSnapshot: vi.fn(
       async (
         _batchId: string,

@@ -6,6 +6,18 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.16 - 2026-10-12
+
+### Fixed
+
+- 修复大批次用例日志详情及浮窗中的“执行此用例”被“请使用摘要及分页接口读取大批次”拒绝：诊断重跑只读取原批次元数据和指定用例的执行快照，不再加载完整用例/attempt 列表。保留超过 500 个成员的完整详情保护，原批次仍在执行时可重跑已结束的用例，再次手动执行仍关联原批次及用例。Lite/Full 共用应用逻辑，无数据库迁移、配置、依赖或 Runner 更新要求。
+
+### Validation
+
+- 先用应用回归复现旧的完整详情读取失败，修复后 40 项定向测试通过，覆盖 500/501/100,000 成员元数据、原批次未结束、再次手动执行、未结束 attempt 拒绝、项目权限及完整详情保护。真实 SQLite/PostgreSQL 各验证 10,000 成员批次只返回指定用例快照，以及诊断重跑元数据保留原批次与用例引用，Full 场景没有跳过。
+- Lite 生产构建下原有单用例执行/实时日志/中断提醒与新增大批次日志重跑两个 Playwright 场景分别通过。501 个真实用例的原批次保持非终态，从完成用例的日志页连续两次提交、领取及完成诊断重跑，执行类和 Adapter 配置正确，完整批次 API 仍拒绝超量读取。实际查看 1024×768、1536×960 的深浅色日志截图，按钮、历史选择及面板没有新增溢出或变形。复用本次已有生产构建；浏览器整组资源限制为 1 CPU/3.5 GiB，后续检查串行运行。未运行 Full 整体部署、全量 E2E 或真实 Java Runner 执行。
+- `pnpm format:check`、受影响 TypeScript 文件的 `pnpm exec eslint ... --max-warnings=0`、`pnpm --filter @autoforge/application typecheck`、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix`、修改文档的 Prettier 检查及 `git diff --check` 通过。定向 Vitest 使用 `--maxWorkers=1 --no-file-parallelism`；Playwright 使用 `tests/e2e/single-case-run.spec.ts --workers=1`，大批次最终检查使用 `--grep 'log detail reruns'`。完整部署及真实 Agent 未重跑，因为本次仅替换共享应用的来源元数据读取，未修改协议或基础设施实现。
+
 ## 1.19.15 - 2026-10-12
 
 ### Added

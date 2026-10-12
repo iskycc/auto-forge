@@ -208,6 +208,49 @@ for (const mode of ["sqlite", "postgres"] as const) {
       }
     });
 
+    it("locates a large-batch rerun through metadata and reads only the selected case snapshot", async () => {
+      const fixture = await createFixture(mode);
+      try {
+        await seedSnapshot(fixture);
+        const fullDetails = vi.spyOn(fixture.batches, "get");
+        expect(await fixture.batches.getMetadata("batch")).toMatchObject({
+          id: "batch",
+          kind: "standard",
+          status: "running",
+          totalRuns: 10_000,
+        });
+        const snapshot = await fixture.batches.getRerunSnapshot("batch", {
+          executionRunId: "run-testng",
+        });
+        expect(snapshot?.runs).toEqual([
+          expect.objectContaining({
+            id: "run-testng",
+            displayName: "Checkout",
+            className: "example.Checkout",
+          }),
+        ]);
+        await fixture.execute(
+          `INSERT INTO run_batches
+           (id, suite_id, suite_name, suite_version, status, retry_limit, total_runs,
+            batch_kind, parent_batch_id, source_execution_run_id, environment_json,
+            created_at, updated_at)
+           VALUES ('manual-rerun', 'suite', 'Manual rerun', 1, 'succeeded', 0, 1,
+                   'case_log_rerun', 'batch', 'run-testng', '[]', ?, ?)`,
+          [timestamp, timestamp],
+        );
+        expect(await fixture.batches.getMetadata("manual-rerun")).toMatchObject({
+          id: "manual-rerun",
+          kind: "case_log_rerun",
+          parentBatchId: "batch",
+          sourceExecutionRunId: "run-testng",
+          totalRuns: 1,
+        });
+        expect(fullDetails).not.toHaveBeenCalled();
+      } finally {
+        await fixture.close();
+      }
+    });
+
     it("rejects a case from another batch and preserves missing historical dependency dates", async () => {
       const fixture = await createFixture(mode);
       try {

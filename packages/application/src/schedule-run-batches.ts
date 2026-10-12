@@ -634,7 +634,7 @@ export class RunBatchSchedulingService {
     if (source.attemptStatus === "assigned" || source.attemptStatus === "running") {
       throw new DomainError("RUN_ATTEMPT_NOT_TERMINAL", "用例执行完成后才能重新执行。");
     }
-    const sourceBatch = await this.batches.get(source.batchId);
+    const sourceBatch = await this.batches.getMetadata(source.batchId);
     if (!sourceBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     const rootBatchId =
       sourceBatch.kind === "case_log_rerun" ? sourceBatch.parentBatchId : source.batchId;
