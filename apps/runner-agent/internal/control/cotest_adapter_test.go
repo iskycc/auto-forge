@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,7 +85,7 @@ func TestCotestAdapterExecutorPassesCaseTimeoutWhenConfigured(t *testing.T) {
 
 func TestCotestAdapterExecutorPassesCaseIDWithoutFileConversion(t *testing.T) {
 	specification := testExecutionSpec()
-	const caseID = "支付/0001?x=1&y=2"
+	const caseID = "支付/0001 中文 😀?x=1&y=2"
 	specification.Adapter = &AdapterSettings{SuiteName: "suite", CaseID: caseID}
 	mapped, inputs, err := cotestAdapterExecutorSpec(specification,
 		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
@@ -94,15 +95,28 @@ func TestCotestAdapterExecutorPassesCaseIDWithoutFileConversion(t *testing.T) {
 	}
 	found := false
 	for index, argument := range mapped.Command.Args {
+		if argument == "--case-id-base64" {
+			encoded := mapped.Command.Args[index+1]
+			for _, character := range encoded {
+				if character > 127 {
+					t.Fatal("CaseID transport must contain only ASCII")
+				}
+			}
+			decoded, decodeError := base64.StdEncoding.DecodeString(encoded)
+			if decodeError != nil {
+				t.Fatal(decodeError)
+			}
+			found = string(decoded) == caseID
+		}
 		if argument == "--case-id" {
-			found = mapped.Command.Args[index+1] == caseID
+			t.Fatal("DDT must not pass locale-sensitive CaseID text through argv")
 		}
 		if argument == "--class-data" {
 			t.Fatal("DDT must not receive a file path")
 		}
 	}
 	if !found {
-		t.Fatalf("CaseID was not passed verbatim: %q", mapped.Command.Args)
+		t.Fatalf("CaseID did not survive UTF-8 transport: %q", mapped.Command.Args)
 	}
 	if len(inputs) != len(specification.Inputs) {
 		t.Fatal("DDT must not add file inputs")
@@ -118,6 +132,19 @@ func TestCotestAdapterRejectsLegacyDDTFileInput(t *testing.T) {
 		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "recreate the execution") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCotestAdapterRejectsInvalidCaseIDBeforeEncoding(t *testing.T) {
+	for _, caseID := range []string{"bad\x00id", string([]byte{0xff}), strings.Repeat("中", 513)} {
+		specification := testExecutionSpec()
+		specification.Adapter = &AdapterSettings{CaseID: caseID}
+		_, _, err := cotestAdapterExecutorSpec(specification,
+			config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
+			config.AdapterConfig{JarPath: "/opt/adapter.jar"}, nil)
+		if err == nil || !strings.Contains(err.Error(), "DDT CaseID is invalid") {
+			t.Fatalf("invalid CaseID was accepted: %v", err)
+		}
 	}
 }
 

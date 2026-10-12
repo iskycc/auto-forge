@@ -2,19 +2,28 @@ package com.autoforge.adapters.cotest;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
 final class AdapterArguments {
   static final int DEFAULT_CASE_TIMEOUT_SECONDS = 600;
   static final int MAXIMUM_CASE_TIMEOUT_SECONDS = 86_400;
+  private static final int MAXIMUM_CASE_ID_CHARACTERS = 512;
+  private static final int MAXIMUM_ENCODED_CASE_ID_LENGTH =
+      ((MAXIMUM_CASE_ID_CHARACTERS * 4 + 2) / 3) * 4;
 
   static final String USAGE =
       "Usage: java -jar cotest-testng-adapter.jar "
           + "--jars DIR --class CLASS [--environment-address VALUE] "
-          + "[--case-id CASE_ID] [--ddt-insight-url URL] [--config FILE] [--suite-name NAME] "
+          + "[--case-id CASE_ID | --case-id-base64 UTF8_BASE64] "
+          + "[--ddt-insight-url URL] [--config FILE] [--suite-name NAME] "
           + "[--test-name NAME] [--output DIR] [--case-timeout-seconds SECONDS]";
 
   private final Path jarDirectory;
@@ -32,11 +41,8 @@ final class AdapterArguments {
     jarDirectory = Paths.get(required(options, "--jars"));
     className = required(options, "--class");
     environmentAddress = options.getOrDefault("--environment-address", "");
-    caseId = options.get("--case-id");
+    caseId = validatedCaseId(options);
     ddtInsightUrl = validatedDdtInsightUrl(options.get("--ddt-insight-url"));
-    if (caseId != null && caseId.length() > 512) {
-      throw new IllegalArgumentException("--case-id must not exceed 512 characters.");
-    }
     configurationFile = optionalPath(options, "--config");
     suiteName = options.get("--suite-name");
     testName = options.get("--test-name");
@@ -83,6 +89,41 @@ final class AdapterArguments {
 
   String ddtInsightUrl() {
     return ddtInsightUrl;
+  }
+
+  private static String validatedCaseId(Map<String, String> options) {
+    String caseId = options.get("--case-id");
+    String encodedCaseId = options.get("--case-id-base64");
+    if (caseId != null && encodedCaseId != null) {
+      throw new IllegalArgumentException("--case-id and --case-id-base64 cannot be used together.");
+    }
+    if (encodedCaseId != null) {
+      if (encodedCaseId.length() > MAXIMUM_ENCODED_CASE_ID_LENGTH) {
+        throw new IllegalArgumentException("--case-id-base64 exceeds the encoded CaseID limit.");
+      }
+      try {
+        byte[] utf8 = Base64.getDecoder().decode(encodedCaseId);
+        // The JVM has already decoded argv using the native locale. Only ASCII crosses
+        // that boundary; reject damaged UTF-8 instead of silently replacing characters.
+        caseId =
+            StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(utf8))
+                .toString();
+      } catch (IllegalArgumentException | CharacterCodingException invalid) {
+        throw new IllegalArgumentException(
+            "--case-id-base64 must contain valid UTF-8 Base64.", invalid);
+      }
+    }
+    if (caseId == null) return null;
+    if (TextValues.isBlank(caseId)
+        || caseId.length() > MAXIMUM_CASE_ID_CHARACTERS
+        || caseId.indexOf('\0') >= 0) {
+      throw new IllegalArgumentException(
+          "DDT CaseID must be nonblank, contain no NUL and not exceed 512 characters.");
+    }
+    return caseId;
   }
 
   private static String validatedDdtInsightUrl(String value) {
@@ -167,6 +208,7 @@ final class AdapterArguments {
       case "--class":
       case "--environment-address":
       case "--case-id":
+      case "--case-id-base64":
       case "--ddt-insight-url":
       case "--config":
       case "--suite-name":

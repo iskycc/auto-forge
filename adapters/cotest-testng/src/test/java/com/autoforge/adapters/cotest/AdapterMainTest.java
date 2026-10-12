@@ -12,11 +12,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class AdapterMainTest {
   @TempDir Path temporaryDirectory;
@@ -87,6 +90,53 @@ class AdapterMainTest {
               errors);
       assertEquals(0, exitCode, Utf8TestIO.decode(errorOutput));
       assertFalse(Utf8TestIO.decode(standardOutput).contains("Configured DDT"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"C", "C.UTF-8"})
+  void preservesDdtCaseIdAcrossLauncherLocales(String locale)
+      throws IOException, InterruptedException {
+    Path jarDirectory =
+        createJarDirectory(
+            "com/huawei/cotest/util/ProjectFileUtil.class",
+            "cotest/auto/dataproviders/MM2DataProvider.class",
+            "fixture/AdapterCase.class");
+    Path consoleLog = temporaryDirectory.resolve("ddt-console.log");
+    String javaExecutable = Paths.get(System.getProperty("java.home"), "bin", "java").toString();
+    String classPath =
+        System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+    String encodedCaseId =
+        Base64.getEncoder().encodeToString("CASE/0001 中文?x=1".getBytes(StandardCharsets.UTF_8));
+    ProcessBuilder launcher =
+        new ProcessBuilder(
+            javaExecutable,
+            "-Xmx128m",
+            "-Dfile.encoding=UTF-8",
+            "-cp", classPath,
+            AdapterMain.class.getName(),
+            "--jars", jarDirectory.toString(),
+            "--class", "fixture.AdapterCase",
+            "--environment-address", "10.0.0.8",
+            "--case-id-base64", encodedCaseId,
+            "--ddt-insight-url", "http://platform:3100/api/v1/public/ddt/projects/p/versions/v/stages/s/case",
+            "--output", temporaryDirectory.resolve("reports-ddt").toString(),
+            "--case-timeout-seconds", "10");
+    launcher.environment().put("LANG", locale);
+    launcher.environment().put("LC_ALL", locale);
+    Process adapter = launcher.redirectErrorStream(true).redirectOutput(consoleLog.toFile()).start();
+    try {
+      assertTrue(adapter.waitFor(20, TimeUnit.SECONDS), "DDT Adapter did not exit");
+      String stdout = new String(Files.readAllBytes(consoleLog), StandardCharsets.UTF_8);
+      assertEquals(0, adapter.exitValue(), stdout);
+      assertTrue(
+          stdout.contains("Configured DDT CaseID for fixture.AdapterCase: CASE/0001 中文?x=1"), stdout);
+      assertTrue(Files.isRegularFile(temporaryDirectory.resolve("reports-ddt/testng-results.xml")));
+    } finally {
+      if (adapter.isAlive()) {
+        adapter.destroyForcibly();
+        assertTrue(adapter.waitFor(5, TimeUnit.SECONDS), "Unable to stop the DDT Adapter test process");
+      }
     }
   }
 

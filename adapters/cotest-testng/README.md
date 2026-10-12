@@ -56,9 +56,14 @@ Adapter 不会访问网络或自动补装缺失依赖。
 - `--environment-address VALUE`：配置时才加载并调用 CoTest `ProjectFileUtil`；
 - `--case-id CASE_ID`：DDT 执行时将原始 CaseID 注入 `MM2DataProvider.setClassDataProvider(className, caseId)`；
   普通用例不传入 CaseID。测试类自行通过 DDT 公开 API 获取数据；
+- `--case-id-base64 UTF8_BASE64`：Runner 使用此参数传递 UTF-8 CaseID 的标准 Base64 编码，
+  Adapter 严格按 UTF-8 解码后注入原始字符串。该参数与 `--case-id` 互斥，非法 Base64、损坏的
+  UTF-8、空白、NUL 或解码后超过 512 字符的 CaseID 返回参数错误。编码输入也有长度上限。
+  旧 `--case-id` 仍可使用；Runner 的编码传输避免 JVM 在 `C` 等非 UTF-8 locale 下提前破坏中文，
+  不新增数据文件，也不要求修改宿主机 locale 或业务依赖；
 - `--ddt-insight-url URL`：在测试类初始化及 TestNG 执行前调用同一隔离 ClassLoader 中的
   `MM2DataProvider.setDdtInsightUrl(String)`，传入以 `/case` 结尾、不带查询参数的 HTTP(S) URL。
-  仅在同时传入 `--case-id` 的 DDT 用例中生效；普通用例不加载该提供器，也不调用此方法，
+  仅在同时传入任一种 CaseID 参数的 DDT 用例中生效；普通用例不加载该提供器，也不调用此方法，
   即使历史规格残留 URL 也会忽略。
   DDT 缺少提供器、或者现有提供器缺少 setter / setter 抛出异常时明确失败，不继续使用错误地址；
 - `--output DIR`：默认是当前目录下的 `reports/testng`。
@@ -89,6 +94,7 @@ Runner 不把历史导入的用例 JAR 或单独声明的旧依赖复制到 `tes
 已加载的同名业务类。
 
 升级主平台后，通过平台的执行机升级或批量升级更新 Runner；升级流程自动安装配套 Adapter，无需单独升级。
+中文 CaseID 的编码修复需要该配套升级，旧 Runner 继续使用原有命令行参数。
 Runner 重建没有当前布局标记的旧共享运行时，清除旧版混合类路径；完成后继续复用，避免反复解压。
 正在运行的批次继续使用已经固化的依赖包；新任务和公开日志的单用例重跑选择当前项目版本的包。
 

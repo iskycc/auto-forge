@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -104,7 +105,8 @@ func cotestAdapterExecutorSpec(
 		if !utf8.ValidString(specification.Adapter.CaseID) || utf8.RuneCountInString(specification.Adapter.CaseID) > 512 || strings.ContainsRune(specification.Adapter.CaseID, 0) {
 			return executor.Spec{}, nil, errors.New("DDT CaseID is invalid or exceeds 512 characters")
 		}
-		arguments = append(arguments, "--case-id", specification.Adapter.CaseID)
+		// Native JVM argv decoding follows the host locale even with file.encoding=UTF-8.
+		arguments = append(arguments, "--case-id-base64", base64.StdEncoding.EncodeToString([]byte(specification.Adapter.CaseID)))
 	}
 	if specification.Adapter.CaseTimeoutSeconds < 0 || specification.Adapter.CaseTimeoutSeconds > 86_400 {
 		return executor.Spec{}, nil, errors.New("adapter case timeout seconds is outside the supported range")

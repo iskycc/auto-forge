@@ -6,6 +6,22 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.15 - 2026-10-12
+
+### Added
+
+- DDT 导入的重复列处理弹窗新增“一键删除空白冲突列”：按预检的整列非空数量判断，批量标记空白重复列删除；全空组保留一列，多列有数据时不自动删除数据列，保留手工改名与删除选择。单个普通字段保留后去除自动建议后缀，身份列保留 `CaseID`/`srNum` 规范名称。支持多上传文件、ZIP 条目与 Sheet，沿用重新预检及后台导入，Lite/Full 无需迁移或配置变更。
+
+### Fixed
+
+- 修复非 UTF-8 执行机 locale 下 DDT 中文 CaseID 传给 CoTest Adapter 后乱码：Runner 以 `--case-id-base64` 传递 UTF-8 的标准 Base64，Adapter 严格解码后注入原值；保留旧 `--case-id` CLI 并拒绝两种参数混用、损坏编码、空白/NUL 和超长输入。原有文件/控制台编码设置不控制 JVM 原生 argv 解码。平台协议和数据库不变，Lite/Full、单用例、调试、任务批跑和重跑共用该路径；修复需通过执行机升级同步安装 Runner 与配套 Adapter，无需调整系统 locale 或业务 JAR。
+
+### Validation
+
+- 空白冲突列功能的 45 项定向单元与组件规范检查、Lite 生产构建下 6 项 Playwright 场景通过，验证整列计数、后续行数据、零值、空白字符、全空组、身份列、多列冲突、ZIP 条目隔离、草稿保留和实际后台导入，并回归手工改名/删除、应用失败重试及再次冲突。实际审查 1024×768、1536×960 的深浅色截图，新增按钮对齐，弹窗与滚动边界保持正常。Web 与测试类型检查通过；此功能修改共享前端规则，未运行 Full 整体部署或真实 Runner 验收。
+- `pnpm format:check`、`pnpm lint`、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix` 和 `pnpm --filter @autoforge/web build` 均通过；定向测试使用 `pnpm exec vitest run` 与 `pnpm exec playwright test tests/e2e/ddt-management.spec.ts --grep` 串行运行，避免构建与浏览器同时增加主机负载。
+- 中文 CaseID 缺陷先以真实子 JVM 在 `C` locale 复现（仍传入 `-Dfile.encoding=UTF-8`），修复后 `C`/`C.UTF-8` 均将原始中文注入 CoTest 提供器。JDK 21 + TestNG 7.11.0、Java 8 + TestNG 7.5.1/6.14.3 各 41 项 Maven 测试通过，覆盖旧 CLI、中文/符号/emoji、512 字符边界及错误编码；另以打包后的 Adapter JAR 实际验证两个 JDK × 两种 locale 的 4 个成功执行。`go -C apps/runner-agent test ./...`、`bash scripts/quality/test-cotest-adapter-java8.sh`、JDK 21 的 `mvn --offline --file adapters/cotest-testng/pom.xml -Dtestng.version=7.11.0 clean verify` 和 `bash scripts/release/build-agent-resources.sh` 均通过；验证两个架构的静态 ELF、Java 8 字节码及四项资源摘要。不新增 UI、协议字段或存储适配器语义，未运行 Lite/Full 完整平台与真实 Agent 部署闭环。
+
 ## 1.19.14 - 2026-10-12
 
 ### Added

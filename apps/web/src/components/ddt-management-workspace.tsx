@@ -46,7 +46,18 @@ import { ActionDialog } from "./action-dialog";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
 import { DdtInheritanceDialog, type DdtInheritanceVersion } from "./ddt-inheritance-dialog";
-import type { DdtExecutionStatistics } from "@autoforge/contracts";
+import type {
+  DdtExecutionStatistics,
+  DdtImportColumnConflict as ColumnConflict,
+  DdtImportColumnResolution as ColumnResolution,
+} from "@autoforge/contracts";
+import {
+  columnResolutionIdentity,
+  columnResolutionKey,
+  planBlankConflictColumnDeletion,
+  requiredConflictColumnName,
+  type LocatedColumnConflict,
+} from "@/lib/ddt-column-resolution";
 import { DdtExecutionChart } from "./ddt-execution-chart";
 import { DdtValueSearch } from "./ddt-value-search";
 import { DdtApiReference, type DdtScopeLabels } from "./ddt-api-reference";
@@ -107,35 +118,10 @@ type ImportFile = {
   unchangedCount: number;
   errorSummary?: string;
 };
-type ColumnConflict = {
-  archiveEntryName?: string;
-  sheetName: string;
-  normalizedName: string;
-  columns: Array<{
-    columnIndex: number;
-    originalName: string;
-    currentName: string;
-    suggestedName: string;
-    nonEmptyCount: number;
-    sampleValues: Array<{ rowNumber: number; value: string }>;
-  }>;
-};
-type ColumnResolution = {
-  uploadIndex: number;
-  archiveEntryName?: string;
-  sheetName: string;
-  columnIndex: number;
-  resolvedName: string;
-  deleteColumn?: boolean;
-};
 type ImportUpload = {
   id: string;
   fileName: string;
   columnConflicts?: ColumnConflict[];
-};
-type LocatedColumnConflict = ColumnConflict & {
-  uploadIndex: number;
-  uploadName: string;
 };
 type ImportJob = Scope & {
   id: string;
@@ -2123,6 +2109,7 @@ function ColumnConflictDialog({
   onConfirm(): void;
 }) {
   const validationError = validateColumnResolutions(resolutions, conflicts);
+  const blankColumnDeletion = planBlankConflictColumnDeletion(resolutions, conflicts);
   const conflictColumnCount = conflicts.reduce(
     (total, conflict) => total + conflict.columns.length,
     0,
@@ -2215,7 +2202,21 @@ function ColumnConflictDialog({
               {affectedFileCount} 个文件 · {conflicts.length} 组冲突 · {conflictColumnCount}{" "}
               个重复列
             </strong>
+            <span>按整列内容判断空白；全空组保留一列</span>
           </p>
+          <Button
+            className={cn(
+              "button button-secondary",
+              uiPatterns["button"],
+              uiPatterns["button-secondary"],
+            )}
+            disabled={busy || blankColumnDeletion.deletedColumnCount === 0}
+            size="compact"
+            type="button"
+            onClick={() => onChange(blankColumnDeletion.resolutions)}
+          >
+            一键删除空白冲突列
+          </Button>
           <Button
             className={cn(
               "button button-secondary",
@@ -3050,12 +3051,7 @@ function keepOnlyConflictColumn(
   conflict: LocatedColumnConflict,
   retainedColumnIndex: number,
 ): ColumnResolution[] {
-  const requiredName =
-    conflict.normalizedName === "caseid"
-      ? "CaseID"
-      : conflict.normalizedName === "srnum"
-        ? "srNum"
-        : undefined;
+  const requiredName = requiredConflictColumnName(conflict.normalizedName);
   let next = [...resolutions];
   for (const column of conflict.columns) {
     const identity = columnResolutionIdentity(conflict, column.columnIndex);
@@ -3085,18 +3081,6 @@ function countRetainedConflictColumns(
       true
     );
   }).length;
-}
-
-function columnResolutionIdentity(
-  conflict: LocatedColumnConflict,
-  columnIndex: number,
-): Pick<ColumnResolution, "uploadIndex" | "archiveEntryName" | "sheetName" | "columnIndex"> {
-  return {
-    uploadIndex: conflict.uploadIndex,
-    ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
-    sheetName: conflict.sheetName,
-    columnIndex,
-  };
 }
 
 function replaceColumnResolution(
@@ -3156,12 +3140,7 @@ function validateColumnResolutions(
     if (conflictResolutions.length && !retainedResolutions.length) {
       return `${conflict.sheetName} Sheet 的重复列“${conflict.columns[0]?.currentName ?? conflict.normalizedName}”至少需要保留一列。`;
     }
-    const requiredName =
-      conflict.normalizedName === "caseid"
-        ? "CaseID"
-        : conflict.normalizedName === "srnum"
-          ? "srNum"
-          : undefined;
+    const requiredName = requiredConflictColumnName(conflict.normalizedName);
     if (!requiredName) continue;
     const conflictResolvedNames = retainedResolutions.map((resolution) =>
       resolution.resolvedName.trim(),
@@ -3171,20 +3150,6 @@ function validateColumnResolutions(
     }
   }
   return undefined;
-}
-
-function columnResolutionKey(
-  resolution: Pick<
-    ColumnResolution,
-    "uploadIndex" | "archiveEntryName" | "sheetName" | "columnIndex"
-  >,
-): string {
-  return [
-    resolution.uploadIndex,
-    resolution.archiveEntryName ?? "",
-    resolution.sheetName,
-    resolution.columnIndex,
-  ].join("\u0000");
 }
 
 function toggleSet(current: Set<string>, value: string): Set<string> {
