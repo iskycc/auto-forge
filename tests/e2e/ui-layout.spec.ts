@@ -3474,6 +3474,160 @@ test("imported case selection keeps counts compact before adding to a task", asy
   await expect(page).toHaveURL(/\/cases\/[^/?]+$/u);
 });
 
+test("task execution shortcuts preselect the clicked task and preserve desktop layouts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const firstName = "立即执行 · 每日冒烟测试";
+  const secondName = "立即执行 · 回归测试与环境恢复验证任务";
+  const first = await createUiSuite(page, scope, firstName);
+  const second = await createUiSuite(page, scope, secondName);
+  for (const suite of [first, second]) {
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suite.id}/pin`, {
+          method: "PUT",
+          body: { pinned: true },
+        })
+      ).status,
+    ).toBe(200);
+  }
+  const disabled = await createUiSuite(page, scope, "停用任务");
+  const archived = await createUiSuite(page, scope, "归档任务");
+  for (const [suite, change] of [
+    [disabled, { enabled: false }],
+    [archived, { archived: true }],
+  ] as const) {
+    const current = await browserJson<{ revision: number }>(
+      page,
+      `/api/v1/case-suites/${suite.id}?view=summary`,
+    );
+    const updated = await browserJson(page, `/api/v1/case-suites/${suite.id}`, {
+      method: "PATCH",
+      body: { ...change, expectedRevision: current.body.revision },
+    });
+    expect(updated.status).toBe(200);
+  }
+  const dialog = page.getByRole("dialog", { name: "开始执行", exact: true });
+  const selection = dialog.locator('select[aria-label="执行用例任务"]');
+  const assertSelectedTask = async (id: string) => {
+    await expect(selection).toHaveValue(id);
+    await expect(dialog.getByRole("radio", { name: "用例任务", exact: true })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "立即执行", exact: true })).toBeChecked();
+    // Missing resources still require editing the saved task, rather than bypassing preflight.
+    await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
+  };
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+      ]);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1280, height: 800 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/case-suites");
+      await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+      await expect(
+        page
+          .getByRole("article", { name: "任务 停用任务", exact: true })
+          .getByRole("button", { name: "立即执行", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        page
+          .getByRole("article", { name: "任务 归档任务", exact: true })
+          .getByRole("button", { name: "立即执行", exact: true }),
+      ).toBeDisabled();
+      await expectUiIntegrity(page);
+      const actionRowOffsets = await page.locator(".suite-card-actions").evaluateAll((footers) =>
+        footers.map((footer) => {
+          const positions = Array.from(
+            footer.querySelectorAll("button"),
+            (button) => button.getBoundingClientRect().top,
+          );
+          return Math.max(...positions) - Math.min(...positions);
+        }),
+      );
+      for (const offset of actionRowOffsets)
+        expect(offset, "task actions must stay aligned on one row").toBeLessThanOrEqual(1);
+      await captureUi(page, `task-execution-shortcuts-list-${theme}`, viewport.width, false);
+      for (const { suite, name } of [
+        { suite: first, name: firstName },
+        { suite: second, name: secondName },
+      ]) {
+        const trigger = page
+          .getByRole("article", { name: `任务 ${name}`, exact: true })
+          .getByRole("button", { name: "立即执行", exact: true });
+        await trigger.focus();
+        await trigger.press("Enter");
+        await assertSelectedTask(suite.id);
+        // Reopening a shortcut must reset a previous single-case/countdown selection.
+        await dialog.getByRole("radio", { name: "单个用例", exact: true }).locator("..").click();
+        await dialog.getByRole("radio", { name: "倒计时执行", exact: true }).locator("..").click();
+        await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+        await expect(dialog).toHaveCount(0);
+        await expect(trigger).toBeFocused();
+      }
+      await page.goto(`/case-suites/${first.id}`);
+      const detailTrigger = page.locator(".page-hero").getByRole("button", {
+        name: "立即执行",
+        exact: true,
+      });
+      await expect(detailTrigger).toBeEnabled();
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-execution-shortcuts-detail-${theme}`, viewport.width, false);
+      await detailTrigger.click();
+      await assertSelectedTask(first.id);
+      await expectUiIntegrity(page);
+      await captureUi(page, `task-execution-shortcuts-dialog-${theme}`, viewport.width, false);
+      await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+    }
+  }
+  // Opening an old detail URL must use the task's own project/version, even after switching context.
+  await createUiProject(page);
+  await page.goto(`/case-suites/${first.id}`);
+  await page.locator(".page-hero").getByRole("button", { name: "立即执行", exact: true }).click();
+  await assertSelectedTask(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  // The explicitly requested summary remains selectable when it is outside the bounded list page.
+  const suiteListRoute = "**/api/v1/case-suites?limit=200*";
+  await page.route(suiteListRoute, (route) => route.fulfill({ json: { items: [] } }));
+  await page.locator(".page-hero").getByRole("button", { name: "立即执行", exact: true }).click();
+  await assertSelectedTask(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  await page.unroute(suiteListRoute);
+  // A stale button must report the current task state instead of selecting another enabled task.
+  const current = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${first.id}?view=summary`,
+  );
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${first.id}`, {
+        method: "PATCH",
+        body: { enabled: false, expectedRevision: current.body.revision },
+      })
+    ).status,
+  ).toBe(200);
+  await page.locator(".page-hero").getByRole("button", { name: "立即执行", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("该任务已停用或归档");
+  await expect(selection).toHaveValue("");
+  await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  await page.goto(`/case-suites/${disabled.id}`);
+  await expect(
+    page.locator(".page-hero").getByRole("button", { name: "立即执行", exact: true }),
+  ).toBeDisabled();
+  await page.goto(`/case-suites/${archived.id}`);
+  await expect(
+    page.locator(".page-hero").getByRole("button", { name: "立即执行", exact: true }),
+  ).toBeDisabled();
+});
+
 test("execution dialog remembers the last chosen task across reopening, edits and project versions", async ({
   page,
 }) => {

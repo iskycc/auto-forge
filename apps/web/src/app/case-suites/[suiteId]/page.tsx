@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { LinkButton } from "@/components/ui/link-button";
 
 import { CachedSuiteDirectory } from "@/components/cached-suite-directory";
+import { OpenRunDialogButton } from "@/components/global-run-dialog";
 import { suiteDirectoryManifestSchema, DIRECTORY_CHUNK_SIZE } from "@autoforge/contracts";
 import { CaseSuiteEditor } from "@/components/case-suite-editor";
 import { CaseSuiteRevisionProvider } from "@/components/case-suite-revision";
@@ -39,6 +40,7 @@ export default async function CaseSuitePage({ params }: Props) {
     search: "",
   });
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
+  const canExecute = hasPermission(identity, "run.create", suite.projectId);
   const [
     runners,
     runnerGroups,
@@ -79,29 +81,42 @@ export default async function CaseSuitePage({ params }: Props) {
             {projectVersion ? `「${projectVersion.name}」` : "未关联"}
           </p>
         </div>
-        {canManage ? (
-          <div className={cn("button-row", uiPatterns["button-row"])}>
-            <LinkButton
-              className={cn(
-                "button button-secondary",
-                uiPatterns["button"],
-                uiPatterns["button-secondary"],
-              )}
-              href={`/cases?targetSuiteId=${encodeURIComponent(suite.id)}`}
-            >
-              <BookOpenText size={17} /> 添加普通用例
-            </LinkButton>
-            <LinkButton
-              variant="primary"
-              className={cn(
-                "button button-primary",
-                uiPatterns["button"],
-                uiPatterns["button-primary"],
-              )}
-              href={`/cases?tab=ddt&ddtView=cases&targetSuiteId=${encodeURIComponent(suite.id)}`}
-            >
-              <BookOpenText size={17} /> 添加 DDT 用例
-            </LinkButton>
+        {canManage || canExecute ? (
+          <div className={cn("button-row", uiPatterns["button-row"], "justify-end")}>
+            {canManage ? (
+              <>
+                <LinkButton
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
+                  href={`/cases?targetSuiteId=${encodeURIComponent(suite.id)}`}
+                >
+                  <BookOpenText size={17} /> 添加普通用例
+                </LinkButton>
+                <LinkButton
+                  variant="default"
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
+                  href={`/cases?tab=ddt&ddtView=cases&targetSuiteId=${encodeURIComponent(suite.id)}`}
+                >
+                  <BookOpenText size={17} /> 添加 DDT 用例
+                </LinkButton>
+              </>
+            ) : null}
+            {canExecute ? (
+              <OpenRunDialogButton
+                suiteId={suite.id}
+                disabled={!suite.enabled || suite.status !== "active"}
+                variant="primary"
+              >
+                立即执行
+              </OpenRunDialogButton>
+            ) : null}
           </div>
         ) : null}
       </section>

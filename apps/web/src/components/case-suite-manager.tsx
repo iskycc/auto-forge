@@ -29,6 +29,7 @@ export function CaseSuiteManager({
   adapterNameDefaults,
   canManage,
   canReadExecutions,
+  canExecute,
   activitySummary,
   initialSuites,
   initialPinnedSuiteIds,
@@ -39,6 +40,7 @@ export function CaseSuiteManager({
   adapterNameDefaults: AdapterNameDefaults;
   canManage: boolean;
   canReadExecutions: boolean;
+  canExecute: boolean;
   activitySummary?: CaseSuiteActivitySummary;
   initialSuites: CaseSuite[];
   initialPinnedSuiteIds: string[];
@@ -487,6 +489,7 @@ export function CaseSuiteManager({
               suite={suite}
               statistics={statisticsBySuite.get(suite.id)}
               canReadExecutions={canReadExecutions}
+              canExecute={canExecute}
               canManage={canManage}
               onDeleted={() => setDeletedSuiteIds((current) => new Set([...current, suite.id]))}
               exporting={exportingSuiteId === suite.id}
@@ -536,7 +539,7 @@ const caseSuiteManagerStyles = {
   "suite-copy-summary":
     "[&_small]:text-muted-foreground [&_small]:text-xs [&_small]:font-normal [&_small]:leading-[1.45]",
   "suite-empty": "min-h-[280px]",
-  "suite-list": "grid grid-cols-2 items-start gap-4 max-[1181px]:grid-cols-[1fr]",
+  "suite-list": "grid grid-cols-1 items-start gap-4 min-[1440px]:grid-cols-2",
   "suite-list-feedback": "col-span-full",
   "suite-manager": "grid gap-3.5",
   "suite-manager-actions": "flex items-center gap-2",

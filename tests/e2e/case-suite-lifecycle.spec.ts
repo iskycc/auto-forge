@@ -20,6 +20,90 @@ import { configureTaskExecution, createTaskRun } from "./support/task-execution"
 import { expectUiIntegrity } from "./support/ui-guard";
 import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
 
+test("task list and detail execution shortcuts submit the selected task through preflight", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("task-execution-shortcut");
+  const project = await createProject(page, suffix);
+  const className = `example.ExecutionShortcut${Date.now()}Test`;
+  await importJar(page, project, `${suffix}.jar`, className, ["verify"]);
+  const definition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    className,
+  );
+  const runner = await registerRunner(page, suffix);
+  const suites: Array<{ id: string; name: string }> = [];
+  for (const name of ["立即执行 · 列表验证", "立即执行 · 详情验证"]) {
+    const suite = await createVersionSuite(
+      page,
+      project.id,
+      project.versionId,
+      name,
+      definition.id,
+    );
+    await configureTaskExecution(page, suite.id, runner.id, {
+      concurrency: 1,
+      retryLimit: 0,
+      adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+    });
+    suites.push({ ...suite, name });
+  }
+  const [listSuite, detailSuite] = suites;
+  for (const { suite, path } of [
+    { suite: listSuite!, path: "/case-suites" },
+    { suite: detailSuite!, path: `/case-suites/${detailSuite!.id}` },
+  ]) {
+    await page.goto(path);
+    const trigger =
+      path === "/case-suites"
+        ? page.getByRole("article", { name: `任务 ${suite.name}`, exact: true })
+        : page.locator(".page-hero");
+    await trigger.getByRole("button", { name: "立即执行", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "开始执行", exact: true });
+    await expect(dialog.locator('select[aria-label="执行用例任务"]')).toHaveValue(suite.id);
+    await expect(dialog.locator(".execution-config-summary")).toContainText(runner.name);
+    const preflightResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/run-batches/preflight",
+    );
+    const createdResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/run-batches",
+    );
+    await dialog.getByRole("button", { name: "确认并开始执行" }).click();
+    const preflight = await preflightResponse;
+    expect(preflight.status()).toBe(200);
+    expect(preflight.request().postDataJSON()).toEqual({ suiteId: suite.id, delaySeconds: 0 });
+    const created = await createdResponse;
+    expect(created.status()).toBe(201);
+    expect(created.request().postDataJSON()).toEqual({ suiteId: suite.id, delaySeconds: 0 });
+    const batch = (await created.json()) as { id: string };
+    await expect(page).toHaveURL(new RegExp(`/run-batches/${batch.id}$`));
+    const summary = await browserJson(page, `/api/v1/run-batches/${batch.id}?view=summary`);
+    expect(summary.body).toMatchObject({
+      suiteId: suite.id,
+      suiteName: suite.name,
+      totalRuns: 1,
+      selectedRunnerIds: [runner.id],
+      policy: { projectVersionId: project.versionId, concurrency: 1 },
+    });
+    expect(
+      (
+        await browserJson(page, `/api/v1/run-batches/${batch.id}/terminate`, {
+          method: "POST",
+          body: { reason: "Task execution shortcut acceptance cleanup" },
+        })
+      ).status,
+    ).toBe(200);
+  }
+});
+
 test("case detail and preview list only completed executions and keep filtered pagination and empty states", async ({
   page,
 }) => {
@@ -662,6 +746,10 @@ test("personal task pins persist across browsers, sort naturally and recover aft
     await expect(
       readerPage.getByRole("checkbox", { name: "置顶 任务 2", exact: true }),
     ).not.toBeChecked();
+    await expect(readerPage.getByRole("button", { name: "立即执行", exact: true })).toHaveCount(0);
+    await readerPage.getByRole("link", { name: /任务 10/u }).click();
+    await expect(readerPage).toHaveURL(/\/case-suites\/[^/?]+$/u);
+    await expect(readerPage.getByRole("button", { name: "立即执行", exact: true })).toHaveCount(0);
   } finally {
     await readerContext.close();
   }

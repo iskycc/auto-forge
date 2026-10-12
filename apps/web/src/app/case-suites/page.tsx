@@ -78,6 +78,7 @@ export default async function CaseSuitesPage() {
         )}
         canManage={hasPermission(identity, "case_suite.manage", activeProjectId)}
         canReadExecutions={canReadExecutions}
+        canExecute={hasPermission(identity, "run.create", activeProjectId)}
         {...(activitySummary ? { activitySummary } : {})}
         initialSuites={suites}
         initialPinnedSuiteIds={pinnedSuiteIds}

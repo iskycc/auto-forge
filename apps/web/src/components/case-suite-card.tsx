@@ -22,6 +22,7 @@ import { Button, Input } from "@/components/ui";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { CaseSuiteRecentExecutions } from "./case-suite-recent-executions";
 import { DeleteCaseSuiteButton } from "./delete-case-suite-button";
+import { OpenRunDialogButton } from "./global-run-dialog";
 
 const statisticNumber = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 
@@ -29,6 +30,7 @@ export function CaseSuiteCard({
   suite,
   statistics,
   canReadExecutions,
+  canExecute,
   canManage,
   onDeleted,
   exporting,
@@ -41,6 +43,7 @@ export function CaseSuiteCard({
   suite: CaseSuite;
   statistics?: CaseSuiteExecutionStatistics | undefined;
   canReadExecutions: boolean;
+  canExecute: boolean;
   canManage: boolean;
   onDeleted: () => void;
   exporting: boolean;
@@ -167,6 +170,15 @@ export function CaseSuiteCard({
           />
           置顶
         </label>
+        {canExecute ? (
+          <OpenRunDialogButton
+            suiteId={suite.id}
+            disabled={!suite.enabled || suite.status !== "active"}
+            variant="primary"
+          >
+            立即执行
+          </OpenRunDialogButton>
+        ) : null}
         <Button
           aria-controls={historyId}
           aria-expanded={expanded}

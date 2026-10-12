@@ -54,7 +54,14 @@ type RunOptions = {
 
 type ProjectRunOptions = {
   contextKey: string;
+  preferenceKey: string;
   value: RunOptions;
+};
+
+type RunDialogRequest = {
+  suiteId?: string;
+  caseDefinitionId?: string;
+  ddtCase?: DdtCaseSummary;
 };
 
 type RunKind = "suite" | "case";
@@ -62,6 +69,7 @@ type RunnerSelectionKind = "runners" | "group";
 type StartMode = "immediate" | "delayed";
 
 export function OpenRunDialogButton({
+  suiteId,
   caseDefinitionId,
   ddtCase,
   disabled,
@@ -69,6 +77,7 @@ export function OpenRunDialogButton({
   variant = "neutral",
   children = "执行此用例",
 }: {
+  suiteId?: string;
   caseDefinitionId?: string;
   ddtCase?: DdtCaseSummary;
   disabled?: boolean;
@@ -84,7 +93,13 @@ export function OpenRunDialogButton({
       onClick={() =>
         window.dispatchEvent(
           new CustomEvent(OPEN_RUN_DIALOG_EVENT, {
-            detail: ddtCase ? { ddtCase } : caseDefinitionId ? { caseDefinitionId } : {},
+            detail: suiteId
+              ? { suiteId }
+              : ddtCase
+                ? { ddtCase }
+                : caseDefinitionId
+                  ? { caseDefinitionId }
+                  : {},
           }),
         )
       }
@@ -145,7 +160,9 @@ export function GlobalRunDialog({
   });
   const rememberedSuites = useRef(new Map<string, string>());
   const contextKey = `${preferenceKey}:${testStageId ?? ""}`;
-  const options = projectOptions?.contextKey === contextKey ? projectOptions.value : undefined;
+  const activeOptions = projectOptions?.contextKey === contextKey ? projectOptions : undefined;
+  const options = activeOptions?.value;
+  const optionsPreferenceKey = activeOptions?.preferenceKey ?? preferenceKey;
 
   const selectedSuite = options?.suites.find((suite) => suite.id === suiteId);
   const selectedCase = options?.cases.find((definition) => definition.id === caseDefinitionId);
@@ -168,22 +185,37 @@ export function GlobalRunDialog({
   }, [caseQuery, options?.cases]);
 
   const openDialog = useCallback(
-    (requestedCaseId?: string, requestedDdtCase?: DdtCaseSummary) => {
+    (target: RunDialogRequest = {}) => {
+      let requestedCaseId = target.caseDefinitionId;
+      const requestedDdtCase = target.ddtCase;
       const request = ++openRequest.current;
       setProjectOptions(undefined);
+      setSuiteId("");
       setCaseDefinitionId("");
       setDdtCase(requestedDdtCase);
       setAdapterEnabled(DEFAULT_EXECUTION_ADAPTER_ENABLED);
       if (requestedDdtCase) {
         requestedCaseId = requestedDdtCase.executionClass?.caseDefinitionId;
       }
-      if (requestedCaseId) {
+      if (target.suiteId) {
+        setRunKind("suite");
+        setStartMode("immediate");
+      } else if (requestedCaseId) {
         setRunKind("case");
       }
       setOpen(true);
       setLoading(true);
       setError("");
       const loadOptions = async () => {
+        const requestedSuite = target.suiteId
+          ? await requestJson<CaseSuite>(
+              `/api/v1/case-suites/${encodeURIComponent(target.suiteId)}?view=summary`,
+            )
+          : undefined;
+        if (requestedSuite && (!requestedSuite.enabled || requestedSuite.status !== "active"))
+          throw new Error("该任务已停用或归档，请刷新任务后重试。");
+        if (requestedSuite && !requestedSuite.policy.projectVersionId)
+          throw new Error("任务尚未关联项目版本，请先编辑任务。");
         const currentDdtCase = requestedDdtCase
           ? await requestJson<DdtCaseSummary>(
               `/api/v1/ddt/cases/${encodeURIComponent(requestedDdtCase.caseId)}/summary?${new URLSearchParams({ projectId: requestedDdtCase.projectId, projectVersionId: requestedDdtCase.projectVersionId, testStageId: requestedDdtCase.testStageId })}`,
@@ -194,25 +226,39 @@ export function GlobalRunDialog({
         requestedCaseId = currentDdtCase?.executionClass?.caseDefinitionId ?? requestedCaseId;
         const loaded = await loadRunOptions(
           requestedCaseId,
-          currentDdtCase?.projectId ?? projectId,
-          currentDdtCase?.projectVersionId ?? projectVersionId,
-          currentDdtCase?.testStageId ?? testStageId,
+          requestedSuite?.projectId ?? currentDdtCase?.projectId ?? projectId,
+          requestedSuite?.policy.projectVersionId ??
+            currentDdtCase?.projectVersionId ??
+            projectVersionId,
+          requestedSuite ? undefined : (currentDdtCase?.testStageId ?? testStageId),
+          requestedSuite,
         );
-        return { loaded, currentDdtCase };
+        const loadedPreferenceKey = requestedSuite
+          ? executionSuitePreferenceKey({
+              userId,
+              projectId: requestedSuite.projectId,
+              projectVersionId: requestedSuite.policy.projectVersionId!,
+            })
+          : preferenceKey;
+        return { loaded, currentDdtCase, loadedPreferenceKey };
       };
       void loadOptions()
-        .then(({ loaded, currentDdtCase }) => {
+        .then(({ loaded, currentDdtCase, loadedPreferenceKey }) => {
           if (request !== openRequest.current) return;
           setDdtCase(currentDdtCase);
-          setProjectOptions({ contextKey, value: loaded });
+          setProjectOptions({ contextKey, preferenceKey: loadedPreferenceKey, value: loaded });
           const remembered =
-            rememberedSuites.current.get(preferenceKey) ??
-            readExecutionSuitePreference(() => window.localStorage, preferenceKey);
-          const selectedId = preferredExecutionSuiteId(loaded.suites, remembered);
+            rememberedSuites.current.get(loadedPreferenceKey) ??
+            readExecutionSuitePreference(() => window.localStorage, loadedPreferenceKey);
+          const selectedId = preferredExecutionSuiteId(loaded.suites, target.suiteId ?? remembered);
           setSuiteId(selectedId);
           if (selectedId) {
-            rememberedSuites.current.set(preferenceKey, selectedId);
-            writeExecutionSuitePreference(() => window.localStorage, preferenceKey, selectedId);
+            rememberedSuites.current.set(loadedPreferenceKey, selectedId);
+            writeExecutionSuitePreference(
+              () => window.localStorage,
+              loadedPreferenceKey,
+              selectedId,
+            );
           }
           setCaseDefinitionId(
             requestedCaseId && loaded.cases.some((candidate) => candidate.id === requestedCaseId)
@@ -228,31 +274,24 @@ export function GlobalRunDialog({
           if (request === openRequest.current) setLoading(false);
         });
     },
-    [contextKey, preferenceKey, projectId, projectVersionId, testStageId],
+    [contextKey, preferenceKey, projectId, projectVersionId, testStageId, userId],
   );
 
   useEffect(() => {
     if (!enabled) return;
     const requestedCaseId = searchParams.get("runCase");
     if (searchParams.get("run") !== "1" && !requestedCaseId) return;
-    const timer = window.setTimeout(() => openDialog(requestedCaseId ?? undefined), 0);
+    const timer = window.setTimeout(
+      () => openDialog(requestedCaseId ? { caseDefinitionId: requestedCaseId } : {}),
+      0,
+    );
     return () => window.clearTimeout(timer);
   }, [enabled, openDialog, searchParams]);
 
   useEffect(() => {
     if (!enabled) return;
     const onOpen = (event: Event) => {
-      const detail = (event as CustomEvent<{ caseDefinitionId?: string; ddtCase?: DdtCaseSummary }>)
-        .detail;
-      if (detail?.ddtCase) {
-        openDialog(undefined, detail.ddtCase);
-        return;
-      }
-      if (detail?.caseDefinitionId) {
-        openDialog(detail.caseDefinitionId);
-        return;
-      }
-      openDialog();
+      openDialog((event as CustomEvent<RunDialogRequest>).detail);
     };
     window.addEventListener(OPEN_RUN_DIALOG_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_RUN_DIALOG_EVENT, onOpen);
@@ -449,10 +488,10 @@ export function GlobalRunDialog({
                         onChange={(event) => {
                           const selectedId = event.target.value;
                           setSuiteId(selectedId);
-                          rememberedSuites.current.set(preferenceKey, selectedId);
+                          rememberedSuites.current.set(optionsPreferenceKey, selectedId);
                           writeExecutionSuitePreference(
                             () => window.localStorage,
-                            preferenceKey,
+                            optionsPreferenceKey,
                             selectedId,
                           );
                         }}
@@ -1020,6 +1059,7 @@ async function loadRunOptions(
   projectId?: string,
   projectVersionId?: string,
   testStageId?: string,
+  requestedSuite?: CaseSuite,
 ): Promise<RunOptions> {
   const requestedCase = requestedCaseId
     ? await requestJson<CaseDefinitionWithMethods>(
@@ -1052,8 +1092,11 @@ async function loadRunOptions(
     ? [requestedCase, ...casePage.items.filter((candidate) => candidate.id !== requestedCase.id)]
     : casePage.items;
   return {
-    // 顶栏版本约束可选任务；执行时仍只提交 suiteId，并由任务快照作为唯一配置来源。
-    suites: suitePage.items.filter((suite) => suite.enabled && suite.status === "active"),
+    // A detail shortcut can target a task outside the first list page; never fall back to another task.
+    suites: (requestedSuite
+      ? [requestedSuite, ...suitePage.items.filter((suite) => suite.id !== requestedSuite.id)]
+      : suitePage.items
+    ).filter((suite) => suite.enabled && suite.status === "active"),
     cases: cases.filter((definition) => definition.enabled && !definition.archived),
     runners: runnerPage.items,
     groups: groupPage.items,
