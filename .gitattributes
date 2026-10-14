@@ -1,0 +1,2 @@
+# Unified diff blank context lines contain one required space.
+vendor/patches/*.patch whitespace=-blank-at-eol
