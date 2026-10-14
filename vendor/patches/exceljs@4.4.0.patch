@@ -1,0 +1,25 @@
+diff --git a/lib/stream/xlsx/worksheet-writer.js b/lib/stream/xlsx/worksheet-writer.js
+index 96705b7f02981437aa4be6e1f5ff8970e5dd95ce..d1df2f7ef3ba826a01d4b6511ec40d4082ede983 100644
+--- a/lib/stream/xlsx/worksheet-writer.js
++++ b/lib/stream/xlsx/worksheet-writer.js
+@@ -231,16 +231,18 @@ class WorksheetWriter {
+       this._writeOpenSheetData();
+     }
+     this._writeCloseSheetData();
++    // CT_Worksheet requires protection before filters and validation before links.
++    // Excel can reject the worksheet even when its XML is otherwise well formed.
++    this._writeSheetProtection();
+     this._writeAutoFilter();
+     this._writeMergeCells();
+ 
+     // for some reason, Excel can't handle dimensions at the bottom of the file
+     // this._writeDimensions();
+ 
+-    this._writeHyperlinks();
+     this._writeConditionalFormatting();
+     this._writeDataValidations();
+-    this._writeSheetProtection();
++    this._writeHyperlinks();
+     this._writePageMargins();
+     this._writePageSetup();
+     this._writeBackground();

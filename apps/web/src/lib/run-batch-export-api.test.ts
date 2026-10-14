@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertExportedWorkbookFeatureOrder } from "../../../../tests/e2e/support/export-workbook-structure";
 
 vi.mock("server-only", () => ({}));
 const {
@@ -121,6 +122,14 @@ describe("validated Excel downloads", () => {
       { params: Promise.resolve({ batchId: "batch" }) },
     );
   }
+  it("delivers a schema-ordered final analysis workbook with dropdowns and public log links", async () => {
+    const response = await requestExport();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    assertExportedWorkbookFeatureOrder(bytes);
+    expect(ensureShares).toHaveBeenCalledWith([row.attemptId], "batch", "reader");
+  });
   it("reports invalid later-page records before sending any XLSX headers", async () => {
     mixedPages();
     const response = await requestExport();
@@ -151,6 +160,7 @@ describe("validated Excel downloads", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-autoforge-export-excluded-rows")).toBe("1");
     const bytes = await response.arrayBuffer();
+    assertExportedWorkbookFeatureOrder(new Uint8Array(bytes));
     expect(Number(response.headers.get("content-length"))).toBe(bytes.byteLength);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);

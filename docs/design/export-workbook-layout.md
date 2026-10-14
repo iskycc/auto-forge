@@ -100,3 +100,15 @@ HTTP 入口在发送下载响应前完成工作簿及分页迭代器的收尾，
 新增两项超限回归在修复前失败，修复后通过；253 个 CRLF 的精确边界合法并可完整回读。另增加 ZIP 提交开始时取消的回归，验证暂存文件清理完成；这一取消路径未复现额外缺陷。浏览器回归夹具改用单独 CR 超限文本，以覆盖实际 API、异常弹窗和排除下载链路。
 
 本次 144 项合并定向检查、119 项应用/双数据库检查及三个 Lite Playwright 场景通过。下载文件全部通过 ZIP CRC、XML/关系部件严格解析和 LibreOffice 回读；已实际查看 1024×768、1536×960 深浅色截图及 1024×560 短桌面状态，未发现新增布局问题。生产构建、全仓库格式/Lint、串行工作区及测试类型、18 个 E2E 覆盖分组和差异检查均通过；具体命令及验证范围见 1.19.19 的发布记录。没有使用 Microsoft Excel 桌面客户端，不能用这些回归结果承诺任意生产输入或基础设施故障永不出现。
+
+### 2026-10-14：流式工作表的 Open XML 元素顺序
+
+用户在升级 `v1.19.19` 后仍遇到分析清单“最终结果”的 `sheet1.xml` 加载错误。进一步检查上一轮实际下载的文件，发现其 `hyperlinks` 位于 `dataValidations` 之前，违反工作表的序列约束；此前的 XML 解析和 LibreOffice 回读会接受这种顺序，未能发现它。这个问题不取决于异常数据，带分析下拉与日志链接的正常清单也能复现，清除缓存不能修复文件。
+
+[Microsoft Open XML SDK 的 `CT_Worksheet` 定义](https://github.com/dotnet/Open-XML-SDK/blob/main/data/schemas/schemas_openxmlformats_org_spreadsheetml_2006_main.json)明确要求数据验证先于超链接；ExcelJS 上游也有[流式数据验证和超链接共存时文件损坏的报告](https://github.com/exceljs/exceljs/issues/1387)。`vendor/patches/exceljs@4.4.0.patch` 在安装阶段修正流式写入器的顺序，同时把保护配置放在筛选前。版本及补丁摘要由 lockfile 固定，现有 Docker `COPY vendor/` 使补丁在 fetch 和离线安装前可用；不依赖运行时猴子补丁、不取消下拉或链接，也不退回整批内存生成。
+
+新增最终、全部、指定轮次三个分页流式回归与导出 API 回归，四项在修复前均因顺序错误失败，非流式对照通过。共享浏览器回读工具现在先检查导出工作表的功能元素顺序，再读取单元格；32,766 条双链接分表和排除后工作表也受此检查。该定向顺序断言不是完整 Open XML schema 校验，也不是 Microsoft Excel 桌面客户端验收。
+
+本次验证使用 [ECMA 官方 Part 4 发行包](https://ecma-international.org/publications-and-standards/standards/ecma-376/)内的 Transitional XSD，在独立本地 Java 校验器中按 `mc:Ignorable` 排除标为可忽略的 Office 扩展属性，仅在校验的 DOM 中处理，不改写下载文件。上一版真实分析下载在 `dataValidations` 处被 schema 拒绝；修复后正常分析、异常排除分析和执行结果三份不同工作簿的工作表、样式及工作簿 XML 全部通过官方基础 schema 校验，ZIP CRC 和所有 XML/关系部件解析通过。XSD 及验证脚本只作为此次本地证据，不是新的产品运行依赖；常态 CI 使用已提交的定向结构回归和浏览器回读断言。没有使用 Microsoft Excel 桌面客户端，也未读取用户的真实故障文件。
+
+`pnpm exec vitest run apps/web/src/lib/run-batch-export-safety.test.ts apps/web/src/lib/run-batch-export-api.test.ts apps/web/src/lib/run-batch-export-xlsx.test.ts apps/web/src/lib/run-batch-export-file.test.ts apps/web/src/lib/ddt-export-xlsx.test.ts apps/web/src/lib/case-suite-export-xlsx.test.ts apps/web/src/lib/execution-exceptions-export-xlsx.test.ts --maxWorkers=1 --no-file-parallelism` 的 63 项检查通过。`pnpm install --offline --frozen-lockfile --ignore-scripts`、`pnpm format:check`、相关文件 ESLint、Web/服务入口/工作线程及测试类型、`pnpm test:e2e:matrix`、`node --test scripts/release/backend-image.test.mjs` 和 Web 生产构建通过。两个 Lite Playwright 场景均通过，已实际查看 1024×768、1536×960 的正常和异常导出截图；未发现新增布局变形。

@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { assertExportedWorkbookFeatureOrder } from "./export-workbook-structure";
 
 // Use the Web workspace's locked offline dependency and inspect cell values across XLSX encodings.
 const ExcelJS = createRequire(resolve(import.meta.dirname, "../../../apps/web/package.json"))(
@@ -7,6 +8,7 @@ const ExcelJS = createRequire(resolve(import.meta.dirname, "../../../apps/web/pa
 ) as typeof import("exceljs").default;
 
 export async function readExportedWorkbookText(buffer: Buffer): Promise<string> {
+  assertExportedWorkbookFeatureOrder(buffer);
   const workbook = new ExcelJS.Workbook();
   // ExcelJS 4's Buffer declaration predates Node 24; its reader accepts Uint8Array.
   const load = workbook.xlsx.load.bind(workbook.xlsx) as unknown as (

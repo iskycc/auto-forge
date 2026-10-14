@@ -3,6 +3,10 @@ import type { FailureAnalysisClaim } from "@autoforge/domain";
 import ExcelJS from "exceljs";
 import { unzipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
+import {
+  assertExportedWorkbookFeatureOrder,
+  assertExportedWorksheetFeatureOrder,
+} from "../../../../tests/e2e/support/export-workbook-structure";
 
 vi.mock("server-only", () => ({}));
 
@@ -32,6 +36,37 @@ const input = {
 };
 
 describe("Excel export data safety", () => {
+  it.each(["final", "all", "round"] as const)(
+    "writes analysis dropdowns before hyperlinks in the %s streaming export",
+    async (scope) => {
+      const source = {
+        ...input,
+        scope,
+        round: 1,
+        shareLinks: new Map([["attempt", "https://example.test/CaseLog?ExecutionId=attempt"]]),
+      };
+      const reference = await buildRunBatchExportWorkbook({ ...source, rows: [row] });
+      assertExportedWorkbookFeatureOrder(reference.buffer);
+      const pages = (async function* () {
+        yield { ...source, rows: [row] };
+        yield { ...source, rows: [{ ...row, executionRunId: "run-two" }] };
+      })();
+      const result = await createRunBatchExportWorkbookStream(pages, new AbortController().signal);
+      const chunks: Buffer[] = [];
+      for await (const chunk of result.stream) chunks.push(Buffer.from(chunk));
+      expect(await result.completed).toBeUndefined();
+      const bytes = Buffer.concat(chunks);
+      assertExportedWorkbookFeatureOrder(bytes);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(Uint8Array.from(bytes).buffer);
+      expect(workbook.worksheets[0]!.getCell("E2").dataValidation).toMatchObject({ type: "list" });
+      expect(workbook.worksheets[0]!.getCell("J2").value).toMatchObject({
+        hyperlink: source.shareLinks.get("attempt"),
+      });
+      expect(workbook.worksheets[0]!.getRow(2).height).toBe(20);
+    },
+  );
+
   it.each([
     ["XML noncharacter", "错误\ufffe消息"],
     ["XML forbidden control", "错误\u0000消息"],
@@ -104,6 +139,7 @@ describe("Excel export data safety", () => {
     let rows = 0;
     for (const [, content] of sheets) {
       const xml = new TextDecoder().decode(content);
+      assertExportedWorksheetFeatureOrder(xml, "split analysis worksheet");
       expect((xml.match(/<hyperlink /gu) ?? []).length).toBeLessThanOrEqual(65_530);
       rows += (xml.match(/<row /gu) ?? []).length - 1;
       expect(xml).toContain("用例编号");

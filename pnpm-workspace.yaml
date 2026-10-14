@@ -21,3 +21,6 @@ minimumReleaseAgeExclude:
   - eslint@9.39.5
   - pg-protocol@1.16.0
   - pg@8.23.0
+
+patchedDependencies:
+  exceljs@4.4.0: vendor/patches/exceljs@4.4.0.patch
