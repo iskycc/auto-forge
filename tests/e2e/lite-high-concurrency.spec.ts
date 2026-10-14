@@ -17,6 +17,8 @@ const CASE_COUNT = 500;
 const RUNNER_COUNT = 8;
 const RUNNER_CAPACITY = 64;
 const CLIENT_REQUEST_CONCURRENCY = 40;
+const RUNNER_REGISTRATION_MAXIMUM_ATTEMPTS = 15;
+const RUNNER_REGISTRATION_RETRY_DELAY_MS = 5_000;
 const CLASS_PREFIX = "ConcurrencyProbe";
 const CAPABILITIES = ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"];
 const LABELS = ["linux", "java", "testng"];
@@ -581,23 +583,32 @@ async function listSyntheticCaseIds(page: Page, projectVersionId: string): Promi
 }
 
 async function registerRunner(page: Page, ordinal: number): Promise<RunnerIdentity> {
-  const response = await page.request.post("/api/v1/runner-agents/register", {
-    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
-    data: {
-      schemaVersion: 1,
-      name: `Concurrency Runner ${ordinal}`,
-      labels: LABELS,
-      capabilities: CAPABILITIES,
-      maxConcurrency: RUNNER_CAPACITY,
-      os: "linux",
-      architecture: "amd64",
-      agentVersion: "0.2.0",
-      protocolVersion: 1,
-      terminalEnabled: false,
-    },
-  });
-  expect(response.status()).toBe(201);
-  return (await response.json()) as RunnerIdentity;
+  // Independent scenarios share the platform's ten-registration/minute budget.
+  // Retry only its explicit admission response; other protocol errors fail immediately.
+  for (let attempt = 1; attempt <= RUNNER_REGISTRATION_MAXIMUM_ATTEMPTS; attempt++) {
+    const response = await page.request.post("/api/v1/runner-agents/register", {
+      headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+      data: {
+        schemaVersion: 1,
+        name: `Concurrency Runner ${ordinal}`,
+        labels: LABELS,
+        capabilities: CAPABILITIES,
+        maxConcurrency: RUNNER_CAPACITY,
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        terminalEnabled: false,
+      },
+    });
+    if (response.status() !== 429 || attempt === RUNNER_REGISTRATION_MAXIMUM_ATTEMPTS) {
+      expect(response.status()).toBe(201);
+      return (await response.json()) as RunnerIdentity;
+    }
+    expect(await response.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
+    await delay(RUNNER_REGISTRATION_RETRY_DELAY_MS);
+  }
+  throw new Error("执行机注册重试预算耗尽。");
 }
 
 async function heartbeatRunner(page: Page, identity: RunnerIdentity): Promise<void> {

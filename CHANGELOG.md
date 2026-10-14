@@ -18,8 +18,9 @@ and known limitations.
 - `pnpm exec vitest run ... --maxWorkers=1 --no-file-parallelism`：11 个定向文件、144 项通过；新增 CR/混合换行超限的两项回归修复前失败，253 个 CRLF 的精确边界正常。ZIP 开始提交时取消可完成清理；调度回归显式推进注入时钟，验证分段时间、新鲜度边界及事件一致。
 - 设置 `AUTOFORGE_TEST_POSTGRES_URL` 后，调度、并发完成及导出分页的应用/双数据库回归共 119 项通过；SQLite/PostgreSQL 均实际读取十万条结果的 500 页，无遗漏或重复。该组与定向组含重复的应用/SQLite 锁测试，不相加宣称唯一用例总数。
 - Lite 新生产构建下三个 Playwright 场景通过。三个模拟执行机、两个任务各并发 65、各 70 个用例，共 140 次执行全部成功，无 `schedule-batch` 数据库冲突通知；导出场景验证实际 CR 超限数据的弹窗、排除下载、全部排除明细及原始记录保留，正常导出和错误后重试继续通过。
+- 首次远端组合回归因两场景累计注册 11 台执行机触发每分钟 10 次注册限制；测试夹具现仅对明确的 `RATE_LIMITED` 做有界退避，其他错误仍立即失败。随后在同一新服务完整运行双任务及 500 槽位两个场景，共 640 次执行通过。双核配额下 351 次读取探测 P95 为 261ms、最大 531ms，续租原性能阈值通过；单核压力检查的续租 P95 1.81s 未达 1.5s 门槛，不把它记录为通过。
 - 全部实际下载工作簿经 ZIP CRC、所有 XML/关系部件严格解析和 LibreOffice 打开/重新保存后校验通过。实际查看 1024×768、1536×960 深浅色异常与正常导出截图及 1024×560 短桌面状态，对齐、换行、按钮和滚动边界正常。未使用 Microsoft Excel 桌面客户端，未连接用户局域网部署或进行生产长期观测。
-- `pnpm format:check`、全仓库 `pnpm exec eslint . --max-warnings=0`、`pnpm --workspace-concurrency=1 -r --if-present typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix`（18 个覆盖分组）、`pnpm --filter @autoforge/web build` 及差异检查全部通过。所有本地重负载验证串行限为单核并限制内存。
+- `pnpm format:check`、全仓库 `pnpm exec eslint . --max-warnings=0`、`pnpm --workspace-concurrency=1 -r --if-present typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix`（18 个覆盖分组）、`pnpm --filter @autoforge/web build` 及差异检查全部通过。所有本地重负载验证串行并限制 CPU/内存，500 槽位性能验收使用一个双核测试任务。测试夹具调整后重新运行相关 Lint、格式、测试类型和完整并发场景。
 
 ### Compatibility
 
