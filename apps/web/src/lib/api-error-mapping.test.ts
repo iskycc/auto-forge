@@ -4,6 +4,18 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it("returns actionable stored export data validation without classifying it as a server fault", () => {
+    const details = { excludedRows: 1 };
+    expect(
+      mapApiError(
+        new DomainError("EXPORT_DATA_INVALID", "排除异常数据后导出。", { details }),
+        "export-request",
+      ),
+    ).toMatchObject({
+      status: 422,
+      body: { error: { code: "EXPORT_DATA_INVALID", requestId: "export-request", details } },
+    });
+  });
   it("distinguishes storage snapshot expiry from node unavailability", () => {
     expect(
       mapApiError(

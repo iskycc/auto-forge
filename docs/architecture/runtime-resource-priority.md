@@ -156,3 +156,19 @@ Lite 的快照清理、通知生成、Webhook 生成/领取、保留期对象清
 回归测试 `notification-generation.integration.test.ts` 覆盖双数据库通知持续推进和重复生成；
 `runner-heartbeat-contention.integration.test.ts` 使用另一真实 SQLite 连接持有写锁，验证五个无工作维护入口
 仍可完成只读检查，并覆盖八类空保留期清理。新增诊断测试覆盖跨线程上下文、不同操作去重及敏感字段过滤。这些确定性测试不代替生产 24 小时观测。
+
+## 多任务补位调度的写锁竞争（2026-10-14）
+
+`schedule-batch / sqlite / SQLITE_BUSY` 表示补位调度的数据库操作在重试预算内未获得锁。旧实现每次补位都会通过 `BEGIN IMMEDIATE` 读取、确认轮次并发配置，即使该轮次已保存、任务并发槽已满、没有任何新分配，也会申请写锁。真实双批次回归在另一连接保持写事务期间复现了两个调度同时失败。SQLite WAL 允许读写并行，但同一时刻仍只有一个写者；无效的写锁申请会放大并行任务竞争，参见 [SQLite WAL 并发说明](https://sqlite.org/wal.html#concurrency)。
+
+Lite 现在先通过只读查询检查轮次并发配置；已存在且无需切换规则时直接返回。新增轮次或规则发生变化时，进入写事务后再次读取并核验，继续原子更新并发配置和规则切换事件。真实锁故障仍使用原有有界重试和告警。
+
+较大的共享调度计划按最多 64 个分配提交，每段重新检查数据库中的执行机占用、任务与项目并发额度，在段间让出事件循环，让其他任务、领取、续租和完成上报有机会推进。每段保存实际接受的用例分配事件，调度摘要累计剩余量；已提交段不会因后续段失败而丢失。一次调度仍可填满原有并发额度，任务成员和单次读取窗口维持原容量约束；Lite/Full 共用该编排，无新迁移、配置、依赖或 Runner 协议变更。
+
+修复前新增两项回归均失败：双满槽任务在真实 SQLite 写锁下报错，以及 513 个分配进入同一次预留。修复后 `pnpm exec vitest run packages/application/test/schedule-run-batches.test.ts packages/db/test/scheduling-writer-contention.integration.test.ts --maxWorkers=1 --no-file-parallelism` 的 40 项检查通过，包含正常/动态并发、实时领取容量和完整分配事件；应用及数据库包的类型检查通过。
+
+在设置 `AUTOFORGE_TEST_POSTGRES_URL` 指向本地临时 PostgreSQL 后，`pnpm exec vitest run packages/db/test/scheduling-refill.integration.test.ts packages/db/test/scheduling-events.integration.test.ts packages/db/test/scheduling-writer-contention.integration.test.ts packages/db/test/postgres-concurrent-completions.integration.test.ts packages/application/test/schedule-run-batches.test.ts --maxWorkers=1 --no-file-parallelism` 的 113 项检查通过，两个数据库的场景均实际运行，包括并发额度、重试规则切换事件、重复调度及并发完成上报。
+
+`pnpm exec playwright test tests/e2e/lite-high-concurrency.spec.ts --grep 'two active tasks' --workers=1` 在新生产构建下通过：实际通过 API 导入用例、创建两个任务并同时执行，共享同一执行机，每任务并发 4、18 个用例；饱和时反复领取和心跳不产生额外分配，36 次执行经日志上传和完成上报后全部成功，给予通知投递循环正常运行时间后仍无 `schedule-batch` 数据库冲突通知。该检查使用 Runner Protocol 模拟执行机，不执行真实 Java 用例，也不等同于真实执行机或生产长期观测；本次没有运行 Full 整体部署、全量 500 槽位或离线包验收。
+
+最终 `pnpm exec vitest run packages/application/test/schedule-run-batches.test.ts packages/application/test/runtime-notifications.test.ts apps/web/src/lib/runtime-priority.test.ts apps/web/server/worker-pool.test.ts --maxWorkers=1 --no-file-parallelism` 的 58 项检查通过，新增后续分段失败时保留先前提交事件、向调用方传递真实错误的回归。去除重复运行的用例，调度应用及双数据库共 114 项、原有通知/运行保护/线程池另 18 项通过。`pnpm --filter @autoforge/application typecheck`、`pnpm --filter @autoforge/db typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、受影响文件 ESLint、`pnpm format:check`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix`、修改文档 Prettier 和 `git diff --check` 均通过。所有高负载检查串行运行并限制为 1 CPU。

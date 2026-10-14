@@ -3,10 +3,16 @@ import "server-only";
 import type { RunBatchExportRow } from "@autoforge/application";
 import {
   DEFAULT_PLATFORM_TIME_ZONE,
+  EXPORT_ISSUE_PREVIEW_LIMIT,
+  type ExportValidationReport,
   type ExportOutcomeFilter,
   type RunBatchExportTemplate,
 } from "@autoforge/contracts";
-import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
+import {
+  DomainError,
+  type FailureAnalysisCategory,
+  type FailureAnalysisClaim,
+} from "@autoforge/domain";
 import ExcelJS from "exceljs";
 import { PassThrough } from "node:stream";
 import { once } from "node:events";
@@ -20,6 +26,12 @@ import {
   styleExportResult,
   type ExportTone,
 } from "./export-workbook-style";
+import {
+  EXCEL_SHEET_HYPERLINK_LIMIT,
+  EXCEL_SHEET_ROW_LIMIT,
+  exportRowHyperlinkCount,
+  validateExportCells,
+} from "./export-cell-validation";
 
 /**
  * 执行结果导出 Excel 生成。列顺序即需求约定的固定顺序；
@@ -101,13 +113,8 @@ export async function buildRunBatchExportWorkbook(
 ): Promise<{ buffer: Buffer; filename: string }> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AutoForge";
-  if (input.template === "failure-analysis") {
-    const sheet = buildFailureAnalysisSheet(workbook, input);
-    appendFailureAnalysisRows(sheet, input);
-  } else {
-    const sheet = buildExecutionResultsSheet(workbook, input);
-    appendExecutionResultsRows(sheet, input);
-  }
+  const rows = exportWorkbookRows(workbook, input);
+  for (const row of input.rows) rows.append(input, row);
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   return {
     buffer,
@@ -119,7 +126,13 @@ export async function buildRunBatchExportWorkbook(
 export async function createRunBatchExportWorkbookStream(
   pages: AsyncIterable<RunBatchExportWorkbookInput>,
   signal: AbortSignal,
-): Promise<{ stream: PassThrough; filename: string }> {
+  options: { invalidRows?: "reject" | "exclude" } = {},
+): Promise<{
+  stream: PassThrough;
+  filename: string;
+  validation: ExportValidationReport;
+  completed: Promise<Error | undefined>;
+}> {
   const iterator = pages[Symbol.asyncIterator]();
   const loadFirstPage = async () => {
     try {
@@ -136,6 +149,7 @@ export async function createRunBatchExportWorkbookStream(
   };
   const first = await loadFirstPage();
   const input = first.value;
+  const validation = emptyExportValidationReport();
   const stream = new PassThrough({ highWaterMark: 256 * 1024 });
   const controller = new AbortController();
   const abort = () => {
@@ -151,23 +165,18 @@ export async function createRunBatchExportWorkbookStream(
       useSharedStrings: false,
     });
     workbook.creator = "AutoForge";
-    const sheet =
-      input.template === "failure-analysis"
-        ? buildFailureAnalysisSheet(workbook, input)
-        : buildExecutionResultsSheet(workbook, input);
-    sheet.getRow(1).commit();
+    const rows = exportWorkbookRows(workbook, input, {
+      invalidRows: options.invalidRows ?? "reject",
+      validation,
+      commitRow: (row) => row.commit(),
+      commitSheet: (sheet) => sheet.commit(),
+    });
     let page: IteratorResult<RunBatchExportWorkbookInput, unknown> = first;
     while (!page.done) {
       controller.signal.throwIfAborted();
-      const append =
-        input.template === "failure-analysis"
-          ? appendFailureAnalysisRows
-          : appendExecutionResultsRows;
       // Yield every 25 rows, including within a page of long failure descriptions.
       for (let offset = 0; offset < page.value.rows.length; offset += 25) {
-        append(sheet, { ...page.value, rows: page.value.rows.slice(offset, offset + 25) }, (row) =>
-          row.commit(),
-        );
+        for (const row of page.value.rows.slice(offset, offset + 25)) rows.append(page.value, row);
         await setImmediate(undefined, { signal: controller.signal });
         if (stream.writableNeedDrain) await once(stream, "drain", { signal: controller.signal });
       }
@@ -175,22 +184,35 @@ export async function createRunBatchExportWorkbookStream(
       controller.signal.throwIfAborted();
       page = await iterator.next();
     }
-    sheet.commit();
+    rows.finish();
     await workbook.commit();
   };
-  void write()
-    .catch((cause: unknown) =>
-      stream.destroy(cause instanceof Error ? cause : new Error("执行结果导出失败。", { cause })),
-    )
-    .finally(async () => {
-      signal.removeEventListener("abort", abort);
+  const completed = (async (): Promise<Error | undefined> => {
+    const failures: unknown[] = [];
+    try {
+      await write();
+    } catch (cause) {
+      failures.push(cause);
+    }
+    signal.removeEventListener("abort", abort);
+    try {
       await iterator.return?.();
-    })
-    .catch((cause: unknown) =>
-      stream.destroy(cause instanceof Error ? cause : new Error("导出关闭失败。", { cause })),
-    );
+    } catch (cause) {
+      failures.push(cause);
+    }
+    if (failures.length === 0) return undefined;
+    const cause =
+      failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, "导出生成和分页清理失败。");
+    const failure = cause instanceof Error ? cause : new Error("执行结果导出失败。", { cause });
+    stream.destroy(failure);
+    return failure;
+  })();
   return {
     stream,
+    validation,
+    completed,
     filename: exportFilename(input.batchId, input.scope, input.round, input.template ?? "results"),
   };
 }
@@ -198,8 +220,9 @@ export async function createRunBatchExportWorkbookStream(
 function buildExecutionResultsSheet(
   workbook: Pick<ExcelJS.Workbook, "addWorksheet">,
   input: RunBatchExportWorkbookInput,
+  name = "执行结果",
 ): ExcelJS.Worksheet {
-  const sheet = workbook.addWorksheet("执行结果", exportWorksheetOptions());
+  const sheet = workbook.addWorksheet(name, exportWorksheetOptions());
   // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
   const includeRound = input.scope === "all";
   const timestampFormatter = exportTimestampFormatter(input);
@@ -261,23 +284,6 @@ function executionResultCells(
   ];
 }
 
-function appendExecutionResultsRows(
-  sheet: ExcelJS.Worksheet,
-  input: RunBatchExportWorkbookInput,
-  commit: (row: ExcelJS.Row) => void = () => undefined,
-): void {
-  const includeRound = input.scope === "all";
-  const columns = includeRound ? EXPORT_COLUMNS.length + 1 : EXPORT_COLUMNS.length;
-  const formatter = exportTimestampFormatter(input);
-  for (const row of input.rows) {
-    const exportedRow = sheet.addRow(executionResultCells(row, input, formatter));
-    styleExportRow(exportedRow, columns);
-    styleExportResult(exportedRow.getCell(includeRound ? 4 : 3), OUTCOME_TONES[row.outcome]);
-    exportedRow.getCell(includeRound ? 8 : 7).numFmt = "0.0";
-    commit(exportedRow);
-  }
-}
-
 function formatExportTimestamp(value: string | null, formatter: Intl.DateTimeFormat): string {
   if (value === null) return "";
   const date = new Date(value);
@@ -291,8 +297,9 @@ function formatExportTimestamp(value: string | null, formatter: Intl.DateTimeFor
 function buildFailureAnalysisSheet(
   workbook: Pick<ExcelJS.Workbook, "addWorksheet">,
   input: RunBatchExportWorkbookInput,
+  name = "失败用例分析清单",
 ): ExcelJS.Worksheet {
-  const sheet = workbook.addWorksheet("失败用例分析清单", exportWorksheetOptions(2));
+  const sheet = workbook.addWorksheet(name, exportWorksheetOptions(2));
   const logColumnIndex = FAILURE_ANALYSIS_HEADERS.length - 1;
   const logColumnWidth = exportColumnWidth(
     FAILURE_ANALYSIS_HEADERS[logColumnIndex]!,
@@ -311,44 +318,204 @@ function buildFailureAnalysisSheet(
   return sheet;
 }
 
-function appendFailureAnalysisRows(
-  sheet: ExcelJS.Worksheet,
+function failureAnalysisCells(
+  item: RunBatchExportRow,
   input: RunBatchExportWorkbookInput,
-  commit: (row: ExcelJS.Row) => void = () => undefined,
-): void {
-  for (const item of input.rows) {
-    const shareLink = item.attemptId ? input.shareLinks.get(item.attemptId) : undefined;
-    const claim = item.attemptId ? input.analysisClaims?.get(item.attemptId) : undefined;
-    const completedClaim = claim?.status === "completed" ? claim : undefined;
-    const proofLink =
-      completedClaim?.category === "rerun_passed"
-        ? input.analysisProofLinks?.get(completedClaim.id)
-        : undefined;
-    const row = sheet.addRow([
-      // 产品口径：用例编号就是用例类路径，不是平台 UUID。
-      item.casePath,
-      item.displayName,
-      item.summary ?? "",
-      claim ? analystLabel(claim) : "",
-      completedClaim?.category ? FAILURE_ANALYSIS_RESULT_LABELS[completedClaim.category] : "",
-      completedClaim?.category === "case_fixed" || completedClaim?.category === "code_issue_filed"
-        ? (completedClaim.issueDescription ?? "")
-        : "",
-      completedClaim ? issueEvidenceCell(completedClaim) : "",
-      proofLink
-        ? {
-            text: completedClaim?.rerunProofUrl
-              ? "重跑通过日志"
-              : (completedClaim?.screenshot?.fileName ?? "重跑通过截图"),
-            hyperlink: proofLink,
-          }
-        : "",
-      completedClaim?.remark ?? "",
-      shareLink ? { text: shareLink, hyperlink: shareLink } : "",
-    ]);
-    styleFailureAnalysisRow(row, completedClaim?.category);
-    commit(row);
+): ExcelJS.CellValue[] {
+  const shareLink = item.attemptId ? input.shareLinks.get(item.attemptId) : undefined;
+  const claim = item.attemptId ? input.analysisClaims?.get(item.attemptId) : undefined;
+  const completedClaim = claim?.status === "completed" ? claim : undefined;
+  const proofLink =
+    completedClaim?.category === "rerun_passed"
+      ? input.analysisProofLinks?.get(completedClaim.id)
+      : undefined;
+  return [
+    // 产品口径：用例编号就是用例类路径，不是平台 UUID。
+    item.casePath,
+    item.displayName,
+    item.summary ?? "",
+    claim ? analystLabel(claim) : "",
+    completedClaim?.category ? FAILURE_ANALYSIS_RESULT_LABELS[completedClaim.category] : "",
+    completedClaim?.category === "case_fixed" || completedClaim?.category === "code_issue_filed"
+      ? (completedClaim.issueDescription ?? "")
+      : "",
+    completedClaim ? issueEvidenceCell(completedClaim) : "",
+    proofLink
+      ? {
+          text: completedClaim?.rerunProofUrl
+            ? "重跑通过日志"
+            : (completedClaim?.screenshot?.fileName ?? "重跑通过截图"),
+          hyperlink: proofLink,
+        }
+      : "",
+    completedClaim?.remark ?? "",
+    shareLink ? { text: shareLink, hyperlink: shareLink } : "",
+  ];
+}
+
+function emptyExportValidationReport(): ExportValidationReport {
+  return {
+    schemaVersion: 1,
+    totalRows: 0,
+    validRows: 0,
+    excludedRows: 0,
+    issues: [],
+    truncated: false,
+  };
+}
+
+function exportHeaders(
+  input: Pick<RunBatchExportWorkbookInput, "template" | "scope">,
+): readonly string[] {
+  if (input.template === "failure-analysis") return FAILURE_ANALYSIS_HEADERS;
+  return [
+    ...(input.scope === "all" ? ["轮次"] : []),
+    ...EXPORT_COLUMNS.map((column) => column.header),
+  ];
+}
+
+function exportCells(
+  input: RunBatchExportWorkbookInput,
+  row: RunBatchExportRow,
+  formatter: Intl.DateTimeFormat,
+): ExcelJS.CellValue[] {
+  return input.template === "failure-analysis"
+    ? failureAnalysisCells(row, input)
+    : executionResultCells(row, input, formatter);
+}
+
+/** Only compatible rows receive public log grants; the writer records the full exclusion report. */
+export async function exportCompatibleAttemptIds(
+  input: RunBatchExportWorkbookInput,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const formatter = exportTimestampFormatter(input);
+  const headers = exportHeaders(input);
+  const ids: string[] = [];
+  for (let offset = 0; offset < input.rows.length; offset++) {
+    signal.throwIfAborted();
+    const row = input.rows[offset]!;
+    if (
+      row.attemptId &&
+      !validateExportCells(exportCells(input, row, formatter), headers, row, offset + 2)
+    )
+      ids.push(row.attemptId);
+    if (offset % 25 === 24) await setImmediate(undefined, { signal });
   }
+  return ids;
+}
+
+function exportWorkbookRows(
+  workbook: Pick<ExcelJS.Workbook, "addWorksheet">,
+  initial: RunBatchExportWorkbookInput,
+  options: {
+    invalidRows?: "reject" | "exclude";
+    validation?: ExportValidationReport;
+    commitRow?: (row: ExcelJS.Row) => void;
+    commitSheet?: (sheet: ExcelJS.Worksheet) => void;
+  } = {},
+) {
+  const validation = options.validation ?? emptyExportValidationReport();
+  const headers = exportHeaders(initial);
+  const formatter = exportTimestampFormatter(initial);
+  let sheetNumber = 0;
+  let hyperlinks = 0;
+  let rowCount = 1;
+  const createSheet = () => {
+    sheetNumber++;
+    hyperlinks = 0;
+    rowCount = 1;
+    const base = initial.template === "failure-analysis" ? "失败用例分析清单" : "执行结果";
+    const name = sheetNumber === 1 ? base : `${base} (${sheetNumber})`;
+    const sheet =
+      initial.template === "failure-analysis"
+        ? buildFailureAnalysisSheet(workbook, initial, name)
+        : buildExecutionResultsSheet(workbook, initial, name);
+    options.commitRow?.(sheet.getRow(1));
+    return sheet;
+  };
+  let sheet = createSheet();
+  let issueSheet: ExcelJS.Worksheet | undefined;
+  let issueSheetNumber = 0;
+  let issueRowCount = 1;
+  const appendIssue = (issue: NonNullable<ReturnType<typeof validateExportCells>>) => {
+    if (!issueSheet || issueRowCount === EXCEL_SHEET_ROW_LIMIT) {
+      if (issueSheet) options.commitSheet?.(issueSheet);
+      issueSheetNumber++;
+      issueRowCount = 1;
+      issueSheet = workbook.addWorksheet(
+        issueSheetNumber === 1 ? "排除明细" : `排除明细 (${issueSheetNumber})`,
+        exportWorksheetOptions(1),
+      );
+      issueSheet.columns = [
+        { header: "原导出行", width: 12 },
+        { header: "执行任务 ID", width: 38 },
+        { header: "执行尝试 ID", width: 38 },
+        { header: "轮次", width: 8 },
+        { header: "用例路径", width: 52 },
+        { header: "用例名称", width: 32 },
+        { header: "字段与问题", width: 88 },
+      ];
+      issueSheet.autoFilter = { from: "A1", to: "G1" };
+      styleExportHeader(issueSheet.getRow(1));
+      options.commitRow?.(issueSheet.getRow(1));
+    }
+    const excluded = issueSheet.addRow([
+      issue.rowNumber,
+      issue.executionRunId,
+      issue.attemptId ?? "",
+      issue.round,
+      issue.casePath,
+      issue.caseName,
+      issue.fields.map(({ field, reason }) => `${field}：${reason}`).join("；"),
+    ]);
+    styleExportRow(excluded, 7);
+    options.commitRow?.(excluded);
+    issueRowCount++;
+  };
+  return {
+    append(input: RunBatchExportWorkbookInput, source: RunBatchExportRow) {
+      validation.totalRows++;
+      const cells = exportCells(input, source, formatter);
+      const issue = validateExportCells(cells, headers, source, validation.totalRows + 1);
+      if (issue) {
+        validation.excludedRows++;
+        if (validation.issues.length < EXPORT_ISSUE_PREVIEW_LIMIT) validation.issues.push(issue);
+        validation.truncated = validation.excludedRows > validation.issues.length;
+        if (options.invalidRows !== "exclude")
+          throw new DomainError(
+            "EXPORT_DATA_INVALID",
+            "部分记录无法安全写入 Excel，请排除异常数据后重试。",
+            { details: validation },
+          );
+        appendIssue(issue);
+        return;
+      }
+      const links = exportRowHyperlinkCount(cells);
+      if (rowCount === EXCEL_SHEET_ROW_LIMIT || hyperlinks + links > EXCEL_SHEET_HYPERLINK_LIMIT) {
+        options.commitSheet?.(sheet);
+        sheet = createSheet();
+      }
+      const row = sheet.addRow(cells);
+      if (initial.template === "failure-analysis") {
+        const claim = source.attemptId ? input.analysisClaims?.get(source.attemptId) : undefined;
+        styleFailureAnalysisRow(row, claim?.status === "completed" ? claim.category : undefined);
+      } else {
+        const includeRound = initial.scope === "all";
+        styleExportRow(row, headers.length);
+        styleExportResult(row.getCell(includeRound ? 4 : 3), OUTCOME_TONES[source.outcome]);
+        row.getCell(includeRound ? 8 : 7).numFmt = "0.0";
+      }
+      options.commitRow?.(row);
+      hyperlinks += links;
+      rowCount++;
+      validation.validRows++;
+    },
+    finish() {
+      options.commitSheet?.(sheet);
+      if (issueSheet) options.commitSheet?.(issueSheet);
+    },
+  };
 }
 
 function styleFailureAnalysisRow(

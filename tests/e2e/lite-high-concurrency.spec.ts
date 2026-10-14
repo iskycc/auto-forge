@@ -28,6 +28,159 @@ type ClaimedAssignment = {
   lease: { token: string; leaseId: string; version: number };
 };
 
+test("two active tasks refill concurrently without schedule-batch database warnings", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = randomUUID();
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: `双任务调度 ${suffix}` },
+    },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions/${version.body.id}/stages`,
+    {
+      method: "POST",
+      body: { name: "并行补位", description: "短事务与真实 HTTP 协议回归" },
+    },
+  );
+  expect(stage.status).toBe(201);
+  const quantity = 18;
+  await importSyntheticCases(page, version.body.id, stage.body.id, quantity);
+  const caseIds = await listSyntheticCaseIds(page, version.body.id);
+  expect(caseIds).toHaveLength(quantity);
+  const identity = await registerRunner(page, 1);
+  await heartbeatRunner(page, identity);
+  const suiteIds: string[] = [];
+  for (const ordinal of [1, 2]) {
+    const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+      method: "POST",
+      body: {
+        projectId: DEFAULT_PROJECT_ID,
+        projectVersionId: version.body.id,
+        name: `并行任务 ${ordinal} ${suffix}`,
+        description: "共享执行机补位",
+      },
+    });
+    expect(suite.status).toBe(201);
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
+          method: "POST",
+          body: { caseDefinitionIds: caseIds },
+        })
+      ).status,
+    ).toBe(200);
+    const saved = await browserJson<{ revision: number; policy: Record<string, unknown> }>(
+      page,
+      `/api/v1/case-suites/${suite.body.id}`,
+    );
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suite.body.id}`, {
+          method: "PATCH",
+          body: {
+            expectedRevision: saved.body.revision,
+            policy: {
+              ...saved.body.policy,
+              concurrency: 4,
+              retryLimit: 0,
+              adapter: {
+                ...(saved.body.policy.adapter as Record<string, unknown>),
+                enabled: false,
+              },
+              runnerIds: [identity.runnerId],
+              runnerGroupId: "",
+            },
+          },
+        })
+      ).status,
+    ).toBe(200);
+    suiteIds.push(suite.body.id);
+  }
+  const startedAt = new Date().toISOString();
+  const batches = await Promise.all(
+    suiteIds.map(async (suiteId) => {
+      const created = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
+        method: "POST",
+        body: { suiteId },
+      });
+      expect(created.status).toBe(201);
+      return created.body;
+    }),
+  );
+  let claims = await claimAssignments(page, identity);
+  expect(claims).toHaveLength(8);
+  for (const batch of batches) {
+    const running = await browserJson<{ status: string; runningRuns: number }>(
+      page,
+      `/api/v1/run-batches/${batch.id}`,
+    );
+    expect(running.status).toBe(200);
+    expect(running.body).toMatchObject({ status: "running", runningRuns: 4 });
+  }
+  // Both tasks are saturated. Repeated claim/heartbeat passes must not write
+  // their unchanged round configuration or manufacture new assignments.
+  for (let probe = 0; probe < 3; probe++) {
+    await heartbeatRunner(page, identity);
+    expect(await claimAssignments(page, identity)).toEqual([]);
+  }
+  const completed = new Set<string>();
+  while (completed.size < quantity * 2) {
+    expect(claims.length).toBeGreaterThan(0);
+    await mapWithConcurrency(claims, 4, async (claim, index) => {
+      expect(completed.has(claim.assignment.attemptId)).toBe(false);
+      await uploadLog(page, claim, index);
+      await completeAttempt(page, claim, index);
+      completed.add(claim.assignment.attemptId);
+    });
+    if (completed.size < quantity * 2) {
+      await expect
+        .poll(
+          async () => {
+            claims = await claimAssignments(page, identity);
+            return claims.length;
+          },
+          { timeout: 10_000, intervals: [100, 250, 500] },
+        )
+        .toBeGreaterThan(0);
+    }
+  }
+  for (const batch of batches) {
+    const finished = await browserJson<{
+      status: string;
+      succeededRuns: number;
+      failedRuns: number;
+    }>(page, `/api/v1/run-batches/${batch.id}`);
+    expect(finished.status).toBe(200);
+    expect(finished.body).toMatchObject({
+      status: "succeeded",
+      succeededRuns: quantity,
+      failedRuns: 0,
+    });
+  }
+  // Give the five-second incident delivery loop its normal opportunity to persist notices.
+  await page.waitForTimeout(5_100);
+  const notices = await browserJson<{
+    items: Array<{ kind: string; message: string; createdAt: string }>;
+  }>(page, "/api/v1/notifications?limit=100");
+  expect(notices.status).toBe(200);
+  expect(
+    notices.body.items.filter(
+      (notice) =>
+        notice.createdAt >= startedAt &&
+        notice.kind === "platform.database_busy" &&
+        notice.message.includes("schedule-batch"),
+    ),
+  ).toEqual([]);
+});
+
 test("control plane completes 500 concurrent protocol slots without blocking reads", async ({
   page,
 }) => {
@@ -347,10 +500,11 @@ async function importSyntheticCases(
   page: Page,
   projectVersionId: string,
   testStageId: string,
+  quantity = CASE_COUNT,
 ): Promise<void> {
   const jar = zipSync(
     Object.fromEntries(
-      Array.from({ length: CASE_COUNT }, (_, index) => {
+      Array.from({ length: quantity }, (_, index) => {
         const className = `com.autoforge.performance.${CLASS_PREFIX}${String(index).padStart(4, "0")}`;
         return [
           `${className.replaceAll(".", "/")}.class`,

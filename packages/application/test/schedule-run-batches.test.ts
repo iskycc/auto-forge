@@ -696,6 +696,76 @@ describe("run batch creation with suite policy", () => {
     });
   });
 
+  it("commits a large scheduling plan in bounded batches without losing assignments or events", async () => {
+    const quantity = 513;
+    const runner = { ...schedulingRunner(), maxConcurrency: quantity };
+    const reserveAssignments = vi.fn(
+      async (input: { decisions: Array<{ attemptId: string; executionRunId: string }> }) => ({
+        reserved: input.decisions.length,
+        acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+      }),
+    );
+    const appendSchedulingEvents = vi.fn().mockResolvedValue(undefined);
+    const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: {
+          id: "batch-1",
+          assignedRuns: 0,
+          currentRound: 1,
+          policy: { concurrency: quantity, runnerLabels: [], artifactPatterns: [] },
+        },
+        queuedRuns: Array.from({ length: quantity }, (_, index) => queuedRun(`run-${index}`)),
+        candidates: [{ runner, reservedSlots: 0 }],
+        projectActiveRuns: 0,
+      }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("existing"),
+      reserveAssignments,
+      appendSchedulingEvents,
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: quantity }),
+    } as unknown as RunBatchRepository;
+    let generatedId = 0;
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => `generated-${generatedId++}` },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      undefined,
+      quantity,
+    );
+    await expect(service.schedule("batch-1")).resolves.toMatchObject({ assignedRuns: quantity });
+    const reservations = reserveAssignments.mock.calls.flatMap(([input]) => input.decisions);
+    expect(reservations).toHaveLength(quantity);
+    expect(new Set(reservations.map((decision) => decision.executionRunId)).size).toBe(quantity);
+    expect(new Set(reservations.map((decision) => decision.attemptId)).size).toBe(quantity);
+    expect(
+      Math.max(...reserveAssignments.mock.calls.map(([input]) => input.decisions.length)),
+    ).toBeLessThanOrEqual(64);
+    const events = appendSchedulingEvents.mock.calls.flatMap(([events]) => events) as Array<{
+      eventType: string;
+      attemptId?: string;
+      payload?: { assignedCount: number; queueRemaining: number };
+    }>;
+    expect(
+      events
+        .filter((event) => event.eventType === "run_assigned")
+        .map((event) => event.attemptId)
+        .sort(),
+    ).toEqual(reservations.map((decision) => decision.attemptId).sort());
+    const summaries = events.filter((event) => event.eventType === "batch_scheduled");
+    expect(summaries.reduce((total, event) => total + event.payload!.assignedCount, 0)).toBe(
+      quantity,
+    );
+    expect(summaries.at(-1)!.payload!.queueRemaining).toBe(0);
+  });
+
   it("limits new assignments to the remaining batch concurrency budget", async () => {
     const decisions: unknown[] = [];
     const suites = { get: vi.fn() } as unknown as CaseSuiteRepository;
@@ -1390,6 +1460,34 @@ describe("scheduling event log", () => {
     });
   });
 
+  it("preserves committed assignment events when a later reservation fails and propagates the failure", async () => {
+    const { batches, appended } = schedulingBatchesFake();
+    const snapshot = await batches.getSchedulingSnapshot("batch-1", timestamp, 128);
+    snapshot!.batch.policy!.concurrency = 128;
+    snapshot!.queuedRuns = Array.from({ length: 128 }, (_, index) => queuedRun(`run-${index}`));
+    snapshot!.candidates[0]!.runner.maxConcurrency = 128;
+    const failure = Object.assign(new Error("writer remains busy"), { code: "SQLITE_BUSY" });
+    vi.mocked(batches.reserveAssignments)
+      .mockImplementationOnce(async ({ decisions }) => ({
+        reserved: decisions.length,
+        acceptedAttemptIds: decisions.map((decision) => decision.attemptId),
+      }))
+      .mockRejectedValueOnce(failure);
+
+    await expect(
+      schedulingService(batches, Date.parse(timestamp)).schedule("batch-1"),
+    ).rejects.toBe(failure);
+    expect(batches.reserveAssignments).toHaveBeenCalledTimes(2);
+    expect(appended).toHaveLength(1);
+    const assigned = appended[0]!.filter((event) => event.eventType === "run_assigned");
+    expect(assigned.map((event) => event.executionRunId)).toEqual(
+      Array.from({ length: 64 }, (_, index) => `run-${index}`),
+    );
+    expect(appended[0]!.find((event) => event.eventType === "batch_scheduled")).toMatchObject({
+      payload: { assignedCount: 64, queueRemaining: 64 },
+    });
+  });
+
   it("throttles runner_metrics events within the 30 second window", async () => {
     const { batches, appended } = schedulingBatchesFake();
     const service = schedulingService(batches, Date.parse(timestamp));
@@ -1618,6 +1716,7 @@ function objectStoreFake() {
 function queuedRun(id: string) {
   return {
     id,
+    version: 1,
     batchId: "batch-1",
     caseDefinitionId: "case-1",
     caseVersion: 1,

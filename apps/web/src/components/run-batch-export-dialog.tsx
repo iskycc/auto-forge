@@ -8,7 +8,8 @@ import { useState } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import { Button } from "@/components/ui";
 import { Notice } from "@/components/ui/notice";
-import { downloadRunBatchExport } from "@/lib/download-run-batch-export";
+import { useRunBatchExport } from "./use-run-batch-export";
+import { ExportDataIssuesDialog } from "./export-data-issues-dialog";
 import {
   buildRunBatchExportQuery,
   DEFAULT_EXPORT_OUTCOMES,
@@ -39,8 +40,8 @@ export function RunBatchExportDialog({
   const [selectedOutcomes, setSelectedOutcomes] = useState<ExportOutcomeFilter[]>(() => [
     ...DEFAULT_EXPORT_OUTCOMES,
   ]);
-  const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState("");
+  const { exporting, error, report, exportFile, excludeInvalidRows, dismissReport } =
+    useRunBatchExport({ batchId, onDownloaded: onClose });
   const hasSelection = template === "failure-analysis" || selectedOutcomes.length > 0;
   const exportLabel = exporting
     ? "正在导出…"
@@ -50,131 +51,134 @@ export function RunBatchExportDialog({
 
   async function exportResults(): Promise<void> {
     if (!hasSelection || exporting) return;
-    setExporting(true);
-    setError("");
-    try {
-      const query = buildRunBatchExportQuery(scope, round, selectedOutcomes, template);
-      await downloadRunBatchExport(batchId, query);
-      onClose();
-    } catch (exportFailure) {
-      setError(exportFailure instanceof Error ? exportFailure.message : "导出执行结果失败。");
-    } finally {
-      setExporting(false);
-    }
+    const query = buildRunBatchExportQuery(scope, round, selectedOutcomes, template);
+    await exportFile(query);
   }
 
   return (
-    <ActionDialog
-      open
-      title="导出执行结果"
-      description="选择导出内容与范围，下载 Excel（.xlsx）文件。"
-      onClose={onClose}
-      closeDisabled={exporting}
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button disabled={exporting} onClick={onClose} type="button">
-            取消
-          </Button>
-          <Button
-            aria-label={exportLabel}
-            variant="primary"
-            disabled={!hasSelection || exporting}
-            loading={exporting}
-            onClick={() => void exportResults()}
-            type="button"
-          >
-            {!exporting ? <Download size={15} aria-hidden="true" /> : null}
-            {exportLabel}
-          </Button>
-        </div>
-      }
-    >
-      <div className="grid min-w-0 gap-4">
-        <fieldset className={groupClassName}>
-          <legend>导出内容</legend>
-          <Radio.Group
-            name="export-template"
-            value={template}
-            onChange={(event) => setTemplate(event.target.value as RunBatchExportTemplate)}
-            disabled={exporting}
-            className="w-full grid-cols-2 gap-3"
-            style={{ display: "grid" }}
-          >
-            <ExportChoice
-              value="results"
-              selected={template === "results"}
-              label="标准执行结果"
-              description="按筛选结果导出执行时间、耗时和日志链接"
-            />
-            <ExportChoice
-              value="failure-analysis"
-              selected={template === "failure-analysis"}
-              label="失败用例分析清单"
-              description="仅包含失败或异常结束的用例，附带可填写的分析字段"
-            />
-          </Radio.Group>
-        </fieldset>
-        <fieldset className={groupClassName}>
-          <legend>导出范围</legend>
-          <Radio.Group
-            name="export-scope"
-            value={scope}
-            onChange={(event) => setScope(event.target.value as RunBatchExportScope)}
-            disabled={exporting}
-            className="w-full gap-2"
-            style={{ display: "grid" }}
-          >
-            {round !== undefined ? (
-              <ExportChoice
-                value="round"
-                selected={scope === "round"}
-                label="当前轮次"
-                description={
-                  roundLabelText ? `${roundLabelText}（第 ${round} 轮）` : `第 ${round} 轮`
-                }
-              />
-            ) : null}
-            <ExportChoice
-              value="all"
-              selected={scope === "all"}
-              label="全部轮次"
-              description="逐条记录，标注轮次；同一用例多条记录会分行导出"
-            />
-            <ExportChoice
-              value="final"
-              selected={scope === "final"}
-              label="最终结果"
-              description="每个用例最终结果"
-            />
-          </Radio.Group>
-        </fieldset>
-        {template === "results" ? (
+    <>
+      <ActionDialog
+        open
+        inactive={report !== null}
+        title="导出执行结果"
+        description="选择导出内容与范围，下载 Excel（.xlsx）文件。"
+        onClose={onClose}
+        closeDisabled={exporting}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button disabled={exporting} onClick={onClose} type="button">
+              取消
+            </Button>
+            <Button
+              aria-label={exportLabel}
+              variant="primary"
+              disabled={!hasSelection || exporting}
+              loading={exporting}
+              onClick={() => void exportResults()}
+              type="button"
+            >
+              {!exporting ? <Download size={15} aria-hidden="true" /> : null}
+              {exportLabel}
+            </Button>
+          </div>
+        }
+      >
+        <div className="grid min-w-0 gap-4">
           <fieldset className={groupClassName}>
-            <legend>结果类型</legend>
-            <Checkbox.Group<ExportOutcomeFilter>
-              value={selectedOutcomes}
-              onChange={setSelectedOutcomes}
+            <legend>导出内容</legend>
+            <Radio.Group
+              name="export-template"
+              value={template}
+              onChange={(event) => setTemplate(event.target.value as RunBatchExportTemplate)}
               disabled={exporting}
-              className="w-full grid-cols-3 gap-x-3 gap-y-2"
+              className="w-full grid-cols-2 gap-3"
               style={{ display: "grid" }}
-              options={EXPORT_OUTCOME_OPTIONS.map((option) => ({ ...option }))}
-            />
-            {!hasSelection ? (
-              <Notice tone="warning" className="m-0 mt-2 text-xs text-warning" role="status">
-                请至少选择一种结果类型后再导出。
-              </Notice>
-            ) : null}
+            >
+              <ExportChoice
+                value="results"
+                selected={template === "results"}
+                label="标准执行结果"
+                description="按筛选结果导出执行时间、耗时和日志链接"
+              />
+              <ExportChoice
+                value="failure-analysis"
+                selected={template === "failure-analysis"}
+                label="失败用例分析清单"
+                description="仅包含失败或异常结束的用例，附带可填写的分析字段"
+              />
+            </Radio.Group>
           </fieldset>
-        ) : (
-          <Notice tone="info">分析结果列可选：重跑通过、用例问题已修改、代码问题已提单。</Notice>
-        )}
-        {error ? (
-          <Notice tone="error" role="alert">
-            {error}
-          </Notice>
-        ) : null}
-      </div>
-    </ActionDialog>
+          <fieldset className={groupClassName}>
+            <legend>导出范围</legend>
+            <Radio.Group
+              name="export-scope"
+              value={scope}
+              onChange={(event) => setScope(event.target.value as RunBatchExportScope)}
+              disabled={exporting}
+              className="w-full gap-2"
+              style={{ display: "grid" }}
+            >
+              {round !== undefined ? (
+                <ExportChoice
+                  value="round"
+                  selected={scope === "round"}
+                  label="当前轮次"
+                  description={
+                    roundLabelText ? `${roundLabelText}（第 ${round} 轮）` : `第 ${round} 轮`
+                  }
+                />
+              ) : null}
+              <ExportChoice
+                value="all"
+                selected={scope === "all"}
+                label="全部轮次"
+                description="逐条记录，标注轮次；同一用例多条记录会分行导出"
+              />
+              <ExportChoice
+                value="final"
+                selected={scope === "final"}
+                label="最终结果"
+                description="每个用例最终结果"
+              />
+            </Radio.Group>
+          </fieldset>
+          {template === "results" ? (
+            <fieldset className={groupClassName}>
+              <legend>结果类型</legend>
+              <Checkbox.Group<ExportOutcomeFilter>
+                value={selectedOutcomes}
+                onChange={setSelectedOutcomes}
+                disabled={exporting}
+                className="w-full grid-cols-3 gap-x-3 gap-y-2"
+                style={{ display: "grid" }}
+                options={EXPORT_OUTCOME_OPTIONS.map((option) => ({ ...option }))}
+              />
+              {!hasSelection ? (
+                <Notice tone="warning" className="m-0 mt-2 text-xs text-warning" role="status">
+                  请至少选择一种结果类型后再导出。
+                </Notice>
+              ) : null}
+            </fieldset>
+          ) : (
+            <Notice tone="info">分析结果列可选：重跑通过、用例问题已修改、代码问题已提单。</Notice>
+          )}
+          {error ? (
+            <Notice tone="error" role="alert">
+              {error}
+            </Notice>
+          ) : null}
+        </div>
+      </ActionDialog>
+      {report ? (
+        <ExportDataIssuesDialog
+          report={report}
+          exporting={exporting}
+          error={error}
+          onExclude={() => void excludeInvalidRows()}
+          onClose={dismissReport}
+        />
+      ) : null}
+    </>
   );
 }
 

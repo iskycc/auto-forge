@@ -7,16 +7,15 @@ import {
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 import { Readable } from "node:stream";
+import { join } from "node:path";
 import type { RunBatchExportWorkbookInput } from "@/lib/run-batch-export-xlsx";
 import { z } from "zod";
 
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
 import { publicLinkBase } from "@/lib/public-link-base";
-import {
-  createRunBatchExportWorkbookStream,
-  exportContentDisposition,
-} from "@/lib/run-batch-export-xlsx";
+import { exportCompatibleAttemptIds, exportContentDisposition } from "@/lib/run-batch-export-xlsx";
+import { prepareRunBatchExportFile, readRunBatchExportFile } from "@/lib/run-batch-export-file";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ batchId: string }> };
@@ -26,6 +25,7 @@ const exportQuerySchema = z.object({
   scope: z.enum(["round", "final", "all"]),
   round: z.coerce.number().int().min(1).optional(),
   outcomes: z.string().default(""),
+  invalidRows: z.enum(["reject", "exclude"]).default("reject"),
 });
 
 export const dynamic = "force-dynamic";
@@ -62,20 +62,6 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       for await (const rows of exportData.pages) {
         request.signal.throwIfAborted();
 
-        const attemptIds = rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
-        // 分页中的 attempt 归属已鉴权的 batchId，
-        // 走批量路径避免 5 万行导出时的逐条链接查询。
-        const links = await services.publicExecutionAccess.ensureLinksForAttemptsInBatch(
-          attemptIds,
-          batchId,
-          identity.user.id,
-        );
-        const shareLinks = new Map(
-          [...links.entries()].map(([attemptId, path]) => [
-            attemptId,
-            new URL(path, `${base}/`).toString(),
-          ]),
-        );
         const analysisClaims =
           parsed.template === "failure-analysis"
             ? await services.failureAnalysis.listExportClaims({
@@ -103,27 +89,44 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           }),
         );
 
-        yield {
+        const input: RunBatchExportWorkbookInput = {
           batchId,
           template: parsed.template,
           scope: parsed.scope,
           ...(parsed.round !== undefined ? { round: parsed.round } : {}),
           rows,
           timeZone,
-          shareLinks,
+          shareLinks: new Map(),
           analysisClaims: analysisClaimsByAttempt,
           analysisProofLinks,
         };
+        const attemptIds = await exportCompatibleAttemptIds(input, request.signal);
+        // Only compatible rows receive public access; each read/write remains bounded by this page.
+        const links = await services.publicExecutionAccess.ensureLinksForAttemptsInBatch(
+          attemptIds,
+          batchId,
+          identity.user.id,
+        );
+        input.shareLinks = new Map(
+          [...links.entries()].map(([attemptId, path]) => [
+            attemptId,
+            new URL(path, `${base}/`).toString(),
+          ]),
+        );
+        yield input;
       }
     }
-    const { stream, filename } = await createRunBatchExportWorkbookStream(
-      workbookPages(),
-      request.signal,
-    );
+    const prepared = await prepareRunBatchExportFile(workbookPages(), request.signal, {
+      directory: join(services.configurationStore.paths.dataDirectory, "tmp", "exports"),
+      invalidRows: parsed.invalidRows,
+    });
+    const stream = readRunBatchExportFile(prepared, request.signal);
     return new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array<ArrayBuffer>>, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": exportContentDisposition(filename),
+        "Content-Disposition": exportContentDisposition(prepared.filename),
+        "Content-Length": String(prepared.sizeBytes),
+        "X-AutoForge-Export-Excluded-Rows": String(prepared.validation.excludedRows),
         "Cache-Control": "no-store",
       },
     });
@@ -132,8 +135,20 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
   }
 }
 
+export async function HEAD(request: Request, context: Context): Promise<NextResponse> {
+  const response = await GET(request, context);
+  await response.body?.cancel();
+  return new NextResponse(null, { status: response.status, headers: response.headers });
+}
+
 function absoluteLink(base: string, value: string): string {
-  return new URL(value, `${base}/`).toString();
+  try {
+    return new URL(value, `${base}/`).toString();
+  } catch (cause) {
+    if (!(cause instanceof TypeError)) throw cause;
+    // Historical invalid links become row-level validation issues, not truncated downloads.
+    return value;
+  }
 }
 
 function parseOutcomeFilter(raw: string): ExportOutcomeFilter[] {

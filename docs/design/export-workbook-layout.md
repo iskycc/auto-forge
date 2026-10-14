@@ -69,3 +69,26 @@ DDT 的 CaseID、srNum、CaseName 最小宽度分别为 12、10、16，其余动
 - `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm --filter @autoforge/web build`、`git diff --check`：通过。
 
 已实际查看 1024×768、1536×960 的执行结果导出截图，并用 LibreOffice 渲染真实下载的工作簿；时间单行完整显示，毫秒未丢失，按钮、列宽、行高和整体排版正常。没有运行 Microsoft Excel 桌面客户端验收。改动位于两种部署共用的展示格式及 HTTP 配置传入路径，未运行 Full 整体部署、Runner 或离线验收。
+
+### 2026-10-14：工作簿兼容性与异常数据排除
+
+本地复现了包含 `U+FFFE` 的失败堆栈被 ExcelJS 原样写入 OOXML 的缺陷；流式导出使用内联文本时，非法内容出现在 `xl/worksheets/sheet1.xml`，可导致 Excel 修复或拒绝读取。既有库会过滤部分控制字符，却不能保证所有输入符合 [XML 1.0 字符规则](https://www.w3.org/TR/xml/#charsets)。此外，单元格内容和工作表超链接需要遵守 [Excel 规格与限制](https://support.microsoft.com/en-us/excel/excel-specifications-and-limits)。这说明生成逻辑存在缺少兼容校验的问题；没有取得用户实际损坏的文件，不能认定该文件只有这一种原因。
+
+执行结果和失败分析共用逐行校验：禁止 XML 控制字符、孤立代理项及 `U+FFFE`/`U+FFFF`；单元格文本按 UTF-16 长度保守限制为 32,767，换行最多 253；数值必须有限，超链接正文及目标必须兼容，目标只允许 HTTP(S)。校验覆盖用例字段、失败堆栈和分析结论等最终导出值，不会截断正常数据后宣称导出完整。每张数据工作表最多 65,530 个超链接、1,048,576 行（含表头）；超过时另建带序号的工作表，继续沿用表头、冻结、筛选、列宽和正文样式。
+
+默认请求在存在异常时返回 `422 EXPORT_DATA_INVALID`，响应包含数量和最多 100 条预览，不返回失败堆栈或错误链接正文。两个导出入口使用同一弹窗，按原导出行、轮次、用例、字段和原因提示。用户确认后在原请求附加 `invalidRows=exclude`，排除整条不兼容记录，并将全部异常写入“排除明细”；全部异常时仍可下载表头及完整明细。异常用例不会新增日志公开授权，原始执行、分析记录不做修改。
+
+HTTP 入口在发送下载响应前完成工作簿及分页迭代器的收尾，后续页读取、ZIP 生成或清理失败均返回标准 API 错误。仍使用 200 条分页和 25 行让出事件循环，不把整批记录载入内存。暂存文件位于显式注入的数据目录 `tmp/exports`，避免占用 Compose 的 64 MiB `/tmp` 内存文件系统；Linux 部署以仅当前用户可访问的文件描述符持有已删除名称的暂存文件，下载结束、取消、失败及进程退出都会释放其磁盘占用。无新增迁移、配置、依赖或 Runner 协议变化。
+
+修复前六项回归失败，分别复现非法字符、单元格文本/换行上限和超链接超过工作表上限，正常中文及 emoji 场景通过。修复后实际运行：
+
+- `pnpm exec vitest run apps/web/src/lib/run-batch-export-safety.test.ts apps/web/src/lib/run-batch-export-file.test.ts apps/web/src/lib/run-batch-export-xlsx.test.ts apps/web/src/lib/run-batch-export-api.test.ts apps/web/src/lib/api-error-mapping.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1 --no-file-parallelism`：六个文件、80 项通过。包括 32,766 条双超链接记录自动分表、103 条异常的有界预览及完整明细、跨页排除、真实 HTTP XLSX 回读、HEAD、鉴权、后续页失败、生成取消、下载取消及分页清理失败；原有时区、格式和日志链接回归通过。
+- `pnpm exec playwright test tests/e2e/failure-analysis.spec.ts tests/e2e/ui-layout.spec.ts --grep 'analysis exports report incompatible records|execution export dialog' --workers=1`：本地 Lite 新生产构建下两项通过，实际下载异常排除和正常执行/分析工作簿。验证取消不下载、异常记录定位、确认后整行排除、全部排除明细及原始记录保留；原有范围/状态筛选、时间、列宽、完整链接和错误后重试同时通过。执行服务使用 UTC 时区，导出仍正确显示北京时间。
+- `pnpm --filter @autoforge/contracts typecheck`、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、受影响文件的 `pnpm exec eslint ... --max-warnings=0` 和 `pnpm --filter @autoforge/web build`：通过。
+- `AUTOFORGE_TEST_POSTGRES_URL=<本地临时数据库> pnpm exec vitest run packages/db/test/run-batch-export-page.integration.test.ts --maxWorkers=1 --no-file-parallelism`：真实 SQLite/PostgreSQL 共四项通过，两种模式均验证终态/逻辑轮次/阻塞筛选及十万条结果的 500 页读取，无遗漏、重复或整批快照读取。
+
+三份实际下载工作簿（执行结果、正常分析、异常排除分析）通过 ZIP CRC 校验及所有 XML/关系部件的严格解析；LibreOffice 成功打开并重新保存，保存后再次通过 ZIP/XML 校验。原有表格格式通过实际工作簿回读与正常导出 Playwright 断言核验；没有将表格软件回读声称为 Microsoft Excel 验收。
+
+最终 `pnpm format:check`、受影响文件 ESLint、`pnpm test:e2e:matrix`（18 个覆盖分组）、修改文档的 Prettier 检查和 `git diff --check` 通过。上述检查串行运行；没有重跑与此次共享导出变更无关的全量测试、Go/Java 构建或正式发布打包。
+
+已实际查看异常弹窗及原导出选择、错误状态的截图：分析列表覆盖 1024×768、1536×960 深浅色，执行详情异常弹窗覆盖两个尺寸深色，原正常导出覆盖两个尺寸浅色、1536×960 深色和 1024×560 短桌面错误状态。表格、提示、按钮、对齐、换行及滚动边界正常，无新增溢出或变形。构建和浏览器串行限额运行，未同时启动多个高 CPU 检查。没有运行 Microsoft Excel 桌面客户端、Full 整体部署、真实 Runner 或离线包验收。

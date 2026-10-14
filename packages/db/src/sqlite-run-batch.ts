@@ -1208,8 +1208,8 @@ export class SqliteRunBatchRepository
   async recordRoundConcurrency(
     input: Parameters<RunBatchRepository["recordRoundConcurrency"]>[0],
   ): Promise<"created" | "existing"> {
-    return retrySqliteWriteTransaction(this.handle, () => {
-      const existing = this.handle.db
+    const readExisting = () =>
+      this.handle.db
         .select({
           batchId: runBatchRoundConcurrencies.batchId,
           concurrency: runBatchRoundConcurrencies.concurrency,
@@ -1224,6 +1224,15 @@ export class SqliteRunBatchRepository
           ),
         )
         .get();
+    const current = readExisting();
+    // Every refill observes this value. An unchanged round must not compete with
+    // completions and other batches for SQLite's writer, especially at full capacity.
+    if (current && (!input.transitionEvent || sameRoundConcurrencyTransition(current, input)))
+      return "existing";
+    return retrySqliteWriteTransaction(this.handle, () => {
+      // Recheck after acquiring the writer: another scheduler may have inserted
+      // or transitioned the round between the read-only probe and this transaction.
+      const existing = readExisting();
       if (existing) {
         if (input.transitionEvent && !sameRoundConcurrencyTransition(existing, input)) {
           this.handle.db

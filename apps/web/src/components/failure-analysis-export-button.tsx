@@ -6,32 +6,15 @@ import { LoadingIcon } from "@/components/ui/loading-icon";
 import { cn } from "@/lib/utils";
 
 import { Download } from "lucide-react";
-import { useState } from "react";
 
 import { Button } from "@/components/ui";
-import { downloadRunBatchExport } from "@/lib/download-run-batch-export";
+import { useRunBatchExport } from "./use-run-batch-export";
+import { ExportDataIssuesDialog } from "./export-data-issues-dialog";
 import { buildRunBatchExportQuery } from "@/lib/run-batch-export";
 
 export function FailureAnalysisExportButton({ batchId }: { batchId: string }) {
-  const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState("");
-
-  async function exportAnalysis(): Promise<void> {
-    if (exporting) return;
-    setExporting(true);
-    setError("");
-    try {
-      await downloadRunBatchExport(
-        batchId,
-        buildRunBatchExportQuery("final", undefined, [], "failure-analysis"),
-        "导出分析结果失败。",
-      );
-    } catch (exportFailure) {
-      setError(exportFailure instanceof Error ? exportFailure.message : "导出分析结果失败。");
-    } finally {
-      setExporting(false);
-    }
-  }
+  const { exporting, error, report, exportFile, excludeInvalidRows, dismissReport } =
+    useRunBatchExport({ batchId, failureMessage: "导出分析结果失败。" });
 
   return (
     <div
@@ -43,7 +26,9 @@ export function FailureAnalysisExportButton({ batchId }: { batchId: string }) {
       <Button
         aria-label="导出分析结果"
         disabled={exporting}
-        onClick={() => void exportAnalysis()}
+        onClick={() =>
+          void exportFile(buildRunBatchExportQuery("final", undefined, [], "failure-analysis"))
+        }
         size="compact"
         type="button"
         variant="secondary"
@@ -51,7 +36,7 @@ export function FailureAnalysisExportButton({ batchId }: { batchId: string }) {
         {exporting ? <LoadingIcon size={14} /> : <Download size={14} />}
         {exporting ? "正在导出" : "导出分析结果"}
       </Button>
-      {error ? (
+      {error && !report ? (
         <Notice
           tone="error"
           className={cn(
@@ -62,6 +47,15 @@ export function FailureAnalysisExportButton({ batchId }: { batchId: string }) {
         >
           {error}
         </Notice>
+      ) : null}
+      {report ? (
+        <ExportDataIssuesDialog
+          report={report}
+          exporting={exporting}
+          error={error}
+          onExclude={() => void excludeInvalidRows()}
+          onClose={dismissReport}
+        />
       ) : null}
     </div>
   );

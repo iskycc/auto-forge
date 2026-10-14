@@ -55,10 +55,12 @@ import type {
 } from "./ports";
 import type { DdtDebugAccess, DdtDebugRepository } from "./ddt-debug";
 import { CoalescedOperation } from "./coalesced-operation";
+import { setImmediate as yieldToExecutionControl } from "node:timers/promises";
 
 const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
+const ASSIGNMENTS_PER_RESERVATION = 64;
 
 type DerivedRuntimeAssetSource = "current_project_version" | "source_snapshot";
 
@@ -1020,32 +1022,38 @@ export class RunBatchSchedulingService {
           attemptId: this.ids.next(),
           assignmentId: this.ids.next(),
         }));
-        const reservation = await this.batches.reserveAssignments({
-          batchId,
-          eventId: this.ids.next(),
-          projectMaximumConcurrency: this.projectMaximumConcurrency,
-          decisions,
-          thresholds: this.thresholds,
-          offlineBefore: offlineBefore(now),
-          metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
-          scheduledAt: now.toISOString(),
-          ...(liveCapacities.length > 0 ? { runnerLiveCapacities: liveCapacities } : {}),
-        });
-        reserved = reservation.reserved;
-        // 被并发调度轮抢占的决策没有创建 run_attempts，
-        // 调度事件只能引用真正被接受的 attempt，否则触发外键冲突。
-        const acceptedAttemptIds = new Set(reservation.acceptedAttemptIds);
-        const acceptedDecisions = decisions.filter((decision) =>
-          acceptedAttemptIds.has(decision.attemptId),
-        );
-        await this.appendSchedulingRoundEvents(
-          batchId,
-          snapshot,
-          plan,
-          acceptedDecisions,
-          reserved,
-          now,
-        );
+        // Keep each atomic reservation short. Every chunk rechecks persisted
+        // Runner, batch and project budgets; the complete plan still fills all slots.
+        for (let offset = 0; offset < decisions.length; offset += ASSIGNMENTS_PER_RESERVATION) {
+          if (offset > 0) await yieldToExecutionControl();
+          const chunk = decisions.slice(offset, offset + ASSIGNMENTS_PER_RESERVATION);
+          const reservation = await this.batches.reserveAssignments({
+            batchId,
+            eventId: this.ids.next(),
+            projectMaximumConcurrency: this.projectMaximumConcurrency,
+            decisions: chunk,
+            thresholds: this.thresholds,
+            offlineBefore: offlineBefore(now),
+            metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
+            scheduledAt: now.toISOString(),
+            ...(liveCapacities.length > 0 ? { runnerLiveCapacities: liveCapacities } : {}),
+          });
+          reserved += reservation.reserved;
+          // 被并发调度轮抢占的决策没有创建 run_attempts，
+          // 调度事件只能引用真正被接受的 attempt，否则触发外键冲突。
+          const acceptedAttemptIds = new Set(reservation.acceptedAttemptIds);
+          const acceptedDecisions = chunk.filter((decision) =>
+            acceptedAttemptIds.has(decision.attemptId),
+          );
+          await this.appendSchedulingRoundEvents(
+            batchId,
+            snapshot,
+            plan,
+            acceptedDecisions,
+            { assignedCount: reservation.reserved, totalAssignedCount: reserved },
+            now,
+          );
+        }
       }
     }
     const batch = await this.batches.getSummary(batchId);
@@ -1075,7 +1083,7 @@ export class RunBatchSchedulingService {
     snapshot: SchedulingSnapshot,
     plan: SchedulingPlan,
     decisions: Array<SchedulingDecision & { attemptId: string; assignmentId: string }>,
-    reserved: number,
+    progress: { assignedCount: number; totalAssignedCount: number },
     now: Date,
   ): Promise<void> {
     const recordedAt = now.toISOString();
@@ -1105,13 +1113,17 @@ export class RunBatchSchedulingService {
         recordedAt,
       });
     }
-    const queueRemaining = Math.max(0, snapshot.queuedRuns.length - reserved);
+    const queueRemaining = Math.max(0, snapshot.queuedRuns.length - progress.totalAssignedCount);
     events.push({
       id: this.ids.next(),
       batchId,
       eventType: "batch_scheduled",
-      message: `本轮调度分配 ${reserved} 个用例，队列剩余 ${queueRemaining} 个`,
-      payload: { assignedCount: reserved, queueRemaining, decisions: reserved },
+      message: `本轮调度分配 ${progress.assignedCount} 个用例，队列剩余 ${queueRemaining} 个`,
+      payload: {
+        assignedCount: progress.assignedCount,
+        queueRemaining,
+        decisions: progress.assignedCount,
+      },
       recordedAt,
     });
     // runner_metrics 按 runner 节流：同一执行机 30 秒内只记录一条资源快照。

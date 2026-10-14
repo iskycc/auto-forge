@@ -17,6 +17,136 @@ import {
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("analysis exports report incompatible records and download only compatible cases", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const suffix = uniqueName("export-validation");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: suffix } },
+  );
+  expect(version.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+  const directory = requiredEnvironment("AUTOFORGE_E2E_DATA_DIR");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    const update = database.prepare("UPDATE run_attempts SET result_summary=? WHERE id=?");
+    ["XML损坏\ufffe字段", "x".repeat(32_768), "line\n".repeat(254)].forEach((summary, index) =>
+      update.run(summary, `attempt-run-failed-${index}-${suffix}`),
+    );
+  } finally {
+    database.close();
+  }
+  const started = await browserJson(page, "/api/v1/failure-analysis/batches", {
+    method: "POST",
+    body: {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: version.body.id,
+      batchId: fixture.batchId,
+    },
+  });
+  expect(started.status).toBe(201);
+  await page.goto("/case-analysis");
+  const task = page.locator(".failure-analysis-batch-card").filter({ hasText: fixture.suiteName });
+  await expect(task).toBeVisible({ timeout: 30_000 });
+  const downloads: string[] = [];
+  page.on("download", (download) => downloads.push(download.suggestedFilename()));
+  await task.getByRole("button", { name: "导出分析结果", exact: true }).click();
+  let dialog = page.getByRole("dialog", { name: "导出数据存在问题", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("U+FFFE");
+  await expect(dialog).toContainText("32767");
+  await expect(dialog).toContainText("253");
+  await expect(dialog).toContainText(fixture.failedNames[0]);
+  expect(downloads).toHaveLength(0);
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(downloads).toHaveLength(0);
+
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  for (const theme of ["light", "dark"] as const) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+      ]);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+    await task.getByRole("button", { name: "导出分析结果", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "导出数据存在问题", exact: true });
+    await expect(dialog).toBeVisible();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(screenshots, `export-invalid-data-${theme}-${viewport.width}.png`),
+        animations: "disabled",
+      });
+    }
+  }
+  const saved = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "排除异常数据并导出", exact: true }).click();
+  const download = await saved;
+  const file = testInfo.outputPath("validated-analysis.xlsx");
+  await download.saveAs(file);
+  const archive = unzipSync(await readFile(file));
+  const firstSheet = new TextDecoder().decode(archive["xl/worksheets/sheet1.xml"]);
+  const excludedSheet = new TextDecoder().decode(archive["xl/worksheets/sheet2.xml"]);
+  expect((firstSheet.match(/<row /gu) ?? []).length).toBe(2);
+  expect(firstSheet).toContain(fixture.failedNames[3]);
+  expect(firstSheet).not.toContain(fixture.failedNames[0]);
+  expect((excludedSheet.match(/<row /gu) ?? []).length).toBe(4);
+  expect(excludedSheet).toContain("U+FFFE");
+  expect(await readExportedWorkbookText(await readFile(file))).toContain("Assertion failure 3");
+  await expect(dialog).toHaveCount(0);
+  // Exclusion affects only the download, never authoritative attempts.
+  const retained = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    expect(
+      retained
+        .prepare("SELECT result_summary FROM run_attempts WHERE id=?")
+        .get(`attempt-run-failed-0-${suffix}`)?.result_summary,
+    ).toBe("XML损坏\ufffe字段");
+  } finally {
+    retained.close();
+  }
+
+  await page.goto(`/run-batches/${fixture.batchId}`);
+  await page.getByRole("button", { name: "导出结果", exact: true }).click();
+  const exportDialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
+  await exportDialog
+    .getByRole("radio", { name: /失败用例分析清单/u })
+    .locator("..")
+    .click();
+  await exportDialog.getByRole("button", { name: "导出分析清单", exact: true }).click();
+  const warning = page.getByRole("dialog", { name: "导出数据存在问题", exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("U+FFFE");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: resolve(screenshots, `execution-export-invalid-data-${viewport.width}.png`),
+      animations: "disabled",
+    });
+  }
+  await warning.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(exportDialog).toBeVisible();
+  await expect(exportDialog.getByRole("radio", { name: /失败用例分析清单/u })).toBeChecked();
+  await exportDialog.getByRole("button", { name: "取消", exact: true }).click();
+});
+
 test("analysis snapshots received during a modal refresh promptly after it closes", async ({
   page,
 }, testInfo) => {
