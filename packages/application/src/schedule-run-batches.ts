@@ -1026,6 +1026,9 @@ export class RunBatchSchedulingService {
         // Runner, batch and project budgets; the complete plan still fills all slots.
         for (let offset = 0; offset < decisions.length; offset += ASSIGNMENTS_PER_RESERVATION) {
           if (offset > 0) await yieldToExecutionControl();
+          // Earlier reservations and lock retries can outlive a heartbeat window.
+          // Each transaction must check freshness and establish deadlines at its own start.
+          const reservationTime = this.clock.now();
           const chunk = decisions.slice(offset, offset + ASSIGNMENTS_PER_RESERVATION);
           const reservation = await this.batches.reserveAssignments({
             batchId,
@@ -1033,9 +1036,9 @@ export class RunBatchSchedulingService {
             projectMaximumConcurrency: this.projectMaximumConcurrency,
             decisions: chunk,
             thresholds: this.thresholds,
-            offlineBefore: offlineBefore(now),
-            metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
-            scheduledAt: now.toISOString(),
+            offlineBefore: offlineBefore(reservationTime),
+            metricsFreshAfter: metricsFreshAfter(reservationTime, this.metricsMaximumAgeSeconds),
+            scheduledAt: reservationTime.toISOString(),
             ...(liveCapacities.length > 0 ? { runnerLiveCapacities: liveCapacities } : {}),
           });
           reserved += reservation.reserved;
@@ -1051,7 +1054,7 @@ export class RunBatchSchedulingService {
             plan,
             acceptedDecisions,
             { assignedCount: reservation.reserved, totalAssignedCount: reserved },
-            now,
+            reservationTime,
           );
         }
       }

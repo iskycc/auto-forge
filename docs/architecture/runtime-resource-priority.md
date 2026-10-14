@@ -172,3 +172,9 @@ Lite 现在先通过只读查询检查轮次并发配置；已存在且无需切
 `pnpm exec playwright test tests/e2e/lite-high-concurrency.spec.ts --grep 'two active tasks' --workers=1` 在新生产构建下通过：实际通过 API 导入用例、创建两个任务并同时执行，共享同一执行机，每任务并发 4、18 个用例；饱和时反复领取和心跳不产生额外分配，36 次执行经日志上传和完成上报后全部成功，给予通知投递循环正常运行时间后仍无 `schedule-batch` 数据库冲突通知。该检查使用 Runner Protocol 模拟执行机，不执行真实 Java 用例，也不等同于真实执行机或生产长期观测；本次没有运行 Full 整体部署、全量 500 槽位或离线包验收。
 
 最终 `pnpm exec vitest run packages/application/test/schedule-run-batches.test.ts packages/application/test/runtime-notifications.test.ts apps/web/src/lib/runtime-priority.test.ts apps/web/server/worker-pool.test.ts --maxWorkers=1 --no-file-parallelism` 的 58 项检查通过，新增后续分段失败时保留先前提交事件、向调用方传递真实错误的回归。去除重复运行的用例，调度应用及双数据库共 114 项、原有通知/运行保护/线程池另 18 项通过。`pnpm --filter @autoforge/application typecheck`、`pnpm --filter @autoforge/db typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、受影响文件 ESLint、`pnpm format:check`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix`、修改文档 Prettier 和 `git diff --check` 均通过。所有高负载检查串行运行并限制为 1 CPU。
+
+### 分段之间的时间边界加固
+
+再次复查发现，整轮调度只在读取计划时取一次时间；前段预留、事件写入或锁重试等待后，后段仍使用旧时间检查执行机离线/资源新鲜度、排队期限并生成领取期限。现在每段在让出执行机会后重新读取应用注入时钟，将同一时刻传入预留和调度事件。Lite/Full 继续由事务核验资源与并发额度，排队超时和心跳/指标过期不会因跨段沿用旧边界而被误放行。
+
+新增回归显式推进注入时钟，先经过轮次配置读取，再跨两个 64 条预留，核对两段的时间、新鲜度边界和事件；修复前断言失败，修复后通过。双任务浏览器协议场景扩大为三个执行机、每任务并发 65、各 70 个用例，以覆盖跨 64 条事务边界、饱和状态下无效领取及补位完成。Lite 新生产构建下该场景通过，140 次执行全部成功、无 `schedule-batch` 数据库冲突通知；真实 SQLite/PostgreSQL 应用、调度、并发完成及导出分页共 119 项通过。持续写锁、慢磁盘等真实故障仍按既有有界重试和通知机制报告，不能用取消告警代替修复。

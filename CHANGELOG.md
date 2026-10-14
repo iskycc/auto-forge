@@ -6,6 +6,25 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.19 - 2026-10-14
+
+### Fixed
+
+- 加固执行结果和失败分析 Excel 导出的换行校验：按 XML 实际读取结果统计单独 CR、LF 与 CRLF，堵住单独 CR 或混合换行绕过 253 次换行限制的漏洞，正常 Windows 换行仍只计一次。不兼容数据继续通过现有弹窗定位并排除，原始数据和表格样式不变。
+- 加固 Lite/Full 分段补位调度：每段提交前重新读取注入时钟，更新执行机心跳/资源新鲜度边界、排队期限检查及 assignment 领取期限的时间基准，并以同一基准记录该段调度事件，避免等待前段或写锁后继续使用整轮开始时的旧时间。
+
+### Validation
+
+- `pnpm exec vitest run ... --maxWorkers=1 --no-file-parallelism`：11 个定向文件、144 项通过；新增 CR/混合换行超限的两项回归修复前失败，253 个 CRLF 的精确边界正常。ZIP 开始提交时取消可完成清理；调度回归显式推进注入时钟，验证分段时间、新鲜度边界及事件一致。
+- 设置 `AUTOFORGE_TEST_POSTGRES_URL` 后，调度、并发完成及导出分页的应用/双数据库回归共 119 项通过；SQLite/PostgreSQL 均实际读取十万条结果的 500 页，无遗漏或重复。该组与定向组含重复的应用/SQLite 锁测试，不相加宣称唯一用例总数。
+- Lite 新生产构建下三个 Playwright 场景通过。三个模拟执行机、两个任务各并发 65、各 70 个用例，共 140 次执行全部成功，无 `schedule-batch` 数据库冲突通知；导出场景验证实际 CR 超限数据的弹窗、排除下载、全部排除明细及原始记录保留，正常导出和错误后重试继续通过。
+- 全部实际下载工作簿经 ZIP CRC、所有 XML/关系部件严格解析和 LibreOffice 打开/重新保存后校验通过。实际查看 1024×768、1536×960 深浅色异常与正常导出截图及 1024×560 短桌面状态，对齐、换行、按钮和滚动边界正常。未使用 Microsoft Excel 桌面客户端，未连接用户局域网部署或进行生产长期观测。
+- `pnpm format:check`、全仓库 `pnpm exec eslint . --max-warnings=0`、`pnpm --workspace-concurrency=1 -r --if-present typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix`（18 个覆盖分组）、`pnpm --filter @autoforge/web build` 及差异检查全部通过。所有本地重负载验证串行限为单核并限制内存。
+
+### Compatibility
+
+- 无新增数据库迁移、持久配置、生产依赖或 Runner Protocol 变更；升级主平台即可。SQLite 仍采用短写事务及有界重试，真实持续写锁或磁盘故障仍应报告，不能承诺任何生产负载下永不发生数据库告警。
+
 ## 1.19.18 - 2026-10-14
 
 ### Fixed

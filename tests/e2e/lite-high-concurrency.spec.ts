@@ -51,12 +51,22 @@ test("two active tasks refill concurrently without schedule-batch database warni
     },
   );
   expect(stage.status).toBe(201);
-  const quantity = 18;
+  const quantity = 70;
+  const suiteConcurrency = 65;
   await importSyntheticCases(page, version.body.id, stage.body.id, quantity);
   const caseIds = await listSyntheticCaseIds(page, version.body.id);
   expect(caseIds).toHaveLength(quantity);
-  const identity = await registerRunner(page, 1);
-  await heartbeatRunner(page, identity);
+  const identities: RunnerIdentity[] = [];
+  for (let ordinal = 1; ordinal <= 3; ordinal++) {
+    const identity = await registerRunner(page, ordinal);
+    await heartbeatRunner(page, identity);
+    identities.push(identity);
+  }
+  const claimAll = async () => {
+    const claims: ClaimedAssignment[] = [];
+    for (const identity of identities) claims.push(...(await claimAssignments(page, identity)));
+    return claims;
+  };
   const suiteIds: string[] = [];
   for (const ordinal of [1, 2]) {
     const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
@@ -89,13 +99,13 @@ test("two active tasks refill concurrently without schedule-batch database warni
             expectedRevision: saved.body.revision,
             policy: {
               ...saved.body.policy,
-              concurrency: 4,
+              concurrency: suiteConcurrency,
               retryLimit: 0,
               adapter: {
                 ...(saved.body.policy.adapter as Record<string, unknown>),
                 enabled: false,
               },
-              runnerIds: [identity.runnerId],
+              runnerIds: identities.map((identity) => identity.runnerId),
               runnerGroupId: "",
             },
           },
@@ -115,21 +125,21 @@ test("two active tasks refill concurrently without schedule-batch database warni
       return created.body;
     }),
   );
-  let claims = await claimAssignments(page, identity);
-  expect(claims).toHaveLength(8);
+  let claims = await claimAll();
+  expect(claims).toHaveLength(suiteConcurrency * 2);
   for (const batch of batches) {
     const running = await browserJson<{ status: string; runningRuns: number }>(
       page,
       `/api/v1/run-batches/${batch.id}`,
     );
     expect(running.status).toBe(200);
-    expect(running.body).toMatchObject({ status: "running", runningRuns: 4 });
+    expect(running.body).toMatchObject({ status: "running", runningRuns: suiteConcurrency });
   }
   // Both tasks are saturated. Repeated claim/heartbeat passes must not write
   // their unchanged round configuration or manufacture new assignments.
   for (let probe = 0; probe < 3; probe++) {
-    await heartbeatRunner(page, identity);
-    expect(await claimAssignments(page, identity)).toEqual([]);
+    for (const identity of identities) await heartbeatRunner(page, identity);
+    expect(await claimAll()).toEqual([]);
   }
   const completed = new Set<string>();
   while (completed.size < quantity * 2) {
@@ -144,7 +154,7 @@ test("two active tasks refill concurrently without schedule-batch database warni
       await expect
         .poll(
           async () => {
-            claims = await claimAssignments(page, identity);
+            claims = await claimAll();
             return claims.length;
           },
           { timeout: 10_000, intervals: [100, 250, 500] },

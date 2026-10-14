@@ -35,7 +35,7 @@ test("analysis exports report incompatible records and download only compatible 
   const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
   try {
     const update = database.prepare("UPDATE run_attempts SET result_summary=? WHERE id=?");
-    ["XML损坏\ufffe字段", "x".repeat(32_768), "line\n".repeat(254)].forEach((summary, index) =>
+    ["XML损坏\ufffe字段", "x".repeat(32_768), "line\r".repeat(254)].forEach((summary, index) =>
       update.run(summary, `attempt-run-failed-${index}-${suffix}`),
     );
   } finally {

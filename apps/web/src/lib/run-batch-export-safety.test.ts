@@ -38,6 +38,8 @@ describe("Excel export data safety", () => {
     ["incomplete Unicode", "错误\ud800消息"],
     ["cell text limit", "x".repeat(32_768)],
     ["cell line feed limit", "line\n".repeat(254)],
+    ["XML-normalized carriage return limit", "line\r".repeat(254)],
+    ["mixed XML-normalized line break limit", "line\r\n".repeat(126) + "line\r".repeat(128)],
   ])("rejects %s instead of returning an unsafe workbook", async (_reason, summary) => {
     await expect(
       buildRunBatchExportWorkbook({ ...input, rows: [{ ...row, summary }] }),
@@ -50,6 +52,14 @@ describe("Excel export data safety", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Uint8Array.from(result.buffer).buffer);
     expect(workbook.worksheets[0]!.getCell("C2").value).toBe(summary);
+  });
+
+  it("counts CRLF as one line break at Excel's exact limit", async () => {
+    const summary = "line\r\n".repeat(253);
+    const result = await buildRunBatchExportWorkbook({ ...input, rows: [{ ...row, summary }] });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Uint8Array.from(result.buffer).buffer);
+    expect(workbook.worksheets[0]!.getCell("C2").value).toBe("line\n".repeat(253));
   });
 
   it("splits analysis sheets before their hyperlinks exceed Excel's limit", async () => {

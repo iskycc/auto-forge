@@ -31,7 +31,9 @@ function textIssues(value: string, cellText = true): string[] {
       );
       break;
     }
-    if (code === 10) lineFeeds++;
+    // XML readers normalize CR and CRLF to LF. Count the text Excel will read,
+    // including lone CR, without counting Windows line endings twice.
+    if (code === 13 || (code === 10 && value.charCodeAt(offset - 1) !== 13)) lineFeeds++;
     offset += code > 0xffff ? 2 : 1;
   }
   if (cellText && lineFeeds > EXCEL_CELL_LINE_FEED_LIMIT)

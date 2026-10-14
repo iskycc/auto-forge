@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import type { RoundRecoveryRule } from "@autoforge/domain";
 
@@ -1486,6 +1487,57 @@ describe("scheduling event log", () => {
     expect(appended[0]!.find((event) => event.eventType === "batch_scheduled")).toMatchObject({
       payload: { assignedCount: 64, queueRemaining: 64 },
     });
+  });
+
+  it("refreshes reservation deadlines and Runner freshness checks after each scheduling yield", async () => {
+    const { batches, appended } = schedulingBatchesFake();
+    const snapshot = await batches.getSchedulingSnapshot("batch-1", timestamp, 128);
+    snapshot!.batch.policy!.concurrency = 128;
+    snapshot!.queuedRuns = Array.from({ length: 128 }, (_, index) => queuedRun(`run-${index}`));
+    snapshot!.candidates[0]!.runner.maxConcurrency = 128;
+    let nowMs = Date.parse(timestamp);
+    vi.mocked(batches.recordRoundConcurrency).mockImplementation(async () => {
+      nowMs += 10_000;
+      return "existing";
+    });
+    vi.mocked(batches.reserveAssignments).mockImplementation(async ({ decisions }) => {
+      nowMs += 60_000;
+      return {
+        reserved: decisions.length,
+        acceptedAttemptIds: decisions.map((decision) => decision.attemptId),
+      };
+    });
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(nowMs) },
+      { next: randomUUID },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      undefined,
+      128,
+    );
+
+    await service.schedule("batch-1");
+
+    const reservations = vi.mocked(batches.reserveAssignments).mock.calls.map(([input]) => input);
+    expect(reservations).toHaveLength(2);
+    for (const [index, reservation] of reservations.entries()) {
+      const expectedTime = Date.parse(timestamp) + 10_000 + index * 60_000;
+      expect(reservation).toMatchObject({
+        scheduledAt: new Date(expectedTime).toISOString(),
+        offlineBefore: new Date(expectedTime - 45_000).toISOString(),
+        metricsFreshAfter: new Date(expectedTime - 45_000).toISOString(),
+      });
+      expect(appended[index]!.every((event) => event.recordedAt === reservation.scheduledAt)).toBe(
+        true,
+      );
+    }
   });
 
   it("throttles runner_metrics events within the 30 second window", async () => {

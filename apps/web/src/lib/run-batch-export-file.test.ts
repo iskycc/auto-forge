@@ -45,6 +45,24 @@ function pages(rows: RunBatchExportRow[]) {
 }
 
 describe("complete private export files", () => {
+  it("finishes cancellation even when it arrives as the ZIP writer begins committing", async () => {
+    const commit = ExcelJS.stream.xlsx.WorkbookWriter.prototype.commit;
+    const interruptedCommit = vi
+      .spyOn(ExcelJS.stream.xlsx.WorkbookWriter.prototype, "commit")
+      .mockImplementation(function (this: ExcelJS.stream.xlsx.WorkbookWriter) {
+        controller.abort(new Error("cancel ZIP commit"));
+        return commit.call(this);
+      });
+    try {
+      await expect(
+        prepareRunBatchExportFile(pages([row]), controller.signal, { directory }),
+      ).rejects.toThrow();
+      expect(await readdir(directory)).toEqual([]);
+    } finally {
+      interruptedCommit.mockRestore();
+    }
+  });
+
   it("does not deliver a complete ZIP when page iterator finalization fails", async () => {
     let next = 0;
     const source: AsyncIterable<RunBatchExportWorkbookInput> = {
