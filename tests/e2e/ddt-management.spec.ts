@@ -20,7 +20,7 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectReadableText, expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
-import type { DdtExecutionStatistics } from "@autoforge/contracts";
+import type { ClaimAssignmentsResponse, DdtExecutionStatistics } from "@autoforge/contracts";
 
 test("DDT inheritance copies another version with pause, recovery and safe duplicate handling", async ({
   page,
@@ -2549,6 +2549,200 @@ test("SR associations restrict candidates and automatically cover imported and m
     0,
   );
   await expect(range.getByRole("region", { name: "候选测试类范围" })).toContainText("候选范围为空");
+});
+
+test("public logs rerun failed Chinese DDT cases and their manual reruns without blocking HTTP", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const caseId = "订单支付_中文场景_001";
+  const className = "com.example.ChineseDdtRerun";
+  const definition = await importExecutionClass(page, hierarchy, className);
+  await importDdtApiFixture(page, hierarchy, caseId, 1);
+  expect(
+    (
+      await browserJson(page, ddtPath(hierarchy, "execution-range"), {
+        method: "POST",
+        body: { caseDefinitionId: definition.id, className, included: true, expectedRevision: 0 },
+      })
+    ).status,
+  ).toBe(200);
+  const category = await browserJson<{ id: string }>(
+    page,
+    ddtPath(hierarchy, "requirement-categories"),
+    {
+      method: "POST",
+      body: { name: "支付", className, expectedRevision: 0 },
+    },
+  );
+  expect(category.status).toBe(200);
+  expect(
+    (
+      await browserJson(page, ddtPath(hierarchy, "sr-categories"), {
+        method: "POST",
+        body: { srNum: "API-SR", categoryId: category.body.id, expectedRevision: 0 },
+      })
+    ).status,
+  ).toBe(200);
+  await uploadDdtTaskDependencies(page, hierarchy.projectId);
+  const runner = await registerDdtTaskRunner(page);
+  type ClaimedCase = ClaimAssignmentsResponse["assignments"][number];
+  async function claimCase(batchId: string): Promise<ClaimedCase> {
+    let claimed: ClaimedCase | undefined;
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.post(
+            `/api/v1/runner-agents/${runner.runnerId}/claims`,
+            {
+              headers: { authorization: `Bearer ${runner.credential}` },
+              data: {
+                schemaVersion: 1,
+                requestId: randomUUID(),
+                availableSlots: 1,
+                labels: ["linux", "java", "testng"],
+                capabilities: ddtTaskCapabilities,
+                waitSeconds: 0,
+              },
+            },
+          );
+          expect(response.status()).toBe(200);
+          claimed = ((await response.json()) as ClaimAssignmentsResponse).assignments.find(
+            (item) => item.assignment.executionSpec.batchId === batchId,
+          );
+          return Boolean(claimed);
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+    expect(claimed!.assignment.executionSpec.className).toBe(className);
+    expect(claimed!.assignment.executionSpec.adapter?.caseId).toBe(caseId);
+    return claimed!;
+  }
+  async function completeCase(claim: ClaimedCase, status: "failed" | "succeeded"): Promise<void> {
+    const response = await page.request.post(
+      `/api/v1/run-attempts/${claim.assignment.attemptId}/complete`,
+      {
+        headers: {
+          authorization: `Bearer ${runner.credential}`,
+          "x-autoforge-runner-id": runner.runnerId,
+        },
+        data: {
+          schemaVersion: 1,
+          completionId: randomUUID(),
+          leaseToken: claim.lease.token,
+          result: {
+            status,
+            resultCode: status === "failed" ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED",
+            summary: "中文 DDT 日志重跑验收",
+            durationMs: 10,
+            artifacts: [],
+          },
+        },
+      },
+    );
+    expect(response.status()).toBe(200);
+  }
+  async function openLog(attemptId: string): Promise<void> {
+    const shared = await browserJson<{ shareUrl: string }>(
+      page,
+      `/api/v1/run-attempts/${attemptId}/log-share`,
+      { method: "POST" },
+    );
+    expect(shared.status).toBe(200);
+    await page.goto(shared.body.shareUrl);
+    await expect(page.getByRole("heading", { name: caseId, exact: true })).toBeVisible();
+  }
+  try {
+    const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+      method: "POST",
+      body: {
+        projectId: hierarchy.projectId,
+        projectVersionId: hierarchy.versionId,
+        name: uniqueName("中文DDT重跑"),
+      },
+    });
+    expect(suite.status).toBe(201);
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suite.body.id}/ddt-cases`, {
+          method: "POST",
+          body: { testStageId: hierarchy.stageId, caseIds: [caseId] },
+        })
+      ).status,
+    ).toBe(200);
+    await configureTaskExecution(page, suite.body.id, runner.runnerId, {
+      concurrency: 1,
+      retryLimit: 0,
+      adapter: {
+        enabled: true,
+        suiteName: "Chinese DDT",
+        testName: "Log rerun",
+        environmentAddresses: ["10.0.0.21", "10.0.0.22"],
+      },
+    });
+    const source = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
+      method: "POST",
+      body: { suiteId: suite.body.id },
+    });
+    expect(source.status).toBe(201);
+    let claim = await claimCase(source.body.id);
+    await completeCase(claim, "failed");
+    await openLog(claim.assignment.attemptId);
+    for (const status of ["failed", "succeeded"] as const) {
+      const submitted = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname ===
+            `/api/v1/run-attempts/${claim.assignment.attemptId}/rerun`,
+      );
+      await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+      const health = await page.request.get("/api/v1/health/live", { timeout: 5_000 });
+      expect(health.status()).toBe(200);
+      const response = await submitted;
+      expect(response.status(), await response.text()).toBe(201);
+      const manual = (await response.json()) as { batchId: string };
+      claim = await claimCase(manual.batchId);
+      await completeCase(claim, status);
+      await openLog(claim.assignment.attemptId);
+    }
+    const original = await browserJson<{
+      status: string;
+      totalRuns: number;
+      failedRuns: number;
+      succeededRuns: number;
+    }>(page, `/api/v1/run-batches/${source.body.id}`);
+    // TestNG assertion failures finish normally; their failed outcome remains authoritative.
+    expect(original.body).toMatchObject({
+      status: "succeeded",
+      totalRuns: 1,
+      failedRuns: 1,
+      succeededRuns: 0,
+    });
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`chinese-ddt-log-rerun-${viewport.width}.png`),
+        animations: "disabled",
+      });
+    }
+  } finally {
+    expect(
+      (
+        await browserJson(page, `/api/v1/runners/${runner.runnerId}`, {
+          method: "PATCH",
+          body: { state: "disabled" },
+        })
+      ).status,
+    ).toBe(200);
+  }
 });
 
 test("mixed and DDT-only tasks share execution and reject unbound members", async ({ page }) => {

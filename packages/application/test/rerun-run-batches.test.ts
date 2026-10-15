@@ -14,6 +14,35 @@ import type {
 const now = "2026-08-26T02:00:00.000Z";
 
 describe("derived run batches", () => {
+  it("preserves a Chinese DDT CaseId and its execution class when creating a log rerun", async () => {
+    const snapshot = rerunSnapshot();
+    const run = snapshot.runs.find((item) => item.id === "run-failed")!;
+    Object.assign(run, {
+      caseType: "ddt",
+      caseDefinitionId: "ddt-record",
+      executionCaseDefinitionId: "testng-class",
+      displayName: "订单支付_中文001",
+      ddtSrNum: "支付需求",
+    });
+    const { batches, created } = rerunRepository(snapshot, {
+      batchId: snapshot.batch.id,
+      executionRunId: run.id,
+      attemptStatus: "failed",
+    });
+    await schedulingService(batches).rerunCaseFromAttempt("attempt-failed", {
+      username: "operator",
+      source: "local",
+    });
+    expect(created[0]?.runs).toEqual([
+      expect.objectContaining({
+        caseType: "ddt",
+        caseDefinitionId: "ddt-record",
+        executionCaseDefinitionId: "testng-class",
+        displayName: "订单支付_中文001",
+        ddtSrNum: "支付需求",
+      }),
+    ]);
+  });
   it.each([500, 501, 100_000])(
     "reruns a completed case from an active %i-case batch without reading full details",
     async (totalRuns) => {

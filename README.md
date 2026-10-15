@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 公开日志页和日志浮窗的“执行此用例”在 Lite/Full 均由工作线程准备快照、创建批次及调度，避免同步数据库操作阻塞 Web 请求；重跑只读取原批次配置和选中用例，不再聚合原批次执行计数。中文 DDT CaseID、原始执行关联、当前运行资产和现有权限检查保持一致。
+
 - 失败分析工作簿的流式写入采用固定的 ExcelJS Open XML 顺序补丁，数据验证位于超链接之前，保留分析下拉选项、完整日志链接和分页导出。导出兼容性检查同时覆盖 XML 内容与工作表元素顺序；不能仅以 XML 可解析或 LibreOffice 可打开判定 Excel 兼容，详见[工作簿兼容性说明](./docs/design/export-workbook-layout.md)。
 
 - DDT 中文 CaseID 通过 UTF-8/Base64 从 Runner 传给受管 CoTest Adapter，严格还原后注入数据提供器，避免非 UTF-8 执行机 locale 造成命令行乱码。平台协议保留原文；升级执行机时同步安装配套 Adapter，无需修改业务 JAR、任务配置或系统 locale。

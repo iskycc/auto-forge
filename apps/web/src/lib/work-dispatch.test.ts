@@ -156,6 +156,29 @@ describe("execution control work dispatch", () => {
     },
   );
 
+  it.each(["local", "ldap"] as const)(
+    "creates log reruns off the Web thread in both modes for a %s initiator",
+    async (source) => {
+      const local = {
+        rerunCaseFromAttempt: vi.fn().mockRejectedValue(new Error("Web-thread rerun forbidden")),
+      } as unknown as RunBatchSchedulingService;
+      const rerunCaseFromAttempt = vi.fn().mockResolvedValue({ id: "manual-batch" });
+      const dispatcher = { rerunCaseFromAttempt } as unknown as WorkDispatcher;
+      const requestedBy = { username: "重跑操作人", source };
+      for (const batchDispatcher of [dispatcher, undefined]) {
+        const service = workerBackedBatchCreation(local, batchDispatcher, dispatcher);
+        await expect(service.rerunCaseFromAttempt("attempt", requestedBy)).resolves.toEqual({
+          id: "manual-batch",
+        });
+        expect(rerunCaseFromAttempt).toHaveBeenLastCalledWith({
+          attemptId: "attempt",
+          requestedBy,
+        });
+      }
+      expect(local.rerunCaseFromAttempt).not.toHaveBeenCalled();
+    },
+  );
+
   it("offloads DDT snapshot creation in both modes without sending case data through the Web", async () => {
     const local = {
       create: vi.fn().mockResolvedValue({ id: "full-batch" }),

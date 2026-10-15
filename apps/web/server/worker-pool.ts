@@ -270,6 +270,10 @@ export class WorkerPool implements WorkDispatcher {
     return this.nextSchedulingLane().dispatch({ kind: "create-single-ddt-case", input });
   }
 
+  rerunCaseFromAttempt(input: unknown): Promise<unknown> {
+    return this.nextSchedulingLane().dispatch({ kind: "rerun-case-from-attempt", input });
+  }
+
   async scheduleForRunner(
     runnerId: string,
     batchLimit: number,

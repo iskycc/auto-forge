@@ -55,6 +55,7 @@ export type WorkTask =
   | { kind: "trigger-schedules" }
   | { kind: "create-batch"; input: unknown }
   | { kind: "create-single-ddt-case"; input: unknown }
+  | { kind: "rerun-case-from-attempt"; input: unknown }
   | { kind: "search-ddt-values"; input: unknown }
   | { kind: "initialize-version"; input: unknown }
   | { kind: "inherit-ddt-cases"; input: unknown }

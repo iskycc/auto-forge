@@ -74,3 +74,32 @@ pnpm exec vitest run apps/web/server/runner-diagnostic-reads.integration.test.ts
 发布整理中复现了既有完整工作台的卡片高度断言：在 1024px 桌面宽度下，完整认领时间超过原列宽，换成两行后卡片从 89px 增至 105px。时间列现按内容保留宽度，不改变字号或移除完整日期。新增固定 `2026/12/31 23:59:59` 的回归，验证单行、无溢出及原卡片高度；完整失败分析文件五项检查全部通过。实际查看 1024×768、1536×960 深浅色四张日期宽度截图，标题、时间和操作按钮没有新增错位、变形或越界。
 
 Full 整体中间件部署、真实 Java Agent 执行及新离线包阻断出网验收本地未运行，由现有发布验收继续覆盖。
+
+## 2026-10-15：日志页手动重跑提交隔离
+
+用户报告从失败的中文 DDT 用例公开日志点击“执行此用例”后一直停留在“正在提交…”，其他页面也失去响应。检查发现既有批次创建代理只卸载普通任务和直接 DDT 执行，`rerunCaseFromAttempt` 仍绑定本地服务，其快照读取、SQLite 写入及首次调度会在 Web 事件循环中执行。重跑快照还通过 `getSummary` 聚合原批次计数，虽然只选择一个用例，准备工作仍受整个批次规模影响。该链路不按 CaseID 是否包含中文分支，中文是必须保留并验证的输入条件，不作为已证实的编码根因。
+
+Lite/Full 现在通过同一个 `rerun-case-from-attempt` 内部任务在已有调度工作线程执行整个重跑用例，入口仍先检查同源、登录、`log.read` 与 `run.retry` 权限。只传执行尝试 ID 和已认证拉起人，工作线程重新校验输入并读取权威快照；不把原批次成员或 DDT 内容传回 Web。批次元数据替代汇总计数，保留选中用例、Adapter 环境轮换、当前项目版本依赖、原始执行锚点和既有终态校验。该改动不涉及 Runner 协议、数据库迁移或新配置。
+
+新增工作线程代理及元数据回归在修复前有三项失败。真实 SQLite 集成测试持有短期写锁，中文 DDT 重跑等待期间 HTTP 探测可响应；释放后创建成功、CaseID 和执行类不变、原执行租约续期成功。应用、权限、工作线程及 SQLite/PostgreSQL 快照/调度回归共九个文件、145 项通过；数据库测试连接独立临时 PostgreSQL 实例，结束后关闭。本次未访问用户局域网或生产数据。
+
+生产构建下，失败中文 DDT 日志重跑和从其手动重跑日志继续重跑通过；Runner Protocol 实际领取的 CaseID 与执行类保持原值，原批次失败计数不被后续手动成功覆盖。另回归 501 用例活动批次中已完成用例及其手动执行的重跑，保持来源任务可继续执行。两场景各通过一次最终验收；新增中文场景起初把生命周期 `status` 当作用例结果，并尝试从元数据接口读取计数，末尾断言失败。按既有规则改用单用例批次详情中的失败/成功计数后通过，未修改生产结果判定。
+
+中文场景最新两次重跑提交耗时 187ms、105ms，同期健康检查耗时 9ms、5ms。它们是单核限额下的本机样本，不代表生产性能上限。已实际查看 1024×768、1536×960 截图，中文标题、执行按钮、三条执行历史、当前记录标记及两侧滚动边界正常，无新增横向溢出或页面变形。浏览器使用协议模拟执行机，没有执行真实 Java 用例、连接用户部署或启动 Full 整体中间件；Runner/Adapter 编码未改动。
+
+实际验证命令：
+
+```sh
+pnpm exec vitest run packages/db/test/attempt-log-snapshot.integration.test.ts packages/db/test/scheduling-refill.integration.test.ts packages/db/test/manual-execution-context.integration.test.ts packages/application/test/rerun-run-batches.test.ts packages/application/test/single-ddt-run.test.ts apps/web/src/lib/work-dispatch.test.ts apps/web/src/lib/authorization-paths.test.ts apps/web/server/worker-pool.test.ts apps/web/server/case-log-rerun.integration.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm format:check
+pnpm exec eslint apps/web/src/lib/work-dispatch.ts tests/e2e/ddt-management.spec.ts --max-warnings=0
+pnpm --filter @autoforge/web typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm test:e2e:matrix
+pnpm --filter @autoforge/web build
+pnpm exec playwright test tests/e2e/ddt-management.spec.ts tests/e2e/single-case-run.spec.ts --grep 'public logs rerun failed Chinese DDT cases|log detail reruns a completed case' --workers=1
+pnpm exec playwright test tests/e2e/ddt-management.spec.ts --grep 'public logs rerun failed Chinese DDT cases' --workers=1
+git diff --check
+```
+
+数据库回归显式设置本地 `AUTOFORGE_TEST_POSTGRES_URL`，因此两种适配器均实际运行。构建、数据库和浏览器串行执行并设定 CPU/内存限额；测试平台和临时 PostgreSQL 均已关闭。

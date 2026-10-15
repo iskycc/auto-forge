@@ -72,6 +72,29 @@ function pool() {
 
 describe("work thread recovery", () => {
   it.each(["lite", "full"] as const)(
+    "runs %s log reruns in a scheduling worker and preserves a domain rejection",
+    async (mode) => {
+      const executor = diagnosticPool(mode);
+      try {
+        const input = { attemptId: "attempt", requestedBy: { username: "操作人", source: "ldap" } };
+        const pending = expect(executor.rerunCaseFromAttempt(input)).rejects.toMatchObject({
+          code: "RUN_ATTEMPT_NOT_TERMINAL",
+        });
+        const worker = workers[0]!;
+        const request = worker.requests[0]!;
+        expect(request.task).toEqual({ kind: "rerun-case-from-attempt", input });
+        worker.emit("message", {
+          id: request.id,
+          ok: false,
+          error: { name: "DomainError", code: "RUN_ATTEMPT_NOT_TERMINAL", message: "仍在执行" },
+        });
+        await pending;
+      } finally {
+        await executor.close();
+      }
+    },
+  );
+  it.each(["lite", "full"] as const)(
     "keeps blocked %s diagnostics away from lease renewal and bounds their queue",
     async (mode) => {
       const executor = diagnosticPool(mode);

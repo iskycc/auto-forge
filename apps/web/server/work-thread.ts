@@ -286,6 +286,16 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
         .parse(task.input);
       return schedulingService().createSingleDdtCase(scope, caseId, input, requestedBy);
     }
+    case "rerun-case-from-attempt": {
+      const { attemptId, requestedBy } = z
+        .object({
+          attemptId: z.string().min(1).max(160),
+          requestedBy: runInitiatorSchema,
+        })
+        .strict()
+        .parse(task.input);
+      return schedulingService().rerunCaseFromAttempt(attemptId, requestedBy);
+    }
     case "trigger-schedules":
       return platformOperations().triggerDueSchedules(
         async (schedule) => (await schedulingService().create({ suiteId: schedule.suiteId })).id,

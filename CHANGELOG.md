@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+## 1.19.21 - 2026-10-15
+
+### Fixed
+
+- 修复公开日志页和日志浮窗重跑用例时可能阻塞平台的问题：Lite/Full 共用工作线程执行重跑快照准备、批次创建和调度，IPC 仅传 attempt ID 与已认证拉起人；请求线程保留原有来源校验及项目权限检查。中文 DDT CaseID、执行类和原始执行关联保持原值。
+- 单用例及失败用例重跑快照改读批次元数据，不再为读取配置聚合原批次全部执行结果。无新增数据库迁移、持久配置、生产依赖或 Runner Protocol 变化。
+
+### Validation
+
+- 工作线程代理和原批次计数回归在修复前有三项失败；修复后应用、权限、工作线程及真实 SQLite/PostgreSQL 快照和调度回归共九个文件、145 项通过。真实 SQLite 写锁等待期间 HTTP 探测可响应，释放后中文 DDT 重跑创建成功，原执行租约续期成功。
+- 新生产构建下，失败中文 DDT 公开日志连续重跑及 501 用例活动批次日志重跑两个 Playwright 场景分别通过；中文 CaseID、执行类、原始失败计数及手动重跑历史保持正确。中文场景两次提交为 187ms、105ms，同期健康检查为 9ms、5ms，仅作为本机定向验收样本。
+- 已实际查看 1024×768、1536×960 的中文 DDT 公开日志截图，标题、按钮、执行历史和滚动边界正常；格式、受影响文件 Lint、Web/服务入口/工作线程及测试类型、18 个 E2E 覆盖分组和生产构建通过。检查串行限制在一个 CPU，未访问用户局域网或生产数据库，未运行 Full 完整部署或真实 Java Agent。
+
+### Compatibility
+
+- Lite/Full 共用修复，升级主平台即可；无新增数据库迁移、持久配置、生产依赖或 Runner Protocol/Agent 变更。
+- 本次按维护者要求快速发布，仅运行生成、校验和发布离线资产的 Release 流水线；不运行 CI、Full distributed acceptance、Published Release acceptance、Release checks 和 Dependency security，不将这些检查记为通过。后续发布的正常流水线保持启用。
+
 ## 1.19.20 - 2026-10-14
 
 ### Fixed

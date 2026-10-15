@@ -593,7 +593,7 @@ export class PostgresRunBatchRepository
     selection: { executionRunId?: string; finalFailuresOnly?: boolean },
   ) {
     await this.ready();
-    const batch = await this.getSummary(batchId);
+    const batch = await this.getMetadata(batchId);
     if (!batch) return null;
     const [runtimeRow] = await this.handle.db
       .select({ adapterRuntimeJson: pgRunBatches.adapterRuntimeJson })

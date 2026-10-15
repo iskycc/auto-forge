@@ -54,15 +54,18 @@ export function workerBackedRunnerResourceReads(
   });
 }
 
-/** Keep Lite batch writes and DDT JSON snapshots in both modes off the Web event loop. */
+/** Keep Lite batch writes, DDT creation and log reruns off the Web event loop. */
 export function workerBackedBatchCreation(
   local: RunBatchSchedulingService,
   dispatcher: WorkDispatcher | undefined,
-  singleCaseDispatcher: WorkDispatcher | undefined = dispatcher,
+  caseExecutionDispatcher: WorkDispatcher | undefined = dispatcher,
 ): RunBatchSchedulingService {
-  if (!dispatcher?.createBatch && !singleCaseDispatcher?.createSingleDdtCase) return local;
   const create = dispatcher?.createBatch?.bind(dispatcher);
-  const createSingleDdtCase = singleCaseDispatcher?.createSingleDdtCase?.bind(singleCaseDispatcher);
+  const createSingleDdtCase =
+    caseExecutionDispatcher?.createSingleDdtCase?.bind(caseExecutionDispatcher);
+  const rerunCaseFromAttempt =
+    caseExecutionDispatcher?.rerunCaseFromAttempt?.bind(caseExecutionDispatcher);
+  if (!create && !createSingleDdtCase && !rerunCaseFromAttempt) return local;
   return new Proxy(local, {
     get(target, property) {
       if (property === "create" && create)
@@ -82,6 +85,13 @@ export function workerBackedBatchCreation(
             input,
             ...(requestedBy ? { requestedBy } : {}),
           }) as ReturnType<RunBatchSchedulingService["createSingleDdtCase"]>;
+      if (property === "rerunCaseFromAttempt" && rerunCaseFromAttempt)
+        return (
+          ...[attemptId, requestedBy]: Parameters<RunBatchSchedulingService["rerunCaseFromAttempt"]>
+        ) =>
+          rerunCaseFromAttempt({ attemptId, requestedBy }) as ReturnType<
+            RunBatchSchedulingService["rerunCaseFromAttempt"]
+          >;
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },

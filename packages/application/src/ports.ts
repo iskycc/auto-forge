@@ -1733,7 +1733,8 @@ export type RunBatchAdapterRuntimeSnapshot = {
  * Jenkins 密钥只在应用层编排和仓储之间传递，不进入 RunBatchDetails 或 HTTP DTO。
  */
 export type RunBatchRerunSnapshot = {
-  batch: RunBatch;
+  /** Rerun configuration does not need aggregate counters from the source batch. */
+  batch: RunBatchMetadata;
   adapterRuntime?: RunBatchAdapterRuntimeSnapshot;
   /**
    * 公开日志页的单用例诊断重跑会创建新的 ExecutionRun。这里保留同一原始

@@ -608,7 +608,7 @@ export class SqliteRunBatchRepository
     batchId: string,
     selection: { executionRunId?: string; finalFailuresOnly?: boolean },
   ) {
-    const batch = await this.getSummary(batchId);
+    const batch = await this.getMetadata(batchId);
     if (!batch) return null;
     const runtimeRow = this.handle.db
       .select({ adapterRuntimeJson: runBatches.adapterRuntimeJson })

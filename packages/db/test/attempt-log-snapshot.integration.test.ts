@@ -213,6 +213,9 @@ for (const mode of ["sqlite", "postgres"] as const) {
       try {
         await seedSnapshot(fixture);
         const fullDetails = vi.spyOn(fixture.batches, "get");
+        const counters = vi
+          .spyOn(fixture.batches, "getSummary")
+          .mockRejectedValue(new Error("Single-case reruns must not aggregate the source batch"));
         expect(await fixture.batches.getMetadata("batch")).toMatchObject({
           id: "batch",
           kind: "standard",
@@ -222,6 +225,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
         const snapshot = await fixture.batches.getRerunSnapshot("batch", {
           executionRunId: "run-testng",
         });
+        expect(counters).not.toHaveBeenCalled();
         expect(snapshot?.runs).toEqual([
           expect.objectContaining({
             id: "run-testng",
