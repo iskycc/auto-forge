@@ -325,7 +325,9 @@ const pageStyles = {
   "batch-next-page": "mt-4 w-full justify-center",
   "execution-records-card":
     "[&_.records-table-header]:flex [&_.records-table-header]:items-center [&_.records-table-header]:justify-between [&_.records-table-header]:gap-3 [&_.records-table-header]:[padding:4px_0_14px] [&_.records-table-header_h2]:m-0 [&_.records-table-header_h2]:text-base [&_.batch-next-page]:mt-4",
-  "execution-records-page": "[&_.run-history-filter]:p-3 [&_.run-history-filter]:gap-3",
+  // Reserve navigation space before Ant Tabs measures itself during hydration.
+  "execution-records-page":
+    "[&_.section-tabs]:min-h-12 [&_.run-history-filter]:p-3 [&_.run-history-filter]:gap-3",
   "hero-icon":
     "inline-flex items-center gap-2 border border-solid border-border rounded-lg p-0 bg-card text-muted-foreground text-xs font-semibold shadow-xs w-12 h-12 justify-center [&.violet]:bg-muted [&.violet]:text-info",
   "run-history-filter":

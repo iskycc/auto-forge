@@ -24,6 +24,21 @@ const runnerCapabilities = [
   "adapter:cotest-testng-v1",
 ];
 
+const registeredRunnerIds = new WeakMap<Page, string[]>();
+
+test.afterEach(async ({ page }) => {
+  // Automatic API execution may select any online compatible Runner. A fake
+  // Runner has no claim loop after its scenario, so stop advertising it.
+  for (const runnerId of registeredRunnerIds.get(page) ?? []) {
+    const response = await page.request.patch(`/api/v1/runners/${runnerId}`, {
+      headers: { origin: new URL(page.url()).origin },
+      data: { state: "disabled" },
+    });
+    expect(response.status()).toBe(200);
+  }
+  registeredRunnerIds.delete(page);
+});
+
 test("global execution dialog schedules one case through a runner group with Adapter IP", async ({
   page,
 }, testInfo) => {
@@ -751,11 +766,6 @@ test("version execution API authenticates calls and separates single results fro
       method: "POST",
       body: { reason: "E2E complete" },
     });
-    const disabled = await browserJson(page, `/api/v1/runners/${runner.runnerId}`, {
-      method: "PATCH",
-      body: { state: "disabled" },
-    });
-    expect(disabled.status).toBe(200);
     await page
       .context()
       .addCookies([{ name: "autoforge-color-mode", value: "light", url: "http://127.0.0.1:3100" }]);
@@ -956,6 +966,7 @@ async function registerRunner(page: Page): Promise<{ runnerId: string; credentia
   });
   expect(registration.status()).toBe(201);
   const runner = (await registration.json()) as { runnerId: string; credential: string };
+  registeredRunnerIds.set(page, [...(registeredRunnerIds.get(page) ?? []), runner.runnerId]);
   await heartbeatRunner(page, runner);
   return runner;
 }

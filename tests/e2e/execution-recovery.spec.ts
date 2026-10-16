@@ -120,6 +120,7 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   page,
   browser,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
   const fixture = await createExecutableFixture(page);
   const runner = await registerRunner(page, "Exception diagnostics Runner", runnerCapabilities);
@@ -141,8 +142,15 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
     )
     .toBe("failed");
   await expectBatchReason(page, queueBatch, "QUEUE_TIMEOUT");
+  // Capacity is needed only to produce the queue timeout. Finish it before
+  // visual checks so an unrenewed fake lease cannot create unrelated retries.
+  await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 0 });
+  await complete(page, runner, capacityClaim, randomUUID());
   const endpoint = `/api/v1/run-batches/${queueBatch}/exceptions`;
   await page.goto("/execution-records");
+  // Hover has no disabled state of its own; wait for the page's client controls
+  // before sending a pointer event that a server-rendered badge cannot handle.
+  await expect(page.getByRole("tab", { name: "任务执行", exact: true })).toBeEnabled();
   const recordRow = page.getByRole("row").filter({
     has: page.locator(`a[href="/run-batches/${queueBatch}"]`),
   });
@@ -207,7 +215,8 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
   await page.goto(`/run-batches/${queueBatch}`);
-  await expect(page.getByText("排队超时", { exact: true })).toBeVisible();
+  // A cold detail page first prepares its statistics asynchronously.
+  await expect(page.getByText("排队超时", { exact: true })).toBeVisible({ timeout: 30_000 });
   const rounds = page.getByRole("region", { name: "轮次列表", exact: true });
   for (const theme of ["light", "dark"]) {
     if (theme === "dark")
@@ -328,7 +337,6 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   await test.step("read-only project members can diagnose only their own project's batch", () =>
     verifyExceptionProjectAccess(page, browser, fixture.projectId, queueBatch));
   await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 0 });
-  await complete(page, runner, capacityClaim, randomUUID());
   for (const resultCode of ["TESTNG_ASSERTIONS_FAILED", "EXECUTION_TIMEOUT"]) {
     const batch = await createBatch(page, fixture, runner.runnerId, { retryLimit: 0 });
     await complete(page, runner, await claimAssignment(page, runner), randomUUID(), {
