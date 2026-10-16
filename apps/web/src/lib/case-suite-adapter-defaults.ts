@@ -1,7 +1,8 @@
 import type { ProjectVersion, TestStage } from "@autoforge/domain";
+import { executionAdapterNameDefaults } from "@autoforge/domain";
 
 // New execution forms share this default; saved task policies and debug drafts retain their choice.
-export const DEFAULT_EXECUTION_ADAPTER_ENABLED = true;
+export { DEFAULT_EXECUTION_ADAPTER_ENABLED } from "@autoforge/domain";
 
 export type AdapterNameDefaults = { suiteName: string; testName: string };
 
@@ -17,8 +18,5 @@ export function caseSuiteAdapterDefaults(
   const activeStages = version?.stages.filter((stage) => stage.status === "active") ?? [];
   // A task can be opened from a link while the top bar points to another version.
   const stage = activeStages.find((stage) => stage.id === selectedTestStageId) ?? activeStages[0];
-  return {
-    suiteName: projectName,
-    testName: [version?.name, stage?.name].filter(Boolean).join(" - "),
-  };
+  return executionAdapterNameDefaults(projectName, version?.name, stage?.name);
 }

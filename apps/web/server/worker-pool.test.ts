@@ -72,6 +72,28 @@ function pool() {
 
 describe("work thread recovery", () => {
   it.each(["lite", "full"] as const)(
+    "dispatches version-scoped case execution to the %s scheduling worker",
+    async (mode) => {
+      const executor = diagnosticPool(mode);
+      try {
+        const input = {
+          projectId: "project",
+          projectVersionId: "version",
+          input: {},
+          requestedBy: { username: "api-user", source: "local" },
+        };
+        const pending = executor.createVersionCaseExecution(input);
+        const worker = workers[0]!;
+        const request = worker.requests[0]!;
+        expect(request.task).toEqual({ kind: "create-version-case-execution", input });
+        worker.emit("message", { id: request.id, ok: true, value: { id: "single-batch" } });
+        await expect(pending).resolves.toEqual({ id: "single-batch" });
+      } finally {
+        await executor.close();
+      }
+    },
+  );
+  it.each(["lite", "full"] as const)(
     "runs %s log reruns in a scheduling worker and preserves a domain rejection",
     async (mode) => {
       const executor = diagnosticPool(mode);

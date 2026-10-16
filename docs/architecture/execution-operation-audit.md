@@ -103,3 +103,28 @@ git diff --check
 ```
 
 数据库回归显式设置本地 `AUTOFORGE_TEST_POSTGRES_URL`，因此两种适配器均实际运行。构建、数据库和浏览器串行执行并设定 CPU/内存限额；测试平台和临时 PostgreSQL 均已关闭。
+
+### 重跑提交响应与实时日志目标的补充复核
+
+v1.19.22 后再次逐步检查请求链路，发现重跑创建已隔离，但返回实时日志入口的 `getCaseLogRerunLogTarget` 仍调用完整批次 `get`。即使手动批次仅有一个用例，也会加载运行快照和详细 TestNG 报告；Lite 的 attempt 关联子查询从 `run_attempts` 起扫，查询计划可出现 `SCAN run_attempts`，使请求耗时受全库执行历史规模影响。因此已有冷启动和负载测试通过不足以证明该响应阶段没有遗留风险；本次未将其认定为已复现的用户现场根因。
+
+现改用双数据库专用读取端口，以手动批次 ID 和类型定位，按批次关联执行用例及其 attempt，只投影项目、批次状态、最新 attempt ID/状态并限制一条结果。不读取快照、报告、汇总计数或状态历史；不存在与普通批次返回空，由应用层沿用原错误；尚未分配返回 `attempt: null`，相同创建时间继续以 ID 决定最新记录。权限入口、响应结构和轮询机制不变。
+
+新增应用回归明确拒绝读取完整详情；共享 SQLite/PostgreSQL 回归覆盖缺失、普通批次、待调度、中文用例和最新 attempt，检查只有一次定向查询且不投影 JSON。SQLite 额外检查真实生成 SQL 的查询计划使用 attempt 索引搜索而非全表扫描。修复前本地三项回归失败。无数据库迁移、配置、依赖或 Runner 变更，验证记录与现场边界在本次交付说明中列出。
+
+本地八个文件共 87 项回归通过，两种数据库均实际运行；包括冷/热启动重跑、隔离的慢调度日志/异常/用例分页 SQL、HTTP 与有效租约续期及恢复。单独增加的 SQLite 查询计划断言通过，其余测试由筛选跳过，不把这次筛选记录当作双数据库完整重跑。新生产构建下，两项 Playwright 在同一服务中通过，覆盖中文 DDT 连续重跑和 501 用例活动批次；四次重跑提交耗时 142ms、80ms、68ms、68ms，中文场景同期健康检查为 15ms、6ms。已实际查看 1024×768、1536×960 截图，标题、按钮、历史选中与滚动区域正常。
+
+实际执行以下检查，所有重负载任务串行限制在一个 CPU；临时 PostgreSQL 和浏览器测试平台结束后关闭。未访问用户现场、重新运行 Full 完整部署或真实 Java Agent，也未发布本次补强，不能据此保证任何生产负载下永不出现平台阻塞。
+
+```sh
+pnpm --filter @autoforge/web build:work-thread
+pnpm exec vitest run packages/db/test/attempt-log-snapshot.integration.test.ts packages/db/test/manual-execution-context.integration.test.ts packages/application/test/rerun-run-batches.test.ts apps/web/server/case-log-rerun.integration.test.ts apps/web/server/runner-diagnostic-reads.integration.test.ts apps/web/server/worker-pool.test.ts apps/web/src/lib/work-dispatch.test.ts apps/web/src/lib/authorization-paths.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm exec vitest run packages/db/test/attempt-log-snapshot.integration.test.ts --testNamePattern='reads a manual log target' --maxWorkers=1 --no-file-parallelism
+pnpm format:check
+pnpm exec eslint packages/application/src/ports.ts packages/application/src/schedule-run-batches.ts packages/application/test/rerun-run-batches.test.ts packages/db/src/sqlite-run-batch.ts packages/db/src/postgres-run-batch.ts packages/db/test/attempt-log-snapshot.integration.test.ts --max-warnings=0
+pnpm --workspace-concurrency=1 -r --if-present typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm --filter @autoforge/web build
+pnpm exec playwright test tests/e2e/ddt-management.spec.ts tests/e2e/single-case-run.spec.ts --grep 'public logs rerun failed Chinese DDT cases|log detail reruns a completed case' --workers=1
+git diff --check
+```

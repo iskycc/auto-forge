@@ -147,6 +147,10 @@ export async function expectDdtSrExecutionContract(
       executionClass: { caseDefinitionId: executionCaseDefinitionId },
     });
     expect(summary).not.toHaveProperty("data");
+    expect(await repository.getCaseSummary(scope, item.caseId.toLowerCase())).toMatchObject({
+      id: item.id,
+      testStageId: scope.testStageId,
+    });
     // Anonymous reads use getCase, while management navigation uses getCaseSummary.
     // Both paths must enforce every component of the scope independently.
     expect((await repository.getCase(scope, item.caseId.toLowerCase()))?.data).toEqual(item.data);
@@ -156,6 +160,7 @@ export async function expectDdtSrExecutionContract(
       { ...scope, projectId: "other-project" },
     ]) {
       expect(await repository.getCase(differentScope, item.caseId)).toBeNull();
+      expect(await repository.getCaseSummary(differentScope, item.caseId)).toBeNull();
     }
     expect(
       await repository.getCaseSummary({ ...scope, testStageId: "other-stage" }, item.caseId),

@@ -274,6 +274,10 @@ export class WorkerPool implements WorkDispatcher {
     return this.nextSchedulingLane().dispatch({ kind: "rerun-case-from-attempt", input });
   }
 
+  createVersionCaseExecution(input: unknown): Promise<unknown> {
+    return this.nextSchedulingLane().dispatch({ kind: "create-version-case-execution", input });
+  }
+
   async scheduleForRunner(
     runnerId: string,
     batchLimit: number,

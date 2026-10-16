@@ -16,6 +16,7 @@ const runtime = vi.hoisted(() => ({
   telemetry: vi.fn(async () => ({ samples: [] })),
   diagnostics: vi.fn(async () => ({ generatedAt: "2026-09-30T00:00:00Z" })),
   rerun: vi.fn(async () => ({ id: "rerun-batch" })),
+  versionCase: vi.fn(async () => ({ id: "single-batch", sequenceNumber: 1, status: "queued" })),
 }));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
@@ -32,9 +33,17 @@ vi.mock("./services", () => ({
     runnerGroups: { list: runtime.listGroups, get: async () => ({ id: "group" }) },
     diagnostics: { read: runtime.diagnostics },
     runBatches: {
+      createVersionCaseExecution: runtime.versionCase,
       getAttemptRerunContext: async () => ({ projectId: "project-operator" }),
       rerunCaseFromAttempt: runtime.rerun,
       getCaseLogRerunLogTarget: async () => ({ batchStatus: "queued", attempt: null }),
+    },
+    projectStructures: {
+      list: async () => ({
+        versions: [
+          { id: "version", status: "active", stages: [{ id: "stage", status: "active" }] },
+        ],
+      }),
     },
   }),
 }));
@@ -46,6 +55,8 @@ import { GET as telemetry } from "../app/api/v1/runners/[runnerId]/telemetry/rou
 import { GET as diagnostics } from "../app/api/v1/settings/diagnostics/route";
 import { POST as terminalSession } from "../app/api/v1/terminal-sessions/route";
 import { POST as rerunAttempt } from "../app/api/v1/run-attempts/[attemptId]/rerun/route";
+import { POST as executeVersionCase } from "../app/api/v1/projects/[projectId]/versions/[versionId]/case-executions/route";
+import { POST as executeStageCase } from "../app/api/v1/projects/[projectId]/versions/[versionId]/stages/[stageId]/case-executions/route";
 import { authenticateRequest, authorizeRequest } from "./auth";
 
 const projectId = "project-operator";
@@ -68,6 +79,64 @@ beforeEach(() => {
 });
 
 describe("project role execution resource access", () => {
+  it.each([
+    { project: "project-operator", version: "version", status: 201 },
+    { project: "other-project", version: "version", status: 403 },
+    { project: "project-operator", version: "other-version", status: 404 },
+  ])(
+    "authorizes version execution within $project / $version",
+    async ({ project, version, status }) => {
+      const response = await executeVersionCase(
+        new Request("http://localhost/api/v1/projects/project/versions/version/case-executions", {
+          method: "POST",
+          headers: {
+            origin: "http://localhost",
+            cookie: "autoforge_session=session",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            className: "com.example.Test",
+            environmentIp: "10.0.0.21",
+          }),
+        }),
+        { params: Promise.resolve({ projectId: project, versionId: version }) },
+      );
+      expect(response.status).toBe(status);
+      expect(runtime.versionCase).toHaveBeenCalledTimes(status === 201 ? 1 : 0);
+      if (status === 201)
+        expect(runtime.versionCase).toHaveBeenCalledWith(project, version, expect.anything(), {
+          username: "operator",
+          source: "local",
+        });
+    },
+  );
+  it.each([
+    { stageId: "stage", status: 201 },
+    { stageId: "other-stage", status: 404 },
+  ])("validates the stage from the URL: $stageId", async ({ stageId, status }) => {
+    const response = await executeStageCase(
+      new Request("http://localhost/api/v1/execute", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          cookie: "autoforge_session=session",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ className: "com.example.Test", environmentIp: "10.0.0.21" }),
+      }),
+      { params: Promise.resolve({ projectId, versionId: "version", stageId }) },
+    );
+    expect(response.status).toBe(status);
+    if (status === 201)
+      expect(runtime.versionCase).toHaveBeenCalledWith(
+        projectId,
+        "version",
+        expect.objectContaining({ environmentIp: "10.0.0.21" }),
+        expect.objectContaining({ username: runtime.identity!.user.username }),
+        { testStageId: stageId },
+      );
+    else expect(runtime.versionCase).not.toHaveBeenCalled();
+  });
   it.each([
     { permissions: ["log.read", "run.retry"] as Permission[], project: projectId, status: 201 },
     { permissions: ["log.read", "run.create"] as Permission[], project: projectId, status: 403 },

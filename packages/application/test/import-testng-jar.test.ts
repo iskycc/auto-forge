@@ -238,6 +238,7 @@ function catalogFake(
     setAuthoritativeSource: vi.fn(),
     getDashboardSummary: vi.fn(),
     getCaseDefinition: vi.fn(),
+    findCaseDefinitionIdsByClassName: vi.fn(),
     updateCaseDefinition: vi.fn(),
     deleteCaseDefinitions: vi.fn(),
     inheritCaseDefinitions: vi.fn(),

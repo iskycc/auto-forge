@@ -20,6 +20,8 @@ import { configureTaskExecution, createTaskRun } from "./support/task-execution"
 import { expectUiIntegrity } from "./support/ui-guard";
 import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
 
+const lifecycleRunnerCapabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
+
 test("task list and detail execution shortcuts submit the selected task through preflight", async ({
   page,
 }) => {
@@ -1482,6 +1484,7 @@ test("terminal execution failures create a reusable task with the execution conf
   );
   let completed = 0;
   while (completed < 3) {
+    await refreshRunnerHeartbeat(page, runner);
     const response = await page.request.post(`/api/v1/runner-agents/${runner.id}/claims`, {
       headers: { authorization: `Bearer ${runner.credential}` },
       data: {
@@ -1751,6 +1754,7 @@ test("terminal execution failures create a reusable task with the execution conf
       })
     ).status,
   ).toBe(200);
+  await refreshRunnerHeartbeat(page, runner);
   const immediateExecutionResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -2515,14 +2519,13 @@ async function registerRunner(
   suffix: string,
 ): Promise<{ id: string; name: string; credential: string }> {
   const name = `Lifecycle runner ${suffix}`;
-  const capabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
     data: {
       schemaVersion: 1,
       name,
       labels: ["linux", "java", "testng"],
-      capabilities,
+      capabilities: lifecycleRunnerCapabilities,
       maxConcurrency: 2,
       os: "linux",
       architecture: "amd64",
@@ -2533,15 +2536,24 @@ async function registerRunner(
   });
   expect(registration.status()).toBe(201);
   const identity = (await registration.json()) as { runnerId: string; credential: string };
+  const runner = { id: identity.runnerId, name, credential: identity.credential };
+  await refreshRunnerHeartbeat(page, runner);
+  return runner;
+}
+
+async function refreshRunnerHeartbeat(
+  page: Page,
+  runner: { id: string; credential: string },
+): Promise<void> {
   const heartbeat = await page.request.post(
-    `/api/v1/runner-agents/${encodeURIComponent(identity.runnerId)}/heartbeat`,
+    `/api/v1/runner-agents/${encodeURIComponent(runner.id)}/heartbeat`,
     {
-      headers: { authorization: `Bearer ${identity.credential}` },
+      headers: { authorization: `Bearer ${runner.credential}` },
       data: {
         schemaVersion: 1,
         busySlots: 0,
         labels: ["linux", "java", "testng"],
-        capabilities,
+        capabilities: lifecycleRunnerCapabilities,
         maxConcurrency: 2,
         agentVersion: "0.9.0-e2e",
         terminalEnabled: false,
@@ -2556,7 +2568,6 @@ async function registerRunner(
     },
   );
   expect(heartbeat.status()).toBe(200);
-  return { id: identity.runnerId, name, credential: identity.credential };
 }
 
 async function createProject(

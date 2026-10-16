@@ -65,9 +65,25 @@ export function workerBackedBatchCreation(
     caseExecutionDispatcher?.createSingleDdtCase?.bind(caseExecutionDispatcher);
   const rerunCaseFromAttempt =
     caseExecutionDispatcher?.rerunCaseFromAttempt?.bind(caseExecutionDispatcher);
-  if (!create && !createSingleDdtCase && !rerunCaseFromAttempt) return local;
+  const createVersionCaseExecution =
+    caseExecutionDispatcher?.createVersionCaseExecution?.bind(caseExecutionDispatcher);
+  if (!create && !createSingleDdtCase && !rerunCaseFromAttempt && !createVersionCaseExecution)
+    return local;
   return new Proxy(local, {
     get(target, property) {
+      if (property === "createVersionCaseExecution" && createVersionCaseExecution)
+        return (
+          ...[projectId, projectVersionId, input, requestedBy, stageScope]: Parameters<
+            RunBatchSchedulingService["createVersionCaseExecution"]
+          >
+        ) =>
+          createVersionCaseExecution({
+            projectId,
+            projectVersionId,
+            input,
+            requestedBy,
+            ...(stageScope ? { stageScope } : {}),
+          }) as ReturnType<RunBatchSchedulingService["createVersionCaseExecution"]>;
       if (property === "create" && create)
         return (...[input, requestedBy]: Parameters<RunBatchSchedulingService["create"]>) =>
           create({ input, ...(requestedBy ? { requestedBy } : {}) }) as ReturnType<

@@ -943,6 +943,8 @@ export interface CaseCatalogRepository {
   ): Promise<ExistingSource | null>;
   importCatalog(record: ImportCatalogRecord): Promise<void>;
   listCases(query: CaseListQuery): Promise<CaseListPage>;
+  // At most two IDs distinguish a unique active-source class from an ambiguous match.
+  findCaseDefinitionIdsByClassName(scope: DdtScope, className: string): Promise<string[]>;
   getCaseDefinition(
     caseDefinitionId: string,
     projectIds?: readonly string[],
@@ -1469,6 +1471,10 @@ export type RegisterRunnerRecord = {
 };
 
 export interface RunnerRepository {
+  listPage(
+    offlineBefore: string,
+    query: { afterId?: string; limit: number },
+  ): Promise<{ items: Runner[]; nextCursor?: string }>;
   resourceSamples(runnerId: string, since: string, until: string): Promise<RunnerResourceSample[]>;
   register(record: RegisterRunnerRecord): Promise<Runner | null>;
   findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null>;
@@ -1809,6 +1815,7 @@ export type ReserveAssignmentsOutcome = {
 };
 
 export type RunBatchListQuery = {
+  executionKind?: "task" | "single";
   projectIds?: readonly string[];
   projectId?: string;
   projectVersionId?: string;
@@ -2131,6 +2138,30 @@ export type RunBatchMetadata = Omit<RunBatch, keyof RunBatchCounters>;
 
 export type ExecutionCasePageKey = { runId: string; attemptId?: string; round: number };
 
+export type CaseLogRerunLogTarget = {
+  projectId: string;
+  batchStatus: RunBatch["status"];
+  attempt: Pick<RunAttempt, "id" | "status"> | null;
+};
+
+export type SingleCaseExecutionEntry = {
+  batchId: string;
+  runId: string;
+  caseDefinitionId: string;
+  displayName: string;
+  className: string;
+  caseType: "testng" | "ddt";
+  status: ExecutionRun["status"];
+  attempt:
+    | (Pick<RunAttempt, "id" | "status"> & {
+        outcome?: RunAttempt["outcome"];
+        resultCode?: RunAttempt["resultCode"];
+        startedAt?: string;
+        finishedAt?: string;
+      })
+    | null;
+};
+
 export interface RunBatchRepository {
   readExportPage(
     input: import("./export-run-batch-results").RunBatchExportPageQuery,
@@ -2156,6 +2187,9 @@ export interface RunBatchRepository {
   getMetadata(batchId: string, projectIds?: readonly string[]): Promise<RunBatchMetadata | null>;
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
   resolveAttemptRerunSource(attemptId: string): Promise<AttemptRerunSource | null>;
+  /** Only manual batch state and its latest attempt; excludes snapshots and report bodies. */
+  getCaseLogRerunLogTarget(batchId: string): Promise<CaseLogRerunLogTarget | null>;
+  readSingleCaseExecutionEntries(batchIds: readonly string[]): Promise<SingleCaseExecutionEntry[]>;
   getAttemptLogSnapshot(
     batchId: string,
     executionRunId: string,

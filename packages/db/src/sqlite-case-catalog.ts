@@ -31,6 +31,7 @@ import {
   DEFAULT_PROJECT_ID,
   DomainError,
   type CaseDefinitionWithMethods,
+  type DdtScope,
   type CaseSource,
   type CaseSourceComparison,
   type CaseSourceSnapshotEntry,
@@ -843,6 +844,28 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       if (lastItem) result.nextCursor = lastItem.id;
     }
     return result;
+  }
+
+  async findCaseDefinitionIdsByClassName(scope: DdtScope, className: string): Promise<string[]> {
+    return this.handle.db
+      .select({ id: caseDefinitions.id })
+      .from(caseDefinitions)
+      .innerJoin(caseSources, eq(caseSources.id, caseDefinitions.sourceId))
+      .where(
+        and(
+          eq(caseDefinitions.projectId, scope.projectId),
+          eq(caseDefinitions.projectVersionId, scope.projectVersionId),
+          eq(caseDefinitions.testStageId, scope.testStageId),
+          eq(caseDefinitions.className, className),
+          eq(caseDefinitions.archived, false),
+          eq(caseSources.projectId, scope.projectId),
+          eq(caseSources.status, "ready"),
+          eq(caseSources.lifecycleStatus, "active"),
+        ),
+      )
+      .limit(2)
+      .all()
+      .map((row) => row.id);
   }
 
   async getCaseDefinition(

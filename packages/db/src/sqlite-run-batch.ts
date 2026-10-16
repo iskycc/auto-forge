@@ -1,4 +1,12 @@
+import { executionRecordKindCondition } from "./execution-record-kind";
 import { finalFailureRunCondition } from "./final-failure-selection";
+import {
+  runBatchCountsQuery,
+  mapRunBatchCounts,
+  type RunBatchCountRow,
+  type RunBatchCounts,
+  type FinalOutcomeCounts,
+} from "./run-batch-counts";
 import { EXECUTION_CASE_IDENTITY_SORT_SQL } from "./execution-case-sort-query";
 import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
 import {
@@ -11,6 +19,8 @@ import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
   AttemptLogSnapshot,
+  CaseLogRerunLogTarget,
+  SingleCaseExecutionEntry,
   ReserveAssignmentsOutcome,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
@@ -421,6 +431,7 @@ export class SqliteRunBatchRepository
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
       sql`${runBatches.batchKind} <> 'case_log_rerun'`,
+      executionRecordKindCondition(input.executionKind, runBatches.suiteId, runBatches.batchKind),
       ...(input.projectIds ? [inArray(runBatches.projectId, [...input.projectIds])] : []),
       ...(input.projectId ? [eq(runBatches.projectId, input.projectId)] : []),
       ...(input.projectVersionId
@@ -602,6 +613,90 @@ export class SqliteRunBatchRepository
         }
       | undefined;
     return row ?? null;
+  }
+
+  async readSingleCaseExecutionEntries(
+    batchIds: readonly string[],
+  ): Promise<SingleCaseExecutionEntry[]> {
+    if (batchIds.length === 0) return [];
+    if (batchIds.length > 200)
+      throw new DomainError("VALIDATION_FAILED", "单用例读取每次最多 200 条。");
+
+    const rows = this.handle.db
+      .select({
+        batchId: runBatches.id,
+        runId: executionRuns.id,
+        caseDefinitionId: executionRuns.caseDefinitionId,
+        displayName: executionRuns.displayName,
+        className: executionRuns.className,
+        caseType: executionRuns.caseType,
+        status: executionRuns.status,
+        attemptId: runAttempts.id,
+        attemptStatus: runAttempts.status,
+        outcome: runAttempts.outcome,
+        resultCode: runAttempts.resultCode,
+        startedAt: runAttempts.startedAt,
+        finishedAt: runAttempts.finishedAt,
+      })
+      .from(runBatches)
+      .innerJoin(executionRuns, eq(executionRuns.batchId, runBatches.id))
+      .leftJoin(
+        runAttempts,
+        sql`${runAttempts.id} = (SELECT candidate.id FROM run_attempts candidate WHERE candidate.execution_run_id = ${executionRuns.id} ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1)`,
+      )
+      .where(
+        and(
+          inArray(runBatches.id, [...batchIds]),
+          executionRecordKindCondition("single", runBatches.suiteId, runBatches.batchKind),
+        ),
+      )
+      .all();
+    return rows.map((row) => ({
+      batchId: row.batchId,
+      runId: row.runId,
+      caseDefinitionId: row.caseDefinitionId,
+      displayName: row.displayName,
+      className: row.className,
+      caseType: row.caseType,
+      status: row.status,
+      attempt:
+        row.attemptId && row.attemptStatus
+          ? {
+              id: row.attemptId,
+              status: row.attemptStatus,
+              ...(row.outcome ? { outcome: row.outcome } : {}),
+              ...(row.resultCode ? { resultCode: row.resultCode } : {}),
+              ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+              ...(row.finishedAt ? { finishedAt: row.finishedAt } : {}),
+            }
+          : null,
+    }));
+  }
+
+  async getCaseLogRerunLogTarget(batchId: string): Promise<CaseLogRerunLogTarget | null> {
+    const row = this.handle.db
+      .select({
+        projectId: runBatches.projectId,
+        batchStatus: runBatches.status,
+        attemptId: runAttempts.id,
+        attemptStatus: runAttempts.status,
+      })
+      .from(runBatches)
+      .leftJoin(executionRuns, eq(executionRuns.batchId, runBatches.id))
+      .leftJoin(runAttempts, eq(runAttempts.executionRunId, executionRuns.id))
+      .where(and(eq(runBatches.id, batchId), eq(runBatches.batchKind, "case_log_rerun")))
+      .orderBy(desc(runAttempts.createdAt), desc(runAttempts.id))
+      .limit(1)
+      .get();
+    if (!row) return null;
+    return {
+      projectId: row.projectId,
+      batchStatus: row.batchStatus,
+      attempt:
+        row.attemptId && row.attemptStatus
+          ? { id: row.attemptId, status: row.attemptStatus }
+          : null,
+    };
   }
 
   async getRerunSnapshot(
@@ -1775,145 +1870,11 @@ export class SqliteRunBatchRepository
     };
   }
 
-  /**
-   * attempt 选择与领域总结保持一致：每个 run 曾成功则成功，否则取最高轮次。
-   * 从未产生 attempt 的排队超时等终态回退 run 结果；聚合留在数据库内。
-   */
-  /**
-   * 状态计数与最终结果计数共享同一次 run/attempt 扫描。无重试批次（列表探针
-   * 热点）合并为单条查询；仅当存在重试 run 时退回窗口排序路径并保留两次查询。
-   */
-  private batchRunCounts(batchIds: readonly string[]): {
-    statusRows: Array<{ batchId: string; status: string; value: number }>;
-    outcomeRows: FinalOutcomeCounts[];
-  } {
-    if (batchIds.length === 0) return { statusRows: [], outcomeRows: [] };
-    const placeholders = batchIds.map(() => "?").join(",");
-    const retried = this.handle.client
-      .prepare(
-        `SELECT EXISTS(
-           SELECT 1 FROM execution_runs
-           WHERE batch_id IN (${placeholders}) AND attempt_count > 1
-         ) AS value`,
-      )
-      .get(...batchIds) as { value: number } | undefined;
-    if (retried?.value) {
-      const statusRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
-        this.handle.db
-          .select({
-            batchId: executionRuns.batchId,
-            status: executionRuns.status,
-            value: count(),
-          })
-          .from(executionRuns)
-          .where(inArray(executionRuns.batchId, ids))
-          .groupBy(executionRuns.batchId, executionRuns.status)
-          .all(),
-      );
-      const outcomeRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
-        this.windowedFinalOutcomeCounts(ids),
-      );
-      return { statusRows, outcomeRows };
-    }
-    // 无重试快速路径：每个 run 至多一条 attempt，LEFT JOIN 不会放大行数；
-    // 状态计数与最终结果计数在同一分组结果上聚合，扫描从两次降为一次。
-    const mergedRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap(
-      (ids) =>
-        this.handle.client
-          .prepare(
-            `SELECT run.batch_id AS batchId,
-                    run.status AS status,
-                    COALESCE(attempt.outcome,
-                      CASE WHEN attempt.status IN ('succeeded','failed','cancelled','timed_out')
-                           THEN attempt.status END,
-                      run.terminal_outcome,
-                      CASE WHEN run.status IN ('succeeded','failed','cancelled')
-                           THEN run.status END
-                    ) AS finalOutcome,
-                    count(*) AS value
-             FROM execution_runs run
-             LEFT JOIN run_attempts attempt ON attempt.execution_run_id = run.id
-             WHERE run.batch_id IN (${ids.map(() => "?").join(",")})
-             GROUP BY 1, 2, 3`,
-          )
-          .all(...ids) as Array<{
-          batchId: string;
-          status: string;
-          finalOutcome: string | null;
-          value: number;
-        }>,
+  private batchRunCounts(batchIds: readonly string[]): RunBatchCounts {
+    const rows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db.all<RunBatchCountRow>(runBatchCountsQuery(ids)),
     );
-    const statusAggregates = new Map<string, Map<string, number>>();
-    const outcomeAggregates = new Map<
-      string,
-      { succeeded: number; failed: number; timedOut: number; cancelled: number }
-    >();
-    for (const row of mergedRows) {
-      const statuses = statusAggregates.get(row.batchId) ?? new Map<string, number>();
-      statuses.set(row.status, (statuses.get(row.status) ?? 0) + row.value);
-      statusAggregates.set(row.batchId, statuses);
-      if (row.finalOutcome === null) continue;
-      const outcomes = outcomeAggregates.get(row.batchId) ?? {
-        succeeded: 0,
-        failed: 0,
-        timedOut: 0,
-        cancelled: 0,
-      };
-      if (row.finalOutcome === "succeeded") outcomes.succeeded += row.value;
-      else if (row.finalOutcome === "failed") outcomes.failed += row.value;
-      else if (row.finalOutcome === "timed_out") outcomes.timedOut += row.value;
-      else if (row.finalOutcome === "cancelled") outcomes.cancelled += row.value;
-      outcomeAggregates.set(row.batchId, outcomes);
-    }
-    return {
-      statusRows: [...statusAggregates.entries()].flatMap(([batchId, statuses]) =>
-        [...statuses.entries()].map(([status, value]) => ({ batchId, status, value })),
-      ),
-      outcomeRows: [...outcomeAggregates.entries()].map(([batchId, outcomes]) => ({
-        batchId,
-        ...outcomes,
-      })),
-    };
-  }
-
-  /** 重试批次的最终结果：按成功优先、轮次倒序挑选决定结果的 attempt。 */
-  private windowedFinalOutcomeCounts(batchIds: readonly string[]): FinalOutcomeCounts[] {
-    if (batchIds.length === 0) return [];
-    const placeholders = batchIds.map(() => "?").join(",");
-    return this.handle.client
-      .prepare(
-        `WITH ranked_attempts AS (
-           SELECT run.batch_id, attempt.execution_run_id,
-                  COALESCE(attempt.outcome, attempt.status) AS final_outcome,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY attempt.execution_run_id
-                    ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
-                                      THEN 0 ELSE 1 END,
-                             attempt.attempt_number DESC
-                  ) AS outcome_rank
-           FROM run_attempts attempt
-           JOIN execution_runs run ON run.id = attempt.execution_run_id
-           WHERE run.batch_id IN (${placeholders})
-         ), selected_outcomes AS (
-           SELECT execution_run_id, final_outcome
-           FROM ranked_attempts WHERE outcome_rank = 1
-         ), run_outcomes AS (
-           SELECT run.batch_id,
-                  COALESCE(selected.final_outcome, run.terminal_outcome,
-                    CASE WHEN run.status IN ('succeeded','failed','cancelled')
-                         THEN run.status END) AS final_outcome
-           FROM execution_runs run
-           LEFT JOIN selected_outcomes selected ON selected.execution_run_id = run.id
-           WHERE run.batch_id IN (${placeholders})
-         )
-         SELECT batch_id AS batchId,
-                SUM(CASE WHEN final_outcome = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
-                SUM(CASE WHEN final_outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
-                SUM(CASE WHEN final_outcome = 'timed_out' THEN 1 ELSE 0 END) AS timedOut,
-                SUM(CASE WHEN final_outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
-         FROM run_outcomes GROUP BY batch_id`,
-      )
-      .all(...batchIds, ...batchIds) as FinalOutcomeCounts[];
+    return mapRunBatchCounts(rows);
   }
 }
 
@@ -2136,14 +2097,6 @@ function sameRoundConcurrencyTransition(
     current.concurrency === input.concurrency
   );
 }
-
-type FinalOutcomeCounts = {
-  batchId: string;
-  succeeded: number | null;
-  failed: number | null;
-  timedOut: number | null;
-  cancelled: number | null;
-};
 
 // policy_json 为 NULL（历史数据）时返回 undefined，保留旧行为。
 function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {

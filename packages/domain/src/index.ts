@@ -8,6 +8,7 @@ export * from "./ddt";
 export * from "./errors";
 export * from "./environment";
 export * from "./execution";
+export * from "./execution-adapter-defaults";
 export * from "./failure-analysis";
 export * from "./identity";
 export * from "./project-structure";

@@ -69,6 +69,7 @@ describe("execution control work dispatch", () => {
     "listCaseLogRerunBatches",
     "listCasePage",
     "listMetadataPage",
+    "readSingleCaseExecutionEntries",
     "getSummary",
     "get",
   ] as const)("moves %s scans away from HTTP and execution control", async (method) => {
@@ -156,6 +157,36 @@ describe("execution control work dispatch", () => {
     },
   );
 
+  it.each(["local", "ldap"] as const)(
+    "keeps version API execution off the Web thread for a %s initiator",
+    async (source) => {
+      const local = { createVersionCaseExecution: vi.fn() } as unknown as RunBatchSchedulingService;
+      const createVersionCaseExecution = vi.fn().mockResolvedValue({ id: "single" });
+      const dispatcher = { createVersionCaseExecution } as unknown as WorkDispatcher;
+      const input = {
+        environmentIp: "10.0.0.21",
+        className: "com.example.Test",
+        execution: { runnerIds: ["runner"] },
+      };
+      const requestedBy = { username: "API", source };
+      for (const batchDispatcher of [dispatcher, undefined]) {
+        const service = workerBackedBatchCreation(local, batchDispatcher, dispatcher);
+        await expect(
+          service.createVersionCaseExecution("project", "version", input, requestedBy, {
+            testStageId: "stage",
+          }),
+        ).resolves.toEqual({ id: "single" });
+        expect(createVersionCaseExecution).toHaveBeenLastCalledWith({
+          projectId: "project",
+          projectVersionId: "version",
+          input,
+          requestedBy,
+          stageScope: { testStageId: "stage" },
+        });
+      }
+      expect(local.createVersionCaseExecution).not.toHaveBeenCalled();
+    },
+  );
   it.each(["local", "ldap"] as const)(
     "creates log reruns off the Web thread in both modes for a %s initiator",
     async (source) => {

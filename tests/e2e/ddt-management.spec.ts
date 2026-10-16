@@ -2709,6 +2709,55 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       await completeCase(claim, status);
       await openLog(claim.assignment.attemptId);
     }
+    const apiRun = await browserJson<{ batchId: string; statusUrl: string }>(
+      page,
+      `/api/v1/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/case-executions`,
+      {
+        method: "POST",
+        body: { caseId, environmentIp: "10.0.0.21" },
+      },
+    );
+    expect(apiRun.status).toBe(201);
+    const apiClaim = await claimCase(apiRun.body.batchId);
+    expect(apiClaim.assignment.executionSpec.adapter).toMatchObject({
+      environmentAddress: "10.0.0.21",
+    });
+    expect(apiClaim.assignment.executionSpec.adapter?.suiteName).toBeTruthy();
+    expect(apiClaim.assignment.executionSpec.adapter?.testName).toContain(" - ");
+    await completeCase(apiClaim, "failed");
+    const apiResult = await browserJson(page, apiRun.body.statusUrl);
+    expect(apiResult.status).toBe(200);
+    expect(apiResult.body).toMatchObject({
+      execution: { caseType: "ddt", displayName: caseId, attempt: { outcome: "failed" } },
+    });
+    const duplicateStage = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/stages`,
+      {
+        method: "POST",
+        body: { name: "同名用例阶段", description: "验证执行 API 自动定位的歧义提示" },
+      },
+    );
+    expect(duplicateStage.status).toBe(201);
+    await importDdtApiFixture(page, { ...hierarchy, stageId: duplicateStage.body.id }, caseId, 2);
+    const requestInput = { caseId, environmentIp: "10.0.0.21" };
+    const versionEndpoint = `/api/v1/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/case-executions`;
+    const ambiguous = await browserJson(page, versionEndpoint, {
+      method: "POST",
+      body: requestInput,
+    });
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body).toMatchObject({ error: { code: "DDT_CASE_SCOPE_CONFLICT" } });
+    const explicitStage = await browserJson<{ batchId: string }>(
+      page,
+      versionEndpoint.replace("/case-executions", `/stages/${hierarchy.stageId}/case-executions`),
+      {
+        method: "POST",
+        body: requestInput,
+      },
+    );
+    expect(explicitStage.status).toBe(201);
+    await completeCase(await claimCase(explicitStage.body.batchId), "succeeded");
     const original = await browserJson<{
       status: string;
       totalRuns: number;

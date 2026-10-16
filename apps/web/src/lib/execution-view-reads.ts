@@ -9,6 +9,7 @@ export const EXECUTION_VIEW_READ_METHODS = [
   "listAttemptsForExecutionRun",
   "listCaseLogRerunBatches",
   "listMetadataPage",
+  "readSingleCaseExecutionEntries",
   "listCasePage",
   "readCasePageEntries",
   "readExceptionRecords",
@@ -19,6 +20,12 @@ const identifier = z.string().min(1).max(160);
 const projectScope = z.array(identifier).max(10_000).optional();
 const batchArgs = z.tuple([identifier, projectScope]);
 const readSchema = z.discriminatedUnion("method", [
+  z
+    .object({
+      method: z.literal("readSingleCaseExecutionEntries"),
+      args: z.tuple([z.array(identifier).max(200)]),
+    })
+    .strict(),
   z
     .object({
       method: z.literal("readExportPage"),
@@ -67,6 +74,7 @@ const readSchema = z.discriminatedUnion("method", [
             projectIds: projectScope,
             projectId: identifier.optional(),
             projectVersionId: identifier.optional(),
+            executionKind: z.enum(["task", "single"]).optional(),
             suiteId: identifier.optional(),
             caseDefinitionId: identifier.optional(),
             runnerId: identifier.optional(),

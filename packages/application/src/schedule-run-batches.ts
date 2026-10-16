@@ -3,6 +3,8 @@ import {
   type CreateCaseDebugRunInput,
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
+  createVersionCaseExecutionSchema,
+  type CreateVersionCaseExecutionInput,
   rerunFinalFailuresInputSchema,
   type CreateRunBatchInput,
   type CreateSingleCaseRunInput,
@@ -12,6 +14,8 @@ import {
 } from "@autoforge/contracts";
 import {
   assessRunnerCompatibility,
+  DEFAULT_EXECUTION_ADAPTER_ENABLED,
+  executionAdapterNameDefaults,
   COTEST_ADAPTER_CAPABILITY,
   DDT_CASE_ID_CAPABILITY,
   DDT_INSIGHT_URL_CAPABILITY,
@@ -41,10 +45,12 @@ import {
 import type {
   CaseSuiteRepository,
   CaseCatalogRepository,
+  CaseLogRerunLogTarget,
   Clock,
   DdtRepository,
   CreateRunBatchRecord,
   IdGenerator,
+  IdentityAccessRepository,
   JarObjectStorePort,
   ProjectStructureRepository,
   RunBatchRepository,
@@ -54,6 +60,8 @@ import type {
   SchedulingSnapshot,
 } from "./ports";
 import type { DdtDebugAccess, DdtDebugRepository } from "./ddt-debug";
+import { resolveVersionExecutionClass } from "./resolve-version-execution-class";
+import { automaticExecutionRunnerIds } from "./automatic-execution-runners";
 import { CoalescedOperation } from "./coalesced-operation";
 import { setImmediate as yieldToExecutionControl } from "node:timers/promises";
 
@@ -61,6 +69,12 @@ const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
 const ASSIGNMENTS_PER_RESERVATION = 64;
+
+type ResolvedVersionCaseExecution = {
+  scope: DdtScope;
+  versionName: string;
+  testStageName: string;
+} & ({ caseDefinitionId: string } | { caseId: string });
 
 type DerivedRuntimeAssetSource = "current_project_version" | "source_snapshot";
 
@@ -115,11 +129,7 @@ function takeLiveCapacities(source: Map<string, number>): RunnerLiveCapacity[] {
   return capacities;
 }
 
-export type CaseLogRerunLogTarget = {
-  projectId: string;
-  batchStatus: RunBatch["status"];
-  attempt: { id: string; status: RunAttemptStatus } | null;
-};
+export type { CaseLogRerunLogTarget } from "./ports";
 
 export class RunBatchSchedulingService {
   // runner_metrics 节流：记录每个 runner 最近一次写入资源快照事件的时间。
@@ -142,8 +152,9 @@ export class RunBatchSchedulingService {
     private readonly metricsMaximumAgeSeconds: number,
     private readonly executionInputs?: {
       catalog: CaseCatalogRepository;
+      projects?: Pick<IdentityAccessRepository, "listProjects">;
       objectStore: JarObjectStorePort;
-      ddt?: Pick<DdtRepository, "getCase">;
+      ddt?: Pick<DdtRepository, "getCase" | "getCaseSummary">;
       ddtDebug?: Pick<DdtDebugRepository, "get" | "workspace">;
     },
     private readonly projectMaximumConcurrency = 128,
@@ -290,6 +301,139 @@ export class RunBatchSchedulingService {
     return this.createSingleExecution(caseDefinitionId, input, { requestedBy });
   }
 
+  async createVersionCaseExecution(
+    projectId: string,
+    projectVersionId: string,
+    input: CreateVersionCaseExecutionInput,
+    requestedBy: NonNullable<RunBatch["requestedBy"]>,
+    stageScope?: { testStageId: string },
+  ): Promise<RunBatch> {
+    const validated = createVersionCaseExecutionSchema.parse(input);
+    if (validated.execution.projectId && validated.execution.projectId !== projectId) {
+      throw new DomainError("VALIDATION_FAILED", "执行配置与接口项目范围不一致。");
+    }
+    const target = await this.resolveVersionCaseExecutionScope(
+      projectId,
+      projectVersionId,
+      validated,
+      stageScope?.testStageId,
+    );
+    const { scope, versionName, testStageName } = target;
+    if (!this.executionInputs?.projects) {
+      throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置项目名称查询。");
+    }
+    const [project] = await this.executionInputs.projects.listProjects([projectId]);
+    if (!project) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
+    const names = executionAdapterNameDefaults(project.name, versionName, testStageName);
+    const adapter = {
+      enabled: validated.execution.adapter?.enabled ?? DEFAULT_EXECUTION_ADAPTER_ENABLED,
+      suiteName: validated.execution.adapter?.suiteName || names.suiteName,
+      testName: validated.execution.adapter?.testName || names.testName,
+      environmentAddresses: [validated.environmentIp],
+    };
+    const isDdt = "caseId" in target;
+    if (isDdt && !adapter.enabled) {
+      throw new DomainError("DDT_ADAPTER_REQUIRED", "DDT 用例执行必须启用 Adapter。");
+    }
+    const execution = {
+      ...validated.execution,
+      projectId,
+      adapter,
+      runnerIds:
+        validated.execution.runnerIds.length || validated.execution.runnerGroupId
+          ? validated.execution.runnerIds
+          : await automaticExecutionRunnerIds(this.runners, offlineBefore(this.clock.now()), [
+              ...(adapter.enabled ? [COTEST_ADAPTER_CAPABILITY] : []),
+              ...(isDdt ? [DDT_CASE_ID_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY] : []),
+            ]),
+    };
+    if ("caseId" in target) {
+      return this.createSingleDdtCase(scope, target.caseId, execution, requestedBy);
+    }
+    return this.createSingleExecution(target.caseDefinitionId, execution, {
+      executionScope: scope,
+      requestedBy,
+    });
+  }
+
+  private async resolveVersionCaseExecutionScope(
+    projectId: string,
+    projectVersionId: string,
+    input: CreateVersionCaseExecutionInput,
+    testStageId?: string,
+  ): Promise<ResolvedVersionCaseExecution> {
+    if (!this.projectStructures || !this.executionInputs) {
+      throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置版本用例查询。");
+    }
+    const structure = await this.projectStructures.list(projectId);
+    const version = structure.versions.find(
+      (entry) => entry.id === projectVersionId && entry.status === "active",
+    );
+    const stages = version?.stages.filter(
+      (stage) => stage.status === "active" && (!testStageId || stage.id === testStageId),
+    );
+    if (!version || !stages?.length) {
+      throw new DomainError("CASE_SCOPE_NOT_FOUND", "指定项目版本或测试阶段不可用。");
+    }
+    if ("className" in input) {
+      const matched = await resolveVersionExecutionClass(
+        this.executionInputs.catalog,
+        { projectId, projectVersionId },
+        stages.map((stage) => stage.id),
+        input.className,
+      );
+      return {
+        scope: { projectId, projectVersionId, testStageId: matched.testStageId },
+        versionName: version.name,
+        testStageName: stages.find((stage) => stage.id === matched.testStageId)!.name,
+        caseDefinitionId: matched.caseDefinitionId,
+      };
+    }
+    if ("caseDefinitionId" in input) {
+      const definition = await this.executionInputs.catalog.getCaseDefinition(
+        input.caseDefinitionId,
+        [projectId],
+      );
+      const stage = stages.find((candidate) => candidate.id === definition?.testStageId);
+      if (!definition || definition.projectVersionId !== projectVersionId || !stage) {
+        throw new DomainError(
+          "CASE_DEFINITION_NOT_FOUND",
+          "指定用例不属于当前项目版本或所选有效阶段。",
+        );
+      }
+      return {
+        scope: { projectId, projectVersionId, testStageId: stage.id },
+        versionName: version.name,
+        testStageName: stage.name,
+        caseDefinitionId: definition.id,
+      };
+    }
+    if (!this.executionInputs.ddt) {
+      throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置 DDT 用例查询。");
+    }
+    let matched: DdtScope | undefined;
+    // Point lookups reuse the scope/CaseID index without loading DDT bodies or building a giant query.
+    for (const stage of stages) {
+      const scope = { projectId, projectVersionId, testStageId: stage.id };
+      if (!(await this.executionInputs.ddt.getCaseSummary(scope, input.caseId))) continue;
+      if (matched) {
+        throw new DomainError(
+          "DDT_CASE_SCOPE_CONFLICT",
+          "该 CaseID 在当前版本的多个有效阶段中存在，请使用带 /stages/{stageId}/ 的接口 URL 指定测试阶段。",
+        );
+      }
+      matched = scope;
+    }
+    if (!matched)
+      throw new DomainError("DDT_CASE_NOT_FOUND", "当前版本及所选有效阶段中不存在该 DDT 用例。");
+    return {
+      scope: matched,
+      caseId: input.caseId,
+      versionName: version.name,
+      testStageName: stages.find((stage) => stage.id === matched.testStageId)!.name,
+    };
+  }
+
   async createDebugCase(
     input: CreateCaseDebugRunInput,
     ownerUserId?: string,
@@ -327,7 +471,13 @@ export class RunBatchSchedulingService {
     return this.createSingleExecution(
       definition.id,
       { ...validated.execution, projectId: validated.projectId },
-      { ddtCase: ddtCase ?? undefined, debugScope: validated, ddtDebug: debugAccess, requestedBy },
+      {
+        ddtCase: ddtCase ?? undefined,
+        executionScope: validated,
+        debug: true,
+        ddtDebug: debugAccess,
+        requestedBy,
+      },
     );
   }
 
@@ -373,12 +523,13 @@ export class RunBatchSchedulingService {
     input: CreateSingleCaseRunInput,
     context: {
       ddtCase?: DdtCase | undefined;
-      debugScope?: DdtScope;
+      executionScope?: DdtScope;
+      debug?: boolean;
       ddtDebug?: DdtDebugAccess | undefined;
       requestedBy?: RunBatch["requestedBy"];
     } = {},
   ): Promise<RunBatch> {
-    const { ddtCase, debugScope, ddtDebug, requestedBy } = context;
+    const { ddtCase, executionScope, ddtDebug, requestedBy } = context;
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
     }
@@ -394,9 +545,9 @@ export class RunBatchSchedulingService {
       );
     }
     if (
-      debugScope &&
-      (definition.projectVersionId !== debugScope.projectVersionId ||
-        definition.testStageId !== debugScope.testStageId)
+      executionScope &&
+      (definition.projectVersionId !== executionScope.projectVersionId ||
+        definition.testStageId !== executionScope.testStageId)
     ) {
       throw new DomainError("CASE_DEFINITION_NOT_FOUND", "执行类范围已变化，请重新选择。");
     }
@@ -480,7 +631,7 @@ export class RunBatchSchedulingService {
       eventId: this.ids.next(),
       suiteId: `single:${ddtCase?.id ?? definition.id}`,
       ...(ddtDebug ? { ddtDebug } : {}),
-      suiteName: `${debugScope ? "用例调试" : "单用例"} · ${ddtCase?.caseId ?? definition.displayName}`,
+      suiteName: `${context.debug ? "用例调试" : "单用例"} · ${ddtCase?.caseId ?? definition.displayName}`,
       suiteVersion: ddtCase?.revision ?? definition.currentVersion,
       ...(requestedBy ? { requestedBy: { ...requestedBy } } : {}),
       retryLimit: validated.retryLimit ?? defaultCaseSuiteExecutionPolicy.retryLimit,
@@ -726,21 +877,11 @@ export class RunBatchSchedulingService {
    * assignment 尚未创建时 attempt 为 null，调用方可有界轮询，避免把隐藏批次详情重新公开。
    */
   async getCaseLogRerunLogTarget(batchId: string): Promise<CaseLogRerunLogTarget> {
-    const batch = await this.batches.get(batchId);
-    if (!batch || batch.kind !== "case_log_rerun") {
+    const target = await this.batches.getCaseLogRerunLogTarget(batchId);
+    if (!target) {
       throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的手动执行记录不存在。");
     }
-    const attempt = [...batch.attempts]
-      .sort((left, right) => {
-        const byTime = right.createdAt.localeCompare(left.createdAt);
-        return byTime || right.id.localeCompare(left.id);
-      })
-      .at(0);
-    return {
-      projectId: batch.projectId,
-      batchStatus: batch.status,
-      attempt: attempt ? { id: attempt.id, status: attempt.status } : null,
-    };
+    return target;
   }
 
   async rerunFinalFailures(

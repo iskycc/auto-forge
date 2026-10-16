@@ -18,6 +18,7 @@ import {
   jobEnvelopeSchema,
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
+  createVersionCaseExecutionSchema,
   ddtScopeSchema,
   ddtValueSearchInputSchema,
   inheritDdtCasesInputSchema,
@@ -34,6 +35,7 @@ import { parentPort, workerData } from "node:worker_threads";
 
 import type {
   ManagedPlatformClock,
+  IdentityAccessRepository,
   CaseCatalogRepository,
   CaseSuiteRepository,
   ExecutionControlRepository,
@@ -53,6 +55,7 @@ import {
   createAttemptLogStore,
   isolatedThreadLogCompression,
   SqliteCaseCatalogRepository,
+  SqliteIdentityAccessRepository,
   SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
   SqliteProjectStructureRepository,
@@ -73,6 +76,7 @@ import {
   NodeAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseCatalogRepository,
+  PostgresIdentityAccessRepository,
   PostgresCaseSuiteRepository,
   PostgresExecutionControlRepository,
   PostgresProjectStructureRepository,
@@ -285,6 +289,28 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
         })
         .parse(task.input);
       return schedulingService().createSingleDdtCase(scope, caseId, input, requestedBy);
+    }
+    case "create-version-case-execution": {
+      const { projectId, projectVersionId, input, requestedBy, stageScope } = z
+        .object({
+          projectId: z.string().min(1).max(128),
+          projectVersionId: z.string().min(1).max(128),
+          input: createVersionCaseExecutionSchema,
+          requestedBy: runInitiatorSchema,
+          stageScope: z
+            .object({ testStageId: z.string().min(1).max(128) })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .parse(task.input);
+      return schedulingService().createVersionCaseExecution(
+        projectId,
+        projectVersionId,
+        input,
+        requestedBy,
+        stageScope,
+      );
     }
     case "rerun-case-from-attempt": {
       const { attemptId, requestedBy } = z
@@ -520,6 +546,7 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
 }
 
 type SchedulingCollaborators = {
+  projects: IdentityAccessRepository;
   catalog: CaseCatalogRepository;
   suites: CaseSuiteRepository;
   runners: RunnerRepository;
@@ -546,6 +573,7 @@ function schedulingService(): RunBatchSchedulingService {
       configuration.scheduler.metricsMaximumAgeSeconds,
       {
         catalog: collaborators.catalog,
+        projects: collaborators.projects,
         objectStore: collaborators.objectStore,
         ddt:
           configuration.mode === "lite"
@@ -576,6 +604,7 @@ function schedulingCollaborators(): SchedulingCollaborators {
     const database = postgresHandle();
     return {
       catalog: new PostgresCaseCatalogRepository(database),
+      projects: new PostgresIdentityAccessRepository(database),
       suites: new PostgresCaseSuiteRepository(database),
       runners: new PostgresRunnerRepository(database),
       batches: new PostgresRunBatchRepository(database, configuration.caseExecutionTimeoutSeconds),
@@ -587,6 +616,7 @@ function schedulingCollaborators(): SchedulingCollaborators {
   const database = sqliteHandle();
   return {
     catalog: new SqliteCaseCatalogRepository(database),
+    projects: new SqliteIdentityAccessRepository(database),
     suites: new SqliteCaseSuiteRepository(database),
     runners: new SqliteRunnerRepository(database),
     batches: new SqliteRunBatchRepository(database, configuration.caseExecutionTimeoutSeconds),

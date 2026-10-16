@@ -1,3 +1,14 @@
+import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
+
+export function singleCaseExecutionStatus(
+  runStatus: ExecutionRun["status"] | undefined,
+  attemptOutcome: RunAttempt["outcome"],
+) {
+  // The run owns retries and cancellation; only its timeout detail comes from the attempt.
+  if (runStatus === "failed" && attemptOutcome === "timed_out") return "timed_out";
+  return runStatus ?? "queued";
+}
+
 export function caseExecutionStatusLabel(status: string): string {
   return (
     {

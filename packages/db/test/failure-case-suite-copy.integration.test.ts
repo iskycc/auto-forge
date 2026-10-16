@@ -191,6 +191,7 @@ async function seed({ suites, execute }: Fixture) {
       [`attempt-${number}`, number, outcome, outcome, timestamp],
     );
   }
+  await execute("UPDATE execution_runs SET attempt_count = 2 WHERE id = 'run-recovered'");
   await suites.updateSuite({
     suiteId: "suite-1",
     expectedRevision: 1,
@@ -216,6 +217,45 @@ async function seed({ suites, execute }: Fixture) {
     { next: randomUUID },
   );
   return { service, policy };
+}
+
+async function seedFailedTestNgBatch(context: Fixture, caseCount: number) {
+  await context.execute(
+    `WITH RECURSIVE members(number) AS (
+          SELECT 1 UNION ALL SELECT number + 1 FROM members WHERE number < ?
+        ) INSERT INTO case_definitions
+          (id, project_version_id, test_stage_id, source_id, class_name, package_name,
+           display_name, enabled, groups_json, current_version, created_at, updated_at)
+          SELECT 'ordinary-' || number, 'version-1', 'stage-1', 'source-1',
+            'example.Ordinary' || number, 'example', 'Ordinary ' || number, TRUE, '[]', 1, ?, ?
+          FROM members`,
+    [caseCount, timestamp, timestamp],
+  );
+  await context.execute(
+    `INSERT INTO run_batches
+          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+           total_runs, project_id, policy_json, created_at, updated_at)
+          SELECT 'ordinary-batch', suite_id, suite_name, suite_version, 'succeeded', retry_limit,
+            environment_json, ?, project_id, policy_json, created_at, updated_at
+          FROM run_batches WHERE id = 'batch-1'`,
+    [caseCount],
+  );
+  await context.execute(
+    `INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name,
+           status, terminal_outcome, created_at, updated_at)
+          SELECT 'ordinary-run-' || id, 'ordinary-batch', id, 1, display_name, class_name,
+            'failed', 'failed', ?, ? FROM case_definitions WHERE id LIKE 'ordinary-%'`,
+    [timestamp, timestamp],
+  );
+  await context.execute(
+    `INSERT INTO run_attempts
+            (id, execution_run_id, runner_id, attempt_number, status, outcome, scheduling_score, created_at)
+            SELECT 'ordinary-attempt-' || id, id, 'runner-1', 1, 'failed', 'failed', 1, ?
+            FROM execution_runs WHERE batch_id = 'ordinary-batch'`,
+    [timestamp],
+  );
+  return "ordinary-batch";
 }
 
 for (const mode of ["sqlite", "postgres"] as const) {
@@ -604,35 +644,14 @@ for (const mode of ["sqlite", "postgres"] as const) {
       const context = await fixture(mode);
       try {
         const { service } = await seed(context);
-        await context.execute(
-          `WITH RECURSIVE members(number) AS (
-          SELECT 1 UNION ALL SELECT number + 1 FROM members WHERE number < 100000
-        ) INSERT INTO case_definitions
-          (id, project_version_id, test_stage_id, source_id, class_name, package_name,
-           display_name, enabled, groups_json, current_version, created_at, updated_at)
-          SELECT 'large-' || number, 'version-1', 'stage-1', 'source-1',
-            'example.Large' || number, 'example', 'Large ' || number, TRUE, '[]', 1, ?, ?
-          FROM members`,
-          [timestamp, timestamp],
-        );
-        await context.execute(`INSERT INTO run_batches
-          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
-           total_runs, project_id, policy_json, created_at, updated_at)
-          SELECT 'large-batch', suite_id, suite_name, suite_version, 'succeeded', retry_limit,
-            environment_json, 100000, project_id, policy_json, created_at, updated_at
-          FROM run_batches WHERE id = 'batch-1'`);
-        await context.execute(
-          `INSERT INTO execution_runs
-          (id, batch_id, case_definition_id, case_version, display_name, class_name,
-           status, terminal_outcome, created_at, updated_at)
-          SELECT 'large-run-' || id, 'large-batch', id, 1, display_name, class_name,
-            'failed', 'failed', ?, ? FROM case_definitions WHERE id LIKE 'large-%'`,
-          [timestamp, timestamp],
-        );
-        const suite = await service.createFromFinalFailures("large-batch", {
+        const batchId = await seedFailedTestNgBatch(context, 100_000);
+        const source = (await context.batches.getSummary(batchId))!;
+        expect(source).toMatchObject({ failedRuns: 100_000, succeededRuns: 0 });
+        const suite = await service.createFromFinalFailures(batchId, {
           name: "Large failure task",
         });
         expect(suite.caseCount).toBe(100_000);
+        expect(suite.caseCount).toBe(source.failedRuns + source.timedOutRuns);
         expect(
           (await context.suites.listMemberPage({ suiteId: suite.id, limit: 5 }))!.items,
         ).toHaveLength(5);
@@ -640,6 +659,121 @@ for (const mode of ["sqlite", "postgres"] as const) {
         await context.close();
       }
     }, 60_000);
+
+    it.each(["terminal", "unfinished"])(
+      "copies all 797 ordinary failures across cursor pages with %s attempt metadata",
+      async (attemptMetadata) => {
+        const context = await fixture(mode);
+        try {
+          const { service } = await seed(context);
+          const batchId = await seedFailedTestNgBatch(context, 797);
+          if (attemptMetadata === "unfinished") {
+            await context.execute(
+              "UPDATE run_attempts SET status = 'running', outcome = NULL WHERE execution_run_id = 'ordinary-run-ordinary-99'",
+            );
+          }
+          const source = (await context.batches.getSummary(batchId))!;
+          expect(source).toMatchObject({ failedRuns: 797, timedOutRuns: 0 });
+          const suite = await service.createFromFinalFailures(batchId, {});
+          expect(suite.caseCount).toBe(797);
+          expect(suite.caseCount).toBe(source.failedRuns + source.timedOutRuns);
+          const selection = {
+            batchId,
+            projectId: DEFAULT_PROJECT_ID,
+            projectVersionId: "version-1",
+            limit: 500,
+          };
+          const first = await context.suites.listFinalFailureMemberPage(selection);
+          expect(first).toHaveLength(500);
+          const next = await context.suites.listFinalFailureMemberPage({
+            ...selection,
+            afterRunId: first.at(-1)!.runId,
+            afterCreatedAt: first.at(-1)!.createdAt,
+          });
+          expect(next).toHaveLength(297);
+          expect(next.map((member) => member.caseId)).toContain("ordinary-99");
+          const memberIds: string[] = [];
+          let afterCaseMemberId: string | undefined;
+          for (let pageIndex = 0; pageIndex < 4; pageIndex++) {
+            const page = (await context.suites.listMemberPage({
+              suiteId: suite.id,
+              limit: 250,
+              ...(afterCaseMemberId ? { afterCaseMemberId } : {}),
+            }))!;
+            expect(page.items).toHaveLength(Math.min(250, 797 - pageIndex * 250));
+            memberIds.push(...page.items.map((item) => item.caseDefinition.id));
+            afterCaseMemberId = page.items.at(-1)!.id;
+          }
+          expect(memberIds.sort()).toEqual(
+            Array.from({ length: 797 }, (_, index) => `ordinary-${index + 1}`).sort(),
+          );
+        } finally {
+          await context.close();
+        }
+      },
+    );
+
+    it.each([
+      "current",
+      "success-before-failure",
+      "stale-attempt-count",
+      "unfinished-attempt",
+      "unfinished-no-retry",
+    ])(
+      "keeps the copied member count equal to final failures with %s attempt metadata",
+      async (scenario) => {
+        const context = await fixture(mode);
+        try {
+          const { service } = await seed(context);
+          if (scenario === "success-before-failure") {
+            await context.execute(
+              "UPDATE run_attempts SET status = 'succeeded', outcome = 'succeeded' WHERE id = 'attempt-1'",
+            );
+            await context.execute(
+              "UPDATE run_attempts SET status = 'failed', outcome = 'failed' WHERE id = 'attempt-2'",
+            );
+          }
+          if (scenario === "stale-attempt-count") {
+            await context.execute(
+              "UPDATE execution_runs SET attempt_count = 0 WHERE id = 'run-recovered'",
+            );
+          }
+          if (scenario.startsWith("unfinished")) {
+            await context.execute(
+              `INSERT INTO run_attempts
+                (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at)
+                VALUES ('unfinished-attempt', 'run-timeout', 'runner-1', 1, 'running', 1, ?)`,
+              [timestamp],
+            );
+            await context.execute(
+              "UPDATE execution_runs SET attempt_count = 1 WHERE id = 'run-timeout'",
+            );
+          }
+          if (scenario === "unfinished-no-retry") {
+            await context.execute("DELETE FROM run_attempts WHERE id = 'attempt-1'");
+            await context.execute(
+              "UPDATE run_attempts SET attempt_number = 1 WHERE id = 'attempt-2'",
+            );
+            await context.execute(
+              "UPDATE execution_runs SET attempt_count = 1, status = 'succeeded', terminal_outcome = 'succeeded' WHERE id = 'run-recovered'",
+            );
+          }
+          const source = (await context.batches.getSummary("batch-1"))!;
+          const suite = await service.createFromFinalFailures("batch-1", {});
+          expect(suite.caseCount).toBe(source.failedRuns + source.timedOutRuns);
+          expect(suite.caseCount).toBe(3);
+          expect(source).toMatchObject({ failedRuns: 2, timedOutRuns: 1, succeededRuns: 2 });
+          const members = (await context.suites.listMemberPage({ suiteId: suite.id, limit: 100 }))!;
+          expect(members.items.map((item) => item.caseDefinition.id).sort()).toEqual([
+            "failure",
+            "timeout",
+          ]);
+          expect(members.ddtItems.map((item) => item.ddtCase.id)).toEqual(["ddt-1"]);
+        } finally {
+          await context.close();
+        }
+      },
+    );
 
     it("copies the immutable configuration and only final failures/timeouts across TestNG and DDT", async () => {
       const context = await fixture(mode);

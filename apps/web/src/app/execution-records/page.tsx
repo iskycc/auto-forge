@@ -1,3 +1,6 @@
+import { SectionTabs } from "@/components/section-tabs";
+import { SingleCaseExecutionTable } from "@/components/single-case-execution-table";
+import { VersionCaseExecutionApi } from "@/components/version-case-execution-api";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -43,6 +46,7 @@ export default async function ExecutionRecordsPage({
   const services = await getPlatformServices();
   const timeZone = services.configurationStore.read().web.timeZone;
   const parameters = await searchParams;
+  const view = parameters.view === "single" ? "single" : parameters.view === "api" ? "api" : "task";
   const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
   const projects = await services.identities
     .listProjects(selectableProjectIds(identity))
@@ -62,19 +66,21 @@ export default async function ExecutionRecordsPage({
       projectId ? [projectId] : [],
       timeZone,
     ),
+    executionKind: view === "single" ? ("single" as const) : ("task" as const),
     ...(projectId ? { projectId } : {}),
     ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
   };
   const [batchPage, suites, runners] = await Promise.all([
-    hierarchy.projectVersionId
+    hierarchy.projectVersionId && view !== "api"
       ? services.executionBatchPage(filter)
       : Promise.resolve({ items: [], nextCursor: undefined, statistics: undefined }),
-    hierarchy.projectVersionId
+    hierarchy.projectVersionId && view === "task"
       ? services.caseSuites.list(200, projectId ? [projectId] : [], hierarchy.projectVersionId)
       : Promise.resolve([]),
-    canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
+    canReadRunners && view !== "api" ? services.runnerControl.list(500) : Promise.resolve([]),
   ]);
   const refreshQuery = refreshQueryFromFilter(filter);
+  refreshQuery.set("view", view);
   const nextQuery = new URLSearchParams(refreshQuery);
   if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
   const observedAt = services.clock.now().toISOString();
@@ -124,7 +130,7 @@ export default async function ExecutionRecordsPage({
         <div>
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Execution Records</span>
           <h1>执行记录</h1>
-          <p>每一次执行都以独立批次记录，可按任务、状态与时间筛选，点击进入详情查看日志与产物。</p>
+          <p>任务执行与单用例执行分别记录；按状态与时间筛选，直接查看执行结果与日志。</p>
         </div>
         <span className={cn("hero-icon violet", pageStyles["hero-icon"])}>
           <ClipboardList size={24} />
@@ -134,138 +140,183 @@ export default async function ExecutionRecordsPage({
         className={cn("scope-caption", pageStyles["scope-caption"])}
         aria-label="执行记录范围"
       >
-        当前版本：{projectVersion?.name ?? "尚未配置"} · 仅展示此版本的任务与执行批次
+        当前版本：{projectVersion?.name ?? "尚未配置"} · 仅展示此版本的执行记录
       </section>
-      <form
-        className={cn(
-          "content-card run-history-filter",
-          uiPatterns["content-card"],
-          pageStyles["run-history-filter"],
-        )}
-        method="get"
-      >
-        <label>
-          用例任务
-          <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
-            <option value="">全部任务</option>
-            {suites.map((suite) => (
-              <option key={suite.id} value={suite.id}>
-                {suite.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <ExecutionCaseFilter
-          key={`${filter.caseDefinitionId ?? ""}:${hierarchy.projectVersionId}:${hierarchy.testStageId}`}
-          initialId={filter.caseDefinitionId}
-          projectId={projectId}
-          projectVersionId={hierarchy.projectVersionId}
-          testStageId={hierarchy.testStageId}
-          canReadCases={hasPermission(identity, "case.read", projectId)}
-        />
-        <label>
-          状态
-          <Select defaultValue={filter.status ?? ""} name="status">
-            <option value="">全部状态</option>
-            <option value="queued">排队中</option>
-            <option value="running">执行中</option>
-            <option value="succeeded">执行完成</option>
-            <option value="failed">执行异常</option>
-            <option value="cancelled">已终止</option>
-          </Select>
-        </label>
-        <label>
-          执行节点
-          <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
-            <option value="">全部执行节点</option>
-            {runners.map((runner) => (
-              <option key={runner.id} value={runner.id}>
-                {runner.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          开始时间
-          <DatetimeInput
-            defaultValue={localDateTimeInputValue(filter.createdAfter, timeZone)}
-            name="createdAfter"
-          />
-        </label>
-        <label>
-          结束时间
-          <DatetimeInput
-            defaultValue={localDateTimeInputValue(filter.createdBefore, timeZone)}
-            name="createdBefore"
-          />
-        </label>
-        <label>
-          每页条数
-          <Select defaultValue={String(filter.limit)} name="limit">
-            {RUN_BATCH_PAGE_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={String(size)}>
-                {size} 条
-              </option>
-            ))}
-          </Select>
-        </label>
-        <div className="flex min-w-0 items-center gap-2 [&_>_*]:flex-1">
-          <Button type="submit" variant="primary">
-            筛选记录
-          </Button>
-          <LinkButton href="/execution-records">重置筛选</LinkButton>
-        </div>
-      </form>
-      {batchPage.statistics ? <ReadModelStatusBar snapshots={[batchPage.statistics]} /> : null}
-      <Card
-        as="section"
-        className={cn(
-          "content-card execution-records-card",
-          uiPatterns["content-card"],
-          pageStyles["execution-records-card"],
-        )}
-      >
-        <div className={"records-table-header"}>
-          <h2>批次列表</h2>
-          <span className={cn("table-count", pageStyles["table-count"])}>
-            本页 {batchPage.items.length} 条 · 每页 {filter.limit} 条
-          </span>
-        </div>
-        {batchPage.items.length === 0 ? (
-          <EmptyState className={cn("table-empty", uiPatterns["table-empty"])}>
-            <p>暂无符合条件的执行记录。</p>
-            <LinkButton
-              variant="primary"
-              className={cn(
-                "button button-primary",
-                uiPatterns["button"],
-                uiPatterns["button-primary"],
-              )}
-              href="/run-batches"
-            >
-              前往发起执行
-            </LinkButton>
-          </EmptyState>
-        ) : (
-          <ExecutionRecordsTable
-            canTerminate={hasPermission(identity, "run.cancel", projectId)}
-            rows={rows}
-          />
-        )}
-        {batchPage.nextCursor ? (
-          <LinkButton
+      <SectionTabs
+        label="执行记录视图"
+        tabs={[
+          { href: "/execution-records?view=task", label: "任务执行", active: view === "task" },
+          {
+            href: "/execution-records?view=single",
+            label: "单用例执行",
+            active: view === "single",
+          },
+          { href: "/execution-records?view=api", label: "执行 API", active: view === "api" },
+        ]}
+      />
+      {view === "api" ? (
+        <Card>
+          {projectId && hierarchy.projectVersionId ? (
+            <VersionCaseExecutionApi
+              projectId={projectId}
+              versionId={hierarchy.projectVersionId}
+              versionName={projectVersion?.name ?? hierarchy.projectVersionId}
+              stageId={hierarchy.testStageId}
+            />
+          ) : (
+            <EmptyState>请先选择项目和版本。</EmptyState>
+          )}
+        </Card>
+      ) : (
+        <>
+          <form
             className={cn(
-              "button button-secondary batch-next-page",
-              uiPatterns["button"],
-              uiPatterns["button-secondary"],
-              pageStyles["batch-next-page"],
+              "content-card run-history-filter",
+              uiPatterns["content-card"],
+              pageStyles["run-history-filter"],
             )}
-            href={`/execution-records?${nextQuery}`}
+            method="get"
           >
-            查看更早记录
-          </LinkButton>
-        ) : null}
-      </Card>
+            <input type="hidden" name="view" value={view} />
+            {view === "task" ? (
+              <label>
+                用例任务
+                <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
+                  <option value="">全部任务</option>
+                  {suites.map((suite) => (
+                    <option key={suite.id} value={suite.id}>
+                      {suite.name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            ) : null}
+            <ExecutionCaseFilter
+              key={`${filter.caseDefinitionId ?? ""}:${hierarchy.projectVersionId}:${hierarchy.testStageId}`}
+              initialId={filter.caseDefinitionId}
+              projectId={projectId}
+              projectVersionId={hierarchy.projectVersionId}
+              testStageId={hierarchy.testStageId}
+              canReadCases={hasPermission(identity, "case.read", projectId)}
+            />
+            <label>
+              状态
+              <Select defaultValue={filter.status ?? ""} name="status">
+                <option value="">全部状态</option>
+                <option value="queued">排队中</option>
+                <option value="running">执行中</option>
+                <option value="succeeded">执行完成</option>
+                <option value="failed">执行异常</option>
+                <option value="cancelled">已终止</option>
+              </Select>
+            </label>
+            <label>
+              执行节点
+              <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
+                <option value="">全部执行节点</option>
+                {runners.map((runner) => (
+                  <option key={runner.id} value={runner.id}>
+                    {runner.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label>
+              开始时间
+              <DatetimeInput
+                defaultValue={localDateTimeInputValue(filter.createdAfter, timeZone)}
+                name="createdAfter"
+              />
+            </label>
+            <label>
+              结束时间
+              <DatetimeInput
+                defaultValue={localDateTimeInputValue(filter.createdBefore, timeZone)}
+                name="createdBefore"
+              />
+            </label>
+            <label>
+              每页条数
+              <Select defaultValue={String(filter.limit)} name="limit">
+                {RUN_BATCH_PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={String(size)}>
+                    {size} 条
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <div className="flex min-w-0 items-center gap-2 [&_>_*]:flex-1">
+              <Button type="submit" variant="primary">
+                筛选记录
+              </Button>
+              <LinkButton href={`/execution-records?view=${view}`}>重置筛选</LinkButton>
+            </div>
+          </form>
+          {batchPage.statistics ? <ReadModelStatusBar snapshots={[batchPage.statistics]} /> : null}
+          <Card
+            as="section"
+            className={cn(
+              "content-card execution-records-card",
+              uiPatterns["content-card"],
+              pageStyles["execution-records-card"],
+            )}
+          >
+            <div className={"records-table-header"}>
+              <h2>{view === "single" ? "单用例执行列表" : "任务执行列表"}</h2>
+              <span className={cn("table-count", pageStyles["table-count"])}>
+                本页 {batchPage.items.length} 条 · 每页 {filter.limit} 条
+              </span>
+            </div>
+            {batchPage.items.length === 0 ? (
+              <EmptyState className={cn("table-empty", uiPatterns["table-empty"])}>
+                <p>暂无符合条件的执行记录。</p>
+                <LinkButton
+                  variant="primary"
+                  className={cn(
+                    "button button-primary",
+                    uiPatterns["button"],
+                    uiPatterns["button-primary"],
+                  )}
+                  href="/run-batches"
+                >
+                  前往发起执行
+                </LinkButton>
+              </EmptyState>
+            ) : view === "single" ? (
+              <SingleCaseExecutionTable
+                rows={batchPage.items.map((batch) => ({
+                  id: batch.id,
+                  sequenceNumber: batch.sequenceNumber,
+                  createdAt: batch.createdAt,
+                  ...(batch.requestedBy ? { requestedBy: batch.requestedBy } : {}),
+                  ...(batch.singleCase ? { singleCase: batch.singleCase } : {}),
+                }))}
+                canReadLogs={hasPermission(identity, "log.read", projectId)}
+                canRetryRuns={hasPermission(identity, "run.retry", projectId)}
+                canTerminate={hasPermission(identity, "run.cancel", projectId)}
+              />
+            ) : (
+              <ExecutionRecordsTable
+                canTerminate={hasPermission(identity, "run.cancel", projectId)}
+                rows={rows}
+              />
+            )}
+            {batchPage.nextCursor ? (
+              <LinkButton
+                className={cn(
+                  "button button-secondary batch-next-page",
+                  uiPatterns["button"],
+                  uiPatterns["button-secondary"],
+                  pageStyles["batch-next-page"],
+                )}
+                href={`/execution-records?${nextQuery}`}
+              >
+                查看更早记录
+              </LinkButton>
+            ) : null}
+          </Card>
+        </>
+      )}
     </div>
   );
 }

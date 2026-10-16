@@ -17,6 +17,7 @@ const postgresUrl = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 type SnapshotFixture = {
   batches: RunBatchRepository;
   statements(): string[];
+  sqliteQueryPlan?(statement: string, parameters: Array<string | number>): string[];
   execute(statement: string, parameters?: Array<string | number>): Promise<void>;
   close(): Promise<void>;
 };
@@ -32,6 +33,12 @@ async function createFixture(mode: "sqlite" | "postgres"): Promise<SnapshotFixtu
     return {
       batches: new SqliteRunBatchRepository(handle),
       statements: () => queries.mock.calls.map(([statement]) => statement),
+      sqliteQueryPlan: (statement, parameters) =>
+        (
+          handle.client.prepare(`EXPLAIN QUERY PLAN ${statement}`).all(...parameters) as Array<{
+            detail: string;
+          }>
+        ).map((row) => row.detail),
       execute: async (statement, parameters = []) => {
         handle.client.prepare(statement).run(...parameters);
       },
@@ -129,6 +136,111 @@ async function seedSnapshot(fixture: SnapshotFixture): Promise<void> {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} attempt log snapshot`, () => {
+    it("separates task and single executions before cursor pagination and reads only page entries", async () => {
+      const fixture = await createFixture(mode);
+      try {
+        await seedSnapshot(fixture);
+        for (const [id, kind, suiteId] of [
+          ["manual-1", "standard", "single:case"],
+          ["manual-2", "standard", "single:case"],
+          ["hidden", "case_log_rerun", "suite"],
+        ]) {
+          await fixture.execute(
+            `INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,batch_kind,environment_json,created_at,updated_at) VALUES (?,?,?,1,'queued',0,1,?,'[]',?,?)`,
+            [id!, suiteId!, id!, kind!, timestamp, timestamp],
+          );
+          await fixture.execute(
+            `INSERT INTO execution_runs(id,batch_id,case_definition_id,case_version,display_name,class_name,status,created_at,updated_at) VALUES (?,?,?,1,'中文用例','example.Case','queued',?,?)`,
+            [id! + "-run", id!, "case", timestamp, timestamp],
+          );
+        }
+        const first = await fixture.batches.listMetadataPage({ executionKind: "single", limit: 1 });
+        expect(first.items.map((batch) => batch.id)).toEqual(["manual-2"]);
+        expect(first.nextCursor).toBeDefined();
+        const second = await fixture.batches.listMetadataPage({
+          executionKind: "single",
+          limit: 1,
+          cursor: first.nextCursor!,
+        });
+        expect(second.items.map((batch) => batch.id)).toEqual(["manual-1"]);
+        expect(second.nextCursor).toBeUndefined();
+        const tasks = await fixture.batches.listMetadataPage({ executionKind: "task", limit: 1 });
+        expect(tasks.items.map((batch) => batch.id)).toEqual(["batch"]);
+        const start = fixture.statements().length;
+        expect(
+          await fixture.batches.readSingleCaseExecutionEntries(["manual-1", "batch", "hidden"]),
+        ).toEqual([
+          expect.objectContaining({
+            batchId: "manual-1",
+            displayName: "中文用例",
+            caseType: "testng",
+            attempt: null,
+          }),
+        ]);
+        const queries = fixture.statements().slice(start);
+        expect(queries).toHaveLength(1);
+        expect(queries[0]).not.toContain("testng_result_json");
+        expect(queries[0]).not.toContain("adapter_runtime_json");
+        expect(await fixture.batches.readSingleCaseExecutionEntries([])).toEqual([]);
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    it("reads a manual log target without full details, reports or unrelated attempt scans", async () => {
+      const fixture = await createFixture(mode);
+      try {
+        await seedSnapshot(fixture);
+        await fixture.execute(
+          `INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,batch_kind,parent_batch_id,source_execution_run_id,environment_json,created_at,updated_at) VALUES ('manual','suite','Manual',1,'queued',0,1,'case_log_rerun','batch','run-ddt','[]',?,?)`,
+          [timestamp, timestamp],
+        );
+        const fullDetails = vi.spyOn(fixture.batches, "get");
+        const counters = vi.spyOn(fixture.batches, "getSummary");
+        expect(await fixture.batches.getCaseLogRerunLogTarget("missing")).toBeNull();
+        expect(await fixture.batches.getCaseLogRerunLogTarget("batch")).toBeNull();
+        expect(await fixture.batches.getCaseLogRerunLogTarget("manual")).toMatchObject({
+          batchStatus: "queued",
+          attempt: null,
+        });
+        await fixture.execute(
+          `INSERT INTO execution_runs(id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,created_at,updated_at) VALUES ('manual-run','manual','case',1,'订单支付_中文001','example.Checkout','running',2,?,?)`,
+          [timestamp, timestamp],
+        );
+        await fixture.execute(
+          `INSERT INTO runners(id,credential_hash,name,os,architecture,agent_version,protocol_version,labels_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at) VALUES ('runner','hash','runner','linux','amd64','1.19.22',1,'[]',4,0,?,?,?)`,
+          [timestamp, timestamp, timestamp],
+        );
+        for (const [id, number] of [
+          ["manual-a", 1],
+          ["manual-z", 2],
+        ] as const) {
+          await fixture.execute(
+            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES (?,'manual-run','runner',?,'running',1,?)`,
+            [id, number, timestamp],
+          );
+        }
+        const before = fixture.statements().length;
+        expect(await fixture.batches.getCaseLogRerunLogTarget("manual")).toMatchObject({
+          batchStatus: "queued",
+          attempt: { id: "manual-z", status: "running" },
+        });
+        const queries = fixture.statements().slice(before);
+        expect(queries).toHaveLength(1);
+        expect(queries[0]!.toLowerCase()).not.toMatch(/exists|json|select\s+\*/u);
+        expect(queries[0]!.toLowerCase()).toContain("join");
+        if (fixture.sqliteQueryPlan) {
+          const plan = fixture.sqliteQueryPlan(queries[0]!, ["manual", "case_log_rerun", 1]);
+          expect(plan.join("\n")).not.toMatch(/SCAN run_attempts/u);
+          expect(plan.join("\n")).toMatch(/SEARCH run_attempts USING/u);
+        }
+        expect(fullDetails).not.toHaveBeenCalled();
+        expect(counters).not.toHaveBeenCalled();
+      } finally {
+        await fixture.close();
+      }
+    });
+
     it("reads TestNG/DDT execution facts without batch counters or rerun preparation", async () => {
       const fixture = await createFixture(mode);
       try {

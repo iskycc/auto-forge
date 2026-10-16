@@ -40,6 +40,9 @@ export function runBatchFilterFromSearch(
       ? (status as NonNullable<RunBatchListQuery["status"]>)
       : undefined;
   return {
+    ...(value("executionKind") === "single" || value("executionKind") === "task"
+      ? { executionKind: value("executionKind") as "single" | "task" }
+      : {}),
     limit: pageSizeFromValue(value("limit")),
     ...(projectIds ? { projectIds } : {}),
     ...(cursor ? { cursor } : {}),

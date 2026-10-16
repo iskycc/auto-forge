@@ -10,6 +10,7 @@ export interface WorkDispatcher {
   cancelExecutionRun?(input: unknown): Promise<unknown>;
   createBatch?(input: unknown): Promise<unknown>;
   createSingleDdtCase?(input: unknown): Promise<unknown>;
+  createVersionCaseExecution?(input: unknown): Promise<unknown>;
   rerunCaseFromAttempt?(input: unknown): Promise<unknown>;
   searchDdtValues?(input: unknown, signal: AbortSignal): Promise<unknown>;
   initializeVersion?(input: unknown, signal: AbortSignal): Promise<unknown>;

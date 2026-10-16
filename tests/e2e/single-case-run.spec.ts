@@ -426,6 +426,342 @@ test("log detail reruns a completed case from an active 501-case batch and its m
   }
 });
 
+test("version execution API authenticates calls and separates single results from task records", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const project = await createProject(page);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  await uploadAdapterDependencies(page, project.id);
+  const className = "com.example.VersionApiExecution";
+  await importCases(page, project, [className]);
+  const caseIds = await listCaseIds(page, project);
+  expect(caseIds).toHaveLength(1);
+  const caseDefinitionId = caseIds[0]!;
+  const runner = await registerRunner(page);
+  const permissions = ["run.create", "run.read", "log.read"];
+  const account = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
+    method: "POST",
+    body: {
+      name: uniqueName("version-execution-api"),
+      projectPermissions: { [project.id]: permissions },
+    },
+  });
+  expect(account.status).toBe(201);
+  const token = await browserJson<{ token: string }>(
+    page,
+    `/api/v1/service-accounts/${account.body.id}/tokens`,
+    {
+      method: "POST",
+      body: {
+        name: "version-run",
+        scopes: permissions,
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    },
+  );
+  expect(token.status).toBe(201);
+  const endpoint = `/api/v1/projects/${project.id}/versions/${project.versionId}/case-executions`;
+  const input = {
+    className,
+    environmentIp: "10.0.0.21",
+  };
+  const headers = { authorization: `Bearer ${token.body.token}` };
+  const denied = await page.request.post(endpoint.replace(project.id, "other-project"), {
+    headers,
+    data: input,
+  });
+  expect(denied.status()).toBe(403);
+  const wrongVersion = await page.request.post(
+    endpoint.replace(project.versionId, "missing-version"),
+    { headers, data: input },
+  );
+  expect(wrongVersion.status()).toBe(404);
+  const invalidToken = await page.request.post(endpoint, {
+    headers: { authorization: "Bearer af_api_invalid" },
+    data: input,
+  });
+  expect(invalidToken.status()).toBe(401);
+  const partialClass = await page.request.post(endpoint, {
+    headers,
+    data: { className: "VersionApiExecution", environmentIp: input.environmentIp },
+  });
+  expect(partialClass.status()).toBe(404);
+  const created = await page.request.post(endpoint, { headers, data: input });
+  expect(created.status(), await created.text()).toBe(201);
+  const execution = (await created.json()) as { batchId: string; statusUrl: string };
+  let claim: ClaimAssignmentsResponse["assignments"][number] | undefined;
+  await expect
+    .poll(async () => {
+      claim = (await claimAvailableAttempts(page, runner)).find(
+        (item) => item.assignment.executionSpec.batchId === execution.batchId,
+      );
+      return Boolean(claim);
+    })
+    .toBe(true);
+  expect(claim!.assignment.executionSpec).toMatchObject({
+    className,
+    adapter: {
+      suiteName: project.name,
+      testName: "单用例 E2E 版本 - 单用例 E2E 阶段",
+      environmentAddress: "10.0.0.21",
+    },
+  });
+  const logs = await page.request.post(`/api/v1/run-attempts/${claim!.assignment.attemptId}/logs`, {
+    headers: {
+      authorization: `Bearer ${runner.credential}`,
+      "x-autoforge-runner-id": runner.runnerId,
+    },
+    data: {
+      schemaVersion: 1,
+      requestId: randomUUID(),
+      leaseToken: claim!.lease.token,
+      chunks: [
+        {
+          stream: "stdout",
+          sequence: 0,
+          content: "version API execution log\n",
+          recordedAt: new Date().toISOString(),
+        },
+      ],
+    },
+  });
+  expect(logs.status()).toBe(200);
+  await finishSuccessfulAttempt(page, runner, claim!, 0);
+  const status = await page.request.get(execution.statusUrl, { headers });
+  expect(status.status()).toBe(200);
+  expect(await status.json()).toMatchObject({
+    execution: { className, attempt: { outcome: "succeeded" } },
+  });
+  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      name: uniqueName("任务分组"),
+    },
+  });
+  expect(suite.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: [caseDefinitionId] },
+      })
+    ).status,
+  ).toBe(200);
+  await configureTaskExecution(page, suite.body.id, runner.runnerId, {
+    concurrency: 1,
+    retryLimit: 0,
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  const task = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
+    method: "POST",
+    body: { suiteId: suite.body.id },
+  });
+  expect(task.status).toBe(201);
+  try {
+    const singleQuery = new URLSearchParams({
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      executionKind: "single",
+    });
+    const singlePage = await browserJson<{ items: Array<{ id: string }> }>(
+      page,
+      `/api/v1/run-batches?${singleQuery}`,
+    );
+    expect(singlePage.body.items.map((item) => item.id)).toEqual([execution.batchId]);
+    singleQuery.set("executionKind", "task");
+    const taskPage = await browserJson<{ items: Array<{ id: string }> }>(
+      page,
+      `/api/v1/run-batches?${singleQuery}`,
+    );
+    expect(taskPage.body.items.map((item) => item.id)).toEqual([task.body.id]);
+    await page.goto("/execution-records?view=single");
+    const row = page.getByRole("row").filter({ hasText: className });
+    await expect(row).toContainText("成功");
+    await expect(row.getByRole("link", { name: /详情/ })).toHaveCount(0);
+    await row.getByRole("button", { name: "结果", exact: true }).click();
+    const resultDialog = page.getByRole("dialog", { name: /单用例执行结果/ });
+    await expect(resultDialog).toContainText("TESTNG_SUCCEEDED");
+    await expect(resultDialog.getByRole("heading", { name: /单用例执行结果/ })).toBeVisible();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`version-execution-result-${width}.png`),
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+    await resultDialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await row.getByRole("button", { name: "日志", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: /执行日志/ })).toContainText(
+      "version API execution log",
+    );
+    await page.keyboard.press("Escape");
+    for (const appearance of ["light", "dark"] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+        ]);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        for (const view of ["single", "task", "api"]) {
+          await page.goto(`/execution-records?view=${view}`);
+          await expect(page.getByRole("heading", { name: "执行记录", exact: true })).toBeVisible();
+          if (view === "api") {
+            await expect(
+              page.getByRole("heading", { name: "必填参数", exact: true }),
+            ).toBeVisible();
+            await expect(
+              page.getByRole("heading", { name: "选填参数", exact: true }),
+            ).toBeVisible();
+            await expect(page.locator("pre")).toContainText('"className"');
+            await expect(page.locator("pre")).toContainText("com.example.CheckoutTest");
+            await expect(page.locator("pre")).not.toContainText('"caseDefinitionId"');
+            await expect(page.locator("pre")).toContainText('"environmentIp"');
+            await expect(page.locator("pre")).not.toContainText('"execution"');
+            await expect(page.locator("pre")).not.toContainText('"kind"');
+            await expect(page.locator("pre")).not.toContainText('"selection"');
+            await expect(page.locator("pre")).not.toContainText('"testStageId"');
+          }
+          await expectUiIntegrity(page);
+          await page.screenshot({
+            path: testInfo.outputPath(`version-execution-${view}-${appearance}-${width}.png`),
+            fullPage: true,
+            animations: "disabled",
+          });
+        }
+      }
+    }
+    await page.goto("/execution-records?view=api");
+    await page.getByRole("combobox", { name: "执行 API 用例类型" }).click();
+    await page.getByRole("option", { name: "DDT 用例", exact: true }).click();
+    await expect(page.locator("pre")).toContainText("订单支付_001");
+    await expect(page.locator("pre")).toContainText('"caseId"');
+    await expect(page.locator("pre")).not.toContainText('"kind"');
+    await expect(page.locator("pre")).toContainText(endpoint);
+    await page.getByRole("combobox", { name: "执行 API 接口范围" }).click();
+    await page.getByRole("option", { name: "限定当前测试阶段", exact: true }).click();
+    await expect(page.locator("pre")).toContainText(`/stages/${project.stageId}/case-executions`);
+    await expect(page.locator("pre")).not.toContainText('"testStageId"');
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`version-execution-api-ddt-dark-${width}.png`),
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+    const cancellable = await page.request.post(endpoint, {
+      headers,
+      data: {
+        caseDefinitionId,
+        environmentIp: input.environmentIp,
+        execution: { runnerIds: [runner.runnerId] },
+      },
+    });
+    expect(cancellable.status()).toBe(201);
+    const cancellation = (await cancellable.json()) as {
+      batchId: string;
+      sequenceNumber: number;
+      statusUrl: string;
+    };
+    await page.goto("/execution-records?view=single");
+    const cancelRow = page.getByRole("row").filter({ hasText: `#${cancellation.sequenceNumber}` });
+    await cancelRow.getByRole("button", { name: "终止", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "终止单用例执行？" })
+      .getByRole("button", { name: "终止执行", exact: true })
+      .click();
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(cancellation.statusUrl, { headers });
+        return ((await response.json()) as { execution: { status: string } }).execution.status;
+      })
+      .toBe("cancelled");
+    const duplicateStage = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${project.id}/versions/${project.versionId}/stages`,
+      {
+        method: "POST",
+        body: { name: "类路径重复阶段", description: "完整类路径定位验收" },
+      },
+    );
+    expect(duplicateStage.status).toBe(201);
+    const emptyStage = await page.request.post(
+      endpoint.replace("/case-executions", `/stages/${duplicateStage.body.id}/case-executions`),
+      { headers, data: input },
+    );
+    expect(emptyStage.status()).toBe(404);
+    await selectProjectContext(page, project.id, project.versionId, duplicateStage.body.id);
+    await importCases(page, { ...project, stageId: duplicateStage.body.id }, [className]);
+    const duplicateDefinitions = await browserJson<{ items: Array<{ className: string }> }>(
+      page,
+      `/api/v1/case-definitions?${new URLSearchParams({
+        projectId: project.id,
+        projectVersionId: project.versionId,
+        testStageId: duplicateStage.body.id,
+        limit: "2",
+      })}`,
+    );
+    expect(duplicateDefinitions.body.items.map((item) => item.className)).toEqual([className]);
+    const ambiguousClass = await page.request.post(endpoint, { headers, data: input });
+    expect(ambiguousClass.status(), await ambiguousClass.text()).toBe(409);
+    expect(await ambiguousClass.json()).toMatchObject({
+      error: { code: "CASE_CLASS_SCOPE_CONFLICT" },
+    });
+    await heartbeatRunner(page, runner);
+    const scoped = await page.request.post(
+      endpoint.replace("/case-executions", `/stages/${project.stageId}/case-executions`),
+      { headers, data: input },
+    );
+    expect(scoped.status(), await scoped.text()).toBe(201);
+    const scopedExecution = (await scoped.json()) as { batchId: string; statusUrl: string };
+    let scopedClaim: ClaimAssignmentsResponse["assignments"][number] | undefined;
+    await expect
+      .poll(async () => {
+        scopedClaim = (await claimAvailableAttempts(page, runner)).find(
+          (item) => item.assignment.executionSpec.batchId === scopedExecution.batchId,
+        );
+        return Boolean(scopedClaim);
+      })
+      .toBe(true);
+    expect(scopedClaim!.assignment.executionSpec.adapter).toMatchObject({
+      suiteName: project.name,
+      testName: "单用例 E2E 版本 - 单用例 E2E 阶段",
+      environmentAddress: input.environmentIp,
+    });
+    await finishSuccessfulAttempt(page, runner, scopedClaim!);
+    const scopedResult = await page.request.get(scopedExecution.statusUrl, { headers });
+    expect(await scopedResult.json()).toMatchObject({
+      execution: {
+        caseDefinitionId,
+        className,
+        attempt: { outcome: "succeeded" },
+      },
+    });
+  } finally {
+    await browserJson(page, `/api/v1/run-batches/${task.body.id}/terminate`, {
+      method: "POST",
+      body: { reason: "E2E complete" },
+    });
+    const disabled = await browserJson(page, `/api/v1/runners/${runner.runnerId}`, {
+      method: "PATCH",
+      body: { state: "disabled" },
+    });
+    expect(disabled.status).toBe(200);
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: "light", url: "http://127.0.0.1:3100" }]);
+  }
+});
+
 async function listCaseIds(
   page: Page,
   project: { id: string; versionId: string },
@@ -473,6 +809,7 @@ async function finishSuccessfulAttempt(
   page: Page,
   runner: { runnerId: string; credential: string },
   claim: ClaimAssignmentsResponse["assignments"][number],
+  stdoutSequence = -1,
 ): Promise<void> {
   const response = await page.request.post(
     `/api/v1/run-attempts/${claim.assignment.attemptId}/complete`,
@@ -490,7 +827,7 @@ async function finishSuccessfulAttempt(
           resultCode: "TESTNG_SUCCEEDED",
           summary: "Log rerun acceptance passed",
           durationMs: 100,
-          logWatermarks: { stdout: -1, stderr: -1, agent: -1 },
+          logWatermarks: { stdout: stdoutSequence, stderr: -1, agent: -1 },
           artifacts: [],
         },
       },
@@ -619,6 +956,14 @@ async function registerRunner(page: Page): Promise<{ runnerId: string; credentia
   });
   expect(registration.status()).toBe(201);
   const runner = (await registration.json()) as { runnerId: string; credential: string };
+  await heartbeatRunner(page, runner);
+  return runner;
+}
+
+async function heartbeatRunner(
+  page: Page,
+  runner: { runnerId: string; credential: string },
+): Promise<void> {
   const heartbeat = await page.request.post(
     `/api/v1/runner-agents/${encodeURIComponent(runner.runnerId)}/heartbeat`,
     {
@@ -642,5 +987,4 @@ async function registerRunner(page: Page): Promise<{ runnerId: string; credentia
     },
   );
   expect(heartbeat.status()).toBe(200);
-  return runner;
 }

@@ -8,6 +8,14 @@ import {
 } from "./run-batch-filter";
 
 describe("runBatchFilterFromSearch", () => {
+  it("preserves execution kind across pagination and ignores unknown kinds", () => {
+    const filter = runBatchFilterFromSearch({ executionKind: "single", cursor: "next" }, undefined);
+    expect(filter.executionKind).toBe("single");
+    expect(refreshQueryFromFilter(filter).get("executionKind")).toBe("single");
+    expect(
+      runBatchFilterFromSearch({ executionKind: "other" }, undefined).executionKind,
+    ).toBeUndefined();
+  });
   it("accepts only the supported page sizes", () => {
     for (const size of RUN_BATCH_PAGE_SIZE_OPTIONS) {
       expect(runBatchFilterFromSearch({ limit: String(size) }, undefined).limit).toBe(size);

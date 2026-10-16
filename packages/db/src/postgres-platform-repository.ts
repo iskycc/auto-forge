@@ -70,6 +70,7 @@ import {
   mergeCaseSuiteExecutionPolicy,
   type CaseSuiteExecutionPolicy,
   type CaseDefinitionWithMethods,
+  type DdtScope,
   type CaseSource,
   type CaseSourceComparison,
   type CaseSourceSnapshotEntry,
@@ -868,6 +869,28 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     }));
     const last = pageRows.at(-1);
     return { items, ...(rows.length > query.limit && last ? { nextCursor: last.id } : {}) };
+  }
+
+  async findCaseDefinitionIdsByClassName(scope: DdtScope, className: string): Promise<string[]> {
+    await this.ready();
+    const rows = await this.handle.db
+      .select({ id: pgCaseDefinitions.id })
+      .from(pgCaseDefinitions)
+      .innerJoin(pgCaseSources, eq(pgCaseSources.id, pgCaseDefinitions.sourceId))
+      .where(
+        and(
+          eq(pgCaseDefinitions.projectId, scope.projectId),
+          eq(pgCaseDefinitions.projectVersionId, scope.projectVersionId),
+          eq(pgCaseDefinitions.testStageId, scope.testStageId),
+          eq(pgCaseDefinitions.className, className),
+          eq(pgCaseDefinitions.archived, false),
+          eq(pgCaseSources.projectId, scope.projectId),
+          eq(pgCaseSources.status, "ready"),
+          eq(pgCaseSources.lifecycleStatus, "active"),
+        ),
+      )
+      .limit(2);
+    return rows.map((row) => row.id);
   }
 
   async getCaseDefinition(
@@ -3214,6 +3237,26 @@ export class PostgresRunnerRepository implements RunnerRepository {
         .orderBy(desc(pgRunners.lastSeenAt))
         .limit(limit)
     ).map((row) => mapStoredRunner(row, offlineBefore));
+  }
+
+  async listPage(offlineBefore: string, query: { afterId?: string; limit: number }) {
+    await this.ready();
+    const limit = Math.max(1, Math.min(200, query.limit));
+    const rows = await this.handle.db
+      .select()
+      .from(pgRunners)
+      .where(
+        and(
+          isNull(pgRunners.purgedAt),
+          query.afterId ? gt(pgRunners.id, query.afterId) : undefined,
+        ),
+      )
+      .orderBy(pgRunners.id)
+      .limit(limit + 1);
+    return {
+      items: rows.slice(0, limit).map((row) => mapStoredRunner(row, offlineBefore)),
+      ...(rows.length > limit ? { nextCursor: rows[limit - 1]!.id } : {}),
+    };
   }
 
   async get(runnerId: string, offlineBefore: string): Promise<Runner | null> {

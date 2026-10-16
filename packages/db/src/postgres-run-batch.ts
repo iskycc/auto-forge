@@ -1,4 +1,12 @@
+import { executionRecordKindCondition } from "./execution-record-kind";
 import { finalFailureRunCondition } from "./final-failure-selection";
+import {
+  runBatchCountsQuery,
+  mapRunBatchCounts,
+  type RunBatchCountRow,
+  type RunBatchCounts,
+  type FinalOutcomeCounts,
+} from "./run-batch-counts";
 import { EXECUTION_CASE_IDENTITY_SORT_SQL } from "./execution-case-sort-query";
 import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
 import {
@@ -12,6 +20,8 @@ import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
   AttemptLogSnapshot,
+  CaseLogRerunLogTarget,
+  SingleCaseExecutionEntry,
   ReserveAssignmentsOutcome,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
@@ -413,6 +423,11 @@ export class PostgresRunBatchRepository
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
       sql`${pgRunBatches.batchKind} <> 'case_log_rerun'`,
+      executionRecordKindCondition(
+        input.executionKind,
+        pgRunBatches.suiteId,
+        pgRunBatches.batchKind,
+      ),
       ...(input.projectIds ? [inArray(pgRunBatches.projectId, [...input.projectIds])] : []),
       ...(input.projectId ? [eq(pgRunBatches.projectId, input.projectId)] : []),
       ...(input.projectVersionId
@@ -586,6 +601,89 @@ export class PostgresRunBatchRepository
       [attemptId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async readSingleCaseExecutionEntries(
+    batchIds: readonly string[],
+  ): Promise<SingleCaseExecutionEntry[]> {
+    if (batchIds.length === 0) return [];
+    if (batchIds.length > 200)
+      throw new DomainError("VALIDATION_FAILED", "单用例读取每次最多 200 条。");
+    await this.ready();
+    const rows = await this.handle.db
+      .select({
+        batchId: pgRunBatches.id,
+        runId: pgExecutionRuns.id,
+        caseDefinitionId: pgExecutionRuns.caseDefinitionId,
+        displayName: pgExecutionRuns.displayName,
+        className: pgExecutionRuns.className,
+        caseType: pgExecutionRuns.caseType,
+        status: pgExecutionRuns.status,
+        attemptId: pgRunAttempts.id,
+        attemptStatus: pgRunAttempts.status,
+        outcome: pgRunAttempts.outcome,
+        resultCode: pgRunAttempts.resultCode,
+        startedAt: pgRunAttempts.startedAt,
+        finishedAt: pgRunAttempts.finishedAt,
+      })
+      .from(pgRunBatches)
+      .innerJoin(pgExecutionRuns, eq(pgExecutionRuns.batchId, pgRunBatches.id))
+      .leftJoin(
+        pgRunAttempts,
+        sql`${pgRunAttempts.id} = (SELECT candidate.id FROM run_attempts candidate WHERE candidate.execution_run_id = ${pgExecutionRuns.id} ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1)`,
+      )
+      .where(
+        and(
+          inArray(pgRunBatches.id, [...batchIds]),
+          executionRecordKindCondition("single", pgRunBatches.suiteId, pgRunBatches.batchKind),
+        ),
+      );
+    return rows.map((row) => ({
+      batchId: row.batchId,
+      runId: row.runId,
+      caseDefinitionId: row.caseDefinitionId,
+      displayName: row.displayName,
+      className: row.className,
+      caseType: row.caseType,
+      status: row.status,
+      attempt:
+        row.attemptId && row.attemptStatus
+          ? {
+              id: row.attemptId,
+              status: row.attemptStatus,
+              ...(row.outcome ? { outcome: row.outcome } : {}),
+              ...(row.resultCode ? { resultCode: row.resultCode } : {}),
+              ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+              ...(row.finishedAt ? { finishedAt: row.finishedAt } : {}),
+            }
+          : null,
+    }));
+  }
+
+  async getCaseLogRerunLogTarget(batchId: string): Promise<CaseLogRerunLogTarget | null> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .select({
+        projectId: pgRunBatches.projectId,
+        batchStatus: pgRunBatches.status,
+        attemptId: pgRunAttempts.id,
+        attemptStatus: pgRunAttempts.status,
+      })
+      .from(pgRunBatches)
+      .leftJoin(pgExecutionRuns, eq(pgExecutionRuns.batchId, pgRunBatches.id))
+      .leftJoin(pgRunAttempts, eq(pgRunAttempts.executionRunId, pgExecutionRuns.id))
+      .where(and(eq(pgRunBatches.id, batchId), eq(pgRunBatches.batchKind, "case_log_rerun")))
+      .orderBy(desc(pgRunAttempts.createdAt), desc(pgRunAttempts.id))
+      .limit(1);
+    if (!row) return null;
+    return {
+      projectId: row.projectId,
+      batchStatus: row.batchStatus,
+      attempt:
+        row.attemptId && row.attemptStatus
+          ? { id: row.attemptId, status: row.attemptStatus }
+          : null,
+    };
   }
 
   async getRerunSnapshot(
@@ -1943,96 +2041,13 @@ export class PostgresRunBatchRepository
     };
   }
 
-  /**
-   * 状态计数与最终结果计数合并为单条重试安全查询：按“总结”规则（成功优先、
-   * attempt_number 倒序）为每个 run 挑选决定结果的 attempt，再按批次状态与
-   * 最终结果分组。attempt_count > 1 的 run 才可能有多条 attempt 竞争结果；
-   * 无重试批次（探针热路径）的 CTE 因此是空扫描，不再随在途 attempt 更新
-   * 反复扫描 run_attempts。与 SQLite 仓储的无重试快速路径语义一致。
-   */
-  private async batchRunCounts(batchIds: readonly string[]): Promise<{
-    statusRows: Array<{ batchId: string; status: string; value: number }>;
-    outcomeRows: FinalOutcomeCounts[];
-  }> {
-    if (batchIds.length === 0) return { statusRows: [], outcomeRows: [] };
-    // A newly bulk-loaded batch can have stale planner estimates. Materialize once so an
-    // empty retry set cannot be re-evaluated for every one of its 100,000 execution rows.
-    const mergedRows = (
-      await Promise.all(
-        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
-          this.handle.pool.query<{
-            batchId: string;
-            status: string;
-            finalOutcome: string | null;
-            value: string;
-          }>(
-            `WITH ranked_attempts AS MATERIALIZED (
-               SELECT attempt.execution_run_id,
-                      COALESCE(attempt.outcome, attempt.status) AS attempt_outcome,
-                      ROW_NUMBER() OVER (
-                        PARTITION BY attempt.execution_run_id
-                        ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
-                                      THEN 0 ELSE 1 END,
-                                 attempt.attempt_number DESC
-                      ) AS outcome_rank
-               FROM run_attempts attempt
-               WHERE attempt.execution_run_id IN (
-                 SELECT id FROM execution_runs
-                 WHERE batch_id = ANY($1::text[]) AND attempt_count > 1
-               )
-             )
-             SELECT run.batch_id AS "batchId",
-                    run.status AS status,
-                    COALESCE(selected.attempt_outcome,
-                      run.terminal_outcome,
-                      CASE WHEN run.status IN ('succeeded','failed','cancelled')
-                           THEN run.status END
-                    ) AS "finalOutcome",
-                    count(*)::text AS value
-             FROM execution_runs run
-             LEFT JOIN ranked_attempts selected
-               ON selected.execution_run_id = run.id AND selected.outcome_rank = 1
-             WHERE run.batch_id = ANY($1::text[])
-             GROUP BY 1, 2, 3`,
-            [ids],
-          ),
-        ),
-      )
-    )
-      .flat()
-      .flatMap((result) => result.rows);
-    const statusAggregates = new Map<string, Map<string, number>>();
-    const outcomeAggregates = new Map<
-      string,
-      { succeeded: number; failed: number; timedOut: number; cancelled: number }
-    >();
-    for (const row of mergedRows) {
-      const value = Number(row.value);
-      const statuses = statusAggregates.get(row.batchId) ?? new Map<string, number>();
-      statuses.set(row.status, (statuses.get(row.status) ?? 0) + value);
-      statusAggregates.set(row.batchId, statuses);
-      if (row.finalOutcome === null) continue;
-      const outcomes = outcomeAggregates.get(row.batchId) ?? {
-        succeeded: 0,
-        failed: 0,
-        timedOut: 0,
-        cancelled: 0,
-      };
-      if (row.finalOutcome === "succeeded") outcomes.succeeded += value;
-      else if (row.finalOutcome === "failed") outcomes.failed += value;
-      else if (row.finalOutcome === "timed_out") outcomes.timedOut += value;
-      else if (row.finalOutcome === "cancelled") outcomes.cancelled += value;
-      outcomeAggregates.set(row.batchId, outcomes);
+  private async batchRunCounts(batchIds: readonly string[]): Promise<RunBatchCounts> {
+    const rows: RunBatchCountRow[] = [];
+    for (const ids of batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      const result = await this.handle.db.execute<RunBatchCountRow>(runBatchCountsQuery(ids));
+      rows.push(...result.rows);
     }
-    return {
-      statusRows: [...statusAggregates.entries()].flatMap(([batchId, statuses]) =>
-        [...statuses.entries()].map(([status, value]) => ({ batchId, status, value })),
-      ),
-      outcomeRows: [...outcomeAggregates.entries()].map(([batchId, outcomes]) => ({
-        batchId,
-        ...outcomes,
-      })),
-    };
+    return mapRunBatchCounts(rows);
   }
 
   private async activeReservations(runnerIds: string[]): Promise<Map<string, number>> {
@@ -2319,14 +2334,6 @@ function sameRoundConcurrencyTransition(
 function isoTimestamp(value: DatabaseTimestamp): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
-
-type FinalOutcomeCounts = {
-  batchId: string;
-  succeeded: number;
-  failed: number;
-  timedOut: number;
-  cancelled: number;
-};
 
 function toRunBatchStatusEvent(
   row: typeof pgRunBatchStatusEvents.$inferSelect,

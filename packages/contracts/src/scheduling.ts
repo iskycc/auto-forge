@@ -23,13 +23,25 @@ function validateExecutionInput(
   },
   context: z.RefinementCtx,
 ): void {
-  const hasDirectRunnerSelection = value.runnerIds.length > 0;
-  const hasRunnerGroupSelection = Boolean(value.runnerGroupId);
-  if (hasDirectRunnerSelection === hasRunnerGroupSelection) {
+  validateOptionalRunnerSelection(value, context);
+  if (value.runnerIds.length === 0 && !value.runnerGroupId) {
     context.addIssue({
       code: "custom",
       path: ["runnerIds"],
       message: "必须且只能选择执行机或执行机组中的一种。",
+    });
+  }
+}
+
+function validateOptionalRunnerSelection(
+  value: { runnerIds: string[]; runnerGroupId?: string | undefined },
+  context: z.RefinementCtx,
+): void {
+  if (value.runnerIds.length > 0 && value.runnerGroupId) {
+    context.addIssue({
+      code: "custom",
+      path: ["runnerIds"],
+      message: "执行机与执行机组不能同时指定。",
     });
   }
   if (new Set(value.runnerIds).size !== value.runnerIds.length) {
@@ -100,6 +112,52 @@ export const createSingleCaseRunInputSchema = z
   });
 
 export type CreateSingleCaseRunInput = z.input<typeof createSingleCaseRunInputSchema>;
+
+const versionCaseExecutionFields = {
+  environmentIp: z
+    .string()
+    .trim()
+    .pipe(z.union([z.ipv4(), z.ipv6()])),
+  execution: z
+    .object({
+      ...executionInputFields,
+      artifactPatterns: z.array(z.string().min(1).max(256)).max(32).default([]),
+      adapter: z
+        .object({
+          enabled: z.boolean().optional(),
+          suiteName: z.string().trim().max(512).optional(),
+          testName: z.string().trim().max(512).optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .superRefine(validateOptionalRunnerSelection)
+    .prefault({}),
+};
+
+export const createVersionCaseExecutionSchema = z.union([
+  z
+    .object({
+      ...versionCaseExecutionFields,
+      className: z.string().trim().min(1).max(1_024),
+    })
+    .strict(),
+  z
+    .object({
+      ...versionCaseExecutionFields,
+      caseDefinitionId: z.string().min(1).max(128),
+    })
+    .strict(),
+  z
+    .object({
+      ...versionCaseExecutionFields,
+      caseId: z.string().trim().min(1).max(512),
+    })
+    .strict(),
+]);
+
+export type CreateVersionCaseExecutionInput = z.input<typeof createVersionCaseExecutionSchema>;
 
 export type RetryMode = "immediate" | "round";
 

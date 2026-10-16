@@ -23,6 +23,279 @@ const input = {
 };
 
 describe("single DDT execution", () => {
+  it.each(["testng", "ddt"] as const)(
+    "creates a version-scoped %s execution with the authenticated initiator",
+    async (kind) => {
+      const { service, create, item } = fixture();
+      item.caseId = "订单支付_001";
+      await service.createVersionCaseExecution(
+        scope.projectId,
+        scope.projectVersionId,
+        {
+          ...(kind === "ddt" ? { caseId: item.caseId } : { caseDefinitionId: "class" }),
+          environmentIp: "10.0.0.21",
+        },
+        { username: "api-user", source: "local" },
+      );
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          suiteId: kind === "ddt" ? "single:ddt-case" : "single:class",
+          suiteName: kind === "ddt" ? "单用例 · 订单支付_001" : "单用例 · Test",
+          requestedBy: { username: "api-user", source: "local" },
+          policy: expect.objectContaining({ projectVersionId: scope.projectVersionId }),
+          runnerIds: ["runner"],
+          adapter: {
+            enabled: true,
+            suiteName: "Project",
+            testName: "Version - Stage",
+            environmentAddresses: ["10.0.0.21"],
+          },
+        }),
+      );
+    },
+  );
+
+  it("executes an ordinary case by its complete class path with the normal defaults", async () => {
+    const { service, create, definition } = fixture();
+    await service.createVersionCaseExecution(
+      "project",
+      "version",
+      {
+        className: definition.className,
+        environmentIp: "10.0.0.21",
+      },
+      { username: "api-user", source: "local" },
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "single:class",
+        adapter: {
+          enabled: true,
+          suiteName: "Project",
+          testName: "Version - Stage",
+          environmentAddresses: ["10.0.0.21"],
+        },
+        runs: [
+          expect.objectContaining({ caseDefinitionId: "class", className: definition.className }),
+        ],
+      }),
+    );
+  });
+
+  it.each(["missing", "duplicate", "disabled", "archived"])(
+    "rejects a %s class path before persisting an execution",
+    async (condition) => {
+      const { service, catalog, definition, create } = fixture();
+      if (condition === "missing")
+        vi.mocked(catalog.findCaseDefinitionIdsByClassName).mockResolvedValue([]);
+      if (condition === "duplicate")
+        vi.mocked(catalog.findCaseDefinitionIdsByClassName).mockResolvedValue(["first", "second"]);
+      if (condition === "disabled") definition.enabled = false;
+      if (condition === "archived") definition.archived = true;
+      await expect(
+        service.createVersionCaseExecution(
+          "project",
+          "version",
+          {
+            className: definition.className,
+            environmentIp: "10.0.0.21",
+          },
+          { username: "api-user", source: "local" },
+        ),
+      ).rejects.toMatchObject({
+        code:
+          condition === "duplicate"
+            ? "CASE_CLASS_SCOPE_CONFLICT"
+            : condition === "disabled"
+              ? "CASE_DEFINITION_DISABLED"
+              : "CASE_DEFINITION_NOT_FOUND",
+      });
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("honors explicit resources and naming overrides without scanning automatic runners", async () => {
+    const { service, runners, create } = fixture();
+    await service.createVersionCaseExecution(
+      "project",
+      "version",
+      {
+        caseDefinitionId: "class",
+        environmentIp: "::1",
+        execution: {
+          runnerIds: ["runner"],
+          adapter: { suiteName: "Custom Suite", testName: "Custom Test" },
+        },
+      },
+      { username: "api-user", source: "local" },
+    );
+    expect(runners.listPage).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: {
+          enabled: true,
+          suiteName: "Custom Suite",
+          testName: "Custom Test",
+          environmentAddresses: ["::1"],
+        },
+      }),
+    );
+  });
+
+  it.each(["testng", "ddt"] as const)(
+    "applies the existing Adapter disable rule to %s",
+    async (kind) => {
+      const { service, create, item } = fixture();
+      const execution = service.createVersionCaseExecution(
+        "project",
+        "version",
+        {
+          ...(kind === "ddt" ? { caseId: item.caseId } : { caseDefinitionId: "class" }),
+          environmentIp: "10.0.0.21",
+          execution: { runnerIds: ["runner"], adapter: { enabled: false } },
+        },
+        { username: "api-user", source: "local" },
+      );
+      if (kind === "ddt") {
+        await expect(execution).rejects.toMatchObject({ code: "DDT_ADAPTER_REQUIRED" });
+        expect(create).not.toHaveBeenCalled();
+      } else {
+        await execution;
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0]![0].adapter.enabled).toBe(false);
+      }
+    },
+  );
+
+  it.each(["version", "stage", "project"])(
+    "rejects a mismatched %s before creating a version-scoped execution",
+    async (dimension) => {
+      const { service, create } = fixture();
+      await expect(
+        service.createVersionCaseExecution(
+          scope.projectId,
+          dimension === "version" ? "other-version" : scope.projectVersionId,
+          {
+            environmentIp: "10.0.0.21",
+            caseDefinitionId: "class",
+            execution: {
+              runnerIds: input.runnerIds,
+              ...(dimension === "project" ? { projectId: "other-project" } : {}),
+            },
+          },
+          { username: "api-user", source: "local" },
+          { testStageId: dimension === "stage" ? "other-stage" : scope.testStageId },
+        ),
+      ).rejects.toMatchObject({
+        code: dimension === "project" ? "VALIDATION_FAILED" : "CASE_SCOPE_NOT_FOUND",
+      });
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("finds a unique DDT CaseID in a later active stage without reading other case bodies", async () => {
+    const { service, structure, getCaseSummary, getCase, item } = fixture();
+    vi.mocked(structure.list).mockResolvedValue({
+      versions: [
+        {
+          id: "version",
+          name: "Version",
+          status: "active",
+          stages: [
+            { id: "empty-stage", status: "active" },
+            { id: "archived-stage", status: "archived" },
+            { id: "stage", name: "Stage", status: "active" },
+          ],
+        },
+      ],
+    } as Awaited<ReturnType<ProjectStructureRepository["list"]>>);
+    await service.createVersionCaseExecution(
+      "project",
+      "version",
+      {
+        caseId: item.caseId,
+        environmentIp: "10.0.0.21",
+        execution: { runnerIds: input.runnerIds },
+      },
+      { username: "api-user", source: "local" },
+    );
+    expect(getCaseSummary.mock.calls.map(([candidate]) => candidate.testStageId)).toEqual([
+      "empty-stage",
+      "stage",
+    ]);
+    expect(getCase).toHaveBeenCalledExactlyOnceWith(scope, item.caseId);
+  });
+
+  it("rejects a DDT CaseID found in multiple active stages before creating an execution", async () => {
+    const { service, structure, getCaseSummary, getCase, create, item } = fixture();
+    vi.mocked(structure.list).mockResolvedValue({
+      versions: [
+        {
+          id: "version",
+          name: "Version",
+          status: "active",
+          stages: [
+            { id: "stage", name: "Stage", status: "active" },
+            { id: "stage-2", status: "active" },
+            { id: "stage-3", status: "active" },
+          ],
+        },
+      ],
+    } as Awaited<ReturnType<ProjectStructureRepository["list"]>>);
+    getCaseSummary.mockResolvedValue(item);
+    await expect(
+      service.createVersionCaseExecution(
+        "project",
+        "version",
+        {
+          caseId: item.caseId,
+          environmentIp: "10.0.0.21",
+          execution: { runnerIds: input.runnerIds },
+        },
+        { username: "api-user", source: "local" },
+      ),
+    ).rejects.toMatchObject({
+      code: "DDT_CASE_SCOPE_CONFLICT",
+      message: expect.stringContaining("/stages/{stageId}/"),
+    });
+    expect(getCaseSummary).toHaveBeenCalledTimes(2);
+    expect(getCase).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    await service.createVersionCaseExecution(
+      "project",
+      "version",
+      {
+        caseId: item.caseId,
+        environmentIp: "10.0.0.21",
+        execution: { runnerIds: input.runnerIds },
+      },
+      { username: "api-user", source: "local" },
+      { testStageId: "stage" },
+    );
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["testng", "ddt"] as const)("rejects a missing or out-of-scope %s case", async (kind) => {
+    const { service, getCaseSummary, definition, create, item } = fixture();
+    definition.projectVersionId = "other-version";
+    getCaseSummary.mockResolvedValue(null);
+    await expect(
+      service.createVersionCaseExecution(
+        "project",
+        "version",
+        {
+          ...(kind === "ddt" ? { caseId: item.caseId } : { caseDefinitionId: "class" }),
+          environmentIp: "10.0.0.21",
+          execution: { runnerIds: input.runnerIds },
+        },
+        { username: "api-user", source: "local" },
+      ),
+    ).rejects.toMatchObject({
+      code: kind === "ddt" ? "DDT_CASE_NOT_FOUND" : "CASE_DEFINITION_NOT_FOUND",
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("allows ordinary debug, immediate and suite execution without DDT Runner capabilities", async () => {
     const { service, runners, create, suite } = fixture();
     suite.ddtItems = [];
@@ -341,6 +614,11 @@ function fixture() {
   const getCase = vi
     .fn<(requestedScope: typeof scope, caseId: string) => Promise<DdtCase | null>>()
     .mockResolvedValue(item);
+  const getCaseSummary = vi
+    .fn()
+    .mockImplementation(async (requestedScope: typeof scope) =>
+      requestedScope.testStageId === item.testStageId ? item : null,
+    );
   const getSource = vi.fn().mockResolvedValue({
     source: {
       projectId: "project",
@@ -417,12 +695,33 @@ function fixture() {
       },
     ]),
   } as unknown as RunnerRepository;
+  runners.listPage = vi.fn().mockImplementation(async () => ({
+    items: await runners.listByIds(["runner"], "2026-09-09T00:00:00Z"),
+  }));
   const catalog = {
+    findCaseDefinitionIdsByClassName: vi
+      .fn()
+      .mockImplementation(async (requestedScope: typeof scope, className: string) =>
+        requestedScope.testStageId === definition.testStageId &&
+        className === definition.className &&
+        !definition.archived
+          ? [definition.id]
+          : [],
+      ),
     getCaseDefinition: vi.fn().mockResolvedValue(definition),
     getSource,
   } as unknown as CaseCatalogRepository;
   const structure = {
-    list: vi.fn().mockResolvedValue({ versions: [{ id: "version", status: "active" }] }),
+    list: vi.fn().mockResolvedValue({
+      versions: [
+        {
+          id: "version",
+          name: "Version",
+          status: "active",
+          stages: [{ id: "stage", name: "Stage", status: "active" }],
+        },
+      ],
+    }),
     getAdapterConfiguration: vi
       .fn()
       .mockResolvedValue({ jarBundleAsset: { sourceType: "upload", objectKey: "bundle" } }),
@@ -437,8 +736,9 @@ function fixture() {
     45,
     {
       catalog,
+      projects: { listProjects: vi.fn().mockResolvedValue([{ id: "project", name: "Project" }]) },
       objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
-      ddt: { getCase },
+      ddt: { getCase, getCaseSummary },
       ddtDebug: {
         get: getCase,
         workspace: async () => ({
@@ -451,5 +751,18 @@ function fixture() {
     5,
     structure,
   );
-  return { service, getCase, create, item, definition, getSource, suite, getSuite, runners };
+  return {
+    service,
+    getCase,
+    getCaseSummary,
+    create,
+    item,
+    definition,
+    getSource,
+    suite,
+    getSuite,
+    runners,
+    structure,
+    catalog,
+  };
 }

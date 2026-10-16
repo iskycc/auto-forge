@@ -562,7 +562,13 @@ async function createPlatformServices() {
         maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
       },
       config.scheduler.metricsMaximumAgeSeconds,
-      { catalog, objectStore, ddt: ddtRepository, ddtDebug: ddtDebugRepository },
+      {
+        catalog,
+        projects: identities,
+        objectStore,
+        ddt: ddtRepository,
+        ddtDebug: ddtDebugRepository,
+      },
       config.scheduler.projectMaximumConcurrency,
       config.scheduler.priorityAgingIntervalMinutes,
       projectStructuresRepository,
@@ -939,6 +945,8 @@ async function createPlatformServices() {
       batchId: string,
       keys: readonly import("@autoforge/application").ExecutionCasePageKey[],
     ) => batches.readCasePageEntries(batchId, keys),
+    singleCaseExecutionEntries: (batchIds: readonly string[]) =>
+      batches.readSingleCaseExecutionEntries(batchIds),
     executionBatchPage: (input: import("@autoforge/application").RunBatchListQuery) =>
       readBatchPage(batches, readModels, input),
     executionOverview: (batchId: string, projectIds?: readonly string[]) =>

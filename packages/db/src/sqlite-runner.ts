@@ -178,6 +178,23 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .map((row) => mapStoredRunner(row, offlineBefore));
   }
 
+  async listPage(offlineBefore: string, query: { afterId?: string; limit: number }) {
+    const limit = Math.max(1, Math.min(200, query.limit));
+    const rows = this.handle.db
+      .select()
+      .from(runners)
+      .where(
+        and(isNull(runners.purgedAt), query.afterId ? gt(runners.id, query.afterId) : undefined),
+      )
+      .orderBy(runners.id)
+      .limit(limit + 1)
+      .all();
+    return {
+      items: rows.slice(0, limit).map((row) => mapStoredRunner(row, offlineBefore)),
+      ...(rows.length > limit ? { nextCursor: rows[limit - 1]!.id } : {}),
+    };
+  }
+
   async get(runnerId: string, offlineBefore: string): Promise<Runner | null> {
     const row = this.handle.db.select().from(runners).where(eq(runners.id, runnerId)).get();
     return row ? mapStoredRunner(row, offlineBefore) : null;

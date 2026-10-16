@@ -7,6 +7,7 @@ import { z } from "zod";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 
 const querySchema = z.object({
+  executionKind: z.enum(["task", "single"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().max(512).optional(),
   projectId: z.string().min(1).max(128).optional(),
@@ -27,6 +28,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
     const filter = {
+      ...(query.executionKind ? { executionKind: query.executionKind } : {}),
       limit: query.limit,
       ...(projectIds ? { projectIds } : {}),
       ...(query.cursor ? { cursor: query.cursor } : {}),
