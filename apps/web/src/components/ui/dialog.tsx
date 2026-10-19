@@ -74,6 +74,9 @@ export function Dialog({
       keyboard={!inactive && !closeDisabled && !onEscape}
       mask={inactive ? false : { closable: !closeDisabled }}
       destroyOnHidden
+      // The shared lifecycle already restores focus. A second restoration after
+      // exit motion can override the field focused by a navigation destination.
+      focusable={{ focusTriggerAfterClose: false }}
       style={{ maxWidth: "calc(100% - 24px)", padding: 0 }}
       classNames={{ wrapper: cn(backdropClassName, inactive && "pointer-events-none") }}
       styles={{

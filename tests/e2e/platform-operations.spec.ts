@@ -128,6 +128,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await captureUi(page, "configuration-search-1536");
   await configurationSearch.getByRole("link", { name: /内部访问地址/u }).click();
   await expect(page).toHaveURL(/section=configuration&focus=runnerBaseUrl/u);
+  await expect(configurationSearch).not.toBeVisible();
   await expect(page.locator('input[name="runnerBaseUrl"]')).toBeFocused();
 
   await page.getByLabel("公开大盘刷新间隔（秒）").fill("6");
@@ -164,6 +165,12 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await page.getByRole("button", { name: "保存平台配置" }).click();
   await expect(page.getByText(/平台时区已立即生效.*无需重启/)).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-time-zone", originalTimeZone);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await captureUi(page, `platform-configuration-saved-${width}`);
+  }
 
   const ddtImportFileLimit = page.getByLabel("DDT 单次上传文件上限");
   const ddtImportZipSpreadsheetLimit = page.getByLabel("DDT 单个 ZIP 表格上限");

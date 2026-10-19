@@ -577,6 +577,18 @@ test("version execution API authenticates calls and separates single results fro
   });
   expect(task.status).toBe(201);
   try {
+    // Keep the comparison record without occupying the only project slot in
+    // the execution CI partition while checking subsequent API requests.
+    let taskClaim: ClaimAssignmentsResponse["assignments"][number] | undefined;
+    await expect
+      .poll(async () => {
+        taskClaim = (await claimAvailableAttempts(page, runner)).find(
+          (item) => item.assignment.executionSpec.batchId === task.body.id,
+        );
+        return Boolean(taskClaim);
+      })
+      .toBe(true);
+    await finishSuccessfulAttempt(page, runner, taskClaim!);
     const singleQuery = new URLSearchParams({
       projectId: project.id,
       projectVersionId: project.versionId,

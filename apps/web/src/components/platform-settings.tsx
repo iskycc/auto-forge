@@ -11,7 +11,6 @@ import { Button, Input, Textarea } from "@/components/ui";
 
 import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
@@ -40,7 +39,6 @@ export function PlatformSettings({
   canManage: boolean;
   initialFocus?: string;
 }) {
-  const router = useRouter();
   const draft = useUnsavedForm();
   const toast = useToast();
   const showConcurrentModification = useConcurrentModificationFeedback();
@@ -116,6 +114,8 @@ export function PlatformSettings({
         restartRequiredFields?: string[];
         web?: { timeZone?: string };
       };
+      // Apply the response locally. A route refresh can overwrite the next edit
+      // or race a navigation to another settings tab.
       if (body.revision !== undefined) setRevision(body.revision);
       if (body.web?.timeZone) {
         document.documentElement.dataset.timeZone = body.web.timeZone;
@@ -134,7 +134,6 @@ export function PlatformSettings({
       if (restart.length > 0) toast.warning(message, { title: "配置已保存，等待重启" });
       else toast.success(message, { title: "平台配置已生效" });
       draft.markSaved();
-      router.refresh();
     } catch (cause) {
       if (await showConcurrentModification(cause)) return;
       setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
