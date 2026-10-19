@@ -54,7 +54,6 @@ import type {
 import {
   columnResolutionIdentity,
   columnResolutionKey,
-  planBlankConflictColumnDeletion,
   requiredConflictColumnName,
   type LocatedColumnConflict,
 } from "@/lib/ddt-column-resolution";
@@ -2109,7 +2108,6 @@ function ColumnConflictDialog({
   onConfirm(): void;
 }) {
   const validationError = validateColumnResolutions(resolutions, conflicts);
-  const blankColumnDeletion = planBlankConflictColumnDeletion(resolutions, conflicts);
   const conflictColumnCount = conflicts.reduce(
     (total, conflict) => total + conflict.columns.length,
     0,
@@ -2202,21 +2200,8 @@ function ColumnConflictDialog({
               {affectedFileCount} 个文件 · {conflicts.length} 组冲突 · {conflictColumnCount}{" "}
               个重复列
             </strong>
-            <span>按整列内容判断空白；全空组保留一列</span>
+            <span>空白列与相同数据已自动处理，请确认以下不同内容</span>
           </p>
-          <Button
-            className={cn(
-              "button button-secondary",
-              uiPatterns["button"],
-              uiPatterns["button-secondary"],
-            )}
-            disabled={busy || blankColumnDeletion.deletedColumnCount === 0}
-            size="compact"
-            type="button"
-            onClick={() => onChange(blankColumnDeletion.resolutions)}
-          >
-            一键删除空白冲突列
-          </Button>
           <Button
             className={cn(
               "button button-secondary",

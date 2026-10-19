@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as XLSX from "xlsx";
 import {
   DDT_IMPORT_COLUMN_RESOLUTION_LIMIT,
@@ -120,18 +121,87 @@ function normalizedColumnName(column: string): string {
   return column.trim().toLocaleLowerCase("en-US");
 }
 
+function columnIndexesByName(columns: readonly (string | undefined)[]): Map<string, number[]> {
+  const indexesByName = new Map<string, number[]>();
+  columns.forEach((column, columnIndex) => {
+    if (column === undefined) return;
+    const normalized = normalizedColumnName(column);
+    const indexes = indexesByName.get(normalized);
+    if (indexes) indexes.push(columnIndex);
+    else indexesByName.set(normalized, [columnIndex]);
+  });
+  return indexesByName;
+}
+
+function columnsHaveEqualValues(
+  matrix: readonly unknown[][],
+  leftIndex: number,
+  rightIndex: number,
+): boolean {
+  for (let rowIndex = 1; rowIndex < matrix.length; rowIndex += 1) {
+    if (
+      normalizeCell(matrix[rowIndex]?.[leftIndex]) !== normalizeCell(matrix[rowIndex]?.[rightIndex])
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function automaticallyRetainedColumns(
+  sourceColumns: readonly (string | undefined)[],
+  matrix: readonly unknown[][],
+): Array<string | undefined> {
+  const columns = [...sourceColumns];
+  for (const [normalizedName, indexes] of columnIndexesByName(sourceColumns)) {
+    if (indexes.length < 2) continue;
+    const retainedIndexes: number[] = [];
+    const indexesByDigest = new Map<string, number[]>();
+    for (const columnIndex of indexes) {
+      let hasContent = false;
+      const hash = createHash("sha256");
+      for (let rowIndex = 1; rowIndex < matrix.length; rowIndex += 1) {
+        const value = normalizeCell(matrix[rowIndex]?.[columnIndex]);
+        if (String(value).trim()) hasContent = true;
+        // JSON preserves cell boundaries, types and significant whitespace.
+        hash.update(JSON.stringify(value)).update("\n");
+      }
+      if (!hasContent) {
+        columns[columnIndex] = undefined;
+        continue;
+      }
+      const digest = hash.digest("hex");
+      const matchingIndexes = indexesByDigest.get(digest) ?? [];
+      // Verify equal digests against every row before discarding any data.
+      if (matchingIndexes.some((index) => columnsHaveEqualValues(matrix, index, columnIndex))) {
+        columns[columnIndex] = undefined;
+        continue;
+      }
+      matchingIndexes.push(columnIndex);
+      indexesByDigest.set(digest, matchingIndexes);
+      retainedIndexes.push(columnIndex);
+    }
+    if (retainedIndexes.length === 0) {
+      const firstIndex = indexes[0]!;
+      columns[firstIndex] = sourceColumns[firstIndex]!;
+      retainedIndexes.push(firstIndex);
+    }
+    if (retainedIndexes.length === 1) {
+      const requiredName =
+        normalizedName === "caseid" ? "CaseID" : normalizedName === "srnum" ? "srNum" : undefined;
+      if (requiredName) columns[retainedIndexes[0]!] = requiredName;
+    }
+  }
+  return columns;
+}
+
 function duplicateColumnConflicts(
   sheetName: string,
   originalColumns: readonly string[],
   columns: readonly (string | undefined)[],
   matrix: readonly unknown[][],
 ): DdtImportColumnConflict[] {
-  const indexesByName = new Map<string, number[]>();
-  columns.forEach((column, columnIndex) => {
-    if (column === undefined) return;
-    const normalized = normalizedColumnName(column);
-    indexesByName.set(normalized, [...(indexesByName.get(normalized) ?? []), columnIndex]);
-  });
+  const indexesByName = columnIndexesByName(columns);
   const duplicateIndexes = new Set(
     [...indexesByName.values()].filter((indexes) => indexes.length > 1).flat(),
   );
@@ -289,15 +359,21 @@ function parseCaseSheet(
       resolvedName,
     });
   }
-  const columns = originalColumns.map((column, columnIndex) => {
+  // Resolve from the immutable source before applying manual choices, so a deleted
+  // representative cannot make an automatically discarded copy reappear on retry.
+  const automaticColumns = automaticallyRetainedColumns(originalColumns, matrix);
+  const resolvedColumns = automaticColumns.map((column, columnIndex) => {
     const resolution = resolutionByIndex.get(columnIndex);
     if (resolution?.deleteColumn) return undefined;
     return resolution?.resolvedName ?? column;
   });
-  const removedConflictName = fullyRemovedDuplicateColumnName(originalColumns, columns);
+  const removedConflictName = fullyRemovedDuplicateColumnName(originalColumns, resolvedColumns);
   if (removedConflictName) {
     throw new Error(`${sheetName} Sheet 的重复列“${removedConflictName}”至少需要保留一列`);
   }
+  const columns = resolutions.length
+    ? automaticallyRetainedColumns(resolvedColumns, matrix)
+    : resolvedColumns;
   const conflicts = duplicateColumnConflicts(sheetName, originalColumns, columns, matrix);
   if (conflicts.length) {
     assertResolvableColumnConflictLimit(conflicts, `${sheetName} Sheet `);
@@ -360,11 +436,7 @@ function fullyRemovedDuplicateColumnName(
   originalColumns: readonly string[],
   columns: readonly (string | undefined)[],
 ): string | undefined {
-  const indexesByName = new Map<string, number[]>();
-  originalColumns.forEach((column, columnIndex) => {
-    const normalized = normalizedColumnName(column);
-    indexesByName.set(normalized, [...(indexesByName.get(normalized) ?? []), columnIndex]);
-  });
+  const indexesByName = columnIndexesByName(originalColumns);
   const removed = [...indexesByName.values()].find(
     (indexes) =>
       indexes.length > 1 && indexes.every((columnIndex) => columns[columnIndex] === undefined),

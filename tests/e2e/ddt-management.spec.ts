@@ -828,7 +828,7 @@ test("DDT import resolves duplicate column names before background import", asyn
 });
 
 for (const theme of ["light", "dark"] as const) {
-  test(`DDT import deletes blank duplicate columns in one action and preserves populated fields (${theme})`, async ({
+  test(`DDT import automatically removes blank and identical columns before confirming different values (${theme})`, async ({
     page,
   }) => {
     await ensureAdministrator(page);
@@ -863,6 +863,8 @@ for (const theme of ["light", "dark"] as const) {
       "数值",
       "数值",
       "非冲突空白",
+      "相同",
+      "相同",
     ];
     const cells = [
       "",
@@ -883,6 +885,8 @@ for (const theme of ["light", "dark"] as const) {
       "",
       "0",
       "",
+      "保留一次",
+      "保留一次",
     ];
     await importDialog.locator('input[type="file"]').setInputFiles({
       name: fileName,
@@ -891,48 +895,24 @@ for (const theme of ["light", "dark"] as const) {
     });
     await importDialog.getByRole("button", { name: "开始预检" }).click();
     const conflictDialog = page.getByRole("dialog", { name: "解决重复列名" });
-    await expect(conflictDialog).toContainText("1 个文件 · 8 组冲突 · 17 个重复列");
-    const deleteBlanks = conflictDialog.getByRole("button", {
-      name: "一键删除空白冲突列",
-      exact: true,
-    });
-    await expect(deleteBlanks).toBeEnabled();
-    await deleteBlanks.focus();
-    await deleteBlanks.press("Enter");
-    await expect(conflictDialog.locator(".ddt-column-resolution-summary")).toContainText(
-      "保留 10 列 · 删除 7 列",
-    );
-    await expect(deleteBlanks).toBeDisabled();
+    await expect(conflictDialog).toContainText("1 个文件 · 2 组冲突 · 4 个重复列");
+    await expect(
+      conflictDialog.getByRole("button", { name: "一键删除空白冲突列", exact: true }),
+    ).toHaveCount(0);
     const deleteChoices = conflictDialog.getByRole("checkbox");
-    await expect(deleteChoices).toHaveCount(17);
-    for (const columnIndex of [0, 2, 4, 7, 9, 11, 15]) {
-      await expect(
-        conflictDialog.getByLabel(
-          `${fileName} Sheet1 Sheet 删除第 ${columnIndex + 1} 列 ${headers[columnIndex]}`,
-        ),
-      ).toBeChecked();
-    }
-    for (const columnIndex of [1, 3, 5, 6, 8, 10, 12, 13, 14, 16]) {
+    await expect(deleteChoices).toHaveCount(4);
+    for (const columnIndex of [10, 12, 13, 14]) {
       await expect(
         conflictDialog.getByLabel(
           `${fileName} Sheet1 Sheet 删除第 ${columnIndex + 1} 列 ${headers[columnIndex]}`,
         ),
       ).not.toBeChecked();
     }
-    await expect(conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 2 列的新列名`)).toHaveValue(
-      "CaseID",
-    );
-    await expect(conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 4 列的新列名`)).toHaveValue(
-      "srNum",
-    );
-    await expect(conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 6 列的新列名`)).toHaveValue(
-      "左空",
-    );
+    const changedName = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 13 列的新列名`);
+    await changedName.fill("保留乙");
     await conflictDialog.getByRole("button", { name: "暂不处理" }).click();
     await importDialog.getByRole("button", { name: "处理重复列名" }).click();
-    await expect(conflictDialog.locator(".ddt-column-resolution-summary")).toContainText(
-      "删除 7 列",
-    );
+    await expect(changedName).toHaveValue("保留乙");
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
     for (const viewport of [
       { width: 1024, height: 768 },
@@ -941,7 +921,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.setViewportSize(viewport);
       await expectUiIntegrity(page);
       await expect(conflictDialog.getByRole("button", { name: "应用并重新预检" })).toBeInViewport();
-      await captureDdtUi(page, `ddt-delete-blank-columns-${theme}-${viewport.width}`);
+      await captureDdtUi(page, `ddt-auto-columns-manual-conflict-${theme}-${viewport.width}`);
     }
     await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
     await expect(conflictDialog).toBeHidden();
@@ -962,16 +942,19 @@ for (const theme of ["light", "dark"] as const) {
       右空: "测试",
       全空: " ",
       混合: "甲",
-      混合_3: "乙",
+      保留乙: "乙",
       双非空: "red",
       双非空_2: "blue",
       数值: "0",
       非冲突空白: "",
+      相同: "保留一次",
     });
   });
 }
 
-test("DDT ZIP import deletes blank conflicts independently for each entry", async ({ page }) => {
+test("DDT ZIP import removes blank and identical columns without opening a conflict dialog", async ({
+  page,
+}) => {
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);
   await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
@@ -987,7 +970,7 @@ test("DDT ZIP import deletes blank conflicts independently for each entry", asyn
           `CaseID,srNum,环境,环境\nZIP-A-${hierarchy.suffix},CORE,,production\n`,
         ),
         "二/冲突.csv": new TextEncoder().encode(
-          `CaseID,srNum,环境,环境\nZIP-B-${hierarchy.suffix},CORE,test,\n`,
+          `CaseID,srNum,环境,环境\nZIP-B-${hierarchy.suffix},CORE,test,test\n`,
         ),
         "正常.csv": new TextEncoder().encode(
           `CaseID,srNum,环境\nZIP-C-${hierarchy.suffix},CORE,unchanged\n`,
@@ -997,14 +980,17 @@ test("DDT ZIP import deletes blank conflicts independently for each entry", asyn
   });
   await importDialog.getByRole("button", { name: "开始预检" }).click();
   const conflictDialog = page.getByRole("dialog", { name: "解决重复列名" });
-  await expect(conflictDialog).toContainText("2 个文件 · 2 组冲突 · 4 个重复列");
-  await conflictDialog.getByRole("button", { name: "一键删除空白冲突列" }).click();
-  await expect(conflictDialog.locator(".ddt-column-resolution-summary")).toContainText(
-    "保留 2 列 · 删除 2 列",
-  );
-  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
-  await expect(conflictDialog).toBeHidden();
   await expect(importDialog.locator(".ddt-preview-summary")).toContainText("3 / 3");
+  await expect(conflictDialog).toBeHidden();
+  await expect(importDialog.getByRole("button", { name: "处理重复列名" })).toHaveCount(0);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-auto-columns-ready-${viewport.width}`);
+  }
   await importDialog.getByRole("button", { name: "确认并后台导入" }).click();
   await expect(page.locator(".ddt-status.succeeded", { hasText: "已完成" })).toBeVisible({
     timeout: 30_000,
