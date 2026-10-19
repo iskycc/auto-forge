@@ -1,4 +1,12 @@
 "use client";
+import { DdtRequirementCategoryFilter } from "./ddt-requirement-category-filter";
+import {
+  collectFilteredDdtCaseIds,
+  ddtCaseFilterParameters,
+} from "@/lib/ddt-filtered-case-selection";
+import { DdtImportFileResults } from "./ddt-import-file-results";
+import { ddtImportStatusLabel as statusLabel } from "@/lib/ddt-import-status";
+import { ddtImportJobSummaryPageSchema, type DdtImportJobSummary } from "@autoforge/contracts";
 import { DdtChangeReview } from "./ddt-change-review";
 import { Radio, Upload as AntUpload } from "antd";
 import { Progress } from "@/components/ui/progress";
@@ -239,10 +247,12 @@ export function DdtManagementWorkspace({
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string>();
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [imports, setImports] = useState<ImportJob[]>([]);
+  const [imports, setImports] = useState<DdtImportJobSummary[]>([]);
   const [deletedCases, setDeletedCases] = useState<DeletedCase[]>([]);
   const query = searchParameters.get("ddtQuery") ?? "";
   const srNum = searchParameters.get("ddtGroup") ?? "";
+  const categoryIds = searchParameters.getAll("ddtCategory");
+  const categoryKey = JSON.stringify(categoryIds);
   const advancedField = searchParameters.get("ddtField") ?? "";
   const advancedOperator = searchParameters.get("ddtOperator") ?? "contains";
   const advancedValue = searchParameters.get("ddtValue") ?? "";
@@ -260,6 +270,8 @@ export function DdtManagementWorkspace({
   const setAdvancedOperator = (value: string) => updateFilterUrl("ddtOperator", value);
   const setAdvancedValue = (value: string) => updateFilterUrl("ddtValue", value);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectionProgress, setSelectionProgress] = useState<number>();
+  const selectionRequest = useRef<AbortController | null>(null);
   const [executionPreviewCaseId, setExecutionPreviewCaseId] = useState<string>();
   const [detail, setDetail] = useState<DdtCase>();
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -290,7 +302,18 @@ export function DdtManagementWorkspace({
   const loadGeneration = useRef(0);
   const observedImportStates = useRef(new Map<string, string>());
   const appliedFilters = useRef<{ key: string; url: string } | null>(null);
-  const filterKey = JSON.stringify([query, srNum, advancedField, advancedOperator, advancedValue]);
+  const filterKey = JSON.stringify([
+    query,
+    srNum,
+    categoryKey,
+    advancedField,
+    advancedOperator,
+    advancedValue,
+  ]);
+  useEffect(
+    () => () => selectionRequest.current?.abort(),
+    [filterKey, tab, scope.projectId, scope.projectVersionId, scope.testStageId],
+  );
 
   const { projectId, projectVersionId, testStageId } = scope;
   const endpoint = useCallback(
@@ -319,27 +342,22 @@ export function DdtManagementWorkspace({
         if (generation === loadGeneration.current) setError(messageOf(error));
       });
     try {
-      const caseParameters = new URLSearchParams({ limit: "60" });
-      if (query.trim()) caseParameters.set("query", query.trim());
-      if (srNum) caseParameters.set("srNum", srNum);
-      if (advancedField.trim()) {
-        caseParameters.set(
-          "filters",
-          JSON.stringify([
-            {
-              field: advancedField.trim(),
-              operator: advancedOperator,
-              ...(advancedOperator === "exists" ? {} : { value: advancedValue }),
-            },
-          ]),
-        );
-      }
+      const caseParameters = ddtCaseFilterParameters({
+        query,
+        srNum,
+        categoryIds: JSON.parse(categoryKey) as string[],
+        advancedField,
+        advancedOperator,
+        advancedValue,
+      });
       const [initialCasePage, templatePage, importPage, recyclePage] = await Promise.all([
         requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
           endpoint("cases", caseParameters),
         ),
         requestJson<{ items: Template[] }>(endpoint("templates")),
-        requestJson<{ items: ImportJob[] }>(endpoint("imports")),
+        requestJson<unknown>(endpoint("imports", new URLSearchParams({ view: "summary" }))).then(
+          (page) => ddtImportJobSummaryPageSchema.parse(page),
+        ),
         requestJson<{ items: DeletedCase[] }>(endpoint("recycle")),
       ]);
       if (generation !== loadGeneration.current) return;
@@ -382,6 +400,7 @@ export function DdtManagementWorkspace({
     endpoint,
     query,
     srNum,
+    categoryKey,
     setRefreshing,
     setBusy,
     setError,
@@ -557,21 +576,11 @@ export function DdtManagementWorkspace({
     const generation = loadGeneration.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    const parameters = new URLSearchParams({ limit: "60", cursor: nextCursor });
-    if (query.trim()) parameters.set("query", query.trim());
-    if (srNum) parameters.set("srNum", srNum);
-    if (advancedField.trim()) {
-      parameters.set(
-        "filters",
-        JSON.stringify([
-          {
-            field: advancedField.trim(),
-            operator: advancedOperator,
-            ...(advancedOperator === "exists" ? {} : { value: advancedValue }),
-          },
-        ]),
-      );
-    }
+    const parameters = ddtCaseFilterParameters(
+      { query, srNum, categoryIds, advancedField, advancedOperator, advancedValue },
+      60,
+      nextCursor,
+    );
     try {
       const page = await requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
         endpoint("cases", parameters),
@@ -584,6 +593,44 @@ export function DdtManagementWorkspace({
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
+    }
+  };
+
+  const selectFilteredCases = async () => {
+    if (selectionRequest.current || !(await leaveEditor())) return;
+    const controller = new AbortController();
+    selectionRequest.current = controller;
+    setSelectionProgress(0);
+    setError("");
+    try {
+      const caseIds = await collectFilteredDdtCaseIds(
+        async (cursor) => {
+          const parameters = ddtCaseFilterParameters(
+            { query, srNum, categoryIds, advancedField, advancedOperator, advancedValue },
+            200,
+            cursor,
+          );
+          return requestJson<{ items: Array<{ caseId: string }>; nextCursor?: string }>(
+            endpoint("cases", parameters),
+            {
+              cache: "reload",
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+            },
+          );
+        },
+        controller.signal,
+        setSelectionProgress,
+      );
+      controller.signal.throwIfAborted();
+      setSelected(new Set(caseIds));
+      toast.success(`已选择全部 ${caseIds.length} 条筛选结果，可加入用例任务。`);
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(messageOf(failure));
+    } finally {
+      if (selectionRequest.current === controller) {
+        selectionRequest.current = null;
+        setSelectionProgress(undefined);
+      }
     }
   };
 
@@ -631,7 +678,11 @@ export function DdtManagementWorkspace({
       const response = await fetch(endpoint("export"), {
         method: "POST",
         headers: jsonHeaders,
-        body: JSON.stringify(selected.size ? { caseIds: [...selected] } : srNum ? { srNum } : {}),
+        body: JSON.stringify(
+          selected.size
+            ? { caseIds: [...selected] }
+            : { ...(srNum ? { srNum } : {}), ...(categoryIds.length ? { categoryIds } : {}) },
+        ),
       });
       if (!response.ok) throw await responseError(response);
       downloadBlob(await response.blob(), "DDT-cases.xlsx");
@@ -703,6 +754,32 @@ export function DdtManagementWorkspace({
             >
               <ListPlus size={16} /> 按清单选择
             </Button>
+          ) : null}
+          {tab === "cases" && categoryIds.length ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={selectionProgress !== undefined || refreshing}
+                onClick={() => void selectFilteredCases()}
+              >
+                <ListPlus size={16} /> 选择全部筛选结果
+              </Button>
+              {selectionProgress !== undefined ? (
+                <div className="flex flex-wrap items-center gap-1" role="status">
+                  <span className="text-xs text-muted-foreground">
+                    已读取 {selectionProgress} 条
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => selectionRequest.current?.abort()}
+                  >
+                    取消选择
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
           <Button
             className={cn(
@@ -939,6 +1016,22 @@ export function DdtManagementWorkspace({
                     ))}
                   </Select>
                 </label>
+                <label className="col-span-full">
+                  <span>需求分类</span>
+                  <DdtRequirementCategoryFilter
+                    url={endpoint("requirement-categories")}
+                    value={categoryIds}
+                    disabled={savingCase || selectionProgress !== undefined}
+                    onChange={(ids) =>
+                      void changeFilter(() => {
+                        const url = new URL(window.location.href);
+                        url.searchParams.delete("ddtCategory");
+                        for (const id of ids) url.searchParams.append("ddtCategory", id);
+                        window.history.pushState(null, "", url);
+                      })
+                    }
+                  />
+                </label>
                 <Disclosure
                   density="compact"
                   showArrow={false}
@@ -1166,6 +1259,7 @@ export function DdtManagementWorkspace({
         {!busy && tab === "imports" ? (
           <ImportJobs
             jobs={imports}
+            fileEndpoint={(id) => endpoint(`imports/${id}/files`)}
             canManage={canManage}
             onOpen={() => setShowImport(true)}
             onCancel={async (id) => {
@@ -1371,12 +1465,14 @@ function Empty({ title, description }: { title: string; description: string }) {
 
 function ImportJobs({
   jobs,
+  fileEndpoint,
   canManage,
   onOpen,
   onCancel,
   onExportCaseIds,
 }: {
-  jobs: ImportJob[];
+  jobs: DdtImportJobSummary[];
+  fileEndpoint(id: string): string;
   canManage: boolean;
   onOpen(): void;
   onCancel(id: string): Promise<void>;
@@ -1483,19 +1579,7 @@ function ImportJobs({
                   <Download size={14} /> 导出本任务 CaseID
                 </Button>
               ) : null}
-              <Disclosure header={<>逐文件结果</>}>
-                {job.files.map((file) => (
-                  <div
-                    className={cn("ddt-file-row", ddtManagementWorkspaceStyles["ddt-file-row"])}
-                    key={file.id}
-                  >
-                    <strong>{file.archiveEntryName ?? file.fileName}</strong>
-                    <span>{file.rowCount} 行</span>
-                    <span>{statusLabel(file.status)}</span>
-                    {file.errorSummary ? <small>{file.errorSummary}</small> : null}
-                  </div>
-                ))}
-              </Disclosure>
+              <DdtImportFileResults filesUrl={fileEndpoint(job.id)} updatedAt={job.updatedAt} />
             </Card>
           ))}
         </div>
@@ -3161,25 +3245,6 @@ function isSupportedDdtImportFile(file: File): boolean {
   const extension = file.name.split(".").pop()?.toLocaleLowerCase("en-US");
   return Boolean(extension && DDT_IMPORT_FILE_EXTENSIONS.has(extension));
 }
-function statusLabel(value: string): string {
-  return (
-    (
-      {
-        previewed: "等待确认",
-        queued: "排队中",
-        running: "导入中",
-        cancel_requested: "取消中",
-        succeeded: "已完成",
-        partially_succeeded: "部分完成",
-        failed: "失败",
-        cancelled: "已取消",
-        valid: "预检通过",
-        excluded: "已排除",
-        importing: "导入中",
-      } as Record<string, string>
-    )[value] ?? value
-  );
-}
 
 function downloadBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
@@ -3238,8 +3303,6 @@ const ddtManagementWorkspaceStyles = {
     "grid w-full min-h-[170px] place-items-center [align-content:center] gap-[7px] border border-dashed border-border rounded-lg bg-info/10 text-info transition-colors duration-150 motion-reduce:transition-none [&:hover:not(:disabled)]:border-info [&:hover:not(:disabled)]:shadow-xs [&:focus-visible]:border-info [&:focus-visible]:shadow-xs [&.drag-active]:border-info [&.drag-active]:shadow-xs [&.drag-active]:[border-style:solid] [&.drag-active]:[background:color-mix(in_srgb,_color-mix(in_srgb,_var(--info)_10%,_transparent)_72%,_var(--card))] [&.drag-active]:[transform:translateY(-1px)] [&_span]:max-w-[520px] [&_span]:text-muted-foreground [&_span]:text-center",
   "ddt-empty":
     "grid min-h-[220px] place-items-center [align-content:center] gap-2 text-muted-foreground text-center [&_strong]:text-foreground [&_p]:m-0",
-  "ddt-file-row":
-    "grid grid-cols-[minmax(0,_1fr)_70px_80px] gap-2 pt-[9px] [&_small]:col-span-full [&_small]:text-destructive",
   "ddt-group-ranking":
     "grid gap-2 mt-[17px] [&_button]:grid [&_button]:grid-cols-[24px_minmax(90px,_0.7fr)_minmax(80px,_1fr)_32px] [&_button]:items-center [&_button]:gap-[9px] [&_button]:border-0 [&_button]:rounded-lg [&_button]:p-[7px] [&_button]:bg-transparent [&_button]:text-foreground [&_button]:text-left [&_button:hover]:bg-muted [&_button_>_span]:grid [&_button_>_span]:h-6 [&_button_>_span]:place-items-center [&_button_>_span]:rounded-md [&_button_>_span]:bg-info/10 [&_button_>_span]:text-info [&_button_>_span]:text-xs [&_i]:h-[7px] [&_i]:rounded-md [&_i]:bg-primary",
   "ddt-group-tag":

@@ -12,6 +12,7 @@ export * from "./project-structure";
 export * from "./attempt-log-share";
 export * from "./public-execution-links";
 export * from "./ddt";
+export * from "./ddt-import-progress";
 export * from "./runner-group";
 export * from "./case-suite-activity";
 export * from "./case-suite-pins";

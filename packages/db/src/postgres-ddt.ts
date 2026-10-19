@@ -6,6 +6,8 @@ import {
   type DdtExecutionDayRow,
 } from "./ddt-dashboard";
 import {
+  ddtCasesInCategoriesSql,
+  ddtExecutionClassIdSql,
   mapDdtExecutionClass,
   mapDdtRequirementCategory,
   type DdtRequirementCategoryRow,
@@ -14,7 +16,6 @@ import {
   type DdtExecutionClassRow,
   type DdtSrMappingRow,
 } from "./ddt-execution-sql";
-import { ddtExecutionClassIdSql } from "./ddt-execution-sql";
 import type {
   DdtCaseListQuery,
   DdtValueSearchCandidate,
@@ -39,6 +40,13 @@ import {
 import type { PoolClient, QueryResult, QueryResultRow } from "pg";
 
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
+import {
+  ddtImportJobSummaryColumns,
+  mapDdtImportJobSummary,
+  mapDdtImportFileSummary,
+  type DdtImportJobSummaryRow,
+  type DdtImportFileSummaryRow,
+} from "./ddt-import-progress";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 
 type PgValue = string | number | null | string[];
@@ -153,7 +161,7 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async listCases(query: DdtCaseListQuery) {
     await this.ready();
-    if (query.caseIds?.length === 0) return { items: [] };
+    if (query.caseIds?.length === 0 || query.categoryIds?.length === 0) return { items: [] };
     const builder = new PgWhereBuilder(query);
     if (query.caseIds)
       builder.add("case_id_normalized = ANY", query.caseIds.map(normalize), "($n::text[])");
@@ -165,6 +173,7 @@ export class PostgresDdtRepository implements DdtRepository {
       );
     if (query.srNum) builder.add("sr_num_normalized =", normalize(query.srNum));
     if (query.sourceName) builder.add("source_name LIKE", `%${escapeLike(query.sourceName)}%`);
+    if (query.categoryIds) builder.addCategories(query, query.categoryIds);
     for (const filter of query.filters) builder.addFilter(filter);
     const limit = builder.value(query.limit + 1);
     const result = await this.handle.pool.query<DdtCaseSummaryRow>(
@@ -665,7 +674,13 @@ export class PostgresDdtRepository implements DdtRepository {
 
   async listRequirementCategories(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number; exactName?: string },
+    query: {
+      query: string;
+      cursor?: string;
+      limit: number;
+      exactName?: string;
+      categoryIds?: string[];
+    },
   ) {
     await this.ready();
     const client = this.handle.pool;
@@ -680,8 +695,15 @@ export class PostgresDdtRepository implements DdtRepository {
  CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled, CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
  FROM ddt_requirement_categories category LEFT JOIN case_definitions definition ON definition.id = category.execution_case_definition_id
  WHERE category.project_id = $1 AND category.project_version_id = $2 AND category.test_stage_id = $3 AND category.id > $4 AND category.normalized_name ${query.exactName === undefined ? "LIKE $5 ESCAPE '\\'" : "= $5"}
+ ${query.categoryIds ? "AND category.id = ANY($7::text[])" : ""}
  ORDER BY category.id LIMIT $6`,
-        [...scopeValues(scope), query.cursor ?? "", pattern, query.limit + 1],
+        [
+          ...scopeValues(scope),
+          query.cursor ?? "",
+          pattern,
+          query.limit + 1,
+          ...(query.categoryIds ? [query.categoryIds] : []),
+        ],
       )
     ).rows;
     return {
@@ -754,12 +776,16 @@ export class PostgresDdtRepository implements DdtRepository {
     };
   }
 
-  async exportCases(selection: DdtScope & { caseIds?: string[]; srNum?: string }) {
+  async exportCases(
+    selection: DdtScope & { caseIds?: string[]; srNum?: string; categoryIds?: string[] },
+  ) {
+    if (selection.categoryIds?.length === 0) return [];
     await this.ready();
     const builder = new PgWhereBuilder(selection);
     if (selection.srNum) builder.add("sr_num_normalized =", normalize(selection.srNum));
     if (selection.caseIds?.length)
       builder.add("case_id_normalized = ANY", selection.caseIds.map(normalize), "($n::text[])");
+    if (selection.categoryIds) builder.addCategories(selection, selection.categoryIds);
     const result = await this.handle.pool.query<{ data_json: string }>(
       `SELECT data_json FROM ddt_cases WHERE ${builder.sql} ORDER BY case_id_normalized`,
       builder.values,
@@ -1277,6 +1303,48 @@ export class PostgresDdtRepository implements DdtRepository {
     );
     const next = result.rows.length > input.limit ? items.at(-1)?.id : undefined;
     return { items, ...(next ? { nextCursor: next } : {}) };
+  }
+
+  async listImportJobSummaries(input: Parameters<DdtRepository["listImportJobSummaries"]>[0]) {
+    await this.ready();
+    const values: PgValue[] = [...scopeValues(input)];
+    const cursor = input.cursor ? `AND id < $${values.push(input.cursor)}` : "";
+    const result = await this.handle.pool.query<DdtImportJobSummaryRow>(
+      `SELECT ${ddtImportJobSummaryColumns} FROM ddt_import_jobs
+       WHERE debug_owner_id IS NULL AND project_id = $1 AND project_version_id = $2 AND test_stage_id = $3
+       ${cursor} ORDER BY id DESC LIMIT $${values.push(input.limit + 1)}`,
+      values,
+    );
+    const items = result.rows.slice(0, input.limit).map(mapDdtImportJobSummary);
+    const nextCursor = result.rows.length > input.limit ? items.at(-1)?.id : undefined;
+    return { items, ...(nextCursor ? { nextCursor } : {}) };
+  }
+
+  async getImportJobSummary(input: Parameters<DdtRepository["getImportJobSummary"]>[0]) {
+    await this.ready();
+    const result = await this.handle.pool.query<DdtImportJobSummaryRow>(
+      `SELECT ${ddtImportJobSummaryColumns} FROM ddt_import_jobs
+       WHERE id = $1 AND debug_owner_id IS NULL
+         AND project_id = $2 AND project_version_id = $3 AND test_stage_id = $4`,
+      [input.jobId, ...scopeValues(input)],
+    );
+    return result.rows[0] ? mapDdtImportJobSummary(result.rows[0]) : null;
+  }
+
+  async listImportFiles(input: Parameters<DdtRepository["listImportFiles"]>[0]) {
+    await this.ready();
+    const values: PgValue[] = [input.jobId, ...scopeValues(input)];
+    const cursor = input.cursor
+      ? `AND (f.created_at, f.id) > ($${values.push(input.cursor.createdAt)}, $${values.push(input.cursor.id)})`
+      : "";
+    const result = await this.handle.pool.query<DdtImportFileSummaryRow>(
+      `SELECT f.* FROM ddt_import_files f WHERE f.job_id = $1
+       AND EXISTS (SELECT 1 FROM ddt_import_jobs j WHERE j.id = f.job_id AND j.debug_owner_id IS NULL
+         AND j.project_id = $2 AND j.project_version_id = $3 AND j.test_stage_id = $4)
+       ${cursor} ORDER BY f.created_at, f.id LIMIT $${values.push(input.limit)}`,
+      values,
+    );
+    return result.rows.map(mapDdtImportFileSummary);
   }
 
   async claimImportJob(jobId: string, startedAt: string) {
@@ -2024,6 +2092,19 @@ class PgWhereBuilder {
 
   raw(expression: string): void {
     this.clauses.push(expression);
+  }
+
+  addCategories(scope: DdtScope, categoryIds: string[]): void {
+    this.raw(
+      ddtCasesInCategoriesSql(
+        [
+          this.value(scope.projectId),
+          this.value(scope.projectVersionId),
+          this.value(scope.testStageId),
+        ],
+        `= ANY(${this.value(categoryIds)}::text[])`,
+      ),
+    );
   }
 
   addFilter(filter: DdtCaseListQuery["filters"][number]): void {

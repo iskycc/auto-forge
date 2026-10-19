@@ -5,6 +5,8 @@ import {
   type DdtExecutionDayRow,
 } from "./ddt-dashboard";
 import {
+  ddtCasesInCategoriesSql,
+  ddtExecutionClassIdSql,
   mapDdtExecutionClass,
   mapDdtRequirementCategory,
   type DdtRequirementCategoryRow,
@@ -13,7 +15,6 @@ import {
   type DdtExecutionClassRow,
   type DdtSrMappingRow,
 } from "./ddt-execution-sql";
-import { ddtExecutionClassIdSql } from "./ddt-execution-sql";
 import {
   DomainError,
   ddtCaseCell,
@@ -37,6 +38,13 @@ import type {
 } from "@autoforge/application";
 
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
+import {
+  ddtImportJobSummaryColumns,
+  mapDdtImportJobSummary,
+  mapDdtImportFileSummary,
+  type DdtImportJobSummaryRow,
+  type DdtImportFileSummaryRow,
+} from "./ddt-import-progress";
 import {
   retrySqliteLockContention,
   retrySqliteWriteTransaction,
@@ -159,7 +167,7 @@ export class SqliteDdtRepository implements DdtRepository {
   }
 
   async listCases(query: DdtCaseListQuery) {
-    if (query.caseIds?.length === 0) return { items: [] };
+    if (query.caseIds?.length === 0 || query.categoryIds?.length === 0) return { items: [] };
     const where = scopeSql(query);
     const parameters: SqlValue[] = scopeParameters(query);
     if (query.caseIds) {
@@ -184,6 +192,7 @@ export class SqliteDdtRepository implements DdtRepository {
       where.push("source_name LIKE ? ESCAPE '\\'");
       parameters.push(`%${escapeLike(query.sourceName)}%`);
     }
+    if (query.categoryIds) appendSqliteCategories(where, parameters, query, query.categoryIds);
     for (const filter of query.filters) appendSqliteFilter(where, parameters, filter);
     const rows = this.handle.client
       .prepare(
@@ -735,7 +744,13 @@ export class SqliteDdtRepository implements DdtRepository {
 
   async listRequirementCategories(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number; exactName?: string },
+    query: {
+      query: string;
+      cursor?: string;
+      limit: number;
+      exactName?: string;
+      categoryIds?: string[];
+    },
   ) {
     const pattern =
       query.exactName === undefined
@@ -748,12 +763,14 @@ export class SqliteDdtRepository implements DdtRepository {
  CASE WHEN definition.enabled THEN 1 ELSE 0 END AS enabled, CASE WHEN definition.archived THEN 1 ELSE 0 END AS archived
  FROM ddt_requirement_categories category LEFT JOIN case_definitions definition ON definition.id = category.execution_case_definition_id
  WHERE category.project_id = ? AND category.project_version_id = ? AND category.test_stage_id = ? AND category.id > ? AND category.normalized_name ${query.exactName === undefined ? "LIKE ? ESCAPE '\\'" : "= ?"}
+ ${query.categoryIds ? `AND category.id IN (${query.categoryIds.map(() => "?").join(",") || "NULL"})` : ""}
  ORDER BY category.id LIMIT ?`,
       )
       .all(
         ...scopeParameters(scope),
         query.cursor ?? "",
         pattern,
+        ...(query.categoryIds ?? []),
         query.limit + 1,
       ) as DdtRequirementCategoryRow[];
     return {
@@ -846,7 +863,10 @@ export class SqliteDdtRepository implements DdtRepository {
     };
   }
 
-  async exportCases(selection: DdtScope & { caseIds?: string[]; srNum?: string }) {
+  async exportCases(
+    selection: DdtScope & { caseIds?: string[]; srNum?: string; categoryIds?: string[] },
+  ) {
+    if (selection.categoryIds?.length === 0) return [];
     const where = scopeSql(selection);
     const parameters: SqlValue[] = scopeParameters(selection);
     if (selection.srNum) {
@@ -857,6 +877,8 @@ export class SqliteDdtRepository implements DdtRepository {
       where.push(`case_id_normalized IN (${selection.caseIds.map(() => "?").join(",")})`);
       parameters.push(...selection.caseIds.map(normalize));
     }
+    if (selection.categoryIds)
+      appendSqliteCategories(where, parameters, selection, selection.categoryIds);
     const rows = this.handle.client
       .prepare(
         `SELECT data_json AS dataJson FROM ddt_cases
@@ -1420,6 +1442,52 @@ export class SqliteDdtRepository implements DdtRepository {
     );
     const next = rows.length > input.limit ? items.at(-1)?.id : undefined;
     return { items, ...(next ? { nextCursor: next } : {}) };
+  }
+
+  async listImportJobSummaries(input: Parameters<DdtRepository["listImportJobSummaries"]>[0]) {
+    const rows = this.handle.client
+      .prepare(
+        `SELECT ${ddtImportJobSummaryColumns} FROM ddt_import_jobs
+       WHERE debug_owner_id IS NULL AND project_id = ? AND project_version_id = ? AND test_stage_id = ?
+         ${input.cursor ? "AND id < ?" : ""} ORDER BY id DESC LIMIT ?`,
+      )
+      .all(
+        ...scopeParameters(input),
+        ...(input.cursor ? [input.cursor] : []),
+        input.limit + 1,
+      ) as DdtImportJobSummaryRow[];
+    const items = rows.slice(0, input.limit).map(mapDdtImportJobSummary);
+    const nextCursor = rows.length > input.limit ? items.at(-1)?.id : undefined;
+    return { items, ...(nextCursor ? { nextCursor } : {}) };
+  }
+
+  async getImportJobSummary(input: Parameters<DdtRepository["getImportJobSummary"]>[0]) {
+    const row = this.handle.client
+      .prepare(
+        `SELECT ${ddtImportJobSummaryColumns} FROM ddt_import_jobs
+       WHERE id = ? AND debug_owner_id IS NULL
+         AND project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
+      )
+      .get(input.jobId, ...scopeParameters(input)) as DdtImportJobSummaryRow | undefined;
+    return row ? mapDdtImportJobSummary(row) : null;
+  }
+
+  async listImportFiles(input: Parameters<DdtRepository["listImportFiles"]>[0]) {
+    const rows = this.handle.client
+      .prepare(
+        `SELECT f.* FROM ddt_import_files f WHERE f.job_id = ?
+       AND EXISTS (SELECT 1 FROM ddt_import_jobs j WHERE j.id = f.job_id AND j.debug_owner_id IS NULL
+         AND j.project_id = ? AND j.project_version_id = ? AND j.test_stage_id = ?)
+       ${input.cursor ? "AND (f.created_at, f.id) > (?, ?)" : ""}
+       ORDER BY f.created_at, f.id LIMIT ?`,
+      )
+      .all(
+        input.jobId,
+        ...scopeParameters(input),
+        ...(input.cursor ? [input.cursor.createdAt, input.cursor.id] : []),
+        input.limit,
+      ) as DdtImportFileSummaryRow[];
+    return rows.map(mapDdtImportFileSummary);
   }
 
   async claimImportJob(jobId: string, startedAt: string) {
@@ -2007,4 +2075,16 @@ function appendSqliteFilter(
   parameters.push(
     filter.operator === "prefix" ? `${escapeLike(value)}%` : `%${escapeLike(value)}%`,
   );
+}
+
+function appendSqliteCategories(
+  where: string[],
+  parameters: SqlValue[],
+  scope: DdtScope,
+  categoryIds: string[],
+) {
+  where.push(
+    ddtCasesInCategoriesSql(["?", "?", "?"], `IN (${categoryIds.map(() => "?").join(",")})`),
+  );
+  parameters.push(...scopeParameters(scope), ...categoryIds);
 }

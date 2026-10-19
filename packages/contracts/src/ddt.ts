@@ -157,7 +157,10 @@ export const ddtSearchFilterSchema = z.object({
   value: ddtCellValueSchema.optional(),
 });
 
+export const ddtCategoryIdsSchema = z.array(z.string().min(1).max(128)).max(100);
+
 export const ddtCaseListInputSchema = ddtScopeSchema.extend({
+  categoryIds: ddtCategoryIdsSchema.optional(),
   caseIds: z.array(z.string().trim().min(1).max(512)).max(200).optional(),
   query: z.string().trim().max(512).optional(),
   queryMatch: z.enum(["prefix", "contains"]).optional(),

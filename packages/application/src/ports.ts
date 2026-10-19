@@ -37,6 +37,8 @@ import type {
   FailureAnalysisInheritanceScope,
   FailureAnalysisRecentSuccess,
   DdtInheritancePage,
+  DdtImportJobSummary,
+  DdtImportFileSummary,
 } from "@autoforge/contracts";
 import type {
   AuditEvent,
@@ -1105,7 +1107,13 @@ export interface DdtRepository {
   }): Promise<DdtInheritancePage>;
   listRequirementCategories(
     scope: DdtScope,
-    query: { query: string; cursor?: string; limit: number; exactName?: string },
+    query: {
+      query: string;
+      cursor?: string;
+      limit: number;
+      exactName?: string;
+      categoryIds?: string[];
+    },
   ): Promise<DdtRequirementCategoryPage>;
   saveRequirementCategory(input: {
     scope: DdtScope;
@@ -1229,6 +1237,18 @@ export interface DdtRepository {
     items: DdtImportJob[];
     nextCursor?: string;
   }>;
+  listImportJobSummaries(input: DdtScope & { cursor?: string; limit: number }): Promise<{
+    items: DdtImportJobSummary[];
+    nextCursor?: string;
+  }>;
+  getImportJobSummary(input: DdtScope & { jobId: string }): Promise<DdtImportJobSummary | null>;
+  listImportFiles(
+    input: DdtScope & {
+      jobId: string;
+      cursor?: { createdAt: string; id: string };
+      limit: number;
+    },
+  ): Promise<DdtImportFileSummary[]>;
   claimImportJob(jobId: string, startedAt: string): Promise<DdtImportJob | null>;
   requestImportCancellation(
     jobId: string,

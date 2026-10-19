@@ -2,6 +2,7 @@ import type {
   DdtColumnResolution,
   DdtImportColumnConflict,
   DdtImportJobStatus,
+  DdtImportFileSummary,
   DdtSearchFilter,
   DdtExecutionStatistics,
 } from "@autoforge/contracts";
@@ -16,6 +17,7 @@ import type {
 } from "@autoforge/domain";
 
 export type DdtCaseListQuery = DdtScope & {
+  categoryIds?: string[];
   caseIds?: string[];
   query?: string;
   /** CaseID fragment matching by default; prefix matching must be requested explicitly. */
@@ -81,7 +83,7 @@ export type DdtImportFile = {
   uploadId: string;
   fileName: string;
   archiveEntryName?: string;
-  status: "valid" | "excluded" | "pending" | "importing" | "succeeded" | "failed" | "cancelled";
+  status: DdtImportFileSummary["status"];
   rowCount: number;
   insertedCount: number;
   updatedCount: number;
@@ -170,7 +172,11 @@ export type DdtTemplateWriteRecord = DdtScope & {
   now: string;
 };
 
-export type DdtExportSelection = DdtScope & { caseIds?: string[]; srNum?: string };
+export type DdtExportSelection = DdtScope & {
+  caseIds?: string[];
+  srNum?: string;
+  categoryIds?: string[];
+};
 
 export type DdtRepositoryReadModels = {
   case: DdtCase;

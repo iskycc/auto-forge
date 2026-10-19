@@ -4,6 +4,10 @@ import {
   DDT_IMPORT_FILE_LIMIT,
   DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
   ddtImportColumnConflictSchema,
+  ddtImportFilesQuerySchema,
+  ddtImportFileCursorSchema,
+  ddtImportFilePageSchema,
+  ddtImportJobSummaryPageSchema,
   type DdtColumnResolution,
   type DdtImportColumnConflict,
   type DdtImportColumnResolution,
@@ -292,6 +296,43 @@ export class DdtImportService {
       ...scope,
       ...(cursor ? { cursor } : {}),
       limit,
+    });
+  }
+
+  async listSummaries(scope: DdtScope, cursor?: string, limit = 50) {
+    const query = ddtImportFilesQuerySchema.parse({ cursor, limit });
+    return ddtImportJobSummaryPageSchema.parse(
+      await this.repository.listImportJobSummaries({
+        ...scope,
+        limit: query.limit,
+        ...(query.cursor ? { cursor: query.cursor } : {}),
+      }),
+    );
+  }
+
+  async files(scope: DdtScope, jobId: string, parameters: { cursor?: string; limit?: number }) {
+    const query = ddtImportFilesQuerySchema.parse(parameters);
+    const cursor = query.cursor ? decodeImportFileCursor(query.cursor, jobId) : undefined;
+    const job = await this.repository.getImportJobSummary({ ...scope, jobId });
+    if (!job) throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
+    const files = await this.repository.listImportFiles({
+      ...scope,
+      jobId,
+      ...(cursor ? { cursor } : {}),
+      limit: query.limit + 1,
+    });
+    const items = files.slice(0, query.limit);
+    const last = items.at(-1);
+    const nextCursor =
+      files.length > query.limit && last
+        ? Buffer.from(JSON.stringify({ jobId, createdAt: last.createdAt, id: last.id })).toString(
+            "base64url",
+          )
+        : undefined;
+    return ddtImportFilePageSchema.parse({
+      items,
+      totalCount: job.totalFiles,
+      ...(nextCursor ? { nextCursor } : {}),
     });
   }
 
@@ -712,6 +753,18 @@ export class DdtImportService {
       payload: { jobId },
     };
   }
+}
+
+function decodeImportFileCursor(encoded: string, jobId: string) {
+  try {
+    const cursor = ddtImportFileCursorSchema.parse(
+      JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")),
+    );
+    if (cursor.jobId === jobId) return { createdAt: cursor.createdAt, id: cursor.id };
+  } catch (cause) {
+    throw new DomainError("VALIDATION_ERROR", "文件清单分页参数无效，请重新展开清单。", { cause });
+  }
+  throw new DomainError("VALIDATION_ERROR", "文件清单分页参数与导入任务不匹配，请重新展开清单。");
 }
 
 async function* oneChunk(content: Uint8Array): AsyncGenerator<Uint8Array> {

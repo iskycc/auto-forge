@@ -44,6 +44,22 @@ describe("DDT CaseID list selection", () => {
   });
 });
 
+it("forwards category selections including empty arrays without resolving every SR", async () => {
+  const listCases = vi.fn().mockResolvedValue({ items: [] });
+  const service = new DdtCaseService(
+    { listCases } as unknown as DdtRepository,
+    { now: () => new Date(timestamp) },
+    { next: () => "unused" },
+  );
+  for (const categoryIds of [[], ["wallet", "payments"]]) {
+    await service.list(ddtCaseListInputSchema.parse({ ...scope, categoryIds }));
+    expect(listCases).toHaveBeenLastCalledWith({ ...scope, categoryIds, limit: 60, filters: [] });
+  }
+  expect(
+    ddtCaseListInputSchema.safeParse({ ...scope, categoryIds: Array(101).fill("wallet") }).success,
+  ).toBe(false);
+});
+
 describe("public DDT case data", () => {
   it.each([
     { CaseID: "PAY-1", srNum: "PAY", amount: 12, enabled: false, note: null },

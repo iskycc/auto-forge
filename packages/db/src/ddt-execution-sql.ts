@@ -19,6 +19,16 @@ export const ddtRequirementCategoryIdSql = `(SELECT mapping.category_id FROM ddt
   WHERE mapping.project_id = ddt_cases.project_id AND mapping.project_version_id = ddt_cases.project_version_id
     AND mapping.test_stage_id = ddt_cases.test_stage_id AND mapping.sr_num_normalized = ddt_cases.sr_num_normalized)`;
 
+/** Resolve matching SRs once so sparse categories do not require a lookup for every case. */
+export function ddtCasesInCategoriesSql(
+  scopeParameters: readonly [string, string, string],
+  categoryPredicate: string,
+): string {
+  return `ddt_cases.sr_num_normalized IN (SELECT sr_num_normalized FROM ddt_sr_execution_mappings
+    WHERE project_id = ${scopeParameters[0]} AND project_version_id = ${scopeParameters[1]}
+      AND test_stage_id = ${scopeParameters[2]} AND category_id ${categoryPredicate})`;
+}
+
 export type DdtExecutionClassRow = Omit<DdtExecutionClass, "enabled" | "archived"> & {
   enabled: number;
   archived: number;

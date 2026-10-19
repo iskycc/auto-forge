@@ -35,6 +35,7 @@ export class DdtCaseService {
       projectVersionId: input.projectVersionId,
       testStageId: input.testStageId,
       ...(input.caseIds !== undefined ? { caseIds: input.caseIds } : {}),
+      ...(input.categoryIds !== undefined ? { categoryIds: input.categoryIds } : {}),
       ...(input.query ? { query: input.query } : {}),
       ...(input.queryMatch ? { queryMatch: input.queryMatch } : {}),
       ...(input.srNum ? { srNum: input.srNum } : {}),
@@ -95,7 +96,10 @@ export class DdtCaseService {
     });
   }
 
-  requirementCategories(scope: DdtScope, query: { query: string; cursor?: string; limit: number }) {
+  requirementCategories(
+    scope: DdtScope,
+    query: { query: string; cursor?: string; limit: number; categoryIds?: string[] },
+  ) {
     return this.repository.listRequirementCategories(scope, query);
   }
 
@@ -420,7 +424,10 @@ export class DdtCaseService {
     }
   }
 
-  export(scope: DdtScope, selection: { caseIds?: string[]; srNum?: string }) {
+  export(
+    scope: DdtScope,
+    selection: { caseIds?: string[]; srNum?: string; categoryIds?: string[] },
+  ) {
     return this.repository.exportCases({ ...scope, ...selection });
   }
 }

@@ -8,6 +8,8 @@ import {
   ddtCaseListInputSchema,
   ddtValueSearchInputSchema,
   ddtValueSearchPageSchema,
+  ddtImportFilesQuerySchema,
+  ddtCategoryIdsSchema,
   inheritDdtCasesInputSchema,
   ddtInheritancePageSchema,
   resolveDdtImportColumnsInputSchema,
@@ -41,6 +43,7 @@ const restoreHistorySchema = z.object({
   snapshot: z.enum(["before", "after"]).default("after"),
 });
 const exportSchema = z.object({
+  categoryIds: ddtCategoryIdsSchema.optional(),
   caseIds: z.array(z.string().min(1).max(512)).max(5_000).optional(),
   srNum: z.string().trim().min(1).max(512).optional(),
 });
@@ -113,6 +116,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       );
     }
     if (matches(path, "requirement-categories")) {
+      const categoryIds = url.searchParams.has("categoryId")
+        ? ddtCategoryIdsSchema.parse(url.searchParams.getAll("categoryId"))
+        : undefined;
       const query = ddtExecutionMappingListInputSchema.parse({
         query: url.searchParams.get("query") ?? "",
         cursor: url.searchParams.get("cursor") ?? undefined,
@@ -120,6 +126,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       });
       return NextResponse.json(
         await services.ddtCases.requirementCategories(scope, {
+          ...(categoryIds ? { categoryIds } : {}),
           query: query.query,
           limit: query.limit,
           ...(query.cursor ? { cursor: query.cursor } : {}),
@@ -137,6 +144,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     }
     if (matches(path, "cases")) {
       const input = ddtCaseListInputSchema.parse({
+        ...(url.searchParams.has("categoryId")
+          ? { categoryIds: url.searchParams.getAll("categoryId") }
+          : {}),
         ...scope,
         query: url.searchParams.get("query") ?? undefined,
         queryMatch: url.searchParams.get("queryMatch") ?? undefined,
@@ -211,11 +221,25 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     }
     if (matches(path, "imports")) {
       return NextResponse.json(
-        await services.ddtImports.list(
-          scope,
-          url.searchParams.get("cursor") ?? undefined,
-          boundedLimit(url, 50, 100),
-        ),
+        await services.ddtImports[
+          url.searchParams.get("view") === "summary" ? "listSummaries" : "list"
+        ](scope, url.searchParams.get("cursor") ?? undefined, boundedLimit(url, 50, 100)),
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    if (path[0] === "imports" && path[1] && path[2] === "files" && path.length === 3) {
+      const query = ddtImportFilesQuerySchema.parse({
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: url.searchParams.get("limit") ?? undefined,
+      });
+      return NextResponse.json(
+        await services.ddtImports.files(scope, path[1], {
+          limit: query.limit,
+          ...(query.cursor ? { cursor: query.cursor } : {}),
+        }),
+        {
+          headers: { "Cache-Control": "private, no-store" },
+        },
       );
     }
     if (path[0] === "imports" && path[1] && path.length <= 3) {
@@ -230,6 +254,9 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     }
     if (matches(path, "export")) {
       const selection = exportSchema.parse({
+        ...(url.searchParams.has("categoryId")
+          ? { categoryIds: url.searchParams.getAll("categoryId") }
+          : {}),
         caseIds: url.searchParams.getAll("caseId"),
         srNum: url.searchParams.get("srNum") ?? undefined,
       });
@@ -677,10 +704,12 @@ async function exportResponse(
 }
 
 function exportSelection(selection: z.infer<typeof exportSchema>): {
+  categoryIds?: string[];
   caseIds?: string[];
   srNum?: string;
 } {
   return {
+    ...(selection.categoryIds !== undefined ? { categoryIds: selection.categoryIds } : {}),
     ...(selection.caseIds?.length ? { caseIds: selection.caseIds } : {}),
     ...(selection.srNum ? { srNum: selection.srNum } : {}),
   };

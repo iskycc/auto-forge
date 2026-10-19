@@ -20,6 +20,7 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectReadableText, expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
+import { insertDdtImportJobFixture } from "./support/ddt-import-job-fixture";
 import type { ClaimAssignmentsResponse, DdtExecutionStatistics } from "@autoforge/contracts";
 
 test("DDT inheritance copies another version with pause, recovery and safe duplicate handling", async ({
@@ -660,6 +661,139 @@ test("DDT spreadsheet import contains long file names, strategies and footer act
   }
 });
 
+test("large DDT import file lists stay unmounted until opened and render one page at a time", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const scope = {
+    projectId: hierarchy.projectId,
+    projectVersionId: hierarchy.versionId,
+    testStageId: hierarchy.stageId,
+  };
+  const jobId = await insertDdtImportJobFixture(scope, 1001);
+  const fileRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith(`/imports/${jobId}/files`))
+      fileRequests.push(request.url());
+  });
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const summaryResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/ddt/imports" && url.searchParams.get("view") === "summary";
+  });
+  await page.goto("/cases?tab=ddt&ddtView=imports");
+  const summary = await (await summaryResponse).json();
+  expect(summary.items[0]).not.toHaveProperty("files");
+  expect(summary.items[0]).not.toHaveProperty("uploads");
+  const job = page.locator(".ddt-job");
+  await expect(job).toHaveCount(1);
+  await expect(job.locator(".ddt-file-row")).toHaveCount(0);
+  expect(fileRequests).toHaveLength(0);
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(job.locator(".ddt-file-row")).toHaveCount(50);
+  await expect(job).toContainText("结果-00001.csv");
+  await job.getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(job).toContainText("结果-00051.csv");
+  await expect(job.locator(".ddt-file-row")).toHaveCount(50);
+  await job.getByRole("button", { name: "上一页", exact: true }).click();
+  await expect(job).toContainText("结果-00001.csv");
+  expect(fileRequests).toHaveLength(3);
+  expect(fileRequests.every((url) => new URL(url).searchParams.get("limit") === "50")).toBe(true);
+  const fileUrl = `/api/v1/ddt/imports/${jobId}/files?${new URLSearchParams(scope)}`;
+  expect((await page.request.get(`${fileUrl}&limit=101`)).status()).toBe(400);
+  expect((await page.request.get(`${fileUrl}&cursor=invalid`)).status()).toBe(400);
+  expect(
+    (await page.request.get(`${fileUrl.replace(scope.testStageId, "other-stage")}`)).status(),
+  ).toBe(404);
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await job.scrollIntoViewIfNeeded();
+      await page.mouse.move(190, 80);
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-import-files-${theme}-${width}`);
+    }
+  }
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(job.locator(".ddt-file-row")).toHaveCount(0);
+});
+
+test("DDT import file paging recovers from a read error and cancels pending reads when collapsed", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await insertDdtImportJobFixture(
+    {
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+    },
+    3,
+  );
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=imports");
+  const job = page.locator(".ddt-job");
+  let attempts = 0;
+  await page.route("**/api/v1/ddt/imports/*/files?*", async (route) => {
+    attempts += 1;
+    if (attempts === 1) {
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: { code: "TEST_READ_FAILURE", message: "文件清单读取暂时失败", requestId: "test" },
+        },
+      });
+    } else await route.continue();
+  });
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(job.getByRole("alert")).toContainText("文件清单读取暂时失败");
+  await job.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(job.locator(".ddt-file-row")).toHaveCount(3);
+  await expect(job).toContainText("最后一个文件的数据格式有误");
+  await expect(job.getByRole("button", { name: "上一页", exact: true })).toBeDisabled();
+  await expect(job.getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(job.locator(".ddt-file-row")).toHaveCount(0);
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(job.locator(".ddt-file-row")).toHaveCount(3);
+  expect(attempts).toBe(3);
+
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  let releaseRead!: () => void;
+  const pendingRead = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const delayRead = async (route: Route) => {
+    await pendingRead;
+    await route.continue();
+  };
+  const filePattern = "**/api/v1/ddt/imports/*/files?*";
+  await page.route(filePattern, delayRead);
+  try {
+    const requested = page.waitForRequest((request) =>
+      new URL(request.url()).pathname.endsWith("/files"),
+    );
+    await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+    const request = await requested;
+    await expect(job.getByRole("status")).toContainText("正在读取文件清单");
+    const cancelled = page.waitForEvent("requestfailed", (failed) => failed === request);
+    await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+    releaseRead();
+    await cancelled;
+    await expect(job.locator(".ddt-file-row")).toHaveCount(0);
+  } finally {
+    releaseRead();
+    await page.unroute(filePattern, delayRead);
+  }
+  await job.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(job.locator(".ddt-file-row")).toHaveCount(3);
+  await expect(job.getByRole("alert")).toHaveCount(0);
+});
+
 test("DDT import resolves duplicate column names before background import", async ({ page }) => {
   test.setTimeout(120_000);
   await ensureAdministrator(page);
@@ -1239,9 +1373,9 @@ test("DDT CaseID conflict strategies preserve existing data and report the outco
   await waitForImport(rejectedJob, "failed");
   expect((await readCase(existingCaseId)).body.data).toEqual(originalData);
   expect((await readCase(addedCaseId)).status).toBe(404);
-  const failedCard = page
-    .locator(".ddt-job")
-    .filter({ has: page.getByText("conflict-error.csv", { exact: true }) });
+  const failedCard = page.locator(".ddt-job").filter({ has: page.locator(".ddt-status.failed") });
+  await failedCard.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(failedCard.getByText("conflict-error.csv", { exact: true })).toBeVisible();
   await expect(failedCard).toContainText("当前范围已存在相同 CaseID");
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -1258,9 +1392,9 @@ test("DDT CaseID conflict strategies preserve existing data and report the outco
     环境: "new",
     环境_2: "secondary",
   });
-  const skippedCard = page
-    .locator(".ddt-job")
-    .filter({ has: page.getByText("conflict-skip.csv", { exact: true }) });
+  const skippedCard = page.locator(".ddt-job").first();
+  await skippedCard.getByRole("button", { name: "逐文件结果", exact: true }).click();
+  await expect(skippedCard.getByText("conflict-skip.csv", { exact: true })).toBeVisible();
   await expect(skippedCard.locator(".ddt-job-results")).toContainText("跳过 1");
 
   const replacedJob = await submitImport(
@@ -1695,6 +1829,175 @@ async function dispatchFileDrag(
     },
   );
 }
+
+test("DDT SR category filters union labels and add all matching pages to a task", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const className = `com.example.CategoryFilter${Date.now()}Test`;
+  const definition = await importExecutionClass(page, hierarchy, className);
+  const walletCount = 207;
+  await importDdtApiFixture(
+    page,
+    hierarchy,
+    "CATEGORY-000",
+    1,
+    Array.from({ length: walletCount + 5 }, (_, index) => ({
+      CaseID: `CATEGORY-${String(index).padStart(3, "0")}`,
+      srNum:
+        index < walletCount
+          ? index % 2
+            ? "WALLET-B"
+            : "WALLET-A"
+          : index < walletCount + 3
+            ? "PAYMENTS"
+            : index === walletCount + 3
+              ? "PRO"
+              : "NONE",
+      CaseName: "Wallet occurs in every case name",
+    })),
+  );
+  expect(
+    (
+      await browserJson(page, ddtPath(hierarchy, "execution-range"), {
+        method: "POST",
+        body: { caseDefinitionId: definition.id, className, included: true, expectedRevision: 0 },
+      })
+    ).status,
+  ).toBe(200);
+  const categories = new Map<string, string>();
+  for (const name of ["Wallet", "Payments", "WalletPro"]) {
+    const result = await browserJson<{ id: string }>(
+      page,
+      ddtPath(hierarchy, "requirement-categories"),
+      { method: "POST", body: { name, className, expectedRevision: 0 } },
+    );
+    expect(result.status).toBe(200);
+    categories.set(name, result.body.id);
+  }
+  for (const [srNum, category] of [
+    ["WALLET-A", "Wallet"],
+    ["WALLET-B", "Wallet"],
+    ["PAYMENTS", "Payments"],
+    ["PRO", "WalletPro"],
+  ]) {
+    expect(
+      (
+        await browserJson(page, ddtPath(hierarchy, "sr-categories"), {
+          method: "POST",
+          body: { srNum: srNum!, categoryId: categories.get(category!)!, expectedRevision: 0 },
+        })
+      ).status,
+    ).toBe(200);
+  }
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const selector = page.getByRole("combobox", { name: "DDT 需求分类", exact: true });
+  await selector.fill("Wal");
+  await page.locator(".ant-select-dropdown:visible").getByTitle("Wallet", { exact: true }).click();
+  await selector.press("Escape");
+  await expect(page).toHaveURL(new RegExp(`ddtCategory=${categories.get("Wallet")}`));
+  await expect(page.locator(".ddt-case-list-row")).toHaveCount(60);
+  await page.getByRole("button", { name: "选择全部筛选结果", exact: true }).click();
+  await expect(page.locator(".ddt-loaded-selection")).toContainText(`已选 ${walletCount} 条`);
+  await page.getByRole("button", { name: "清空选择", exact: true }).click();
+  await selector.fill("Pay");
+  await page
+    .locator(".ant-select-dropdown:visible")
+    .getByTitle("Payments", { exact: true })
+    .click();
+  await selector.press("Escape");
+  await page.getByRole("button", { name: "选择全部筛选结果", exact: true }).click();
+  await expect(page.locator(".ddt-loaded-selection")).toContainText(`已选 ${walletCount + 3} 条`);
+  expect(new URL(page.url()).searchParams.getAll("ddtCategory")).toEqual([
+    categories.get("Wallet"),
+    categories.get("Payments"),
+  ]);
+  const closeNotice = page.getByRole("button", { name: "关闭通知", exact: true });
+  if (await closeNotice.isVisible()) await closeNotice.click();
+  await expect(page.locator(".toast-card")).toHaveCount(0);
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.mouse.move(190, 80);
+      try {
+        await expectUiIntegrity(page);
+      } catch (failure) {
+        await test.info().attach("active-ui-animations", {
+          body: JSON.stringify(
+            await page.evaluate(() =>
+              document.getAnimations().map((animation) => {
+                const target =
+                  animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+                return {
+                  playState: animation.playState,
+                  currentTime: animation.currentTime,
+                  timing: animation.effect?.getTiming(),
+                  target: target instanceof Element ? target.outerHTML.slice(0, 500) : null,
+                };
+              }),
+            ),
+          ),
+          contentType: "application/json",
+        });
+        throw failure;
+      }
+      await captureDdtUi(page, `ddt-category-filter-${theme}-${width}`);
+    }
+  }
+  await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: `将 ${walletCount + 3} 条 DDT 用例加入任务`,
+    exact: true,
+  });
+  const taskName = `Wallet and Payments ${hierarchy.suffix}`;
+  await dialog.getByRole("textbox", { name: "新任务名称", exact: true }).fill(taskName);
+  const added = page.waitForResponse(
+    (response) => response.url().includes("/ddt-cases") && response.request().method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "加入任务", exact: true }).click();
+  const response = await added;
+  expect(response.status()).toBe(200);
+  const createdTask = await response.json();
+  expect(createdTask.caseCount).toBe(walletCount + 3);
+  expect(response.request().postDataJSON().caseIds).toHaveLength(walletCount + 3);
+  await expect(dialog).toBeHidden();
+  const restoredCases = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/ddt/cases" &&
+      url.searchParams.getAll("categoryId").length === 2 &&
+      response.status() === 200
+    );
+  });
+  await page.reload();
+  await restoredCases;
+  await expect(selector).toHaveValue("");
+  await expect(page.getByTitle("Wallet", { exact: true })).toBeVisible();
+  await expect(page.getByTitle("Payments", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "选择全部筛选结果", exact: true }).click();
+  await expect(page.locator(".ddt-loaded-selection")).toContainText(`已选 ${walletCount + 3} 条`);
+  await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
+  const existingDialog = page.getByRole("dialog", {
+    name: `将 ${walletCount + 3} 条 DDT 用例加入任务`,
+    exact: true,
+  });
+  await expect(existingDialog.locator("select")).toHaveValue(createdTask.id);
+  const repeated = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/case-suites/${createdTask.id}/ddt-cases`) &&
+      response.request().method() === "POST",
+  );
+  await existingDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+  const repeatedResponse = await repeated;
+  expect(repeatedResponse.status()).toBe(200);
+  expect((await repeatedResponse.json()).caseCount).toBe(walletCount + 3);
+  await expect(existingDialog).toBeHidden();
+});
 
 test("DDT CaseID search matches fragments across pages and preserves literal filters", async ({
   page,
