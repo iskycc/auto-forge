@@ -1016,28 +1016,20 @@ export function DdtManagementWorkspace({
                     ))}
                   </Select>
                 </label>
-                <label className="col-span-full">
-                  <span>需求分类</span>
-                  <DdtRequirementCategoryFilter
-                    url={endpoint("requirement-categories")}
-                    value={categoryIds}
-                    disabled={savingCase || selectionProgress !== undefined}
-                    onChange={(ids) =>
-                      void changeFilter(() => {
-                        const url = new URL(window.location.href);
-                        url.searchParams.delete("ddtCategory");
-                        for (const id of ids) url.searchParams.append("ddtCategory", id);
-                        window.history.pushState(null, "", url);
-                      })
-                    }
-                  />
-                </label>
                 <Disclosure
                   density="compact"
                   showArrow={false}
                   header={
                     <>
                       <Filter size={14} /> 高级筛选
+                      {categoryIds.length ? (
+                        <span
+                          className="text-info"
+                          aria-label={`已选 ${categoryIds.length} 个需求分类`}
+                        >
+                          {categoryIds.length}
+                        </span>
+                      ) : null}
                     </>
                   }
                   className={cn(
@@ -1051,6 +1043,22 @@ export function DdtManagementWorkspace({
                       ddtManagementWorkspaceStyles["ddt-advanced-filter-fields"],
                     )}
                   >
+                    <label>
+                      <span>需求分类</span>
+                      <DdtRequirementCategoryFilter
+                        url={endpoint("requirement-categories")}
+                        value={categoryIds}
+                        disabled={savingCase || selectionProgress !== undefined}
+                        onChange={(ids) =>
+                          void changeFilter(() => {
+                            const url = new URL(window.location.href);
+                            url.searchParams.delete("ddtCategory");
+                            for (const id of ids) url.searchParams.append("ddtCategory", id);
+                            window.history.pushState(null, "", url);
+                          })
+                        }
+                      />
+                    </label>
                     <label>
                       <span>动态字段</span>
                       <Input

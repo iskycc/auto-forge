@@ -922,8 +922,7 @@ async function seedAdditionalDebugCandidates(
 }
 
 async function screenshotReview(page: Page, name: string) {
-  for (const close of await page.locator(".ant-notification-notice-close").all())
-    await close.click();
+  // Notifications expire independently; waiting avoids clicking a departing close button.
   await expect(page.locator(".ant-notification-notice")).toHaveCount(0);
   const directory = resolve(process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? ".local/case-debug-ui");
   await mkdir(directory, { recursive: true });

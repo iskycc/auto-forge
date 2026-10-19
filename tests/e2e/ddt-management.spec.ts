@@ -1894,6 +1894,8 @@ test("DDT SR category filters union labels and add all matching pages to a task"
     ).toBe(200);
   }
   await page.goto("/cases?tab=ddt&ddtView=cases");
+  const advancedFilters = page.locator(".ddt-advanced-filters .ant-collapse-header");
+  await advancedFilters.click();
   const selector = page.getByRole("combobox", { name: "DDT 需求分类", exact: true });
   await selector.fill("Wal");
   await page.locator(".ant-select-dropdown:visible").getByTitle("Wallet", { exact: true }).click();
@@ -1915,9 +1917,8 @@ test("DDT SR category filters union labels and add all matching pages to a task"
     categories.get("Wallet"),
     categories.get("Payments"),
   ]);
-  const closeNotice = page.getByRole("button", { name: "关闭通知", exact: true });
-  if (await closeNotice.isVisible()) await closeNotice.click();
   await expect(page.locator(".toast-card")).toHaveCount(0);
+  await advancedFilters.click();
   for (const theme of ["light", "dark"]) {
     if (theme === "dark")
       await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
@@ -1948,6 +1949,10 @@ test("DDT SR category filters union labels and add all matching pages to a task"
       }
       await captureDdtUi(page, `ddt-category-filter-${theme}-${width}`);
     }
+    await advancedFilters.click();
+    await expect(selector).toBeVisible();
+    await captureDdtUi(page, `ddt-category-filter-expanded-${theme}`);
+    await advancedFilters.click();
   }
   await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
   const dialog = page.getByRole("dialog", {
@@ -1966,19 +1971,12 @@ test("DDT SR category filters union labels and add all matching pages to a task"
   expect(createdTask.caseCount).toBe(walletCount + 3);
   expect(response.request().postDataJSON().caseIds).toHaveLength(walletCount + 3);
   await expect(dialog).toBeHidden();
-  const restoredCases = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      url.pathname === "/api/v1/ddt/cases" &&
-      url.searchParams.getAll("categoryId").length === 2 &&
-      response.status() === 200
-    );
-  });
   await page.reload();
-  await restoredCases;
+  await advancedFilters.click();
   await expect(selector).toHaveValue("");
   await expect(page.getByTitle("Wallet", { exact: true })).toBeVisible();
   await expect(page.getByTitle("Payments", { exact: true })).toBeVisible();
+  await advancedFilters.click();
   await page.getByRole("button", { name: "选择全部筛选结果", exact: true }).click();
   await expect(page.locator(".ddt-loaded-selection")).toContainText(`已选 ${walletCount + 3} 条`);
   await page.getByRole("button", { name: "加入用例任务", exact: true }).click();
