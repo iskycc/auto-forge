@@ -285,13 +285,14 @@ stop_fault_controller() {
 }
 
 run_adapter_tests() {
+  # Schema fixtures share the migration advisory lock, so parallel files only queue migrations.
   AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
   AUTOFORGE_TEST_MINIO_ENDPOINT=http://127.0.0.1:59009 \
   AUTOFORGE_TEST_MINIO_ACCESS_KEY=autoforge \
   AUTOFORGE_TEST_MINIO_SECRET_KEY=autoforge-secret \
   AUTOFORGE_TEST_REDIS_URL=redis://127.0.0.1:56389 \
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
-    pnpm exec vitest run \
+    pnpm exec vitest run --no-file-parallelism \
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
       packages/db/test/diagnostic-read-database.integration.test.ts \
@@ -336,7 +337,7 @@ run_distributed_contract_tests() {
   AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
   AUTOFORGE_TEST_REDIS_URL=redis://127.0.0.1:56389 \
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
-    pnpm exec vitest run --reporter=default --reporter=json \
+    pnpm exec vitest run --no-file-parallelism --reporter=default --reporter=json \
       --outputFile.json="${evidence_directory}/contracts.json" \
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
