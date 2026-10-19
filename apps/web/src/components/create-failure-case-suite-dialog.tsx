@@ -11,7 +11,7 @@ import { readApiErrorMessage } from "@/lib/client-api";
 export function CreateFailureCaseSuiteDialog({
   batchId,
   suiteName,
-  failedCount,
+  nonPassedCount,
   canCreateRuns,
   onClose,
   onCreated,
@@ -19,7 +19,7 @@ export function CreateFailureCaseSuiteDialog({
 }: {
   batchId: string;
   suiteName: string;
-  failedCount: number;
+  nonPassedCount: number;
   canCreateRuns: boolean;
   onClose: () => void;
   onCreated: (suiteId: string) => void;
@@ -73,7 +73,7 @@ export function CreateFailureCaseSuiteDialog({
       },
     );
     if (!response.ok)
-      throw new Error((await readApiErrorMessage(response, "以失败用例创建任务失败。"))!);
+      throw new Error((await readApiErrorMessage(response, "以未通过用例创建任务失败。"))!);
     const suite = (await response.json()) as { id?: string; name?: string };
     if (!suite.id) throw new Error("平台未返回新任务标识。");
     if (suite.name) setName(suite.name);
@@ -117,7 +117,7 @@ export function CreateFailureCaseSuiteDialog({
       if (action === "create") onCreated(suiteId);
       else onStarted(await startTask(suiteId));
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "以失败用例创建任务失败。";
+      const message = cause instanceof Error ? cause.message : "以未通过用例创建任务失败。";
       setError(suiteId ? `任务已创建，但立即执行失败：${message}` : message);
     } finally {
       submitting.current = false;
@@ -128,8 +128,8 @@ export function CreateFailureCaseSuiteDialog({
   return (
     <ActionDialog
       open
-      title="以失败用例创建任务"
-      description={`将本次执行最终失败或超时的 ${failedCount} 个用例保存为独立任务，配置复制本次执行快照。`}
+      title="以未通过用例创建任务"
+      description={`将本次执行未通过的 ${nonPassedCount} 个用例保存为独立任务，配置复制本次执行快照。`}
       className="w-[min(560px,_calc(100dvw_-_40px))]"
       closeDisabled={pending}
       onClose={onClose}
@@ -189,7 +189,9 @@ export function CreateFailureCaseSuiteDialog({
         <div className="grid min-w-0 gap-2 rounded-lg border border-border bg-muted/30 p-4 text-sm">
           <span className="text-muted-foreground">来源任务</span>
           <strong className="font-medium [overflow-wrap:anywhere]">{suiteName}</strong>
-          <span className="text-muted-foreground">用例范围：最终失败或超时 {failedCount} 个</span>
+          <span className="text-muted-foreground">
+            用例范围：未通过 {nonPassedCount} 个，包含未执行、失败、超时、取消等结果。
+          </span>
         </div>
         <p className="m-0 text-sm leading-6 text-muted-foreground">
           选择“创建任务”进入新任务详情，或“创建并立即执行”直接启动并查看执行进度。执行计划和回调通知绑定按新任务单独配置。

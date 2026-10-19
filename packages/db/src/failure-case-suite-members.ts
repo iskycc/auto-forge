@@ -1,7 +1,7 @@
 import type { CopyCaseSuiteRecord } from "@autoforge/application";
 import { DomainError } from "@autoforge/domain";
 import { sql } from "drizzle-orm";
-import { finalFailureRunCondition } from "./final-failure-selection";
+import { finalRunOutcome } from "./final-failure-selection";
 
 export function failureSuiteMemberQuery(input: {
   batchId: string;
@@ -11,7 +11,8 @@ export function failureSuiteMemberQuery(input: {
   afterCreatedAt?: string;
   limit?: number;
 }) {
-  const finalFailure = finalFailureRunCondition({
+  // Only task copying includes missing outcomes; failure statistics and reruns retain their own filter.
+  const finalOutcome = finalRunOutcome({
     id: sql`run.id`,
     terminalOutcome: sql`run.terminal_outcome`,
     status: sql`run.status`,
@@ -28,7 +29,7 @@ export function failureSuiteMemberQuery(input: {
     FROM execution_runs run
     LEFT JOIN case_definitions definition ON definition.id = run.case_definition_id AND run.case_type = 'testng'
     LEFT JOIN ddt_cases ddt ON ddt.id = run.case_definition_id AND run.case_type = 'ddt'
-    WHERE run.batch_id = ${input.batchId} AND ${finalFailure}
+    WHERE run.batch_id = ${input.batchId} AND COALESCE(${finalOutcome}, 'not_executed') <> 'succeeded'
     ${input.afterRunId && input.afterCreatedAt ? sql`AND (run.created_at, run.id) > (${input.afterCreatedAt}, ${input.afterRunId})` : sql``}
     ${input.limit ? sql`ORDER BY run.created_at, run.id LIMIT ${Math.max(1, Math.min(input.limit, 500))}` : sql``}`;
 }
@@ -64,7 +65,7 @@ export function assertFailureCopyValidation(
   input: CopyCaseSuiteRecord,
 ): void {
   if (!Number(validation.terminal))
-    throw new DomainError("RUN_BATCH_NOT_TERMINAL", "执行任务完全结束后才能以失败用例创建任务。");
+    throw new DomainError("RUN_BATCH_NOT_TERMINAL", "执行任务完全结束后才能以未通过用例创建任务。");
   if (!Number(validation.activeVersion))
     throw new DomainError("PROJECT_VERSION_ARCHIVED", "原项目版本已归档或删除，无法创建任务。");
   if (
@@ -74,6 +75,6 @@ export function assertFailureCopyValidation(
   )
     throw new DomainError(
       "CASE_SUITE_FAILURE_MEMBER_UNAVAILABLE",
-      "失败用例范围已变化或包含不可用用例，请刷新后重试。",
+      "未通过用例范围已变化或包含不可用用例，请刷新后重试。",
     );
 }

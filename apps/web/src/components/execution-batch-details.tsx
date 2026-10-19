@@ -106,10 +106,12 @@ export function ExecutionBatchDetails({
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
   const canRerunFinalFailures =
     canRetryRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
+  const failureTaskCaseCount = Math.max(0, batch.totalRuns - batch.succeededRuns);
   const canCreateFailureTask =
     failureTaskConfiguration !== undefined &&
     isTerminalRunBatch(batch.status) &&
-    finalFailureCount > 0;
+    !statisticsPending &&
+    failureTaskCaseCount > 0;
 
   const refreshBatch = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
@@ -393,7 +395,7 @@ export function ExecutionBatchDetails({
                 type="button"
               >
                 <ListPlus size={16} />
-                以失败用例创建任务
+                以未通过用例创建任务
               </Button>
             ) : null}
           </div>
@@ -449,7 +451,7 @@ export function ExecutionBatchDetails({
         <CreateFailureCaseSuiteDialog
           batchId={batch.id}
           suiteName={failureTaskConfiguration.suiteName}
-          failedCount={finalFailureCount}
+          nonPassedCount={failureTaskCaseCount}
           canCreateRuns={canCreateRuns}
           onClose={() => setFailureTaskDialogOpen(false)}
           onCreated={(suiteId) => router.push(`/case-suites/${encodeURIComponent(suiteId)}`)}

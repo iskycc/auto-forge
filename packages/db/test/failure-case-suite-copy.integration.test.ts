@@ -260,6 +260,107 @@ async function seedFailedTestNgBatch(context: Fixture, caseCount: number) {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} failure task copy contract`, () => {
+    it("copies every non-passing member without broadening failure reruns or execution statistics", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service } = await seed(context);
+        for (const [caseId, caseType, status] of [
+          ["not-started", "testng", "queued"],
+          ["pending-attempt", "testng", "queued"],
+          ["ddt-not-started", "ddt", "queued"],
+          ["ddt-cancelled", "ddt", "cancelled"],
+        ] as const) {
+          if (caseType === "testng") {
+            await context.execute(
+              "INSERT INTO case_definitions (id, project_version_id, test_stage_id, source_id, class_name, package_name, display_name, enabled, groups_json, current_version, created_at, updated_at) VALUES (?, 'version-1', 'stage-1', 'source-1', ?, 'example', ?, TRUE, '[]', 1, ?, ?)",
+              [caseId, `example.${caseId}`, caseId, timestamp, timestamp],
+            );
+          } else {
+            await context.execute(
+              "INSERT INTO ddt_cases (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized, sr_num, sr_num_normalized, case_kind, data_json, created_at, updated_at) VALUES (?, ?, 'version-1', 'stage-1', ?, ?, 'SR1', 'sr1', 'standard', '{}', ?, ?)",
+              [caseId, DEFAULT_PROJECT_ID, caseId, caseId, timestamp, timestamp],
+            );
+          }
+          await context.execute(
+            "INSERT INTO execution_runs (id, batch_id, case_definition_id, case_version, display_name, class_name, case_type, status, created_at, updated_at) VALUES (?, 'batch-1', ?, 1, ?, 'example.Case', ?, ?, ?, ?)",
+            [`run-${caseId}`, caseId, caseId, caseType, status, timestamp, timestamp],
+          );
+        }
+        await context.execute(
+          "INSERT INTO run_attempts (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at) VALUES ('pending-attempt', 'run-pending-attempt', 'runner-1', 1, 'running', 1, ?)",
+          [timestamp],
+        );
+        await context.execute(
+          "UPDATE execution_runs SET attempt_count = 1 WHERE id = 'run-pending-attempt'",
+        );
+        await context.execute(
+          "UPDATE run_batches SET status = 'cancelled', total_runs = 10 WHERE id = 'batch-1'",
+        );
+        const before = await context.batches.getSummary("batch-1");
+        expect(before).toMatchObject({
+          totalRuns: 10,
+          succeededRuns: 2,
+          failedRuns: 2,
+          timedOutRuns: 1,
+        });
+        const failureRerunBefore = await context.batches.getRerunSnapshot("batch-1", {
+          finalFailuresOnly: true,
+        });
+        expect(failureRerunBefore!.runs.map((run) => run.caseDefinitionId).sort()).toEqual([
+          "ddt-1",
+          "failure",
+          "timeout",
+        ]);
+        const copy = await service.createFromFinalFailures("batch-1", {});
+        expect(copy.caseCount).toBe(8);
+        const members = (await context.suites.listMemberPage({ suiteId: copy.id, limit: 100 }))!;
+        expect(members.items.map((member) => member.caseDefinition.id).sort()).toEqual([
+          "cancelled",
+          "failure",
+          "not-started",
+          "pending-attempt",
+          "timeout",
+        ]);
+        expect(members.ddtItems.map((member) => member.ddtCase.id).sort()).toEqual([
+          "ddt-1",
+          "ddt-cancelled",
+          "ddt-not-started",
+        ]);
+        expect(await context.batches.getSummary("batch-1")).toEqual(before);
+        expect(
+          await context.batches.getRerunSnapshot("batch-1", { finalFailuresOnly: true }),
+        ).toEqual(failureRerunBefore);
+      } finally {
+        await context.close();
+      }
+    });
+
+    it.each(["queued", "cancelled", "succeeded"] as const)(
+      "handles a terminal batch containing only %s members",
+      async (status) => {
+        const context = await fixture(mode);
+        try {
+          const { service } = await seed(context);
+          await context.execute("DELETE FROM run_attempts");
+          await context.execute(
+            "UPDATE execution_runs SET attempt_count = 0, terminal_outcome = NULL",
+          );
+          await context.execute("UPDATE execution_runs SET status = ?", [status]);
+          await context.execute("UPDATE run_batches SET status = 'cancelled' WHERE id = 'batch-1'");
+          if (status === "succeeded") {
+            await expect(service.createFromFinalFailures("batch-1", {})).rejects.toMatchObject({
+              code: "RUN_BATCH_NO_FINAL_FAILURES",
+            });
+          } else {
+            const copy = await service.createFromFinalFailures("batch-1", {});
+            expect(copy.caseCount).toBe(6);
+          }
+        } finally {
+          await context.close();
+        }
+      },
+    );
+
     it("upgrades the previous schema without losing snapshots and rolls back failed history DDL", async () => {
       const directory = await mkdtemp(resolve(tmpdir(), "suite-history-upgrade-"));
       const folder = resolve(
@@ -309,7 +410,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
           versions,
         );
         expect(await context.rows("SELECT * FROM run_batches ORDER BY id")).toEqual(batches);
-        expect((await service.createFromFinalFailures("batch-1", {})).caseCount).toBe(3);
+        expect((await service.createFromFinalFailures("batch-1", {})).caseCount).toBe(4);
       } finally {
         await context.close();
         await rm(directory, { recursive: true, force: true });
@@ -374,12 +475,13 @@ for (const mode of ["sqlite", "postgres"] as const) {
         });
         const copy = await service.createFromFinalFailures("batch-1", {});
         expect(copy).toMatchObject({
-          caseCount: 3,
+          caseCount: 4,
           policy: { concurrency: 17 },
           description: "Original description",
         });
         const members = await context.suites.listMemberPage({ suiteId: copy.id, limit: 10 });
         expect(members!.items.map((member) => member.caseDefinition.id).sort()).toEqual([
+          "cancelled",
           "failure",
           "timeout",
         ]);
@@ -585,7 +687,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
           "Original Rerun-2026100603",
         ]);
         expect(
-          copies.every((suite) => suite.caseCount === 3 && suite.policy.concurrency === 17),
+          copies.every((suite) => suite.caseCount === 4 && suite.policy.concurrency === 17),
         ).toBe(true);
         expect(await service.suggestFinalFailureName("batch-1")).toEqual({
           name: "Original Rerun-2026100604",
@@ -720,7 +822,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
       "unfinished-attempt",
       "unfinished-no-retry",
     ])(
-      "keeps the copied member count equal to final failures with %s attempt metadata",
+      "copies all non-passing members while preserving final failure counts with %s attempt metadata",
       async (scenario) => {
         const context = await fixture(mode);
         try {
@@ -760,11 +862,12 @@ for (const mode of ["sqlite", "postgres"] as const) {
           }
           const source = (await context.batches.getSummary("batch-1"))!;
           const suite = await service.createFromFinalFailures("batch-1", {});
-          expect(suite.caseCount).toBe(source.failedRuns + source.timedOutRuns);
-          expect(suite.caseCount).toBe(3);
+          expect(suite.caseCount).toBe(source.totalRuns - source.succeededRuns);
+          expect(suite.caseCount).toBe(4);
           expect(source).toMatchObject({ failedRuns: 2, timedOutRuns: 1, succeededRuns: 2 });
           const members = (await context.suites.listMemberPage({ suiteId: suite.id, limit: 100 }))!;
           expect(members.items.map((item) => item.caseDefinition.id).sort()).toEqual([
+            "cancelled",
             "failure",
             "timeout",
           ]);
@@ -775,7 +878,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
       },
     );
 
-    it("copies the immutable configuration and only final failures/timeouts across TestNG and DDT", async () => {
+    it("copies the immutable configuration and non-passing TestNG and DDT members", async () => {
       const context = await fixture(mode);
       try {
         const { service } = await seed(context);
@@ -797,6 +900,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
           afterCreatedAt: page.at(-1)!.createdAt,
         });
         expect([...page, ...next].map((member) => member.caseId).sort()).toEqual([
+          "cancelled",
           "ddt-1",
           "failure",
           "timeout",
@@ -810,7 +914,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
         expect(suite).toMatchObject({
           version: 1,
           revision: 1,
-          caseCount: 3,
+          caseCount: 4,
           description: "Original description",
           policy: {
             concurrency: 17,
@@ -822,6 +926,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
         });
         const members = await context.suites.listMemberPage({ suiteId: suite.id, limit: 100 });
         expect(members!.items.map((item) => item.caseDefinition.id).sort()).toEqual([
+          "cancelled",
           "failure",
           "timeout",
         ]);

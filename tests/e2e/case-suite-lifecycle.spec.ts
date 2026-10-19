@@ -462,7 +462,9 @@ test("task deletion preserves history, public logs, analysis and in-flight execu
   await expect(page.getByRole("region", { name: "批次操作", exact: true })).toContainText(
     "本批次的执行记录与配置快照已保留",
   );
-  await expect(page.getByRole("button", { name: "以失败用例创建任务", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "以未通过用例创建任务", exact: true }),
+  ).toBeVisible();
   for (const theme of ["light", "dark"]) {
     await page
       .context()
@@ -478,8 +480,8 @@ test("task deletion preserves history, public logs, analysis and in-flight execu
       await captureUi(page, `task-delete-preserved-execution-${theme}-${width}`);
     }
   }
-  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
-  const copyDialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+  await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
+  const copyDialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
   const copiedResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -1429,6 +1431,124 @@ test("Jenkins recovery credentials support current-task and cross-task reuse wit
   }
 });
 
+test("a terminal task with no failures copies its unexecuted members into a new task", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("unexecuted-task-copy");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const classes = ["First", "Second"].map((name) => `example.unexecutedcopy.${name}`);
+  await importJar(
+    page,
+    project,
+    `${suffix}.jar`,
+    classes[0]!,
+    ["test"],
+    [{ className: classes[1]!, methodNames: ["test"] }],
+  );
+  const definitions = await Promise.all(
+    classes.map((className) =>
+      findVersionCase(page, project.id, project.versionId, project.stageId, className),
+    ),
+  );
+  const suite = await createVersionSuite(
+    page,
+    project.id,
+    project.versionId,
+    `未执行范围 ${suffix}`,
+    definitions[0]!.id,
+  );
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${suite.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: [definitions[1]!.id] },
+      })
+    ).status,
+  ).toBe(200);
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id, {
+    concurrency: 2,
+    retryLimit: 0,
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  const batch = await createTaskRun(page, suite.id);
+  expect(
+    (
+      await browserJson(page, `/api/v1/run-batches/${batch.id}/terminate`, {
+        method: "POST",
+        body: { reason: "Stop before any Runner claims a case" },
+      })
+    ).status,
+  ).toBe(200);
+  const summaryUrl = `/api/v1/run-batches/${batch.id}?view=summary`;
+  const overviewUrl = `/api/v1/run-batches/${batch.id}/overview`;
+  await expect
+    .poll(async () => (await browserJson<{ status: string }>(page, summaryUrl)).body.status, {
+      timeout: 30_000,
+    })
+    .toBe("cancelled");
+  const source = await browserJson(page, overviewUrl);
+  expect(source.body).toMatchObject({
+    totalRuns: 2,
+    succeededRuns: 0,
+    failedRuns: 0,
+    timedOutRuns: 0,
+  });
+  const action = page.getByRole("button", { name: "以未通过用例创建任务", exact: true });
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+    await page.goto(`/run-batches/${batch.id}`);
+    await action.scrollIntoViewIfNeeded();
+    await expect(page.getByRole("button", { name: "重新执行最后一轮", exact: true })).toHaveCount(
+      0,
+    );
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await action.scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      await captureUi(page, `non-pass-task-actions-${theme}-${width}`);
+      await action.click();
+      const dialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
+      await expect(dialog).toContainText("未通过的 2 个用例");
+      await expect(dialog).toContainText("包含未执行、失败、超时、取消等结果");
+      await expectUiIntegrity(page);
+      await captureUi(page, `non-pass-task-dialog-${theme}-${width}`);
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      await expect(dialog).toBeHidden();
+    }
+  }
+  await action.click();
+  const dialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/api/v1/run-batches/${batch.id}/failure-case-suite`,
+  );
+  await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  const response = await createdResponse;
+  expect(response.status()).toBe(201);
+  const copy = (await response.json()) as { id: string; caseCount: number };
+  expect(copy.caseCount).toBe(2);
+  await expect(page).toHaveURL(new RegExp(`/case-suites/${copy.id}$`));
+  const members = await browserJson<{ items: Array<{ caseDefinition: { id: string } }> }>(
+    page,
+    `/api/v1/case-suites/${copy.id}/members?limit=100`,
+  );
+  expect(members.body.items.map((item) => item.caseDefinition.id).sort()).toEqual(
+    definitions.map((definition) => definition.id).sort(),
+  );
+  expect((await browserJson(page, overviewUrl)).body).toMatchObject({
+    totalRuns: 2,
+    succeededRuns: 0,
+    failedRuns: 0,
+    timedOutRuns: 0,
+  });
+});
+
 test("terminal execution failures create a reusable task with the execution configuration", async ({
   page,
   browser,
@@ -1479,7 +1599,7 @@ test("terminal execution failures create a reusable task with the execution conf
     (await browserJson(page, endpoint, { method: "POST", body: { name: "Too early" } })).status,
   ).toBe(400);
   await page.goto(`/run-batches/${batch.id}`);
-  await expect(page.getByRole("button", { name: "以失败用例创建任务", exact: true })).toHaveCount(
+  await expect(page.getByRole("button", { name: "以未通过用例创建任务", exact: true })).toHaveCount(
     0,
   );
   let completed = 0;
@@ -1548,7 +1668,7 @@ test("terminal execution failures create a reusable task with the execution conf
       .context()
       .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
     await page.reload();
-    const action = page.getByRole("button", { name: "以失败用例创建任务", exact: true });
+    const action = page.getByRole("button", { name: "以未通过用例创建任务", exact: true });
     await expect(action).toBeVisible();
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -1556,8 +1676,8 @@ test("terminal execution failures create a reusable task with the execution conf
       await expectUiIntegrity(page);
       await captureUi(page, `failure-task-actions-${theme}-${width}`);
       await action.click();
-      const dialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
-      await expect(dialog).toContainText("最终失败或超时的 2 个用例");
+      const dialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
+      await expect(dialog).toContainText("未通过的 2 个用例");
       await expect(dialog.getByLabel("任务名称", { exact: true })).toHaveValue(defaultName);
       await expect(dialog.getByRole("button", { name: "创建任务", exact: true })).toBeVisible();
       await expect(
@@ -1570,8 +1690,8 @@ test("terminal execution failures create a reusable task with the execution conf
     }
   }
   // An open dialog may have an outdated suggestion after another window creates a task.
-  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
-  const defaultDialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+  await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
+  const defaultDialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
   await expect(defaultDialog.getByLabel("任务名称", { exact: true })).toHaveValue(defaultName);
   const concurrentCopy = await browserJson<{ name: string }>(page, endpoint, {
     method: "POST",
@@ -1601,8 +1721,8 @@ test("terminal execution failures create a reusable task with the execution conf
     if (route.request().method() === "GET") await delayedSuggestion;
     await route.continue();
   });
-  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "以失败用例创建任务", exact: true });
+  await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
   await dialog.getByLabel("任务名称", { exact: true }).fill(" ");
   const suggestionResponse = page.waitForResponse(
     (response) =>
@@ -1652,7 +1772,7 @@ test("terminal execution failures create a reusable task with the execution conf
       });
     else await route.continue();
   });
-  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("名称服务暂不可用");
   await dialog.getByLabel("任务名称", { exact: true }).fill(`手动命名恢复 ${suffix}`);
   await dialog.getByRole("button", { name: "创建任务", exact: true }).click();
@@ -1689,9 +1809,9 @@ test("terminal execution failures create a reusable task with the execution conf
     const restrictedPage = await restrictedContext.newPage();
     await login(restrictedPage, username, password);
     await restrictedPage.goto(`/run-batches/${batch.id}`);
-    await restrictedPage.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+    await restrictedPage.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
     const restrictedDialog = restrictedPage.getByRole("dialog", {
-      name: "以失败用例创建任务",
+      name: "以未通过用例创建任务",
       exact: true,
     });
     await expect(
@@ -1725,7 +1845,7 @@ test("terminal execution failures create a reusable task with the execution conf
       })
     ).status,
   ).toBe(200);
-  await page.getByRole("button", { name: "以失败用例创建任务", exact: true }).click();
+  await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
   await expect(dialog.getByLabel("任务名称", { exact: true })).toHaveValue(`${defaultName}02`);
   const immediateCreationResponse = page.waitForResponse(
     (response) =>

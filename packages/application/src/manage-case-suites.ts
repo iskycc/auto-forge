@@ -311,7 +311,10 @@ export class CaseSuiteService {
     const source = await this.suites.getFailureCopySource(batchId, projectIds);
     if (!source) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     if (!isTerminalRunBatchStatus(source.status)) {
-      throw new DomainError("RUN_BATCH_NOT_TERMINAL", "执行任务完全结束后才能以失败用例创建任务。");
+      throw new DomainError(
+        "RUN_BATCH_NOT_TERMINAL",
+        "执行任务完全结束后才能以未通过用例创建任务。",
+      );
     }
     const projectVersionId = source.policy?.projectVersionId;
     if (
@@ -387,7 +390,7 @@ export class CaseSuiteService {
         if (!member.available) {
           throw new DomainError(
             "CASE_SUITE_FAILURE_MEMBER_UNAVAILABLE",
-            "失败用例中包含已删除、已回收或不属于原项目版本的用例，无法完整创建任务。",
+            "未通过用例中包含已删除、已回收或不属于原项目版本的用例，无法完整创建任务。",
           );
         }
         selected[member.caseType].add(member.caseId);
@@ -397,7 +400,7 @@ export class CaseSuiteService {
       afterCreatedAt = members.at(-1)!.createdAt;
     }
     if (selected.testng.size + selected.ddt.size === 0) {
-      throw new DomainError("RUN_BATCH_NO_FINAL_FAILURES", "本次执行没有最终失败或超时的用例。");
+      throw new DomainError("RUN_BATCH_NO_FINAL_FAILURES", "本次执行没有未通过的用例。");
     }
     return selected;
   }
