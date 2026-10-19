@@ -16,6 +16,8 @@ describe("session cookie transport security", () => {
       new Date("2000-01-01T00:00:00Z"),
     );
     expect(cookie.maxAge).toBe(86_400);
+    expect(cookie.sameSite).toBe("strict");
+    expect(cookie.httpOnly).toBe(true);
     expect(cookie).not.toHaveProperty("expires");
   });
   it("allows a production deployment reached directly over HTTP to retain the session", () => {

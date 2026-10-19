@@ -2840,6 +2840,7 @@ test("SR associations restrict candidates and automatically cover imported and m
 
 test("public logs rerun failed Chinese DDT cases and their manual reruns without blocking HTTP", async ({
   page,
+  browser,
 }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
@@ -2933,6 +2934,14 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
     );
     expect(response.status()).toBe(200);
   }
+  let firstLogVisit = true;
+  let currentPublicLogUrl = "";
+  async function capturePublicLog(target: Page, name: string): Promise<void> {
+    const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+    await mkdir(directory, { recursive: true });
+    await expectUiIntegrity(target);
+    await target.screenshot({ path: resolve(directory, `${name}.png`), animations: "disabled" });
+  }
   async function openLog(attemptId: string): Promise<void> {
     const shared = await browserJson<{ shareUrl: string }>(
       page,
@@ -2940,8 +2949,50 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       { method: "POST" },
     );
     expect(shared.status).toBe(200);
-    await page.goto(shared.body.shareUrl);
+    const publicLogUrl = new URL(shared.body.shareUrl, page.url()).href;
+    currentPublicLogUrl = publicLogUrl;
+    if (firstLogVisit) {
+      firstLogVisit = false;
+      const externalUrl = "http://outside.autoforge.test/public-log-link";
+      let releaseSessionCheck!: () => void;
+      const sessionCheckGate = new Promise<void>((resolve) => {
+        releaseSessionCheck = resolve;
+      });
+      const sessionUrl = new URL("/api/v1/auth/session", publicLogUrl).href;
+      await page.route(sessionUrl, async (route) => {
+        await sessionCheckGate;
+        await route.continue();
+      });
+      await page.route(externalUrl, (route) =>
+        route.fulfill({
+          contentType: "text/html; charset=utf-8",
+          body: `<a href="${publicLogUrl.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}">查看公开用例日志</a>`,
+        }),
+      );
+      try {
+        await page.goto(externalUrl);
+        const navigation = page.waitForRequest(
+          (request) => request.isNavigationRequest() && request.url() === publicLogUrl,
+        );
+        await page.getByRole("link", { name: "查看公开用例日志", exact: true }).click();
+        const headers = await (await navigation).allHeaders();
+        expect(Boolean(headers.cookie?.includes("autoforge_session="))).toBe(false);
+        await expect(page.getByRole("button", { name: /正在确认登录状态…/u })).toBeVisible();
+        for (const width of [1024, 1536]) {
+          await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          await capturePublicLog(page, `public-log-session-checking-${width}`);
+        }
+      } finally {
+        releaseSessionCheck();
+        await page.unroute(externalUrl);
+      }
+      await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
+      await page.unroute(sessionUrl);
+    } else {
+      await page.goto(publicLogUrl);
+    }
     await expect(page.getByRole("heading", { name: caseId, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
   }
   try {
     const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
@@ -3058,16 +3109,54 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       failedRuns: 1,
       succeededRuns: 0,
     });
-    for (const viewport of [
-      { width: 1024, height: 768 },
-      { width: 1536, height: 960 },
-    ]) {
-      await page.setViewportSize(viewport);
-      await expectUiIntegrity(page);
-      await page.screenshot({
-        path: testInfo.outputPath(`chinese-ddt-log-rerun-${viewport.width}.png`),
-        animations: "disabled",
+    for (const theme of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([{ name: "autoforge-color-mode", value: theme, url: currentPublicLogUrl }]);
+      await page.reload();
+      await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await capturePublicLog(page, `chinese-ddt-log-rerun-${theme}-${width}`);
+      }
+    }
+    const anonymous = await browser.newContext();
+    try {
+      const anonymousPage = await anonymous.newPage();
+      let sessionChecks = 0;
+      await anonymousPage.route(
+        new URL("/api/v1/auth/session", currentPublicLogUrl).href,
+        async (route) => {
+          sessionChecks += 1;
+          if (sessionChecks === 1)
+            await route.fulfill({ status: 503, json: { error: { code: "UNAVAILABLE" } } });
+          else await route.continue();
+        },
+      );
+      await anonymousPage.goto(currentPublicLogUrl);
+      const retrySession = anonymousPage.getByRole("button", {
+        name: "登录状态确认失败，重试",
+        exact: true,
       });
+      await expect(retrySession).toBeVisible();
+      for (const width of [1024, 1536]) {
+        await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await capturePublicLog(anonymousPage, `public-log-session-error-${width}`);
+      }
+      await retrySession.click();
+      await expect(
+        anonymousPage.getByRole("link", { name: "登录后执行此用例", exact: true }),
+      ).toBeVisible();
+      expect(sessionChecks).toBe(2);
+      await expect(
+        anonymousPage.getByRole("button", { name: "执行此用例", exact: true }),
+      ).toHaveCount(0);
+      for (const width of [1024, 1536]) {
+        await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await capturePublicLog(anonymousPage, `public-log-session-anonymous-${width}`);
+      }
+    } finally {
+      await anonymous.close();
     }
   } finally {
     expect(

@@ -241,6 +241,79 @@ for (const mode of ["sqlite", "postgres"] as const) {
       }
     });
 
+    it("prepares a cold DDT rerun without scanning unrelated assignments or attempts", async () => {
+      const fixture = await createFixture(mode);
+      try {
+        await seedSnapshot(fixture);
+        for (const [runnerId, attemptId, runId, address, createdAt] of [
+          ["runner", "source-attempt", "run-ddt", "10.0.0.22", timestamp],
+          [
+            "unrelated-runner",
+            "unrelated-attempt",
+            "run-testng",
+            "10.0.0.99",
+            "2026-10-06T00:00:01.000Z",
+          ],
+        ]) {
+          await fixture.execute(
+            `INSERT INTO runners(id,credential_hash,name,os,architecture,agent_version,protocol_version,labels_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at) VALUES (?,?,'runner','linux','amd64','1.20.0',1,'[]',4,0,?,?,?)`,
+            [runnerId!, runnerId!, createdAt!, createdAt!, createdAt!],
+          );
+          await fixture.execute(
+            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,outcome,scheduling_score,created_at) VALUES (?,?,?,1,'failed','failed',1,?)`,
+            [attemptId!, runId!, runnerId!, createdAt!],
+          );
+          await fixture.execute(
+            `INSERT INTO assignments(id,attempt_id,execution_run_id,batch_id,runner_id,status,execution_spec_json,available_at,claim_deadline_at,created_at,updated_at) VALUES (?,?,?,'batch',?,'completed',?,?,?,?,?)`,
+            [
+              `${attemptId}-assignment`,
+              attemptId!,
+              runId!,
+              runnerId!,
+              JSON.stringify({ adapter: { environmentAddress: address } }),
+              createdAt!,
+              createdAt!,
+              createdAt!,
+              createdAt!,
+            ],
+          );
+        }
+        const before = fixture.statements().length;
+        const snapshot = await fixture.batches.getRerunSnapshot("batch", {
+          executionRunId: "run-ddt",
+        });
+        expect(snapshot?.caseLogRerunRotation?.previousAdapterEnvironmentAddress).toBe("10.0.0.22");
+        await fixture.execute(
+          `INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,batch_kind,parent_batch_id,source_execution_run_id,environment_json,created_at,updated_at) VALUES ('manual','suite','Manual',1,'queued',0,1,'case_log_rerun','batch','run-ddt','[]',?,?)`,
+          [timestamp, timestamp],
+        );
+        await fixture.execute(
+          `INSERT INTO execution_runs(id,batch_id,case_definition_id,case_version,display_name,class_name,case_type,status,created_at,updated_at) VALUES ('manual-run','manual','ddt',1,'订单支付_中文001','example.Checkout','ddt','queued',?,?)`,
+          [timestamp, timestamp],
+        );
+        const scheduling = await fixture.batches.getSchedulingSnapshot("manual", timestamp);
+        expect(scheduling?.runnerHistoryByRun).toEqual({ "manual-run": ["runner"] });
+        if (fixture.sqliteQueryPlan) {
+          const queries = fixture.statements().slice(before);
+          const historyReads = queries.filter((statement) =>
+            /SELECT (?:assignment\.execution_spec_json|attempt\.runner_id) AS/u.test(statement),
+          );
+          expect(historyReads).toHaveLength(2);
+          for (const statement of historyReads) {
+            const plan = fixture.sqliteQueryPlan(statement, [
+              "batch",
+              "run-ddt",
+              "batch",
+              "run-ddt",
+            ]);
+            expect(plan.join("\n")).not.toMatch(/SCAN (?:assignment|attempt)\b/u);
+          }
+        }
+      } finally {
+        await fixture.close();
+      }
+    });
+
     it("reads TestNG/DDT execution facts without batch counters or rerun preparation", async () => {
       const fixture = await createFixture(mode);
       try {

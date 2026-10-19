@@ -7,11 +7,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     const identity = await authenticateRequest(request, { allowPasswordChangeRequired: true });
-    return NextResponse.json({
-      user: identity.user,
-      systemPermissions: identity.systemPermissions,
-      projectPermissions: identity.projectPermissions,
-    });
+    return NextResponse.json(
+      {
+        user: identity.user,
+        systemPermissions: identity.systemPermissions,
+        projectPermissions: identity.projectPermissions,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }

@@ -1,6 +1,10 @@
 import { executionRecordKindCondition } from "./execution-record-kind";
 import { finalFailureRunCondition } from "./final-failure-selection";
 import {
+  previousCaseLogAssignmentQuery,
+  previousCaseLogRunnerQuery,
+} from "./case-log-rerun-history-query";
+import {
   runBatchCountsQuery,
   mapRunBatchCounts,
   type RunBatchCountRow,
@@ -2430,19 +2434,9 @@ function previousCaseLogAdapterEnvironmentAddress(
     if (address) return address;
   }
 
-  const actualAssignment = handle.client
-    .prepare(
-      `SELECT assignment.execution_spec_json AS executionSpecJson
-       FROM assignments assignment
-       JOIN execution_runs run ON run.id = assignment.execution_run_id
-       JOIN run_batches batch ON batch.id = run.batch_id
-       WHERE (batch.id = ? AND run.id = ?)
-          OR (batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = ?
-              AND batch.source_execution_run_id = ?)
-       ORDER BY assignment.created_at DESC, assignment.id DESC LIMIT 1`,
-    )
-    .get(parentBatchId, sourceExecutionRunId, parentBatchId, sourceExecutionRunId) as
-    { executionSpecJson: string } | undefined;
+  const actualAssignment = handle.db.all<{ executionSpecJson: string }>(
+    previousCaseLogAssignmentQuery(parentBatchId, sourceExecutionRunId),
+  )[0];
   const actualAddress = actualAssignment
     ? adapterEnvironmentAddressFromExecutionSpec(actualAssignment.executionSpecJson)
     : undefined;
@@ -2469,19 +2463,9 @@ function previousCaseLogRunnerId(
   parentBatchId: string,
   sourceExecutionRunId: string,
 ): string | undefined {
-  const row = handle.client
-    .prepare(
-      `SELECT attempt.runner_id AS runnerId
-       FROM run_attempts attempt
-       JOIN execution_runs run ON run.id = attempt.execution_run_id
-       JOIN run_batches batch ON batch.id = run.batch_id
-       WHERE (batch.id = ? AND run.id = ?)
-          OR (batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = ?
-              AND batch.source_execution_run_id = ?)
-       ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1`,
-    )
-    .get(parentBatchId, sourceExecutionRunId, parentBatchId, sourceExecutionRunId) as
-    { runnerId: string } | undefined;
+  const row = handle.db.all<{ runnerId: string }>(
+    previousCaseLogRunnerQuery(parentBatchId, sourceExecutionRunId),
+  )[0];
   return row?.runnerId;
 }
 

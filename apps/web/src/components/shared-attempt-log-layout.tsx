@@ -3,10 +3,10 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import type { SharedAttemptLogView } from "@autoforge/contracts";
 import Link from "next/link";
-import { LinkButton } from "@/components/ui/link-button";
 import type { ReactNode } from "react";
 
 import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
+import { SharedLogSessionAction } from "@/components/shared-log-session-action";
 import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
@@ -286,18 +286,14 @@ function SharedLogRerunAction({
   }
   if (access === "login") {
     return (
-      <LinkButton
-        variant="primary"
+      <SharedLogSessionAction
         className={cn(
           "button button-primary share-log-rerun-login",
           uiPatterns["button"],
           uiPatterns["button-primary"],
           sharedAttemptLogContentStyles["share-log-rerun-login"],
         )}
-        href="/login"
-      >
-        登录后执行此用例
-      </LinkButton>
+      />
     );
   }
   return (
