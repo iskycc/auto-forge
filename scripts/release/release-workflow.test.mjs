@@ -140,7 +140,12 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /test-full-business-recovery\.sh runtime-agent/);
   assert.match(workflow, /test-full-business-recovery\.sh runtime-recovery/);
   assert.match(workflow, /test-full-business-recovery\.sh browser-governance/);
-  assert.match(workflow, /test-full-business-recovery\.sh contracts/);
+  assert.match(workflow, /test-full-business-recovery\.sh capacity-contracts/);
+  assert.match(workflow, /test-full-business-recovery\.sh adapter-contracts/);
+  const fullScript = await readFile("scripts/quality/test-full.sh", "utf8");
+  assert.match(fullScript, /capacity-contracts\)\s+run_capacity_tests\s+;;/);
+  assert.match(fullScript, /adapter-contracts\)\s+run_adapter_tests\s+;;/);
+  assert.match(fullScript, /\n  contracts\)\s+run_capacity_tests\s+run_adapter_tests\s+;;/);
   assert.doesNotMatch(
     workflow,
     /test-full-business-recovery\.sh (browser-recovery|real-agent|ldap)/,

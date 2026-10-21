@@ -712,6 +712,12 @@ case "${acceptance_phase}" in
   distributed-contracts)
     run_distributed_contract_tests
     ;;
+  capacity-contracts)
+    run_capacity_tests
+    ;;
+  adapter-contracts)
+    run_adapter_tests
+    ;;
   contracts)
     run_capacity_tests
     run_adapter_tests

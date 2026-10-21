@@ -567,8 +567,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Full · contracts and capacity
-            command: bash scripts/quality/test-full-business-recovery.sh contracts
+          - name: Full · capacity and performance
+            command: bash scripts/quality/test-full-business-recovery.sh capacity-contracts
+          - name: Full · adapter contracts
+            command: bash scripts/quality/test-full-business-recovery.sh adapter-contracts
           - name: Full · runtime Agent
             command: bash scripts/quality/test-full-business-recovery.sh runtime-agent
           - name: Full · runtime recovery
