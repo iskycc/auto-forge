@@ -1,7 +1,38 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { buildClassFile } from "../../../packages/testng-discovery/test/class-fixture";
 import { browserJson, uniqueName } from "./session";
+
+/** Initialization can yield to execution work before writing; resume only that explicit deferral. */
+export async function inheritInitializationStep(page: Page, wizard: Locator): Promise<void> {
+  let acceptedStatus: number | undefined;
+  await expect
+    .poll(
+      async () => {
+        const [response] = await Promise.all([
+          page.waitForResponse(
+            (candidate) =>
+              candidate.request().method() === "POST" &&
+              new URL(candidate.url()).pathname.endsWith("/initialize"),
+          ),
+          wizard.getByRole("button", { name: /^(继承所选内容|继续继承)$/u }).click(),
+        ]);
+        if (response.status() === 503) {
+          const body = (await response.json()) as { error?: { code?: string } };
+          if (body.error?.code === "PLATFORM_BUSY") return false;
+        }
+        acceptedStatus = response.status();
+        return true;
+      },
+      {
+        timeout: 5_000,
+        intervals: [250, 500, 1_000],
+        message: "initialization resumes after explicit priority deferral",
+      },
+    )
+    .toBe(true);
+  expect(acceptedStatus, "non-deferral initialization responses must succeed").toBe(200);
+}
 
 export async function createInitializationProject(page: Page) {
   const name = uniqueName("version-init");

@@ -7,6 +7,7 @@ import {
   createInitializationProject,
   seedInitializationSource,
   openNewVersionWizard,
+  inheritInitializationStep,
 } from "./support/version-initialization";
 
 import {
@@ -83,7 +84,7 @@ test("version initialization inherits mapped cases and tasks and preserves progr
     .getByRole("option", { name: "来源版本_完整支付回归_".repeat(4), exact: true })
     .click();
   const inherit = wizard.getByRole("button", { name: "继承所选内容", exact: true });
-  await inherit.click();
+  await inheritInitializationStep(page, wizard);
   await expect(wizard.getByText(/本步已处理：新增或匹配/)).toBeVisible();
   await wizard.getByRole("button", { name: "下一步", exact: true }).click();
   await wizard.getByRole("button", { name: "跳过此步", exact: true }).click();
@@ -105,13 +106,13 @@ test("version initialization inherits mapped cases and tasks and preserves progr
   );
   await inherit.click();
   await expect(wizard.getByText(/测试暂时繁忙，允许继续/)).toBeVisible();
-  await wizard.getByRole("button", { name: "继续继承", exact: true }).click();
+  await inheritInitializationStep(page, wizard);
   await expect(wizard.getByText(/本步已处理：新增或匹配 1 项/)).toBeVisible();
   await wizard.getByRole("button", { name: "下一步", exact: true }).click();
-  await inherit.click();
+  await inheritInitializationStep(page, wizard);
   await expect(wizard.getByText(/本步已处理：新增或匹配 1 项/)).toBeVisible();
   await wizard.getByRole("button", { name: "下一步", exact: true }).click();
-  await inherit.click();
+  await inheritInitializationStep(page, wizard);
   await expect(wizard.getByText(/本步已处理：新增或匹配/)).toBeVisible();
   await wizard.getByRole("button", { name: "下一步", exact: true }).click();
   await wizard.getByRole("button", { name: "读取可继承任务", exact: true }).click();
@@ -148,7 +149,23 @@ test("version initialization inherits mapped cases and tasks and preserves progr
   const conflict = page.getByRole("dialog", { name: "用例任务已被其他人修改", exact: true });
   await expect(conflict).toBeVisible();
   await conflict.getByRole("button", { name: "暂不重新加载", exact: true }).click();
-  await wizard.getByRole("button", { name: "继续继承", exact: true }).click();
+  // Exercise real backpressure recovery deterministically after preserving the conflict progress.
+  await page.route(
+    "**/versions/*/initialize",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "平台正在处理高优先级工作，请稍后继续初始化。",
+            requestId: "initialization-priority-deferral",
+          },
+        },
+      }),
+    { times: 1 },
+  );
+  await inheritInitializationStep(page, wizard);
   await expect(wizard.getByText(/本步已处理：新增或匹配 2 项/)).toBeVisible();
   await wizard.getByRole("button", { name: "完成并进入版本", exact: true }).click();
   await expect(wizard).toBeHidden();
