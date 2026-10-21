@@ -185,7 +185,7 @@ DDT 用例、SR 分类与测试类关联、用例任务。**每一步都可以�
 | `GET`            | `/api/v1/run-batches`                                                                                           | 查询批跑调度记录                                                                                       |
 | `POST`           | `/api/v1/run-batches`                                                                                           | 创建批次并尝试资源感知分配                                                                             |
 | `POST`           | `/api/v1/run-batches/preflight`                                                                                 | 返回创建前逐项配置阻塞原因                                                                             |
-| `GET` / `POST`   | `/api/v1/run-batches/{batchId}/failure-case-suite`                                                              | 查询建议任务名，或从终态批次全部非 Pass 用例与执行配置快照创建独立任务                                |
+| `GET` / `POST`   | `/api/v1/run-batches/{batchId}/failure-case-suite`                                                              | 查询建议任务名，或从终态批次全部非 Pass 用例与执行配置快照创建独立任务                                 |
 | `GET`            | `/api/v1/case-suites/{suiteId}/round-recovery/credentials`                                                      | 按管理权限分页查询可复用的 Jenkins 密钥来源元数据，不返回密钥或密文                                    |
 | `GET`            | `/api/v1/run-batches/{batchId}`                                                                                 | 查询有界批次详情，`view=summary` 仅读元数据                                                            |
 | `GET`            | `/api/v1/run-batches/{batchId}/progress`                                                                        | API Key 或批次签名参数读取 Jenkins 进展摘要                                                            |
@@ -231,6 +231,8 @@ Runner/传输基础设施失败使用独立的最多两次自动重调度预算�
 执行记录列表展示每个批次固化的“用例总数”，不累计重试次数；列宽调整、固定列和表格内横向滚动沿用原有交互。
 
 执行结果、执行异常原因、分析清单、任务成员与 DDT 的 Excel 导出共用无额外缩进的正文格式。执行结果、异常原因和 DDT 按表头、字段用途及前 100 行常见内容调整有上下限的列宽，长文本保留完整单元格值；执行结果和分析清单的日志列统一按链接长度在 64–120 字符宽度内调整，超链接保持单行、完整地址和点击能力。分析清单的其他列与流式任务成员保留原列宽比例。详见[Excel 导出排版](./docs/design/export-workbook-layout.md)。
+
+含 DDT 用例的执行批次导出执行结果或失败分析清单时，在原名称列后增加 `CaseName`、`SRID` 两列，按 DDT 数据中的同名字段原值填写；缺失字段以及混合任务中的普通用例均留空，不用用例显示名称或 `srNum` 代填。列是否出现按整个执行批次判断，不随轮次或结果筛选变化；纯普通用例批次不增加这两列。字段文本、前导零、数字与布尔值保持原类型，继续遵守现有 Excel 兼容性校验和异常数据排除规则。
 
 执行结果 Excel 的开始/结束时间跟随平台设置中的展示时区，默认北京时间（`Asia/Shanghai`），格式为 `YYYY-MM-DD HH:mm:ss.SSS`，保留毫秒精度；当前轮次、最终结果和全部轮次使用同一规则。数据库及 API 时间仍为 UTC，耗时不受时区转换影响。
 

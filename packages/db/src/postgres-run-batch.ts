@@ -12,7 +12,11 @@ import {
   type FinalOutcomeCounts,
 } from "./run-batch-counts";
 import { EXECUTION_CASE_IDENTITY_SORT_SQL } from "./execution-case-sort-query";
-import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
+import {
+  runBatchExportPageQuery,
+  mapRunBatchExportPage,
+  runBatchHasDdtQuery,
+} from "./run-batch-export-page";
 import {
   executionExceptionQueries,
   mapExecutionExceptionRecords,
@@ -188,9 +192,18 @@ const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
 export class PostgresRunBatchRepository
   implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
 {
+  async hasDdtRuns(batchId: string) {
+    await this.handle.ready;
+    return (await this.handle.db.execute(runBatchHasDdtQuery(batchId))).rows.length > 0;
+  }
+
   async readExportPage(input: Parameters<RunBatchRepository["readExportPage"]>[0]) {
     await this.handle.ready;
-    const result = await this.handle.db.execute(runBatchExportPageQuery(input));
+    const query = runBatchExportPageQuery(
+      input,
+      (field) => sql`(ddt.data_json::json -> ${field})::text`,
+    );
+    const result = await this.handle.db.execute(query);
     return mapRunBatchExportPage(
       result.rows as unknown as Parameters<typeof mapRunBatchExportPage>[0],
       input.limit,

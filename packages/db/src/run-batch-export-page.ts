@@ -1,11 +1,15 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { RunBatchExportPage, RunBatchExportPageQuery } from "@autoforge/application";
 import type { RunAttempt } from "@autoforge/domain";
+import { ddtCellValueSchema } from "@autoforge/contracts";
 
 type ExportRecord = {
   runId: string;
   className: string;
   displayName: string;
+  caseType: "testng" | "ddt";
+  ddtCaseNameJson: string | null;
+  ddtSrIdJson: string | null;
   attemptId: string;
   attemptNumber: number;
   round: number;
@@ -19,7 +23,10 @@ type ExportRecord = {
 };
 
 /** Select latest physical attempts before outcome filtering, so recovered failures stay excluded. */
-export function runBatchExportPageQuery(input: RunBatchExportPageQuery): SQL {
+export function runBatchExportPageQuery(
+  input: RunBatchExportPageQuery,
+  ddtFieldJson: (field: "CaseName" | "SRID") => SQL,
+): SQL {
   const round = sql`COALESCE(attempt.execution_round,attempt.attempt_number)`;
   const conditions = [sql`run.batch_id=${input.batchId}`];
   if (input.scope === "round") conditions.push(sql`${round}=${input.round}`);
@@ -37,13 +44,34 @@ export function runBatchExportPageQuery(input: RunBatchExportPageQuery): SQL {
       sql`(run.class_name,run.display_name,run.id,${round}) > (${cursor.className},${cursor.displayName},${cursor.runId},${cursor.round})`,
     );
   }
-  return sql`SELECT run.id AS "runId",run.class_name AS "className",run.display_name AS "displayName",
+  // Resolve the bounded result page before reading potentially large DDT documents.
+  return sql`WITH export_page AS MATERIALIZED (
+    SELECT run.id AS "runId",run.class_name AS "className",run.display_name AS "displayName",
+    run.case_type AS "caseType",run.case_definition_id AS "caseDefinitionId",
     attempt.id AS "attemptId",attempt.attempt_number AS "attemptNumber",${round} AS round,
     attempt.status,attempt.outcome,attempt.result_code AS "resultCode",attempt.result_summary AS summary,
     attempt.started_at AS "startedAt",attempt.finished_at AS "finishedAt",attempt.duration_ms AS "durationMs"
     FROM execution_runs run JOIN run_attempts attempt ON attempt.execution_run_id=run.id
     WHERE ${sql.join(conditions, sql` AND `)}
-    ORDER BY run.class_name,run.display_name,run.id,${round} LIMIT ${Math.min(200, Math.max(1, input.limit)) + 1}`;
+    ORDER BY run.class_name,run.display_name,run.id,${round} LIMIT ${Math.min(200, Math.max(1, input.limit)) + 1}
+  )
+  SELECT page."runId",page."className",page."displayName",page."caseType",
+    ${ddtFieldJson("CaseName")} AS "ddtCaseNameJson",${ddtFieldJson("SRID")} AS "ddtSrIdJson",
+    page."attemptId",page."attemptNumber",page.round,page.status,page.outcome,page."resultCode",
+    page.summary,page."startedAt",page."finishedAt",page."durationMs"
+  FROM export_page page
+  LEFT JOIN ddt_cases ddt ON page."caseType"='ddt' AND ddt.id=page."caseDefinitionId"
+  ORDER BY page."className",page."displayName",page."runId",page.round`;
+}
+
+export function runBatchHasDdtQuery(batchId: string): SQL {
+  return sql`SELECT 1 FROM execution_runs WHERE batch_id=${batchId} AND case_type='ddt' LIMIT 1`;
+}
+
+function ddtExportCell(value: string | null) {
+  if (value === null) return null;
+  const cell = ddtCellValueSchema.safeParse(JSON.parse(value));
+  return cell.success ? cell.data : null;
 }
 
 export function mapRunBatchExportPage(rows: ExportRecord[], limit: number): RunBatchExportPage {
@@ -52,7 +80,19 @@ export function mapRunBatchExportPage(rows: ExportRecord[], limit: number): RunB
   const last = selected.at(-1);
   return {
     items: selected.map((row) => ({
-      run: { id: row.runId, className: row.className, displayName: row.displayName },
+      run: {
+        id: row.runId,
+        className: row.className,
+        displayName: row.displayName,
+        ...(row.caseType === "ddt"
+          ? {
+              ddt: {
+                caseName: ddtExportCell(row.ddtCaseNameJson),
+                srId: ddtExportCell(row.ddtSrIdJson),
+              },
+            }
+          : {}),
+      },
       attempt: {
         id: row.attemptId,
         executionRunId: row.runId,

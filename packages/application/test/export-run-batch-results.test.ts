@@ -286,6 +286,7 @@ describe("RunBatchExportService", () => {
     const get = vi.fn();
     const batches = {
       getMetadata: async () => makeDetails({ totalRuns: 100_000 }),
+      hasDdtRuns: async () => false,
       readExportPage,
       get,
     } as unknown as RunBatchRepository;

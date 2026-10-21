@@ -54,6 +54,60 @@ const completedClaim: FailureAnalysisClaim = {
 
 describe("buildRunBatchExportWorkbook", () => {
   it.each(["results", "failure-analysis"] as const)(
+    "keeps DDT columns across %s pages when the first page contains only a standard case",
+    async (template) => {
+      const input = {
+        batchId: "mixed",
+        scope: "all" as const,
+        template,
+        includesDdt: true,
+        shareLinks: new Map([
+          [failedRow.attemptId!, "http://autoforge.local/CaseLog?ExecutionId=first"],
+        ]),
+      };
+      const pages = (async function* () {
+        yield { ...input, rows: [failedRow] };
+        yield {
+          ...input,
+          rows: [
+            { ...failedRow, ddt: { caseName: "  中文名称\n原文  ", srId: "00123" } },
+            { ...failedRow, ddt: { caseName: null, srId: null } },
+            { ...failedRow, ddt: { caseName: 0, srId: false } },
+          ],
+        };
+      })();
+      const streamed = await createRunBatchExportWorkbookStream(
+        pages,
+        new AbortController().signal,
+      );
+      const chunks: Buffer[] = [];
+      for await (const part of streamed.stream) chunks.push(Buffer.from(part));
+      expect(await streamed.completed).toBeUndefined();
+      const sheet = (await loadWorkbook(Buffer.concat(chunks))).worksheets[0]!;
+      const headers = sheet.getRow(1).values as string[];
+      const caseNameColumn = headers.indexOf("CaseName");
+      const srIdColumn = headers.indexOf("SRID");
+      expect(caseNameColumn).toBeGreaterThan(0);
+      expect(srIdColumn).toBe(caseNameColumn + 1);
+      const cells = (row: number) => [
+        sheet.getCell(row, caseNameColumn).value ?? "",
+        sheet.getCell(row, srIdColumn).value ?? "",
+      ];
+      expect(cells(2)).toEqual(["", ""]);
+      expect(cells(3)).toEqual(["  中文名称\n原文  ", "00123"]);
+      expect(cells(4)).toEqual(["", ""]);
+      expect(cells(5)).toEqual([0, false]);
+      expect(sheet.columnCount).toBe(template === "results" ? 11 : 12);
+      expect(sheet.getCell(2, sheet.columnCount).hyperlink).toContain("/CaseLog?");
+      if (template === "failure-analysis") {
+        expect(sheet.getCell(2, headers.indexOf("分析结果")).dataValidation.type).toBe("list");
+      } else {
+        expect(sheet.getCell(2, headers.indexOf("执行耗时(s)")).numFmt).toBe("0.0");
+        expect(sheet.getCell(2, headers.indexOf("轮次")).value).toBe(failedRow.round);
+      }
+    },
+  );
+  it.each(["results", "failure-analysis"] as const)(
     "streams %s pages with the existing spreadsheet styles, links and time zone",
     async (template) => {
       const second = { ...failedRow, attemptId: "attempt-second" };

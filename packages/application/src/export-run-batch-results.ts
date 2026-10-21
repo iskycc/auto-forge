@@ -6,6 +6,7 @@ import {
   runAttemptOutcome,
   runAttemptsForExecutionRound,
   type AttemptResultCategory,
+  type DdtCellValue,
   type ExecutionRun,
   type RunAttempt,
   type RunBatchDetails,
@@ -23,6 +24,8 @@ export type RunBatchExportRow = {
   executionRunId: string;
   casePath: string;
   displayName: string;
+  /** Present only for DDT runs; missing original cells remain null. */
+  ddt?: { caseName: DdtCellValue; srId: DdtCellValue };
   outcome: ExportOutcomeFilter;
   resultCode: string | null;
   /** 仅失败/阻塞尝试有值（一行精简堆栈）。 */
@@ -60,7 +63,7 @@ export type RunBatchExportPageQuery = Pick<RunBatchExportQuery, "batchId" | "sco
 };
 export type RunBatchExportPage = {
   items: Array<{
-    run: Pick<ExecutionRun, "id" | "className" | "displayName">;
+    run: Pick<ExecutionRun, "id" | "className" | "displayName"> & Pick<RunBatchExportRow, "ddt">;
     attempt: Pick<
       RunAttempt,
       | "id"
@@ -83,13 +86,16 @@ export class RunBatchExportService {
   constructor(private readonly batches: RunBatchRepository) {}
 
   /** Export only bounded result pages; no batch-wide runs, class data or TestNG reports enter HTTP. */
-  async prepare(
-    query: RunBatchExportQuery,
-  ): Promise<{ projectId: string; pages: AsyncIterable<RunBatchExportRow[]> }> {
+  async prepare(query: RunBatchExportQuery): Promise<{
+    projectId: string;
+    includesDdt: boolean;
+    pages: AsyncIterable<RunBatchExportRow[]>;
+  }> {
     const outcomes = validatedOutcomes(query.outcomes);
     if (query.scope === "round") requiredRound(query.round);
     const metadata = await this.batches.getMetadata(query.batchId, query.projectIds);
     if (!metadata) throw new DomainError("BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    const includesDdt = await this.batches.hasDdtRuns(query.batchId);
     const batches = this.batches;
     async function* pages(): AsyncGenerator<RunBatchExportRow[]> {
       let after: RunBatchExportCursor | undefined;
@@ -107,7 +113,7 @@ export class RunBatchExportService {
         after = page.next;
       } while (after);
     }
-    return { projectId: metadata.projectId, pages: pages() };
+    return { projectId: metadata.projectId, includesDdt, pages: pages() };
   }
 
   async buildRows(query: RunBatchExportQuery): Promise<RunBatchExportRow[]> {
@@ -264,7 +270,8 @@ function matchesOutcomeFilter(
 
 function attemptRow(
   attempt: RunBatchExportPage["items"][number]["attempt"],
-  run: Pick<ExecutionRun, "className" | "displayName"> | undefined,
+  run:
+    (Pick<ExecutionRun, "className" | "displayName"> & Pick<RunBatchExportRow, "ddt">) | undefined,
 ): RunBatchExportRow {
   const outcome = runAttemptOutcome(attempt);
   if (!outcome) throw new DomainError("INVALID_OUTCOMES", "进行中的执行尝试不能导出。");
@@ -277,6 +284,7 @@ function attemptRow(
     executionRunId: attempt.executionRunId,
     casePath: run?.className ?? "",
     displayName: run?.displayName ?? "",
+    ...(run?.ddt ? { ddt: run.ddt } : {}),
     outcome: category,
     resultCode: attempt.resultCode ?? null,
     summary: category === "succeeded" ? null : (attempt.resultSummary ?? null),

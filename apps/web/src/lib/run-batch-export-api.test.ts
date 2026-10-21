@@ -77,6 +77,79 @@ afterEach(async () => {
 });
 
 describe("validated Excel downloads", () => {
+  it.each(["results", "failure-analysis"] as const)(
+    "downloads %s DDT cells across pages without shifting result fields or public links",
+    async (template) => {
+      const ddtRow = {
+        ...row,
+        attemptId: "attempt-ddt",
+        executionRunId: "run-ddt",
+        ddt: { caseName: "  中文名称\n保持空白  ", srId: "000123" },
+      };
+      buildExport.mockImplementation(async () => ({
+        projectId: "project",
+        includesDdt: true,
+        pages: (async function* () {
+          yield [row];
+          yield [ddtRow];
+        })(),
+      }));
+      ensureShares.mockImplementation(
+        async (ids: string[]) => new Map(ids.map((id) => [id, `/CaseLog?ExecutionId=${id}`])),
+      );
+      const response = await GET(
+        new Request(
+          `http://localhost/api/v1/run-batches/batch/export?scope=final&outcomes=failed&template=${template}`,
+        ),
+        { params: Promise.resolve({ batchId: "batch" }) },
+      );
+      expect(response.status).toBe(200);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      assertExportedWorkbookFeatureOrder(bytes);
+      const workbook = new ExcelJS.Workbook();
+      const load = workbook.xlsx.load.bind(workbook.xlsx) as unknown as (
+        content: Uint8Array,
+      ) => Promise<ExcelJS.Workbook>;
+      await load(bytes);
+      const sheet = workbook.worksheets[0]!;
+      const headers = sheet.getRow(1).values as string[];
+      const caseName = headers.indexOf("CaseName");
+      const srId = headers.indexOf("SRID");
+      expect(caseName).toBeGreaterThan(0);
+      expect(sheet.getCell(2, caseName).value ?? "").toBe("");
+      expect(sheet.getCell(2, srId).value ?? "").toBe("");
+      expect(sheet.getCell(3, caseName).value).toBe(ddtRow.ddt.caseName);
+      expect(sheet.getCell(3, srId).value).toBe("000123");
+      expect(sheet.getCell(3, sheet.columnCount).hyperlink).toContain("ExecutionId=attempt-ddt");
+      expect(response.headers.get("X-AutoForge-Export-Excluded-Rows")).toBe("0");
+    },
+  );
+  it.each(["results", "failure-analysis"] as const)(
+    "reports incompatible DDT cells in %s through the existing exclusion flow",
+    async (template) => {
+      buildExport.mockImplementation(async () => ({
+        projectId: "project",
+        includesDdt: true,
+        pages: (async function* () {
+          yield [{ ...row, ddt: { caseName: "bad\ufffe", srId: "SR-1" } }];
+        })(),
+      }));
+      const response = await GET(
+        new Request(
+          `http://localhost/api/v1/run-batches/batch/export?scope=final&outcomes=failed&template=${template}`,
+        ),
+        { params: Promise.resolve({ batchId: "batch" }) },
+      );
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: "EXPORT_DATA_INVALID",
+          details: { issues: [{ fields: [{ field: "CaseName" }] }] },
+        },
+      });
+      expect(ensureShares).toHaveBeenCalledWith([], "batch", "reader");
+    },
+  );
   it("closes a HEAD response body while retaining the authenticated download headers", async () => {
     const response = await HEAD(
       new Request("http://localhost/api/v1/run-batches/batch/export?scope=final&outcomes=failed", {

@@ -33,6 +33,21 @@ DDT 的 CaseID、srNum、CaseName 最小宽度分别为 12、10、16，其余动
 
 执行结果的开始/结束时间在工作簿展示层按平台配置的时区转换，默认北京时间（`Asia/Shanghai`）。当前轮次、最终结果和全部轮次共用 `YYYY-MM-DD HH:mm:ss.SSS` 格式；跨日、跨年按目标时区计算，保留毫秒精度，缺失时间仍为空白。展示转换不修改原始 UTC 时间，也不改变执行耗时；分析清单没有开始/结束时间列，字段和布局保持原样。
 
+## 执行导出的 DDT 原始字段
+
+含 DDT 用例的执行批次在“名称”或“用例名称”后增加 `CaseName`、`SRID`；两类模板、当前轮次、最终结果、全部轮次共用规则。是否包含 DDT 按批次成员判定一次，即使筛选后只剩普通用例或没有结果，也保留两列；纯普通用例批次维持原列集合。
+
+字段来自关联 DDT 用例当前数据的同名顶层字段，按精确字段名取值。字符串不裁剪、不替换，前导零、数字和布尔类型原样写入；没有字段、值为 null 或原 DDT 记录已不存在时留空，普通用例始终留空。不以执行记录的显示名称、SR 分类 `srNum` 或其他大小写的字段代填，也不从旅程步骤猜测顶层字段。
+
+查询按原有 200 行分页，只在数据库内投影两个字段，不将整段 DDT 正文载入应用或 HTTP。Lite/Full 仅 JSON 提取语法不同，行映射与导出规则共用；不增加迁移、缓存或依赖。CaseName 宽度为 18–36，SRID 为 16–32，按前 100 行有界样本调整；冻结列、表头、条纹、链接和行高沿用共享样式，分析下拉及执行结果/耗时格式按表头定位，避免新增列引起错位。两字段继续受 XML、单元格长度与换行限制保护，异常沿用提示与整行排除流程。
+
+### 2026-10-21 验证
+
+- `pnpm exec vitest run packages/db/test/run-batch-export-page.integration.test.ts packages/application/test/export-run-batch-results.test.ts apps/web/src/lib/run-batch-export-xlsx.test.ts apps/web/src/lib/run-batch-export-api.test.ts apps/web/src/lib/run-batch-export-file.test.ts apps/web/src/lib/run-batch-export-safety.test.ts apps/web/src/lib/run-batch-export.test.ts --maxWorkers=1 --no-file-parallelism`：带真实 SQLite/PostgreSQL 的 87 项检查通过，包含两数据库各十万条结果的 500 页读取、混合成员、缺失字段、中文及空白、前导零、数字/布尔值、跨页列一致、数据排除、链接分表及 XML 元素顺序。
+- `pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'execution exports preserve DDT|execution export dialog' --workers=1`：独立 Lite 生产服务的两个完整场景通过，实际下载混合与纯普通任务的两类表格。确认普通用例留空、缺失字段不代填、纯普通批次无新增列，原有分析结论、时区、链接、筛选及失败后重试保持正常。
+- 四份实际下载文件通过 ZIP CRC、所有 XML/关系部件解析及官方 ECMA 基础工作表/样式/工作簿 XSD 校验。已实际查看 1024×768、1536×960 导出弹窗及深色、短桌面错误状态截图，无新增挤压或溢出；没有使用 Microsoft Excel 桌面客户端验收。
+- 受影响文件 ESLint、`pnpm exec tsc -p tsconfig.tests.json --noEmit`、应用/数据库类型、`pnpm --filter @autoforge/web build`、`pnpm format:check`、`pnpm test:e2e:matrix` 和差异检查通过。重检查串行限额运行；本次没有运行 Full 整栈、真实 Runner 或离线发布包验收。
+
 时区由 HTTP 入口从持久平台配置读取后显式传入工作簿生成器，不依赖容器、宿主机或浏览器的系统时区。每份执行结果工作簿只创建一个时间格式器，有界列宽样本和正文共用它；没有新增数据库迁移、运行配置或依赖。
 
 ## 验证记录

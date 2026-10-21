@@ -13,6 +13,75 @@ import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
 const postgresUrl = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 for (const dialect of ["sqlite", "postgres"] as const)
   describe.skipIf(dialect === "postgres" && !postgresUrl)(`${dialect} paged result exports`, () => {
+    it("exports original DDT CaseName and SRID cells without filling standard cases or missing fields", async () => {
+      const fixture = await exportDatabase(dialect);
+      try {
+        const now = "2026-10-21T00:00:00.000Z";
+        await fixture.execute(
+          `INSERT INTO projects(id,name,slug,created_at,updated_at) VALUES ('project','project','project','${now}','${now}')`,
+        );
+        await fixture.execute(
+          `INSERT INTO project_versions(id,project_id,name,normalized_name,created_at,updated_at) VALUES ('version','project','version','version','${now}','${now}')`,
+        );
+        await fixture.execute(
+          `INSERT INTO test_stages(id,project_id,project_version_id,name,normalized_name,position,created_at,updated_at) VALUES ('stage','project','version','stage','stage',0,'${now}','${now}')`,
+        );
+        await fixture.execute(
+          `INSERT INTO runners(id,credential_hash,name,os,architecture,agent_version,protocol_version,labels_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at) VALUES ('runner','hash','runner','linux','amd64','1.20.1',1,'[]',1,0,'${now}','${now}','${now}')`,
+        );
+        await fixture.execute(
+          `INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,environment_json,created_at,updated_at) VALUES ('mixed','suite','suite',1,'failed',0,5,'[]','${now}','${now}')`,
+        );
+        const definitions = [
+          ["a", "testng", { CaseName: "must stay blank", SRID: "not a DDT run" }],
+          [
+            "b",
+            "ddt",
+            { CaseName: "  中文名称\n原文  ", SRID: "00123", unrelated: "x".repeat(262_144) },
+          ],
+          ["c", "ddt", { caseName: "wrong case", srNum: "do not substitute" }],
+          ["d", "ddt", { CaseName: 0, SRID: false }],
+          ["e", "ddt", null],
+        ] as const;
+        for (const [id, kind, cells] of definitions) {
+          await fixture.execute(
+            `INSERT INTO execution_runs(id,batch_id,case_definition_id,case_version,display_name,class_name,case_type,status,attempt_count,created_at,updated_at) VALUES ('${id}','mixed','case-${id}',1,'${id}','example.Test','${kind}','failed',1,'${now}','${now}')`,
+          );
+          if (cells)
+            await fixture.execute(
+              `INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at) VALUES ('case-${id}','project','version','stage','${id}','${id}','SR','sr','standard','${JSON.stringify(cells)}','${now}','${now}')`,
+            );
+          await fixture.execute(
+            `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,outcome,result_code,scheduling_score,created_at) VALUES ('attempt-${id}','${id}','runner',1,'failed','failed','TESTNG_ASSERTIONS_FAILED',1,'${now}')`,
+          );
+        }
+        const prepared = await new RunBatchExportService(fixture.batches).prepare({
+          batchId: "mixed",
+          scope: "final",
+          outcomes: ["failed"],
+        });
+        expect(prepared).toMatchObject({ includesDdt: true });
+        const rows = [];
+        for await (const page of prepared.pages) rows.push(...page);
+        expect(rows[0]).not.toHaveProperty("ddt");
+        expect(rows.slice(1)).toMatchObject([
+          { ddt: { caseName: "  中文名称\n原文  ", srId: "00123" } },
+          { ddt: { caseName: null, srId: null } },
+          { ddt: { caseName: 0, srId: false } },
+          { ddt: { caseName: null, srId: null } },
+        ]);
+        // Column presence describes the entire batch, even when DDT rows are filtered out.
+        expect(
+          await new RunBatchExportService(fixture.batches).prepare({
+            batchId: "mixed",
+            scope: "final",
+            outcomes: ["succeeded"],
+          }),
+        ).toMatchObject({ includesDdt: true });
+      } finally {
+        await fixture.close();
+      }
+    });
     it("preserves final, logical-round and blocked result selection while paging duplicate names", async () => {
       const fixture = await exportDatabase(dialect);
       try {

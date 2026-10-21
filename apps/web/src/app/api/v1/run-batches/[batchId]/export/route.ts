@@ -93,6 +93,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           batchId,
           template: parsed.template,
           scope: parsed.scope,
+          includesDdt: exportData.includesDdt,
           ...(parsed.round !== undefined ? { round: parsed.round } : {}),
           rows,
           timeZone,

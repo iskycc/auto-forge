@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { unzipSync, zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
-import { readExportedWorkbookText } from "./support/export-workbook";
+import { readExportedWorkbook, readExportedWorkbookText } from "./support/export-workbook";
 import { selectJarForInspection } from "./support/jar-import";
 import { dropCaseListFiles } from "./support/case-list-upload";
 import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
@@ -1013,6 +1013,114 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
     await expectUiIntegrity(anonymousPage);
   } finally {
     await context.close();
+  }
+});
+
+test("execution exports preserve DDT CaseName and SRID while leaving mixed standard cases blank", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("ddt-export-fields");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: suffix } },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions/${version.body.id}/stages`,
+    { method: "POST", body: { name: "导出验收" } },
+  );
+  expect(stage.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id, stage.body.id);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    const now = new Date().toISOString();
+    for (const [index, cells] of [
+      [0, { CaseName: "  钱包中文名称\n保留原文  ", SRID: "000123" }],
+      [1, { srNum: "Wallet" }],
+    ] as const) {
+      const runId = `run-failed-${index}-${suffix}`;
+      database.prepare("UPDATE execution_runs SET case_type='ddt' WHERE id=?").run(runId);
+      database
+        .prepare(
+          `INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at) VALUES (?,?,?,?,?,?,'Wallet','wallet','standard',?,?,?)`,
+        )
+        .run(
+          `case-${runId}`,
+          DEFAULT_PROJECT_ID,
+          version.body.id,
+          stage.body.id,
+          runId,
+          runId.toLowerCase(),
+          JSON.stringify(cells),
+          now,
+          now,
+        );
+    }
+  } finally {
+    database.close();
+  }
+  await page.goto(`/run-batches/${fixture.batchId}?round=summary`);
+  const dialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
+  for (const template of ["results", "failure-analysis"] as const) {
+    await page.getByRole("button", { name: "导出结果", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    if (template === "failure-analysis")
+      await dialog.getByRole("radio", { name: /^失败用例分析清单/u }).check();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await waitForUiTransitions(page);
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: test.info().outputPath(`ddt-export-${template}-${width}.png`),
+      });
+    }
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      dialog
+        .getByRole("button", {
+          name: template === "results" ? "导出 Excel" : "导出分析清单",
+          exact: true,
+        })
+        .click(),
+    ]);
+    const path = test.info().outputPath(`mixed-${template}.xlsx`);
+    await download.saveAs(path);
+    const workbook = await readExportedWorkbook(await readFile(path));
+    const sheet = workbook.worksheets[0]!;
+    const headers = sheet.getRow(1).values as string[];
+    expect(headers.slice(1, 5)).toEqual([
+      template === "results" ? "用例路径" : "用例编号",
+      template === "results" ? "名称" : "用例名称",
+      "CaseName",
+      "SRID",
+    ]);
+    expect(sheet.rowCount).toBe(5);
+    const valuesByName = new Map<string, [unknown, unknown]>();
+    sheet.eachRow((row, index) => {
+      if (index > 1)
+        valuesByName.set(row.getCell(2).text, [
+          row.getCell(3).value ?? "",
+          row.getCell(4).value ?? "",
+        ]);
+    });
+    expect(valuesByName.get(fixture.failedNames[0])).toEqual([
+      "  钱包中文名称\n保留原文  ",
+      "000123",
+    ]);
+    expect(valuesByName.get(fixture.failedNames[1])).toEqual(["", ""]);
+    expect(valuesByName.get(fixture.failedNames[2])).toEqual(["", ""]);
+    expect(valuesByName.get(fixture.failedNames[3])).toEqual(["", ""]);
+    expect(sheet.getCell(2, sheet.columnCount).hyperlink).toContain("/CaseLog?");
+    if (template === "failure-analysis")
+      expect(sheet.getCell(2, headers.indexOf("分析结果")).dataValidation.type).toBe("list");
+    await expect(dialog).not.toBeVisible();
   }
 });
 

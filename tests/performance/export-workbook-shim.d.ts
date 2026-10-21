@@ -23,13 +23,26 @@ declare module "@/export-workbook" {
 }
 
 declare module "exceljs" {
+  type ExportedCell = {
+    text: string;
+    value: unknown;
+    hyperlink?: string;
+    dataValidation: { type?: string };
+  };
+  type ExportedRow = {
+    values: unknown[];
+    getCell(column: number): ExportedCell;
+    eachCell(callback: (cell: ExportedCell) => void): void;
+  };
   const ExcelJS: {
     Workbook: new () => {
       xlsx: { load(buffer: Uint8Array): Promise<void> };
       worksheets: Array<{
-        eachRow(
-          callback: (row: { eachCell(callback: (cell: { text: string }) => void): void }) => void,
-        ): void;
+        rowCount: number;
+        columnCount: number;
+        getRow(row: number): ExportedRow;
+        getCell(row: number, column: number): ExportedCell;
+        eachRow(callback: (row: ExportedRow, rowNumber: number) => void): void;
       }>;
       getWorksheet(name: string):
         | {

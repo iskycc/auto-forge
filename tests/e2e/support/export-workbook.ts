@@ -7,7 +7,7 @@ const ExcelJS = createRequire(resolve(import.meta.dirname, "../../../apps/web/pa
   "exceljs",
 ) as typeof import("exceljs").default;
 
-export async function readExportedWorkbookText(buffer: Buffer): Promise<string> {
+export async function readExportedWorkbook(buffer: Buffer) {
   assertExportedWorkbookFeatureOrder(buffer);
   const workbook = new ExcelJS.Workbook();
   // ExcelJS 4's Buffer declaration predates Node 24; its reader accepts Uint8Array.
@@ -15,6 +15,11 @@ export async function readExportedWorkbookText(buffer: Buffer): Promise<string> 
     bytes: Uint8Array,
   ) => Promise<InstanceType<typeof ExcelJS.Workbook>>;
   await load(buffer);
+  return workbook;
+}
+
+export async function readExportedWorkbookText(buffer: Buffer): Promise<string> {
+  const workbook = await readExportedWorkbook(buffer);
   const values: string[] = [];
   for (const sheet of workbook.worksheets)
     sheet.eachRow((row) => row.eachCell((cell) => values.push(cell.text)));

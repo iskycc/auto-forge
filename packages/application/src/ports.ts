@@ -2183,6 +2183,8 @@ export type SingleCaseExecutionEntry = {
 };
 
 export interface RunBatchRepository {
+  /** Batch-wide column selection is independent of export scope and outcome filters. */
+  hasDdtRuns(batchId: string): Promise<boolean>;
   readExportPage(
     input: import("./export-run-batch-results").RunBatchExportPageQuery,
   ): Promise<import("./export-run-batch-results").RunBatchExportPage>;

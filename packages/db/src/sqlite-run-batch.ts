@@ -12,7 +12,11 @@ import {
   type FinalOutcomeCounts,
 } from "./run-batch-counts";
 import { EXECUTION_CASE_IDENTITY_SORT_SQL } from "./execution-case-sort-query";
-import { runBatchExportPageQuery, mapRunBatchExportPage } from "./run-batch-export-page";
+import {
+  runBatchExportPageQuery,
+  mapRunBatchExportPage,
+  runBatchHasDdtQuery,
+} from "./run-batch-export-page";
 import {
   executionExceptionQueries,
   mapExecutionExceptionRecords,
@@ -199,8 +203,13 @@ const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS (
 export class SqliteRunBatchRepository
   implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
 {
+  async hasDdtRuns(batchId: string) {
+    return this.handle.db.all(runBatchHasDdtQuery(batchId)).length > 0;
+  }
+
   async readExportPage(input: Parameters<RunBatchRepository["readExportPage"]>[0]) {
-    return mapRunBatchExportPage(this.handle.db.all(runBatchExportPageQuery(input)), input.limit);
+    const query = runBatchExportPageQuery(input, (field) => sql`ddt.data_json -> ${field}`);
+    return mapRunBatchExportPage(this.handle.db.all(query), input.limit);
   }
   async readExceptionRecords(input: Parameters<RunBatchRepository["readExceptionRecords"]>[0]) {
     const queries = executionExceptionQueries(input);

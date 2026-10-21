@@ -39,6 +39,10 @@ import {
  */
 
 const LOG_LINK_COLUMN_WIDTH = { minimum: 64, maximum: 120 } as const;
+const DDT_EXPORT_COLUMNS = [
+  { header: "CaseName", minimum: 18, maximum: 36 },
+  { header: "SRID", minimum: 16, maximum: 32 },
+] as const;
 
 const EXPORT_COLUMNS = [
   { header: "用例路径", minimum: 28, maximum: 52 },
@@ -95,6 +99,8 @@ export type RunBatchExportWorkbookInput = {
   batchId: string;
   template?: RunBatchExportTemplate;
   scope: "round" | "final" | "all";
+  /** Determined from the whole batch before reading filtered pages. */
+  includesDdt?: boolean;
   /** scope=round 时记录具体轮次，用于文件名区分。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
@@ -226,9 +232,12 @@ function buildExecutionResultsSheet(
   // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
   const includeRound = input.scope === "all";
   const timestampFormatter = exportTimestampFormatter(input);
-  const columns = includeRound
-    ? [{ header: "轮次", minimum: 6, maximum: 8 }, ...EXPORT_COLUMNS]
-    : EXPORT_COLUMNS;
+  const columns = [
+    ...(includeRound ? [{ header: "轮次", minimum: 6, maximum: 8 }] : []),
+    ...EXPORT_COLUMNS.slice(0, 2),
+    ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
+    ...EXPORT_COLUMNS.slice(2),
+  ];
   const cellsFor = (row: RunBatchExportRow) => executionResultCells(row, input, timestampFormatter);
   const samples = input.rows.slice(0, EXPORT_WIDTH_SAMPLE_ROWS).map(cellsFor);
   sheet.columns = columns.map((column, index) => ({
@@ -275,6 +284,7 @@ function executionResultCells(
     ...(includeRound ? [row.round] : []),
     row.casePath,
     row.displayName,
+    ...ddtExportCells(row, input),
     OUTCOME_LABELS[row.outcome],
     row.summary ?? "",
     formatExportTimestamp(row.startedAt, timestampFormatter),
@@ -300,19 +310,37 @@ function buildFailureAnalysisSheet(
   name = "失败用例分析清单",
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(name, exportWorksheetOptions(2));
-  const logColumnIndex = FAILURE_ANALYSIS_HEADERS.length - 1;
+  const headers = exportHeaders(input);
+  const logColumnIndex = headers.length - 1;
   const logColumnWidth = exportColumnWidth(
-    FAILURE_ANALYSIS_HEADERS[logColumnIndex]!,
+    headers[logColumnIndex]!,
     input.rows
       .slice(0, EXPORT_WIDTH_SAMPLE_ROWS)
       .map((row) => (row.attemptId ? (input.shareLinks.get(row.attemptId) ?? "") : "")),
     LOG_LINK_COLUMN_WIDTH,
   );
-  sheet.columns = FAILURE_ANALYSIS_HEADERS.map((header, index) => ({
+  const widths = [
+    ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(0, 2),
+    ...(input.includesDdt
+      ? DDT_EXPORT_COLUMNS.map((column) =>
+          exportColumnWidth(
+            column.header,
+            input.rows
+              .slice(0, EXPORT_WIDTH_SAMPLE_ROWS)
+              .map((row) =>
+                String((column.header === "CaseName" ? row.ddt?.caseName : row.ddt?.srId) ?? ""),
+              ),
+            column,
+          ),
+        )
+      : []),
+    ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(2),
+  ];
+  sheet.columns = headers.map((header, index) => ({
     header,
-    width: index === logColumnIndex ? logColumnWidth : FAILURE_ANALYSIS_COLUMN_WIDTHS[index]!,
+    width: index === logColumnIndex ? logColumnWidth : widths[index]!,
   }));
-  sheet.autoFilter = { from: "A1", to: "J1" };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
   styleExportHeader(sheet.getRow(1));
 
   return sheet;
@@ -333,6 +361,7 @@ function failureAnalysisCells(
     // 产品口径：用例编号就是用例类路径，不是平台 UUID。
     item.casePath,
     item.displayName,
+    ...ddtExportCells(item, input),
     item.summary ?? "",
     claim ? analystLabel(claim) : "",
     completedClaim?.category ? FAILURE_ANALYSIS_RESULT_LABELS[completedClaim.category] : "",
@@ -353,6 +382,13 @@ function failureAnalysisCells(
   ];
 }
 
+function ddtExportCells(
+  row: RunBatchExportRow,
+  input: RunBatchExportWorkbookInput,
+): ExcelJS.CellValue[] {
+  return input.includesDdt ? [row.ddt?.caseName ?? "", row.ddt?.srId ?? ""] : [];
+}
+
 function emptyExportValidationReport(): ExportValidationReport {
   return {
     schemaVersion: 1,
@@ -365,12 +401,17 @@ function emptyExportValidationReport(): ExportValidationReport {
 }
 
 function exportHeaders(
-  input: Pick<RunBatchExportWorkbookInput, "template" | "scope">,
+  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt">,
 ): readonly string[] {
-  if (input.template === "failure-analysis") return FAILURE_ANALYSIS_HEADERS;
+  const headers =
+    input.template === "failure-analysis"
+      ? FAILURE_ANALYSIS_HEADERS
+      : EXPORT_COLUMNS.map((column) => column.header);
   return [
-    ...(input.scope === "all" ? ["轮次"] : []),
-    ...EXPORT_COLUMNS.map((column) => column.header),
+    ...(input.template !== "failure-analysis" && input.scope === "all" ? ["轮次"] : []),
+    ...headers.slice(0, 2),
+    ...(input.includesDdt ? DDT_EXPORT_COLUMNS.map((column) => column.header) : []),
+    ...headers.slice(2),
   ];
 }
 
@@ -499,12 +540,18 @@ function exportWorkbookRows(
       const row = sheet.addRow(cells);
       if (initial.template === "failure-analysis") {
         const claim = source.attemptId ? input.analysisClaims?.get(source.attemptId) : undefined;
-        styleFailureAnalysisRow(row, claim?.status === "completed" ? claim.category : undefined);
+        styleFailureAnalysisRow(
+          row,
+          claim?.status === "completed" ? claim.category : undefined,
+          headers,
+        );
       } else {
-        const includeRound = initial.scope === "all";
         styleExportRow(row, headers.length);
-        styleExportResult(row.getCell(includeRound ? 4 : 3), OUTCOME_TONES[source.outcome]);
-        row.getCell(includeRound ? 8 : 7).numFmt = "0.0";
+        styleExportResult(
+          row.getCell(headers.indexOf("执行结果") + 1),
+          OUTCOME_TONES[source.outcome],
+        );
+        row.getCell(headers.indexOf("执行耗时(s)") + 1).numFmt = "0.0";
       }
       options.commitRow?.(row);
       hyperlinks += links;
@@ -521,12 +568,16 @@ function exportWorkbookRows(
 function styleFailureAnalysisRow(
   row: ExcelJS.Row,
   category: FailureAnalysisCategory | undefined,
+  headers: readonly string[],
 ): void {
-  styleExportRow(row, FAILURE_ANALYSIS_HEADERS.length);
+  styleExportRow(row, headers.length);
   row.height = 20;
   row.getCell(2).font = { ...row.getCell(2).font, bold: true };
-  row.getCell(4).alignment = { horizontal: "center", vertical: "middle" };
-  const analysisResultCell = row.getCell(5);
+  row.getCell(headers.indexOf("分析责任人") + 1).alignment = {
+    horizontal: "center",
+    vertical: "middle",
+  };
+  const analysisResultCell = row.getCell(headers.indexOf("分析结果") + 1);
   if (category)
     styleExportResult(
       analysisResultCell,
