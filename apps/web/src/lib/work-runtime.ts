@@ -6,6 +6,7 @@ export interface WorkDispatcher {
   readonly backgroundConcurrency?: number;
   listSchedulingEvents?(input: unknown): Promise<unknown>;
   readRunnerResourceSamples?(input: unknown): Promise<unknown>;
+  readDdtCases?(input: unknown): Promise<unknown>;
   readExecutionView?(input: unknown): Promise<unknown>;
   cancelExecutionRun?(input: unknown): Promise<unknown>;
   createBatch?(input: unknown): Promise<unknown>;

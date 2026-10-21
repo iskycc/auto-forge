@@ -170,3 +170,35 @@ describe("SR execution class mapping", () => {
     );
   });
 });
+
+it("exports bounded pages in repository collation order, forwards scope and stops on cancellation or repeated cursors", async () => {
+  const readExportCasesPage = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [{ CaseID: "first", srNum: "SR" }], nextCursor: "z" })
+    .mockResolvedValueOnce({ items: [{ CaseID: "second", srNum: "SR" }], nextCursor: "a" })
+    .mockResolvedValueOnce({ items: [] });
+  const repository = { readExportCasesPage } as unknown as DdtRepository;
+  const service = new DdtCaseService(
+    repository,
+    { now: () => new Date(timestamp) },
+    { next: () => "unused" },
+  );
+  const controller = new AbortController();
+  const selection = { categoryIds: ["category"], srNum: "SR" };
+  const exported = [];
+  for await (const page of service.exportPages(scope, selection, controller.signal))
+    exported.push(...page);
+  expect(exported.map((row) => row.CaseID)).toEqual(["first", "second"]);
+  expect(readExportCasesPage).toHaveBeenNthCalledWith(2, { ...scope, ...selection, cursor: "z" });
+  expect(readExportCasesPage).toHaveBeenNthCalledWith(3, { ...scope, ...selection, cursor: "a" });
+  controller.abort();
+  await expect(service.exportPages(scope, selection, controller.signal).next()).rejects.toThrow();
+  expect(readExportCasesPage).toHaveBeenCalledTimes(3);
+  readExportCasesPage.mockResolvedValue({
+    items: [{ CaseID: "same", srNum: "SR" }],
+    nextCursor: "same",
+  });
+  const repeated = service.exportPages(scope, {}, new AbortController().signal);
+  await repeated.next();
+  await expect(repeated.next()).rejects.toMatchObject({ code: "DDT_EXPORT_CURSOR_INVALID" });
+});

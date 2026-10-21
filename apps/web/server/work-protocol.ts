@@ -48,6 +48,7 @@ export type DiagnosticReadConfiguration =
 
 export type WorkTask =
   | { kind: "cancel-run"; input: unknown }
+  | { kind: "read-ddt-cases"; input: unknown }
   | { kind: "read-execution-view"; input: unknown }
   | { kind: "read-scheduling-events"; input: unknown }
   | { kind: "read-runner-resource-samples"; input: unknown }

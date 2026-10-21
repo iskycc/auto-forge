@@ -2,8 +2,8 @@ import "server-only";
 
 import { exportValidationReportSchema, type ExportValidationReport } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
-import { mkdir, mkdtemp, open, rm, type FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import type { FileHandle } from "node:fs/promises";
+import { openTemporaryExportFile } from "./export-temporary-file";
 import { pipeline } from "node:stream/promises";
 import { Writable } from "node:stream";
 import {
@@ -18,29 +18,6 @@ export type PreparedRunBatchExportFile = {
   validation: ExportValidationReport;
 };
 
-/** Linux deployment: unlink while open so a crash cannot leave exported data on disk. */
-async function openExportFile(rootDirectory: string): Promise<FileHandle> {
-  await mkdir(rootDirectory, { recursive: true, mode: 0o700 });
-  const directory = await mkdtemp(join(rootDirectory, "autoforge-export-"));
-  let file: FileHandle | undefined;
-  try {
-    file = await open(join(directory, "workbook.xlsx"), "wx+", 0o600);
-    await rm(directory, { recursive: true, force: true });
-    return file;
-  } catch (cause) {
-    const cleanup = await Promise.allSettled([
-      ...(file ? [file.close()] : []),
-      rm(directory, { recursive: true, force: true }),
-    ]);
-    const cleanupErrors = cleanup.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : [],
-    );
-    if (cleanupErrors.length)
-      throw new AggregateError([cause, ...cleanupErrors], "创建导出暂存文件失败，清理未完成。");
-    throw cause;
-  }
-}
-
 /** Finish and validate the ZIP before sending HTTP headers; rows remain paged and committed. */
 export async function prepareRunBatchExportFile(
   pages: AsyncIterable<RunBatchExportWorkbookInput>,
@@ -48,7 +25,7 @@ export async function prepareRunBatchExportFile(
   options: { directory: string; invalidRows?: "reject" | "exclude" },
 ): Promise<PreparedRunBatchExportFile> {
   signal.throwIfAborted();
-  const file = await openExportFile(options.directory);
+  const file = await openTemporaryExportFile(options.directory);
   let completion: Promise<Error | undefined> | undefined;
   try {
     const workbook = await createRunBatchExportWorkbookStream(pages, signal, {
@@ -97,7 +74,7 @@ export async function prepareRunBatchExportFile(
 }
 
 /** Read ownership transfers to the stream; end, client cancellation and errors all close the file. */
-export function readRunBatchExportFile(prepared: PreparedRunBatchExportFile, signal: AbortSignal) {
+export function readRunBatchExportFile(prepared: { file: FileHandle }, signal: AbortSignal) {
   const stream = prepared.file.createReadStream({ start: 0, autoClose: true });
   const abort = () =>
     stream.destroy(signal.reason instanceof Error ? signal.reason : new Error("导出下载已取消。"));

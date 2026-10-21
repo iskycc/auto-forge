@@ -1,3 +1,4 @@
+import { ddtCaseListPageSql } from "./ddt-case-list-page";
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import {
   ddtExecutionStatistics,
@@ -177,11 +178,7 @@ export class PostgresDdtRepository implements DdtRepository {
     for (const filter of query.filters) builder.addFilter(filter);
     const limit = builder.value(query.limit + 1);
     const result = await this.handle.pool.query<DdtCaseSummaryRow>(
-      `SELECT id, project_id, project_version_id, test_stage_id, case_id,
-              case_id_normalized, sr_num, case_kind, source_name, revision, updated_at,
-              ${executionClassColumns}
-       FROM ddt_cases WHERE ${builder.sql}
-       ORDER BY case_id_normalized, id LIMIT ${limit}`,
+      ddtCaseListPageSql(builder.sql, limit, "postgres"),
       builder.values,
     );
     const items = result.rows.slice(0, query.limit).map(mapCaseSummary);
@@ -773,6 +770,40 @@ export class PostgresDdtRepository implements DdtRepository {
       updatedToday: Number(row.updated_today),
       groups,
       timeline: timeline.rows.map((item) => ({ date: item.date, count: Number(item.count) })),
+    };
+  }
+
+  async readExportCasesPage(
+    selection: DdtScope & {
+      caseIds?: string[];
+      srNum?: string;
+      categoryIds?: string[];
+      cursor?: string;
+    },
+  ) {
+    if (selection.categoryIds?.length === 0) return { items: [] };
+    await this.ready();
+    const builder = new PgWhereBuilder(selection);
+    if (selection.srNum) builder.add("sr_num_normalized =", normalize(selection.srNum));
+    if (selection.caseIds?.length)
+      builder.add("case_id_normalized = ANY", selection.caseIds.map(normalize), "($n::text[])");
+    if (selection.categoryIds) builder.addCategories(selection, selection.categoryIds);
+    builder.add("case_id_normalized >", selection.cursor ?? "");
+    const result = await this.handle.pool.query<{ cursor: string; data_json: string }>(
+      `WITH candidates AS MATERIALIZED (
+        SELECT id, case_id_normalized, octet_length(data_json) AS bytes
+        FROM ddt_cases WHERE ${builder.sql} ORDER BY case_id_normalized LIMIT 64
+      ), bounded AS (
+        SELECT id, row_number() OVER (ORDER BY case_id_normalized) AS ordinal,
+          sum(bytes) OVER (ORDER BY case_id_normalized) AS total_bytes FROM candidates
+      ) SELECT case_id_normalized AS cursor, data_json FROM ddt_cases
+        WHERE id IN (SELECT id FROM bounded WHERE ordinal = 1 OR total_bytes <= 2097152)
+        ORDER BY case_id_normalized`,
+      builder.values,
+    );
+    return {
+      items: result.rows.map((row) => parseCaseData(row.data_json)),
+      ...(result.rows.length ? { nextCursor: result.rows.at(-1)!.cursor } : {}),
     };
   }
 

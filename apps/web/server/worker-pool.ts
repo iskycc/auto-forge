@@ -163,6 +163,10 @@ export class WorkerPool implements WorkDispatcher {
     return this.diagnosticLane.dispatch({ kind: "read-scheduling-events", input });
   }
 
+  readDdtCases(input: unknown): Promise<unknown> {
+    return this.diagnosticLane.dispatch({ kind: "read-ddt-cases", input });
+  }
+
   readExecutionView(input: unknown): Promise<unknown> {
     return this.diagnosticLane.dispatch({ kind: "read-execution-view", input });
   }
@@ -461,7 +465,7 @@ class WorkerLane {
       return Promise.reject(
         Object.assign(
           new Error(
-            diagnostic ? "执行机诊断读取繁忙，请稍后重试。" : "执行控制队列繁忙，请稍后重试。",
+            diagnostic ? "平台只读查询繁忙，请稍后重试。" : "执行控制队列繁忙，请稍后重试。",
           ),
           {
             name: "DomainError",
@@ -587,7 +591,7 @@ class WorkerLane {
   private expireDiagnosticRead(worker: Worker | DiagnosticReadProcess): void {
     if (this.worker !== worker || this.workerFailed) return;
     this.workerFailed = true;
-    this.diagnosticExitError = Object.assign(new Error("执行机诊断读取超时，请稍后重试。"), {
+    this.diagnosticExitError = Object.assign(new Error("平台只读查询超时，请稍后重试。"), {
       name: "DomainError",
       code: "PLATFORM_BUSY",
     });

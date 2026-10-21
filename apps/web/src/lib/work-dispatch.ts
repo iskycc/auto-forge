@@ -1,4 +1,5 @@
 import {
+  type DdtRepository,
   type AttemptSchedulingContext,
   CoalescedOperation,
   type ExecutionControlRepository,
@@ -12,6 +13,23 @@ import type { WorkDispatcher } from "./work-runtime";
 import { EXECUTION_VIEW_READ_METHODS } from "./execution-view-reads";
 
 export { workDispatcher } from "./work-runtime";
+
+/** DDT filters and body pages cannot block Web or Runner control requests. */
+export function workerBackedDdtReads(
+  local: DdtRepository,
+  dispatcher: WorkDispatcher | undefined,
+): DdtRepository {
+  const read = dispatcher?.readDdtCases?.bind(dispatcher);
+  if (!read) return local;
+  return new Proxy(local, {
+    get(target, property) {
+      if (property === "listCases" || property === "readExportCasesPage")
+        return (input: unknown) => read({ method: property, input });
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 /** Diagnostic scans never share the Web event loop or a control/scheduling lane. */
 export function workerBackedExecutionViewReads<Repository extends RunBatchRepository>(

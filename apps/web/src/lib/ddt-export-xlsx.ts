@@ -72,7 +72,7 @@ async function writeDdtWorkbook(
   await workbook.commit();
 }
 
-function ddtColumnMinimumWidth(header: string): number {
+export function ddtColumnMinimumWidth(header: string): number {
   switch (header.toLowerCase()) {
     case "caseid":
       return 12;

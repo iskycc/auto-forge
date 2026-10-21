@@ -1,3 +1,4 @@
+import { ddtCaseListPageSql } from "./ddt-case-list-page";
 import {
   ddtExecutionStatistics,
   ddtExecutionTimelineSql,
@@ -195,17 +196,7 @@ export class SqliteDdtRepository implements DdtRepository {
     if (query.categoryIds) appendSqliteCategories(where, parameters, query, query.categoryIds);
     for (const filter of query.filters) appendSqliteFilter(where, parameters, filter);
     const rows = this.handle.client
-      .prepare(
-        `SELECT id, project_id AS projectId, project_version_id AS projectVersionId,
-                test_stage_id AS testStageId, case_id AS caseId,
-                case_id_normalized AS caseIdNormalized, sr_num AS srNum,
-                case_kind AS kind, source_name AS sourceName, revision, updated_at AS updatedAt,
-                ${executionClassColumns}
-         FROM ddt_cases
-         WHERE ${where.join(" AND ")}
-         ORDER BY case_id_normalized, id
-         LIMIT ?`,
-      )
+      .prepare(ddtCaseListPageSql(where.join(" AND "), "?", "sqlite"))
       .all(...parameters, query.limit + 1) as DdtCaseSummaryRow[];
     const items = rows.slice(0, query.limit).map(mapCaseSummary);
     const next = rows.length > query.limit ? rows[query.limit - 1]?.caseIdNormalized : undefined;
@@ -860,6 +851,49 @@ export class SqliteDdtRepository implements DdtRepository {
       updatedToday: counts.updatedToday ?? 0,
       groups,
       timeline,
+    };
+  }
+
+  async readExportCasesPage(
+    selection: DdtScope & {
+      caseIds?: string[];
+      srNum?: string;
+      categoryIds?: string[];
+      cursor?: string;
+    },
+  ) {
+    if (selection.categoryIds?.length === 0) return { items: [] };
+    const where = scopeSql(selection);
+    const parameters: SqlValue[] = scopeParameters(selection);
+    if (selection.srNum) {
+      where.push("sr_num_normalized = ?");
+      parameters.push(normalize(selection.srNum));
+    }
+    if (selection.caseIds?.length) {
+      where.push(`case_id_normalized IN (${selection.caseIds.map(() => "?").join(",")})`);
+      parameters.push(...selection.caseIds.map(normalize));
+    }
+    if (selection.categoryIds)
+      appendSqliteCategories(where, parameters, selection, selection.categoryIds);
+    where.push("case_id_normalized > ?");
+    parameters.push(selection.cursor ?? "");
+    const rows = this.handle.client
+      .prepare(
+        `WITH candidates AS MATERIALIZED (
+      SELECT id, case_id_normalized, length(CAST(data_json AS BLOB)) AS bytes
+      FROM ddt_cases WHERE ${where.join(" AND ")}
+      ORDER BY case_id_normalized LIMIT 64
+    ), bounded AS (
+      SELECT id, row_number() OVER (ORDER BY case_id_normalized) AS ordinal,
+        sum(bytes) OVER (ORDER BY case_id_normalized) AS total_bytes FROM candidates
+    ) SELECT case_id_normalized AS cursor, data_json AS dataJson FROM ddt_cases
+      WHERE id IN (SELECT id FROM bounded WHERE ordinal = 1 OR total_bytes <= 2097152)
+      ORDER BY case_id_normalized`,
+      )
+      .all(...parameters) as Array<{ cursor: string; dataJson: string }>;
+    return {
+      items: rows.map((row) => parseCaseData(row.dataJson)),
+      ...(rows.length ? { nextCursor: rows.at(-1)!.cursor } : {}),
     };
   }
 

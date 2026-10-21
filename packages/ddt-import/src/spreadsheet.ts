@@ -18,7 +18,7 @@ import {
 } from "@autoforge/domain";
 
 const SUPPORTED_EXTENSIONS = new Set(["xlsx", "xls", "xlsb", "csv", "ods"]);
-const EXPORTED_STEP_PRESENT_COLUMN = "__DDT_INSIGHT_STEP_PRESENT__";
+export const EXPORTED_STEP_PRESENT_COLUMN = "__DDT_INSIGHT_STEP_PRESENT__";
 const COLUMN_SAMPLE_LIMIT = 8;
 const COLUMN_SAMPLE_VALUE_LENGTH = 256;
 const utf8CsvDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -629,23 +629,27 @@ type ExportColumnGroup = {
   hasConflictingValues: boolean;
 };
 
-function exportSheetColumns(rows: readonly CaseStepData[]) {
-  const groups = new Map<string, ExportColumnGroup>();
-  for (const name of ["CaseID", "srNum"]) {
-    groups.set(normalizedColumnName(name), {
-      name,
-      fields: new Set(),
-      hasConflictingValues: false,
-    });
+export class DdtExportColumnPlanner {
+  private readonly groups = new Map<string, ExportColumnGroup>();
+
+  constructor() {
+    for (const name of ["CaseID", "srNum"]) {
+      this.groups.set(normalizedColumnName(name), {
+        name,
+        fields: new Set(),
+        hasConflictingValues: false,
+      });
+    }
   }
-  for (const row of rows) {
+
+  add(row: CaseStepData): void {
     const valuesByColumn = new Map<string, CellValue>();
     for (const [field, value] of Object.entries(row)) {
       const normalizedName = normalizedColumnName(field);
-      let group = groups.get(normalizedName);
+      let group = this.groups.get(normalizedName);
       if (!group) {
         group = { name: field.trim(), fields: new Set(), hasConflictingValues: false };
-        groups.set(normalizedName, group);
+        this.groups.set(normalizedName, group);
       }
       group.fields.add(field);
       if (valuesByColumn.has(normalizedName) && valuesByColumn.get(normalizedName) !== value) {
@@ -655,27 +659,35 @@ function exportSheetColumns(rows: readonly CaseStepData[]) {
     }
   }
 
-  const columns = [...groups.values()].map((group) => group.name);
-  // Reserve every original column before allocating suffixes, including fields discovered later.
-  const usedNames = new Set(groups.keys());
-  const headerByField = new Map<string, string>();
-  for (const group of groups.values()) {
-    const primaryField = group.fields.has(group.name)
-      ? group.name
-      : group.fields.values().next().value;
-    for (const field of group.fields) {
-      if (!group.hasConflictingValues || field === primaryField) {
-        headerByField.set(field, group.name);
-        continue;
+  build() {
+    const columns = [...this.groups.values()].map((group) => group.name);
+    // Reserve every original column before allocating suffixes, including fields discovered later.
+    const usedNames = new Set(this.groups.keys());
+    const headerByField = new Map<string, string>();
+    for (const group of this.groups.values()) {
+      const primaryField = group.fields.has(group.name)
+        ? group.name
+        : group.fields.values().next().value;
+      for (const field of group.fields) {
+        if (!group.hasConflictingValues || field === primaryField) {
+          headerByField.set(field, group.name);
+          continue;
+        }
+        // Same-row aliases with different values must remain separate throughout the sheet.
+        const header = availableColumnName(field.trim(), 2, usedNames);
+        usedNames.add(normalizedColumnName(header));
+        columns.push(header);
+        headerByField.set(field, header);
       }
-      // Same-row aliases with different values must remain separate throughout the sheet.
-      const header = availableColumnName(field.trim(), 2, usedNames);
-      usedNames.add(normalizedColumnName(header));
-      columns.push(header);
-      headerByField.set(field, header);
     }
+    return { columns, headerByField };
   }
-  return { columns, headerByField };
+}
+
+function exportSheetColumns(rows: readonly CaseStepData[]) {
+  const planner = new DdtExportColumnPlanner();
+  for (const row of rows) planner.add(row);
+  return planner.build();
 }
 
 export function buildDdtExportSheets(rows: CaseData[]) {

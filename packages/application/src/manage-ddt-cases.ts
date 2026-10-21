@@ -424,6 +424,30 @@ export class DdtCaseService {
     }
   }
 
+  async *exportPages(
+    scope: DdtScope,
+    selection: { caseIds?: string[]; srNum?: string; categoryIds?: string[] },
+    signal: AbortSignal,
+  ): AsyncGenerator<DdtCaseData[]> {
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    while (true) {
+      signal.throwIfAborted();
+      const page = await this.repository.readExportCasesPage({
+        ...scope,
+        ...selection,
+        ...(cursor ? { cursor } : {}),
+      });
+      signal.throwIfAborted();
+      if (page.nextCursor && seenCursors.has(page.nextCursor))
+        throw new DomainError("DDT_EXPORT_CURSOR_INVALID", "导出分页未能继续，请重新导出。");
+      if (page.nextCursor) seenCursors.add(page.nextCursor);
+      if (page.items.length) yield page.items;
+      if (!page.nextCursor) return;
+      cursor = page.nextCursor;
+    }
+  }
+
   export(
     scope: DdtScope,
     selection: { caseIds?: string[]; srNum?: string; categoryIds?: string[] },

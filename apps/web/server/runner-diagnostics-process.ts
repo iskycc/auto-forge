@@ -1,7 +1,8 @@
 import { DomainError, isDomainError } from "@autoforge/domain";
 import { z } from "zod";
-import type { RunBatchRepository, RunnerRepository } from "@autoforge/application";
+import type { RunBatchRepository, RunnerRepository, DdtRepository } from "@autoforge/application";
 import type { WorkRequest, WorkResponse, DiagnosticReadConfiguration } from "./work-protocol.ts";
+import { readDdtCases } from "../src/lib/ddt-case-reads.ts";
 import { readExecutionView } from "../src/lib/execution-view-reads.ts";
 import {
   isRuntimeDatabaseContention,
@@ -41,7 +42,12 @@ const configurationSchema = z.discriminatedUnion("mode", [
 ]);
 let configuration: DiagnosticReadConfiguration | undefined;
 let repositories:
-  | Promise<{ batches: RunBatchRepository; runners: RunnerRepository; close(): Promise<void> }>
+  | Promise<{
+      batches: RunBatchRepository;
+      runners: RunnerRepository;
+      ddt: DdtRepository;
+      close(): Promise<void>;
+    }>
   | undefined;
 let requests = Promise.resolve();
 
@@ -94,18 +100,20 @@ async function read({ task }: WorkRequest): Promise<unknown> {
   if (
     task.kind !== "read-scheduling-events" &&
     task.kind !== "read-runner-resource-samples" &&
-    task.kind !== "read-execution-view"
+    task.kind !== "read-execution-view" &&
+    task.kind !== "read-ddt-cases"
   )
     throw new DomainError(
       "VALIDATION_FAILED",
-      "只读进程只接受已声明的执行视图、日志和资源监控读取。",
+      "只读进程只接受已声明的执行视图、DDT、日志和资源监控读取。",
     );
   repositories ??= openRepositories().catch((error: unknown) => {
     repositories = undefined;
     throw error;
   });
-  const { batches, runners } = await repositories;
+  const { batches, runners, ddt } = await repositories;
   try {
+    if (task.kind === "read-ddt-cases") return await readDdtCases(ddt, task.input);
     if (task.kind === "read-execution-view") return await readExecutionView(batches, task.input);
     if (task.kind === "read-scheduling-events") {
       const input = querySchema.parse(task.input);
@@ -145,6 +153,7 @@ async function openRepositories() {
       busyTimeoutMs: 25,
     });
     return {
+      ddt: new adapters.SqliteDdtRepository(database),
       batches: new adapters.SqliteRunBatchRepository(database),
       runners: new adapters.SqliteRunnerRepository(database),
       close: async () => database.close(),
@@ -162,6 +171,7 @@ async function openRepositories() {
   try {
     await database.ready;
     return {
+      ddt: new adapters.PostgresDdtRepository(database),
       batches: new adapters.PostgresRunBatchRepository(database),
       runners: new adapters.PostgresRunnerRepository(database),
       close: () => database.close(),

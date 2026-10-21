@@ -1,4 +1,5 @@
 "use client";
+import { DdtCaseNavigationWindow } from "./ddt-case-navigation-window";
 import { Splitter } from "antd";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -184,31 +185,12 @@ export function DdtCaseBrowser({
                 />
                 {selected.size ? `已选 ${selected.size} 条` : "选择已加载用例"}
               </label>
-              <div
-                className={cn("ddt-case-list", ddtCaseBrowserStyles["ddt-case-list"])}
-                aria-busy={refreshing}
-                onKeyDown={(event) => {
-                  if (!(event.target instanceof HTMLButtonElement) || !event.target.dataset.caseId)
-                    return;
-                  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-                  const direction = ["ArrowDown", "j"].includes(event.key)
-                    ? 1
-                    : ["ArrowUp", "k"].includes(event.key)
-                      ? -1
-                      : 0;
-                  if (!direction) return;
-                  const focusedCaseId = event.target.dataset.caseId;
-                  const index = cases.findIndex((item) => item.caseId === focusedCaseId);
-                  const next = cases[index + direction];
-                  if (!next) return;
-                  event.preventDefault();
-                  onOpen(next.caseId);
-                  const buttons =
-                    event.currentTarget.querySelectorAll<HTMLButtonElement>("button[data-case-id]");
-                  buttons[index + direction]?.focus();
-                }}
-              >
-                {cases.map((item) => (
+              <DdtCaseNavigationWindow
+                cases={cases}
+                activeCaseId={activeCaseId}
+                refreshing={refreshing}
+                onOpen={onOpen}
+                renderRow={(item) => (
                   <div
                     key={item.id}
                     className={cn(
@@ -259,7 +241,8 @@ export function DdtCaseBrowser({
                       <Eye size={15} aria-hidden="true" />
                     </Button>
                   </div>
-                ))}
+                )}
+              >
                 {refreshing && !cases.length ? (
                   <LoadingStateMessage
                     className={cn(
@@ -284,6 +267,7 @@ export function DdtCaseBrowser({
                   <Button
                     type="button"
                     className={cn("ddt-load-more", ddtCaseBrowserStyles["ddt-load-more"])}
+                    aria-label={loadingMore ? "正在加载更多用例" : "加载更多"}
                     loading={loadingMore}
                     disabled={loadingMore || savingCase}
                     variant="secondary"
@@ -294,7 +278,7 @@ export function DdtCaseBrowser({
                     {loadingMore ? "正在加载…" : "加载更多"}
                   </Button>
                 ) : null}
-              </div>
+              </DdtCaseNavigationWindow>
             </div>
           </section>
         </Splitter.Panel>
@@ -776,7 +760,7 @@ const ddtCaseBrowserStyles = {
   "ddt-case-list-item":
     "[&.ui-button]:shadow-none [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_>_span]:flex-1 flex min-w-0 flex-1 items-center gap-2 border-0 py-1 px-1 bg-transparent text-foreground text-left [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small_>_span]:overflow-hidden [&_small_>_span]:text-ellipsis [&_small_>_span]:whitespace-nowrap [&_small]:flex [&_small]:min-w-0 [&_small]:items-center [&_small]:gap-2 [&_em]:[flex:0_0_auto] [&_em]:text-info [&_em]:[font-style:normal]",
   "ddt-case-list-row":
-    "flex min-w-0 items-center gap-1 border border-solid border-transparent rounded-lg pl-2 [&.active]:border-primary/30 [&.active]:bg-accent [&.active_.ddt-case-list-item]:text-primary-text [&:hover]:bg-muted/60",
+    "flex h-[52px] min-w-0 items-center gap-1 overflow-hidden border border-solid border-transparent rounded-lg pl-2 [&.active]:border-primary/30 [&.active]:bg-accent [&.active_.ddt-case-list-item]:text-primary-text [&:hover]:bg-muted/60",
   "ddt-case-navigation":
     "flex min-w-0 min-h-0 flex-col bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:[flex:0_0_auto] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-1 [&_>_header]:px-3 [&_>_header_>_div]:flex [&_>_header_>_div]:items-baseline [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-2 [&_small]:text-muted-foreground [&_small]:text-xs",
   "ddt-case-navigation-content": "flex min-w-0 min-h-0 flex-col flex-1 [&[hidden]]:hidden",

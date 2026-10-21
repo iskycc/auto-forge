@@ -18,7 +18,7 @@ const later = "2026-10-09T00:01:00.000Z";
 
 for (const mode of ["lite", "full"] as const) {
   describe.skipIf(mode === "full" && !postgresUrl)(`${mode} isolated Runner diagnostics`, () => {
-    it.each(["scheduling", "exceptions", "case-page"] as const)(
+    it.each(["scheduling", "exceptions", "case-page", "ddt-page", "ddt-export"] as const)(
       "keeps HTTP and active lease renewals responsive during stalled %s SQL, then recovers",
       async (view) => {
         const database = await diagnosticDatabase(mode);
@@ -96,22 +96,35 @@ for (const mode of ["lite", "full"] as const) {
           await expect(
             pool.listSchedulingEvents({ batchId: "batch", limit: 500 }),
           ).resolves.toMatchObject({ items: [] });
-          const table = view === "scheduling" ? "scheduling_events" : "run_attempts";
+          const ddt = view === "ddt-page" || view === "ddt-export";
+          const table = ddt
+            ? "ddt_cases"
+            : view === "scheduling"
+              ? "scheduling_events"
+              : "run_attempts";
           await database.execute(`ALTER TABLE ${table} RENAME TO diagnostic_events_fixture`);
           // An adversarial view gives the real repository a scan that cannot finish in its budget.
           await database.execute(
-            view !== "scheduling"
-              ? mode === "lite"
-                ? `CREATE VIEW run_attempts AS WITH RECURSIVE counter(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM counter WHERE value<1000000000)
+            ddt
+              ? `CREATE VIEW ddt_cases AS ${mode === "lite" ? "WITH RECURSIVE counter(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM counter WHERE value<1000000000)" : ""}
+                SELECT CAST(value AS TEXT) AS id, '00000000-0000-7000-8000-000000000001' AS project_id,
+                  'version' AS project_version_id, 'stage' AS test_stage_id,
+                  CAST(value AS TEXT) AS case_id, CAST(value AS TEXT) AS case_id_normalized,
+                  'SR' AS sr_num, 'sr' AS sr_num_normalized, 'standard' AS case_kind,
+                  '{}' AS data_json, '' AS source_name, 1 AS revision, '${now}' AS updated_at
+                FROM ${mode === "lite" ? "counter" : "generate_series(1,1000000000) counter(value)"}`
+              : view !== "scheduling"
+                ? mode === "lite"
+                  ? `CREATE VIEW run_attempts AS WITH RECURSIVE counter(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM counter WHERE value<1000000000)
                 SELECT original.* FROM diagnostic_events_fixture original CROSS JOIN counter`
-                : `CREATE VIEW run_attempts AS SELECT original.* FROM diagnostic_events_fixture original CROSS JOIN generate_series(1,1000000000) counter`
-              : mode === "lite"
-                ? `CREATE VIEW scheduling_events AS
+                  : `CREATE VIEW run_attempts AS SELECT original.* FROM diagnostic_events_fixture original CROSS JOIN generate_series(1,1000000000) counter`
+                : mode === "lite"
+                  ? `CREATE VIEW scheduling_events AS
           WITH RECURSIVE counter(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM counter WHERE value < 1000000000)
           SELECT CAST(value AS TEXT) AS id, 'batch' AS batch_id, 'runner' AS runner_id,
             NULL AS execution_run_id, NULL AS attempt_id, 'run_assigned' AS event_type,
             CAST(value AS TEXT) AS message, NULL AS payload_json, '${now}' AS recorded_at FROM counter`
-                : `CREATE VIEW scheduling_events AS SELECT value::text AS id, 'batch'::text AS batch_id, 'runner'::text AS runner_id,
+                  : `CREATE VIEW scheduling_events AS SELECT value::text AS id, 'batch'::text AS batch_id, 'runner'::text AS runner_id,
             NULL::text AS execution_run_id, NULL::text AS attempt_id, 'run_assigned'::text AS event_type,
             value::text AS message, NULL::text AS payload_json, '${now}'::text AS recorded_at FROM generate_series(1, 1000000000) value`,
           );
@@ -120,30 +133,42 @@ for (const mode of ["lite", "full"] as const) {
               "UPDATE diagnostic_events_fixture SET status='timed_out',outcome='timed_out',result_code='EXECUTION_TIMEOUT'",
             );
           const readView = () =>
-            view === "scheduling"
-              ? pool.listSchedulingEvents({
-                  batchId: "batch",
-                  runnerId: "runner",
-                  query: "absent-message",
-                  limit: 500,
+            ddt
+              ? pool.readDdtCases({
+                  method: view === "ddt-page" ? "listCases" : "readExportCasesPage",
+                  input: {
+                    projectId: "00000000-0000-7000-8000-000000000001",
+                    projectVersionId: "version",
+                    testStageId: "stage",
+                    ...(view === "ddt-page"
+                      ? { query: "absent-case", filters: [], limit: 60 }
+                      : { cursor: "absent-case" }),
+                  },
                 })
-              : pool.readExecutionView(
-                  view === "exceptions"
-                    ? { method: "readExceptionRecords", args: [{ batchId: "batch", limit: 51 }] }
-                    : {
-                        method: "listCasePage",
-                        args: [
-                          {
-                            batchId: "batch",
-                            scope: "summary",
-                            sort: "name",
-                            direction: "asc",
-                            offset: 0,
-                            limit: 50,
-                          },
-                        ],
-                      },
-                );
+              : view === "scheduling"
+                ? pool.listSchedulingEvents({
+                    batchId: "batch",
+                    runnerId: "runner",
+                    query: "absent-message",
+                    limit: 500,
+                  })
+                : pool.readExecutionView(
+                    view === "exceptions"
+                      ? { method: "readExceptionRecords", args: [{ batchId: "batch", limit: 51 }] }
+                      : {
+                          method: "listCasePage",
+                          args: [
+                            {
+                              batchId: "batch",
+                              scope: "summary",
+                              sort: "name",
+                              direction: "asc",
+                              offset: 0,
+                              limit: 50,
+                            },
+                          ],
+                        },
+                  );
           const blocked = Promise.allSettled([
             readView(),
             pool.readRunnerResourceSamples({ runnerId: "runner", since: now, until: later }),
@@ -172,6 +197,7 @@ for (const mode of ["lite", "full"] as const) {
           await expect(
             pool.listSchedulingEvents({ batchId: "batch", limit: 500 }),
           ).resolves.toMatchObject({ items: [] });
+          if (ddt) await expect(readView()).resolves.toEqual({ items: [] });
           await expect(renew()).resolves.toMatchObject({
             leaseVersion: 13,
             instruction: "continue",

@@ -12,6 +12,7 @@ import {
   prioritizedExecutionControlRepository,
   workerBackedBatchCreation,
   workerBackedExecutionViewReads,
+  workerBackedDdtReads,
   workerBackedRunnerResourceReads,
 } from "./work-dispatch";
 import type { WorkDispatcher } from "./work-runtime";
@@ -321,4 +322,31 @@ describe("execution control work dispatch", () => {
     expect(workerAppend).toHaveBeenCalledWith(input);
     expect(localAppend).not.toHaveBeenCalled();
   });
+});
+
+describe("DDT read dispatch", () => {
+  it.each(["listCases", "readExportCasesPage"] as const)(
+    "isolates %s without falling back when the reader is busy",
+    async (method) => {
+      const local = {
+        [method]: vi.fn(),
+        exportCases: vi.fn(),
+      } as unknown as import("@autoforge/application").DdtRepository;
+      const readDdtCases = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("busy"), { code: "PLATFORM_BUSY" }));
+      const isolated = workerBackedDdtReads(local, { readDdtCases } as unknown as WorkDispatcher);
+      const input = {
+        projectId: "project",
+        projectVersionId: "version",
+        testStageId: "stage",
+        limit: 60,
+        filters: [],
+      };
+      await expect(isolated[method](input)).rejects.toMatchObject({ code: "PLATFORM_BUSY" });
+      expect(readDdtCases).toHaveBeenCalledWith({ method, input });
+      expect(local[method]).not.toHaveBeenCalled();
+      expect(workerBackedDdtReads(local, undefined)).toBe(local);
+    },
+  );
 });

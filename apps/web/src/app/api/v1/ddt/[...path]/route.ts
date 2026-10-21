@@ -26,7 +26,11 @@ import {
 import type { AuthenticatedIdentity, DdtScope, Permission } from "@autoforge/domain";
 import { loadDdtCaseDetail } from "@/lib/load-ddt-case-detail";
 import { DomainError } from "@autoforge/domain";
-import { buildStyledDdtExportWorkbook } from "@/lib/ddt-export-xlsx";
+import { prepareDdtExportFile } from "@/lib/ddt-export-file";
+import { readRunBatchExportFile } from "@/lib/run-batch-export-file";
+import { ddtExportSelectionSchema as exportSchema } from "@/lib/ddt-case-reads";
+import { Readable } from "node:stream";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -41,11 +45,6 @@ type Context = { params: Promise<{ path: string[] }> };
 
 const restoreHistorySchema = z.object({
   snapshot: z.enum(["before", "after"]).default("after"),
-});
-const exportSchema = z.object({
-  categoryIds: ddtCategoryIdsSchema.optional(),
-  caseIds: z.array(z.string().min(1).max(512)).max(5_000).optional(),
-  srNum: z.string().trim().min(1).max(512).optional(),
 });
 
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
@@ -261,13 +260,21 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         srNum: url.searchParams.get("srNum") ?? undefined,
       });
       return await exportResponse(
-        await services.ddtCases.export(scope, exportSelection(selection)),
+        services.ddtCases.exportPages(scope, exportSelection(selection), request.signal),
+        request.signal,
+        join(services.configurationStore.paths.dataDirectory, "tmp", "exports"),
       );
     }
     throw routeNotFound();
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }
+}
+
+export async function HEAD(request: Request, context: Context): Promise<NextResponse> {
+  const response = await GET(request, context);
+  await response.body?.cancel();
+  return new NextResponse(null, { status: response.status, headers: response.headers });
 }
 
 export async function POST(request: Request, context: Context): Promise<NextResponse> {
@@ -538,7 +545,9 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       if (matches(path, "export")) {
         const selection = exportSchema.parse(await readJsonBody(request, 4 * 1_024 * 1_024));
         return await exportResponse(
-          await services.ddtCases.export(scope, exportSelection(selection)),
+          services.ddtCases.exportPages(scope, exportSelection(selection), request.signal),
+          request.signal,
+          join(services.configurationStore.paths.dataDirectory, "tmp", "exports"),
         );
       }
       throw routeNotFound();
@@ -691,13 +700,17 @@ function assertJobScope(
 }
 
 async function exportResponse(
-  rows: Awaited<ReturnType<import("@autoforge/application").DdtCaseService["export"]>>,
+  pages: AsyncIterable<import("@autoforge/domain").DdtCaseData[]>,
+  signal: AbortSignal,
+  directory: string,
 ): Promise<NextResponse> {
-  const workbook = await buildStyledDdtExportWorkbook(rows);
-  return new NextResponse(new Uint8Array(workbook), {
+  const prepared = await prepareDdtExportFile(pages, signal, directory);
+  const stream = readRunBatchExportFile(prepared, signal);
+  return new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array<ArrayBuffer>>, {
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "content-disposition": "attachment; filename*=UTF-8''DDT-cases.xlsx",
+      "content-length": String(prepared.sizeBytes),
       "cache-control": "no-store",
     },
   });

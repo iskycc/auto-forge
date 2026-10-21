@@ -138,6 +138,7 @@ import { AesGcmSecretCipher } from "./secret-cipher";
 import {
   CoalescingSchedulingPort,
   workerBackedBatchCreation,
+  workerBackedDdtReads,
   workDispatcher,
   workerBackedExecutionControlRepository,
   workerBackedExecutionViewReads,
@@ -440,6 +441,7 @@ async function createPlatformServices() {
     dispatcher,
   );
 
+  ddtRepository = workerBackedDdtReads(ddtRepository, dispatcher);
   batches = workerBackedExecutionViewReads(batches, dispatcher);
   runners = workerBackedRunnerResourceReads(runners, dispatcher);
   const caseSuiteActivity = new CaseSuiteActivityService(

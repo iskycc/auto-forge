@@ -284,6 +284,27 @@ export function DdtManagementWorkspace({
   const detailRequest = useRef<AbortController | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
+  const moreRequest = useRef<AbortController | null>(null);
+  const exportRequest = useRef<AbortController | null>(null);
+  const [exporting, setExporting] = useState<"all" | "current">();
+  useEffect(
+    () => () => {
+      moreRequest.current?.abort();
+      exportRequest.current?.abort();
+    },
+    [
+      query,
+      srNum,
+      categoryKey,
+      advancedField,
+      advancedOperator,
+      advancedValue,
+      tab,
+      scope.projectId,
+      scope.projectVersionId,
+      scope.testStageId,
+    ],
+  );
   const [busy, setBusy] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -574,6 +595,8 @@ export function DdtManagementWorkspace({
   const loadMore = async () => {
     if (!nextCursor || loadingMoreRef.current) return;
     const generation = loadGeneration.current;
+    const controller = new AbortController();
+    moreRequest.current = controller;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const parameters = ddtCaseFilterParameters(
@@ -584,13 +607,21 @@ export function DdtManagementWorkspace({
     try {
       const page = await requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
         endpoint("cases", parameters),
+        { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]) },
       );
-      if (generation !== loadGeneration.current) return;
-      setCases((current) => [...current, ...page.items]);
+      if (controller.signal.aborted || generation !== loadGeneration.current) return;
+      if (page.nextCursor && page.nextCursor === nextCursor)
+        throw new Error("用例分页未能继续，请刷新后重试。");
+      setCases((current) => {
+        const ids = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !ids.has(item.id))];
+      });
       setNextCursor(page.nextCursor);
     } catch (loadError) {
-      if (generation === loadGeneration.current) setError(messageOf(loadError));
+      if (!controller.signal.aborted && generation === loadGeneration.current)
+        setError(messageOf(loadError));
     } finally {
+      moreRequest.current = null;
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
@@ -673,21 +704,37 @@ export function DdtManagementWorkspace({
     }
   };
 
-  const exportSelection = async () => {
+  const exportSelection = async (mode: "all" | "current" = "current") => {
+    if (exportRequest.current) return;
+    const controller = new AbortController();
+    exportRequest.current = controller;
+    setExporting(mode);
+    setError("");
     try {
       const response = await fetch(endpoint("export"), {
         method: "POST",
         headers: jsonHeaders,
+        signal: controller.signal,
         body: JSON.stringify(
-          selected.size
-            ? { caseIds: [...selected] }
-            : { ...(srNum ? { srNum } : {}), ...(categoryIds.length ? { categoryIds } : {}) },
+          mode === "all"
+            ? {}
+            : selected.size
+              ? { caseIds: [...selected] }
+              : { ...(srNum ? { srNum } : {}), ...(categoryIds.length ? { categoryIds } : {}) },
         ),
       });
       if (!response.ok) throw await responseError(response);
-      downloadBlob(await response.blob(), "DDT-cases.xlsx");
+      const blob = await response.blob();
+      controller.signal.throwIfAborted();
+      downloadBlob(blob, mode === "all" ? "DDT-all-cases.xlsx" : "DDT-cases.xlsx");
+      toast.success(mode === "all" ? "全部 DDT 用例导出完成。" : "DDT 用例导出完成。");
     } catch (downloadError) {
-      setError(messageOf(downloadError));
+      if (!controller.signal.aborted) setError(messageOf(downloadError));
+    } finally {
+      if (exportRequest.current === controller) {
+        exportRequest.current = null;
+        setExporting(undefined);
+      }
     }
   };
 
@@ -746,6 +793,32 @@ export function DdtManagementWorkspace({
           <span>CaseID 在当前项目版本与测试阶段内唯一</span>
         </div>
         <div className="ddt-workspace-actions flex min-w-0 flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={exporting !== undefined || savingCase}
+            aria-label="导出全部用例"
+            loading={exporting === "all"}
+            onClick={() => void exportSelection("all")}
+          >
+            <Download size={16} /> 导出全部用例
+          </Button>
+          {exporting ? (
+            <span
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground"
+              role="status"
+            >
+              {exporting === "all" ? "正在准备全部用例…" : "正在准备导出…"}
+              <Button
+                type="button"
+                variant="ghost"
+                size="compact"
+                onClick={() => exportRequest.current?.abort()}
+              >
+                取消导出
+              </Button>
+            </span>
+          ) : null}
           {tab === "cases" ? (
             <Button
               type="button"
@@ -1110,6 +1183,7 @@ export function DdtManagementWorkspace({
                 <Button
                   className={cn("text-button", uiPatterns["text-button"])}
                   type="button"
+                  disabled={exporting !== undefined}
                   onClick={() => void exportSelection()}
                 >
                   <Download size={15} /> 导出当前范围
@@ -1130,6 +1204,7 @@ export function DdtManagementWorkspace({
                     uiPatterns["button-secondary"],
                   )}
                   type="button"
+                  disabled={exporting !== undefined}
                   onClick={() => void exportSelection()}
                 >
                   <Download size={15} /> 导出 {selected.size} 条

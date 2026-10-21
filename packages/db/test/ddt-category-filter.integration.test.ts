@@ -78,6 +78,58 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             67,
           );
           expect(await repository.exportCases({ ...scope, categoryIds: [] })).toEqual([]);
+          const expectedExport = await repository.exportCases({
+            ...scope,
+            categoryIds: [walletId],
+          });
+          const exported = [];
+          let cursor: string | undefined;
+          do {
+            const page = await repository.readExportCasesPage({
+              ...scope,
+              categoryIds: [walletId],
+              ...(cursor ? { cursor } : {}),
+            });
+            expect(page.items.length).toBeLessThanOrEqual(64);
+            exported.push(...page.items);
+            cursor = page.nextCursor;
+          } while (cursor);
+          expect(exported).toEqual(expectedExport);
+          expect(await repository.readExportCasesPage({ ...scope, categoryIds: [] })).toEqual({
+            items: [],
+          });
+          expect(
+            (
+              await repository.readExportCasesPage({
+                ...scope,
+                caseIds: ["case-066"],
+                srNum: "WALLET-A",
+              })
+            ).items,
+          ).toEqual(expectedExport.filter((row) => row.CaseID === "CASE-066"));
+          for (const wrong of [
+            { projectId: "other" },
+            { projectVersionId: "other" },
+            { testStageId: "other" },
+          ])
+            expect((await repository.readExportCasesPage({ ...scope, ...wrong })).items).toEqual(
+              [],
+            );
+          for (let index = 0; index < 5; index++) {
+            const caseId = `CASE-${String(index).padStart(3, "0")}`;
+            await execute(
+              "UPDATE ddt_cases SET data_json = ? WHERE project_version_id = ? AND case_id = ?",
+              [
+                JSON.stringify({ CaseID: caseId, srNum: "SR", large: "x".repeat(512 * 1_024) }),
+                scope.projectVersionId,
+                caseId,
+              ],
+            );
+          }
+          const bounded = await repository.readExportCasesPage(scope);
+          expect(bounded.items).toHaveLength(3);
+          expect(bounded.nextCursor).toBe("case-002");
+
           await execute(
             "UPDATE ddt_requirement_categories SET name = '钱包改名', normalized_name = '钱包改名' WHERE id = ?",
             [walletId],

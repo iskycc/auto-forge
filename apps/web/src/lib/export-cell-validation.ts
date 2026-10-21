@@ -16,7 +16,7 @@ function forbiddenXmlCodePoint(code: number): boolean {
   );
 }
 
-function textIssues(value: string, cellText = true): string[] {
+export function exportCellTextIssues(value: string, cellText = true): string[] {
   const reasons: string[] = [];
   if (cellText && value.length > EXCEL_CELL_TEXT_LIMIT)
     reasons.push(
@@ -67,12 +67,13 @@ export function validateExportCells(
   cells.forEach((cell, index) => {
     const field = headers[index]!;
     if (typeof cell === "string") {
-      for (const reason of textIssues(cell)) fields.push({ field, reason });
+      for (const reason of exportCellTextIssues(cell)) fields.push({ field, reason });
     } else if (typeof cell === "number" && !Number.isFinite(cell)) {
       fields.push({ field, reason: "数值不是有限数字，无法写入 Excel。" });
     } else if (cell && typeof cell === "object" && "hyperlink" in cell) {
-      for (const reason of textIssues(cell.text)) fields.push({ field, reason });
-      for (const reason of textIssues(cell.hyperlink, false)) fields.push({ field, reason });
+      for (const reason of exportCellTextIssues(cell.text)) fields.push({ field, reason });
+      for (const reason of exportCellTextIssues(cell.hyperlink, false))
+        fields.push({ field, reason });
       try {
         const target = new URL(cell.hyperlink);
         if (target.protocol !== "http:" && target.protocol !== "https:")

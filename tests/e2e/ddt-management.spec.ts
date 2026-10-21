@@ -3674,6 +3674,111 @@ async function alignDdtSectionBelowTopbar(section: Locator) {
   });
 }
 
+test("DDT navigation bounds rendering, retries pages and exports every case independently of selection", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const rows = Array.from({ length: 190 }, (_, index) => ({
+    CaseID: `CASE-${String(index).padStart(3, "0")}`,
+    srNum: index < 100 ? "WALLET" : "PAYMENT",
+    CaseName: `原始用例 ${index}`,
+    SRID: `需求-${index}`,
+  }));
+  await importDdtApiFixture(page, hierarchy, "CASE-000", 0, rows);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const navigation = page.getByRole("region", { name: "DDT 用例导航", exact: true });
+  await expect(navigation.getByText("60 条已加载", { exact: true })).toBeVisible();
+  await page.route(
+    "**/api/v1/ddt/cases?*",
+    async (route) => {
+      if (!new URL(route.request().url()).searchParams.has("cursor")) return route.continue();
+      await route.fulfill({
+        status: 503,
+        json: { error: { code: "PLATFORM_BUSY", message: "用例读取繁忙，请重试。" } },
+      });
+    },
+    { times: 1 },
+  );
+  await navigation.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "DDT 管理工作台", exact: true }).getByRole("alert"),
+  ).toContainText("用例读取繁忙");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-pagination-retry-${width}`);
+  }
+  await expect(navigation.getByText("60 条已加载", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭错误", exact: true }).click();
+  for (const count of [120, 180, 190]) {
+    await navigation.getByRole("button", { name: "加载更多", exact: true }).click();
+    await expect(navigation.getByText(`${count} 条已加载`, { exact: true })).toBeVisible();
+  }
+  await expect(navigation.getByRole("button", { name: "加载更多", exact: true })).toHaveCount(0);
+  expect(await navigation.locator(".ddt-case-list-row").count()).toBeLessThan(50);
+  await navigation.locator(".ddt-case-list").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await navigation.getByRole("button", { name: "CASE-000", exact: true }).click();
+  await navigation.getByRole("button", { name: "CASE-000", exact: true }).press("ArrowDown");
+  await expect(
+    page
+      .getByRole("region", { name: "DDT 用例详情", exact: true })
+      .getByRole("heading", { name: "CASE-001", exact: true }),
+  ).toBeVisible();
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.mouse.move(190, 80);
+      await expect(page.locator(".ant-tooltip:visible")).toHaveCount(0);
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-paged-export-${theme}-${width}`);
+    }
+  }
+  await navigation.getByRole("textbox", { name: "搜索 DDT 用例" }).fill("CASE-000");
+  await expect(navigation.getByText("1 条已加载", { exact: true })).toBeVisible();
+  await navigation.getByLabel("选择 CASE-000", { exact: true }).check();
+  const downloadEvent = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出全部用例", exact: true }).click();
+  const download = await downloadEvent;
+  expect(await download.failure()).toBeNull();
+  await download.saveAs(test.info().outputPath("ddt-all-cases.xlsx"));
+  const content = await readFile((await download.path())!);
+  const exported = parseSpreadsheet(content, download.suggestedFilename());
+  expect(exported.rows).toEqual(rows);
+  await expect(page.getByRole("button", { name: "导出全部用例", exact: true })).toBeEnabled();
+  await expect(navigation.getByLabel("选择 CASE-000", { exact: true })).toBeChecked();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    "**/api/v1/ddt/export?*",
+    async (route) => {
+      await pending;
+      await route.abort("aborted");
+    },
+    { times: 1 },
+  );
+  try {
+    await page.getByRole("button", { name: "导出全部用例", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "正在准备全部用例…" })).toBeVisible();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-export-preparing-${width}`);
+    }
+    await page.getByRole("button", { name: "取消导出", exact: true }).click();
+    await expect(page.getByRole("button", { name: "导出全部用例", exact: true })).toBeEnabled();
+  } finally {
+    release();
+  }
+});
+
 test("DDT full-scope export merges column aliases and can be imported again", async ({ page }) => {
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);

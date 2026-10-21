@@ -1169,6 +1169,10 @@ export interface DdtRepository {
     limit?: number,
   ): Promise<Array<{ srNum: string; count: number }>>;
   dashboard(scope: DdtScope, generatedAt: string): Promise<DdtDashboard>;
+  readExportCasesPage(selection: DdtExportSelection & { cursor?: string }): Promise<{
+    items: DdtCaseData[];
+    nextCursor?: string;
+  }>;
   exportCases(selection: DdtExportSelection): Promise<DdtCaseData[]>;
   updateCases(
     records: Array<{
