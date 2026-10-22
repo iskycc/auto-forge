@@ -20,10 +20,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 
 import { Button } from "./ui";
-import { LoginDialog } from "./login-dialog";
+import { useLoginDialog } from "./login-dialog-provider";
 import { ColorModeToggle } from "./color-mode-toggle";
 import { PublicControlPreview, publicSnapshotPresentation } from "./public-control-preview";
 import { usePublicStatistics } from "./use-public-statistics";
@@ -46,18 +45,7 @@ export function PublicDashboard({
   const { statistics, synchronizing, syncFailed, refresh } = usePublicStatistics(initialStatistics);
   const { hasStatistics } = publicSnapshotPresentation(statistics, syncFailed);
   const count = (value: number) => (hasStatistics ? value.toLocaleString("zh-CN") : "—");
-  const searchParams = useSearchParams();
-  function openLogin() {
-    const url = new URL(window.location.href);
-    url.searchParams.set("login", "1");
-    window.history.pushState(null, "", url);
-  }
-  function closeLogin() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("login");
-    url.searchParams.delete("passwordChanged");
-    window.history.replaceState(null, "", url);
-  }
+  const { openLogin } = useLoginDialog();
 
   return (
     <main className={styles.page}>
@@ -294,11 +282,6 @@ export function PublicDashboard({
           公开页面仅展示脱敏聚合数据
         </span>
       </footer>
-      <LoginDialog
-        open={!setupRequired && searchParams.get("login") === "1"}
-        passwordChanged={searchParams.get("passwordChanged") === "1"}
-        onClose={closeLogin}
-      />
     </main>
   );
 }

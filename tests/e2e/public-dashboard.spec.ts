@@ -2,9 +2,291 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import type { PublicPlatformStatistics } from "@autoforge/contracts";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { expectUiIntegrity } from "./support/ui-guard";
-import { E2E_ADMIN_PASSWORD, E2E_ADMIN_USERNAME, ensureAdministrator } from "./support/session";
+import {
+  E2E_ADMIN_PASSWORD,
+  E2E_ADMIN_USERNAME,
+  ensureAdministrator,
+  browserJson,
+  uniqueName,
+} from "./support/session";
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
+import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
+
+test("public logs log in locally without losing their execution", async ({ page, browser }) => {
+  const { fixture, attemptId } = await preparePublicLoginFixture(page);
+  const paths = [
+    `/CaseLog?ExecutionId=${attemptId}&AttemptId=${attemptId}#execution-log`,
+    await legacyAttemptLogPath(attemptId),
+    `${legacyExecutionPath(fixture.batchId)}/attempt/${attemptId}`,
+  ];
+  for (const [index, path] of paths.entries()) {
+    const context = await browser.newContext();
+    try {
+      const logPage = await context.newPage();
+      if (index === 0) {
+        let checks = 0;
+        await logPage.route("**/api/v1/auth/session", (route) => {
+          checks += 1;
+          return checks === 1
+            ? route.fulfill({ status: 503, json: { error: { message: "暂时不可用" } } })
+            : route.continue();
+        });
+      }
+      await logPage.goto(path);
+      const originalUrl = logPage.url();
+      if (index === 0) {
+        await logPage.getByRole("button", { name: "登录状态确认失败，重试", exact: true }).click();
+      }
+      const entry = logPage.getByText("登录后执行此用例", { exact: true });
+      await entry.click();
+      const dialog = logPage.getByRole("dialog", { name: "登录控制台", exact: true });
+      await expect(dialog).toBeVisible();
+      expect(new URL(logPage.url()).pathname).toBe(new URL(originalUrl).pathname);
+      await dialog.getByLabel("用户名", { exact: true }).fill("discarded-draft");
+      await logPage.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(logPage).toHaveURL(originalUrl);
+      await entry.click();
+      await expect(dialog.getByLabel("用户名", { exact: true })).toHaveValue("");
+      if (index === 0) {
+        for (const width of [1024, 1536]) {
+          await logPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          await expectUiIntegrity(logPage);
+          await capturePublicHomepage(logPage, width, "public-log-login-dialog");
+        }
+      }
+      await dialog.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+      await dialog.getByLabel("密码", { exact: true }).fill("Incorrect!Password123");
+      await dialog.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      expect(new URL(logPage.url()).pathname).toBe(new URL(originalUrl).pathname);
+      await dialog.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+      await dialog.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(logPage).toHaveURL(originalUrl);
+      await expect(logPage.getByRole("button", { name: "执行此用例", exact: true })).toBeEnabled();
+      expect((await logPage.request.get("/api/v1/auth/session")).status()).toBe(200);
+      const cookie = (await context.cookies()).find(({ name }) => name === "autoforge_session");
+      expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict" });
+      await logPage.reload();
+      await expect(logPage).toHaveURL(originalUrl);
+      await expect(logPage.getByRole("button", { name: "执行此用例", exact: true })).toBeEnabled();
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("public execution login preserves its round and recovers Strict sessions without a console redirect", async ({
+  page,
+  browser,
+}) => {
+  const { fixture, shareUrl } = await preparePublicLoginFixture(page);
+  for (const [index, path] of [shareUrl, legacyExecutionPath(fixture.batchId)].entries()) {
+    const context = await browser.newContext();
+    try {
+      const detailPage = await context.newPage();
+      await detailPage.goto(path);
+      await detailPage.getByRole("button", { name: "总结", exact: true }).click();
+      await expect(detailPage).toHaveURL(/round=summary/u);
+      const originalUrl = detailPage.url();
+      await detailPage.getByRole("button", { name: "登录", exact: true }).click();
+      const dialog = detailPage.getByRole("dialog", { name: "登录控制台", exact: true });
+      await expect(dialog).toBeVisible();
+      if (index === 0) {
+        for (const width of [1024, 1536]) {
+          await detailPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          await expectUiIntegrity(detailPage);
+          await capturePublicHomepage(detailPage, width, "public-execution-login-dialog");
+        }
+      }
+      await dialog.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+      await dialog.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+      await dialog.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(detailPage).toHaveURL(originalUrl);
+      await expect(detailPage.getByRole("button", { name: "总结", exact: true })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      await expect(detailPage.locator(".app-shell")).toHaveCount(0);
+      expect((await detailPage.request.get("/api/v1/auth/session")).status()).toBe(200);
+      await detailPage.reload();
+      await expect(detailPage).toHaveURL(originalUrl);
+      await expect(detailPage.getByRole("button", { name: "登录", exact: true })).toHaveCount(0);
+
+      if (index === 0) {
+        const externalUrl = "http://jenkins.example.test/local-login";
+        await detailPage.route(externalUrl, (route) =>
+          route.fulfill({
+            contentType: "text/html; charset=utf-8",
+            body: `<a href="${originalUrl}">查看执行详情</a>`,
+          }),
+        );
+        await detailPage.goto(externalUrl);
+        const navigation = detailPage.waitForRequest(
+          (request) => request.isNavigationRequest() && request.url() === originalUrl,
+        );
+        await detailPage.getByRole("link", { name: "查看执行详情" }).click();
+        expect((await (await navigation).allHeaders()).cookie ?? "").not.toContain(
+          "autoforge_session=",
+        );
+        await expect(detailPage.getByRole("button", { name: /登录|正在确认登录状态/ })).toHaveCount(
+          0,
+        );
+        await expect(detailPage).toHaveURL(originalUrl);
+        await expect(detailPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+      }
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("public login retains project denials and password-change requirements", async ({
+  page,
+  browser,
+}) => {
+  const { attemptId } = await preparePublicLoginFixture(page);
+  for (const forcePasswordChange of [false, true]) {
+    const username = uniqueName("public-unprivileged");
+    const password = "E2e!Unprivileged123";
+    const user = await browserJson(page, "/api/v1/users", {
+      method: "POST",
+      body: { username, displayName: username, password, forcePasswordChange },
+    });
+    expect(user.status).toBe(201);
+    const context = await browser.newContext();
+    try {
+      const logPage = await context.newPage();
+      await logPage.goto(`/CaseLog?ExecutionId=${attemptId}`);
+      const originalUrl = logPage.url();
+      await logPage.getByRole("button", { name: "登录后执行此用例", exact: true }).click();
+      const dialog = logPage.getByRole("dialog", { name: "登录控制台", exact: true });
+      await dialog.getByLabel("用户名", { exact: true }).fill(username);
+      await dialog.getByLabel("密码", { exact: true }).fill(password);
+      await dialog.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(logPage).toHaveURL(originalUrl);
+      await expect(
+        logPage.getByRole("button", { name: "无权执行此用例", exact: true }),
+      ).toBeDisabled();
+      expect((await logPage.request.get("/api/v1/auth/session")).status()).toBe(200);
+      const attempt = await logPage.request.get(
+        `/api/v1/run-attempts/${attemptId}/logs?stream=stdout&limit=1`,
+      );
+      expect(attempt.status()).toBe(forcePasswordChange ? 400 : 403);
+      expect(await attempt.json()).toMatchObject({
+        error: { code: forcePasswordChange ? "PASSWORD_CHANGE_REQUIRED" : "AUTH_FORBIDDEN" },
+      });
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("expired public-log sessions can log in after client history navigation", async ({
+  page,
+  browser,
+}) => {
+  const { fixture, attemptId } = await preparePublicLoginFixture(page);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const retryAttemptId = `retry-attempt-${attemptId}`;
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");
+    database
+      .prepare(
+        `INSERT INTO run_attempts
+        (id,execution_run_id,runner_id,attempt_number,execution_round,status,scheduling_score,
+         outcome,result_code,result_summary,created_at,finished_at)
+        SELECT ?,execution_run_id,runner_id,2,2,'failed',scheduling_score,
+               outcome,result_code,result_summary,created_at,finished_at
+        FROM run_attempts WHERE id = ?`,
+      )
+      .run(retryAttemptId, attemptId);
+    database.prepare("UPDATE run_batches SET retry_limit = 1 WHERE id = ?").run(fixture.batchId);
+    database
+      .prepare(
+        "UPDATE execution_runs SET attempt_count = 2 WHERE id = (SELECT execution_run_id FROM run_attempts WHERE id = ?)",
+      )
+      .run(attemptId);
+    database.exec("COMMIT");
+  } finally {
+    database.close();
+  }
+  const context = await browser.newContext();
+  try {
+    const logPage = await context.newPage();
+    const origin = new URL(page.url()).origin;
+    const login = await context.request.post(`${origin}/api/v1/auth/login`, {
+      headers: { origin },
+      data: { username: E2E_ADMIN_USERNAME, password: E2E_ADMIN_PASSWORD },
+    });
+    expect(login.status()).toBe(200);
+    await logPage.goto(`/CaseLog?ExecutionId=${attemptId}`);
+    await expect(logPage.getByRole("button", { name: "执行此用例", exact: true })).toBeEnabled();
+    await context.clearCookies();
+    await Promise.all([
+      logPage.waitForURL(/AttemptId=retry-attempt-/u),
+      logPage
+        .getByRole("navigation", { name: "同一用例的执行历史" })
+        .getByRole("link", { name: /第 2 轮/ })
+        .click(),
+    ]);
+    await expect(logPage).toHaveURL(/AttemptId=retry-attempt-/u);
+    const originalUrl = logPage.url();
+    expect((await logPage.request.get("/api/v1/auth/session")).status()).toBe(401);
+    const loginEntry = logPage.getByRole("button", { name: "登录后执行此用例", exact: true });
+    await expect(loginEntry).toBeVisible();
+    await loginEntry.click();
+    const dialog = logPage.getByRole("dialog", { name: "登录控制台", exact: true });
+    await dialog.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+    await dialog.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+    await dialog.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(logPage).toHaveURL(originalUrl);
+    await expect(logPage.getByRole("button", { name: "执行此用例", exact: true })).toBeEnabled();
+    expect((await logPage.request.get("/api/v1/auth/session")).status()).toBe(200);
+  } finally {
+    await context.close();
+  }
+});
+
+async function preparePublicLoginFixture(page: Page) {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("public-login");
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: suffix } },
+  );
+  expect(version.status).toBe(201);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
+  const fixture = insertFailureAnalysisFixture(directory, version.body.id, suffix);
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    database
+      .prepare("UPDATE run_batches SET scheduled_for = created_at WHERE id = ?")
+      .run(fixture.batchId);
+  } finally {
+    database.close();
+  }
+  const share = await browserJson<{ shareUrl: string }>(
+    page,
+    `/api/v1/run-batches/${fixture.batchId}/share`,
+    { method: "POST" },
+  );
+  expect(share.status).toBe(200);
+  return { fixture, attemptId: `attempt-run-failed-0-${suffix}`, shareUrl: share.body.shareUrl };
+}
 
 const populatedStatistics: PublicPlatformStatistics = {
   snapshotState: "ready",

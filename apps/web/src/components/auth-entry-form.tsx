@@ -17,10 +17,12 @@ export function AuthEntryForm({
   mode,
   notice,
   onPendingChange,
+  onAuthenticated,
 }: {
   mode: AuthMode;
   notice?: string | undefined;
   onPendingChange?: (pending: boolean) => void;
+  onAuthenticated?: () => void;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -72,9 +74,14 @@ export function AuthEntryForm({
             : message,
         );
       }
-      // The root layout is rendered with the session state from the login/setup request.
-      // A document navigation prevents Next.js from reusing that unauthenticated layout.
-      window.location.replace("/landing");
+      if (mode === "setup") {
+        window.location.replace("/landing");
+        return;
+      }
+      if (onAuthenticated) onAuthenticated();
+      else window.location.reload();
+      setPending(false);
+      onPendingChange?.(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "请求未成功。");
       setPending(false);

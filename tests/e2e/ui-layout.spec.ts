@@ -17,6 +17,7 @@ import {
 } from "./support/batch-runner-fixture";
 import { insertRunnerInstallationProfileFixture } from "./support/runner-installation-profile-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { legacyExecutionPath } from "./support/legacy-public-links";
 
 import {
   browserJson,
@@ -783,14 +784,37 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await expect(anonymousPage.locator(".runner-card").getByRole("button")).toHaveCount(0);
     await expectUiIntegrity(anonymousPage);
     await anonymousPage.locator(".round-tab-toolbar").getByText("用例", { exact: true }).click();
-    const publicLog = anonymousPage
-      .getByRole("link", { name: "查看公开日志", exact: true })
-      .first();
-    await publicLog.click();
-    await expect(anonymousPage).toHaveURL(/\/CaseLog\?ExecutionId=/u);
-    await expect(anonymousPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+    for (const executionPath of [share.body.shareUrl, legacyExecutionPath(fixture.batchId)]) {
+      await anonymousPage.goto(executionPath);
+      const publicLog = anonymousPage
+        .getByRole("link", { name: "查看公开日志", exact: true })
+        .first();
+      await expect(publicLog).toHaveAttribute("target", "_blank");
+      await expect(publicLog).toHaveAttribute("rel", "noopener noreferrer");
+      const executionUrl = anonymousPage.url();
+      const logHref = await publicLog.getAttribute("href");
+      if (executionPath !== share.body.shareUrl) await publicLog.focus();
+      const [logPage] = await Promise.all([
+        anonymousPage.waitForEvent("popup"),
+        executionPath === share.body.shareUrl ? publicLog.click() : publicLog.press("Enter"),
+      ]);
+      try {
+        await expect(logPage).toHaveURL(new URL(logHref!, executionUrl).toString());
+        await expect(logPage.locator(".share-log-output")).toBeVisible();
+        await expect(logPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+        expect(await logPage.evaluate(() => window.opener === null)).toBe(true);
+        await expect(anonymousPage).toHaveURL(executionUrl);
+        await expect(anonymousPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
+      } finally {
+        await logPage.close();
+      }
+    }
+    await page.bringToFront();
     await page.goto(share.body.shareUrl);
-    await expect(page).toHaveURL(`/run-batches/${fixture.batchId}`);
+    await expect(page).toHaveURL(share.body.shareUrl);
+    await expect(page.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+    await expect(page.locator(".app-shell")).toHaveCount(0);
+    await page.goto(`/run-batches/${fixture.batchId}`);
     await expect(page.getByRole("heading", { name: /^支付回归_/ })).toBeVisible();
     await expectUiIntegrity(page);
   } finally {

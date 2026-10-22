@@ -6,7 +6,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
-import { SharedLogSessionAction } from "@/components/shared-log-session-action";
+import { SessionLoginButton } from "@/components/session-login-button";
 import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
@@ -286,7 +286,8 @@ function SharedLogRerunAction({
   }
   if (access === "login") {
     return (
-      <SharedLogSessionAction
+      <SessionLoginButton
+        label="登录后执行此用例"
         className={cn(
           "button button-primary share-log-rerun-login",
           uiPatterns["button"],

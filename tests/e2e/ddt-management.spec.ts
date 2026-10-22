@@ -3145,7 +3145,7 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       }
       await retrySession.click();
       await expect(
-        anonymousPage.getByRole("link", { name: "登录后执行此用例", exact: true }),
+        anonymousPage.getByRole("button", { name: "登录后执行此用例", exact: true }),
       ).toBeVisible();
       expect(sessionChecks).toBe(2);
       await expect(

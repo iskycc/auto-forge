@@ -1999,6 +1999,8 @@ function RoundCaseRow({
                     : `/share/run/${encodeURIComponent(publicRunShareToken!)}/attempt/${encodeURIComponent(attempt.id)}`
                 }
                 prefetch={false}
+                rel="noopener noreferrer"
+                target="_blank"
               >
                 <Eye size={15} /> 公开日志
               </LinkButton>

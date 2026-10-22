@@ -44,13 +44,14 @@ async function captureUi(page: Page, name: string): Promise<void> {
   });
 }
 
-async function expectConsoleRunDetails(page: Page, batchId: string, suiteName: string) {
-  await expect(page).toHaveURL(new RegExp(`/run-batches/${batchId}$`, "u"));
-  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+async function expectAuthenticatedPublicRunDetails(page: Page, batchId: string, suiteName: string) {
+  await expect(page).toHaveURL(new RegExp(`/Execution\\?BatchId=${batchId}$`, "u"));
+  await expect(page.getByRole("navigation", { name: "主导航" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: suiteName, exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "批次概览" })).toBeVisible();
-  await expect(page.getByText("永久匿名只读执行详情")).toHaveCount(0);
+  await expect(page.getByText("永久匿名只读执行详情")).toBeVisible();
+  expect((await page.request.get("/api/v1/auth/session")).status()).toBe(200);
 }
 
 async function openRunLinkFromJenkins(page: Page, url: string): Promise<void> {
@@ -1161,22 +1162,21 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   const signedInDetailsPage = await page.context().newPage();
   await openRunLinkFromJenkins(signedInDetailsPage, jenkinsRun.progressUrl);
-  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expectAuthenticatedPublicRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
   await captureUi(signedInDetailsPage, "jenkins-signed-in-active-execution-details");
   await signedInDetailsPage.goto(jenkinsRun.progressUrl);
-  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expectAuthenticatedPublicRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
 
   const legacyProgressUrl = new URL(`/progress/${jenkinsRun.batchId}`, jenkinsRun.progressApiUrl);
   legacyProgressUrl.search = new URL(jenkinsRun.progressApiUrl).search;
   await signedInDetailsPage.goto(legacyProgressUrl.toString());
-  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expect(signedInDetailsPage).toHaveURL(legacyProgressUrl.toString());
+  await expect(signedInDetailsPage.locator(".public-progress-card")).toBeVisible();
   await openRunLinkFromJenkins(signedInDetailsPage, legacyProgressUrl.toString());
-  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expect(signedInDetailsPage).toHaveURL(legacyProgressUrl.toString());
+  await expect(signedInDetailsPage.locator(".public-progress-card")).toBeVisible();
 
-  const sessionProbeUrl = new URL(
-    `/api/v1/run-batches/${jenkinsRun.batchId}?view=summary`,
-    jenkinsRun.resultUrl,
-  ).toString();
+  const sessionProbeUrl = new URL("/api/v1/auth/session", jenkinsRun.resultUrl).toString();
   await signedInDetailsPage.route(sessionProbeUrl, (route) => route.abort("failed"));
   const failedProbe = signedInDetailsPage.waitForEvent("requestfailed", {
     predicate: (request) => request.url() === sessionProbeUrl,
@@ -1187,7 +1187,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(signedInDetailsPage).toHaveURL(jenkinsRun.progressUrl);
   await signedInDetailsPage.unroute(sessionProbeUrl);
   await signedInDetailsPage.reload();
-  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expectAuthenticatedPublicRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
 
   const restrictedContext = await browser.newContext();
   const restrictedPage = await restrictedContext.newPage();
@@ -1275,7 +1275,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await anonymousProgressPage.reload();
   await expect(anonymousProgressPage.getByText("执行完成", { exact: true })).toBeVisible();
   await signedInDetailsPage.goto(jenkinsRun.resultUrl);
-  await expectConsoleRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
+  await expectAuthenticatedPublicRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
   await expect(signedInDetailsPage.getByText("执行完成", { exact: true })).toBeVisible();
   await captureUi(signedInDetailsPage, "jenkins-signed-in-final-execution-details");
   await signedInDetailsPage.close();
@@ -1801,7 +1801,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     anonymousSockets += 1;
   });
   await anonymousManualPage.goto(publicLogPage.url());
-  await expect(anonymousManualPage.getByRole("link", { name: "登录后执行此用例" })).toBeVisible();
+  await expect(anonymousManualPage.getByRole("button", { name: "登录后执行此用例" })).toBeVisible();
   await expect(anonymousManualPage.getByText("只读日志", { exact: true })).toBeVisible();
   await expect(
     anonymousManualPage.getByRole("button", { name: "强行中断", exact: true }),

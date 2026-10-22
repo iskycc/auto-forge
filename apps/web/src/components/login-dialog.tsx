@@ -8,10 +8,12 @@ export function LoginDialog({
   open,
   passwordChanged,
   onClose,
+  onAuthenticated,
 }: {
   open: boolean;
   passwordChanged: boolean;
   onClose: () => void;
+  onAuthenticated: () => void;
 }) {
   const [pending, setPending] = useState(false);
   return (
@@ -26,6 +28,7 @@ export function LoginDialog({
       <AuthEntryForm
         mode="login"
         onPendingChange={setPending}
+        onAuthenticated={onAuthenticated}
         notice={passwordChanged ? "密码已修改，请使用新密码重新登录。" : undefined}
       />
     </ActionDialog>

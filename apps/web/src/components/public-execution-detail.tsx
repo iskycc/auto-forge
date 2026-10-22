@@ -1,10 +1,9 @@
 import { Result } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
-import { DomainError, hasPermission } from "@autoforge/domain";
-import { redirect } from "next/navigation";
+import { DomainError } from "@autoforge/domain";
 
-import { AuthenticatedRunRedirect } from "@/components/authenticated-run-redirect";
+import { SessionLoginButton } from "@/components/session-login-button";
 import { ExecutionBatchDetails } from "@/components/execution-batch-details";
 import { RunBatchDetailHero } from "@/components/run-batch-detail-hero";
 import type { RunnerDirectoryEntry } from "@/components/run-batch-rounds";
@@ -30,9 +29,6 @@ export async function PublicExecutionDetail({
   if (!overview) return <InvalidPublicExecution />;
   const batch = overview.batch;
   const identity = await currentIdentity();
-  if (identity && hasPermission(identity, "run.read", batch.projectId)) {
-    redirect(`/run-batches/${encodeURIComponent(batchId)}`);
-  }
   const projectVersion = batch.policy?.projectVersionId
     ? (await services.projectStructures.list(batch.projectId)).versions.find(
         (version) => version.id === batch.policy?.projectVersionId,
@@ -48,7 +44,6 @@ export async function PublicExecutionDetail({
 
   return (
     <main className={cn("shared-run-detail-page", pageStyles["shared-run-detail-page"])}>
-      {!identity && <AuthenticatedRunRedirect batchId={batchId} />}
       <div
         className={cn(
           "page-stack shared-run-detail-shell",
@@ -63,6 +58,7 @@ export async function PublicExecutionDetail({
           suiteVersion={batch.suiteVersion}
           {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
           shared
+          sharedActions={!identity ? <SessionLoginButton /> : undefined}
         />
         <ExecutionBatchDetails
           batch={toExecutionBatchView(overview)}
