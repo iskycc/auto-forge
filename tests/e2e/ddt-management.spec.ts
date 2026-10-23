@@ -3785,11 +3785,25 @@ test("DDT navigation bounds rendering, retries pages and exports every case inde
   const download = await downloadEvent;
   expect(await download.failure()).toBeNull();
   await download.saveAs(test.info().outputPath("ddt-all-cases.xlsx"));
+  expect(download.suggestedFilename()).toMatch(
+    /^DDT 1\.1-DDT 验收_DDT用例清单_全部用例_\d{8}-\d{6}\.xlsx$/u,
+  );
   const content = await readFile((await download.path())!);
   const exported = parseSpreadsheet(content, download.suggestedFilename());
   expect(exported.rows).toEqual(rows);
   await expect(page.getByRole("button", { name: "导出全部用例", exact: true })).toBeEnabled();
   await expect(navigation.getByLabel("选择 CASE-000", { exact: true })).toBeChecked();
+  const selectedDownloadEvent = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出当前范围", exact: true }).click();
+  const selectedDownload = await selectedDownloadEvent;
+  expect(selectedDownload.suggestedFilename()).toMatch(
+    /^DDT 1\.1-DDT 验收_DDT用例清单_已选用例_\d{8}-\d{6}\.xlsx$/u,
+  );
+  const selectedRows = parseSpreadsheet(
+    await readFile((await selectedDownload.path())!),
+    selectedDownload.suggestedFilename(),
+  ).rows;
+  expect(selectedRows).toEqual([rows[0]]);
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;

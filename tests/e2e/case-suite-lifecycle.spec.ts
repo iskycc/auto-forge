@@ -1137,7 +1137,7 @@ test("tasks and execution history follow the selected project version", async ({
   const suiteExportDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: `导出 ${firstSuiteName} 用例` }).click();
   const downloadedWorkbook = await suiteExportDownload;
-  expect(downloadedWorkbook.suggestedFilename()).toMatch(/-用例\.xlsx$/u);
+  expect(downloadedWorkbook.suggestedFilename()).toMatch(/_任务用例清单_\d{8}-\d{6}\.xlsx$/u);
   const workbookPath = await downloadedWorkbook.path();
   expect(workbookPath).not.toBeNull();
   const workbookFiles = unzipSync(new Uint8Array(await readFile(workbookPath!)));

@@ -29,6 +29,7 @@ import { DomainError } from "@autoforge/domain";
 import { prepareDdtExportFile } from "@/lib/ddt-export-file";
 import { readRunBatchExportFile } from "@/lib/run-batch-export-file";
 import { ddtExportSelectionSchema as exportSchema } from "@/lib/ddt-case-reads";
+import { ddtExportFilename, exportContentDisposition } from "@/lib/export-filename";
 import { Readable } from "node:stream";
 import { join } from "node:path";
 import { NextResponse } from "next/server";
@@ -52,7 +53,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
   try {
     const identity = await authenticateRequest(request);
     const url = new URL(request.url);
-    const { scope, services } = await authorizeDdtScope(identity, "case.read", url);
+    const { scope, services, labels } = await authorizeDdtScope(identity, "case.read", url);
     const path = await pathSegments(context);
 
     if (matches(path, "value-search")) {
@@ -263,6 +264,13 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         services.ddtCases.exportPages(scope, exportSelection(selection), request.signal),
         request.signal,
         join(services.configurationStore.paths.dataDirectory, "tmp", "exports"),
+        ddtExportFilename({
+          versionName: labels.version,
+          stageName: labels.stage,
+          selection,
+          exportedAt: services.clock.now(),
+          timeZone: services.configurationStore.read().web.timeZone,
+        }),
       );
     }
     throw routeNotFound();
@@ -288,7 +296,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     request,
     context,
     permission,
-    async ({ identity, scope, services, path, currentRequestId }) => {
+    async ({ identity, scope, services, labels, path, currentRequestId }) => {
       if (matches(path, "cases", "inherit")) {
         const input = inheritDdtCasesInputSchema.parse(await readJsonBody(request, 8 * 1_024));
         const source = {
@@ -548,6 +556,13 @@ export async function POST(request: Request, context: Context): Promise<NextResp
           services.ddtCases.exportPages(scope, exportSelection(selection), request.signal),
           request.signal,
           join(services.configurationStore.paths.dataDirectory, "tmp", "exports"),
+          ddtExportFilename({
+            versionName: labels.version,
+            stageName: labels.stage,
+            selection,
+            exportedAt: services.clock.now(),
+            timeZone: services.configurationStore.read().web.timeZone,
+          }),
         );
       }
       throw routeNotFound();
@@ -654,8 +669,12 @@ async function mutationContext(
   permission: Permission,
 ) {
   const identity = await authenticateRequest(request);
-  const { scope, services } = await authorizeDdtScope(identity, permission, new URL(request.url));
-  return { identity, scope, services, path: await pathSegments(context), currentRequestId };
+  const { scope, services, labels } = await authorizeDdtScope(
+    identity,
+    permission,
+    new URL(request.url),
+  );
+  return { identity, scope, services, labels, path: await pathSegments(context), currentRequestId };
 }
 
 async function pathSegments(context: Context): Promise<string[]> {
@@ -703,13 +722,14 @@ async function exportResponse(
   pages: AsyncIterable<import("@autoforge/domain").DdtCaseData[]>,
   signal: AbortSignal,
   directory: string,
+  filename: string,
 ): Promise<NextResponse> {
   const prepared = await prepareDdtExportFile(pages, signal, directory);
   const stream = readRunBatchExportFile(prepared, signal);
   return new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array<ArrayBuffer>>, {
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "content-disposition": "attachment; filename*=UTF-8''DDT-cases.xlsx",
+      "content-disposition": exportContentDisposition(filename),
       "content-length": String(prepared.sizeBytes),
       "cache-control": "no-store",
     },

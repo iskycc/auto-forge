@@ -13,6 +13,8 @@ vi.mock("./auth", () => ({ authenticateRequest }));
 vi.mock("./permanent-share-token", () => ({ readPermanentShareToken: readToken }));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
+    clock: { now: () => new Date("2026-10-23T10:30:45Z") },
+    configurationStore: { read: () => ({ web: { timeZone: "Asia/Shanghai" } }) },
     config: { masterKey: "fixture" },
     identityAccess: { projectScope },
     publicExecutionAccess: { isBatchPublic },
@@ -37,6 +39,7 @@ beforeEach(() => {
     items: [],
   };
   executionExceptionExport.mockImplementation(async () => ({
+    batch: { suiteName: "支付回归", sequenceNumber: 123 },
     firstPage,
     pages: (async function* () {
       yield firstPage;
@@ -52,7 +55,9 @@ describe("execution exception export authorization", () => {
     expect(executionExceptionExport).toHaveBeenCalledWith({ batchId: "batch", projectIds: [] });
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-type")).toContain("spreadsheetml.sheet");
-    expect(response.headers.get("content-disposition")).toContain("exceptions.xlsx");
+    expect(decodeURIComponent(response.headers.get("content-disposition")!)).toContain(
+      "支付回归_执行异常原因_批次123_20261023-183045.xlsx",
+    );
     expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(100);
   });
   it("accepts the batch share token without granting cross-batch access", async () => {

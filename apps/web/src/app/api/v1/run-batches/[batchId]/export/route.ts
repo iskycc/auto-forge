@@ -14,9 +14,10 @@ import { z } from "zod";
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
 import { publicLinkBase } from "@/lib/public-link-base";
-import { exportCompatibleAttemptIds, exportContentDisposition } from "@/lib/run-batch-export-xlsx";
+import { exportCompatibleAttemptIds } from "@/lib/run-batch-export-xlsx";
 import { prepareRunBatchExportFile, readRunBatchExportFile } from "@/lib/run-batch-export-file";
 import { getPlatformServices } from "@/lib/services";
+import { executionExportFilename, exportContentDisposition } from "@/lib/export-filename";
 
 type Context = { params: Promise<{ batchId: string }> };
 
@@ -58,6 +59,15 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     });
     const base = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const timeZone = services.configurationStore.read().web.timeZone;
+    const filename = executionExportFilename({
+      batch: exportData.batch,
+      template: parsed.template,
+      scope: parsed.scope,
+      round: parsed.round,
+      outcomes,
+      exportedAt: services.clock.now(),
+      timeZone,
+    });
     async function* workbookPages(): AsyncGenerator<RunBatchExportWorkbookInput> {
       for await (const rows of exportData.pages) {
         request.signal.throwIfAborted();
@@ -125,7 +135,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     return new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array<ArrayBuffer>>, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": exportContentDisposition(prepared.filename),
+        "Content-Disposition": exportContentDisposition(filename),
         "Content-Length": String(prepared.sizeBytes),
         "X-AutoForge-Export-Excluded-Rows": String(prepared.validation.excludedRows),
         "Cache-Control": "no-store",

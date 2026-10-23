@@ -31,7 +31,11 @@ export async function readExecutionExceptions(
 export async function prepareExecutionExceptionExport(
   batches: ExceptionRepository,
   input: { batchId: string; projectIds?: readonly string[] },
-): Promise<{ firstPage: ExecutionExceptionPage; pages: AsyncIterable<ExecutionExceptionPage> }> {
+): Promise<{
+  batch: Pick<RunBatchMetadata, "suiteName" | "sequenceNumber">;
+  firstPage: ExecutionExceptionPage;
+  pages: AsyncIterable<ExecutionExceptionPage>;
+}> {
   const batch = await accessibleBatchMetadata(batches, input);
   const firstPage = await readExceptionPage(batches, batch, { scope: "all", limit: 100 });
   async function* pages(): AsyncGenerator<ExecutionExceptionPage> {
@@ -47,7 +51,11 @@ export async function prepareExecutionExceptionExport(
       );
     }
   }
-  return { firstPage, pages: pages() };
+  return {
+    batch: { suiteName: batch.suiteName, sequenceNumber: batch.sequenceNumber },
+    firstPage,
+    pages: pages(),
+  };
 }
 
 async function accessibleBatchMetadata(

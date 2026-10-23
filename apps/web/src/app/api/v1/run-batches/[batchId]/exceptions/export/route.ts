@@ -4,7 +4,7 @@ import { z } from "zod";
 import { apiErrorResponse } from "@/lib/api-response";
 import { executionReadProjectScope } from "@/lib/execution-public-access";
 import { createExecutionExceptionWorkbookStream } from "@/lib/execution-exceptions-export-xlsx";
-import { exportContentDisposition } from "@/lib/run-batch-export-xlsx";
+import { executionExceptionExportFilename, exportContentDisposition } from "@/lib/export-filename";
 import { getPlatformServices } from "@/lib/services";
 
 const querySchema = z
@@ -49,12 +49,16 @@ export async function GET(request: Request, context: { params: Promise<{ batchId
       ...(projectIds ? { projectIds } : {}),
     });
     request.signal.throwIfAborted();
+    const filename = executionExceptionExportFilename({
+      batch: prepared.batch,
+      exportedAt: services.clock.now(),
+      timeZone: services.configurationStore.read().web.timeZone,
+    });
     const workbook = createExecutionExceptionWorkbookStream({
       ...prepared,
       timeZone: input.time_zone,
       signal: request.signal,
     });
-    const filename = `run-batch-${prepared.firstPage.batchId.slice(0, 8)}-exceptions.xlsx`;
     return new NextResponse(
       Readable.toWeb(workbook.stream) as ReadableStream<Uint8Array<ArrayBuffer>>,
       {

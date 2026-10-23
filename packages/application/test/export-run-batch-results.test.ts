@@ -297,6 +297,7 @@ describe("RunBatchExportService", () => {
       projectIds: ["project-1"],
     });
     expect(readExportPage).not.toHaveBeenCalled();
+    expect(prepared.batch).toEqual({ suiteName: "回归套件", sequenceNumber: 1 });
     const pages = [];
     for await (const page of prepared.pages) pages.push(page);
     expect(pages).toMatchObject([[], [{ attemptId: "b", outcome: "failed" }]]);

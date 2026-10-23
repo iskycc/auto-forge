@@ -13,7 +13,6 @@ import {
 
 export type PreparedRunBatchExportFile = {
   file: FileHandle;
-  filename: string;
   sizeBytes: number;
   validation: ExportValidationReport;
 };
@@ -57,7 +56,7 @@ export async function prepareRunBatchExportFile(
       );
     }
     const sizeBytes = (await file.stat()).size;
-    return { file, filename: workbook.filename, sizeBytes, validation };
+    return { file, sizeBytes, validation };
   } catch (cause) {
     const finalizationError = await completion;
     const failure =

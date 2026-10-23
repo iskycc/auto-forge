@@ -50,6 +50,7 @@ import {
   type DdtHistoryItem,
 } from "@/components/ddt-case-browser";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { parseExportFilename } from "@/lib/run-batch-export";
 import { ActionDialog } from "./action-dialog";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
@@ -726,7 +727,7 @@ export function DdtManagementWorkspace({
       if (!response.ok) throw await responseError(response);
       const blob = await response.blob();
       controller.signal.throwIfAborted();
-      downloadBlob(blob, mode === "all" ? "DDT-all-cases.xlsx" : "DDT-cases.xlsx");
+      downloadBlob(blob, parseExportFilename(response.headers.get("content-disposition")));
       toast.success(mode === "all" ? "全部 DDT 用例导出完成。" : "DDT 用例导出完成。");
     } catch (downloadError) {
       if (!controller.signal.aborted) setError(messageOf(downloadError));

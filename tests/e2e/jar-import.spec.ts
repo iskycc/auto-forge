@@ -1679,7 +1679,7 @@ public class MixedVisibleTest {
   await analysisDialog.getByRole("button", { name: "导出分析清单" }).click();
   expect((await analysisResponsePromise).status()).toBe(200);
   const analysisDownload = await analysisDownloadPromise;
-  expect(analysisDownload.suggestedFilename()).toContain("failure-analysis-round-1.xlsx");
+  expect(analysisDownload.suggestedFilename()).toContain("_失败用例分析清单_第1轮_批次");
   const analysisBuffer = await readFile(await analysisDownload.path());
   const analysisArchive = unzipSync(new Uint8Array(analysisBuffer));
   const analysisStrings = await readExportedWorkbookText(analysisBuffer);

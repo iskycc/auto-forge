@@ -6,9 +6,13 @@ import {
 import type { RunBatchRepository } from "../src/ports";
 
 function fixture() {
-  const getMetadata = vi
-    .fn()
-    .mockResolvedValue({ id: "batch", status: "failed", queueTimeoutMs: 1000 });
+  const getMetadata = vi.fn().mockResolvedValue({
+    id: "batch",
+    suiteName: "每日回归",
+    sequenceNumber: 321,
+    status: "failed",
+    queueTimeoutMs: 1000,
+  });
   const readExceptionRecords = vi.fn().mockResolvedValue({
     items: [],
     completions: [{ status: "failed", abnormal: true, count: 1 }],
@@ -43,6 +47,7 @@ describe("execution exception evidence", () => {
       projectIds: [],
     });
     expect(prepared.firstPage.items).toHaveLength(100);
+    expect(prepared.batch).toEqual({ suiteName: "每日回归", sequenceNumber: 321 });
     expect(repository.readExceptionRecords).toHaveBeenCalledTimes(1);
     const pages = [];
     for await (const page of prepared.pages) pages.push(page);

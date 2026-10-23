@@ -44,7 +44,7 @@ export function buildRunBatchExportQuery(
   return parameters.toString();
 }
 
-export const EXPORT_FALLBACK_FILENAME = "run-batch-results.xlsx";
+export const EXPORT_FALLBACK_FILENAME = "AutoForge-用例清单.xlsx";
 
 /** 从 Content-Disposition 解析下载文件名；缺失或无法解析时回退到固定文件名。 */
 export function parseExportFilename(

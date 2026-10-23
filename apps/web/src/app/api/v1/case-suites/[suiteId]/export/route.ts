@@ -3,11 +3,8 @@ import { Readable } from "node:stream";
 
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest, requestId } from "@/lib/auth";
-import {
-  caseSuiteExportContentDisposition,
-  caseSuiteExportFilename,
-  createCaseSuiteExportWorkbookStream,
-} from "@/lib/case-suite-export-xlsx";
+import { createCaseSuiteExportWorkbookStream } from "@/lib/case-suite-export-xlsx";
+import { caseSuiteExportFilename, exportContentDisposition } from "@/lib/export-filename";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ suiteId: string }> };
@@ -22,6 +19,11 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.read");
     const prepared = await services.caseSuites.prepareCaseExport(suiteId, projectIds);
+    const filename = caseSuiteExportFilename({
+      suiteName: prepared.suite.name,
+      exportedAt: services.clock.now(),
+      timeZone: services.configurationStore.read().web.timeZone,
+    });
     const workbook = createCaseSuiteExportWorkbookStream(prepared.rows);
     const abortExport = () => workbook.stream.destroy(new Error("任务用例导出请求已取消。"));
     request.signal.addEventListener("abort", abortExport, { once: true });
@@ -32,9 +34,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       {
         headers: {
           "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "Content-Disposition": caseSuiteExportContentDisposition(
-            caseSuiteExportFilename(prepared.suite.name, prepared.suite.id),
-          ),
+          "Content-Disposition": exportContentDisposition(filename),
           "Cache-Control": "no-store",
           "X-Content-Type-Options": "nosniff",
         },

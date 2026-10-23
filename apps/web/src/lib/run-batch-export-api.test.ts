@@ -28,6 +28,7 @@ const {
 vi.mock("./auth", () => ({ authenticateRequest }));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
+    clock: { now: () => new Date("2026-10-23T10:30:45Z") },
     identityAccess: { projectScope },
     runBatchExport: { prepare: buildExport },
     publicExecutionAccess: { ensureLinksForAttemptsInBatch: ensureShares },
@@ -59,6 +60,7 @@ beforeEach(async () => {
   projectScope.mockReturnValue(["project"]);
   buildExport.mockImplementation(async () => ({
     projectId: "project",
+    batch: { suiteName: "支付回归", sequenceNumber: 123 },
     pages: (async function* () {
       yield [row];
     })(),
@@ -88,6 +90,7 @@ describe("validated Excel downloads", () => {
       };
       buildExport.mockImplementation(async () => ({
         projectId: "project",
+        batch: { suiteName: "支付回归", sequenceNumber: 123 },
         includesDdt: true,
         pages: (async function* () {
           yield [row];
@@ -104,6 +107,11 @@ describe("validated Excel downloads", () => {
         { params: Promise.resolve({ batchId: "batch" }) },
       );
       expect(response.status).toBe(200);
+      expect(decodeURIComponent(response.headers.get("content-disposition")!)).toContain(
+        template === "results"
+          ? "支付回归_用例执行结果_最终结果_失败_批次123_20261023-183045.xlsx"
+          : "支付回归_失败用例分析清单_最终结果_批次123_20261023-183045.xlsx",
+      );
       const bytes = new Uint8Array(await response.arrayBuffer());
       assertExportedWorkbookFeatureOrder(bytes);
       const workbook = new ExcelJS.Workbook();
@@ -129,6 +137,7 @@ describe("validated Excel downloads", () => {
     async (template) => {
       buildExport.mockImplementation(async () => ({
         projectId: "project",
+        batch: { suiteName: "支付回归", sequenceNumber: 123 },
         includesDdt: true,
         pages: (async function* () {
           yield [{ ...row, ddt: { caseName: "bad\ufffe", srId: "SR-1" } }];
@@ -177,6 +186,7 @@ describe("validated Excel downloads", () => {
   function mixedPages() {
     buildExport.mockImplementation(async () => ({
       projectId: "project",
+      batch: { suiteName: "支付回归", sequenceNumber: 123 },
       pages: (async function* () {
         yield [row];
         yield [bad];
@@ -247,6 +257,7 @@ describe("validated Excel downloads", () => {
   it("returns a JSON error when a later page fails rather than an incomplete ZIP", async () => {
     buildExport.mockResolvedValue({
       projectId: "project",
+      batch: { suiteName: "支付回归", sequenceNumber: 123 },
       pages: (async function* () {
         yield [row];
         throw new DomainError("PLATFORM_BUSY", "执行信息读取繁忙。");

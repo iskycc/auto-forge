@@ -137,7 +137,6 @@ describe("buildRunBatchExportWorkbook", () => {
       const first = expected.worksheets[0]!;
       const result = actual.worksheets[0]!;
       expect(result.rowCount).toBe(3);
-      expect(streamed.filename).toBe(normal.filename);
       expect(result.columns.map((column) => column.width)).toEqual(
         first.columns.map((column) => column.width),
       );
@@ -342,7 +341,6 @@ describe("buildRunBatchExportWorkbook", () => {
       analysisProofLinks: new Map(),
     });
 
-    expect(result.filename).toBe("run-batch-batch-12-failure-analysis-final.xlsx");
     const workbook = await loadWorkbook(result.buffer);
     const sheet = workbook.getWorksheet("失败用例分析清单");
     expect(sheet).toBeDefined();
@@ -417,7 +415,6 @@ describe("buildRunBatchExportWorkbook", () => {
       shareLinks: new Map(),
     });
 
-    expect(result.filename).toBe("run-batch-batch-12-round-2.xlsx");
     const workbook = await loadWorkbook(result.buffer);
     const sheet = workbook.getWorksheet("执行结果")!;
     expect(sheet.getRow(1).values).toContain("执行结果");

@@ -6,6 +6,28 @@
 
 本次取消共用缩进，并针对执行结果和 DDT 的不同内容计算列宽。分析清单已有紧凑列宽比例，任务成员已有路径/名称的独立宽度，继续沿用这些比例。Lite/Full 使用同一套工作簿生成代码；没有迁移、运行配置、生产依赖或网页表格布局变更。
 
+## 文件命名
+
+Excel 下载统一按“业务名称_清单用途_导出范围_批次编号_导出时间.xlsx”排列，省略不适用的部分。各类文件示例（平台时区为北京时间）：
+
+| 导出类型               | 文件名示例                                                             |
+| ---------------------- | ---------------------------------------------------------------------- |
+| 执行结果               | `支付回归_用例执行结果_最终结果_失败_批次123_20261023-183045.xlsx`     |
+| 指定轮次结果           | `支付回归_用例执行结果_第2轮_成功-失败_批次123_20261023-183045.xlsx`   |
+| 全部轮次结果           | `支付回归_用例执行结果_全部轮次_全部状态_批次123_20261023-183045.xlsx` |
+| 失败分析               | `支付回归_失败用例分析清单_最终结果_批次123_20261023-183045.xlsx`      |
+| 异常原因               | `支付回归_执行异常原因_批次123_20261023-183045.xlsx`                   |
+| 任务成员               | `支付回归_任务用例清单_20261023-183045.xlsx`                           |
+| DDT 全部用例           | `1.20-系统测试_DDT用例清单_全部用例_20261023-183045.xlsx`              |
+| DDT 勾选用例           | `1.20-系统测试_DDT用例清单_已选用例_20261023-183045.xlsx`              |
+| DDT 按 SR/关联分类筛选 | `1.20-系统测试_DDT用例清单_筛选范围_20261023-183045.xlsx`              |
+
+执行类使用批次快照中的任务名称和页面展示编号；任务改名或删除不影响既有批次名称。执行结果状态标签按界面顺序排列，全部勾选时写“全部状态”；失败分析本身限定失败/阻塞，不再重复状态标签，范围仍支持具体轮次、全部轮次和最终结果。DDT 按请求中真正导出的范围命名，“导出全部用例”忽略当前勾选与筛选后仍标为“全部用例”。DDT 的工作表名称、字段和可重新导入的内容保持原有契约。
+
+时间取本次导出开始时的平台时钟，使用平台配置的 IANA 时区，默认 `Asia/Shanghai`，不受服务器系统时区影响。文件名保留中文，统一替换路径分隔符、Windows 禁用字符、控制字符和方向控制字符，清理首尾空白、点号及分隔符；空业务名称使用 `AutoForge`。完整文件名最多 240 个 UTF-8 字节，仅缩短业务名称，按 Unicode 字符边界保留用途、范围、批次编号、时间及扩展名。下载头使用 RFC 5987 编码，并转义引号和括号等标点；浏览器读取服务端文件名，不再以固定的 `DDT-cases.xlsx` 覆盖。
+
+该规则只改变上述 Excel 文件的下载名称，不新增数据库查询、不改变数据筛选、行列、工作簿样式、公开授权或流式分页。Lite/Full 共享命名实现；CSV/JSON 分析导出、原始日志和上传文件保持各自现有名称。
+
 ## 列宽规则
 
 执行结果列宽使用 Excel 字符宽度单位：
@@ -127,3 +149,15 @@ HTTP 入口在发送下载响应前完成工作簿及分页迭代器的收尾，
 本次验证使用 [ECMA 官方 Part 4 发行包](https://ecma-international.org/publications-and-standards/standards/ecma-376/)内的 Transitional XSD，在独立本地 Java 校验器中按 `mc:Ignorable` 排除标为可忽略的 Office 扩展属性，仅在校验的 DOM 中处理，不改写下载文件。上一版真实分析下载在 `dataValidations` 处被 schema 拒绝；修复后正常分析、异常排除分析和执行结果三份不同工作簿的工作表、样式及工作簿 XML 全部通过官方基础 schema 校验，ZIP CRC 和所有 XML/关系部件解析通过。XSD 及验证脚本只作为此次本地证据，不是新的产品运行依赖；常态 CI 使用已提交的定向结构回归和浏览器回读断言。没有使用 Microsoft Excel 桌面客户端，也未读取用户的真实故障文件。
 
 `pnpm exec vitest run apps/web/src/lib/run-batch-export-safety.test.ts apps/web/src/lib/run-batch-export-api.test.ts apps/web/src/lib/run-batch-export-xlsx.test.ts apps/web/src/lib/run-batch-export-file.test.ts apps/web/src/lib/ddt-export-xlsx.test.ts apps/web/src/lib/case-suite-export-xlsx.test.ts apps/web/src/lib/execution-exceptions-export-xlsx.test.ts --maxWorkers=1 --no-file-parallelism` 的 63 项检查通过。`pnpm install --offline --frozen-lockfile --ignore-scripts`、`pnpm format:check`、相关文件 ESLint、Web/服务入口/工作线程及测试类型、`pnpm test:e2e:matrix`、`node --test scripts/release/backend-image.test.mjs` 和 Web 生产构建通过。两个 Lite Playwright 场景均通过，已实际查看 1024×768、1536×960 的正常和异常导出截图；未发现新增布局变形。
+
+### 2026-10-23：导出文件命名
+
+执行结果、失败分析、异常原因、任务成员和 DDT 的下载名称由同一个模块生成。任务和批次名称复用已经授权读取的摘要或执行快照，不读取整批成员来拼接文件名。工作簿生成器专注于内容，不再同时拼接随机 ID 文件名；DDT 客户端读取下载响应中的 UTF-8 文件名。
+
+实际完成的验证：
+
+- 导出相关 12 个 Vitest 文件共 126 项通过，覆盖三类轮次、模板区分、所选状态、DDT 全部/已选/筛选范围、中文与特殊字符、240 字节上限、时区跨日/跨年、真实 HTTP 工作簿回读、XML 顺序、异常排除和分页取消。最终再运行命名、四类 HTTP 导出与 Ant Design 检查共 65 项，全部通过；两次运行存在重叠，不累计为独立测试数量。
+- `pnpm format:check`、全部受影响 TypeScript 文件的 Prettier/ESLint 检查、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix`、`pnpm --filter @autoforge/web build` 和 `git diff --check` 通过。
+- `AUTOFORGE_E2E_EXTERNAL_SERVER=1 pnpm exec playwright test tests/e2e/ui-layout.spec.ts tests/e2e/ddt-management.spec.ts --grep 'execution export dialog keeps choices readable|DDT navigation bounds rendering' --workers=1`：生产 Lite 两条流程通过。实际下载并核对执行结果、失败分析、DDT 全部 190 条与勾选 1 条用例的文件名和内容，原有失败重试、取消和勾选保持正常。
+
+实际查看 DDT 页面与执行结果/失败分析弹窗在 1024×768、1536×960 的截图，包含浅色和深色状态；控件、换行、对齐及滚动边界未出现新增变形。所有重任务串行执行，整组进程限一个 CPU、4 GiB 内存。未修改数据库适配器、迁移、Runner、依赖或工作表字段，未运行 Full 整体部署、真实 Runner 或完整离线验收；本次未使用 Microsoft Excel 桌面客户端，文件内容校验由实际下载、工作簿回读和既有结构断言覆盖。

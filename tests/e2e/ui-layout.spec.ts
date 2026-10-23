@@ -1291,6 +1291,10 @@ test("execution export dialog keeps choices readable and downloads the selected 
     dialog.getByRole("button", { name: "导出 Excel", exact: true }).click(),
   ]);
   expect(standardResponse.status()).toBe(200);
+  expect(standardDownload.suggestedFilename()).toContain(
+    `${fixture.suiteName}_用例执行结果_第1轮_成功-失败-阻塞（异常结束）_批次991_`,
+  );
+  expect(standardDownload.suggestedFilename()).toMatch(/_\d{8}-\d{6}\.xlsx$/u);
   const standardQuery = new URL(standardResponse.url()).searchParams;
   expect(Object.fromEntries(standardQuery)).toMatchObject({
     template: "results",
@@ -1361,6 +1365,9 @@ test("execution export dialog keeps choices readable and downloads the selected 
     dialog.getByRole("button", { name: "导出分析清单", exact: true }).click(),
   ]);
   expect(analysisResponse.status()).toBe(200);
+  expect(analysisDownload.suggestedFilename()).toContain(
+    `${fixture.suiteName}_失败用例分析清单_最终结果_批次991_`,
+  );
   expect(new URL(analysisResponse.url()).searchParams.get("scope")).toBe("final");
   expect(new URL(analysisResponse.url()).searchParams.get("template")).toBe("failure-analysis");
   const analysisWorkbookPath = test.info().outputPath("failure-analysis.xlsx");

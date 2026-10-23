@@ -101,7 +101,7 @@ export type RunBatchExportWorkbookInput = {
   scope: "round" | "final" | "all";
   /** Determined from the whole batch before reading filtered pages. */
   includesDdt?: boolean;
-  /** scope=round 时记录具体轮次，用于文件名区分。 */
+  /** scope=round 时记录具体轮次。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
   /** 与页面一致的平台展示时区；未指定时使用北京时间。 */
@@ -116,16 +116,13 @@ export type RunBatchExportWorkbookInput = {
 
 export async function buildRunBatchExportWorkbook(
   input: RunBatchExportWorkbookInput,
-): Promise<{ buffer: Buffer; filename: string }> {
+): Promise<{ buffer: Buffer }> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AutoForge";
   const rows = exportWorkbookRows(workbook, input);
   for (const row of input.rows) rows.append(input, row);
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
-  return {
-    buffer,
-    filename: exportFilename(input.batchId, input.scope, input.round, input.template ?? "results"),
-  };
+  return { buffer };
 }
 
 /** Consume one bounded page at a time; committed rows and hyperlinks are released by the writer. */
@@ -135,7 +132,6 @@ export async function createRunBatchExportWorkbookStream(
   options: { invalidRows?: "reject" | "exclude" } = {},
 ): Promise<{
   stream: PassThrough;
-  filename: string;
   validation: ExportValidationReport;
   completed: Promise<Error | undefined>;
 }> {
@@ -219,7 +215,6 @@ export async function createRunBatchExportWorkbookStream(
     stream,
     validation,
     completed,
-    filename: exportFilename(input.batchId, input.scope, input.round, input.template ?? "results"),
   };
 }
 
@@ -611,21 +606,4 @@ function issueEvidenceCell(claim: FailureAnalysisClaim): ExcelJS.CellValue {
         : undefined;
   if (!value) return "";
   return /^https?:\/\/[^\s]+$/iu.test(value) ? { text: value, hyperlink: value } : value;
-}
-
-function exportFilename(
-  batchId: string,
-  scope: "round" | "final" | "all",
-  round: number | undefined,
-  template: RunBatchExportTemplate,
-): string {
-  const suffix =
-    scope === "round" ? `round-${round ?? 0}` : scope === "all" ? "all-rounds" : "final";
-  const templateSuffix = template === "failure-analysis" ? "failure-analysis-" : "";
-  return `run-batch-${batchId.slice(0, 8)}-${templateSuffix}${suffix}.xlsx`;
-}
-
-/** Content-Disposition 需 RFC 5987 编码，保证中文文件名可被浏览器正确解码。 */
-export function exportContentDisposition(filename: string): string {
-  return `attachment; filename="run-batch-export.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }

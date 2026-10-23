@@ -1391,7 +1391,7 @@ test("terminal task failures support durable single and batch analysis with evid
   await page.getByRole("button", { name: "导出分析结果" }).click();
   expect((await exportResponsePromise).status()).toBe(200);
   const analysisDownload = await analysisDownloadPromise;
-  expect(analysisDownload.suggestedFilename()).toContain("failure-analysis-final.xlsx");
+  expect(analysisDownload.suggestedFilename()).toContain("_失败用例分析清单_最终结果_批次");
   const analysisBuffer = await readFile((await analysisDownload.path())!);
   const analysisArchive = unzipSync(new Uint8Array(analysisBuffer));
   const analysisStrings = await readExportedWorkbookText(analysisBuffer);

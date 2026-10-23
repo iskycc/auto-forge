@@ -1082,7 +1082,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await fakeJenkins.close();
   }
 
-  // 全部轮次导出：scope=all，Excel 首列为轮次，文件名带 all-rounds。
+  // 全部轮次导出：scope=all，Excel 首列为轮次，文件名标明全部轮次。
   await page.getByRole("button", { name: "全部轮次", exact: true }).click();
   // 等面板切换完成再点导出，否则导航重渲染会重置对话框的打开状态（偶发丢失点击）。
   await expect(page).toHaveURL(/round=all/);
@@ -1100,7 +1100,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const exportResponse = await exportResponsePromise;
   expect(exportResponse.status()).toBe(200);
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toContain("all-rounds");
+  expect(download.suggestedFilename()).toContain("_用例执行结果_全部轮次_");
   const exportBody = new Uint8Array(await readFile(await download.path()));
   expect(Array.from(exportBody.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
   const exportedText = await readExportedWorkbookText(Buffer.from(exportBody));

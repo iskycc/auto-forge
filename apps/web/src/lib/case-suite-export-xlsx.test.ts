@@ -5,15 +5,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 let createCaseSuiteExportWorkbookStream: typeof import("./case-suite-export-xlsx").createCaseSuiteExportWorkbookStream;
-let caseSuiteExportFilename: typeof import("./case-suite-export-xlsx").caseSuiteExportFilename;
-let caseSuiteExportContentDisposition: typeof import("./case-suite-export-xlsx").caseSuiteExportContentDisposition;
 
 beforeAll(async () => {
-  ({
-    createCaseSuiteExportWorkbookStream,
-    caseSuiteExportFilename,
-    caseSuiteExportContentDisposition,
-  } = await import("./case-suite-export-xlsx"));
+  ({ createCaseSuiteExportWorkbookStream } = await import("./case-suite-export-xlsx"));
 });
 
 describe("case suite XLSX export", () => {
@@ -59,14 +53,6 @@ describe("case suite XLSX export", () => {
     expect(sheet?.getColumn(1).width).toBe(52);
     expect(sheet?.getColumn(2).width).toBe(36);
     sheet?.getRow(2).eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
-  });
-
-  it("creates a safe Chinese filename and RFC 5987 disposition", () => {
-    const filename = caseSuiteExportFilename('每日/冒烟:"任务"', "12345678-rest");
-    expect(filename).toBe("每日-冒烟--任务--12345678-用例.xlsx");
-    const disposition = caseSuiteExportContentDisposition(filename);
-    expect(disposition).toContain('filename="case-suite-cases.xlsx"');
-    expect(decodeURIComponent(disposition.split("filename*=UTF-8''")[1]!)).toBe(filename);
   });
 });
 

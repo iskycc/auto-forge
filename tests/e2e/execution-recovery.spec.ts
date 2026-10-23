@@ -105,7 +105,7 @@ async function downloadExceptionWorkbook(
     .getByRole("button", { name: "导出异常原因 Excel", exact: true })
     .click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(/^run-batch-.*-exceptions\.xlsx$/);
+  expect(download.suggestedFilename()).toMatch(/_执行异常原因_批次\d+_\d{8}-\d{6}\.xlsx$/u);
   const filePath = await download.path();
   expect(filePath).not.toBeNull();
   const workbook = new ExcelJS.Workbook();

@@ -88,6 +88,7 @@ export class RunBatchExportService {
   /** Export only bounded result pages; no batch-wide runs, class data or TestNG reports enter HTTP. */
   async prepare(query: RunBatchExportQuery): Promise<{
     projectId: string;
+    batch: { suiteName: string; sequenceNumber: number };
     includesDdt: boolean;
     pages: AsyncIterable<RunBatchExportRow[]>;
   }> {
@@ -113,7 +114,12 @@ export class RunBatchExportService {
         after = page.next;
       } while (after);
     }
-    return { projectId: metadata.projectId, includesDdt, pages: pages() };
+    return {
+      projectId: metadata.projectId,
+      batch: { suiteName: metadata.suiteName, sequenceNumber: metadata.sequenceNumber },
+      includesDdt,
+      pages: pages(),
+    };
   }
 
   async buildRows(query: RunBatchExportQuery): Promise<RunBatchExportRow[]> {

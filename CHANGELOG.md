@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+## 1.20.9 - 2026-10-23
+
+### Changed
+
+- 规范执行结果、失败分析、异常原因、任务用例清单和 DDT 的 Excel 下载文件名，统一包含任务或版本/阶段名称、清单用途、适用范围和平台时区下的导出时间；执行类使用页面批次编号，结果清单标明所选状态。保留中文，安全替换禁用字符并限制文件名长度；DDT 浏览器下载沿用服务端名称。
+
+### Compatibility
+
+- Lite/Full 共用命名实现；名称复用已经授权读取的任务摘要和执行快照，无新增数据库查询、迁移、持久配置、依赖或 Runner/Adapter 协议变更。升级主平台即可启用。
+- 工作簿筛选、字段、样式、日志链接、公开授权和分页导出沿用原有规则；DDT 工作表名称与重新导入契约保持兼容。CSV/JSON 分析导出及原始日志、产物的名称不在本次调整范围。
+- 按维护者要求快速发布，仅运行 Release 的双架构构建、内置资源校验、SBOM、签名和发布流程；CI、Full distributed acceptance、Published Release acceptance、Release checks 和 Dependency security 本次不运行，不记为通过。发布结束后恢复其原有启用状态。
+
+### Validation
+
+- 12 个导出相关 Vitest 文件共 126 项检查通过；最终命名、HTTP 导出与 Ant Design 复验共 65 项通过，两次运行包含重叠场景。
+- 两条生产 Lite Playwright 流程通过，实际下载验证执行结果、失败分析、DDT 全部 190 条及勾选 1 条用例的文件名与数据范围。实际审查 1024×768、1536×960 浅色/深色截图，无新增页面变形。
+- 格式/许可证、受影响文件 ESLint、Web/服务端/工作线程及测试类型、E2E 覆盖矩阵和 Web 生产构建通过。未修改数据库适配器、迁移和 Runner；本地未重跑 Full 整体部署、真实 Runner、完整离线验收或 Microsoft Excel 桌面客户端。详细命名与验证说明见 `docs/design/export-workbook-layout.md`。
+
 ## 1.20.8 - 2026-10-23
 
 ### Added

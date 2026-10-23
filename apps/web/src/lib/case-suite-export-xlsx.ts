@@ -6,7 +6,6 @@ import { exportWorksheetOptions, styleExportHeader, styleExportRow } from "./exp
 import { PassThrough } from "node:stream";
 
 const CASE_SUITE_EXPORT_HEADERS = ["用例编号（类路径）", "用例名称"] as const;
-const FALLBACK_FILENAME = "case-suite-cases.xlsx";
 
 export type CaseSuiteExportWorkbookStream = {
   stream: PassThrough;
@@ -55,22 +54,6 @@ async function writeWorkbook(
 
   sheet.commit();
   await workbook.commit();
-}
-
-export function caseSuiteExportFilename(suiteName: string, suiteId: string): string {
-  const safeName = suiteName
-    .normalize("NFKC")
-    .replace(/[\\/:*?"<>|\u0000-\u001F]/gu, "-")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 80);
-  const identity = suiteId.slice(0, 8);
-  return `${safeName || "用例任务"}-${identity}-用例.xlsx`;
-}
-
-/** RFC 5987 编码保证中文任务名在浏览器下载时保持可读。 */
-export function caseSuiteExportContentDisposition(filename: string): string {
-  return `attachment; filename="${FALLBACK_FILENAME}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 function asError(error: unknown): Error {
