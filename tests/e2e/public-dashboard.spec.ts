@@ -139,7 +139,9 @@ test("public execution login preserves its round and recovers Strict sessions wi
           0,
         );
         await expect(detailPage).toHaveURL(originalUrl);
-        await expect(detailPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+        await expect(
+          detailPage.getByRole("main").getByText("永久匿名只读执行详情", { exact: true }),
+        ).toBeVisible();
       }
     } finally {
       await context.close();

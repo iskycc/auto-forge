@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution } from "./support/task-execution";
-import { associateDdtSr } from "./support/ddt-associations";
+import { associateDdtSr, setUnlinkedSrFilter } from "./support/ddt-associations";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -2717,7 +2717,7 @@ test("SR associations restrict candidates and automatically cover imported and m
   await expect(inspector.getByRole("tab", { name: "测试类详情", exact: true })).toBeDisabled();
 
   await page.goto("/cases/ddt-associations");
-  await page.getByRole("switch", { name: "仅显示未关联 SR" }).uncheck();
+  await setUnlinkedSrFilter(page, false);
   const srRow = page.locator('.ddt-sr-row[data-sr="PAYMENTS"]');
   await expect(srRow).toContainText(className);
   await page.getByLabel("搜索 SR", { exact: true }).fill("PAY");
@@ -5071,7 +5071,7 @@ test("SR assignments retain expanded pages and default to unlinked requirements"
   await page.getByRole("button", { name: "设置 SR-069 的分类", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
   await expect(rows).toHaveCount(69);
-  await filter.uncheck();
+  await setUnlinkedSrFilter(page, false);
   await expect(rows).toHaveCount(60);
   await page.getByRole("button", { name: "加载更多 SR", exact: true }).click();
   await expect(rows).toHaveCount(70);
@@ -5088,7 +5088,7 @@ test("SR assignments retain expanded pages and default to unlinked requirements"
   }
   await page.reload();
   await expect(filter).not.toBeChecked();
-  await filter.check();
+  await setUnlinkedSrFilter(page, true);
   await expect(rows).toHaveCount(60);
   await page.getByRole("button", { name: "加载更多 SR", exact: true }).click();
   await expect(rows).toHaveCount(68);

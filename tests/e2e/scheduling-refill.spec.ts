@@ -220,7 +220,7 @@ async function verifyColdPublicLogDuringUploads(
   let publicPage: Page | undefined;
   try {
     [publicPage] = await Promise.all([page.waitForEvent("popup"), shareButton.click()]);
-    await expect(publicPage.locator(".share-log-output")).toContainText(
+    await expect(publicPage.locator(".share-log-output:visible")).toContainText(
       `completed-case-log-${completedLogChunkCount - 1}`,
       { timeout: 10_000 },
     );

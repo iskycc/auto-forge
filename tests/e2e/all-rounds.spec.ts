@@ -50,7 +50,7 @@ async function expectAuthenticatedPublicRunDetails(page: Page, batchId: string, 
   await expect(page.getByRole("button", { name: "登录", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: suiteName, exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "批次概览" })).toBeVisible();
-  await expect(page.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(page.getByRole("main").getByText("永久匿名只读执行详情")).toBeVisible();
   expect((await page.request.get("/api/v1/auth/session")).status()).toBe(200);
 }
 
@@ -792,6 +792,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   // PROCESS_START_FAILED 属于执行机异常：保留原失败记录、自动重新调度，并在执行机视图聚合展示。
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const retainedCaseSearch = page.getByRole("textbox", { name: "按名称搜索用例" });
+  await expect(retainedCaseSearch).toBeVisible();
   const searchWidthBeforeLongQuery = (await retainedCaseSearch.boundingBox())?.width ?? 0;
   await retainedCaseSearch.fill("AllRoundsFlakyTest".repeat(8));
   await page.waitForTimeout(350);
@@ -1152,7 +1153,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const progressPageResponse = await anonymousProgressPage.goto(jenkinsRun.progressUrl);
   expect(progressPageResponse?.status()).toBe(200);
   expect(new URL(anonymousProgressPage.url()).pathname).not.toBe("/login");
-  await expect(anonymousProgressPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(
+    anonymousProgressPage.getByRole("main").getByText("永久匿名只读执行详情"),
+  ).toBeVisible();
   await expect(anonymousProgressPage.getByRole("region", { name: "批次概览" })).toBeVisible();
   await expect(anonymousProgressPage.locator(".execution-round-table")).toBeVisible();
   await expect(anonymousProgressPage.locator(".execution-case-table tbody tr")).toHaveCount(2);
@@ -1183,7 +1186,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
   await openRunLinkFromJenkins(signedInDetailsPage, jenkinsRun.progressUrl);
   await failedProbe;
-  await expect(signedInDetailsPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(
+    signedInDetailsPage.getByRole("main").getByText("永久匿名只读执行详情"),
+  ).toBeVisible();
   await expect(signedInDetailsPage).toHaveURL(jenkinsRun.progressUrl);
   await signedInDetailsPage.unroute(sessionProbeUrl);
   await signedInDetailsPage.reload();
@@ -1218,7 +1223,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     ).status(),
   ).toBe(403);
   await restrictedPage.goto(jenkinsRun.resultUrl);
-  await expect(restrictedPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(restrictedPage.getByRole("main").getByText("永久匿名只读执行详情")).toBeVisible();
   await expect(restrictedPage.locator(".app-shell")).toHaveCount(0);
 
   // A stale cookie must not turn a working public report into a login redirect.
@@ -1233,7 +1238,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     },
   ]);
   await restrictedPage.goto(jenkinsRun.resultUrl);
-  await expect(restrictedPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(restrictedPage.getByRole("main").getByText("永久匿名只读执行详情")).toBeVisible();
   await expect(restrictedPage).toHaveURL(jenkinsRun.resultUrl);
   await restrictedContext.close();
 
@@ -1283,7 +1288,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const resultPageResponse = await anonymousResultPage.goto(jenkinsRun.resultUrl);
   expect(resultPageResponse?.status()).toBe(200);
   expect(new URL(anonymousResultPage.url()).pathname).not.toBe("/login");
-  await expect(anonymousResultPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(
+    anonymousResultPage.getByRole("main").getByText("永久匿名只读执行详情"),
+  ).toBeVisible();
   await expect(anonymousResultPage.getByRole("heading", { name: suiteName })).toBeVisible();
   await expect(anonymousResultPage.getByRole("region", { name: "批次概览" })).toBeVisible();
   await expect(
@@ -1406,7 +1413,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const historyAnonymousPage = await historyAnonymousContext.newPage();
   const historyShareResponse = await historyAnonymousPage.goto(sharedResultHref!);
   expect(historyShareResponse?.status()).toBe(200);
-  await expect(historyAnonymousPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(
+    historyAnonymousPage.getByRole("main").getByText("永久匿名只读执行详情"),
+  ).toBeVisible();
   await expect(historyAnonymousPage.getByRole("region", { name: "批次概览" })).toBeVisible();
   await expect(historyAnonymousPage.locator(".execution-round-table")).toBeVisible();
   await expect(historyAnonymousPage.locator(".public-progress-card")).toHaveCount(0);
@@ -1667,7 +1676,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   ]) {
     await runningPublicLogPage.goto(`${path}?attempt=${diagnosticClaim.assignment.attemptId}`);
     await expect(runningPublicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
-    await expect(runningPublicLogPage.locator(".share-log-output")).toContainText(
+    await expect(runningPublicLogPage.locator(".share-log-output:visible")).toContainText(
       realtimeMarker.trim(),
     );
     await expect(
@@ -1762,10 +1771,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const detailSocket = await detailSocketPromise;
   await expect(latestManualRerunLink).toHaveAttribute("aria-current", "page");
   await expect(dependencyTime).toHaveAttribute("title", `UTC ${currentDependencyUpdatedAt}`);
-  await expect(publicLogPage.locator(".share-log-output")).toContainText("本次尝试暂无日志内容。");
+  await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
+    "本次尝试暂无日志内容。",
+  );
   await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
   await uploadAttemptLog(page, identity, publicPageRerunClaim, "public rerun first upload\n");
-  await expect(publicLogPage.locator(".share-log-output")).toContainText(
+  await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
     "public rerun first upload",
   );
   // Hidden log details release their socket; returning backfills logs received meanwhile.
@@ -1781,7 +1792,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     "public rerun hidden-page upload\n",
     1,
   );
-  await expect(publicLogPage.locator(".share-log-output")).not.toContainText(
+  await expect(publicLogPage.locator(".share-log-output:visible")).not.toContainText(
     "public rerun hidden-page upload",
   );
   const resumedSocketPromise = publicLogPage.waitForEvent("websocket");
@@ -1791,7 +1802,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
   await resumedSocketPromise;
   await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
-  await expect(publicLogPage.locator(".share-log-output")).toContainText(
+  await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
     "public rerun hidden-page upload",
   );
   const anonymousManualContext = await publicLogPage.context().browser()!.newContext();
@@ -1844,7 +1855,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await expect(stopButton).toBeVisible();
     await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
     await uploadAttemptLog(page, identity, stopClaim, `manual stop scenario ${stopIndex}\n`);
-    await expect(publicLogPage.locator(".share-log-output")).toContainText(
+    await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
       `manual stop scenario ${stopIndex}`,
     );
     const stopPath = `/api/v1/run-attempts/${encodeURIComponent(stopAttemptId)}/cancel`;

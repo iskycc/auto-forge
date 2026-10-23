@@ -1,5 +1,14 @@
 import { expect, type Page } from "@playwright/test";
 
+export async function setUnlinkedSrFilter(page: Page, onlyUnlinked: boolean): Promise<void> {
+  const filter = page.getByRole("switch", { name: "仅显示未关联 SR" });
+  const expectedState = String(onlyUnlinked);
+  await expect(filter).toBeVisible();
+  // The controlled switch follows the URL through a React transition.
+  if ((await filter.getAttribute("aria-checked")) !== expectedState) await filter.click();
+  await expect(filter).toHaveAttribute("aria-checked", expectedState);
+}
+
 export async function associateDdtSr(page: Page, srNum: string, className: string): Promise<void> {
   await page.getByRole("button", { name: "SR 测试类关联", exact: true }).click();
   await expect(page.getByRole("heading", { name: "SR 测试类关联", exact: true })).toBeVisible();
@@ -25,7 +34,7 @@ export async function associateDdtSr(page: Page, srNum: string, className: strin
   await mapping.getByRole("radio", { name: `${srNum} 分类`, exact: true }).check();
   await mapping.getByRole("button", { name: "保存 SR 分类", exact: true }).click();
   await expect(mapping).toHaveCount(0);
-  await page.getByRole("switch", { name: "仅显示未关联 SR" }).uncheck();
+  await setUnlinkedSrFilter(page, false);
   await expect(
     page.locator(".ddt-sr-row").filter({ has: page.getByText(srNum, { exact: true }) }),
   ).toContainText(className);

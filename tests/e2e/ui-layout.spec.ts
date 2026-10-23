@@ -643,7 +643,9 @@ test("execution details show the recorded initiator without stretching the heade
   try {
     const sharedPage = await anonymous.newPage();
     await sharedPage.goto(share.body.shareUrl);
-    await expect(sharedPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+    await expect(
+      sharedPage.getByRole("main").getByText("永久匿名只读执行详情", { exact: true }),
+    ).toBeVisible();
     await expect(sharedPage.locator(".execution-batch-initiator")).toHaveCount(0);
     expect(await sharedPage.content()).not.toContain(recorded.username);
   } finally {
@@ -714,7 +716,9 @@ test("anonymous execution details keep tables and actions within the page", asyn
   try {
     const anonymousPage = await context.newPage();
     await anonymousPage.goto(share.body.shareUrl);
-    await expect(anonymousPage.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+    await expect(
+      anonymousPage.getByRole("main").getByText("永久匿名只读执行详情", { exact: true }),
+    ).toBeVisible();
     await expect(anonymousPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
     await expect(anonymousPage.locator(".execution-case-table")).toContainText(
       `分析 Runner ${suffix}`,
@@ -800,7 +804,7 @@ test("anonymous execution details keep tables and actions within the page", asyn
       ]);
       try {
         await expect(logPage).toHaveURL(new URL(logHref!, executionUrl).toString());
-        await expect(logPage.locator(".share-log-output")).toBeVisible();
+        await expect(logPage.locator(".share-log-output:visible")).toBeVisible();
         await expect(logPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
         expect(await logPage.evaluate(() => window.opener === null)).toBe(true);
         await expect(anonymousPage).toHaveURL(executionUrl);
@@ -812,7 +816,9 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await page.bringToFront();
     await page.goto(share.body.shareUrl);
     await expect(page).toHaveURL(share.body.shareUrl);
-    await expect(page.getByText("永久匿名只读执行详情", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("永久匿名只读执行详情", { exact: true }),
+    ).toBeVisible();
     await expect(page.locator(".app-shell")).toHaveCount(0);
     await page.goto(`/run-batches/${fixture.batchId}`);
     await expect(page.getByRole("heading", { name: /^支付回归_/ })).toBeVisible();

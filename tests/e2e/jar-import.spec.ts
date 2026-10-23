@@ -1718,7 +1718,7 @@ public class MixedVisibleTest {
     const loginToRerun = anonymousPage.getByRole("button", { name: "登录后执行此用例" });
     await expect(loginToRerun).toBeVisible();
     await expectReadableText(loginToRerun);
-    await expect(anonymousPage.locator(".share-log-output")).toContainText(
+    await expect(anonymousPage.locator(".share-log-output:visible")).toContainText(
       /first attempt assertion failed|retry passed/,
     );
     // Business IDs alone do not publish an execution batch; export only publishes the selected logs.
@@ -1732,18 +1732,18 @@ public class MixedVisibleTest {
     await anonymousPage.goto(legacyExecutionPath(batch.id));
     await expect(anonymousPage.getByRole("main").getByText("永久匿名只读执行详情")).toBeVisible();
     await anonymousPage.goto(historicalLogPath);
-    await expect(anonymousPage.locator(".share-log-output")).toContainText(
+    await expect(anonymousPage.locator(".share-log-output:visible")).toContainText(
       "first attempt assertion failed",
     );
     const historicalRounds = anonymousPage.getByRole("navigation", { name: "同一用例的执行历史" });
     await historicalRounds.getByRole("link", { name: /第 2 轮.*通过/u }).click();
-    await expect(anonymousPage.locator(".share-log-output")).toContainText("retry passed");
+    await expect(anonymousPage.locator(".share-log-output:visible")).toContainText("retry passed");
     await anonymousPage.goto(failureSharePath);
     // Streaming rendering may retain a hidden copy while publishing the visible content.
     const sharedSummary = anonymousPage.locator(".share-log-summary:visible");
     await expect(sharedSummary).toBeVisible();
     expect(await sharedSummary.textContent()).toBe(expectedFailureSummary);
-    await expect(anonymousPage.locator(".share-log-output")).not.toContainText(
+    await expect(anonymousPage.locator(".share-log-output:visible")).not.toContainText(
       "TestCase Run Failed Stack Base64",
     );
     for (const width of [1024, 1536]) {
@@ -1756,7 +1756,7 @@ public class MixedVisibleTest {
       await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(anonymousPage);
       await expect(anonymousPage.locator("html")).toHaveCSS("color-scheme", "dark");
-      await expect(anonymousPage.locator(".share-log-output")).toHaveCSS(
+      await expect(anonymousPage.locator(".share-log-output:visible")).toHaveCSS(
         "color",
         "rgb(232, 237, 245)",
       );
@@ -1775,7 +1775,7 @@ public class MixedVisibleTest {
     await expect(firstRoundLink).toHaveAttribute("aria-current", "page");
     await secondRoundLink.click();
     await expect(secondRoundLink).toHaveAttribute("aria-current", "page");
-    await expect(anonymousPage.locator(".share-log-output")).toContainText("retry passed");
+    await expect(anonymousPage.locator(".share-log-output:visible")).toContainText("retry passed");
     expect(anonymousContext.pages()).toHaveLength(1);
     expect(new URL(anonymousPage.url()).pathname).toBe("/CaseLog");
     expect(new URL(anonymousPage.url()).searchParams.get("ExecutionId")).toBe(firstAttemptId);

@@ -209,7 +209,9 @@ test("global execution dialog schedules one case through a runner group with Ada
     },
   );
   expect(logResponse.status()).toBe(200);
-  await expect(page.locator(".share-log-output")).toContainText("single-case detail live update");
+  await expect(page.locator(".share-log-output:visible")).toContainText(
+    "single-case detail live update",
+  );
   await verifyLogStreamIsolation(page, batch.id, assigned.assignment.attemptId, testInfo);
   await page.goto(logLink.body.shareUrl);
   await page.getByRole("button", { name: "强行中断", exact: true }).click();
