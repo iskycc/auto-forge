@@ -1730,7 +1730,7 @@ public class MixedVisibleTest {
     expect(unpublishedOverview.status()).toBe(400);
     // The previous signed detail URL is still accepted without a new grant.
     await anonymousPage.goto(legacyExecutionPath(batch.id));
-    await expect(anonymousPage.getByText("永久匿名只读执行详情")).toBeVisible();
+    await expect(anonymousPage.getByRole("main").getByText("永久匿名只读执行详情")).toBeVisible();
     await anonymousPage.goto(historicalLogPath);
     await expect(anonymousPage.locator(".share-log-output")).toContainText(
       "first attempt assertion failed",
@@ -1739,7 +1739,8 @@ public class MixedVisibleTest {
     await historicalRounds.getByRole("link", { name: /第 2 轮.*通过/u }).click();
     await expect(anonymousPage.locator(".share-log-output")).toContainText("retry passed");
     await anonymousPage.goto(failureSharePath);
-    const sharedSummary = anonymousPage.locator(".share-log-summary");
+    // Streaming rendering may retain a hidden copy while publishing the visible content.
+    const sharedSummary = anonymousPage.locator(".share-log-summary:visible");
     await expect(sharedSummary).toBeVisible();
     expect(await sharedSummary.textContent()).toBe(expectedFailureSummary);
     await expect(anonymousPage.locator(".share-log-output")).not.toContainText(

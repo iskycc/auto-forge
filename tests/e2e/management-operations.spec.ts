@@ -544,10 +544,8 @@ test("task schedule dialog keeps read permissions separate from execution histor
       const readerPage = await readerContext.newPage();
       await readerPage.goto("/login");
       await login(readerPage, username, password);
-      // History readers pass through /run-batches before its client redirect completes.
-      await expect(readerPage).toHaveURL(
-        canReadExecutions ? /\/execution-records(?:\?|$)/u : /\/account\/security(?:\?|$)/u,
-      );
+      // The legacy login entry opens the home-page dialog and preserves that page.
+      await expect(readerPage).toHaveURL(new URL("/", readerPage.url()).href);
       await expect(readerPage.getByRole("navigation", { name: "主导航" })).toBeVisible();
       await readerPage.goto(`/case-suites/${suite.body.id}`);
       const plan = readerPage.getByRole("region", { name: "任务执行计划" });

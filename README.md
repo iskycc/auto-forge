@@ -44,7 +44,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 - 日志浮窗切换日志流、过滤条件或执行记录时会中止旧读取，旧响应和已关闭的实时连接不会覆盖当前日志；关闭浮窗同时清理读取和连接。
 
-- Next.js 16.3.8 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
+- Next.js 16.4.1 App Router 主平台，采用 Ant Design 统一组件，保留方案 E 的桌面 Bento 信息架构。旧全局样式表已退役，见[界面重构说明](./docs/design/ant-design-migration.md)与[组件及页面复查](./docs/design/ant-design-ui-audit.md)。
 - 登录后的执行任务详情在标题下显示“拉起人”用户名，读取执行时保存的账号快照；普通任务、Jenkins API、单用例与调试入口从已认证身份写入，不接受请求指定拉起人，重跑继续记录实际重跑账号。长用户名省略显示，可悬浮或聚焦查看全文；历史缺失记录及没有人工账号的系统计划显示“未记录”。匿名永久分享不展示该账号信息。Lite/Full 使用现有批次字段，无需数据库迁移。
 - UI 离线约束：Ant Design、图标与中文语言资源锁定版本并在构建时打包，完整组件 CSS 从本地 `antd/dist/antd.css` 编译；SSR 首屏样式使用本地 registry 提取。后端离线 Docker tar 必须包含 `.next/static` 的全部脚本、样式和其他静态资源及服务端运行依赖，禁止 CDN、在线字体、Iconfont 在线脚本或运行时下载。全平台支持 Ant Design 浅色/深色切换，包括首页、登录弹窗、控制台和公开分享页；当前浏览器的选择保存一年，并用于服务端首屏，刷新不依赖客户端再次切换。
 - 表单数字、时区候选、多选、字段校验、DDT 拖拽／分栏和分析图片预览统一使用 Ant Design 组件；隐藏字段保留浏览器表单提交语义。补齐的组件范围、保留的业务 DOM 与验证结果见[原生组件修复报告](./docs/design/ant-design-native-component-audit-2026-09-26.md)。
@@ -456,7 +456,7 @@ queued -> dispatching -> running -> succeeded
 | 校验         | Zod（持久配置、API 输入和消息载荷）                                    |
 | 测试         | Vitest + Playwright + Go test + 双模式集成测试                         |
 
-截至 2026-10-08，当前实现使用 Node.js 24 LTS 与 Next.js 16.3.8。实际依赖均在 `package.json` 中锁定具体版本，并以 `pnpm-lock.yaml` 为准；不得在可复现构建中使用浮动的 `latest` 标签。
+截至 2026-10-23，当前实现使用 Node.js 24 LTS 与 Next.js 16.4.1。实际依赖均在 `package.json` 中锁定具体版本，并以 `pnpm-lock.yaml` 为准；不得在可复现构建中使用浮动的 `latest` 标签。
 
 ## 仓库结构
 
