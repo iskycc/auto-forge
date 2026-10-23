@@ -21,13 +21,15 @@ var credentialPatterns = []*regexp.Regexp{
 }
 
 type attemptLogCollector struct {
-	attemptID string
-	spool     *logSpool
-	secrets   []string
-	carrySize int
-	mu        sync.Mutex
-	pending   map[string]string
-	sequence  map[string]int64
+	attemptID      string
+	spool          *logSpool
+	secrets        []string
+	carrySize      int
+	mu             sync.Mutex
+	pending        map[string]string
+	sequence       map[string]int64
+	firstOutput    chan struct{}
+	outputNotified bool
 }
 
 func newAttemptLogCollector(attemptID string, spool *logSpool, environment []EnvironmentEntry) *attemptLogCollector {
@@ -42,12 +44,13 @@ func newAttemptLogCollector(attemptID string, spool *logSpool, environment []Env
 	}
 	sort.Slice(secrets, func(left, right int) bool { return len(secrets[left]) > len(secrets[right]) })
 	return &attemptLogCollector{
-		attemptID: attemptID,
-		spool:     spool,
-		secrets:   secrets,
-		carrySize: carrySize,
-		pending:   make(map[string]string),
-		sequence:  map[string]int64{"stdout": 0, "stderr": 0, "agent": 0},
+		attemptID:   attemptID,
+		spool:       spool,
+		secrets:     secrets,
+		carrySize:   carrySize,
+		pending:     make(map[string]string),
+		sequence:    map[string]int64{"stdout": 0, "stderr": 0, "agent": 0},
+		firstOutput: make(chan struct{}),
 	}
 }
 
@@ -104,6 +107,12 @@ func (collector *attemptLogCollector) flushStream(stream, recordedAt string, fin
 			return err
 		}
 		collector.sequence[stream]++
+		// Wake the uploader once, only after redaction and spool publication.
+		// Later writes keep the normal batch cadence instead of flooding the control plane.
+		if stream != "agent" && !collector.outputNotified {
+			collector.outputNotified = true
+			close(collector.firstOutput)
+		}
 	}
 	collector.pending[stream] = content
 	return nil

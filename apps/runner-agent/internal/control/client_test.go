@@ -404,7 +404,7 @@ func TestIdentityStoreRejectsCredentialsReadableByOtherUsers(t *testing.T) {
 	}
 }
 
-func testConfiguration(t *testing.T, serverURL string) config.Config {
+func testConfiguration(t testing.TB, serverURL string) config.Config {
 	t.Helper()
 	parsed, err := url.Parse(serverURL)
 	if err != nil {

@@ -695,7 +695,7 @@ func TestSupervisorRemovesBatchWorkspaceAfterBatchCloses(t *testing.T) {
 			}
 			_ = json.NewEncoder(writer).Encode(uploadLogChunksResponse{
 				SchemaVersion:        1,
-				AcknowledgedSequence: logWatermark{Stdout: -1, Stderr: -1, Agent: 0},
+				AcknowledgedSequence: acknowledgedLogChunks(upload.Chunks),
 			})
 		case "/api/v1/run-attempts/attempt-1/artifacts":
 			var declaration declareArtifactsRequest

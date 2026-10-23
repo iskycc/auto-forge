@@ -398,6 +398,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	persistProgress func(completionResult, []artifactUploadState) error,
 	persistProcess func(executor.ProcessIdentity) error,
 ) completionResult {
+	startupStartedAt := time.Now()
 	executionSpec := claimed.Assignment.ExecutionSpec
 	executionToolchain := supervisor.configuration.Toolchain
 	useAdapter := executionSpec.Adapter != nil && supervisor.configuration.Adapter.Enabled()
@@ -453,6 +454,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 			liveLogContext,
 			claimed,
 			liveLogUploadInterval,
+			collector.firstOutput,
 		)
 	}()
 	streamedWatermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
@@ -478,8 +480,13 @@ func (supervisor *attemptSupervisor) runTestNG(
 			RequireCgroup: supervisor.configuration.Resources.Enabled(),
 			ApplyRlimits:  true,
 		},
-		ProcessStarted: persistProcess,
-		LogSink:        processLogs.Write,
+		ProcessStarted: func(identity executor.ProcessIdentity) error {
+			if err := persistProcess(identity); err != nil {
+				return err
+			}
+			return recordAttemptStartupStage(collector, "process_created", startupStartedAt)
+		},
+		LogSink: processLogs.Write,
 		PrepareWorkspace: func(workspace string) error {
 			if executionSpec.BatchID != "" {
 				// 批次共享：同批次输入只下载解压一次，attempt 工作目录通过
@@ -491,18 +498,22 @@ func (supervisor *attemptSupervisor) runTestNG(
 				return err
 			}
 			if useAdapter && executionSpec.BatchID == "" {
-				return prepareCotestWorkspace(
+				if err := prepareCotestWorkspace(
 					workspace,
 					inputs,
 					executionSpec.ResourceLimits.DiskBytes,
 					executionSpec.ResourceLimits.FileCount,
-				)
-			}
-			return prepareTestNGLauncher(
+				); err != nil {
+					return err
+				}
+			} else if err := prepareTestNGLauncher(
 				workspace,
 				claimed.Assignment.ExecutionSpec.MethodDescriptors,
 				claimed.Assignment.ExecutionSpec.Parameters,
-			)
+			); err != nil {
+				return err
+			}
+			return recordAttemptStartupStage(collector, "workspace_ready", startupStartedAt)
 		},
 	})
 	processLogErr := processLogs.Close()
@@ -782,6 +793,7 @@ func (supervisor *attemptSupervisor) streamAttemptLogs(
 	ctx context.Context,
 	claimed ClaimedAssignment,
 	interval time.Duration,
+	firstOutput <-chan struct{},
 ) logWatermark {
 	watermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
 	ticker := time.NewTicker(interval)
@@ -791,15 +803,18 @@ func (supervisor *attemptSupervisor) streamAttemptLogs(
 		case <-ctx.Done():
 			return watermarks
 		case <-ticker.C:
-			uploaded, err := supervisor.flushAttemptLogs(ctx, claimed, 5*time.Second)
-			if err != nil {
-				if ctx.Err() == nil {
-					fmt.Fprintf(supervisor.diagnostics, "stream attempt logs for %s: %v\n", claimed.Assignment.AttemptID, err)
-				}
-				continue
-			}
-			watermarks = mergeLogWatermarks(watermarks, uploaded)
+		case <-firstOutput:
+			firstOutput = nil
+			ticker.Reset(interval)
 		}
+		uploaded, err := supervisor.flushAttemptLogs(ctx, claimed, 5*time.Second)
+		if err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(supervisor.diagnostics, "stream attempt logs for %s: %v\n", claimed.Assignment.AttemptID, err)
+			}
+			continue
+		}
+		watermarks = mergeLogWatermarks(watermarks, uploaded)
 	}
 }
 

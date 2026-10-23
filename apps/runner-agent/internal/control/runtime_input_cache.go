@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,8 @@ import (
 	"sync"
 	"time"
 )
+
+var errCachedRuntimeInputCorrupt = errors.New("cached runtime input failed verification")
 
 const runtimeInputRetention = 24 * time.Hour
 const runtimeInputCacheMaximumBytes int64 = 32 << 30
@@ -138,42 +142,58 @@ func (cache *runtimeInputCache) materialize(ctx context.Context, client *Client,
 	directory := filepath.Join(cache.root, key)
 	cachedInput := input
 	cachedInput.TargetPath = "archive"
-	valid, err := cache.valid(directory, cachedInput)
+	reusable, err := cache.freshArchive(directory, cachedInput)
 	if err != nil {
 		return err
 	}
-	if !valid {
-		if err := cache.remove(key); err != nil {
+	if reusable {
+		// Verify the exact bytes copied, instead of reading the archive once to
+		// hash it and a second time to materialize it. Never publish unverified bytes.
+		err := materializeCachedArchive(ctx, directory, workspace, input)
+		if err == nil {
+			return cache.touch(directory)
+		}
+		if !errors.Is(err, errCachedRuntimeInputCorrupt) {
 			return err
 		}
-		available, err := availableBytes(workspace)
-		if err != nil {
-			return err
-		}
-		if input.SizeBytes > available/2 {
-			return downloadAttemptInput(ctx, client, identity, claimed, input, workspace)
-		}
-		if !cache.reserve(key, input.SizeBytes) {
-			// Capacity is a cache admission limit, never a reason to reject an execution.
-			return downloadAttemptInput(ctx, client, identity, claimed, input, workspace)
-		}
-		published := false
-		defer func() {
-			if !published {
-				resultErr = errors.Join(resultErr, cache.remove(key))
-			}
-		}()
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return err
-		}
-		if err := downloadAttemptInput(ctx, client, identity, claimed, cachedInput, directory); err != nil {
-			return fmt.Errorf("download cached runtime input: %w", err)
-		}
-		if err := cache.touch(directory); err != nil {
-			return err
-		}
-		published = true
 	}
+	if err := cache.remove(key); err != nil {
+		return err
+	}
+	available, err := availableBytes(workspace)
+	if err != nil {
+		return err
+	}
+	if input.SizeBytes > available/2 {
+		return downloadAttemptInput(ctx, client, identity, claimed, input, workspace)
+	}
+	if !cache.reserve(key, input.SizeBytes) {
+		// Capacity is a cache admission limit, never a reason to reject an execution.
+		return downloadAttemptInput(ctx, client, identity, claimed, input, workspace)
+	}
+	published := false
+	defer func() {
+		if !published {
+			resultErr = errors.Join(resultErr, cache.remove(key))
+		}
+	}()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	if err := downloadAttemptInput(ctx, client, identity, claimed, cachedInput, directory); err != nil {
+		return fmt.Errorf("download cached runtime input: %w", err)
+	}
+	if err := cache.touch(directory); err != nil {
+		return err
+	}
+	published = true
+	if err := materializeCachedArchive(ctx, directory, workspace, input); err != nil {
+		return err
+	}
+	return cache.touch(directory)
+}
+
+func materializeCachedArchive(ctx context.Context, directory, workspace string, input ExecutionInput) error {
 	available, err := availableBytes(workspace)
 	if err != nil {
 		return err
@@ -181,16 +201,13 @@ func (cache *runtimeInputCache) materialize(ctx context.Context, client *Client,
 	if input.SizeBytes > available {
 		return &workspaceCapacityError{requiredBytes: input.SizeBytes, availableBytes: available}
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := copyCachedArchive(ctx, filepath.Join(directory, "archive"), filepath.Join(workspace, input.TargetPath), input.SizeBytes); err != nil {
+	if err := copyCachedArchive(ctx, filepath.Join(directory, "archive"), filepath.Join(workspace, input.TargetPath), input); err != nil {
 		return fmt.Errorf("copy cached runtime input: %w", err)
 	}
-	return cache.touch(directory)
+	return nil
 }
 
-func copyCachedArchive(ctx context.Context, source, destination string, size int64) error {
+func copyCachedArchive(ctx context.Context, source, destination string, expected ExecutionInput) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return err
 	}
@@ -205,13 +222,17 @@ func copyCachedArchive(ctx context.Context, source, destination string, size int
 	}
 	defer os.Remove(output.Name())
 	defer output.Close()
-	reader := &cacheContextReader{ctx: ctx, source: io.LimitReader(input, size+1)}
-	written, err := io.Copy(output, reader)
+	reader := &cacheContextReader{ctx: ctx, source: io.LimitReader(input, expected.SizeBytes+1)}
+	digest := sha256.New()
+	written, err := io.Copy(io.MultiWriter(output, digest), reader)
 	if err != nil {
 		return err
 	}
-	if written != size {
-		return errors.New("cached runtime input size changed while copying")
+	if written != expected.SizeBytes || hex.EncodeToString(digest.Sum(nil)) != expected.SHA256 {
+		return errCachedRuntimeInputCorrupt
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := output.Sync(); err != nil {
 		return err
@@ -234,7 +255,7 @@ func (reader *cacheContextReader) Read(buffer []byte) (int, error) {
 	return reader.source.Read(buffer)
 }
 
-func (cache *runtimeInputCache) valid(directory string, input ExecutionInput) (bool, error) {
+func (cache *runtimeInputCache) freshArchive(directory string, input ExecutionInput) (bool, error) {
 	usage, err := cache.usage(directory)
 	if err != nil {
 		return false, err
@@ -252,7 +273,7 @@ func (cache *runtimeInputCache) valid(directory string, input ExecutionInput) (b
 	if !stat.Mode().IsRegular() || stat.Size() != input.SizeBytes {
 		return false, nil
 	}
-	return existingInputMatches(directory, input)
+	return true, nil
 }
 
 func (cache *runtimeInputCache) usage(directory string) (*runtimeInputUsage, error) {

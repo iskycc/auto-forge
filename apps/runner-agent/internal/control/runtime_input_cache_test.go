@@ -3,12 +3,91 @@ package control
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestCachedArchiveCopyVerifiesBeforePublishing(t *testing.T) {
+	input, _ := batchTestInput([]byte("verified"))
+	for _, content := range []string{"verified", "tampered", "short", "unexpected extra bytes"} {
+		t.Run(content, func(t *testing.T) {
+			directory := t.TempDir()
+			source := filepath.Join(directory, "archive")
+			destination := filepath.Join(directory, "workspace", "archive")
+			if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, []byte("previous"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := copyCachedArchive(context.Background(), source, destination, input)
+			want := "verified"
+			if content != want {
+				if !errors.Is(err, errCachedRuntimeInputCorrupt) {
+					t.Fatalf("unverified archive error = %v", err)
+				}
+				want = "previous"
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := os.ReadFile(destination)
+			if err != nil || string(actual) != want {
+				t.Fatalf("published archive = %q, want %q: %v", actual, want, err)
+			}
+			entries, err := os.ReadDir(filepath.Dir(destination))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), ".cached-input-") {
+					t.Fatal("temporary archive retained")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkWarmRuntimeInputMaterialization(b *testing.B) {
+	content := make([]byte, 32<<20)
+	input, _ := batchTestInput(content)
+	input.Kind = "jar-bundle"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Length", fmt.Sprint(len(content)))
+		_, _ = writer.Write(content)
+	}))
+	defer server.Close()
+	configuration := testConfiguration(b, server.URL)
+	client, err := NewClient(configuration)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer client.Close()
+	cache := newRuntimeInputCache(b.TempDir())
+	workspace := b.TempDir()
+	claimed := batchClaimedAssignment("benchmark-attempt", "benchmark-batch", input)
+	claimed.Assignment.ExecutionSpec.ResourceLimits.DiskBytes = 128 << 20
+	materialize := func() {
+		if err := cache.materialize(context.Background(), client, Identity{}, claimed, input, workspace); err != nil {
+			b.Fatal(err)
+		}
+	}
+	materialize()
+	b.SetBytes(input.SizeBytes)
+	b.ResetTimer()
+	for b.Loop() {
+		materialize()
+	}
+}
 
 func TestRuntimeCacheOutlivesClosedBatches(t *testing.T) {
 	input, _ := batchTestInput([]byte("bundle"))
@@ -149,7 +228,8 @@ func TestRuntimeInputCacheCoalescesConcurrentBatchesAndRepairsCorruption(t *test
 	if downloads.Load() != 1 {
 		t.Fatalf("concurrent downloads = %d", downloads.Load())
 	}
-	if err := os.WriteFile(filepath.Join(cache.root, cache.key(input), "archive"), []byte("corrupt"), 0o600); err != nil {
+	// A same-size change passes the metadata check and must be caught while copying.
+	if err := os.WriteFile(filepath.Join(cache.root, cache.key(input), "archive"), []byte(strings.Repeat("!", len(content))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := cache.materialize(context.Background(), client, Identity{}, batchClaimedAssignment("attempt", "batch", input), input, t.TempDir()); err != nil {

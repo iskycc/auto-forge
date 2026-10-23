@@ -11,6 +11,21 @@ import (
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/executor"
 )
 
+func acknowledgedLogChunks(chunks []logChunk) logWatermark {
+	watermark := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
+	for _, chunk := range chunks {
+		switch chunk.Stream {
+		case "stdout":
+			watermark.Stdout = max(watermark.Stdout, chunk.Sequence)
+		case "stderr":
+			watermark.Stderr = max(watermark.Stderr, chunk.Sequence)
+		case "agent":
+			watermark.Agent = max(watermark.Agent, chunk.Sequence)
+		}
+	}
+	return watermark
+}
+
 func TestLogCollectorRedactsCrossChunkSecretBeforeSpooling(t *testing.T) {
 	spool, err := newLogSpool(t.TempDir(), config.SpoolConfig{
 		MaximumBytes: 1 << 20,
@@ -77,6 +92,23 @@ func TestLogCollectorFlushesAgentStreamImmediately(t *testing.T) {
 	}
 	if len(chunks) != 1 || chunks[0].Stream != "agent" || chunks[0].Content != "Agent started.\n" {
 		t.Fatalf("agent chunk was not flushed immediately: %#v", chunks)
+	}
+	select {
+	case <-collector.firstOutput:
+		t.Fatal("Agent diagnostics must not consume the first test-output wakeup")
+	default:
+	}
+	for _, stream := range []string{"stdout", "stderr"} {
+		if err := collector.Write(executor.LogChunk{
+			Stream: stream, Content: "first test output\n", RecordedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-collector.firstOutput:
+		default:
+			t.Fatal("persisted test output did not wake the uploader")
+		}
 	}
 }
 

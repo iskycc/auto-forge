@@ -24,6 +24,7 @@ import { caseDebugResult } from "@/lib/case-debug-result";
 import { runBatchCompletionLabel } from "@/lib/run-batch-presentation";
 import { useConfirm, useToast } from "./ui-feedback";
 import { CaseDebugSplitter } from "./case-debug-splitter";
+import { useDebugLogStream } from "./use-debug-log-stream";
 
 const attemptStatusLabels: Record<RunAttempt["status"], string> = {
   assigned: "已分配",
@@ -332,6 +333,29 @@ function CaseDebugLogs({
   const logViewport = useRef<HTMLPreElement>(null);
   const [refresh, setRefresh] = useState(0);
   const terminal = ["succeeded", "failed", "timed_out", "cancelled"].includes(attempt.status);
+
+  useDebugLogStream({
+    attemptId: attempt.id,
+    enabled: canRead && visible && following && !terminal,
+    onConnected: () => setRefresh((value) => value + 1),
+    onChunks: (chunks, truncatedStreams) => {
+      const incoming = chunks.filter((chunk) => chunk.stream === stream);
+      if (!incoming.length) return;
+      if (truncatedStreams.includes(stream)) setTrimmed(true);
+      setLogPage((previous) => {
+        const window = debugLogWindow(previous?.items ?? [], incoming);
+        if (window.trimmed) setTrimmed(true);
+        return {
+          ...previous,
+          items: window.items,
+          acknowledgedSequence: previous?.acknowledgedSequence ?? -1,
+          truncated: previous?.truncated ?? false,
+        };
+      });
+      // Only persisted reads advance the cursor: a socket can omit frames during
+      // reconnect. The existing pager repairs gaps and deduplicates live chunks.
+    },
+  });
 
   useEffect(() => {
     if (!canRead || !visible || view === "paused") return;

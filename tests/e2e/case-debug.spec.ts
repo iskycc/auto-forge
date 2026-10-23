@@ -136,11 +136,47 @@ test("debug workspace imports JAR and personal DDT assets, executes existing and
   await expect(panel.getByLabel("调试配置保存状态")).toHaveText("配置已自动保存到当前浏览器");
   await screenshotReview(page, "ordinary-existing");
   await heartbeat(page, runner);
+  const liveSocket = page.waitForEvent("websocket", {
+    predicate: (socket) => new URL(socket.url()).pathname === "/api/v1/log-stream",
+    timeout: 10_000,
+  });
+  const readySocket = liveSocket.then((socket) =>
+    socket.waitForEvent("framereceived", {
+      predicate: (frame) => JSON.parse(String(frame.payload)).type === "ready",
+    }),
+  );
   await panel.getByRole("button", { name: "开始调试", exact: true }).click();
   await expect(page).toHaveURL(/testngBatch=/);
   const existingClaim = await claim(page, runner);
   expect(existingClaim.assignment.executionSpec.className).toBe(className);
-  await logAndComplete(page, runner, existingClaim);
+  await readySocket;
+  const logReads = `**/api/v1/run-attempts/${existingClaim.assignment.attemptId}/logs?*`;
+  // Persisted reads deliberately return no output: only the live channel can
+  // display the first line before completion, without waiting for the next poll.
+  await page.route(logReads, (route) =>
+    route.fulfill({ json: { items: [], acknowledgedSequence: -1, truncated: false } }),
+  );
+  const firstOutputStarted = performance.now();
+  await logAndComplete(page, runner, existingClaim, "succeeded", async () => {
+    await expect(page.getByLabel("调试日志内容")).toContainText("DEBUG_NEW_JAR_EXECUTED");
+    await test.info().attach("first-live-output", {
+      contentType: "application/json",
+      body: JSON.stringify({
+        uploadToVisibleMs: performance.now() - firstOutputStarted,
+        persistedReadsSuppressed: true,
+      }),
+    });
+    const results = page.getByLabel("调试执行结果");
+    const closed = (await liveSocket).waitForEvent("close");
+    await results.getByRole("checkbox", { name: "跟随最新" }).uncheck();
+    await closed;
+    const resumed = page.waitForEvent("websocket", {
+      predicate: (socket) => new URL(socket.url()).pathname === "/api/v1/log-stream",
+    });
+    await results.getByRole("checkbox", { name: "跟随最新" }).check();
+    await resumed;
+    await page.unroute(logReads);
+  });
   await expect(page.getByLabel("调试执行结果")).toContainText("执行通过");
 
   await classInput.getByRole("button", { name: "上传 JAR", exact: true }).click();
@@ -701,6 +737,7 @@ async function logAndComplete(
   runner: { runnerId: string; credential: string },
   claim: ClaimedAssignment,
   outcome: "succeeded" | "failed" | "skipped" = "succeeded",
+  beforeComplete?: () => Promise<void>,
 ) {
   const status = outcome === "succeeded" ? "succeeded" : "failed";
   const path = `/api/v1/run-attempts/${claim.assignment.attemptId}`;
@@ -734,6 +771,7 @@ async function logAndComplete(
     },
   });
   expect(logged.status()).toBe(200);
+  await beforeComplete?.();
   const completed = await page.request.post(`${path}/complete`, {
     headers: runnerHeaders(runner),
     data: {
