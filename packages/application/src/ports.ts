@@ -1788,6 +1788,11 @@ export type AttemptLogSnapshot = {
   batchId: string;
   batchSequenceNumber: number;
   executionRunId: string;
+  caseDefinitionId: string;
+  ddtCaseId: string | null;
+  ddtProjectId: string | null;
+  ddtProjectVersionId: string | null;
+  ddtTestStageId: string | null;
   displayName: string;
   className: string;
   caseType: "testng" | "ddt";

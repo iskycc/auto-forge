@@ -121,6 +121,31 @@ async function seedSnapshot(fixture: SnapshotFixture): Promise<void> {
     );
   }
   await fixture.execute(
+    `INSERT INTO projects (id, name, slug, created_at, updated_at)
+     VALUES ('project-ddt', 'DDT project', 'ddt-project', ?, ?)`,
+    [timestamp, timestamp],
+  );
+  await fixture.execute(
+    `INSERT INTO project_versions
+     (id, project_id, name, normalized_name, created_at, updated_at)
+     VALUES ('version-ddt', 'project-ddt', 'v1', 'v1', ?, ?)`,
+    [timestamp, timestamp],
+  );
+  await fixture.execute(
+    `INSERT INTO test_stages
+     (id, project_id, project_version_id, name, normalized_name, position, created_at, updated_at)
+     VALUES ('stage-ddt', 'project-ddt', 'version-ddt', 'Regression', 'regression', 0, ?, ?)`,
+    [timestamp, timestamp],
+  );
+  await fixture.execute(
+    `INSERT INTO ddt_cases
+     (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
+      sr_num, sr_num_normalized, case_kind, data_json, created_at, updated_at)
+     VALUES ('run-ddt', 'project-ddt', 'version-ddt', 'stage-ddt', 'DDT001', 'ddt001',
+             'SR1', 'sr1', 'standard', '{}', ?, ?)`,
+    [timestamp, timestamp],
+  );
+  await fixture.execute(
     `WITH RECURSIVE members(n) AS (
        SELECT 1 UNION ALL SELECT n + 1 FROM members WHERE n < 9998
      )
@@ -328,6 +353,11 @@ for (const mode of ["sqlite", "postgres"] as const) {
             batchId: "batch",
             batchSequenceNumber: 7,
             executionRunId: runId,
+            caseDefinitionId: runId,
+            ddtCaseId: caseType === "ddt" ? "DDT001" : null,
+            ddtProjectId: caseType === "ddt" ? "project-ddt" : null,
+            ddtProjectVersionId: caseType === "ddt" ? "version-ddt" : null,
+            ddtTestStageId: caseType === "ddt" ? "stage-ddt" : null,
             displayName,
             className: "example.Checkout",
             caseType,
@@ -337,6 +367,30 @@ for (const mode of ["sqlite", "postgres"] as const) {
         expect(await fixture.batches.getMetadata("batch")).toMatchObject({ status: "running" });
         expect(counters).not.toHaveBeenCalled();
         expect(rerun).not.toHaveBeenCalled();
+        if (fixture.sqliteQueryPlan) {
+          const statement = fixture.statements().find((sql) => sql.includes("AS ddtCaseId"))!;
+          const plan = fixture.sqliteQueryPlan(statement, ["run-ddt", "batch"]);
+          expect(plan.join("\n")).not.toMatch(/SCAN (?:run|ddt)\b/u);
+        }
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    it("retains historical execution facts after the DDT record is removed", async () => {
+      const fixture = await createFixture(mode);
+      try {
+        await seedSnapshot(fixture);
+        await fixture.execute("DELETE FROM ddt_cases WHERE id = 'run-ddt'");
+        expect(await fixture.batches.getAttemptLogSnapshot("batch", "run-ddt")).toMatchObject({
+          caseType: "ddt",
+          caseDefinitionId: "run-ddt",
+          displayName: "DDT001",
+          ddtCaseId: null,
+          ddtProjectId: null,
+          ddtProjectVersionId: null,
+          ddtTestStageId: null,
+        });
       } finally {
         await fixture.close();
       }

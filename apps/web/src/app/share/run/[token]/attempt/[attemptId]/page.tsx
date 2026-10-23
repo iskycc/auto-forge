@@ -37,7 +37,7 @@ export default async function SharedRunAttemptLogPage({
     selectedAttemptId,
   );
   if (!view) return <InvalidAttemptLogShareView />;
-  const { rerunAccess, canCancelRuns } = await sharedLogAccess(
+  const { rerunAccess, canCancelRuns, canReadCaseDetails } = await sharedLogAccess(
     services,
     await currentIdentity(),
     view.attemptId,
@@ -46,6 +46,7 @@ export default async function SharedRunAttemptLogPage({
     <SharedAttemptLogContent
       key={view.attemptId}
       canCancelRuns={canCancelRuns}
+      canReadCaseDetails={canReadCaseDetails}
       historyHref={`/share/run/${encodeURIComponent(token)}/attempt/${encodeURIComponent(anchorAttemptId)}`}
       rerunAccess={rerunAccess}
       timeZone={services.configurationStore.read().web.timeZone}

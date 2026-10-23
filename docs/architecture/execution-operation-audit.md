@@ -152,3 +152,30 @@ DDT 管理的 GET/POST 列表原来直接调用本地仓储，复杂字段筛选
 Agent 诊断新增 `workspace_ready` 与 `process_created` 阶段的 `elapsedMs`，沿用已有 spool、脱敏、上传与确认水位，不新增数据库字段或协议字段。前者记录输入与运行时就绪，后者记录进程创建及身份持久化；进程创建仍可能早于资源握手和 JVM/用例初始化。阶段日志错误保留 cause，启动路径不会在记录失败后假装成功。旧 Runner、Lite/Full 和原有执行终态继续兼容。这些诊断用于下一次实际执行区分耗时，不作为已消除十秒等待的承诺。
 
 阶段回归先在原实现因缺少 `workspace_ready` 失败；修改后 Go 全量测试通过，覆盖阶段日志、输入准备、完成上报、水位、批次清理及上一轮首条唤醒、缓存损坏恢复。测试服务按实际上传块确认 Agent 水位，不再将诊断流永远固定在序号零。本轮不修改页面样式，上一轮两项完整 Lite Playwright 和桌面截图仍作为页面验证；未重新运行完整 Full 部署或完整离线镜像验收。探针、失败记录和验证命令保存于 `/var/tmp/autoforge-startup-20261023/`。
+
+## 2026-10-23：公开日志跳转用例历史
+
+公开日志操作区新增“用例详情”，以原生新标签页链接打开详情，保留当前日志及轮次。普通用例定位到平台用例 ID；DDT 定位到当前 DDT 记录自身的 CaseID 和项目、版本、阶段，不跳到关联测试类。DDT 独立详情页复用现有执行历史、分析结论和统计历史组件，沿用已完成记录过滤、服务端有界分页与日志权限。业务地址、旧日志令牌地址和旧批次日志地址共用布局与权限决策，手动重跑继续指向同一个用例。
+
+公开授权仍只允许原日志家族的读取，不扩大为全部用例历史的匿名授权。匿名访客通过日志页本页登录框恢复 session，登录后仍停留在原日志地址，再新开详情；详情独立要求目标项目的 `case.read` 权限，与日志读取、重跑和停止权限分别判定。用例不存在、缺少完整 DDT 范围或强制改密时不会绕过原有权限边界。
+
+Lite/Full 在原来的单行日志快照查询中补充用例标识，DDT 通过主键关联取得 CaseID 和完整范围，不读取 DDT 正文、全部批次成员、计数聚合或重跑准备数据。SQLite 查询计划确认没有扫描执行成员或 DDT 表；DDT 记录删除后仍保留原执行事实及公开日志。没有数据库迁移、持久配置、生产依赖或 Runner/Adapter 协议变更。
+
+第一次浏览器验收发现，新 DDT 详情页的单段路径参数仍保留中文 URI 编码，而同一用例的 workspace API 可正常读取。经本地生产构建定向核验后，改用 `/cases/ddt?caseId=...&projectId=...&projectVersionId=...&testStageId=...`，统一由查询参数解析，避免手动重复解码损坏包含 `%`、`/`、`?`、`&` 等字符的 CaseID。随后重新构建并完成中文 DDT、连续手动重跑及原地登录回归。
+
+本轮 45 项应用、权限、导航与 Ant Design 检查，以及 16 项真实 SQLite/PostgreSQL 集成测试通过。生产 Lite 下两条完整 Playwright 流程通过，覆盖 501 用例活动批次中的普通用例、中文 DDT、手动重跑、旧令牌链接、鼠标和键盘新标签页、匿名会话失败重试、登录弹框取消和登录后保持地址。已实际查看 1024×768、1536×960 的浅色/深色截图，按钮层级、对齐、表格和滚动边界正常，没有新增页面变形。受影响文件 Prettier、ESLint、Web/服务端/工作线程与测试类型检查、18 行 E2E 矩阵和 Web 生产构建通过。
+
+主要验证命令：
+
+```sh
+pnpm exec vitest run packages/application/test/attempt-log-shares.test.ts apps/web/src/lib/shared-attempt-log.test.ts apps/web/src/lib/shared-attempt-log-access.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm exec vitest run packages/db/test/attempt-log-snapshot.integration.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm --filter @autoforge/web typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm test:e2e:matrix
+pnpm --filter @autoforge/web build
+pnpm exec playwright test tests/e2e/single-case-run.spec.ts tests/e2e/ddt-management.spec.ts --grep 'log detail reruns a completed case from an active 501-case batch|public logs rerun failed Chinese DDT cases' --workers=1
+git diff --check
+```
+
+数据库测试显式连接一次性 PostgreSQL，两个适配器均实际执行；浏览器使用 Lite 和 Runner Protocol 夹具。因变更限于导航、权限与单行读取投影，本轮没有重跑 Full 整套基础设施、真实 Java Runner 或完整离线发布验收。所有重负载任务串行限制一个 CPU、4 GiB 内存；日志、截图、首次失败与复验记录保存在本地 `/var/tmp/autoforge-log-case-detail-20261023/`。

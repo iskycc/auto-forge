@@ -50,6 +50,17 @@ export interface SharedAttemptLogRoundView {
   requestedBy?: { username: string; source: "local" | "ldap" } | null;
 }
 
+/** Navigation identifies the DDT record itself, never its associated TestNG class. */
+export type SharedLogCaseDetailTarget =
+  | { type: "testng"; caseDefinitionId: string }
+  | {
+      type: "ddt";
+      caseId: string;
+      projectId: string;
+      projectVersionId: string;
+      testStageId: string;
+    };
+
 /** 导出/日志公开访问页共用的单行数据结构。 */
 export interface SharedAttemptLogView {
   batchId: string;
@@ -63,6 +74,8 @@ export interface SharedAttemptLogView {
   /** 本次执行快照的完整类路径，TestNG 与 DDT 共用。 */
   casePath: string;
   caseType?: "testng" | "ddt";
+  /** Internal detail navigation still requires the target project's case.read permission. */
+  caseDetail?: SharedLogCaseDetailTarget;
   /** TestNG 展示名；DDT 为本次执行快照的 CaseID。 */
   displayName: string;
   /** 当前查看的执行实际使用的依赖压缩包上传/登记时间；历史未记录时为 null。 */

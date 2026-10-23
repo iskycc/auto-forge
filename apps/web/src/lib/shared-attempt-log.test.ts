@@ -4,8 +4,38 @@ import {
   SHARED_LOG_MAX_BYTES,
   sharedOutcomeClass,
   sharedOutcomeLabel,
+  sharedCaseDetailHref,
   truncateSharedLogText,
 } from "./shared-attempt-log";
+
+describe("log detail case navigation", () => {
+  it("encodes ordinary case IDs as a single path segment", () => {
+    expect(sharedCaseDetailHref({ type: "testng", caseDefinitionId: "case/1?x" })).toBe(
+      "/cases/case%2F1%3Fx",
+    );
+  });
+
+  it("preserves a Chinese DDT CaseID and its original scope independently of selection cookies", () => {
+    const caseId = "中文订单/%?&";
+    const url = new URL(
+      sharedCaseDetailHref({
+        type: "ddt",
+        caseId,
+        projectId: "project",
+        projectVersionId: "version+1",
+        testStageId: "stage&2",
+      }),
+      "http://localhost",
+    );
+    expect(url.pathname).toBe("/cases/ddt");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      caseId,
+      projectId: "project",
+      projectVersionId: "version+1",
+      testStageId: "stage&2",
+    });
+  });
+});
 
 describe("truncateSharedLogText", () => {
   it("keeps logs within the byte limit untouched", () => {

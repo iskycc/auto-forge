@@ -29,7 +29,7 @@ export default async function PublicCaseLogPage({
     query.data.AttemptId,
   );
   if (!view) return <InvalidAttemptLogShareView />;
-  const { rerunAccess, canCancelRuns } = await sharedLogAccess(
+  const { rerunAccess, canCancelRuns, canReadCaseDetails } = await sharedLogAccess(
     services,
     await currentIdentity(),
     view.attemptId,
@@ -38,6 +38,7 @@ export default async function PublicCaseLogPage({
     <SharedAttemptLogContent
       key={view.attemptId}
       canCancelRuns={canCancelRuns}
+      canReadCaseDetails={canReadCaseDetails}
       historyHref={publicCaseLogPath(query.data.ExecutionId)}
       rerunAccess={rerunAccess}
       timeZone={services.configurationStore.read().web.timeZone}

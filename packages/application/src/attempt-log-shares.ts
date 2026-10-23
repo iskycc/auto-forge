@@ -1,8 +1,13 @@
-import type { SharedAttemptLogOutcome, SharedAttemptLogView } from "@autoforge/contracts";
+import type {
+  SharedAttemptLogOutcome,
+  SharedAttemptLogView,
+  SharedLogCaseDetailTarget,
+} from "@autoforge/contracts";
 import { isManualCaseExecution, runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
 
 import type {
   AttemptLogShareRepository,
+  AttemptLogSnapshot,
   Clock,
   ExecutionControlRepository,
   RunBatchRepository,
@@ -166,6 +171,7 @@ export class AttemptLogShareService {
       casePath: selectedSnapshot.className,
       displayName: selectedSnapshot.displayName,
       caseType: selectedSnapshot.caseType,
+      ...caseDetailNavigation(selectedSnapshot),
       dependencyUpdatedAt: selectedSnapshot.dependencyUpdatedAt,
       outcome,
       resultCode: attempt.resultCode ?? null,
@@ -240,6 +246,30 @@ export class AttemptLogShareService {
     const bounded = truncateUtf8(joined, SHARED_LOG_MAX_BYTES);
     return { text: bounded.text, truncated: truncated || bounded.truncated };
   }
+}
+
+function caseDetailNavigation(snapshot: AttemptLogSnapshot): {
+  caseDetail?: SharedLogCaseDetailTarget;
+} {
+  if (snapshot.caseType === "testng") {
+    return { caseDetail: { type: "testng", caseDefinitionId: snapshot.caseDefinitionId } };
+  }
+  if (
+    !snapshot.ddtCaseId ||
+    !snapshot.ddtProjectId ||
+    !snapshot.ddtProjectVersionId ||
+    !snapshot.ddtTestStageId
+  )
+    return {};
+  return {
+    caseDetail: {
+      type: "ddt",
+      caseId: snapshot.ddtCaseId,
+      projectId: snapshot.ddtProjectId,
+      projectVersionId: snapshot.ddtProjectVersionId,
+      testStageId: snapshot.ddtTestStageId,
+    },
+  };
 }
 
 function utf8ByteLength(value: string): number {

@@ -20,6 +20,7 @@ describe("log detail control permissions", () => {
     expect(await sharedLogAccess(services, null, "attempt")).toEqual({
       rerunAccess: "login",
       canCancelRuns: false,
+      canReadCaseDetails: false,
     });
     expect(getAttemptRerunContext).not.toHaveBeenCalled();
   });
@@ -33,6 +34,7 @@ describe("log detail control permissions", () => {
       expect(await sharedLogAccess(services, identity, "attempt")).toEqual({
         rerunAccess: "read_only",
         canCancelRuns: canStop,
+        canReadCaseDetails: true,
       });
     },
   );
@@ -43,6 +45,28 @@ describe("log detail control permissions", () => {
     expect(await sharedLogAccess(services, identity, "attempt")).toEqual({
       rerunAccess: "forbidden",
       canCancelRuns: false,
+      canReadCaseDetails: false,
+    });
+  });
+  it("does not grant case access through public log, retry or stop permissions", async () => {
+    authorize.mockImplementation((_identity, permission, projectId) => {
+      expect(projectId).toBe("project");
+      if (permission === "case.read") throw new DomainError("AUTH_FORBIDDEN", "denied");
+    });
+    expect(await sharedLogAccess(services, identity, "attempt")).toEqual({
+      rerunAccess: "allowed",
+      canCancelRuns: true,
+      canReadCaseDetails: false,
+    });
+  });
+  it("permits case navigation independently of authenticated log controls", async () => {
+    authorize.mockImplementation((_identity, permission) => {
+      if (permission !== "case.read") throw new DomainError("AUTH_FORBIDDEN", "denied");
+    });
+    expect(await sharedLogAccess(services, identity, "attempt")).toEqual({
+      rerunAccess: "forbidden",
+      canCancelRuns: false,
+      canReadCaseDetails: true,
     });
   });
   it("preserves infrastructure failures rather than treating them as denied permission", async () => {
@@ -50,5 +74,14 @@ describe("log detail control permissions", () => {
     await expect(sharedLogAccess(services, identity, "attempt")).rejects.toThrow(
       "database unavailable",
     );
+  });
+  it("requires the initial password change before enabling case navigation", async () => {
+    const restricted = { ...identity, user: { ...identity.user, forcePasswordChange: true } };
+    expect(await sharedLogAccess(services, restricted, "attempt")).toEqual({
+      rerunAccess: "forbidden",
+      canCancelRuns: false,
+      canReadCaseDetails: false,
+    });
+    expect(getAttemptRerunContext).not.toHaveBeenCalled();
   });
 });

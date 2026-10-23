@@ -9,6 +9,8 @@ import type { ClaimAssignmentsResponse } from "@autoforge/contracts";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { expectLogCaseDetail } from "./support/log-case-detail";
+import { legacyAttemptLogPath } from "./support/legacy-public-links";
 import {
   browserJson,
   ensureAdministrator,
@@ -360,6 +362,35 @@ test("log detail reruns a completed case from an active 501-case batch and its m
   );
   expect(originalLog.status).toBe(200);
   await page.goto(originalLog.body.shareUrl);
+  const caseDetails = await browserJson<{ items: Array<{ id: string; displayName: string }> }>(
+    page,
+    `/api/v1/case-definitions?${new URLSearchParams({
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      testStageId: project.stageId,
+      query: sourceClaim.assignment.executionSpec.className,
+      limit: "10",
+    })}`,
+  );
+  expect(caseDetails.status).toBe(200);
+  expect(caseDetails.body.items).toHaveLength(1);
+  const sourceCaseId = caseDetails.body.items[0]!.id;
+  const sourceDisplayName = caseDetails.body.items[0]!.displayName;
+  const detailPath = `/cases/${encodeURIComponent(sourceCaseId)}`;
+  await expectLogCaseDetail(page, detailPath, sourceDisplayName, "ordinary-case-history");
+  await page.goto(await legacyAttemptLogPath(sourceClaim.assignment.attemptId));
+  await expectLogCaseDetail(page, detailPath, sourceDisplayName);
+  const detailLink = page.getByRole("link", { name: "用例详情", exact: true });
+  await detailLink.focus();
+  const keyboardPopup = page.waitForEvent("popup");
+  await detailLink.press("Enter");
+  const keyboardDetails = await keyboardPopup;
+  try {
+    await expect(keyboardDetails).toHaveURL(new URL(detailPath, page.url()).href);
+  } finally {
+    await keyboardDetails.close();
+  }
+  await page.goto(originalLog.body.shareUrl);
   for (let execution = 0; execution < 2; execution += 1) {
     const submission = page.waitForResponse(
       (response) =>
@@ -409,6 +440,7 @@ test("log detail reruns a completed case from an active 501-case batch and its m
     expect(manualLog.status).toBe(200);
     await page.goto(manualLog.body.shareUrl);
     await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
+    await expectLogCaseDetail(page, detailPath, sourceDisplayName);
   }
 
   const finalSource = await browserJson<{ status: string; totalRuns: number }>(page, summaryUrl);

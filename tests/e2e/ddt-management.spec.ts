@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution } from "./support/task-execution";
 import { associateDdtSr, setUnlinkedSrFilter } from "./support/ddt-associations";
+import { expectLogCaseDetail } from "./support/log-case-detail";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -15,6 +16,8 @@ import { dropCaseListFiles } from "./support/case-list-upload";
 import {
   acceptSystemDialog,
   browserJson,
+  E2E_ADMIN_USERNAME,
+  E2E_ADMIN_PASSWORD,
   ensureAdministrator,
   selectProjectContext,
   uniqueName,
@@ -3033,6 +3036,13 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
     let claim = await claimCase(source.body.id);
     await completeCase(claim, "failed");
     await openLog(claim.assignment.attemptId);
+    const detailPath = `/cases/ddt?${new URLSearchParams({
+      caseId,
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+    })}`;
+    await expectLogCaseDetail(page, detailPath, caseId, "ddt-case-history");
     for (const status of ["failed", "succeeded"] as const) {
       const submitted = page.waitForResponse(
         (response) =>
@@ -3049,6 +3059,7 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       claim = await claimCase(manual.batchId);
       await completeCase(claim, status);
       await openLog(claim.assignment.attemptId);
+      await expectLogCaseDetail(page, detailPath, caseId);
     }
     const apiRun = await browserJson<{ batchId: string; statusUrl: string }>(
       page,
@@ -3118,6 +3129,7 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
         .addCookies([{ name: "autoforge-color-mode", value: theme, url: currentPublicLogUrl }]);
       await page.reload();
       await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
+      await expectLogCaseDetail(page, detailPath, caseId, `ddt-case-history-${theme}`);
       for (const width of [1024, 1536]) {
         await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
         await capturePublicLog(page, `chinese-ddt-log-rerun-${theme}-${width}`);
@@ -3150,6 +3162,19 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       await expect(
         anonymousPage.getByRole("button", { name: "登录后执行此用例", exact: true }),
       ).toBeVisible();
+      await expect(anonymousPage.getByRole("link", { name: "用例详情", exact: true })).toHaveCount(
+        0,
+      );
+      await anonymousPage.getByRole("button", { name: "登录后查看用例详情", exact: true }).click();
+      await expect(
+        anonymousPage.getByRole("dialog", { name: "登录控制台", exact: true }),
+      ).toBeVisible();
+      expect(new URL(anonymousPage.url()).pathname).toBe(new URL(currentPublicLogUrl).pathname);
+      await anonymousPage
+        .getByRole("dialog", { name: "登录控制台", exact: true })
+        .getByRole("button", { name: "关闭登录控制台", exact: true })
+        .click();
+      expect(anonymousPage.url()).toBe(currentPublicLogUrl);
       expect(sessionChecks).toBe(2);
       await expect(
         anonymousPage.getByRole("button", { name: "执行此用例", exact: true }),
@@ -3158,6 +3183,16 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
         await anonymousPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
         await capturePublicLog(anonymousPage, `public-log-session-anonymous-${width}`);
       }
+      await anonymousPage.getByRole("button", { name: "登录后查看用例详情", exact: true }).click();
+      const loginDialog = anonymousPage.getByRole("dialog", { name: "登录控制台", exact: true });
+      await loginDialog.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+      await loginDialog.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+      await loginDialog.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(
+        anonymousPage.getByRole("link", { name: "用例详情", exact: true }),
+      ).toBeVisible();
+      expect(anonymousPage.url()).toBe(currentPublicLogUrl);
+      await expectLogCaseDetail(anonymousPage, detailPath, caseId);
     } finally {
       await anonymous.close();
     }

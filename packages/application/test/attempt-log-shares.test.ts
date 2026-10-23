@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { PERMANENT_LOG_ACCESS_EXPIRY, AttemptLogShareService } from "../src/attempt-log-shares";
 import type {
   AttemptLogShareRepository,
+  AttemptLogSnapshot,
   ExecutionControlRepository,
   RunBatchRepository,
 } from "../src/ports";
@@ -84,6 +85,7 @@ function makeBatchDetails(attemptOutcome: "succeeded" | "failed"): RunBatchDetai
 }
 
 type FakeState = {
+  snapshotFields?: Partial<AttemptLogSnapshot>;
   records: AttemptLogShareRecord[];
   logChunks: Array<{
     attemptId?: string;
@@ -101,7 +103,7 @@ type FakeState = {
 };
 
 function makeState(
-  overrides: Partial<Pick<FakeState, "logChunks" | "knownAttemptIds">> = {},
+  overrides: Partial<Pick<FakeState, "logChunks" | "knownAttemptIds" | "snapshotFields">> = {},
 ): FakeState {
   return {
     records: [],
@@ -162,10 +164,16 @@ function makeService(
             batchId,
             batchSequenceNumber: selectedBatch.sequenceNumber,
             executionRunId,
+            caseDefinitionId: run.caseDefinitionId,
+            ddtCaseId: null,
+            ddtProjectId: null,
+            ddtProjectVersionId: null,
+            ddtTestStageId: null,
             className: run.className,
             displayName: run.displayName,
             caseType: run.caseType ?? "testng",
             dependencyUpdatedAt: dependencyPublishedAt[batchId] ?? null,
+            ...state.snapshotFields,
           }
         : null;
     },
@@ -263,6 +271,43 @@ function makeService(
 }
 
 describe("AttemptLogShareService", () => {
+  it("identifies the ordinary case rather than its display name or execution run", async () => {
+    const state = makeState();
+    seedLegacyShare(state);
+    const view = await makeService(state).getSharedAttemptLog("token-1");
+    expect(view?.caseDetail).toEqual({ type: "testng", caseDefinitionId: "case-1" });
+  });
+
+  it("identifies a DDT case by its own current CaseID and complete scope", async () => {
+    const state = makeState({
+      snapshotFields: {
+        caseType: "ddt",
+        ddtCaseId: "中文订单/%?&",
+        ddtProjectId: "project",
+        ddtProjectVersionId: "version",
+        ddtTestStageId: "stage",
+      },
+    });
+    seedLegacyShare(state);
+    const view = await makeService(state).getSharedAttemptLog("token-1");
+    expect(view?.caseDetail).toEqual({
+      type: "ddt",
+      caseId: "中文订单/%?&",
+      projectId: "project",
+      projectVersionId: "version",
+      testStageId: "stage",
+    });
+    expect(state.wholeBatchReadCalls).toEqual([]);
+  });
+
+  it("keeps historical DDT logs readable when the DDT record no longer exists", async () => {
+    const state = makeState({ snapshotFields: { caseType: "ddt" } });
+    seedLegacyShare(state);
+    const view = await makeService(state).getSharedAttemptLog("token-1");
+    expect(view?.attemptId).toBe("attempt-1");
+    expect(view?.caseDetail).toBeUndefined();
+  });
+
   it("opens a completed case in an active batch without computing batch counters or preparing a rerun", async () => {
     const state = makeState();
     const batch = {

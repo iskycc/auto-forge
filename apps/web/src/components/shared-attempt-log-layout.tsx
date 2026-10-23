@@ -4,11 +4,13 @@ import { uiPatterns } from "@/components/ui/patterns";
 import type { SharedAttemptLogView } from "@autoforge/contracts";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { ExternalLink } from "lucide-react";
 
 import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
 import { SessionLoginButton } from "@/components/session-login-button";
 import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
+import { LinkButton } from "@/components/ui/link-button";
 import { LoadingState } from "@/components/loading-state";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
 import { highlightLogLevels } from "@/lib/log-levels";
@@ -17,6 +19,7 @@ import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 import {
   sharedOutcomeClass,
+  sharedCaseDetailHref,
   sharedOutcomeLabel,
   truncateSharedLogText,
 } from "@/lib/shared-attempt-log";
@@ -29,6 +32,7 @@ export type SharedAttemptLogContentProps = {
   rerunAccess: SharedLogRerunAccess;
   historyHref: string;
   canCancelRuns?: boolean;
+  canReadCaseDetails?: boolean;
 };
 
 export function SharedAttemptLogLayout({
@@ -37,6 +41,7 @@ export function SharedAttemptLogLayout({
   rerunAccess,
   historyHref,
   canCancelRuns = false,
+  canReadCaseDetails = false,
   live,
 }: SharedAttemptLogContentProps & {
   live?: { connected: boolean; error: string; retry: () => void; truncated: boolean };
@@ -82,12 +87,19 @@ export function SharedAttemptLogLayout({
                   {sharedOutcomeLabel(view.outcome)}
                 </Tag>
               </div>
-              <SharedLogRerunAction
-                access={rerunAccess}
-                attempt={{ id: view.attemptId, status: view.outcome }}
-                manualExecution={Boolean(view.manualExecution)}
-                canCancelRuns={canCancelRuns}
-              />
+              <div className="mb-4.5 flex flex-wrap items-center gap-2 [&_.shared-attempt-log-actions]:mb-0 [&_.share-log-rerun-login]:mb-0">
+                <SharedLogRerunAction
+                  access={rerunAccess}
+                  attempt={{ id: view.attemptId, status: view.outcome }}
+                  manualExecution={Boolean(view.manualExecution)}
+                  canCancelRuns={canCancelRuns}
+                />
+                <SharedLogCaseDetailAction
+                  target={view.caseDetail}
+                  canReadCaseDetails={canReadCaseDetails}
+                  access={rerunAccess}
+                />
+              </div>
               {view.rounds.length > 1 ? (
                 <RoundLogNavigation historyHref={historyHref} timeZone={timeZone} view={view} />
               ) : null}
@@ -233,6 +245,45 @@ export function SharedAttemptLogLayout({
         </Card>
       </div>
     </main>
+  );
+}
+
+function SharedLogCaseDetailAction({
+  target,
+  canReadCaseDetails,
+  access,
+}: {
+  target: SharedAttemptLogView["caseDetail"];
+  canReadCaseDetails: boolean;
+  access: SharedLogRerunAccess;
+}) {
+  if (!target) return null;
+  if (canReadCaseDetails) {
+    return (
+      <LinkButton
+        href={sharedCaseDetailHref(target)}
+        prefetch={false}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="新标签页查看用例详情及历史执行记录"
+      >
+        <ExternalLink size={15} aria-hidden="true" /> 用例详情
+      </LinkButton>
+    );
+  }
+  if (access === "login") {
+    return (
+      <SessionLoginButton
+        aria-label="登录后查看用例详情"
+        label="登录后查看用例详情"
+        variant="secondary"
+      />
+    );
+  }
+  return (
+    <Button disabled type="button" variant="secondary" title="当前账号没有该项目的用例读取权限">
+      无权查看用例详情
+    </Button>
   );
 }
 

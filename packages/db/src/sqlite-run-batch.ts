@@ -799,9 +799,13 @@ export class SqliteRunBatchRepository
       .prepare(
         `SELECT batch.id AS batchId, batch.sequence_number AS batchSequenceNumber,
                 run.id AS executionRunId, run.display_name AS displayName,
+                run.case_definition_id AS caseDefinitionId,
+                ddt.case_id AS ddtCaseId, ddt.project_id AS ddtProjectId,
+                ddt.project_version_id AS ddtProjectVersionId, ddt.test_stage_id AS ddtTestStageId,
                 run.class_name AS className, run.case_type AS caseType,
                 json_extract(batch.adapter_runtime_json, '$.jarBundle.createdAt') AS dependencyUpdatedAt
          FROM execution_runs run JOIN run_batches batch ON batch.id = run.batch_id
+         LEFT JOIN ddt_cases ddt ON run.case_type = 'ddt' AND ddt.id = run.case_definition_id
          WHERE run.id = ? AND batch.id = ?`,
       )
       .get(executionRunId, batchId) as AttemptLogSnapshot | undefined;
