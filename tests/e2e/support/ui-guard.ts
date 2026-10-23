@@ -1,5 +1,18 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
+export async function waitForVisibleWidth(control: Locator): Promise<number> {
+  let width = 0;
+  // Visibility and geometry can change between two browser calls during a transition.
+  // Return the exact positive measurement observed by this assertion.
+  await expect
+    .poll(async () => {
+      width = (await control.boundingBox())?.width ?? 0;
+      return width;
+    })
+    .toBeGreaterThan(0);
+  return width;
+}
+
 export async function expectPageFitsViewport(page: Page): Promise<void> {
   // Reserve space for native scrollbars; only content wider than the usable viewport overflows.
   await expect

@@ -2615,14 +2615,15 @@ test("topbar tools remain separate from execution controls across desktop widths
   );
   await ensureAdministrator(page);
   await expect(page.getByRole("button", { name: "2 条未读通知" })).toBeVisible();
-  const unreadBadge = page.locator(".notification-count");
+  const topbar = page.getByRole("banner");
+  const unreadBadge = topbar.locator(".notification-count");
   await expect(unreadBadge).toHaveCSS("border-width", "0px");
   await expect(unreadBadge).toHaveCSS("box-shadow", "none");
   await expectReadableText(unreadBadge);
   for (const width of [1024, 1180, 1181, 1280, 1500, 1501, 1536, 1920, 1024]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
-    const tools = page.locator(".topbar-tools");
-    const actions = page.locator(".topbar-actions");
+    const tools = topbar.locator(".topbar-tools");
+    const actions = topbar.locator(".topbar-actions");
     await expect(tools.getByRole("button", { name: "搜索配置" })).toBeVisible();
     await expect(tools.getByRole("button", { name: /通知$/ })).toBeVisible();
     await expect(actions.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();

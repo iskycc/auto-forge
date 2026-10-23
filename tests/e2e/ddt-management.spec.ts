@@ -2183,6 +2183,9 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
   await expect(details.getByRole("alert")).toContainText("请输入有效的数字");
   await details.getByLabel("retries 的值").fill("4");
   await details.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(
+    details.getByRole("button", { name: "编辑字段 retries", exact: true }),
+  ).toBeEnabled();
   const stored = await browserJson<{ data: { retries: number; enabled: boolean; 描述: string } }>(
     page,
     ddtPath(hierarchy, "cases/CASE-000"),

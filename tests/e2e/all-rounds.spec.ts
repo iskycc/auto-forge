@@ -18,7 +18,7 @@ import {
   ensureAdministrator,
   uniqueName,
 } from "./support/session";
-import { expectReadableText, expectUiIntegrity } from "./support/ui-guard";
+import { expectReadableText, expectUiIntegrity, waitForVisibleWidth } from "./support/ui-guard";
 
 // The 5-second worker tick, Jenkins polling and injected 503 retry can consume 30 seconds
 // before the next round is released. Leave bounded time for the final state observation.
@@ -792,11 +792,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   // PROCESS_START_FAILED 属于执行机异常：保留原失败记录、自动重新调度，并在执行机视图聚合展示。
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const retainedCaseSearch = page.getByRole("textbox", { name: "按名称搜索用例" });
-  await expect(retainedCaseSearch).toBeVisible();
-  const searchWidthBeforeLongQuery = (await retainedCaseSearch.boundingBox())?.width ?? 0;
+  const searchWidthBeforeLongQuery = await waitForVisibleWidth(retainedCaseSearch);
   await retainedCaseSearch.fill("AllRoundsFlakyTest".repeat(8));
   await page.waitForTimeout(350);
-  const searchWidthAfterLongQuery = (await retainedCaseSearch.boundingBox())?.width ?? 0;
+  const searchWidthAfterLongQuery = await waitForVisibleWidth(retainedCaseSearch);
   expect(searchWidthBeforeLongQuery).toBeGreaterThan(0);
   expect(searchWidthAfterLongQuery).toBeGreaterThanOrEqual(searchWidthBeforeLongQuery - 1);
   await retainedCaseSearch.fill("AllRoundsFlakyTest");
@@ -1278,10 +1277,14 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     )
     .toBe("false:执行完成:2/2");
   await anonymousProgressPage.reload();
-  await expect(anonymousProgressPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await expect(
+    anonymousProgressPage.getByRole("main").getByText("执行完成", { exact: true }),
+  ).toBeVisible();
   await signedInDetailsPage.goto(jenkinsRun.resultUrl);
   await expectAuthenticatedPublicRunDetails(signedInDetailsPage, jenkinsRun.batchId, suiteName);
-  await expect(signedInDetailsPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await expect(
+    signedInDetailsPage.getByRole("main").getByText("执行完成", { exact: true }),
+  ).toBeVisible();
   await captureUi(signedInDetailsPage, "jenkins-signed-in-final-execution-details");
   await signedInDetailsPage.close();
   const anonymousResultPage = await anonymousContext.newPage();
@@ -1652,7 +1655,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(runningManualLink).toBeVisible();
   expect(detailSocketCount).toBe(0);
   await runningManualLink.click();
-  await expect(runningPublicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+  await expect(
+    runningPublicLogPage.getByRole("main").getByText("实时日志", { exact: true }),
+  ).toBeVisible();
   expect(detailSocketCount).toBe(1);
   await expect(
     runningPublicLogPage.getByRole("button", { name: "强行中断", exact: true }),
@@ -1675,7 +1680,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     `${legacyExecutionPath(failedSourceBatch.id)}/attempt/${sharedAttemptId}`,
   ]) {
     await runningPublicLogPage.goto(`${path}?attempt=${diagnosticClaim.assignment.attemptId}`);
-    await expect(runningPublicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+    await expect(
+      runningPublicLogPage.getByRole("main").getByText("实时日志", { exact: true }),
+    ).toBeVisible();
     await expect(runningPublicLogPage.locator(".share-log-output:visible")).toContainText(
       realtimeMarker.trim(),
     );
@@ -1774,7 +1781,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
     "本次尝试暂无日志内容。",
   );
-  await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+  await expect(
+    publicLogPage.getByRole("main").getByText("实时日志", { exact: true }),
+  ).toBeVisible();
   await uploadAttemptLog(page, identity, publicPageRerunClaim, "public rerun first upload\n");
   await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
     "public rerun first upload",
@@ -1801,7 +1810,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await resumedSocketPromise;
-  await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+  await expect(
+    publicLogPage.getByRole("main").getByText("实时日志", { exact: true }),
+  ).toBeVisible();
   await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
     "public rerun hidden-page upload",
   );
@@ -1813,7 +1824,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
   await anonymousManualPage.goto(publicLogPage.url());
   await expect(anonymousManualPage.getByRole("button", { name: "登录后执行此用例" })).toBeVisible();
-  await expect(anonymousManualPage.getByText("只读日志", { exact: true })).toBeVisible();
+  await expect(
+    anonymousManualPage.getByRole("main").getByText("只读日志", { exact: true }),
+  ).toBeVisible();
   await expect(
     anonymousManualPage.getByRole("button", { name: "强行中断", exact: true }),
   ).toHaveCount(0);
@@ -1853,7 +1866,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await stopLink.click();
     const stopButton = publicLogPage.getByRole("button", { name: "强行中断", exact: true });
     await expect(stopButton).toBeVisible();
-    await expect(publicLogPage.getByText("实时日志", { exact: true })).toBeVisible();
+    await expect(
+      publicLogPage.getByRole("main").getByText("实时日志", { exact: true }),
+    ).toBeVisible();
     await uploadAttemptLog(page, identity, stopClaim, `manual stop scenario ${stopIndex}\n`);
     await expect(publicLogPage.locator(".share-log-output:visible")).toContainText(
       `manual stop scenario ${stopIndex}`,

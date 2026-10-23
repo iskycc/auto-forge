@@ -1714,7 +1714,9 @@ public class MixedVisibleTest {
     const anonymousPage = await anonymousContext.newPage();
     await anonymousPage.goto(sharePath!);
     expect(anonymousPage.url()).toContain("/CaseLog?ExecutionId=");
-    await expect(anonymousPage.getByText("执行类路径", { exact: true }).first()).toBeVisible();
+    await expect(
+      anonymousPage.getByRole("main").getByText("执行类路径", { exact: true }),
+    ).toBeVisible();
     const loginToRerun = anonymousPage.getByRole("button", { name: "登录后执行此用例" });
     await expect(loginToRerun).toBeVisible();
     await expectReadableText(loginToRerun);
