@@ -62,6 +62,9 @@ describe("classifyAttemptResult", () => {
     expect(
       classifyAttemptResult({ outcome: "failed", resultCode: "RESOURCE_MEMORY_EXCEEDED" }),
     ).toBe("blocked");
+    expect(classifyAttemptResult({ outcome: "failed", resultCode: "PROCESS_INTERRUPTED" })).toBe(
+      "blocked",
+    );
     expect(classifyAttemptResult({ outcome: "failed", resultCode: "TESTNG_NO_TESTS" })).toBe(
       "blocked",
     );

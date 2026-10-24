@@ -7,9 +7,10 @@ import {
   useEffect,
   useMemo,
   useState,
+  useTransition,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { LoginDialog } from "./login-dialog";
 
@@ -34,9 +35,10 @@ export function LoginDialogProvider({
   hasSession: boolean;
 }) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const [refreshing, startRefresh] = useTransition();
   const [session, setSession] = useState<LoginSessionState>({ status: "checking" });
   const [attempt, setAttempt] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
 
   const openLogin = useCallback(() => {
     const url = new URL(window.location.href);
@@ -48,6 +50,12 @@ export function LoginDialogProvider({
   const closeLogin = useCallback(() => {
     window.history.replaceState(null, "", loginReturnUrl());
   }, []);
+
+  const refreshIdentity = useCallback(() => {
+    closeLogin();
+    // Merge authenticated server content without replacing the log document or its scroll state.
+    startRefresh(() => router.refresh());
+  }, [closeLogin, router]);
 
   const retrySessionCheck = useCallback(() => {
     setSession({ status: "checking" });
@@ -73,9 +81,7 @@ export function LoginDialogProvider({
           throw new Error(`确认登录状态失败（HTTP ${response.status}）。`);
         setSession({ status: "anonymous" });
         if (response.ok) {
-          setRefreshing(true);
-          closeLogin();
-          window.location.reload();
+          refreshIdentity();
         }
       } catch (cause) {
         if (!disposed) {
@@ -98,7 +104,7 @@ export function LoginDialogProvider({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [hasSession, attempt, closeLogin]);
+  }, [hasSession, attempt, refreshIdentity]);
 
   const context = useMemo<LoginDialogContextValue>(
     () => ({
@@ -120,11 +126,7 @@ export function LoginDialogProvider({
         open={searchParams.get("login") === "1"}
         passwordChanged={searchParams.get("passwordChanged") === "1"}
         onClose={closeLogin}
-        onAuthenticated={() => {
-          // Route Handler cookies do not invalidate Next's cached root layout.
-          // Navigate atomically: clearing the flag before reload exposes a stale page.
-          window.location.replace(loginReturnUrl().href);
-        }}
+        onAuthenticated={refreshIdentity}
       />
     </LoginDialogContext.Provider>
   );

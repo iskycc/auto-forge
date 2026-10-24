@@ -3,7 +3,6 @@ import type {
   PublicBatchAccessRecord,
   PublicAttemptAccessRecord,
 } from "@autoforge/application";
-import { eq } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { retryPostgresWrite, runPostgresDrizzleTransaction } from "./postgres-transaction";
@@ -29,20 +28,26 @@ export class PostgresPublicExecutionAccessRepository implements PublicExecutionA
   }
 
   async isBatchPublic(batchId: string): Promise<boolean> {
-    const rows = await this.handle.db
-      .select({ id: pgPublicBatchAccess.batchId })
-      .from(pgPublicBatchAccess)
-      .where(eq(pgPublicBatchAccess.batchId, batchId))
-      .limit(1);
-    return rows.length > 0;
+    return (
+      (
+        await this.handle.pool.query(
+          `SELECT g.batch_id FROM public_batch_access g JOIN run_batches b ON b.id=g.batch_id
+      WHERE g.batch_id=$1 AND NOT EXISTS (SELECT 1 FROM project_version_copies c WHERE c.target_version_id=(b.policy_json::jsonb->>'projectVersionId') AND c.status NOT IN ('completed','cancelled'))`,
+          [batchId],
+        )
+      ).rowCount !== 0
+    );
   }
 
   async isAttemptPublic(attemptId: string): Promise<boolean> {
-    const rows = await this.handle.db
-      .select({ id: pgPublicAttemptAccess.attemptId })
-      .from(pgPublicAttemptAccess)
-      .where(eq(pgPublicAttemptAccess.attemptId, attemptId))
-      .limit(1);
-    return rows.length > 0;
+    return (
+      (
+        await this.handle.pool.query(
+          `SELECT g.attempt_id FROM public_attempt_access g JOIN run_attempts a ON a.id=g.attempt_id JOIN execution_runs r ON r.id=a.execution_run_id JOIN run_batches b ON b.id=r.batch_id
+      WHERE g.attempt_id=$1 AND NOT EXISTS (SELECT 1 FROM project_version_copies c WHERE c.target_version_id=(b.policy_json::jsonb->>'projectVersionId') AND c.status NOT IN ('completed','cancelled'))`,
+          [attemptId],
+        )
+      ).rowCount !== 0
+    );
   }
 }

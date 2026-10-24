@@ -1,4 +1,4 @@
-import { Alert, Card, Descriptions, Result, Tag, Timeline } from "antd";
+import { Alert, Card, Descriptions, Result, Skeleton, Tag, Timeline } from "antd";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import type { SharedAttemptLogView } from "@autoforge/contracts";
@@ -11,7 +11,6 @@ import { SessionLoginButton } from "@/components/session-login-button";
 import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
 import { LinkButton } from "@/components/ui/link-button";
-import { LoadingState } from "@/components/loading-state";
 import { ColorModeToggle } from "@/components/color-mode-toggle";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { visibleAttemptLogText } from "@/lib/log-presentation";
@@ -526,17 +525,22 @@ export function InvalidAttemptLogShareView() {
 export function SharedAttemptLogLoadingView() {
   return (
     <main
-      className={cn(
-        "share-log-page share-log-page-center",
-        sharedAttemptLogContentStyles["share-log-page"],
-        sharedAttemptLogContentStyles["share-log-page-center"],
-      )}
+      className={cn("share-log-page", sharedAttemptLogContentStyles["share-log-page"])}
       aria-busy="true"
+      aria-label="正在加载执行日志"
     >
-      <LoadingState
-        label="正在加载执行日志"
-        description="正在校验公开访问授权并读取有界日志内容。"
-      />
+      <div className={cn("share-log-layout", sharedAttemptLogContentStyles["share-log-layout"])}>
+        <Card className={sharedAttemptLogContentStyles["share-log-aside"]}>
+          <p className={uiPatterns.eyebrow}>Case Execution Log</p>
+          <Skeleton title={{ width: "70%" }} paragraph={{ rows: 12 }} />
+        </Card>
+        <Card className={sharedAttemptLogContentStyles["share-log-main"]} title="执行日志">
+          <span role="status" className="sr-only">
+            正在加载执行日志
+          </span>
+          <Skeleton title={false} paragraph={{ rows: 16 }} />
+        </Card>
+      </div>
     </main>
   );
 }

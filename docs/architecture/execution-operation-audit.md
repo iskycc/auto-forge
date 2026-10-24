@@ -179,3 +179,43 @@ git diff --check
 ```
 
 数据库测试显式连接一次性 PostgreSQL，两个适配器均实际执行；浏览器使用 Lite 和 Runner Protocol 夹具。因变更限于导航、权限与单行读取投影，本轮没有重跑 Full 整套基础设施、真实 Java Runner 或完整离线发布验收。所有重负载任务串行限制一个 CPU、4 GiB 内存；日志、截图、首次失败与复验记录保存在本地 `/var/tmp/autoforge-log-case-detail-20261023/`。
+
+## 2026-10-24：执行记录页双向分页
+
+主执行记录页的「任务执行」「单用例执行」原来仅提供「查看更早记录」，现在复用共享游标分页栏，提供当前页、本页记录数、上一页、下一页和返回第一页。原有筛选表单、每页 10/50/100/500 条、表格列宽与操作按钮保持原规则；应用筛选或切换执行类型会回到第一页。
+
+页位置及最近五个回退游标保存在 URL，刷新后保留当前位置，支持浏览器前进/后退；更早位置可以返回第一页重新导航。切换项目、版本或测试阶段会清除游标、页码及回退历史，避免跨范围复用位置。最后一页禁用下一页，第一页禁用上一页；空结果仍显示清晰的页状态。
+
+仍使用既有服务端游标分页和只读隔离查询，不追加已浏览页面的 DOM，不新增全量历史读取、OFFSET 或总记录数扫描；Lite/Full 共用页面与分页行为，无数据库迁移、配置、依赖或 Runner 协议变化。
+
+本次验证：31 项 Vitest 回归通过（筛选、列宽、Ant Design 规范及表格），生产 Lite 的任务执行分页、单用例执行分页、顶栏项目切换三条 Playwright 场景通过。分页场景各使用 23 条历史记录，验证 10/10/3 的分段、不重复不遗漏、上一页/第一页、刷新保留、筛选与页大小重置、空结果和任务/单用例隔离；历史由夹具构造，不是 Runner 执行验收。
+
+实际查看两类列表在 1024×768、1536×960 浅色/深色下的分页栏和表格截图，新增分页未造成变形或页面横向溢出。初次检查将固定顶栏对表格横向固定列的正常遮挡判为冲突；保留完整性检查，在无遮挡的页首执行，同时单独截图审查页尾分页，不放宽检查规则。截图在布局稳定后滚动定位，并断言分页栏完整进入视口。
+
+实际执行 `pnpm exec vitest run`（`run-batch-filter.test.ts`、`execution-record-columns.test.ts`、`ui-usage.test.ts`、`ui/table.test.tsx`，`--maxWorkers=1 --no-file-parallelism`）、受影响文件 `pnpm exec eslint ... --max-warnings=0`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm format:check`、`pnpm test:e2e:matrix`、`pnpm --filter @autoforge/web build` 和 `git diff --check`。浏览器命令为 `pnpm exec playwright test tests/e2e/management-operations.spec.ts tests/e2e/ui-layout.spec.ts --grep 'execution record pagination|top-bar project context persists' --workers=1`，布局定位调整后单独复验两条分页流程。
+
+本次未改数据库读取语义、迁移、Worker 或 Runner，也未重跑 Full 整体部署、真实 Java 用例和离线包验收。检查与浏览器测试串行限单核、4 GiB；日志及截图位于 `/var/tmp/autoforge-record-pages-20261024/`。
+
+## 2026-10-24：公开日志入口与独立节点内存准入
+
+- 复现：站外打开公开日志时 Strict Cookie 不随首个文档请求发送；同源 session 恢复随后触发 `location.reload`，同一 URL 产生两次 document 请求。恢复改为 Router 刷新并合并服务端内容，保留日志文档及滚动；当前登录按钮也使用该路径。首次加载使用同布局 Ant Design 骨架，避免中心加载图切换到双栏的整体位移。
+- 准入漏洞：一次调度循环只扣并发槽位，同一旧心跳的内存百分比会让多个 JVM 集中拉起。新增有效可用容量、2 GiB/attempt 保守预留和系统余量，规划及 Lite/Full 原子预留重复核验全节点预算。Full 同步排除终态批次、终态 run 的残留 active attempt，保持与 Lite/快照查询一致。
+- 143 不能直接等同资源不足：新增内核信号、数值退出的诊断，防止部分 TestNG XML 把中断原因改写为普通失败；保留取消、超时和 cgroup OOM 的优先判定。未取得用户局域网执行节点系统日志，无法确定其历史 143 的信号发送方。
+
+验证证据位于 `/var/tmp/autoforge-log-resource-20261024/`：`before.log` 记录同一心跳过量派发的失败回归；`e2e-before.log` 记录同一公开日志 URL 两次 document 请求，`e2e-final.log` 中四条生产 Lite Playwright 场景通过。`db-final.log` 的 54 项双数据库回归覆盖跨批次原子内存预留、释放后补槽、旧心跳覆盖与迁移失败回滚。已实际查看 1024×768、1536×960 下的深浅色日志、会话恢复和登录弹窗截图，双栏、按钮、滚动边界及弹窗正常。
+
+本轮验证命令：
+
+```sh
+pnpm format:check
+pnpm lint
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm exec vitest run packages/domain/test/{scheduler,attempt-result}.test.ts packages/contracts/test/management.test.ts packages/application/test/{manage-runners,normalize-testng-completion}.test.ts packages/runner-sdk/test/protocol-compatibility.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm exec vitest run packages/db/test/scheduling-refill.integration.test.ts packages/db/test/runner-resource-samples.integration.test.ts packages/db/test/runner-memory-migration.integration.test.ts --maxWorkers=1 --no-file-parallelism
+go -C apps/runner-agent test -p 1 ./...
+pnpm --filter @autoforge/web build
+pnpm exec playwright test tests/e2e/ddt-management.spec.ts tests/e2e/public-dashboard.spec.ts --grep 'public logs rerun failed Chinese DDT cases|public logs log in locally|public execution login preserves|public login retains' --workers=1
+pnpm test:e2e:matrix
+```
+
+数据库验证通过临时 PostgreSQL 实例注入 `AUTOFORGE_TEST_POSTGRES_URL`，未访问用户局域网；生产构建、测试和浏览器均串行限制为 1 CPU / 4 GiB，未使用 OOM 压测。未运行整套 Full 基础设施 E2E 或完整离线镜像验收，本轮证据不能确认用户历史 143 的发送来源，也不承诺外部进程突增或服务管理器主动停止时没有进程中断。

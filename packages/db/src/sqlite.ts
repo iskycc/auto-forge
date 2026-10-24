@@ -29,3 +29,5 @@ export { isDatabaseLockContentionError } from "./lock-contention";
 export * from "./sqlite-ddt-debug";
 
 export { SqliteDdtChangeRequestRepository } from "./sqlite-ddt-change-requests";
+export { SqliteProjectVersionCopyRepository } from "./sqlite-version-copy";
+export { VersionCopyArchive } from "./version-copy-archive";

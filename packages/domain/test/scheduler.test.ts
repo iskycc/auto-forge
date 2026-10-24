@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { scheduleExecutionRuns } from "../src/scheduler";
+import { evaluateRunnerForScheduling, scheduleExecutionRuns } from "../src/scheduler";
 import { statusAfterFailedAttempt, type ExecutionRun } from "../src/run-batch";
 import type { Runner } from "../src/runner";
 
@@ -12,6 +12,51 @@ const thresholds = {
 const freshAfter = "2026-08-09T00:00:00.000Z";
 
 describe("dynamic execution scheduler", () => {
+  it("reserves JVM memory before the next heartbeat instead of filling every configured slot", () => {
+    const node = runner("memory-bound", { cpu: 10, memory: 25, load: 0.1, concurrency: 32 });
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: 16 * 1024 ** 3,
+      memoryAvailableBytes: 12 * 1024 ** 3,
+    };
+    const plan = scheduleExecutionRuns({
+      runs: Array.from({ length: 12 }, (_, index) => run(`run-${index}`)),
+      candidates: [{ runner: node, reservedSlots: 0 }],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    // 12 GiB available - 15% system reserve leaves room for four 2 GiB attempts.
+    expect(plan.decisions).toHaveLength(4);
+    expect(plan.unassignedRunIds).toHaveLength(8);
+    expect(
+      evaluateRunnerForScheduling({ runner: node, reservedSlots: 4 }, thresholds, freshAfter),
+    ).toMatchObject({
+      eligible: false,
+      availableSlots: 0,
+      blockReasons: ["memory_reservation_exhausted"],
+    });
+    expect(
+      evaluateRunnerForScheduling({ runner: node, reservedSlots: 3 }, thresholds, freshAfter),
+    ).toMatchObject({ eligible: true, availableSlots: 1 });
+  });
+
+  it("includes live occupied slots and never lets a claim hint bypass persisted memory reservations", () => {
+    const node = runner("memory-bound", { cpu: 10, memory: 25, load: 0.1, concurrency: 32 });
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: 16 * 1024 ** 3,
+      memoryAvailableBytes: 12 * 1024 ** 3,
+    };
+    for (const candidate of [
+      { runner: { ...node, busySlots: 4 }, reservedSlots: 0 },
+      { runner: node, reservedSlots: 4, liveAvailableSlots: 32 },
+    ]) {
+      expect(evaluateRunnerForScheduling(candidate, thresholds, freshAfter).blockReasons).toContain(
+        "memory_reservation_exhausted",
+      );
+    }
+  });
+
   it("filters overloaded runners and spreads runs as capacity scores decline", () => {
     const plan = scheduleExecutionRuns({
       runs: [run("run-1"), run("run-2"), run("run-3")],

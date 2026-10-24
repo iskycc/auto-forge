@@ -1510,13 +1510,7 @@ export interface RunnerRepository {
     busySlots: number;
     agentVersion: string;
     terminalEnabled: boolean;
-    resourceSnapshot?: {
-      cpuUtilizationPercent: number;
-      memoryUtilizationPercent: number;
-      loadAverage1m: number;
-      logicalCpuCount: number;
-      observedAt: string;
-    };
+    resourceSnapshot?: Runner["resourceSnapshot"];
     recordedAt: string;
   }): Promise<Runner>;
   list(offlineBefore: string, limit: number): Promise<Runner[]>;

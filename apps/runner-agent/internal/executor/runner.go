@@ -49,6 +49,7 @@ type Result struct {
 	LogsTruncated bool   `json:"logsTruncated"`
 	WorkspacePath string `json:"workspacePath,omitempty"`
 	ResourceLimit string `json:"resourceLimit,omitempty"`
+	Signal        string `json:"signal,omitempty"`
 }
 
 func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, returnErr error) {
@@ -215,6 +216,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 		Stderr:        strings.ToValidUTF8(stderr.String(), "�"),
 		LogsTruncated: budget.wasTruncated(),
 		ResourceLimit: resourceLimit,
+		Signal:        processExitSignal(command),
 	}
 	if options.KeepWorkspace {
 		result.WorkspacePath = workspace

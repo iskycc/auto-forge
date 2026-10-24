@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXECUTION_RECORD_COLUMNS,
   executionRecordColumnWidths,
+  fitExecutionRecordColumns,
   executionRecordDurationMs,
   executionRecordStatusLabel,
   type ExecutionRecordRow,
@@ -30,6 +31,16 @@ function row(index: number, suiteName = "日常回归任务"): ExecutionRecordRo
 }
 
 describe("executionRecordColumnWidths", () => {
+  it("fills a wide desktop with task context while keeping actions and numeric columns compact", () => {
+    const widths = executionRecordColumnWidths([row(1)]);
+    const total = EXECUTION_RECORD_COLUMNS.reduce((sum, column) => sum + widths[column.key], 0);
+    const fitted = fitExecutionRecordColumns(widths, total + 800);
+    expect(fitted.suite).toBe(widths.suite + 800);
+    expect(fitted.actions).toBe(widths.actions);
+    expect(fitted.total).toBe(widths.total);
+    expect(fitExecutionRecordColumns(widths, 800)).toEqual(widths);
+    expect(fitExecutionRecordColumns(widths, 0)).toEqual(widths);
+  });
   it("shows the execution case total independently of result statistics and retry rounds", () => {
     const totalColumn = EXECUTION_RECORD_COLUMNS.find((column) => column.key === "total");
     expect(totalColumn?.label).toBe("用例总数");

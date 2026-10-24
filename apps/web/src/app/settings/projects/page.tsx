@@ -8,6 +8,7 @@ import { ProjectActions } from "@/components/project-actions";
 import { ProjectStructureManager } from "@/components/project-structure-manager";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
+import { canCopyProjectVersion } from "@autoforge/application";
 import { selectedProjectHierarchy, selectedProjectId } from "@/lib/selected-project";
 
 export default async function ProjectsPage({
@@ -59,6 +60,13 @@ export default async function ProjectsPage({
         <ProjectStructureManager
           key={`${project.id}:${hierarchy.projectVersionId ?? "none"}`}
           canManage={canManage}
+          canCopy={
+            canManage &&
+            projects.some(
+              (target) =>
+                !target.archived && canCopyProjectVersion(identity, project.id, target.id),
+            )
+          }
           initialStructure={structure}
           {...(hierarchy.projectVersionId ? { initialVersionId: hierarchy.projectVersionId } : {})}
           projectId={project.id}

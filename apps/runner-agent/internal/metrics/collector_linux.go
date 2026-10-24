@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -16,15 +17,18 @@ import (
 type Snapshot struct {
 	CPUUtilizationPercent    float64 `json:"cpuUtilizationPercent"`
 	MemoryUtilizationPercent float64 `json:"memoryUtilizationPercent"`
+	MemoryTotalBytes         uint64  `json:"memoryTotalBytes"`
+	MemoryAvailableBytes     uint64  `json:"memoryAvailableBytes"`
 	LoadAverage1m            float64 `json:"loadAverage1m"`
 	LogicalCPUCount          int     `json:"logicalCpuCount"`
 	ObservedAt               string  `json:"observedAt"`
 }
 
 type Collector struct {
-	mu          sync.Mutex
-	previousCPU cpuTimes
-	hasPrevious bool
+	executionCgroupRoot string
+	mu                  sync.Mutex
+	previousCPU         cpuTimes
+	hasPrevious         bool
 }
 
 type cpuTimes struct {
@@ -32,8 +36,8 @@ type cpuTimes struct {
 	idle  uint64
 }
 
-func NewCollector() *Collector {
-	return &Collector{}
+func NewCollector(executionCgroupRoot string) *Collector {
+	return &Collector{executionCgroupRoot: executionCgroupRoot}
 }
 
 func (collector *Collector) Collect() (Snapshot, error) {
@@ -54,9 +58,27 @@ func (collector *Collector) Collect() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	memoryUtilization, err := parseMemoryUtilization(string(memoryContent))
+	memory, err := parseMemoryCapacity(string(memoryContent))
 	if err != nil {
 		return Snapshot{}, err
+	}
+	membership, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read memory cgroup membership: %w", err)
+	}
+	memory, err = effectiveMemoryCapacity(memory, string(membership), "/sys/fs/cgroup", os.ReadFile)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if collector.executionCgroupRoot != "" {
+		relative, pathErr := filepath.Rel("/sys/fs/cgroup", collector.executionCgroupRoot)
+		if pathErr != nil || (relative != "." && !filepath.IsLocal(relative)) {
+			return Snapshot{}, errors.New("execution memory cgroup escapes /sys/fs/cgroup")
+		}
+		memory, err = effectiveMemoryCapacity(memory, "0::/"+relative, "/sys/fs/cgroup", os.ReadFile)
+		if err != nil {
+			return Snapshot{}, err
+		}
 	}
 	loadAverage, err := parseLoadAverage(string(loadContent))
 	if err != nil {
@@ -79,7 +101,9 @@ func (collector *Collector) Collect() (Snapshot, error) {
 
 	return Snapshot{
 		CPUUtilizationPercent:    roundedPercent(cpuUtilization),
-		MemoryUtilizationPercent: roundedPercent(memoryUtilization),
+		MemoryUtilizationPercent: roundedPercent(memory.utilizationPercent()),
+		MemoryTotalBytes:         memory.total,
+		MemoryAvailableBytes:     memory.available,
 		LoadAverage1m:            loadAverage,
 		LogicalCPUCount:          runtime.NumCPU(),
 		ObservedAt:               time.Now().UTC().Format(time.RFC3339Nano),
@@ -112,31 +136,6 @@ func parseCPUTimes(content string) (cpuTimes, error) {
 		return cpuTimes{}, errors.New("parse CPU statistics: total time is zero")
 	}
 	return cpuTimes{total: total, idle: idle}, nil
-}
-
-func parseMemoryUtilization(content string) (float64, error) {
-	values := make(map[string]uint64)
-	for _, line := range strings.Split(content, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		key := strings.TrimSuffix(fields[0], ":")
-		if key != "MemTotal" && key != "MemAvailable" {
-			continue
-		}
-		value, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse memory statistics: %w", err)
-		}
-		values[key] = value
-	}
-	total, hasTotal := values["MemTotal"]
-	available, hasAvailable := values["MemAvailable"]
-	if !hasTotal || !hasAvailable || total == 0 || available > total {
-		return 0, errors.New("parse memory statistics: MemTotal or MemAvailable is invalid")
-	}
-	return float64(total-available) / float64(total) * 100, nil
 }
 
 func parseLoadAverage(content string) (float64, error) {

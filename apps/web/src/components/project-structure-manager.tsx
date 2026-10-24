@@ -26,17 +26,20 @@ import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { ActionDialog } from "@/components/action-dialog";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
+import { ProjectVersionCopyButton } from "./project-version-copy-dialog";
 
 export function ProjectStructureManager({
   projectId,
   initialStructure,
   initialVersionId,
   canManage,
+  canCopy = false,
 }: {
   projectId: string;
   initialStructure: ProjectStructure;
   initialVersionId?: string;
   canManage: boolean;
+  canCopy?: boolean;
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
@@ -434,6 +437,14 @@ export function ProjectStructureManager({
               <div className={cn("button-row", uiPatterns["button-row"])}>
                 {canManage ? (
                   <>
+                    {canCopy && selectedVersion ? (
+                      <ProjectVersionCopyButton
+                        projectId={projectId}
+                        versionId={selectedVersion.id}
+                        versionName={selectedVersion.name}
+                        onCompleted={() => void run(() => refresh("版本复制完成。"))}
+                      />
+                    ) : null}
                     <Button
                       onClick={() => (setError(""), setInheritDialogOpen(true))}
                       type="button"

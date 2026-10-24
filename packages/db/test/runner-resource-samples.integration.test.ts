@@ -43,6 +43,62 @@ for (const dialect of ["sqlite", "postgres"] as const)
   describe.skipIf(dialect === "postgres" && !postgresUrl)(
     `${dialect} bounded Runner telemetry`,
     () => {
+      it("persists absolute memory capacity and clears it when an older Agent sends percentage-only metrics", async () => {
+        const context = await harness(dialect);
+        const id = randomUUID();
+        const base = {
+          runnerId: id,
+          labels: [],
+          capabilities: [],
+          maxConcurrency: 8,
+          busySlots: 0,
+          agentVersion: "1.20.0",
+          terminalEnabled: false,
+          recordedAt: atMinute(0),
+        };
+        const metrics = {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 100,
+          loadAverage1m: 0,
+          logicalCpuCount: 4,
+          observedAt: atMinute(0),
+        };
+        try {
+          await context.repository.register({
+            ...base,
+            id,
+            bootstrapTokenHash: randomUUID(),
+            credentialHash: randomUUID(),
+            name: "memory budget",
+            os: "linux",
+            architecture: "amd64",
+            protocolVersion: 1,
+          });
+          await context.repository.heartbeat({
+            ...base,
+            resourceSnapshot: { ...metrics, memoryTotalBytes: 4096, memoryAvailableBytes: 0 },
+          });
+          expect((await context.repository.get(id, atMinute(-1)))?.resourceSnapshot).toMatchObject({
+            memoryTotalBytes: 4096,
+            memoryAvailableBytes: 0,
+          });
+          expect(
+            (await context.repository.listByIds([id], atMinute(-1)))[0]?.resourceSnapshot,
+          ).toMatchObject({ memoryTotalBytes: 4096, memoryAvailableBytes: 0 });
+          await context.repository.heartbeat({
+            ...base,
+            recordedAt: atMinute(1),
+            resourceSnapshot: { ...metrics, memoryUtilizationPercent: 20, observedAt: atMinute(1) },
+          });
+          const legacy = (await context.repository.get(id, atMinute(-1)))?.resourceSnapshot;
+          expect(legacy).not.toHaveProperty("memoryTotalBytes");
+          expect(legacy).not.toHaveProperty("memoryAvailableBytes");
+          expect(legacy?.memoryUtilizationPercent).toBe(20);
+        } finally {
+          await context.close();
+        }
+      });
+
       it("samples once per minute, keeps 360 persistent slots and isolates nodes / time windows", async () => {
         const context = await harness(dialect);
         const repository = context.repository;

@@ -30,3 +30,5 @@ export { isDatabaseLockContentionError } from "./lock-contention";
 export * from "./postgres-ddt-debug";
 
 export { PostgresDdtChangeRequestRepository } from "./postgres-ddt-change-requests";
+export { PostgresProjectVersionCopyRepository } from "./postgres-version-copy";
+export { VersionCopyArchive } from "./version-copy-archive";

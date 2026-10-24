@@ -364,3 +364,13 @@ PostgreSQL `0069_runner_resource_samples.sql` 在原心跳 UPDATE 的短事务�
 Bourne 兼容 Shell 读取 `/etc/profile`，其他 Shell 以各自文档为准。白名单过滤仍在进程启动前执行，
 平台/Agent 凭据不从服务环境继承；用例执行路径不受此改动影响。系统 profile 自身的错误或阻塞会影响
 Shell 初始化，可通过宿主机运维修复，不静默跳过 profile。
+
+## 内存准入与进程终止诊断（2026-10-24）
+
+资源心跳可兼容新增 `memoryTotalBytes`、`memoryAvailableBytes`，两者必须成对出现，使用安全整数，允许可用量为零。新 Agent 将 `/proc/meminfo` 与自身、受委派执行目录的 cgroup 层级约束取保守交集；支持标准挂载位置下的 cgroup v2，以及仅有 v1 memory controller 的采集。有限上限使用 `memory.max - memory.current`（v1 对应 limit/usage），同时检查祖先限制；无法安全读取有限约束时不伪造健康快照。容器文件缓存也计入占用，因此可能比宿主机 `MemAvailable` 更保守。
+
+共享调度器按 `floor(max(0, available - total × (1 - 内存阈值 / 100)) / 每次执行内存上限) - 已占槽位` 计算内存槽位，再与配置并发剩余槽位取最小值。每次执行上限复用 `DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes`（目前 2 GiB），不引入第二份资源配置。已占槽位取权威 assignment 预留与心跳/实时 claim 占用的较大值。规划每个决策后立即扣减，数据库原子预留再次按同一规则检查跨批次全局占用；完成后释放预留，指标变旧或预算不足时保持排队。实测已用内存与完整执行上限同时保留，是有意的安全余量；这不是每个 JVM 的 RSS 预测，不承诺外部进程突然分配内存时仍无 OOM。
+
+SQLite 0081、PostgreSQL 0079 为 Runner 新增两列可空整数，不改变历史资源采样环的大小和查询。无新环境变量或依赖。旧 Agent 未上报绝对容量时保留原百分比准入；旧版心跳覆盖新指标时清空两列，避免错误复用。升级平台后应同步升级独立执行节点 Agent。回退旧平台二进制可保留新增空列；若升级 DDL 中断，迁移事务回滚后重启重试，不手工修改已应用迁移摘要。
+
+执行器保留内核观察到的终止信号；已知取消、执行超时、资源超限仍优先于数值退出码。未被这些原因解释的 143/137 或被信号终止记为 `PROCESS_INTERRUPTED`，附执行节点系统/服务日志排查提示；TestNG 部分 XML 仍附带保存，但不再覆盖进程中断原因。143 通常与 SIGTERM 对应，137 通常与 SIGKILL 对应，单独退出码不能证明 OOM；只有执行 cgroup 的 `oom_kill` 证据才归为内存异常，该证据也可能来自宿主机或祖先压力。普通断言失败和 Adapter 超时规则保留，不增加未知原因的自动重跑。

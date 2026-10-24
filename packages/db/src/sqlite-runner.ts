@@ -128,13 +128,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
     busySlots: number;
     agentVersion: string;
     terminalEnabled: boolean;
-    resourceSnapshot?: {
-      cpuUtilizationPercent: number;
-      memoryUtilizationPercent: number;
-      loadAverage1m: number;
-      logicalCpuCount: number;
-      observedAt: string;
-    };
+    resourceSnapshot?: Runner["resourceSnapshot"];
     recordedAt: string;
   }): Promise<Runner> {
     const row = await retrySqliteLockContention(() =>
@@ -151,6 +145,8 @@ export class SqliteRunnerRepository implements RunnerRepository {
             ? {
                 cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
                 memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
+                memoryTotalBytes: input.resourceSnapshot.memoryTotalBytes ?? null,
+                memoryAvailableBytes: input.resourceSnapshot.memoryAvailableBytes ?? null,
                 loadAverage1m: input.resourceSnapshot.loadAverage1m,
                 logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
                 metricsObservedAt: input.resourceSnapshot.observedAt,

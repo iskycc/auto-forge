@@ -55,14 +55,17 @@ describe("authoritative TestNG completion", () => {
     const interrupted = { ...result(0, 0, 1), status };
     expect(normalizeTestNgCompletion(interrupted)).toBe(interrupted);
   });
-  it("preserves infrastructure failures even when a partial TestNG report exists", () => {
-    const interrupted = {
-      ...result(0, 0, 1),
-      status: "failed" as const,
-      resultCode: "RESOURCE_MEMORY_EXCEEDED",
-    };
-    expect(normalizeTestNgCompletion(interrupted)).toBe(interrupted);
-  });
+  it.each(["RESOURCE_MEMORY_EXCEEDED", "PROCESS_INTERRUPTED"])(
+    "preserves infrastructure failures even when a partial TestNG report exists (%s)",
+    (resultCode) => {
+      const interrupted = {
+        ...result(0, 0, 1),
+        status: "failed" as const,
+        resultCode,
+      };
+      expect(normalizeTestNgCompletion(interrupted)).toBe(interrupted);
+    },
+  );
   it.each([
     "TEST_ASSERTION_FAILED",
     "TESTNG_ASSERTIONS_FAILED",

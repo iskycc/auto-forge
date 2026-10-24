@@ -21,6 +21,8 @@ type StoredRunner = {
   lastSeenAt: string;
   cpuUtilizationPercent: number | null;
   memoryUtilizationPercent: number | null;
+  memoryTotalBytes: number | null;
+  memoryAvailableBytes: number | null;
   loadAverage1m: number | null;
   logicalCpuCount: number | null;
   metricsObservedAt: string | null;
@@ -60,6 +62,12 @@ export function mapStoredRunner(row: StoredRunner, offlineBefore?: string): Runn
           resourceSnapshot: {
             cpuUtilizationPercent: row.cpuUtilizationPercent,
             memoryUtilizationPercent: row.memoryUtilizationPercent,
+            ...(row.memoryTotalBytes !== null && row.memoryAvailableBytes !== null
+              ? {
+                  memoryTotalBytes: row.memoryTotalBytes,
+                  memoryAvailableBytes: row.memoryAvailableBytes,
+                }
+              : {}),
             loadAverage1m: row.loadAverage1m,
             logicalCpuCount: row.logicalCpuCount,
             observedAt: row.metricsObservedAt,

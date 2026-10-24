@@ -2964,6 +2964,16 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       const sessionCheckGate = new Promise<void>((resolve) => {
         releaseSessionCheck = resolve;
       });
+      const documentRequests: string[] = [];
+      const recordDocument = (request: import("@playwright/test").Request) => {
+        if (
+          request.isNavigationRequest() &&
+          request.frame() === page.mainFrame() &&
+          request.url() === publicLogUrl
+        )
+          documentRequests.push(request.url());
+      };
+      page.on("request", recordDocument);
       const sessionUrl = new URL("/api/v1/auth/session", publicLogUrl).href;
       await page.route(sessionUrl, async (route) => {
         await sessionCheckGate;
@@ -2994,6 +3004,11 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
       }
       await expect(page.getByRole("button", { name: "执行此用例", exact: true })).toBeVisible();
       await page.unroute(sessionUrl);
+      page.off("request", recordDocument);
+      expect(
+        documentRequests,
+        "recovering Strict cookies must preserve the current log document",
+      ).toHaveLength(1);
     } else {
       await page.goto(publicLogUrl);
     }

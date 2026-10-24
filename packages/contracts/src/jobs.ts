@@ -22,6 +22,7 @@ export const jobEnvelopeSchema = z.object({
     "analytics-export",
     "ddt-import",
     "ddt-debug-import",
+    "project-version-copy",
   ]),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 });

@@ -9,6 +9,12 @@ import {
   openNewVersionWizard,
   inheritInitializationStep,
 } from "./support/version-initialization";
+import { insertSuiteProgressFixture } from "./support/suite-progress-fixture";
+import { insertExecutionRecordsFixture } from "./support/execution-records-fixture";
+import {
+  copiedVersionMemberCount,
+  insertVersionCopyScaleFixture,
+} from "./support/version-copy-scale-fixture";
 
 import {
   acceptSystemDialog,
@@ -18,6 +24,236 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
+
+for (const view of ["task", "single"] as const)
+  test(`execution record pagination keeps ${view} pages bounded and preserves filters`, async ({
+    page,
+  }, testInfo) => {
+    await ensureAdministrator(page);
+    const project = await createInitializationProject(page);
+    const version = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${project.projectId}/versions`,
+      { method: "POST", body: { name: uniqueName("分页版本") } },
+    );
+    expect(version.status).toBe(201);
+    insertExecutionRecordsFixture(
+      process.env.AUTOFORGE_E2E_DATA_DIR!,
+      { projectId: project.projectId, projectVersionId: version.body.id },
+      23,
+    );
+    await selectProjectContext(page, project.projectId, version.body.id);
+    await page.goto(`/execution-records?view=${view}&limit=10&status=succeeded`);
+    const pagination = page.getByRole("navigation", { name: "执行记录分页", exact: true });
+    const card = page.locator(".execution-records-card");
+    const rows = card.getByRole("row").filter({ has: page.getByRole("cell") });
+    const keys = async () =>
+      view === "task"
+        ? card
+            .locator('tbody a[href^="/run-batches/"]')
+            .evaluateAll((links) => links.map((link) => link.getAttribute("href")))
+        : card
+            .locator("tbody tr[data-row-key]")
+            .evaluateAll((elements) =>
+              elements.map((element) => element.getAttribute("data-row-key")),
+            );
+    await expect(pagination).toContainText("第 1 页 · 本页 10 条");
+    await expect(pagination.getByRole("button", { name: "上一页", exact: true })).toBeDisabled();
+    await expect(rows).toHaveCount(10);
+    const first = await keys();
+    expect(first).toHaveLength(10);
+    await expect(card).toContainText(view === "task" ? "任务历史" : "单用例历史");
+    await expect(card).not.toContainText(view === "task" ? "单用例历史" : "任务历史");
+    await pagination.getByRole("link", { name: "下一页", exact: true }).click();
+    await expect(pagination).toContainText("第 2 页 · 本页 10 条");
+    await expect(rows).toHaveCount(10);
+    const second = await keys();
+    expect(second.some((key) => first.includes(key))).toBe(false);
+    expect(new URL(page.url()).searchParams.get("status")).toBe("succeeded");
+    expect(new URL(page.url()).searchParams.get("limit")).toBe("10");
+    await page.reload();
+    await expect(pagination).toContainText("第 2 页 · 本页 10 条");
+    expect(await keys()).toEqual(second);
+    for (const appearance of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+        ]);
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await waitForUiTransitions(page);
+        await pagination.scrollIntoViewIfNeeded();
+        await expect(pagination).toBeInViewport({ ratio: 1 });
+        await page.screenshot({
+          path: testInfo.outputPath(`record-pagination-${appearance}-${viewport.width}.png`),
+        });
+        // Inspect the unobscured page separately: the fixed top bar intentionally
+        // covers horizontally sticky table cells while the footer is in view.
+        await page
+          .locator(".page-hero")
+          .evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
+        await expectUiIntegrity(page);
+      }
+    }
+    await pagination.getByRole("link", { name: "下一页", exact: true }).click();
+    await expect(pagination).toContainText("第 3 页 · 本页 3 条");
+    await expect(rows).toHaveCount(3);
+    expect(new Set([...first, ...second, ...(await keys())]).size).toBe(23);
+    await expect(pagination.getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
+    await pagination.getByRole("link", { name: "上一页", exact: true }).click();
+    await expect(pagination).toContainText("第 2 页 · 本页 10 条");
+    expect(await keys()).toEqual(second);
+    await pagination.getByRole("link", { name: "第一页", exact: true }).click();
+    await expect(pagination).toContainText("第 1 页 · 本页 10 条");
+    expect(await keys()).toEqual(first);
+    const filter = page.locator(".run-history-filter");
+    await filter.locator('select[name="limit"]').selectOption("50", { force: true });
+    await filter.getByRole("button", { name: "筛选记录", exact: true }).click();
+    await expect(rows).toHaveCount(23);
+    await expect(pagination).toContainText("第 1 页 · 本页 23 条");
+    await filter.locator('select[name="status"]').selectOption("failed", { force: true });
+    await filter.getByRole("button", { name: "筛选记录", exact: true }).click();
+    await expect(card).toContainText("暂无符合条件的执行记录");
+    await expect(pagination).toContainText("第 1 页 · 本页 0 条");
+    await expect(pagination.getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
+  });
+
+for (const targetMode of ["new", "existing"] as const)
+  test(`whole-version copy into ${targetMode} version retains historical executions`, async ({
+    page,
+  }, testInfo) => {
+    await ensureAdministrator(page);
+    const sourceProject = await createInitializationProject(page);
+    const source = await seedInitializationSource(page, sourceProject.projectId);
+    const scale = process.env.E2E_VERSION_COPY_SCALE === "1";
+    if (scale) await insertVersionCopyScaleFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, source);
+    const targetProject = await createInitializationProject(page);
+    insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, source, [
+      { id: source.suiteId, name: source.suiteName, passedRuns: 0 },
+    ]);
+    await selectProjectContext(page, source.projectId, source.projectVersionId, source.testStageId);
+    await page.goto("/settings/projects");
+    await page.getByRole("button", { name: "复制整个版本", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "复制整个版本", exact: true });
+    await expect(dialog.getByRole("button", { name: "开始复制", exact: true })).toBeEnabled();
+    const targetName = uniqueName("完整副本");
+    let existingVersionId: string | undefined;
+    if (targetMode === "existing") {
+      const existing = await browserJson<{ id: string }>(
+        page,
+        `/api/v1/projects/${targetProject.projectId}/versions`,
+        { method: "POST", body: { name: targetName } },
+      );
+      expect(existing.status).toBe(201);
+      existingVersionId = existing.body.id;
+      const nonempty = await browserJson<{ id: string }>(
+        page,
+        `/api/v1/projects/${targetProject.projectId}/versions`,
+        { method: "POST", body: { name: "不能覆盖的已有版本" } },
+      );
+      expect(nonempty.status).toBe(201);
+      expect(
+        (
+          await browserJson(
+            page,
+            `/api/v1/projects/${targetProject.projectId}/versions/${nonempty.body.id}/stages`,
+            { method: "POST", body: { name: "已有阶段" } },
+          )
+        ).status,
+      ).toBe(201);
+      await dialog.getByRole("radio", { name: "已有空版本", exact: true }).check();
+      await expect(dialog.getByRole("button", { name: "开始复制", exact: true })).toBeDisabled();
+    } else {
+      await dialog.getByLabel("新版本名称", { exact: true }).fill(targetName);
+    }
+    const target = dialog.getByRole("combobox", { name: "目标项目", exact: true });
+    await target.click();
+    await page.getByRole("option", { name: targetProject.name, exact: true }).click();
+    if (targetMode === "existing") {
+      const existingSelector = dialog.getByRole("combobox", { name: "已有空版本", exact: true });
+      await expect(existingSelector).toBeEnabled();
+      await existingSelector.click();
+      await expect(
+        page.getByRole("option", { name: "不能覆盖的已有版本（非空）", exact: true }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await page.getByRole("option", { name: targetName, exact: true }).click();
+      await expect(dialog.getByRole("button", { name: "开始复制", exact: true })).toBeEnabled();
+    }
+    for (const appearance of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+        ]);
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await waitForUiTransitions(page);
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`version-copy-${appearance}-${viewport.width}.png`),
+        });
+      }
+    }
+    await dialog.getByRole("button", { name: "开始复制", exact: true }).click();
+    await expect(dialog.getByText("副本已校验并开放使用", { exact: true })).toBeVisible({
+      timeout: scale ? 240000 : 60000,
+    });
+    const jobs = (
+      await browserJson<{
+        jobs: Array<{ status: string; targetVersionId?: string; targetVersionName: string }>;
+      }>(page, `/api/v1/project-version-copies?projectId=${source.projectId}`)
+    ).body.jobs;
+    const copied = jobs.find((job) => job.targetVersionName === targetName)!;
+    expect(copied.status).toBe("completed");
+    expect(copied.targetVersionId).toBeTruthy();
+    if (existingVersionId) expect(copied.targetVersionId).toBe(existingVersionId);
+    const structure = (
+      await browserJson<{
+        versions: Array<{ id: string; name: string; stages: Array<{ id: string }> }>;
+      }>(page, `/api/v1/projects/${targetProject.projectId}/structure`)
+    ).body;
+    const version = structure.versions.find(
+      (candidate) => candidate.id === copied.targetVersionId,
+    )!;
+    expect(version.name).toBe(targetName);
+    expect(version.stages).toHaveLength(1);
+    if (scale)
+      expect(copiedVersionMemberCount(process.env.AUTOFORGE_E2E_DATA_DIR!, version.id)).toBe(
+        100000,
+      );
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`version-copy-completed-${viewport.width}.png`),
+      });
+    }
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await selectProjectContext(page, targetProject.projectId, version.id, version.stages[0]!.id);
+    await page.goto("/execution-records");
+    await expect(
+      page.locator(".execution-records-table").getByText(source.suiteName, { exact: true }),
+    ).toBeVisible();
+    await expectUiIntegrity(page);
+    await page.goto("/case-suites");
+    await expect(
+      page
+        .getByRole("region", { name: "用例任务列表", exact: true })
+        .getByText(source.suiteName, { exact: true }),
+    ).toBeVisible();
+  });
 
 test("version initialization allows every step to be skipped and can be reopened", async ({
   page,

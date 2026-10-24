@@ -694,3 +694,31 @@ func TestMapTestNGReportRejectsAnySkippedTests(t *testing.T) {
 		}
 	}
 }
+
+func TestInterruptedProcessKeepsItsDiagnosticWhenTestNGHasPartialResults(t *testing.T) {
+	for _, exitCode := range []int{137, 143} {
+		result := executor.Result{Termination: "completed", ExitCode: exitCode}
+		mapped := mapExecutionResult(result)
+		if mapped.Status != "failed" || mapped.ResultCode != "PROCESS_INTERRUPTED" {
+			t.Fatalf("exit=%d mapped=%+v", exitCode, mapped)
+		}
+		originalSummary := mapped.Summary
+		mapTestNGReport(&mapped, result, executor.TestNGReportSummary{
+			TestNGResultCounts: executor.TestNGResultCounts{Total: 2, Passed: 1, Skipped: 1},
+		})
+		if mapped.ResultCode != "PROCESS_INTERRUPTED" || mapped.Summary != originalSummary || mapped.TestNG == nil {
+			t.Fatalf("partial XML overrode interrupted process: %+v", mapped)
+		}
+	}
+}
+
+func TestKnownTerminationReasonTakesPrecedenceOverExit143(t *testing.T) {
+	for termination, expectedCode := range map[string]string{
+		"cancelled": "EXECUTION_CANCELLED", "timeout": "EXECUTION_TIMEOUT", "resource_exceeded": "RESOURCE_MEMORY_EXCEEDED",
+	} {
+		mapped := mapExecutionResult(executor.Result{Termination: termination, ExitCode: 143, ResourceLimit: "memory"})
+		if mapped.ResultCode != expectedCode {
+			t.Fatalf("termination=%s mapped=%+v", termination, mapped)
+		}
+	}
+}

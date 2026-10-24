@@ -18,6 +18,7 @@ import {
   type ProjectVersion,
   type TestStage,
 } from "@autoforge/domain";
+import { VERSION_COPY_RESERVED } from "./version-copy-target";
 
 type VersionRow = {
   id: string;
@@ -86,7 +87,11 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
   async list(projectId: string) {
     const versions = (
       this.handle.client
-        .prepare("SELECT * FROM project_versions WHERE project_id = ? ORDER BY created_at, id")
+        .prepare(
+          `SELECT * FROM project_versions v WHERE project_id = ?
+          AND NOT EXISTS (SELECT 1 FROM project_version_copies c WHERE c.target_version_id=v.id AND c.status NOT IN ('completed','cancelled'))
+          ORDER BY created_at, id`,
+        )
         .all(projectId) as VersionRow[]
     ).map(mapVersion);
     const stages = (
@@ -180,12 +185,7 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
   async createStage(record: CreateTestStageRecord): Promise<TestStage> {
     try {
       return await retrySqliteWriteTransaction(this.handle, () => {
-        const version = this.handle.client
-          .prepare("SELECT id FROM project_versions WHERE id = ? AND project_id = ?")
-          .get(record.projectVersionId, record.projectId);
-        if (!version) {
-          throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在。");
-        }
+        this.requireVersionInProject(record.projectVersionId, record.projectId);
         const position = (
           this.handle.client
             .prepare(
@@ -257,6 +257,7 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     return retrySqliteLockContention(() => {
       try {
         return runSqliteWriteTransaction(this.handle, () => {
+          this.requireVersionInProject(projectVersionId, record.projectId);
           const version = this.handle.client
             .prepare("SELECT * FROM project_versions WHERE id = ? AND project_id = ?")
             .get(projectVersionId, record.projectId) as VersionRow | undefined;
@@ -626,6 +627,17 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     if (!version) {
       throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在或不属于当前项目。");
     }
+    if (
+      this.handle.client
+        .prepare(
+          `SELECT id FROM project_version_copies WHERE target_version_id=? AND ${VERSION_COPY_RESERVED} LIMIT 1`,
+        )
+        .get(projectVersionId)
+    )
+      throw new DomainError(
+        "VERSION_COPY_TARGET_RESERVED",
+        "目标版本正在复制或等待清理，暂不能修改。",
+      );
   }
 
   private deleteAssetMetadataIfUnreferenced(assetId: string): ProjectRuntimeAsset | undefined {

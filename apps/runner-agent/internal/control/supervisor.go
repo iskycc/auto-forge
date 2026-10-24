@@ -1317,6 +1317,18 @@ func mapExecutionResult(result executor.Result) completionResult {
 		mapped.Status = "failed"
 		mapped.ResultCode = "LOG_LIMIT_EXCEEDED"
 		mapped.Summary = "Test output exceeded the local log byte limit."
+	case result.Signal != "":
+		mapped.Status = "failed"
+		mapped.ResultCode = "PROCESS_INTERRUPTED"
+		mapped.Summary = fmt.Sprintf("TestNG was terminated by %s. Check the Runner's system/service logs and memory pressure; the signal alone does not establish an OOM kill.", result.Signal)
+	case result.ExitCode == 143 || result.ExitCode == 137:
+		mapped.Status = "failed"
+		mapped.ResultCode = "PROCESS_INTERRUPTED"
+		signal := "SIGTERM"
+		if result.ExitCode == 137 {
+			signal = "SIGKILL"
+		}
+		mapped.Summary = fmt.Sprintf("TestNG exited with code %d (often associated with %s; no terminating signal was observed by the Agent). Check the Runner's system/service logs, external stop requests and memory pressure; this exit code alone does not establish an OOM kill.", result.ExitCode, signal)
 	case result.ExitCode == 0:
 		mapped.Status = "succeeded"
 		mapped.ResultCode = "TESTNG_SUCCEEDED"
@@ -1332,7 +1344,7 @@ func mapExecutionResult(result executor.Result) completionResult {
 func resourceLimitResult(resource string) (string, string) {
 	switch resource {
 	case "memory":
-		return "RESOURCE_MEMORY_EXCEEDED", "The execution exceeded its cgroup memory limit."
+		return "RESOURCE_MEMORY_EXCEEDED", "The kernel recorded an OOM kill in the execution cgroup. Check both its memory limit and the Runner/ancestor cgroup memory pressure."
 	case "processes":
 		return "RESOURCE_PROCESS_LIMIT_EXCEEDED", "The execution exceeded its cgroup process limit."
 	case "disk":
@@ -1354,7 +1366,7 @@ func mapTestNGReport(mapped *completionResult, result executor.Result, summary e
 		Suites:           mapTestNGSuites(summary.Suites),
 	}
 	if result.Termination != "completed" || result.LogsTruncated ||
-		result.ExitCode == adapterCaseTimeoutExitCode {
+		result.ExitCode == adapterCaseTimeoutExitCode || mapped.ResultCode == "PROCESS_INTERRUPTED" {
 		return
 	}
 	switch {

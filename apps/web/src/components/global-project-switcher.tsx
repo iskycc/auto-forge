@@ -21,6 +21,8 @@ const PROJECT_DEPENDENT_PARAMETERS = [
   "caseProjectId",
   "caseProjectVersionId",
   "cursor",
+  "cursorPage",
+  "cursorTrail",
 ] as const;
 
 type ProjectVersionOption = {

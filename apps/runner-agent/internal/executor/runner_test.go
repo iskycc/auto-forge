@@ -234,6 +234,9 @@ func TestHelperProcess(t *testing.T) {
 	case "output":
 		fmt.Fprint(os.Stdout, "stdout-data")
 		fmt.Fprint(os.Stderr, "stderr-data")
+	case "sigterm":
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		time.Sleep(time.Second)
 	case "sleep":
 		time.Sleep(5 * time.Second)
 	case "argument":
@@ -288,4 +291,17 @@ func testExecutable(t *testing.T) string {
 		t.Fatalf("filepath.Abs(os.Args[0]): %v", err)
 	}
 	return absolute
+}
+
+func TestRunRecordsExternalSIGTERMWithoutMistakingItForCancellation(t *testing.T) {
+	executable := testExecutable(t)
+	result, err := Run(context.Background(), helperSpec(executable, "sigterm"), RunOptions{
+		DataDirectory: t.TempDir(), Policy: Policy{AllowedExecutables: []string{executable}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Signal != "SIGTERM" || result.Termination != "completed" || result.ExitCode == 0 {
+		t.Fatalf("unexpected external termination result: %+v", result)
+	}
 }

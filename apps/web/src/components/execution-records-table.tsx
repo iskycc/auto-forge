@@ -36,6 +36,7 @@ import {
 import {
   EXECUTION_RECORD_COLUMNS,
   executionRecordColumnWidths,
+  fitExecutionRecordColumns,
   executionRecordDurationMs,
   executionRecordIsActive,
   executionRecordPassRate,
@@ -138,14 +139,23 @@ export function ExecutionRecordsTable({
   const widths: Record<string, number> = { ...storedWidths, ...dragWidths };
   const automaticWidths = useMemo(() => executionRecordColumnWidths(rows), [rows]);
   const tableContainerRef = useRef<HTMLDivElement>(null);
-  const [measuredActionsWidth, setMeasuredActionsWidth] = useState(
-    () => executionRecordColumnWidths([]).actions,
-  );
+  const [measuredActionsWidth, setMeasuredActionsWidth] = useState<number>();
+  const [availableWidth, setAvailableWidth] = useState(0);
   const minimumColumnWidth = useCallback(
     (column: ExecutionRecordColumnDefinition) =>
-      column.key === "actions" ? Math.max(column.minWidth, measuredActionsWidth) : column.minWidth,
+      column.key === "actions"
+        ? Math.max(column.minWidth, measuredActionsWidth ?? 0)
+        : column.minWidth,
     [measuredActionsWidth],
   );
+
+  useEffect(() => {
+    const scroll = tableContainerRef.current?.querySelector<HTMLElement>(".resizable-table-scroll");
+    if (!scroll) return;
+    const observer = new ResizeObserver(() => setAvailableWidth(scroll.clientWidth));
+    observer.observe(scroll);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const groups = Array.from(
@@ -219,10 +229,22 @@ export function ExecutionRecordsTable({
     [],
   );
 
-  const columnWidth = (column: ExecutionRecordColumnDefinition): number =>
-    // 已持久化的列宽可能来自旧版约束；读取时重新执行当前下限，防止升级后
-    // localStorage 中的过窄数值继续截断状态、百分比和操作按钮。
-    Math.max(minimumColumnWidth(column), widths[column.key] ?? automaticWidths[column.key]);
+  const baseWidths = Object.fromEntries(
+    EXECUTION_RECORD_COLUMNS.map((column) => [
+      column.key,
+      // 已持久化的列宽可能来自旧版约束；读取时重新执行当前下限，防止升级后
+      // localStorage 中的过窄数值继续截断状态、百分比和操作按钮。
+      Math.max(
+        minimumColumnWidth(column),
+        widths[column.key] ??
+          (column.key === "actions" && measuredActionsWidth !== undefined
+            ? measuredActionsWidth
+            : automaticWidths[column.key]),
+      ),
+    ]),
+  ) as ReturnType<typeof executionRecordColumnWidths>;
+  const fittedWidths = fitExecutionRecordColumns(baseWidths, availableWidth);
+  const columnWidth = (column: ExecutionRecordColumnDefinition): number => fittedWidths[column.key];
   // table-layout: fixed 只有在表格拥有确定宽度时才会完全忽略单元格的内在宽度。
   // 直接使用各列宽度之和，避免某个超长且不可换行的任务名通过 max-content 撑宽整列。
   const tableWidth = EXECUTION_RECORD_COLUMNS.reduce(

@@ -6,6 +6,8 @@ import {
   CaseSourceService,
   CaseSuiteService,
   VersionInitializationService,
+  ProjectVersionCopyService,
+  authorizeVersionCopyActor,
   CaseDefinitionService,
   PlatformOperationsService,
   DdtImportService,
@@ -59,6 +61,8 @@ import {
   SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
   SqliteProjectStructureRepository,
+  SqliteProjectVersionCopyRepository,
+  VersionCopyArchive,
   SqliteRunBatchRepository,
   SqliteRunnerGroupRepository,
   SqliteRunnerRepository,
@@ -80,6 +84,7 @@ import {
   PostgresCaseSuiteRepository,
   PostgresExecutionControlRepository,
   PostgresProjectStructureRepository,
+  PostgresProjectVersionCopyRepository,
   PostgresRunBatchRepository,
   PostgresRunnerGroupRepository,
   PostgresRunnerRepository,
@@ -500,6 +505,31 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
     clock,
   );
   switch (job.kind) {
+    case "project-version-copy": {
+      const copyId = z.string().min(1).max(128).parse(job.payload.copyId);
+      const repository =
+        configuration.mode === "lite"
+          ? new SqliteProjectVersionCopyRepository(sqliteHandle())
+          : new PostgresProjectVersionCopyRepository(postgresHandle());
+      const { projects } = schedulingCollaborators();
+      try {
+        await new ProjectVersionCopyService({
+          repository,
+          archive: new VersionCopyArchive(repository, objectStore, configuration.dataDirectory),
+          objects: objectStore,
+          logs: configuration.mode === "lite" ? logStore() : fullLogStore(),
+          cipher: new AesGcmSecretCipher(platformConfigurationStore.read().secrets.masterKey),
+          clock,
+          ids,
+          authorize: (actorId, source, target) =>
+            authorizeVersionCopyActor(projects, actorId, source, target),
+          invalidate: (projectId) => snapshots.invalidate(projectId),
+        }).execute(copyId, signal);
+      } finally {
+        await repository.close();
+      }
+      return;
+    }
     case "object-cleanup":
       return new CaseSourceService(catalog, objectStore, clock, ids).objectCleanupHandler()(
         job,

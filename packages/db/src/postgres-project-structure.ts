@@ -16,6 +16,7 @@ import {
 import type { PoolClient, QueryResultRow } from "pg";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
+import { VERSION_COPY_RESERVED } from "./version-copy-target";
 
 type VersionRow = QueryResultRow & {
   id: string;
@@ -81,7 +82,9 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     await this.handle.ready;
     const [versionResult, stageResult, adapterConfiguration] = await Promise.all([
       this.handle.pool.query<VersionRow>(
-        "SELECT * FROM project_versions WHERE project_id = $1 ORDER BY created_at, id",
+        `SELECT * FROM project_versions v WHERE project_id = $1
+          AND NOT EXISTS (SELECT 1 FROM project_version_copies c WHERE c.target_version_id=v.id AND c.status NOT IN ('completed','cancelled'))
+          ORDER BY created_at, id`,
         [projectId],
       ),
       this.handle.pool.query<StageRow>(
@@ -171,13 +174,7 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     await this.handle.ready;
     try {
       return await this.transaction(async (client) => {
-        const version = await client.query(
-          "SELECT id FROM project_versions WHERE id = $1 AND project_id = $2 FOR UPDATE",
-          [record.projectVersionId, record.projectId],
-        );
-        if (version.rowCount !== 1) {
-          throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在。");
-        }
+        await requireVersionInProject(client, record.projectVersionId, record.projectId);
         const result = await client.query<StageRow>(
           `INSERT INTO test_stages
            (id, project_id, project_version_id, name, normalized_name, description, position,
@@ -241,6 +238,7 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     await this.handle.ready;
     try {
       return await this.transaction(async (client) => {
+        await requireVersionInProject(client, projectVersionId, record.projectId);
         const versions = await client.query<VersionRow>(
           "SELECT * FROM project_versions WHERE id = $1 AND project_id = $2 FOR UPDATE",
           [projectVersionId, record.projectId],
@@ -401,7 +399,12 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     await this.handle.ready;
     try {
       return await this.transaction(async (client) => {
-        await requireVersionInProject(client, input.sourceProjectVersionId, input.projectId);
+        await requireVersionInProject(
+          client,
+          input.sourceProjectVersionId,
+          input.projectId,
+          "read",
+        );
         await requireVersionInProject(client, input.targetProjectVersionId, input.projectId);
         const source = await versionRuntimeRow(client, input.sourceProjectVersionId, true);
         if (!source) {
@@ -557,14 +560,27 @@ async function requireVersionInProject(
   client: Queryable,
   projectVersionId: string,
   projectId: string,
+  access: "read" | "write" = "write",
 ): Promise<void> {
   const result = await client.query(
-    "SELECT 1 FROM project_versions WHERE id = $1 AND project_id = $2",
+    `SELECT 1 FROM project_versions WHERE id = $1 AND project_id = $2${access === "write" ? " FOR UPDATE" : ""}`,
     [projectVersionId, projectId],
   );
   if (result.rowCount !== 1) {
     throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在或不属于当前项目。");
   }
+  if (
+    (
+      await client.query(
+        `SELECT id FROM project_version_copies WHERE target_version_id=$1 AND ${VERSION_COPY_RESERVED} LIMIT 1`,
+        [projectVersionId],
+      )
+    ).rowCount
+  )
+    throw new DomainError(
+      "VERSION_COPY_TARGET_RESERVED",
+      "目标版本正在复制或等待清理，暂不能修改。",
+    );
 }
 
 async function versionRuntimeRow(

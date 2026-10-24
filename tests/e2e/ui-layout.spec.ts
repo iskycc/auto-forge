@@ -2333,7 +2333,9 @@ test("top-bar project context persists across pages and removes local project sw
   expect(alternateStage.status).toBe(201);
   await selectProjectContext(page, DEFAULT_PROJECT_ID);
 
-  await page.goto("/cases?projectId=stale-project&cursor=stale-cursor");
+  await page.goto(
+    "/cases?projectId=stale-project&cursor=stale-cursor&cursorPage=3&cursorTrail=%5B%22older-cursor%22%5D",
+  );
   const switcher = page.locator(".global-project-switcher");
   await switcher.locator(".project-picker-trigger").click();
   const switched = page.waitForResponse(
@@ -4999,7 +5001,7 @@ test("execution record actions stay on one line after sharing and resizing saved
       .addCookies([
         { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
       ]);
-    for (const width of [1024, 1536]) {
+    for (const width of [1024, 1536, 2560]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page.reload();
       await expect(failedRow.getByRole("button", { name: "开始分析", exact: true })).toBeVisible();
@@ -5058,6 +5060,16 @@ test("execution record actions stay on one line after sharing and resizing saved
       await expect(handle).toHaveAttribute("aria-valuenow", resizedWidth!);
       await page.getByRole("button", { name: "重置列宽", exact: true }).click();
       await expectSingleLine();
+      await expect
+        .poll(async () => {
+          const configured = Number(await handle.getAttribute("aria-valuenow"));
+          const actual = await failedRow
+            .locator("td")
+            .last()
+            .evaluate((cell) => cell.getBoundingClientRect().width);
+          return Math.abs(actual - configured);
+        })
+        .toBeLessThan(2);
       await expect
         .poll(async () => Number(await handle.getAttribute("aria-valuenow")))
         .toBeLessThan(Number(resizedWidth));

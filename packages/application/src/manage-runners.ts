@@ -134,7 +134,7 @@ export class RunnerControlService {
       agentVersion: input.agentVersion,
       terminalEnabled: input.terminalEnabled,
       ...(input.resourceSnapshot
-        ? { resourceSnapshot: { ...input.resourceSnapshot, observedAt: acceptedAt } }
+        ? { resourceSnapshot: heartbeatResourceSnapshot(input.resourceSnapshot, acceptedAt) }
         : {}),
       recordedAt: acceptedAt,
     });
@@ -301,4 +301,18 @@ export class RunnerControlService {
   private offlineBefore(): string {
     return new Date(this.clock.now().getTime() - OFFLINE_AFTER_SECONDS * 1000).toISOString();
   }
+}
+
+function heartbeatResourceSnapshot(
+  snapshot: NonNullable<RunnerHeartbeatInput["resourceSnapshot"]>,
+  observedAt: string,
+): NonNullable<Runner["resourceSnapshot"]> {
+  const { memoryTotalBytes, memoryAvailableBytes, ...percentages } = snapshot;
+  return {
+    ...percentages,
+    observedAt,
+    ...(memoryTotalBytes !== undefined && memoryAvailableBytes !== undefined
+      ? { memoryTotalBytes, memoryAvailableBytes }
+      : {}),
+  };
 }

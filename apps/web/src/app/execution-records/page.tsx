@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { ExecutionCaseFilter } from "@/components/execution-case-filter";
 import { ReadModelStatusBar } from "@/components/read-model-status";
+import { CursorPagination } from "@/components/cursor-pagination";
 import { Button, DatetimeInput, Select } from "@/components/ui";
 import {
   ExecutionRecordsTable,
@@ -30,7 +31,6 @@ import {
 import { hasPermission } from "@autoforge/domain";
 import {
   localDateTimeInputValue,
-  refreshQueryFromFilter,
   runBatchFilterFromSearch,
   RUN_BATCH_PAGE_SIZE_OPTIONS,
 } from "@/lib/run-batch-filter";
@@ -79,10 +79,6 @@ export default async function ExecutionRecordsPage({
       : Promise.resolve([]),
     canReadRunners && view !== "api" ? services.runnerControl.list(500) : Promise.resolve([]),
   ]);
-  const refreshQuery = refreshQueryFromFilter(filter);
-  refreshQuery.set("view", view);
-  const nextQuery = new URLSearchParams(refreshQuery);
-  if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
   const observedAt = services.clock.now().toISOString();
   const rows: ExecutionRecordRow[] = batchPage.items.map((batch) => ({
     id: batch.id,
@@ -301,19 +297,11 @@ export default async function ExecutionRecordsPage({
                 rows={rows}
               />
             )}
-            {batchPage.nextCursor ? (
-              <LinkButton
-                className={cn(
-                  "button button-secondary batch-next-page",
-                  uiPatterns["button"],
-                  uiPatterns["button-secondary"],
-                  pageStyles["batch-next-page"],
-                )}
-                href={`/execution-records?${nextQuery}`}
-              >
-                查看更早记录
-              </LinkButton>
-            ) : null}
+            <CursorPagination
+              nextCursor={batchPage.nextCursor}
+              count={batchPage.items.length}
+              label="执行记录分页"
+            />
           </Card>
         </>
       )}
@@ -322,9 +310,8 @@ export default async function ExecutionRecordsPage({
 }
 
 const pageStyles = {
-  "batch-next-page": "mt-4 w-full justify-center",
   "execution-records-card":
-    "[&_.records-table-header]:flex [&_.records-table-header]:items-center [&_.records-table-header]:justify-between [&_.records-table-header]:gap-3 [&_.records-table-header]:[padding:4px_0_14px] [&_.records-table-header_h2]:m-0 [&_.records-table-header_h2]:text-base [&_.batch-next-page]:mt-4",
+    "[&_.records-table-header]:flex [&_.records-table-header]:items-center [&_.records-table-header]:justify-between [&_.records-table-header]:gap-3 [&_.records-table-header]:[padding:4px_0_14px] [&_.records-table-header_h2]:m-0 [&_.records-table-header_h2]:text-base",
   // Reserve navigation space before Ant Tabs measures itself during hydration.
   "execution-records-page":
     "[&_.section-tabs]:min-h-12 [&_.run-history-filter]:p-3 [&_.run-history-filter]:gap-3",

@@ -46,6 +46,9 @@ import {
   runWithTransientRecovery,
   PlatformOperationsService,
   ProjectStructureService,
+  ProjectVersionCopyRequests,
+  authorizeVersionCopyActor,
+  type ProjectVersionCopyRepository,
   RunBatchExportService,
   RunBatchSchedulingService,
   RoundRecoveryConfigurationInspector,
@@ -104,6 +107,7 @@ import {
   SqliteRunnerGroupRepository,
   SqlitePlatformOperationsRepository,
   SqliteProjectStructureRepository,
+  SqliteProjectVersionCopyRepository,
   SqliteWebhookRepository,
 } from "@autoforge/db/sqlite";
 import { parseDdtUpload } from "@autoforge/ddt-import";
@@ -182,6 +186,7 @@ async function createPlatformServices() {
   let cache: CachePort;
   let operationsRepository: PlatformOperationsRepository;
   let projectStructuresRepository: ProjectStructureRepository;
+  let versionCopyRepository: ProjectVersionCopyRepository & { close(): Promise<void> };
   let webhookRepository: WebhookRepository;
   let closeDatabase: () => Promise<void>;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
@@ -235,8 +240,10 @@ async function createPlatformServices() {
       isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
     );
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
+    versionCopyRepository = new SqliteProjectVersionCopyRepository(database);
     webhookRepository = new SqliteWebhookRepository(database);
     closeDatabase = async () => {
+      await versionCopyRepository.close();
       attemptLogs.close();
       database.close();
     };
@@ -259,6 +266,7 @@ async function createPlatformServices() {
         PostgresDashboardSnapshotRepository,
         PostgresReadModelSnapshotRepository,
         PostgresIdentityAccessRepository,
+        PostgresProjectVersionCopyRepository,
         PostgresExecutionControlRepository,
         PostgresFailureAnalysisRepository,
         PostgresRunBatchRepository,
@@ -378,6 +386,7 @@ async function createPlatformServices() {
       });
       cache = new RedisCache(redis);
       closeDatabase = async () => {
+        await versionCopyRepository.close();
         await attemptLogs.close();
         await Promise.all([database.close(), executionDatabase.close()]);
       };
@@ -431,6 +440,7 @@ async function createPlatformServices() {
     objectStore = new MinioObjectStore(config.minio);
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
+    versionCopyRepository = new PostgresProjectVersionCopyRepository(database);
     webhookRepository = new PostgresWebhookRepository(database);
   }
   const discovery = isolatedJarDiscovery(
@@ -451,6 +461,13 @@ async function createPlatformServices() {
     clock,
   );
   const ids = { next: () => uuidV7() };
+  const versionCopies = new ProjectVersionCopyRequests({
+    repository: versionCopyRepository,
+    clock,
+    ids,
+    authorize: (actorId, source, target) =>
+      authorizeVersionCopyActor(identities, actorId, source, target),
+  });
   const secretCipher = new AesGcmSecretCipher(config.masterKey);
   const webhooks = new WebhookNotificationService(
     webhookRepository,
@@ -671,6 +688,10 @@ async function createPlatformServices() {
             "analytics-export": dispatcher
               ? (job, signal) => dispatcher.executeBackgroundJob(job, signal)
               : platformOperations.analyticsExportJobHandler(),
+            "project-version-copy": async (job, signal) => {
+              if (!dispatcher) throw new Error("Version copying requires the background worker.");
+              await dispatcher.executeBackgroundJob(job, signal);
+            },
           },
           clock,
           {
@@ -936,6 +957,7 @@ async function createPlatformServices() {
     ddtDebug,
     ddtChanges,
     projectStructures,
+    versionCopies,
     storageInventory,
     readStorageInventory: createStorageInventoryReader({
       local: storageInventory,

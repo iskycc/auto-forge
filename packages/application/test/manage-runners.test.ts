@@ -41,6 +41,41 @@ function serviceWith(
 }
 
 describe("RunnerControlService credentials", () => {
+  it("preserves effective memory capacity while stamping a trusted heartbeat time", async () => {
+    const heartbeat = vi.fn().mockResolvedValue(undefined);
+    const { service } = serviceWith({
+      findByCredentialHash: vi.fn().mockResolvedValue({ id: "runner-1", state: "online" }),
+      heartbeat,
+    });
+    await service.heartbeat("runner-1", "credential", {
+      schemaVersion: 1,
+      busySlots: 0,
+      labels: [],
+      capabilities: [],
+      maxConcurrency: 8,
+      agentVersion: "1.20.0",
+      terminalEnabled: false,
+      resourceSnapshot: {
+        cpuUtilizationPercent: 10,
+        memoryUtilizationPercent: 100,
+        memoryTotalBytes: 4096,
+        memoryAvailableBytes: 0,
+        loadAverage1m: 0,
+        logicalCpuCount: 4,
+        observedAt: "2099-01-01T00:00:00.000Z",
+      },
+    });
+    expect(heartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resourceSnapshot: expect.objectContaining({
+          memoryTotalBytes: 4096,
+          memoryAvailableBytes: 0,
+          observedAt: now.toISOString(),
+        }),
+      }),
+    );
+  });
+
   it("recovers the existing logical Runner id during an authenticated reinstall", async () => {
     const register = vi.fn().mockImplementation(async (record) => ({
       id: record.id,

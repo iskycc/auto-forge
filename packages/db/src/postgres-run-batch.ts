@@ -1517,6 +1517,8 @@ export class PostgresRunBatchRepository
           .where(
             and(
               eq(pgRunBatches.projectId, lockedBatch.projectId),
+              inArray(pgRunBatches.status, [...activeBatchStatuses]),
+              inArray(pgExecutionRuns.status, [...activeAttemptStatuses]),
               inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
             ),
           ),
@@ -1524,9 +1526,12 @@ export class PostgresRunBatchRepository
           .select({ value: count() })
           .from(pgRunAttempts)
           .innerJoin(pgExecutionRuns, eq(pgExecutionRuns.id, pgRunAttempts.executionRunId))
+          .innerJoin(pgRunBatches, eq(pgRunBatches.id, pgExecutionRuns.batchId))
           .where(
             and(
               eq(pgExecutionRuns.batchId, input.batchId),
+              inArray(pgRunBatches.status, [...activeBatchStatuses]),
+              inArray(pgExecutionRuns.status, [...activeAttemptStatuses]),
               inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
             ),
           ),
@@ -1579,9 +1584,13 @@ export class PostgresRunBatchRepository
                 await transaction
                   .select({ runnerId: pgRunAttempts.runnerId, value: count() })
                   .from(pgRunAttempts)
+                  .innerJoin(pgExecutionRuns, eq(pgExecutionRuns.id, pgRunAttempts.executionRunId))
+                  .innerJoin(pgRunBatches, eq(pgRunBatches.id, pgExecutionRuns.batchId))
                   .where(
                     and(
                       inArray(pgRunAttempts.runnerId, decisionRunnerIds),
+                      inArray(pgRunBatches.status, [...activeBatchStatuses]),
+                      inArray(pgExecutionRuns.status, [...activeAttemptStatuses]),
                       inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
                     ),
                   )

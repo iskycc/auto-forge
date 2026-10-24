@@ -1,6 +1,9 @@
 import type { ExecutionRun } from "./run-batch";
 import type { Runner } from "./runner";
-import { assessRunnerCompatibility } from "./runner-compatibility";
+import {
+  assessRunnerCompatibility,
+  DEFAULT_EXECUTION_RESOURCE_LIMITS,
+} from "./runner-compatibility";
 
 export type SchedulingThresholds = {
   maximumCpuUtilizationPercent: number;
@@ -16,6 +19,7 @@ export type SchedulingBlockReason =
   | "capacity_exhausted"
   | "cpu_limit_exceeded"
   | "memory_limit_exceeded"
+  | "memory_reservation_exhausted"
   | "load_limit_exceeded";
 
 export type SchedulingCandidate = {
@@ -175,12 +179,15 @@ export function evaluateRunnerForScheduling(
   const reasons: SchedulingBlockReason[] = [];
   const runner = candidate.runner;
   const occupiedSlots = occupiedRunnerSlots(candidate);
-  const availableSlots = Math.max(0, runner.maxConcurrency - occupiedSlots);
+  const concurrencySlots = Math.max(0, runner.maxConcurrency - occupiedSlots);
+  const memorySlots = availableMemorySlots(candidate, thresholds);
+  const availableSlots = Math.min(concurrencySlots, memorySlots);
   const metrics = runner.resourceSnapshot;
 
   if (runner.state !== "online") reasons.push("runner_not_online");
   if (!assessRunnerCompatibility(runner).compatible) reasons.push("runner_incompatible");
-  if (availableSlots === 0) reasons.push("capacity_exhausted");
+  if (concurrencySlots === 0) reasons.push("capacity_exhausted");
+  if (memorySlots === 0) reasons.push("memory_reservation_exhausted");
   if (!metrics) {
     reasons.push("metrics_unavailable");
     return { runnerId: runner.id, eligible: false, blockReasons: reasons, availableSlots };
@@ -253,7 +260,10 @@ function schedulingScore(
   if (!metrics) return 0;
   const occupiedSlots = occupiedRunnerSlots(candidate);
   const capacityHeadroom =
-    (candidate.runner.maxConcurrency - occupiedSlots) / candidate.runner.maxConcurrency;
+    Math.min(
+      candidate.runner.maxConcurrency - occupiedSlots,
+      availableMemorySlots(candidate, thresholds),
+    ) / candidate.runner.maxConcurrency;
   const cpuHeadroom = headroom(
     metrics.cpuUtilizationPercent,
     thresholds.maximumCpuUtilizationPercent,
@@ -267,6 +277,36 @@ function schedulingScore(
     100 *
       (0.4 * capacityHeadroom + 0.25 * cpuHeadroom + 0.2 * memoryHeadroom + 0.15 * loadHeadroom),
   );
+}
+
+/** Reserve each active or newly planned JVM's full execution limit, even before metrics catch up.
+ * Existing RSS remains in measured usage: the conservative margin also protects non-test processes.
+ */
+function availableMemorySlots(
+  candidate: SchedulingCandidate,
+  thresholds: SchedulingThresholds,
+): number {
+  const metrics = candidate.runner.resourceSnapshot;
+  if (metrics?.memoryTotalBytes === undefined && metrics?.memoryAvailableBytes === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const total = metrics?.memoryTotalBytes;
+  const available = metrics?.memoryAvailableBytes;
+  if (
+    total === undefined ||
+    available === undefined ||
+    !Number.isSafeInteger(total) ||
+    total <= 0 ||
+    !Number.isSafeInteger(available) ||
+    available < 0 ||
+    available > total
+  )
+    return 0;
+  const systemReserveBytes = total * (1 - thresholds.maximumMemoryUtilizationPercent / 100);
+  const slots = Math.floor(
+    Math.max(0, available - systemReserveBytes) / DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes,
+  );
+  return Math.max(0, slots - occupiedRunnerSlots(candidate));
 }
 
 function occupiedRunnerSlots(candidate: SchedulingCandidate): number {

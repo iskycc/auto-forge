@@ -181,6 +181,111 @@ async function insertCaseHistoryRun(
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("atomically shares one memory budget across concurrently scheduled batches and releases reservations", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-10T00:00:00.000Z";
+    const sourceId = randomUUID();
+    const batchIds = [harness.batchRunningId, harness.batchQueuedId];
+    try {
+      await harness.rawQuery("UPDATE run_batches SET status = 'succeeded' WHERE id = ?", [
+        harness.completion.batchId,
+      ]);
+      await harness.rawQuery(
+        `UPDATE runners SET max_concurrency = 32, cpu_utilization_percent = 10,
+        memory_utilization_percent = 25, memory_total_bytes = ?, memory_available_bytes = ?,
+        load_average_1m = 0, logical_cpu_count = 16, metrics_observed_at = ? WHERE id = ?`,
+        [16 * 1024 ** 3, 12 * 1024 ** 3, now, harness.runnerId],
+      );
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id, runner_id) VALUES (?, ?)", [
+        harness.batchQueuedId,
+        harness.runnerId,
+      ]);
+      await harness.rawQuery(
+        `INSERT INTO case_sources
+        (id,project_id,display_name,original_file_name,object_key,sha256,size_bytes,class_count,method_count,status,warnings_json,inspection_json,created_at,updated_at)
+        VALUES (?,?,'Memory fixture','fixture.jar',?, ?,100,1,1,'ready','[]','{}',?,?)`,
+        [sourceId, harness.projectId, sourceId, "a".repeat(64), now, now],
+      );
+      const runIdsByBatch: string[][] = [];
+      for (const batchId of batchIds) {
+        const runIds: string[] = [];
+        for (let index = 0; index < 3; index++) {
+          const caseId = randomUUID();
+          await harness.rawQuery(
+            `INSERT INTO case_definitions(id,project_id,source_id,class_name,package_name,display_name,enabled,groups_json,current_version,created_at,updated_at)
+            VALUES (?,?,?,'example.MemoryTest','example','MemoryTest',TRUE,'[]',1,?,?)`,
+            [caseId, harness.projectId, sourceId, now, now],
+          );
+          await harness.rawQuery(
+            "INSERT INTO case_versions(id,case_definition_id,source_id,version,snapshot_json,created_at) VALUES (?,?,?,1,'{}',?)",
+            [randomUUID(), caseId, sourceId, now],
+          );
+          const runId = await insertQueuedRun(harness, batchId);
+          await harness.rawQuery("UPDATE execution_runs SET case_definition_id = ? WHERE id = ?", [
+            caseId,
+            runId,
+          ]);
+          runIds.push(runId);
+        }
+        runIdsByBatch.push(runIds);
+      }
+      const reserve = (batchId: string, runIds: string[]) =>
+        harness.batches.reserveAssignments({
+          batchId,
+          decisions: runIds.map((executionRunId) => ({
+            executionRunId,
+            runnerId: harness.runnerId,
+            score: 1,
+            attemptId: randomUUID(),
+            assignmentId: randomUUID(),
+          })),
+          thresholds: {
+            maximumCpuUtilizationPercent: 80,
+            maximumMemoryUtilizationPercent: 85,
+            maximumLoadPerCpu: 1,
+          },
+          runnerLiveCapacities: [{ runnerId: harness.runnerId, availableSlots: 32 }],
+          offlineBefore: now,
+          metricsFreshAfter: now,
+          scheduledAt: now,
+        });
+      const reservations = await Promise.all(
+        batchIds.map((batchId, index) => reserve(batchId, runIdsByBatch[index]!)),
+      );
+      expect(reservations.reduce((count, reservation) => count + reservation.reserved, 0)).toBe(4);
+      const snapshot = await harness.batches.getSchedulingSnapshot(harness.batchRunningId, now);
+      expect(snapshot?.candidates[0]?.reservedSlots).toBe(4);
+      expect(snapshot?.candidates[0]?.runner.resourceSnapshot).toMatchObject({
+        memoryTotalBytes: 16 * 1024 ** 3,
+        memoryAvailableBytes: 12 * 1024 ** 3,
+      });
+      // A completed attempt must release its budget without requiring another heartbeat.
+      const releasedAttemptId = reservations.flatMap(
+        (reservation) => reservation.acceptedAttemptIds,
+      )[0]!;
+      await harness.rawQuery(
+        "UPDATE run_attempts SET status = 'failed', outcome = 'failed' WHERE id = ?",
+        [releasedAttemptId],
+      );
+      const refilled = await Promise.all(
+        batchIds.map(async (batchId, index) => {
+          const batch = await harness.batches.get(batchId);
+          const queuedIds = new Set(
+            batch?.runs.filter((run) => run.status === "queued").map((run) => run.id),
+          );
+          return reserve(
+            batchId,
+            runIdsByBatch[index]!.filter((runId) => queuedIds.has(runId)),
+          );
+        }),
+      );
+      expect(refilled.reduce((count, reservation) => count + reservation.reserved, 0)).toBe(1);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("records skipped tests as failed runs and failed batch counters", async () => {
     const harness = await createHarness();
     try {

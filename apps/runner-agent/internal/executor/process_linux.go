@@ -99,3 +99,21 @@ func readProcessStat(processID int) (ProcessIdentity, string, error) {
 	}
 	return ProcessIdentity{ProcessID: processID, StartTimeTicks: startTimeTicks}, fields[0], nil
 }
+
+func processExitSignal(command *exec.Cmd) string {
+	if command.ProcessState == nil {
+		return ""
+	}
+	status, ok := command.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return ""
+	}
+	switch status.Signal() {
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	case syscall.SIGKILL:
+		return "SIGKILL"
+	default:
+		return fmt.Sprintf("signal %d (%s)", status.Signal(), status.Signal())
+	}
+}

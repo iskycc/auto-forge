@@ -26,3 +26,4 @@ export * from "./security-audit";
 export * from "./version-initialization";
 export * from "./case-debug";
 export * from "./ddt-change-requests";
+export * from "./project-version-copy";

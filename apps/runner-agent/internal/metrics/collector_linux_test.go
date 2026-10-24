@@ -20,11 +20,11 @@ func TestCalculateCPUUtilizationUsesDeltaAfterFirstSample(t *testing.T) {
 }
 
 func TestParseMemoryUtilizationUsesMemAvailable(t *testing.T) {
-	got, err := parseMemoryUtilization("MemTotal: 1000 kB\nMemAvailable: 250 kB\n")
+	got, err := parseMemoryCapacity("MemTotal: 1000 kB\nMemAvailable: 250 kB\n")
 	if err != nil {
 		t.Fatalf("parseMemoryUtilization() error = %v", err)
 	}
-	if got != 75 {
+	if got.utilizationPercent() != 75 || got.total != 1024000 || got.available != 256000 {
 		t.Fatalf("memory utilization = %v, want 75", got)
 	}
 }

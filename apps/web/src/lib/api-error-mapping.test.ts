@@ -4,6 +4,15 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it.each([
+    "VERSION_COPY_TARGET_NOT_EMPTY",
+    "VERSION_COPY_TARGET_RESERVED",
+    "VERSION_COPY_TARGET_INVALID",
+  ])("returns a conflict for %s without treating it as a server failure", (code) => {
+    expect(
+      mapApiError(new DomainError(code, "请选择其他目标版本。"), "copy-request"),
+    ).toMatchObject({ status: 409, body: { error: { code, requestId: "copy-request" } } });
+  });
   it("returns actionable stored export data validation without classifying it as a server fault", () => {
     const details = { excludedRows: 1 };
     expect(

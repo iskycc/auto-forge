@@ -101,7 +101,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		terminalConnector.UpdateToken(terminalConnectionToken)
 		go terminalConnector.Run(ctx)
 	}
-	resourceCollector := metrics.NewCollector()
+	resourceCollector := metrics.NewCollector(configuration.Resources.CgroupRoot)
 	supervisor := newAttemptSupervisor(client, identity, configuration, diagnostics)
 	if err := supervisor.Start(ctx); err != nil {
 		return fmt.Errorf("start assignment supervisor: %w", err)

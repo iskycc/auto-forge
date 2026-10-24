@@ -355,3 +355,48 @@ describe("runner heartbeat cache reconciliation contracts", () => {
     ).toThrow();
   });
 });
+
+describe("runner memory budget compatibility", () => {
+  const heartbeat = {
+    schemaVersion: 1,
+    busySlots: 0,
+    labels: [],
+    maxConcurrency: 8,
+    agentVersion: "1.20.0",
+    terminalEnabled: false,
+  };
+  const metrics = {
+    cpuUtilizationPercent: 10,
+    memoryUtilizationPercent: 20,
+    loadAverage1m: 0,
+    logicalCpuCount: 4,
+    observedAt: "2026-10-24T00:00:00.000Z",
+  };
+  it("keeps old Agents compatible and preserves zero available bytes", () => {
+    expect(
+      runnerHeartbeatInputSchema.parse({ ...heartbeat, resourceSnapshot: metrics })
+        .resourceSnapshot,
+    ).toEqual(metrics);
+    expect(
+      runnerHeartbeatInputSchema.parse({
+        ...heartbeat,
+        resourceSnapshot: { ...metrics, memoryTotalBytes: 4000, memoryAvailableBytes: 0 },
+      }).resourceSnapshot,
+    ).toMatchObject({ memoryTotalBytes: 4000, memoryAvailableBytes: 0 });
+  });
+  it.each([
+    { memoryTotalBytes: 4000 },
+    { memoryAvailableBytes: 0 },
+    { memoryTotalBytes: 4000, memoryAvailableBytes: 4001 },
+    { memoryTotalBytes: 0, memoryAvailableBytes: 0 },
+    { memoryTotalBytes: Number.MAX_SAFE_INTEGER + 1, memoryAvailableBytes: 0 },
+    { memoryTotalBytes: 4000, memoryAvailableBytes: -1 },
+  ])("rejects incomplete or unsafe memory capacity %j", (capacity) => {
+    expect(
+      runnerHeartbeatInputSchema.safeParse({
+        ...heartbeat,
+        resourceSnapshot: { ...metrics, ...capacity },
+      }).success,
+    ).toBe(false);
+  });
+});

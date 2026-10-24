@@ -3,6 +3,9 @@ export type RunnerState = "online" | "offline" | "draining" | "disabled";
 export type RunnerResourceSnapshot = {
   cpuUtilizationPercent: number;
   memoryUtilizationPercent: number;
+  /** Effective host/cgroup capacity. Optional for older Runner Agents. */
+  memoryTotalBytes?: number;
+  memoryAvailableBytes?: number;
   loadAverage1m: number;
   logicalCpuCount: number;
   observedAt: string;

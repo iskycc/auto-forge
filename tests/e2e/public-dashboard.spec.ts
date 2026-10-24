@@ -27,6 +27,11 @@ test("public logs log in locally without losing their execution", async ({ page,
     const context = await browser.newContext();
     try {
       const logPage = await context.newPage();
+      let documentCount = 0;
+      logPage.on("request", (request) => {
+        if (request.isNavigationRequest() && request.frame() === logPage.mainFrame())
+          documentCount++;
+      });
       if (index === 0) {
         let checks = 0;
         await logPage.route("**/api/v1/auth/session", (route) => {
@@ -69,6 +74,21 @@ test("public logs log in locally without losing their execution", async ({ page,
       await expect(dialog).toHaveCount(0);
       await expect(logPage).toHaveURL(originalUrl);
       await expect(logPage.getByRole("button", { name: "执行此用例", exact: true })).toBeEnabled();
+      expect(
+        documentCount,
+        "inline login must merge the session without reloading the log document",
+      ).toBe(1);
+      if (index === 0) {
+        for (const theme of ["light", "dark"]) {
+          if (theme === "dark")
+            await logPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+          for (const width of [1024, 1536]) {
+            await logPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+            await expectUiIntegrity(logPage);
+            await capturePublicHomepage(logPage, width, `public-log-authenticated-${theme}`);
+          }
+        }
+      }
       expect((await logPage.request.get("/api/v1/auth/session")).status()).toBe(200);
       const cookie = (await context.cookies()).find(({ name }) => name === "autoforge_session");
       expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict" });

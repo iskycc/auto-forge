@@ -102,6 +102,17 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (
+    [
+      "VERSION_COPY_BUSY",
+      "VERSION_COPY_SOURCE_ACTIVE",
+      "VERSION_COPY_TARGET_EXISTS",
+      "VERSION_COPY_TARGET_RESERVED",
+      "VERSION_COPY_TARGET_NOT_EMPTY",
+      "VERSION_COPY_TARGET_INVALID",
+    ].includes(code)
+  )
+    return 409;
   if (code === "EXPORT_DATA_INVALID") return 422;
   if (code === "STORAGE_INVENTORY_SNAPSHOT_EXPIRED") return 409;
   if (
