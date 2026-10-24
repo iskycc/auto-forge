@@ -4937,11 +4937,133 @@ test("execution case actions stay on one line in console and shared details", as
   }
 });
 
+test("execution records keep their first visible column layout during hydration and navigation", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const suite = await createUiSuite(page, scope, "首屏布局验证任务");
+  insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, [
+    { ...suite, name: "首屏布局验证任务", passedRuns: 0 },
+  ]);
+  await page.addInitScript(() => {
+    const samples: number[][] = [];
+    const deadline = performance.now() + 15_000;
+    function sample() {
+      const table = document.querySelector<HTMLElement>(".execution-records-table");
+      if (table?.checkVisibility({ visibilityProperty: true, opacityProperty: true })) {
+        const widths = Array.from(
+          table.querySelectorAll("thead th"),
+          (cell) => cell.getBoundingClientRect().width,
+        );
+        if (JSON.stringify(widths) !== JSON.stringify(samples.at(-1))) samples.push(widths);
+      }
+      if (performance.now() < deadline) requestAnimationFrame(sample);
+    }
+    Object.assign(window, { executionRecordPaints: samples });
+    requestAnimationFrame(sample);
+  });
+  const readPaints = () =>
+    page.evaluate(
+      () => (window as typeof window & { executionRecordPaints: number[][] }).executionRecordPaints,
+    );
+  async function expectStablePaints() {
+    await expect(page.getByRole("separator", { name: "调整“操作”列宽" })).toBeVisible();
+    await waitForUiTransitions(page);
+    const samples = await readPaints();
+    expect(samples.length).toBeGreaterThan(0);
+    const finalWidths = await page
+      .locator(".execution-records-table thead th")
+      .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+    for (const sample of samples) {
+      expect(sample).toHaveLength(finalWidths.length);
+      sample.forEach((width, index) =>
+        expect(Math.abs(width - finalWidths[index]!)).toBeLessThan(1),
+      );
+    }
+  }
+  await page.goto("/execution-records");
+  await expect(page.getByRole("button", { name: "开始分析", exact: true })).toBeVisible();
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    for (const { width, savedWidths } of [
+      { width: 1024, savedWidths: true },
+      { width: 2560, savedWidths: false },
+      { width: 2560, savedWidths: true },
+    ]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.evaluate((saved) => {
+        const key = "autoforge.execution-records.column-widths.v1";
+        if (saved)
+          localStorage.setItem(key, JSON.stringify({ suite: 320, total: 140, actions: 190 }));
+        else localStorage.removeItem(key);
+      }, savedWidths);
+      const scenario = `${appearance}-${savedWidths ? "saved" : "automatic"}`;
+      let releaseScripts!: () => void;
+      const scriptsReady = new Promise<void>((resolve) => {
+        releaseScripts = resolve;
+      });
+      const delayScripts = async (route: import("@playwright/test").Route) => {
+        await scriptsReady;
+        await route.continue();
+      };
+      await page.route(/\/_next\/static\/.*\.js(?:\?|$)/, delayScripts);
+      try {
+        await page.goto("/execution-records", { waitUntil: "commit" });
+        await expect(page.locator(".execution-records-table")).toBeAttached();
+        await expect(page.locator(".resizable-table-scroll")).toHaveAttribute("aria-busy", "true");
+        await expect(
+          page.getByRole("status").filter({ hasText: "正在加载执行记录表格…" }),
+        ).toBeVisible();
+        // Hold hydration until the server-rendered state has had a chance to paint.
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            }),
+        );
+        await captureUi(page, `record-first-paint-${scenario}`, width, false);
+      } finally {
+        releaseScripts();
+        await page.waitForLoadState("load");
+        await page.unroute(/\/_next\/static\/.*\.js(?:\?|$)/, delayScripts);
+      }
+      await expectStablePaints();
+      await captureUi(page, `record-hydrated-${scenario}`, width, false);
+      await expectUiIntegrity(page);
+      await page
+        .getByRole("navigation", { name: "主导航" })
+        .getByRole("link", { name: "用例任务", exact: true })
+        .click();
+      await expect(page).toHaveURL(/\/case-suites/);
+      await page.evaluate(() => {
+        (
+          window as typeof window & { executionRecordPaints: number[][] }
+        ).executionRecordPaints.length = 0;
+      });
+      await page
+        .getByRole("navigation", { name: "主导航" })
+        .getByRole("link", { name: "执行记录", exact: true })
+        .click();
+      await expect(page).toHaveURL(/\/execution-records/);
+      await expectStablePaints();
+    }
+  }
+  expect(pageErrors).toEqual([]);
+});
+
 test("execution record actions stay on one line after sharing and resizing saved columns", async ({
   page,
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await ensureAdministrator(page);
   const scope = await createUiProject(page);
   const suites = [];
@@ -5072,7 +5194,9 @@ test("execution record actions stay on one line after sharing and resizing saved
       await handle.press("ArrowRight");
       const resizedWidth = await handle.getAttribute("aria-valuenow");
       await failedRow.getByRole("button", { name: /复制批次/ }).click();
-      await expect(failedRow.getByRole("status")).toHaveText("公开访问地址已复制");
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(await failedRow.getByRole("link", { name: /打开批次/ }).getAttribute("href"));
       await failedRow.scrollIntoViewIfNeeded();
       await captureUi(page, `record-actions-shared-${appearance}`, width, false);
       await expectUiIntegrity(page);

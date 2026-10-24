@@ -229,3 +229,25 @@ pnpm test:e2e:matrix
 回归先在原实现因其他数据列没有分到剩余宽度而失败；修改后列宽、Ant Design 约定与表格三组测试共 27 项通过。Lite 生产 Playwright 的 `execution record actions stay on one line after sharing and resizing saved columns` 场景通过，覆盖任务列大屏占比、分享控件展开、鼠标/键盘调宽、刷新持久化、Home 单列恢复、整表重置、终止确认和查看详情。实际查看 1024×768、1536×960、2560×960 深浅色共 12 张截图；列宽分配均衡、操作保持单行，窄屏沿用横向滚动，没有新增页面越界或按钮变形。
 
 实际执行：`pnpm exec vitest run apps/web/src/lib/execution-record-columns.test.ts apps/web/src/components/ui-usage.test.ts apps/web/src/components/ui/table.test.tsx --maxWorkers=1 --no-file-parallelism`、受影响文件的 Prettier/ESLint、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm --filter @autoforge/web build`、`pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'execution record actions stay on one line' --workers=1` 和 `git diff --check`。构建和浏览器串行限单核、4 GiB；证据保存在 `/var/tmp/autoforge-record-columns-20261024/`。本轮为共享前端列宽修复，未重跑 Full 部署、数据库集成或真实 Runner 执行。
+
+## 2026-10-24：执行记录首屏列宽闪动
+
+执行记录原来在服务端和水合首轮使用默认列宽，随后通过浏览器 store 恢复手动列宽，再由两个异步 ResizeObserver 更新容器及操作列宽；用户可见的表格因此经历多次排布。先补充生产 Lite Playwright 回归，延迟静态脚本以保留真实服务端首屏，逐帧比较已可见列宽，原实现复现了 136 像素的列宽跳变。
+
+现在服务端保留表格的布局空间，使用共享 Ant Design 骨架屏提供加载状态；浏览器完成列宽恢复和同步布局测量后才显示表格。页面内导航通过 useLayoutEffect 在绘制前完成初次测量，后续容器、分享按钮尺寸变化仍由一个可清理的 ResizeObserver 处理，仅测量当前有界分页，尺寸不变不更新状态。骨架屏高于 Ant Table 的背景，最多预览六行，避免随每页条数重复生成大量加载控件。原有列宽均分、拖动、持久化、Home 和整表重置保持原规则。
+
+Lite/Full 共用同一前端组件；无数据库迁移、后台读写、调度、Runner 协议、配置或新依赖变化。定向验证使用原列宽、表格和 UI 约定测试，生产浏览器回归覆盖延迟水合、页面内跳转，以及自动/保存列宽、分享、鼠标/键盘调宽、刷新恢复和终止/详情入口。复制提示的短时文本不作为布局场景的同步条件，直接核验实际剪贴板地址。
+
+最终验证：27 项列宽、Ant Design 与共享表格定向测试通过；受影响文件 ESLint、测试 TypeScript 检查和 Web 生产构建通过。生产 Lite 的两条 Playwright 场景全部通过：首屏场景覆盖浅深色、1024×768 保存列宽、2560×960 自动及保存列宽，分别验证冷启动和页内导航；原交互场景覆盖 1024×768、1536×960、2560×960 浅深色。实际查看本轮 24 张截图，加载占位、最终列宽、按钮单行、固定列、横向滚动与边界正常，未发现新增页面溢出。
+
+主要命令：
+
+```sh
+pnpm exec vitest run apps/web/src/lib/execution-record-columns.test.ts apps/web/src/components/ui-usage.test.ts apps/web/src/components/ui/table.test.tsx --maxWorkers=1
+pnpm exec eslint apps/web/src/components/execution-records-table.tsx tests/e2e/ui-layout.spec.ts
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm --filter @autoforge/web build
+pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'execution records keep their first visible|execution record actions stay on one line' --workers=1
+```
+
+格式及差异检查另行通过。构建和浏览器均串行限制一个 CPU、4 GiB；复现、构建、浏览器日志及截图保存在 `/var/tmp/autoforge-record-first-paint-20261024/`。此次限于共享前端首次显示时序，未重跑 Full 整体部署、数据库集成、真实 Runner 或完整离线包验收。

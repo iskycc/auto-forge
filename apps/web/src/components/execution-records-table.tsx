@@ -1,5 +1,6 @@
 "use client";
 import { LoadingIcon } from "@/components/ui/loading-icon";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { Badge } from "@/components/ui/badge";
 
@@ -26,6 +27,7 @@ import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -57,6 +59,7 @@ const STORAGE_KEY = "autoforge.execution-records.column-widths.v1";
 // localStorage 变更事件名：拖拽结束后写入列宽时派发，让 useSyncExternalStore 快照刷新。
 const COLUMN_WIDTHS_CHANGED = "autoforge.execution-records.column-widths-changed";
 const EMPTY_WIDTHS: Record<string, number> = {};
+const LOADING_PREVIEW_ROW_LIMIT = 6;
 
 function parseStoredWidths(raw: string): Record<string, number> {
   if (!raw) return EMPTY_WIDTHS;
@@ -125,12 +128,14 @@ export function ExecutionRecordsTable({
   const [actionError, setActionError] = useState("");
   const nowMs = usePlatformNow(rows.some((row) => executionRecordIsActive(row.status)));
   const observedAt = new Date(nowMs).toISOString();
-  // 持久化列宽通过外部 store 读取，服务端快照恒为空，避免首屏水合不一致。
-  const storedWidths = useSyncExternalStore(
+  // The server cannot read browser preferences. Keep the measuring table out
+  // of view until hydration has restored them and measured its intrinsic sizes.
+  const columnWidthSnapshot = useSyncExternalStore(
     subscribeColumnWidths,
     readColumnWidthSnapshot,
-    () => EMPTY_WIDTHS,
+    () => undefined,
   );
+  const storedWidths = columnWidthSnapshot ?? EMPTY_WIDTHS;
   // 拖拽中的宽度先放在临时状态里，松手后统一持久化。
   const [dragWidths, setDragWidths] = useState<Record<string, number>>({});
   // 拖拽镜像只在事件处理器里维护，供松手时合并持久化使用，避免渲染期写 ref。
@@ -139,8 +144,13 @@ export function ExecutionRecordsTable({
   const widths: Record<string, number> = { ...storedWidths, ...dragWidths };
   const automaticWidths = useMemo(() => executionRecordColumnWidths(rows), [rows]);
   const tableContainerRef = useRef<HTMLDivElement>(null);
-  const [measuredActionsWidth, setMeasuredActionsWidth] = useState<number>();
-  const [availableWidth, setAvailableWidth] = useState(0);
+  const [measuredLayout, setMeasuredLayout] = useState<{
+    availableWidth: number;
+    actionsWidth: number;
+  }>();
+  const availableWidth = measuredLayout?.availableWidth ?? 0;
+  const measuredActionsWidth = measuredLayout?.actionsWidth;
+  const layoutReady = measuredLayout !== undefined && columnWidthSnapshot !== undefined;
   const minimumColumnWidth = useCallback(
     (column: ExecutionRecordColumnDefinition) =>
       column.key === "actions"
@@ -149,15 +159,9 @@ export function ExecutionRecordsTable({
     [measuredActionsWidth],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const scroll = tableContainerRef.current?.querySelector<HTMLElement>(".resizable-table-scroll");
     if (!scroll) return;
-    const observer = new ResizeObserver(() => setAvailableWidth(scroll.clientWidth));
-    observer.observe(scroll);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     const groups = Array.from(
       tableContainerRef.current?.querySelectorAll<HTMLElement>(".execution-record-row-actions") ??
         [],
@@ -165,7 +169,7 @@ export function ExecutionRecordsTable({
     // Buttons include icons, spacing and controls revealed after sharing. Their
     // intrinsic width is independent of the column, so observing it cannot feed
     // back into table sizing. Only the current, bounded page is measured.
-    const observer = new ResizeObserver(() => {
+    const measureLayout = () => {
       const requiredWidth = groups.reduce((maximum, group) => {
         const cell = group.closest("td");
         if (!cell) return maximum;
@@ -177,8 +181,18 @@ export function ExecutionRecordsTable({
           parseFloat(style.borderRightWidth);
         return Math.max(maximum, Math.ceil(group.getBoundingClientRect().width + insets));
       }, 0);
-      setMeasuredActionsWidth(requiredWidth);
-    });
+      const containerWidth = scroll.clientWidth;
+      setMeasuredLayout((previous) =>
+        previous?.availableWidth === containerWidth && previous.actionsWidth === requiredWidth
+          ? previous
+          : { availableWidth: containerWidth, actionsWidth: requiredWidth },
+      );
+    };
+    // ResizeObserver's first delivery can follow a painted frame. Measure now
+    // so client navigation and changed row actions settle before becoming visible.
+    measureLayout();
+    const observer = new ResizeObserver(measureLayout);
+    observer.observe(scroll);
     groups.forEach((group) => observer.observe(group));
     return () => observer.disconnect();
   }, [rows]);
@@ -324,8 +338,11 @@ export function ExecutionRecordsTable({
         )}
         tabIndex={0}
         aria-label="执行记录表格，可横向滚动"
+        aria-busy={!layoutReady}
       >
+        {!layoutReady ? <ExecutionRecordsLoading rowCount={rows.length} /> : null}
         <Table
+          aria-hidden={!layoutReady}
           className={cn(
             "data-table execution-records-table resizable-table",
             uiPatterns["data-table"],
@@ -335,6 +352,7 @@ export function ExecutionRecordsTable({
           style={
             {
               width: tableWidth,
+              visibility: layoutReady ? undefined : "hidden",
               "--record-id-width": `${columnWidth(EXECUTION_RECORD_COLUMNS[0]!)}px`,
             } as CSSProperties
           }
@@ -509,6 +527,28 @@ export function ExecutionRecordsTable({
   );
 }
 
+function ExecutionRecordsLoading({ rowCount }: { rowCount: number }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-2 overflow-hidden bg-card" role="status">
+      <span className="sr-only">正在加载执行记录表格…</span>
+      {Array.from({ length: Math.min(rowCount, LOADING_PREVIEW_ROW_LIMIT) + 1 }, (_, index) => (
+        <div
+          key={index}
+          className={cn(
+            "grid grid-cols-[2fr_1fr_1fr_1fr] items-center gap-4 border-b border-border px-4",
+            index === 0 ? "h-10 bg-muted" : "h-14",
+          )}
+        >
+          <Skeleton className="w-3/4" />
+          <Skeleton />
+          <Skeleton />
+          <Skeleton />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const executionRecordsTableStyles = {
   "batch-status": uiPatterns["batch-status"],
   "column-resize-handle":
@@ -520,7 +560,7 @@ const executionRecordsTableStyles = {
     "[&_td_small]:text-muted-foreground [&_:is(th,_td):first-child]:sticky [&_:is(th,_td):first-child]:z-1 [&_:is(th,_td):first-child]:bg-card [&_:is(th,_td):first-child]:left-0 [&_:is(th,_td):nth-child(2)]:sticky [&_:is(th,_td):nth-child(2)]:z-1 [&_:is(th,_td):nth-child(2)]:bg-card [&_:is(th,_td):nth-child(2)]:left-[var(--record-id-width)] [&_:is(th,_td):nth-child(2)]:border-r [&_:is(th,_td):nth-child(2)]:border-solid [&_:is(th,_td):nth-child(2)]:border-border [&_:is(th,_td):last-child]:sticky [&_:is(th,_td):last-child]:z-1 [&_:is(th,_td):last-child]:bg-card [&_:is(th,_td):last-child]:right-0 [&_:is(th,_td):last-child]:border-l [&_:is(th,_td):last-child]:border-solid [&_:is(th,_td):last-child]:border-border [&_th:is(:first-child,_:nth-child(2),_:last-child)]:bg-muted",
   "resizable-table":
     "[table-layout:fixed] [&_th]:relative [&_th]:overflow-visible [&_th]:whitespace-nowrap [&_td]:[overflow-wrap:anywhere] [&_td]:whitespace-normal",
-  "resizable-table-scroll": "overflow-x-auto",
+  "resizable-table-scroll": "relative overflow-x-auto",
   "resizable-th-content": "flex items-center gap-1.5 min-w-0 overflow-hidden text-ellipsis",
   "table-display-tools":
     "flex items-center justify-between flex-wrap gap-3 text-muted-foreground text-sm",
