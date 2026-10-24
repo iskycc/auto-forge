@@ -1,4 +1,5 @@
 "use client";
+import { SrTagBadges, SuiteSrTagSelection, useSuiteSrTags } from "./suite-sr-tags";
 import { LoadingStateMessage } from "@/components/ui/loading-state-message";
 
 import { LoadingIcon } from "@/components/ui/loading-icon";
@@ -76,6 +77,7 @@ export function CaseSuiteDetailsView({
     if (externalQuery !== undefined) setQuery(externalQuery);
   }
   const [knownMembers, setKnownMembers] = useState<SuiteDirectoryPart>({ items: [], ddtItems: [] });
+  const [tagMembers, setTagMembers] = useState<Array<{ id: string; srNum: string }>>([]);
   const [collecting, setCollecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [selectedDdtIds, setSelectedDdtIds] = useState<ReadonlySet<string>>(new Set());
@@ -102,6 +104,12 @@ export function CaseSuiteDetailsView({
     ? directoryTree.groups.filter((group) => group.kind === "ddt").map((group) => [group.name, []])
     : srGroups(visibleDdtItems);
 
+  const srTags = useSuiteSrTags(
+    suite.id,
+    ddtGroups.slice(0, visibleGroupCount).map(([srNum]) => srNum),
+    revision,
+  );
+
   const knownGroupSelections = useMemo(() => {
     const groups = new Map<string, { knownCount: number; selectedCount: number }>();
     function add(key: string, selected: boolean) {
@@ -117,8 +125,11 @@ export function CaseSuiteDetailsView({
       );
     for (const item of knownMembers.ddtItems)
       add(`ddt:${item.ddtCase.srNum}`, selectedDdtIds.has(item.ddtCase.id));
+    const knownDdtIds = new Set(knownMembers.ddtItems.map((item) => item.ddtCase.id));
+    for (const member of tagMembers)
+      if (!knownDdtIds.has(member.id)) add(`ddt:${member.srNum}`, selectedDdtIds.has(member.id));
     return groups;
-  }, [knownMembers, selectedIds, selectedDdtIds]);
+  }, [knownMembers, selectedIds, selectedDdtIds, tagMembers]);
 
   async function selectMembers(kind: "case" | "ddt", ordinal?: number) {
     if (!directoryTree) return;
@@ -238,6 +249,11 @@ export function CaseSuiteDetailsView({
       setSuite((current) => ({
         ...current,
         ...summary,
+        ddtItems: current.ddtItems.filter((item) => !removedIds.has(item.ddtCase.id)),
+      }));
+      setTagMembers((current) => current.filter((member) => !removedIds.has(member.id)));
+      setKnownMembers((current) => ({
+        ...current,
         ddtItems: current.ddtItems.filter((item) => !removedIds.has(item.ddtCase.id)),
       }));
       setSelectedDdtIds(new Set());
@@ -506,7 +522,7 @@ export function CaseSuiteDetailsView({
                         uiPatterns["button"],
                         uiPatterns["button-danger-quiet"],
                       )}
-                      disabled={selectedDdtIds.size === 0 || removing}
+                      disabled={selectedDdtIds.size === 0 || removing || collecting}
                       onClick={() => void removeDdtCases([...selectedDdtIds])}
                       type="button"
                     >
@@ -516,6 +532,26 @@ export function CaseSuiteDetailsView({
                   </div>
                 ) : null}
               </div>
+              {canManage && suite.policy.projectVersionId ? (
+                <SuiteSrTagSelection
+                  suiteId={suite.id}
+                  revision={revision}
+                  disabled={removing || collecting || filtering}
+                  onBusyChange={setCollecting}
+                  onSelect={(members) => {
+                    setTagMembers(members);
+                    setSelectedDdtIds(new Set(members.map((member) => member.id)));
+                  }}
+                />
+              ) : null}
+              {srTags.error ? (
+                <Notice tone="error" role="alert">
+                  {srTags.error}
+                  <Button type="button" variant="ghost" onClick={srTags.retry}>
+                    重试标签
+                  </Button>
+                </Notice>
+              ) : null}
               {ddtGroups.length === 0 ? (
                 <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>
                   没有匹配的 DDT 用例。
@@ -526,7 +562,7 @@ export function CaseSuiteDetailsView({
                   role="tree"
                   aria-label="按 SR 分组的 DDT 用例"
                 >
-                  {ddtGroups.map(([srNum, items]) => (
+                  {ddtGroups.slice(0, visibleGroupCount).map(([srNum, items]) => (
                     <SuiteDdtGroup
                       directory={groupSource("ddt", srNum)}
                       canManage={canManage}
@@ -544,8 +580,20 @@ export function CaseSuiteDetailsView({
                       removing={removing}
                       selectedIds={selectedDdtIds}
                       srNum={srNum}
+                      tags={srTags.tags[srNum] ?? []}
                     />
                   ))}
+                  {visibleGroupCount < ddtGroups.length ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() =>
+                        setVisibleGroupCount((count) => count + SUITE_TREE_GROUP_PAGE_SIZE)
+                      }
+                    >
+                      加载更多 SR（剩余 {ddtGroups.length - visibleGroupCount}）
+                    </Button>
+                  ) : null}
                 </div>
               )}
             </section>
@@ -739,6 +787,7 @@ function SuiteDdtGroup({
   removing,
   selectedIds,
   srNum,
+  tags,
 }: {
   directory?: LazySuiteGroup | undefined;
   canManage: boolean;
@@ -749,6 +798,7 @@ function SuiteDdtGroup({
   removing: boolean;
   selectedIds: ReadonlySet<string>;
   srNum: string;
+  tags: import("@autoforge/contracts").DdtSrTag[];
 }) {
   const expansionKey = `${directory?.source.projection.status.id}:${directory?.descriptor.kind}:${directory?.descriptor.path}`;
   const [open, setOpen] = useState(directory?.expansion.get(expansionKey) ?? false);
@@ -794,6 +844,7 @@ function SuiteDdtGroup({
           <span className={cn("suite-tree-folder", caseSuiteDetailsStyles["suite-tree-folder"])}>
             SR · {srNum}
           </span>
+          <SrTagBadges tags={tags} />
           <small>{count} 个 DDT 用例</small>
         </>
       }

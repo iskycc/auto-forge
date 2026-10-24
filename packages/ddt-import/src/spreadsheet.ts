@@ -444,12 +444,11 @@ function fullyRemovedDuplicateColumnName(
   return removed ? originalColumns[removed[0]!] : undefined;
 }
 
-export function parseSpreadsheet(
+export function readSpreadsheetWorkbook(
   buffer: Buffer,
   fileName: string,
-  columnResolutions: readonly DdtColumnResolution[] = [],
-): ParsedSpreadsheet {
-  const startedAt = Date.now();
+  options: { maximumRows?: number; preserveCsvText?: boolean } = {},
+): XLSX.WorkBook {
   const extension = extensionOf(fileName);
 
   if (!isSupportedSpreadsheetFile(fileName)) {
@@ -461,19 +460,33 @@ export function parseSpreadsheet(
     workbook =
       extension === "csv"
         ? XLSX.read(decodeCsvBuffer(buffer), {
+            raw: options.preserveCsvText ?? false,
             type: "string",
             cellDates: true,
             dense: true,
+            ...(options.maximumRows ? { sheetRows: options.maximumRows } : {}),
           })
         : XLSX.read(buffer, {
             type: "buffer",
             cellDates: true,
             dense: true,
+            ...(options.maximumRows ? { sheetRows: options.maximumRows } : {}),
           });
   } catch {
     throw new Error("无法解析该表格，请确认文件未损坏且格式正确");
   }
 
+  return workbook;
+}
+
+export function parseSpreadsheet(
+  buffer: Buffer,
+  fileName: string,
+  columnResolutions: readonly DdtColumnResolution[] = [],
+): ParsedSpreadsheet {
+  const startedAt = Date.now();
+  const extension = extensionOf(fileName);
+  const workbook = readSpreadsheetWorkbook(buffer, fileName);
   const dataSheetName =
     workbook.SheetNames.find((name) => name.trim().toLocaleLowerCase("en-US") === "data") ??
     (extension === "csv" ? workbook.SheetNames[0] : undefined);

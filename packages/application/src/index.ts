@@ -58,3 +58,7 @@ export * from "./project-version-copy-ports";
 export * from "./project-version-copy-records";
 export * from "./copy-project-version";
 export * from "./project-version-copy-requests";
+
+export * from "./ddt-sr-tags";
+
+export * from "./import-ddt-sr-tags";

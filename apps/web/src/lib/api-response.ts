@@ -4,6 +4,7 @@ import { DomainError, isAuthorizationDeniedError } from "@autoforge/domain";
 import {
   DDT_IMPORT_FILE_BYTES,
   DDT_IMPORT_FILE_LIMIT,
+  SR_TAG_IMPORT_MAXIMUM_BYTES,
   DDT_IMPORT_TOTAL_BYTES,
 } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
@@ -67,6 +68,16 @@ export async function readDdtUploads(
     });
   }
   return uploads;
+}
+
+export function readSrTagUpload(request: Request): Promise<JarUpload> {
+  return readBoundedUpload(request, SR_TAG_IMPORT_MAXIMUM_BYTES, {
+    missingCode: "SR_TAG_FILE_REQUIRED",
+    missingMessage: "请选择 SR 标签表格。",
+    emptyCode: "SR_TAG_FILE_EMPTY",
+    emptyMessage: "SR 标签表格为空。",
+    tooLarge: () => new DomainError("SR_TAG_FILE_TOO_LARGE", "SR 标签表格不能超过 16 MiB。"),
+  });
 }
 
 async function readBoundedUpload(

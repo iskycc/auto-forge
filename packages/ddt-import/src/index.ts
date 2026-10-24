@@ -115,3 +115,5 @@ function parseSpreadsheetOutcome(
 function spreadsheetErrorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : "DDT 表格解析失败。").slice(0, 1_000);
 }
+
+export * from "./sr-tags";

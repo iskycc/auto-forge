@@ -51,6 +51,64 @@ for (const dialect of ["sqlite", "postgres"] as const)
   describe.skipIf(dialect === "postgres" && !postgresUrl)(
     `${dialect} complete version copy`,
     () => {
+      it("copies independent SR tags with remapped identities and assignments", async () => {
+        const f = await fixture(dialect);
+        try {
+          await f.rows(
+            "INSERT INTO ddt_sr_tags(id,project_id,project_version_id,name,normalized_name,created_at) VALUES ('sr-tag','source','version','Wallet','wallet',?)",
+            [now],
+          );
+          await f.rows(
+            "INSERT INTO ddt_sr_tag_assignments(tag_id,project_id,project_version_id,sr_num_normalized,created_at) VALUES ('sr-tag','source','version','sr',?)",
+            [now],
+          );
+          const job = await f.requests.create(input, "operator");
+          await f.service.execute(job.id, new AbortController().signal);
+          const state = (await f.repository.get(job.id))!;
+          expect(
+            await f.rows(
+              "SELECT tag_id,sr_num_normalized FROM ddt_sr_tag_assignments WHERE project_version_id=?",
+              [state.targetVersionId],
+            ),
+          ).toEqual([{ tag_id: versionCopyId(state, "sr-tag"), sr_num_normalized: "sr" }]);
+          expect(
+            await f.rows("SELECT name FROM ddt_sr_tags WHERE id=?", [
+              versionCopyId(state, "sr-tag"),
+            ]),
+          ).toEqual([{ name: "Wallet" }]);
+        } finally {
+          await f.close();
+        }
+      }, 60000);
+      it("rejects a tags-only target as an empty-version copy destination", async () => {
+        const f = await fixture(dialect);
+        try {
+          await f.structures.createVersion({
+            id: "tags-only",
+            projectId: "target",
+            name: "标签版本",
+            normalizedName: "标签版本",
+            recordedAt: now,
+          });
+          await f.rows(
+            "INSERT INTO ddt_sr_tags(id,project_id,project_version_id,name,normalized_name,created_at) VALUES ('tag-only','target','tags-only','Wallet','wallet',?)",
+            [now],
+          );
+          expect(
+            (await f.repository.listTargets("target")).items.find(
+              (version) => version.id === "tags-only",
+            )?.empty,
+          ).toBe(false);
+          await expect(
+            f.requests.create(
+              { ...input, targetVersionName: undefined, targetVersionId: "tags-only" },
+              "operator",
+            ),
+          ).rejects.toMatchObject({ code: "VERSION_COPY_TARGET_NOT_EMPTY" });
+        } finally {
+          await f.close();
+        }
+      }, 60000);
       it.each(["source", "target"])(
         "copies into an existing empty version in project %s while preserving its identity and metadata",
         async (targetProjectId) => {

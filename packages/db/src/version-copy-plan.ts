@@ -104,6 +104,16 @@ export const VERSION_COPY_TABLES: readonly VersionCopyTable[] = [
     predicate: "c.project_version_id=(SELECT version_id FROM scope)",
   },
   {
+    name: "ddt_sr_tags",
+    primaryKey: ["id"],
+    predicate: "c.project_version_id=(SELECT version_id FROM scope)",
+  },
+  {
+    name: "ddt_sr_tag_assignments",
+    primaryKey: ["tag_id", "sr_num_normalized"],
+    predicate: "c.project_version_id=(SELECT version_id FROM scope)",
+  },
+  {
     name: "ddt_sr_execution_mappings",
     primaryKey: ["project_id", "project_version_id", "test_stage_id", "sr_num_normalized"],
     predicate: "c.project_version_id=(SELECT version_id FROM scope)",

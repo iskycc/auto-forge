@@ -190,7 +190,7 @@ export class WorkerPool implements WorkDispatcher {
   }
 
   parseFile(
-    operation: "inspect-jar" | "read-jar-source" | "parse-ddt",
+    operation: "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags",
     input: unknown,
   ): Promise<unknown> {
     const lane = this.maintenanceLanes.reduce((least, candidate) =>

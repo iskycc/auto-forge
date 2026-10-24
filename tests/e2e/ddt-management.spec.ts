@@ -1,3 +1,4 @@
+import { buildSrTagSpreadsheetFixture } from "../../packages/ddt-import/test/sr-tag-fixture";
 import { randomUUID } from "node:crypto";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution } from "./support/task-execution";
@@ -9,7 +10,11 @@ import { resolve } from "node:path";
 import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { zipSync } from "fflate";
 
-import { buildExportWorkbook, parseSpreadsheet } from "../../packages/ddt-import/src";
+import {
+  buildExportWorkbook,
+  parseSpreadsheet,
+  parseSrTagSpreadsheet,
+} from "../../packages/ddt-import/src";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
 import { dropCaseListFiles } from "./support/case-list-upload";
@@ -5241,4 +5246,268 @@ test("DDT long CaseIDs remain readable and the sidebar expands in both direction
   await navigation.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(62);
   await expect(navigation.getByRole("button", { name: "加载更多", exact: true })).toHaveCount(0);
+});
+
+test("independent SR tags persist across stages and select only matching or untagged task members", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const rows = [
+    { CaseID: "TAG-1", srNum: "Wallet-SR" },
+    { CaseID: "TAG-2", srNum: "Wallet-SR" },
+    { CaseID: "TAG-3", srNum: "Other-SR" },
+    { CaseID: "TAG-4", srNum: "Untagged-SR" },
+  ];
+  await importDdtApiFixture(page, hierarchy, "TAG-1", 0, rows);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const ordinary = await importExecutionClass(
+    page,
+    hierarchy,
+    `com.example.SrTagOrdinary${Date.now()}Test`,
+  );
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: "SR 标签", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "SR 标签", exact: true });
+  await dialog.getByRole("textbox", { name: "新标签名称" }).fill("Wallet");
+  const created = page.waitForResponse(
+    (response) => response.url().includes("/ddt/sr-tags") && response.request().method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "新建标签", exact: true }).click();
+  const tag = (await (await created).json()) as { id: string };
+  const selector = dialog.getByRole("combobox", { name: "SR Wallet-SR 的标签", exact: true });
+  await expect(selector).toBeEnabled();
+  await selector.click();
+  const assigned = page.waitForResponse(
+    (response) => response.url().includes("/ddt/sr-tags") && response.request().method() === "POST",
+  );
+  await page.locator(".ant-select-dropdown:visible").getByTitle("Wallet", { exact: true }).click();
+  expect((await assigned).status()).toBe(200);
+  await selector.press("Escape");
+  await expect(selector).toBeEnabled();
+  await expect(dialog.getByTitle("Wallet", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-tag-manager-light-${width}`);
+  }
+  await dialog.getByRole("button", { name: "关闭SR 标签", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  const task = await browserJson<{ id: string; revision: number }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      name: `SR tags ${hierarchy.suffix}`,
+    },
+  });
+  expect(task.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${task.body.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: [ordinary.id] },
+      })
+    ).status,
+  ).toBe(200);
+  const added = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${task.body.id}/ddt-cases`,
+    {
+      method: "POST",
+      body: { testStageId: hierarchy.stageId, caseIds: rows.map((row) => row.CaseID) },
+    },
+  );
+  expect(added.status).toBe(200);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/stages`,
+    { method: "POST", body: { name: "SR 标签共享验证" } },
+  );
+  expect(stage.status).toBe(201);
+  await importDdtApiFixture(page, { ...hierarchy, stageId: stage.body.id }, "TAG-SECOND-STAGE", 0, [
+    { CaseID: "TAG-SECOND-STAGE", srNum: "wallet-sr" },
+  ]);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${task.body.id}/ddt-cases`, {
+        method: "POST",
+        body: { testStageId: stage.body.id, caseIds: ["TAG-SECOND-STAGE"] },
+      })
+    ).status,
+  ).toBe(200);
+  const taskUrl = `/api/v1/case-suites/${task.body.id}/sr-tags`;
+  const second = await browserJson<Record<string, Array<{ id: string }>>>(
+    page,
+    `${taskUrl}?view=lookup&srNum=wallet-sr`,
+  );
+  expect(second.body["wallet-sr"]).toEqual([{ id: tag.id, name: "Wallet" }]);
+  await page.goto(`/case-suites/${task.body.id}`);
+  await page.getByRole("checkbox", { name: "选择包 com.example", exact: true }).check();
+  await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
+  const tree = page.getByRole("tree", { name: "按 SR 分组的 DDT 用例" });
+  await expect(tree.getByText("Wallet", { exact: true }).first()).toBeVisible();
+  const picker = page.getByRole("combobox", { name: "DDT SR 标签", exact: true });
+  await picker.fill("Wal");
+  await page.locator(".ant-select-dropdown:visible").getByTitle("Wallet", { exact: true }).click();
+  await picker.press("Escape");
+  await page.getByRole("button", { name: "选择带标签的用例", exact: true }).click();
+  await expect(page.getByRole("button", { name: "批量移除（3）", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "选择不带标签的用例", exact: true }).click();
+  await expect(page.getByRole("button", { name: "批量移除（2）", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.getByRole("region", { name: "DDT 用例树", exact: true }).scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `suite-sr-tags-${theme}-${width}`);
+    }
+  }
+  const removed = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/case-suites/${task.body.id}/ddt-cases`) &&
+      response.request().method() === "DELETE",
+  );
+  await page.getByRole("button", { name: "批量移除（2）", exact: true }).click();
+  await acceptSystemDialog(page, "移除 DDT 用例", "确认移除");
+  expect((await removed).status()).toBe(200);
+  await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(
+    page
+      .getByRole("tree", { name: "按 SR 分组的 DDT 用例" })
+      .getByText("Wallet", { exact: true })
+      .first(),
+  ).toBeVisible();
+});
+
+test("SR tag spreadsheets validate headers and duplicate pairs, import classifications and export an idempotent round trip", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await importDdtApiFixture(page, hierarchy, "SHEET-1", 0, [
+    { CaseID: "SHEET-1", srNum: "钱包-SR" },
+    { CaseID: "SHEET-2", srNum: "Other-SR" },
+  ]);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: "SR 标签", exact: true }).click();
+  const manager = page.getByRole("dialog", { name: "SR 标签", exact: true });
+  const downloads = resolve(
+    process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? test.info().outputDir,
+    "downloads",
+  );
+  await mkdir(downloads, { recursive: true });
+  const templateEvent = page.waitForEvent("download");
+  await manager.getByRole("button", { name: "下载模板", exact: true }).click();
+  const template = await templateEvent;
+  expect(template.suggestedFilename()).toContain("SR标签导入模板");
+  const templatePath = resolve(downloads, "sr-tags-template.xlsx");
+  await template.saveAs(templatePath);
+  expect(
+    parseSrTagSpreadsheet(await readFile(templatePath), "template.xlsx").issues[0]!.reason,
+  ).toContain("没有可导入的数据");
+  await manager.getByRole("button", { name: "导入分类", exact: true }).click();
+  const importer = page.getByRole("dialog", { name: "导入 SR 标签分类", exact: true });
+  async function previewRows(rows: Parameters<typeof buildExportWorkbook>[0]) {
+    await importer.locator('input[type="file"]').setInputFiles({
+      name: "sr-labels.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: buildSrTagSpreadsheetFixture(rows),
+    });
+    await importer.getByRole("button", { name: "预览校验", exact: true }).click();
+    await expect(importer.getByRole("button", { name: "预览校验", exact: true })).toBeEnabled();
+  }
+  await previewRows([{ Wrong: "钱包-SR", 标签: "Wallet" }]);
+  await expect(importer.getByText(/第一行必须是表头/)).toBeVisible();
+  await expect(importer.getByRole("button", { name: "确认导入", exact: true })).toBeDisabled();
+  await previewRows([
+    { SR: "钱包-SR", 标签: "Wallet" },
+    { SR: "钱包-sr", 标签: " wallet " },
+  ]);
+  await expect(importer.getByText(/相同标签重复/)).toBeVisible();
+  await expect(importer.getByRole("button", { name: "确认导入", exact: true })).toBeDisabled();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-tag-import-duplicate-${width}`);
+  }
+  const tagUrl = `/api/v1/ddt/sr-tags?${new URLSearchParams({ projectId: hierarchy.projectId, projectVersionId: hierarchy.versionId })}`;
+  expect((await browserJson<{ items: unknown[] }>(page, tagUrl)).body.items).toEqual([]);
+  const rejected = await page.request.post(`${tagUrl.replace("?", "/import?")}&action=import`, {
+    headers: { origin: new URL(page.url()).origin },
+    multipart: {
+      file: {
+        name: "duplicates.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: buildSrTagSpreadsheetFixture([
+          { SR: "钱包-SR", 标签: "Wallet" },
+          { SR: "钱包-sr", 标签: "wallet" },
+        ]),
+      },
+    },
+  });
+  expect(rejected.status()).toBe(400);
+  expect((await rejected.json()).error.code).toBe("SR_TAG_IMPORT_INVALID");
+  expect((await browserJson<{ items: unknown[] }>(page, tagUrl)).body.items).toEqual([]);
+
+  await previewRows([{ SR: "Missing-SR", 标签: "Wallet" }]);
+  await expect(importer.getByText(/当前项目版本不存在此 SR/)).toBeVisible();
+  const valid = [
+    { SR: "钱包-SR", 标签: "Wallet" },
+    { SR: "钱包-SR", 标签: "Smoke" },
+    { SR: "Other-SR", 标签: "Wallet" },
+  ];
+  await previewRows(valid);
+  await expect(importer.getByText(/校验通过，可以导入/)).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-tag-import-valid-light-${width}`);
+  }
+  await importer.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(importer).toBeHidden();
+  await expect(manager.getByText(/新增 3 条关联，复用 0 条已有关联/)).toBeVisible();
+  await expect(manager.getByTitle("Smoke", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-tag-import-result-${width}`);
+  }
+  const exportedEvent = page.waitForEvent("download");
+  await manager.getByRole("button", { name: "导出分类", exact: true }).click();
+  const download = await exportedEvent;
+  expect(download.suggestedFilename()).toContain("SR标签分类_全部关联");
+  const filename = resolve(downloads, "sr-tags-classifications.xlsx");
+  await download.saveAs(filename);
+  const exported = parseSrTagSpreadsheet(await readFile(filename), "classifications.xlsx");
+  expect(exported.issueCount).toBe(0);
+  expect(exported.rows).toHaveLength(3);
+  expect(exported.rows.map(({ srNum, tagName }) => `${srNum}:${tagName}`).sort()).toEqual(
+    valid.map((row) => `${row.SR}:${row.标签}`).sort(),
+  );
+  await manager.getByRole("button", { name: "导入分类", exact: true }).click();
+  await importer.locator('input[type="file"]').setInputFiles(filename);
+  await importer.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(importer.getByText(/校验通过，可以导入/)).toBeVisible();
+  await importer.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(importer).toBeHidden();
+  await expect(manager.getByText(/新增 0 条关联，复用 3 条已有关联/)).toBeVisible();
+  await manager.getByRole("button", { name: "关闭SR 标签", exact: true }).click();
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "SR 标签", exact: true }).click();
+  await manager.getByRole("button", { name: "导入分类", exact: true }).click();
+  await previewRows(valid);
+  await expect(importer.getByText(/校验通过，可以导入/)).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-tag-import-valid-dark-${width}`);
+  }
 });

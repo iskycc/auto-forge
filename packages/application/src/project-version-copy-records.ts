@@ -31,6 +31,7 @@ const RELATION_COLUMNS = new Set([
   "request_id",
   "base_id",
   "category_id",
+  "tag_id",
   "rule_id",
   "jdk_asset_id",
   "jar_bundle_asset_id",

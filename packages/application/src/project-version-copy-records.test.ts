@@ -165,11 +165,22 @@ describe("version-copy record boundaries", () => {
   });
   it("requires full source visibility and management permission in both project scopes", () => {
     const identity = {
-      user: {},
+      user: {
+        id: "operator",
+        username: "operator",
+        displayName: "Operator",
+        source: "local",
+        status: "active",
+        forcePasswordChange: false,
+        failedLoginAttempts: 0,
+        createdAt: job.createdAt,
+        updatedAt: job.createdAt,
+        version: 1,
+      },
       sessionId: "session",
       systemPermissions: [],
       projectPermissions: { source: [...permissionCatalog], target: [...permissionCatalog] },
-    } as AuthenticatedIdentity;
+    } satisfies AuthenticatedIdentity;
     expect(() => assertVersionCopyAccess(identity, "source", "target")).not.toThrow();
     expect(() =>
       assertVersionCopyAccess(

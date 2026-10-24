@@ -6,6 +6,7 @@ import {
   index,
   integer,
   primaryKey,
+  foreignKey,
   pgTable,
   text,
   uniqueIndex,
@@ -1820,6 +1821,12 @@ export const pgDdtCases = pgTable(
       table.testStageId,
       table.caseIdNormalized,
     ),
+    index("ddt_cases_version_sr_tag_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.srNumNormalized,
+      table.srNum,
+    ),
     index("ddt_cases_scope_sr_num_idx").on(
       table.projectId,
       table.projectVersionId,
@@ -2122,7 +2129,56 @@ export const pgDdtChangeRequestItems = pgTable(
   (t) => [primaryKey({ columns: [t.requestId, t.position] })],
 );
 
+export const pgDdtSrTags = pgTable(
+  "ddt_sr_tags",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => pgProjects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => pgProjectVersions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    unique("ddt_sr_tags_scope_name_uq").on(
+      table.projectId,
+      table.projectVersionId,
+      table.normalizedName,
+    ),
+    unique("ddt_sr_tags_id_scope_uq").on(table.id, table.projectId, table.projectVersionId),
+  ],
+);
+export const pgDdtSrTagAssignments = pgTable(
+  "ddt_sr_tag_assignments",
+  {
+    tagId: text("tag_id").notNull(),
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    srNumNormalized: text("sr_num_normalized").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tagId, table.srNumNormalized] }),
+    foreignKey({
+      columns: [table.tagId, table.projectId, table.projectVersionId],
+      foreignColumns: [pgDdtSrTags.id, pgDdtSrTags.projectId, pgDdtSrTags.projectVersionId],
+    }).onDelete("cascade"),
+    index("ddt_sr_tag_assignments_scope_sr_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.srNumNormalized,
+      table.tagId,
+    ),
+  ],
+);
+
 export const postgresSchema = {
+  ddtSrTags: pgDdtSrTags,
+  ddtSrTagAssignments: pgDdtSrTagAssignments,
   ddtChangeRequests: pgDdtChangeRequests,
   ddtChangeRequestItems: pgDdtChangeRequestItems,
   ddtDebugWorkspaces: pgDdtDebugWorkspaces,

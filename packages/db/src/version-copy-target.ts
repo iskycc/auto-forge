@@ -15,6 +15,8 @@ const DIRECT_VERSION_TABLES = [
   "ddt_requirement_categories",
   "ddt_sr_execution_mappings",
   "ddt_cases",
+  "ddt_sr_tags",
+  "ddt_sr_tag_assignments",
   "ddt_deleted_cases",
   "ddt_case_templates",
   "ddt_debug_workspaces",

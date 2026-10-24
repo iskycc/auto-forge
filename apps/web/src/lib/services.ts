@@ -30,6 +30,9 @@ import {
   CaseSuiteService,
   CaseSuiteActivityService,
   DdtCaseService,
+  DdtSrTagService,
+  DdtSrTagImportService,
+  type DdtSrTagRepository,
   DdtImportService,
   DdtDebugService,
   DdtChangeRequestService,
@@ -93,6 +96,7 @@ import {
   SqliteCaseSuiteRepository,
   SqliteCaseSuiteActivityRepository,
   SqliteDdtRepository,
+  SqliteDdtSrTagRepository,
   SqliteDdtDebugRepository,
   SqliteDdtChangeRequestRepository,
   SqliteDashboardSnapshotRepository,
@@ -110,8 +114,12 @@ import {
   SqliteProjectVersionCopyRepository,
   SqliteWebhookRepository,
 } from "@autoforge/db/sqlite";
-import { parseDdtUpload } from "@autoforge/ddt-import";
-import { isolatedJarDiscovery, isolatedDdtSpreadsheets } from "./isolated-file-parsing";
+import { parseDdtUpload, parseSrTagSpreadsheet } from "@autoforge/ddt-import";
+import {
+  isolatedJarDiscovery,
+  isolatedDdtSpreadsheets,
+  isolatedSrTagSpreadsheets,
+} from "./isolated-file-parsing";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { RuntimeArchiveCache } from "@autoforge/object-store/runtime-archive-cache";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
@@ -167,6 +175,7 @@ async function createPlatformServices() {
   let suites: CaseSuiteRepository;
   let suiteActivityRepository: CaseSuiteActivityRepository;
   let ddtRepository: DdtRepository;
+  let srTagRepository: DdtSrTagRepository;
   let ddtDebugRepository: DdtDebugRepository;
   let ddtChangeRepository: DdtChangeRequestRepository;
   let dashboardSnapshotRepository: DashboardSnapshotRepository;
@@ -213,6 +222,7 @@ async function createPlatformServices() {
     suites = new SqliteCaseSuiteRepository(database);
     suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
+    srTagRepository = new SqliteDdtSrTagRepository(database);
     ddtDebugRepository = new SqliteDdtDebugRepository(database);
     ddtChangeRepository = new SqliteDdtChangeRequestRepository(database);
     dashboardSnapshotRepository = new SqliteDashboardSnapshotRepository(database);
@@ -261,6 +271,7 @@ async function createPlatformServices() {
         PostgresCaseSuiteRepository,
         PostgresCaseSuiteActivityRepository,
         PostgresDdtRepository,
+        PostgresDdtSrTagRepository,
         PostgresDdtDebugRepository,
         PostgresDdtChangeRequestRepository,
         PostgresDashboardSnapshotRepository,
@@ -416,6 +427,7 @@ async function createPlatformServices() {
     suites = new PostgresCaseSuiteRepository(database);
     suiteActivityRepository = new PostgresCaseSuiteActivityRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
+    srTagRepository = new PostgresDdtSrTagRepository(database);
     ddtDebugRepository = new PostgresDdtDebugRepository(database);
     ddtChangeRepository = new PostgresDdtChangeRequestRepository(database);
     dashboardSnapshotRepository = new PostgresDashboardSnapshotRepository(database);
@@ -953,6 +965,16 @@ async function createPlatformServices() {
     roundRecoveryConfigurationInspector,
     caseDefinitions,
     ddtCases,
+    ddtSrTags: new DdtSrTagService(srTagRepository, clock, ids),
+    ddtSrTagImports: new DdtSrTagImportService(
+      srTagRepository,
+      isolatedSrTagSpreadsheets(
+        { parse: async (content, fileName) => parseSrTagSpreadsheet(content, fileName) },
+        dispatcher,
+      ),
+      clock,
+      ids,
+    ),
     ddtImports,
     ddtDebug,
     ddtChanges,

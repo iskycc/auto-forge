@@ -51,6 +51,7 @@ import {
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { parseExportFilename } from "@/lib/run-batch-export";
 import { ActionDialog } from "./action-dialog";
+import { DdtSrTagManager } from "./ddt-sr-tag-manager";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
 import { DdtInheritanceDialog, type DdtInheritanceVersion } from "./ddt-inheritance-dialog";
@@ -869,6 +870,10 @@ export function DdtManagementWorkspace({
           >
             <Code2 size={15} /> SR 测试类关联
           </Button>
+          <DdtSrTagManager
+            scope={{ projectId: scope.projectId, projectVersionId: scope.projectVersionId }}
+            canManage={canManage}
+          />
           {!isIndependentTab ? (
             <Button
               className={cn(

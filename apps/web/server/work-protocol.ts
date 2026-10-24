@@ -64,7 +64,7 @@ export type WorkTask =
   | { kind: "inherit-testng-cases"; input: unknown }
   | {
       kind: "parse-file";
-      operation: "inspect-jar" | "read-jar-source" | "parse-ddt";
+      operation: "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags";
       input: unknown;
     }
   | { kind: "background-job"; job: unknown }

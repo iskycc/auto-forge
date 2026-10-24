@@ -6,6 +6,26 @@ and known limitations.
 
 ## Unreleased
 
+## 1.20.14 - 2026-10-24
+
+### Added
+
+- DDT 新增独立的 SR 标签，按项目和版本共享于各测试阶段，与 SR 测试类关联及需求分类分别维护。任务详情显示标签，支持选择带任一所选标签或不带任何所选标签的本任务 DDT 用例，保留普通用例的勾选。
+- SR 标签支持下载两列模板、预览导入及导出全部分类：首行为 `SR`、`标签`，允许同一 SR 关联多个不同标签，拒绝重复组合、未知 SR 和无效表头，并定位工作表及行号。导入追加关联、复用已有标签，不覆盖其他分类；导出文件可再次导入。
+- 版本完整复制包含 SR 标签及关联；标签查询、任务选择、导入和导出均使用有界分页或分批，导入解析在后台线程执行。
+
+### Compatibility
+
+- Lite 新增 SQLite `0082_ddt_sr_tags.sql`，Full 新增 PostgreSQL `0080_ddt_sr_tags.sql`，仅增加 SR 标签表及索引，不改写现有用例、执行记录或 SR 测试类关联。升级前备份数据库；迁移失败按现有事务机制回滚并可重试，降级优先恢复升级前备份。
+- 无新增生产依赖、持久配置、离线资源类型或 Runner/Adapter 协议变化；升级主平台即可启用。标签修改自动保存，其他浏览器需刷新后读取最新标签。
+- 按维护者要求快速发布，仅运行 Release 的双架构构建、内置资源校验、SBOM、签名和发布流程；CI、Full distributed acceptance、Published Release acceptance、Release checks 和 Dependency security 本次不运行，不记为通过。发布结束后恢复其原有启用状态。
+
+### Validation
+
+- SR 标签、版本复制及任务选择定向测试通过，真实 SQLite/PostgreSQL 均验证新建库、上一版本升级、版本隔离、复制和故障回滚；表格功能最终 62 项定向测试通过，包含原 DDT 解析回归。受影响文件 Prettier/ESLint、工作区及测试类型检查、Web 生产构建通过。
+- 生产 Lite Playwright 覆盖跨阶段标签共享、混合任务匹配/反选、原 SR 分类及 Tab 切换，以及模板下载、错误表头/重复组合/未知 SR、分类导入导出和幂等重导。实际审查 1024×768、1536×960 深浅色截图，弹窗、分页和任务详情无新增布局变形。
+- 下载工作簿经 ExcelJS、ZIP CRC/XML 和 LibreOffice Calc 保存回读核对，单元格完整一致；未使用 Microsoft Excel 桌面客户端。未重跑整仓测试、十万成员完整复制规模测试、Full 全栈浏览器、真实 Runner 或完整离线部署验收；详见 `docs/architecture/ddt-sr-tags.md`。
+
 ## 1.20.13 - 2026-10-24
 
 ### Fixed

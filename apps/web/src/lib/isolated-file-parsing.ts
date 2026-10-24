@@ -1,3 +1,4 @@
+import { parsedSrTagImportSchema } from "@autoforge/contracts";
 import type { DdtSpreadsheetPort, JarDiscoveryPort } from "@autoforge/application";
 import type { WorkDispatcher } from "./work-runtime";
 
@@ -28,5 +29,19 @@ export function isolatedDdtSpreadsheets(
       dispatcher.parseFile!("parse-ddt", { ...input, parseLimits: limits }) as ReturnType<
         DdtSpreadsheetPort["parseUpload"]
       >,
+  };
+}
+
+export function isolatedSrTagSpreadsheets(
+  local: import("@autoforge/application").SrTagSpreadsheetPort,
+  dispatcher: WorkDispatcher | undefined,
+): import("@autoforge/application").SrTagSpreadsheetPort {
+  return {
+    parse: async (content, fileName) =>
+      parsedSrTagImportSchema.parse(
+        dispatcher?.parseFile
+          ? await dispatcher.parseFile("parse-sr-tags", { content, fileName })
+          : await local.parse(content, fileName),
+      ),
   };
 }

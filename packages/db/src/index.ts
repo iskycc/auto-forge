@@ -24,3 +24,7 @@ export * from "./postgres-public-execution-access";
 export * from "./sqlite-webhook";
 export * from "./postgres-attempt-log-share";
 export * from "./postgres-webhook";
+
+export * from "./sqlite-ddt-sr-tags";
+
+export * from "./postgres-ddt-sr-tags";

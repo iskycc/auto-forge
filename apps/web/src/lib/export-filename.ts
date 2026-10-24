@@ -52,6 +52,16 @@ export function ddtExportFilename(
   return workbookFilename(`${input.versionName}-${input.stageName}`, ["DDT用例清单", scope], input);
 }
 
+export function srTagExportFilename(
+  input: ExportTime & { versionName: string; template: boolean },
+): string {
+  return workbookFilename(
+    input.versionName,
+    input.template ? ["SR标签导入模板"] : ["SR标签分类", "全部关联"],
+    input,
+  );
+}
+
 /** Keep the business identity bounded while preserving the report, scope, batch number and time. */
 function workbookFilename(
   businessName: string,
