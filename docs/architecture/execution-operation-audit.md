@@ -219,3 +219,13 @@ pnpm test:e2e:matrix
 ```
 
 数据库验证通过临时 PostgreSQL 实例注入 `AUTOFORGE_TEST_POSTGRES_URL`，未访问用户局域网；生产构建、测试和浏览器均串行限制为 1 CPU / 4 GiB，未使用 OOM 压测。未运行整套 Full 基础设施 E2E 或完整离线镜像验收，本轮证据不能确认用户历史 143 的发送来源，也不承诺外部进程突增或服务管理器主动停止时没有进程中断。
+
+## 2026-10-24：执行记录表格列宽均衡
+
+此前压缩操作列后，将全部剩余宽度交给任务列，导致超宽屏任务列明显失衡。现在保留按内容估算的基础宽度，把剩余整像素均分给自动数据列，差值最多一个像素；操作列继续按当前按钮实际宽度显示，不承担额外填充。
+
+手动调整的列不参与自动扩展，刷新后保持显示宽度，避免已扩展的显示值再次叠加。列边界按 Home 可清除该列覆盖并恢复自动分配，「重置列宽」恢复整表自动分配；所有数据列均由用户设定时，表格采用明确的总宽度，不再由 CSS 强制二次拉伸。继续使用同一 Lite/Full 页面组件，无数据库、查询、配置或执行协议变更。
+
+回归先在原实现因其他数据列没有分到剩余宽度而失败；修改后列宽、Ant Design 约定与表格三组测试共 27 项通过。Lite 生产 Playwright 的 `execution record actions stay on one line after sharing and resizing saved columns` 场景通过，覆盖任务列大屏占比、分享控件展开、鼠标/键盘调宽、刷新持久化、Home 单列恢复、整表重置、终止确认和查看详情。实际查看 1024×768、1536×960、2560×960 深浅色共 12 张截图；列宽分配均衡、操作保持单行，窄屏沿用横向滚动，没有新增页面越界或按钮变形。
+
+实际执行：`pnpm exec vitest run apps/web/src/lib/execution-record-columns.test.ts apps/web/src/components/ui-usage.test.ts apps/web/src/components/ui/table.test.tsx --maxWorkers=1 --no-file-parallelism`、受影响文件的 Prettier/ESLint、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm --filter @autoforge/web build`、`pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'execution record actions stay on one line' --workers=1` 和 `git diff --check`。构建和浏览器串行限单核、4 GiB；证据保存在 `/var/tmp/autoforge-record-columns-20261024/`。本轮为共享前端列宽修复，未重跑 Full 部署、数据库集成或真实 Runner 执行。

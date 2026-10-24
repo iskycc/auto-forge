@@ -171,14 +171,25 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
 const CHARACTER_PIXEL_WIDTH = 8;
 const CELL_HORIZONTAL_PADDING = 32;
 
-/** The task column absorbs spare desktop width; fixed action buttons keep their measured width. */
+/** Share spare space between automatic data columns; preserve explicit widths and compact actions. */
 export function fitExecutionRecordColumns(
   widths: Record<ExecutionRecordColumnKey, number>,
   availableWidth: number,
+  resizedColumnKeys: readonly ExecutionRecordColumnKey[] = [],
 ): Record<ExecutionRecordColumnKey, number> {
   const total = EXECUTION_RECORD_COLUMNS.reduce((sum, column) => sum + widths[column.key], 0);
   const extra = Math.max(0, Math.floor(availableWidth) - total);
-  return { ...widths, suite: widths.suite + extra };
+  const flexibleColumns = EXECUTION_RECORD_COLUMNS.filter(
+    (column) => column.key !== "actions" && !resizedColumnKeys.includes(column.key),
+  );
+  const fitted = { ...widths };
+  if (extra === 0 || flexibleColumns.length === 0) return fitted;
+  const extraPerColumn = Math.floor(extra / flexibleColumns.length);
+  const remainder = extra % flexibleColumns.length;
+  flexibleColumns.forEach((column, index) => {
+    fitted[column.key] += extraPerColumn + (index < remainder ? 1 : 0);
+  });
+  return fitted;
 }
 
 export function executionRecordColumnWidths(

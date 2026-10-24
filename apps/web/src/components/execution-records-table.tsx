@@ -243,7 +243,10 @@ export function ExecutionRecordsTable({
       ),
     ]),
   ) as ReturnType<typeof executionRecordColumnWidths>;
-  const fittedWidths = fitExecutionRecordColumns(baseWidths, availableWidth);
+  const resizedColumnKeys = EXECUTION_RECORD_COLUMNS.filter(
+    (column) => widths[column.key] !== undefined,
+  ).map((column) => column.key);
+  const fittedWidths = fitExecutionRecordColumns(baseWidths, availableWidth, resizedColumnKeys);
   const columnWidth = (column: ExecutionRecordColumnDefinition): number => fittedWidths[column.key];
   // table-layout: fixed 只有在表格拥有确定宽度时才会完全忽略单元格的内在宽度。
   // 直接使用各列宽度之和，避免某个超长且不可换行的任务名通过 max-content 撑宽整列。
@@ -360,13 +363,16 @@ export function ExecutionRecordsTable({
                       onKeyDown={(event) => {
                         if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
                         event.preventDefault();
-                        const width =
-                          event.key === "Home"
-                            ? automaticWidths[column.key]!
-                            : Math.max(
-                                minimumColumnWidth(column),
-                                columnWidth(column) + (event.key === "ArrowRight" ? 20 : -20),
-                              );
+                        if (event.key === "Home") {
+                          const resetWidths = { ...storedWidths };
+                          delete resetWidths[column.key];
+                          persistColumnWidths(resetWidths);
+                          return;
+                        }
+                        const width = Math.max(
+                          minimumColumnWidth(column),
+                          columnWidth(column) + (event.key === "ArrowRight" ? 20 : -20),
+                        );
                         persistColumnWidths({ ...storedWidths, [column.key]: width });
                       }}
                       className={cn(
@@ -513,7 +519,7 @@ const executionRecordsTableStyles = {
   "execution-records-table":
     "[&_td_small]:text-muted-foreground [&_:is(th,_td):first-child]:sticky [&_:is(th,_td):first-child]:z-1 [&_:is(th,_td):first-child]:bg-card [&_:is(th,_td):first-child]:left-0 [&_:is(th,_td):nth-child(2)]:sticky [&_:is(th,_td):nth-child(2)]:z-1 [&_:is(th,_td):nth-child(2)]:bg-card [&_:is(th,_td):nth-child(2)]:left-[var(--record-id-width)] [&_:is(th,_td):nth-child(2)]:border-r [&_:is(th,_td):nth-child(2)]:border-solid [&_:is(th,_td):nth-child(2)]:border-border [&_:is(th,_td):last-child]:sticky [&_:is(th,_td):last-child]:z-1 [&_:is(th,_td):last-child]:bg-card [&_:is(th,_td):last-child]:right-0 [&_:is(th,_td):last-child]:border-l [&_:is(th,_td):last-child]:border-solid [&_:is(th,_td):last-child]:border-border [&_th:is(:first-child,_:nth-child(2),_:last-child)]:bg-muted",
   "resizable-table":
-    "min-w-full [table-layout:fixed] [&_th]:relative [&_th]:overflow-visible [&_th]:whitespace-nowrap [&_td]:[overflow-wrap:anywhere] [&_td]:whitespace-normal",
+    "[table-layout:fixed] [&_th]:relative [&_th]:overflow-visible [&_th]:whitespace-nowrap [&_td]:[overflow-wrap:anywhere] [&_td]:whitespace-normal",
   "resizable-table-scroll": "overflow-x-auto",
   "resizable-th-content": "flex items-center gap-1.5 min-w-0 overflow-hidden text-ellipsis",
   "table-display-tools":

@@ -31,16 +31,46 @@ function row(index: number, suiteName = "日常回归任务"): ExecutionRecordRo
 }
 
 describe("executionRecordColumnWidths", () => {
-  it("fills a wide desktop with task context while keeping actions and numeric columns compact", () => {
+  it("shares spare desktop width evenly across data columns and keeps action buttons compact", () => {
     const widths = executionRecordColumnWidths([row(1)]);
     const total = EXECUTION_RECORD_COLUMNS.reduce((sum, column) => sum + widths[column.key], 0);
-    const fitted = fitExecutionRecordColumns(widths, total + 800);
-    expect(fitted.suite).toBe(widths.suite + 800);
+    const fitted = fitExecutionRecordColumns(widths, total + 800.75);
+    const gains = EXECUTION_RECORD_COLUMNS.filter((column) => column.key !== "actions").map(
+      (column) => fitted[column.key] - widths[column.key],
+    );
+    expect(Math.min(...gains)).toBeGreaterThan(0);
+    expect(Math.max(...gains) - Math.min(...gains)).toBeLessThanOrEqual(1);
+    expect(EXECUTION_RECORD_COLUMNS.reduce((sum, column) => sum + fitted[column.key], 0)).toBe(
+      total + 800,
+    );
     expect(fitted.actions).toBe(widths.actions);
-    expect(fitted.total).toBe(widths.total);
     expect(fitExecutionRecordColumns(widths, 800)).toEqual(widths);
     expect(fitExecutionRecordColumns(widths, 0)).toEqual(widths);
   });
+
+  it("keeps resized columns stable while other columns share the remaining space", () => {
+    const widths = { ...executionRecordColumnWidths([row(1)]), suite: 300, total: 160 };
+    const total = EXECUTION_RECORD_COLUMNS.reduce((sum, column) => sum + widths[column.key], 0);
+    const fitted = fitExecutionRecordColumns(widths, total + 503, ["suite", "total"]);
+    expect(fitted.suite).toBe(300);
+    expect(fitted.total).toBe(160);
+    expect(fitted.actions).toBe(widths.actions);
+    const gains = EXECUTION_RECORD_COLUMNS.filter(
+      (column) => !["actions", "suite", "total"].includes(column.key),
+    ).map((column) => fitted[column.key] - widths[column.key]);
+    expect(Math.min(...gains)).toBeGreaterThan(0);
+    expect(Math.max(...gains) - Math.min(...gains)).toBeLessThanOrEqual(1);
+    expect(gains.reduce((sum, gain) => sum + gain, 0)).toBe(503);
+    expect(widths.suite).toBe(300);
+    expect(
+      fitExecutionRecordColumns(
+        widths,
+        total + 503,
+        EXECUTION_RECORD_COLUMNS.map((column) => column.key),
+      ),
+    ).toEqual(widths);
+  });
+
   it("shows the execution case total independently of result statistics and retry rounds", () => {
     const totalColumn = EXECUTION_RECORD_COLUMNS.find((column) => column.key === "total");
     expect(totalColumn?.label).toBe("用例总数");

@@ -5006,6 +5006,22 @@ test("execution record actions stay on one line after sharing and resizing saved
       await page.reload();
       await expect(failedRow.getByRole("button", { name: "开始分析", exact: true })).toBeVisible();
       const headers = page.locator(".execution-records-table thead th");
+      if (width === 2560) {
+        await expect
+          .poll(
+            async () => {
+              const taskWidth = await headers
+                .nth(1)
+                .evaluate((cell) => cell.getBoundingClientRect().width);
+              const containerWidth = await page
+                .locator(".resizable-table-scroll")
+                .evaluate((container) => container.clientWidth);
+              return taskWidth / containerWidth;
+            },
+            { message: "The task column must not absorb the whole desktop's spare width." },
+          )
+          .toBeLessThan(0.25);
+      }
       const totalIndex = (await headers.allTextContents()).findIndex((label) =>
         label.includes("用例总数"),
       );
@@ -5016,6 +5032,10 @@ test("execution record actions stay on one line after sharing and resizing saved
       const totalWidth = await totalHandle.getAttribute("aria-valuenow");
       await page.reload();
       await expect(totalHandle).toHaveAttribute("aria-valuenow", totalWidth!);
+      await totalHandle.press("Home");
+      expect(
+        await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").total, widthKey),
+      ).toBeUndefined();
       await groups.first().scrollIntoViewIfNeeded();
       await waitForUiTransitions(page);
       await captureUi(page, `record-actions-${appearance}`, width, false);

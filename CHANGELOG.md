@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.20.11 - 2026-10-24
+
+### Changed
+
+- 执行记录表格的剩余空间由自动数据列均分，避免任务列在大屏上独占宽度；操作列保持按钮所需宽度，已手动调整的列宽保持稳定，Home 可恢复单列自动分配。
+
+### Compatibility
+
+- Lite/Full 共用前端列宽实现，无新增数据库迁移、持久配置、生产依赖或 Runner/Adapter 协议变化；本次布局修复升级主平台即可启用。
+- 按维护者要求快速发布，仅运行 Release 的双架构构建、内置资源校验、SBOM、签名和发布流程；CI、Full distributed acceptance、Published Release acceptance、Release checks 和 Dependency security 本次不运行，不记为通过。发布结束后恢复其原有启用状态。
+
+### Validation
+
+- 27 项定向列宽、Ant Design 和表格检查通过；受影响文件 Prettier/ESLint、测试类型及 Web 生产构建通过。
+- 生产 Lite Playwright 覆盖分享展开、鼠标/键盘调宽、刷新持久化、Home 单列恢复、整表重置、终止确认及详情跳转；已实际查看 1024×768、1536×960、2560×960 深浅色共 12 张截图，无新增布局变形。
+- 本次未重跑 Full 整体部署、数据库集成、真实 Runner 或完整离线包验收；详细规则和验证证据见 `docs/architecture/execution-operation-audit.md`。
+
 ## 1.20.10 - 2026-10-24
 
 ### Added
