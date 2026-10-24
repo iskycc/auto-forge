@@ -20,7 +20,6 @@ import { Notice } from "@/components/ui/notice";
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { Tabs } from "./ui/tabs";
-import { TabContent } from "./ui/tab-content";
 import { Disclosure } from "@/components/ui/disclosure";
 
 import { Card } from "@/components/ui/card";
@@ -238,7 +237,8 @@ export function DdtManagementWorkspace({
   const isApiTab = tab === "api";
   const isIndependentTab = isApiTab || tab === "search" || tab === "reviews";
   const setTab = (value: WorkspaceTab) => {
-    setActiveTab(value);
+    // Let the guarded URL synchronization below commit the selected tab. An
+    // optimistic local change can be reverted by the previous URL snapshot.
     const url = new URL(window.location.href);
     url.searchParams.set("tab", "ddt");
     url.searchParams.set("ddtView", value);
@@ -917,7 +917,7 @@ export function DdtManagementWorkspace({
         </div>
       </div>
 
-      <TabContent activeKey={tab}>
+      <div className="grid min-w-0 content-start gap-4">
         {tab === "reviews" ? (
           <Card className="min-w-0 p-4">
             <DdtChangeReview
@@ -1423,7 +1423,7 @@ export function DdtManagementWorkspace({
             }}
           />
         ) : null}
-      </TabContent>
+      </div>
 
       {showCaseSelection ? (
         <DdtCaseSelectionDialog

@@ -7,7 +7,20 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
+
+type DdtTabAudit = {
+  recording: boolean;
+  frames: number[][];
+  fades: string[];
+  selections: string[];
+};
+type DdtTransitionReport = Omit<DdtTabAudit, "recording"> & {
+  appearance: string;
+  width: number;
+  view: string;
+  label: string;
+};
 
 test("shared Ant motion follows browser preferences without resetting drafts", async ({ page }) => {
   await ensureAdministrator(page);
@@ -183,6 +196,141 @@ test("case tabs keep their navigation in place across all DDT views", async ({ p
     await expect.poll(() => position(caseTabs)).toEqual(initialPosition);
     await capture(page, `testng-${width}`);
   }
+});
+
+test("DDT subtabs keep opaque content and stable browser geometry while switching", async ({
+  page,
+}, testInfo) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await ensureAdministrator(page);
+  await prepareCaseScope(page);
+  const reports: DdtTransitionReport[] = [];
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+      ]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.goto("/cases?tab=ddt&ddtView=cases");
+      const tabs = page.getByRole("tablist", { name: "DDT 功能", exact: true });
+      const browser = page.locator(".ddt-case-browser");
+      await expect(browser).toBeVisible();
+      await waitForUiTransitions(page);
+      await page.evaluate(() => {
+        const audit: DdtTabAudit = { frames: [], fades: [], selections: [], recording: false };
+        Object.assign(window, { ddtTabAudit: audit });
+        const animate = Element.prototype.animate;
+        Element.prototype.animate = function (...args: Parameters<Element["animate"]>) {
+          if (
+            audit.recording &&
+            this.closest(".ddt-workspace") &&
+            Array.isArray(args[0]) &&
+            args[0].some((frame) => Number(frame.opacity) < 1)
+          )
+            audit.fades.push(this.className);
+          return animate.apply(this, args);
+        };
+        const tabs = document.querySelector(".ddt-subtabs");
+        if (!tabs) throw new Error("DDT tab navigation is missing.");
+        new MutationObserver(() => {
+          const selected = tabs
+            .querySelector('[role="tab"][aria-selected="true"]')
+            ?.textContent?.replace(/\s/g, "");
+          if (audit.recording && selected && selected !== audit.selections.at(-1))
+            audit.selections.push(selected);
+        }).observe(tabs, { attributes: true, attributeFilter: ["aria-selected"], subtree: true });
+        function sample() {
+          const browser = document.querySelector<HTMLElement>(".ddt-case-browser");
+          const navigation = browser?.querySelector<HTMLElement>(".ddt-case-navigation");
+          if (
+            audit.recording &&
+            new URLSearchParams(location.search).get("ddtView") === "cases" &&
+            browser?.checkVisibility({ visibilityProperty: true }) &&
+            navigation
+          ) {
+            const bounds = browser.getBoundingClientRect();
+            const sizes = [bounds.width, bounds.height, navigation.getBoundingClientRect().width];
+            if (
+              audit.frames.length < 20 &&
+              JSON.stringify(sizes) !== JSON.stringify(audit.frames.at(-1))
+            )
+              audit.frames.push(sizes);
+          }
+          requestAnimationFrame(sample);
+        }
+        requestAnimationFrame(sample);
+      });
+      for (const [view, label] of [
+        ["overview", "概览"],
+        ["cases", "用例"],
+        ["search", "高级检索"],
+        ["cases", "用例"],
+        ["imports", "导入任务"],
+        ["reviews", "变更审核"],
+        ["templates", "字段模板"],
+        ["recycle", "回收站"],
+        ["api", "开放 API"],
+        ["cases", "用例"],
+      ] as const) {
+        await page.evaluate(() => {
+          const audit = (window as typeof window & { ddtTabAudit: DdtTabAudit }).ddtTabAudit;
+          audit.frames.length = 0;
+          audit.fades.length = 0;
+          audit.selections.length = 0;
+          audit.recording = true;
+        });
+        await tabs.getByRole("tab", { name: label, exact: true }).click();
+        await expect(tabs.getByRole("tab", { name: label, exact: true })).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+        await waitForUiTransitions(page);
+        await expectUiIntegrity(page);
+        await capture(page, `ddt-stable-${view}-${appearance}-${width}`);
+        const audit = await page.evaluate(() => {
+          const audit = (window as typeof window & { ddtTabAudit: DdtTabAudit }).ddtTabAudit;
+          audit.recording = false;
+          return { frames: audit.frames, fades: audit.fades, selections: audit.selections };
+        });
+        reports.push({ appearance, width, view, label, ...audit });
+      }
+      await testInfo.attach(`ddt-transitions-${appearance}-${width}.json`, {
+        body: JSON.stringify(reports, null, 2),
+        contentType: "application/json",
+      });
+      for (const report of reports) {
+        expect(report.selections, "A single tab click must commit exactly one selection.").toEqual([
+          report.label.replace(/\s/g, ""),
+        ]);
+        expect(report.fades, "Changing a DDT subtab must not dim the content surface.").toEqual([]);
+        if (report.view !== "cases") continue;
+        expect(report.frames.length).toBeGreaterThan(0);
+        const final = report.frames.at(-1)!;
+        report.frames.forEach((sizes) =>
+          sizes.forEach((size, index) => expect(Math.abs(size - final[index]!)).toBeLessThan(1)),
+        );
+      }
+      await page.goBack();
+      await expect(tabs.getByRole("tab", { name: "开放 API", exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.goForward();
+      await expect(tabs.getByRole("tab", { name: "用例", exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.reload();
+      await expect(tabs.getByRole("tab", { name: "用例", exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    }
+  }
+  expect(pageErrors).toEqual([]);
 });
 
 test("settings tabs retain the current page while loading and support browser history", async ({

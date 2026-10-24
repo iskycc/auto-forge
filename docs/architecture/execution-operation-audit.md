@@ -251,3 +251,26 @@ pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep 'execution records 
 ```
 
 格式及差异检查另行通过。构建和浏览器均串行限制一个 CPU、4 GiB；复现、构建、浏览器日志及截图保存在 `/var/tmp/autoforge-record-first-paint-20261024/`。此次限于共享前端首次显示时序，未重跑 Full 整体部署、数据库集成、真实 Runner 或完整离线包验收。
+
+## 2026-10-24：DDT 子 Tab 切换闪动
+
+原实现点击子 Tab 时先修改本地 `tab`，再调用原生 History API。`useSearchParams` 尚未更新时，同步 effect 会把选中项撤回旧值；随后新 URL 再次触发切换。生产 Lite 回归复现了一次点击三次内容淡入、用例双栏重复挂载，高度在 320/373 像素之间多次变化；仅在动画结束后检查位置无法发现该问题。
+
+现在点击只更新 URL，由既有的未保存修改保护统一提交选中状态，不再与旧 URL 快照竞争。DDT 子页取消整块淡入，其他页面的共享动效保持原规则。双栏首次挂载同步测量宽度和可用高度，在绘制前完成调整，后续 resize 继续合并到帧并保留清理逻辑；隐藏的 TestNG/DDT 面板仍不会覆盖布局。没有新增后台读取、配置、依赖、迁移或执行协议变化，Lite/Full 使用同一组件。
+
+新增 Playwright 在八个子页之间往返，通过 MutationObserver 断言一次点击仅提交一次选中状态，检查无内容变淡，并逐帧核对用例双栏宽度、高度及导航宽度。覆盖 1024×768、1536×960 深浅色，以及后退、前进和刷新定位。25 项定向单元/UI 约定测试与四条生产 Lite 浏览器场景通过；其他三条场景覆盖 TestNG/DDT 导航位置、共享页面动效/弹窗焦点，以及导入、按需详情、字段类型校验、保存/恢复、未保存修改确认、旧响应隔离、错误重试、筛选历史、分页、分栏拖动与折叠。
+
+子页场景生成 32 张截图，实际查看了全部八个子页在最小桌面浅色和大屏深色的 16 张截图；另检查有数据的双栏 1024×768、1536×1024、2560×1440 截图。层级、对齐、换行、滚动和操作控件未发现新增变形。浏览器无未捕获错误；受影响文件格式、Lint、测试类型与 Web 生产构建通过。
+
+主要验证命令：
+
+```sh
+pnpm exec vitest run apps/web/src/components/ui-usage.test.ts apps/web/src/lib/ddt-case-selection.test.ts apps/web/src/lib/ddt-filtered-case-selection.test.ts --maxWorkers=1
+pnpm exec eslint apps/web/src/components/ddt-management-workspace.tsx apps/web/src/components/use-ddt-browser-layout.ts tests/e2e/tab-navigation.spec.ts
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm --filter @autoforge/web build
+pnpm exec playwright test tests/e2e/tab-navigation.spec.ts --grep 'DDT subtabs keep opaque' --workers=1
+pnpm exec playwright test tests/e2e/tab-navigation.spec.ts tests/e2e/ddt-management.spec.ts --grep 'case tabs keep their navigation|navigation and dialogs use bounded|DDT split workspace loads details on demand' --workers=1
+```
+
+所有构建、类型检查和浏览器任务串行限制一个 CPU、4 GiB；复现、指标、构建和浏览器日志与截图保存在 `/var/tmp/autoforge-ddt-tab-flash-20261024/`。本轮只调整共享前端时序，未重跑 Full 整体部署、数据库集成、真实 Runner 或完整离线包验收。

@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.20.13 - 2026-10-24
+
+### Fixed
+
+- 修复 DDT 管理子 Tab 在本地状态与 URL 同步时反复切换、重复淡入造成的闪动；子页只提交一次选中状态，并在绘制前完成用例双栏的初次尺寸测量。保留未保存修改确认、浏览器历史和刷新定位。
+
+### Compatibility
+
+- Lite/Full 共用前端实现，无新增数据库迁移、持久配置、生产依赖或 Runner/Adapter 协议变化；本次修复升级主平台即可启用。
+- 按维护者要求快速发布，仅运行 Release 的双架构构建、内置资源校验、SBOM、签名和发布流程；CI、Full distributed acceptance、Published Release acceptance、Release checks 和 Dependency security 本次不运行，不记为通过。发布结束后恢复其原有启用状态。
+
+### Validation
+
+- 25 项定向 DDT 选择及 Ant Design 检查通过；受影响文件 Prettier/ESLint、测试类型及 Web 生产构建通过。
+- 四条生产 Lite Playwright 场景通过，覆盖八个子页的单次选中、逐帧尺寸、前进/后退/刷新、导航位置、字段编辑/保存/恢复、未保存修改确认、错误重试、分页和分栏拖动；已审查 1024×768 浅色、1536×960 深色各子页及有数据的双栏截图，无新增布局变形。
+- 本次未重跑 Full 整体部署、数据库集成、真实 Runner 或完整离线包验收；详细规则和验证证据见 `docs/architecture/execution-operation-audit.md`。
+
 ## 1.20.12 - 2026-10-24
 
 ### Fixed

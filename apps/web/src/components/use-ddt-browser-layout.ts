@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
 const MINIMUM_LIST_WIDTH = 200;
 const MAXIMUM_LIST_WIDTH = 640;
@@ -16,7 +16,7 @@ export function useDdtBrowserLayout() {
   const [measurements, setMeasurements] = useState({ width: 0, height: 0, filterHeight: 0 });
   const [preferredListRatio, setPreferredListRatio] = useState<number>();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const browser = browserRef.current;
     if (!browser) return;
     const filters = browser.querySelector(".ddt-case-filters");
@@ -66,7 +66,9 @@ export function useDdtBrowserLayout() {
     const page = browser.closest(".page-stack");
     if (page) observer.observe(page);
     window.addEventListener("resize", scheduleMeasurement);
-    scheduleMeasurement();
+    // DDT views mount on demand. Set the split and viewport sizes before their
+    // first paint; subsequent container changes can be coalesced into a frame.
+    measure();
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", scheduleMeasurement);
