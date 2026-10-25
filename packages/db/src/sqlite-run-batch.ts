@@ -1,4 +1,12 @@
 import { executionRecordKindCondition } from "./execution-record-kind";
+import {
+  concurrencyCountsQuery,
+  runnerReservationsQuery,
+  concurrencySnapshot,
+  type ConcurrencyCountRow,
+  type RunnerReservationRow,
+} from "./concurrency-diagnostics-query";
+import { schedulableBatchCapacitySql, schedulableBatchOrderSql } from "./schedulable-batch-query";
 import { finalFailureRunCondition } from "./final-failure-selection";
 import {
   previousCaseLogAssignmentQuery,
@@ -1163,14 +1171,13 @@ export class SqliteRunBatchRepository
           `SELECT id FROM run_batches
            WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
              AND scheduled_for <= ?
+             AND ${schedulableBatchCapacitySql("sqlite", "run_batches")}
              AND EXISTS (
                SELECT 1 FROM execution_runs run
                WHERE run.batch_id = run_batches.id
                  AND run.status = 'queued' AND run.held_round = 0
              )
-           ORDER BY priority + MIN(100, MAX(0, CAST(
-             (julianday(?) - julianday(scheduled_for)) * 1440 / ? AS INTEGER
-           ))) DESC, scheduled_for, id LIMIT ?`,
+           ORDER BY ${schedulableBatchOrderSql("sqlite", "run_batches")} LIMIT ?`,
         )
         .all(now, now, agingIntervalMinutes, limit) as Array<{ id: string }>
     ).map((row) => row.id);
@@ -1188,17 +1195,56 @@ export class SqliteRunBatchRepository
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
            WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
              AND b.cancel_requested_at IS NULL AND b.scheduled_for <= ?
+             AND ${schedulableBatchCapacitySql("sqlite", "b")}
              AND EXISTS (
                SELECT 1 FROM execution_runs run
                WHERE run.batch_id = b.id
                  AND run.status = 'queued' AND run.held_round = 0
              )
-           ORDER BY b.priority + MIN(100, MAX(0, CAST(
-             (julianday(?) - julianday(b.scheduled_for)) * 1440 / ? AS INTEGER
-           ))) DESC, b.scheduled_for, b.id LIMIT ?`,
+           ORDER BY ${schedulableBatchOrderSql("sqlite", "b")} LIMIT ?`,
         )
         .all(runnerId, now, now, agingIntervalMinutes, limit) as Array<{ id: string }>
     ).map((row) => row.id);
+  }
+
+  async readConcurrencySnapshot(
+    batchId: string,
+    offlineBefore: string,
+    projectIds?: readonly string[],
+  ): Promise<import("@autoforge/application").ConcurrencySnapshot | null> {
+    const metadata = await this.getMetadata(batchId, projectIds);
+    if (!metadata) return null;
+    const counts = this.handle.db.get(concurrencyCountsQuery("sqlite", batchId)) as
+      ConcurrencyCountRow | undefined;
+    if (!counts) return null;
+    const selectedIds = metadata.selectedRunnerIds.slice(0, 64);
+    const runnerColumns = getTableColumns(runners);
+    const safeColumns = Object.fromEntries(
+      Object.entries(runnerColumns).filter(
+        ([name]) => name !== "credentialHash" && name !== "previousCredentialHash",
+      ),
+    ) as Omit<typeof runnerColumns, "credentialHash" | "previousCredentialHash">;
+    const nodes = selectedIds.length
+      ? this.handle.db
+          .select(safeColumns)
+          .from(runners)
+          .where(inArray(runners.id, selectedIds))
+          .orderBy(runners.id)
+          .all()
+          .map((row) => mapStoredRunner(row, offlineBefore))
+      : [];
+    const reservations = selectedIds.length
+      ? (this.handle.db.all(
+          runnerReservationsQuery(batchId, selectedIds),
+        ) as RunnerReservationRow[])
+      : [];
+    return concurrencySnapshot(
+      metadata,
+      counts,
+      nodes,
+      reservations,
+      projectActiveRuns(this.handle, metadata.projectId),
+    );
   }
 
   async getSchedulingSnapshot(
@@ -2557,7 +2603,7 @@ function batchActiveRuns(handle: SqliteDatabaseHandle, batchId: string): number 
     .prepare(
       `SELECT count(*) AS count FROM run_attempts a
        JOIN execution_runs r ON r.id=a.execution_run_id
-       WHERE r.batch_id=? AND a.status IN ('assigned','running')`,
+       WHERE r.batch_id=? AND r.status IN ('assigned','running') AND a.status IN ('assigned','running')`,
     )
     .get(batchId) as { count: number };
   return row.count;

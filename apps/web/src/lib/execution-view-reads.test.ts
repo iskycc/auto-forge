@@ -3,6 +3,19 @@ import type { RunBatchRepository } from "@autoforge/application";
 import { readExecutionView } from "./execution-view-reads";
 
 describe("isolated execution view boundaries", () => {
+  it("validates and forwards a scoped concurrency snapshot read to the isolated repository", async () => {
+    const readConcurrencySnapshot = vi.fn().mockResolvedValue({ readyRuns: 1 });
+    const batches = { readConcurrencySnapshot } as unknown as RunBatchRepository;
+    const args = ["batch", "2026-10-25T00:00:00.000Z", ["project"]];
+    await expect(
+      readExecutionView(batches, { method: "readConcurrencySnapshot", args }),
+    ).resolves.toEqual({ readyRuns: 1 });
+    expect(readConcurrencySnapshot).toHaveBeenCalledWith(...args);
+    await expect(
+      readExecutionView(batches, { method: "readConcurrencySnapshot", args: ["batch", "invalid"] }),
+    ).rejects.toThrow();
+    expect(readConcurrencySnapshot).toHaveBeenCalledOnce();
+  });
   it("retains explicit project scope and permits omitted optional arguments", async () => {
     const getSummary = vi.fn().mockResolvedValue({ id: "batch" });
     const batches = { getSummary } as unknown as RunBatchRepository;

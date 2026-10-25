@@ -8,8 +8,14 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
-import { acceptSystemDialog, browserJson, ensureAdministrator } from "./support/session";
+import {
+  acceptSystemDialog,
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+} from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { insertConcurrencyDiagnosticsFixture } from "./support/concurrency-diagnostics-fixture";
 
 /**
  * 即时补槽调度验收：一个批次 5 个用例、执行机并发 2。验证：
@@ -25,6 +31,144 @@ import { expectUiIntegrity } from "./support/ui-guard";
 
 const caseNames = ["RefillCaseA", "RefillCaseB", "RefillCaseC", "RefillCaseD", "RefillCaseE"];
 const completedLogChunkCount = 64;
+
+test("execution concurrency diagnostics explains shared capacity without background polling", async ({
+  page,
+  request,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const projectSuffix = randomUUID();
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: `并发诊断项目 ${projectSuffix}`, slug: `concurrency-${projectSuffix}` },
+  });
+  expect(project.status).toBe(201);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${project.body.id}/versions`,
+    { method: "POST", body: { name: `并发诊断 ${randomUUID()}` } },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${project.body.id}/versions/${version.body.id}/stages`,
+    { method: "POST", body: { name: "并发诊断阶段", description: "只读快照验证" } },
+  );
+  expect(stage.status).toBe(201);
+  await selectProjectContext(page, project.body.id, version.body.id, stage.body.id);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("Missing E2E directory");
+  const { batchId } = insertConcurrencyDiagnosticsFixture(
+    directory,
+    project.body.id,
+    version.body.id,
+  );
+  const endpoint = `/api/v1/run-batches/${batchId}/concurrency-diagnostics`;
+  const anonymous = await request.get(endpoint);
+  expect(anonymous.status()).toBe(401);
+  let reads = 0;
+  page.on("request", (event) => {
+    if (new URL(event.url()).pathname === endpoint) reads++;
+  });
+  await page.goto(`/run-batches/${batchId}`);
+  await expect(page.getByRole("button", { name: "并发诊断", exact: true })).toBeVisible();
+  expect(reads).toBe(0);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.getByRole("button", { name: "并发诊断", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "并发诊断", exact: true });
+  await expect(dialog.getByText("本次采样结论", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/1 个用例已分配、等待 Agent 领取/)).toBeVisible();
+  await expect(dialog.getByText(/内存保守预留预算不足，详见下表/)).toBeVisible();
+  const actual = await page.request.get(endpoint);
+  expect(actual.status()).toBe(200);
+  expect(await actual.json()).toMatchObject({
+    targetConcurrency: 40,
+    runningRuns: 1,
+    assignedRuns: 1,
+    readyRuns: 3,
+    projectActiveRuns: 4,
+    availableNodeSlots: 0,
+  });
+  for (const theme of ["light", "dark"] as const) {
+    // Reload the saved preference so the server document and dialog use the same theme.
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, domain: "127.0.0.1", path: "/" }]);
+    await dialog.getByRole("button", { name: "关闭并发诊断" }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "并发诊断", exact: true }).click();
+    await expect(dialog.getByText("本次采样结论", { exact: true })).toBeVisible();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await dialog
+        .locator("div.overflow-auto")
+        .first()
+        .evaluate((element) => (element.scrollTop = 0));
+      await expect(dialog.getByRole("button", { name: "刷新诊断", exact: true })).toBeVisible();
+      const box = await dialog.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(width === 1024 ? 768 : 960);
+      await expect(dialog.getByRole("button", { name: "刷新诊断", exact: true })).toBeInViewport();
+      await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+      await dialog.screenshot({
+        path: testInfo.outputPath(`concurrency-diagnostics-${theme}-${width}.png`),
+      });
+      await dialog.getByRole("table").scrollIntoViewIfNeeded();
+      await dialog.screenshot({
+        path: testInfo.outputPath(`concurrency-diagnostics-nodes-${theme}-${width}.png`),
+      });
+    }
+  }
+  const before = reads;
+  await dialog.getByText("2", { exact: true }).click();
+  await expect(dialog.getByText("执行节点 8", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect(dialog.getByRole("button", { name: "刷新诊断", exact: true })).toBeVisible();
+  expect(reads).toBe(before);
+  await page.route(
+    `**${endpoint}`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "诊断读取暂时繁忙，请稍后重试。",
+            requestId: "diagnostic-test",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "刷新诊断", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("诊断读取暂时繁忙");
+  await dialog.getByRole("alert").scrollIntoViewIfNeeded();
+  await dialog.screenshot({ path: testInfo.outputPath("concurrency-diagnostics-error-1024.png") });
+  const successfulRetry = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === endpoint && response.status() === 200,
+  );
+  await dialog.getByRole("button", { name: "刷新诊断", exact: true }).click();
+  await successfulRetry;
+  await expect(dialog.getByRole("button", { name: "刷新诊断", exact: true })).toBeEnabled();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(dialog.getByText("本次采样结论", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭并发诊断" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "并发诊断", exact: true })).toBeFocused();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await page.screenshot({
+      path: testInfo.outputPath(`concurrency-diagnostics-entry-${width}.png`),
+    });
+  }
+  await expectUiIntegrity(page);
+  expect(errors).toEqual([]);
+});
 
 type RunnerIdentity = { runnerId: string; credential: string };
 
@@ -402,6 +546,16 @@ test("completion immediately refills free runner slots without waiting for the w
     },
   );
   expect(saturatedHeartbeat.status()).toBe(200);
+  const diagnostics = await page.request.get(
+    `/api/v1/run-batches/${batch.id}/concurrency-diagnostics`,
+  );
+  expect(diagnostics.status()).toBe(200);
+  expect(await diagnostics.json()).toMatchObject({
+    runningRuns: 2,
+    assignedRuns: 0,
+    readyRuns: 3,
+    availableNodeSlots: 0,
+  });
   // 没有空闲槽时领不到新任务。
   await expectNoAssignment(page, identity);
 

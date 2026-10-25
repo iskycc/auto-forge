@@ -321,6 +321,25 @@ function occupiedRunnerSlots(candidate: SchedulingCandidate): number {
   return Math.max(liveBusySlots, candidate.reservedSlots);
 }
 
+/** Read-only explanation of the same admission budget used by the scheduler. */
+export function explainRunnerSchedulingCapacity(
+  candidate: SchedulingCandidate,
+  thresholds: SchedulingThresholds,
+) {
+  const occupiedSlots = occupiedRunnerSlots(candidate);
+  const memorySlots = availableMemorySlots(candidate, thresholds);
+  const total = candidate.runner.resourceSnapshot?.memoryTotalBytes;
+  return {
+    concurrencyAvailableSlots: Math.max(0, candidate.runner.maxConcurrency - occupiedSlots),
+    memoryAvailableSlots: Number.isFinite(memorySlots) ? memorySlots : null,
+    memoryPerAttemptBytes: DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes,
+    systemMemoryReserveBytes:
+      total === undefined
+        ? null
+        : Math.max(0, Math.ceil(total * (1 - thresholds.maximumMemoryUtilizationPercent / 100))),
+  };
+}
+
 function headroom(value: number, maximum: number): number {
   return Math.max(0, Math.min(1, (maximum - value) / maximum));
 }

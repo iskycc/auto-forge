@@ -302,3 +302,99 @@ SQLite `0082_ddt_sr_tags.sql`、PostgreSQL `0080_ddt_sr_tags.sql` 新增标签�
 发布任务详情按 SR 标签直接勾选功能，复用上一节已经完成的定向测试、类型检查、生产构建和 Playwright 视觉验证。发布前核对工作树、远端主分支与最新版本，补齐变更日志，再检查受影响文件格式、E2E 覆盖矩阵和提交差异。
 
 按维护者要求，仅触发 Release 的双架构构建、内置 Agent／Adapter 资源校验、SBOM、签名和完整资产发布；其他五项 workflow 在推送前临时暂停，发布结束后恢复原启用状态，不记为本次验收通过。发布后核对 tag／提交一致、完整附件集合、可信公钥签名、下载元数据校验和与远端资产摘要。发布记录保存在 `/var/tmp/autoforge-release-1.20.15/`。本版没有新增数据库迁移、依赖、配置或执行协议变更。
+
+## 2026-10-25：按清单从指定任务移除 DDT 成员
+
+DDT 管理已选操作区新增“从用例任务移除”，复用清单、手动或筛选产生的完整选择。选择目标任务后，以每批 200 条轻量元数据匹配当前版本和阶段的成员交集，显示匹配和跳过数量；取消或预览失败不写入，没有交集时禁用确认。确认复用原有原子移除接口及版本快照，保留普通成员、其他任务／阶段的同名成员、用例资产和既有执行记录。新增任务后刷新可选任务，窄桌面操作栏允许自然换行。
+
+新增只读匹配端点使用现有 `case_suite.manage`、同源校验、请求体边界和显式 DTO，不读取完整任务或 DDT 正文，不修改迁移、队列、存储、依赖或 Runner 协议。Lite/Full 共用应用服务与既有持久化事务。
+
+45 项定向测试通过，SQLite/PostgreSQL 均实际验证任务／阶段隔离、执行快照和用例保留及重复提交幂等。Web／测试类型、变更文件格式与 Lint、生产构建通过；生产 Lite 的新增移除和原有清单添加两条 Playwright 场景通过。新场景的初次夹具缺失项目上下文已修正，按钮类型检查问题已改用共享 Ant Design 按钮；均保留失败证据，没有放宽检查。实际查看 1024×768、1536×960 的六张操作区、深浅色预览截图，控件、表格与弹窗布局正常。
+
+详细命令与限制见 [DDT 管理](./ddt-management.md#按清单从任务移除)。本轮重负载任务串行限 1 CPU、4 GiB，临时 PostgreSQL 和 Web 服务已停止，证据保存在 `/var/tmp/autoforge-list-removal-20261025/`。未重跑整仓、Full 全栈、真实 Runner 或完整离线部署验收。
+
+## 2026-10-25：两个独立任务的补槽阻塞
+
+用户报告一个全普通用例任务与一个全 DDT 任务同时使用相同独立执行节点，任务并发均设为 40、没有开启动态并发，DDT 仅约 5～11 个在执行。按两个独立批次复查，而非一个包含两种成员的任务；未访问用户的局域网或生产库。
+
+确认可复现的调度缺陷：候选列表包含仍有排队用例、但已达到批次并发上限的任务；Runner 只空出一个槽位时，领取触发的补调度原来只检查队首一个批次。若普通任务位于队首且已有 40 个在途用例，调度在它上面得到零额度后结束，后续只有五个在途用例的 DDT 任务无法利用空槽。这个缺陷取决于排序和补槽时机，交换任务类型同样可复现，不是 DDT 专用并发上限。
+
+Lite/Full 的全局及按 Runner 候选查询现先按当前生效的并发状态排除已满批次，再执行排序和窗口限制；历史 NULL 策略仍无批次上限，缺少并发字段的策略对象仍默认四。领取补调度继续合并同一 Runner 的并发请求，候选窗口固定最多八个，不随空闲槽缩成一个。分配事务继续权威复核 Runner、项目、批次及资源额度；没有提高资源阈值或绕开内存预留。
+
+另复现 Lite 的并发计数不一致：已结束的 DDT 执行用例若遗留运行中 attempt，仍被 `batchActiveRuns` 算作在途；Full 已排除此类记录。Lite 现同时要求执行用例和 attempt 为已分配／执行中，避免终态残留虚占批次名额。SQLite 在修复前的对应调度用例失败、PostgreSQL 通过；修复后保持一致。
+
+双数据库共享回归用两个独立批次分别构造“40 个在途普通用例＋5 个在途 DDT 用例”和相反顺序，共用一个只剩一槽的 Runner。测试候选筛选、真实应用调度、分配事务和协议仓储领取，检查补到后续批次、原批次不超限、中文 DDT CaseID 原样传递，并覆盖待领取占额、动态并发生效状态、历史策略及槽位释放后重新参与排序。用持久化记录模拟在途执行，没有启动 45 个 JVM。
+
+无新增迁移、配置、生产依赖、对象存储／队列或 Runner 协议变化。Lite 继续使用 SQLite 和本地对象存储，Full 继续使用 PostgreSQL；不依赖 Redis／NATS 缓存决定并发正确性，已有租约恢复、取消及资源保护规则不变。需要更新主平台及独立 Full worker，无需为本修复更改 Agent 协议。
+
+验证结果：调度、执行控制及共享双数据库回归四个文件共 130 项通过；补充历史策略检查后，双数据库 50 项再次通过。数据库／应用／测试 TypeScript、受影响文件格式与 ESLint、Web 和独立 worker 生产构建通过。SQLite 实际查询计划使用 `execution_runs_batch_status_idx` 和 `run_attempts_run_round_number_idx` 定位活跃记录，没有扫描全部 attempt 历史。
+
+生产 Lite 的原即时补槽 Playwright 场景通过，覆盖单例完成后立即补位、同轮即时重试、重复完成上报、执行期间首次读取已完成用例公开日志及执行记录取消。浏览器使用协议模拟执行机，未启动真实 Java；此次没有修改 UI。所有重任务串行限制 1 CPU、4 GiB，临时 Web 服务和 PostgreSQL 验证实例结束后关闭。证据保存在 `/var/tmp/autoforge-ddt-refill-20261025/`。
+
+实际运行：
+
+```sh
+# 临时 PostgreSQL URL 显式注入 AUTOFORGE_TEST_POSTGRES_URL，两种数据库均实际运行。
+pnpm exec vitest run packages/db/test/scheduling-refill.integration.test.ts packages/application/test/control-executions.test.ts packages/application/test/schedule-run-batches.test.ts packages/domain/test/scheduler.test.ts --maxWorkers=1
+pnpm --filter @autoforge/db typecheck
+pnpm --filter @autoforge/application typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm --filter @autoforge/web build
+pnpm --filter @autoforge/worker build
+pnpm exec playwright test tests/e2e/scheduling-refill.spec.ts --workers=1
+git diff --check
+```
+
+本次没有运行 Full 整体部署、真实 Runner／Java 或完整离线镜像验收，也没有访问用户现场。已证明并修复上述补槽缺陷及 Lite 计数差异；实际并发仍受 Runner、项目、内存与资源新鲜度等准入条件约束，不能据此承诺任何节点均可持续跑满 40。
+
+### 持续补槽补充复查：先启动任务挤占
+
+用户补充普通任务结束后 DDT 明显加速，并确认共同选择 8 台节点、每台 Agent 最大并发 10，普通任务并发 30、DDT 任务并发 40，项目最大在途执行数为 128。总配置需求 70 小于节点槽位 80 和项目额度 128，不能归因为这两项配置不足；内存等实际准入仍需单独计算。
+
+上一轮只覆盖了队首批次已经满额的情况。进一步确认两条未覆盖路径：完成接口及控制协议快路径只调用原批次的 `schedule(batchId)`，释放的容量会先被原任务补回；候选排序又持续按较早计划时间累积加分，即使改为扫描多个批次，先启动任务尚差一槽时仍可能一直先补。因此仅排除已满候选不足以解决持续占用比例不均。新增“普通 30 降为 29、DDT 在途 5、共享池仅空出一槽”及类型互换的双数据库测试，补强前四项失败，补强后通过。
+
+完成上报现在让该 Runner 的候选任务共同补位，accepted 和 duplicate 都保持幂等，调度失败仍传回供 Agent 重放；late、不关联批次的历史结果不补位。原任务没有排队用例或刚结束时，也不能依据它自己的 `hasSchedulableRuns=false` 跳过其他任务。普通 Route Handler 与快路径共用完成后补槽规则，同一 Runner 的请求继续通过已有工作线程代理合并，不把同步 SQL 移回 Web 事件循环。
+
+候选排序保持显式优先级；等待时间加分只提升尚无在途执行的排队任务。已启动的同优先级任务按在途数从少到多补位，相同时仍按计划时间和 ID 稳定排序。没有在途的低优先级任务仍可通过原有等待加分提升，避免永久饥饿。不是抢占正在执行的用例，也不改变任务基础／动态并发上限；共享容量不足时逐步均衡，不能保证每个任务独享其配置上限。
+
+按实际配置新增 8×10 节点、普通 30、DDT 40 的 SQLite/PostgreSQL 分配回归。节点携带 16 CPU、32 GiB 绝对内存指标，选择有资源余量的样本，分别验证：
+
+| 项目最大在途数  | 普通任务在途 | 后启动 DDT 在途 | 普通任务结束并释放额度后 DDT |
+| --------------- | ------------ | --------------- | ---------------------------- |
+| 128（用户配置） | 30           | 40              | 40                           |
+| 40（对照）      | 30           | 10              | 40                           |
+
+每种情况均检查八个节点分别不超过 10，总项目额度不被绕过；对照场景说明平台限额可产生相似表象，但不符合用户给出的 128。测试使用真实仓储分配和模拟终态释放，没有启动 70 个 JVM，也不把低内存占用的准入样本当作用户现场 70% 内存的性能证明。原内存预留保护保持不变。
+
+最终七个文件 183 项回归通过，其中双数据库共享回归共 60 项；新增快路径检查覆盖鉴权成功后才补位、已关闭批次／重复完成仍补其他任务，以及拒绝鉴权不触发调度。多节点夹具初次复用了普通用例身份和来源摘要，触发真实唯一约束；已修正夹具为独立普通类身份和来源摘要，未放宽约束，保留首次失败证据。数据库、应用及测试类型、受影响文件格式和 ESLint、Web 与独立 worker 生产构建通过。实际 SQLite 查询计划继续使用批次状态与 attempt 索引，没有扫描全部执行历史。
+
+生产 Lite 三项 Playwright 全部通过：双任务并发补槽没有 `schedule-batch` 数据库保护事件；500 协议槽位持续续租、诊断／日志／导出及完成后全部成功，读取 P95 小于 1.5 秒、最大值小于五秒的门禁通过；原即时重试、重复完成上报及完成后补位保持通过。这里记录门禁结果，不把它当作用户现场实测延迟。浏览器使用模拟 Runner Protocol，没有启动 500 个 JVM；此次没有修改 UI。
+
+实际验证命令：
+
+```sh
+# 为数据库测试显式设置临时 AUTOFORGE_TEST_POSTGRES_URL，SQLite/PostgreSQL 均实际运行。
+pnpm exec vitest run packages/db/test/scheduling-refill.integration.test.ts packages/application/test/control-executions.test.ts packages/application/test/schedule-run-batches.test.ts packages/domain/test/scheduler.test.ts apps/web/src/lib/refill-runner-after-completion.test.ts apps/web/src/lib/runner-fast-path-bridge.test.ts apps/web/src/lib/work-dispatch.test.ts --maxWorkers=1
+pnpm --filter @autoforge/db typecheck
+pnpm --filter @autoforge/application typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm --filter @autoforge/web build
+pnpm --filter @autoforge/worker build
+pnpm exec playwright test tests/e2e/scheduling-refill.spec.ts tests/e2e/lite-high-concurrency.spec.ts --workers=1
+pnpm test:e2e:matrix
+git diff --check
+```
+
+格式和 ESLint 仅检查本轮受影响文件。500 槽位测试使用独立临时数据目录并把测试项目额度设为 500，未修改用户部署。全部重任务串行限 1 CPU、4 GiB；临时 Web 与 PostgreSQL 在结束后关闭，证据保存在 `/var/tmp/autoforge-concurrent-tasks-20261025/`。无新增迁移、配置、依赖或 Runner 协议变化，未运行 Full 整套基础设施、真实 Java／Agent 或完整离线镜像验收。
+
+## 2026-10-25：活动任务未达并发上限的只读诊断
+
+执行详情增加按需打开的“并发诊断”，明确区分执行中、已分配待领取、立即可调度及等待轮次释放；展示生效并发上限、项目额度、节点本任务／其他任务占用、资源阈值和内存保守预留依据。无可用预算时列出具体条件，有空闲但还未分配时明确等待共同补位，不把一次采样推断成调度故障。读取复用领域准入规则和已有隔离只读进程，响应仅包含有界聚合与所选节点，避免诊断本身阻塞执行控制。需批次项目范围内的执行记录及节点查看权限，不开放匿名诊断。
+
+最终 158 项定向测试通过，含实际 SQLite/PostgreSQL、新端点权限、白名单和 UI 约定。生产 Lite 两条 Playwright 通过，覆盖诊断按需读取／分页／错误重试／焦点及原有执行补槽、重试、日志和取消。实际查看最终 1024×768、1536×960 深浅色、入口与错误共 11 张截图；长节点名经视觉复查改为两行后，未发现新增错位或页面越界。格式、Lint、受影响类型、Web／worker 构建与矩阵通过，无新增迁移、配置、依赖或协议变化。具体命令、证据及边界见[执行任务并发诊断](./execution-concurrency-diagnostics.md)。
+
+## 2026-10-25：v1.20.16 快速发布
+
+本版整理并发布按清单移除 DDT 任务成员、独立任务持续补槽修复与按需并发诊断，复用前述已完成的双数据库、生产构建、浏览器及视觉验证。发布前核对远端主分支与版本、整理变更日志，再执行有界的格式、许可、矩阵和提交差异检查。
+
+按维护者要求走最快发布路径：仅触发 Release，保留双架构镜像、内置 Agent／Adapter 校验、SBOM、清单、签名及完整资产发布。其他五条 workflow 在推送前临时暂停，发布结束后恢复原状态；未运行的流程不记为通过。发布从指向已检查提交的 `v1.20.16` tag 构建，完成后核对资产集合、签名、元数据校验和、源码 revision 和工作流状态。发布过程与最终校验证据保存于 `/var/tmp/autoforge-release-1.20.16/`。

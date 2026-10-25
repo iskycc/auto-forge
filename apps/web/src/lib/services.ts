@@ -29,6 +29,7 @@ import {
   CaseSourceService,
   CaseSuiteService,
   CaseSuiteActivityService,
+  ConcurrencyDiagnosticsService,
   DdtCaseService,
   DdtSrTagService,
   DdtSrTagImportService,
@@ -999,6 +1000,15 @@ async function createPlatformServices() {
       readExecutionOverview(batches, readModels, batchId, projectIds),
     executionExceptions: (input: Parameters<typeof readExecutionExceptions>[1]) =>
       readExecutionExceptions(batches, input),
+    concurrencyDiagnostics: new ConcurrencyDiagnosticsService(batches, clock, () => ({
+      thresholds: {
+        maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
+        maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
+        maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
+      },
+      metricsMaximumAgeSeconds: config.scheduler.metricsMaximumAgeSeconds,
+      projectMaximumConcurrency: config.scheduler.projectMaximumConcurrency,
+    })),
     executionExceptionExport: (input: Parameters<typeof prepareExecutionExceptionExport>[1]) =>
       prepareExecutionExceptionExport(batches, input),
     runners,

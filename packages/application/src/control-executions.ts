@@ -34,6 +34,7 @@ import { normalizeTestNgCompletion } from "./normalize-testng-completion";
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
 const RECOVERY_MINIMUM_INTERVAL_MS = 1_000;
+const RUNNER_SCHEDULING_BATCH_SCAN_LIMIT = 8;
 export class ExecutionControlService {
   private recoveryInFlight: Promise<void> | undefined;
   private nextRecoveryAtMs = 0;
@@ -585,15 +586,18 @@ export class ExecutionControlService {
     }
   }
 
-  /** 同一 Runner 的并发 claim 共用一次补调度；批次数量与可用槽位保持有界。 */
+  /** 同一 Runner 的并发 claim 共用一次补调度；候选批次数不随单个空闲槽缩为一。 */
   private async scheduleForRunner(runnerId: string, availableSlots: number): Promise<void> {
     const existing = this.runnerSchedulingInFlight.get(runnerId);
     if (existing) {
       await existing;
       return;
     }
-    const batchLimit = Math.min(8, Math.max(1, availableSlots));
-    const scheduling = this.scheduling.scheduleForRunner(runnerId, batchLimit, availableSlots);
+    const scheduling = this.scheduling.scheduleForRunner(
+      runnerId,
+      RUNNER_SCHEDULING_BATCH_SCAN_LIMIT,
+      availableSlots,
+    );
     this.runnerSchedulingInFlight.set(runnerId, scheduling);
     try {
       await scheduling;

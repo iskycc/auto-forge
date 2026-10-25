@@ -109,6 +109,9 @@ export default async function RunBatchDetailsPage({
           services.identityAccess.authorize(identity, "log.read", batch.projectId),
         )}
         canReadAttemptEvents
+        canReadConcurrencyDiagnostics={canAuthorize(() =>
+          services.identityAccess.authorize(identity, "runner.read", batch.projectId),
+        )}
         canReadArtifacts={canAuthorize(() =>
           services.identityAccess.authorize(identity, "artifact.read", batch.projectId),
         )}

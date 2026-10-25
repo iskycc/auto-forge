@@ -5,13 +5,16 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import type {
+  CaseSuiteRepository,
   CaseActivity,
   CaseExecutionHistoryPage,
   CaseExecutionHistoryQuery,
   ExecutionControlRepository,
   LatestCaseRunOutcome,
   RunBatchRepository,
+  RunnerRepository,
 } from "@autoforge/application";
+import { RunBatchSchedulingService } from "@autoforge/application";
 import {
   createPostgresDatabase,
   createSqliteDatabase,
@@ -116,6 +119,162 @@ async function insertQueuedRun(harness: RefillHarness, batchId: string): Promise
   return runId;
 }
 
+async function refillAndClaimWaitingTask(
+  harness: RefillHarness,
+  queuedRunId: string,
+  caseType: "testng" | "ddt",
+  now: string,
+  runnerCapacity = { maxConcurrency: 46, busySlots: 45 },
+): Promise<void> {
+  const capabilities = [
+    "executor:testng-v1",
+    "isolation:cgroup-v2",
+    "java:21.0.8",
+    "testng:7.11.0",
+    "adapter:cotest-testng-v1",
+    "adapter:ddt-case-id-v1",
+    "adapter:ddt-insight-url-v1",
+  ];
+  await harness.rawQuery(
+    "UPDATE run_batches SET status='succeeded' WHERE project_id=? AND id NOT IN (?,?)",
+    [harness.projectId, harness.batchRunningId, harness.batchQueuedId],
+  );
+  // One free Runner slot, shared by the two independent tasks; no JVMs are started.
+  await harness.rawQuery(
+    `UPDATE runners SET max_concurrency=?,busy_slots=?,capabilities_json=?,
+      labels_json='["linux","java","testng"]',cpu_utilization_percent=30,
+      memory_utilization_percent=70,load_average_1m=0,logical_cpu_count=16,
+      metrics_observed_at=?,last_seen_at=? WHERE id=?`,
+    [
+      runnerCapacity.maxConcurrency,
+      runnerCapacity.busySlots,
+      JSON.stringify(capabilities),
+      now,
+      now,
+      harness.runnerId,
+    ],
+  );
+  const caseId = await prepareRefillExecutions(
+    harness,
+    harness.batchQueuedId,
+    [queuedRunId],
+    caseType,
+    now,
+  );
+  const scheduling = refillSchedulingService(harness, now);
+  expect(await scheduling.scheduleForRunner(harness.runnerId, 1, 1)).toBe(1);
+  const claimed = await harness.executions.claim({
+    runnerId: harness.runnerId,
+    requestId: randomUUID(),
+    availableSlots: 1,
+    labels: ["linux", "java", "testng"],
+    capabilities,
+    now,
+    leaseExpiresAt: new Date(Date.parse(now) + 45_000).toISOString(),
+    leaseSeeds: [
+      { id: randomUUID(), eventId: randomUUID(), tokenHash: "refill", tokenEncrypted: "refill" },
+    ],
+  });
+  expect(claimed).toHaveLength(1);
+  expect(claimed[0]?.assignment.executionSpec.batchId).toBe(harness.batchQueuedId);
+  expect(claimed[0]?.assignment.executionSpec.executionRunId).toBe(queuedRunId);
+  if (caseType === "ddt") expect(claimed[0]?.assignment.executionSpec.adapter?.caseId).toBe(caseId);
+}
+
+async function prepareRefillExecutions(
+  harness: RefillHarness,
+  batchId: string,
+  queuedRunIds: readonly string[],
+  caseType: "testng" | "ddt",
+  now: string,
+): Promise<string> {
+  const sourceId = randomUUID();
+  const classId = randomUUID();
+  const caseId = "DDT-refill-中文";
+  await harness.rawQuery(
+    `INSERT INTO case_sources
+      (id,project_id,display_name,original_file_name,object_key,sha256,size_bytes,
+       class_count,method_count,status,warnings_json,inspection_json,created_at,updated_at)
+      VALUES (?,?,'Refill','fixture.jar',?,?,100,1,1,'ready','[]','{}',?,?)`,
+    [sourceId, harness.projectId, sourceId, sourceId.replaceAll("-", "").repeat(2), now, now],
+  );
+  await harness.rawQuery(
+    `INSERT INTO case_definitions
+      (id,project_id,source_id,class_name,package_name,display_name,enabled,
+       groups_json,current_version,created_at,updated_at)
+      VALUES (?,?,?,'example.SharedExecution','example','SharedExecution',TRUE,'[]',1,?,?)`,
+    [classId, harness.projectId, sourceId, now, now],
+  );
+  await harness.rawQuery(
+    "INSERT INTO case_versions(id,case_definition_id,source_id,version,snapshot_json,created_at) VALUES (?,?,?,1,'{}',?)",
+    [randomUUID(), classId, sourceId, now],
+  );
+  for (const [index, queuedRunId] of queuedRunIds.entries()) {
+    const executionClassId = caseType === "testng" && index > 0 ? randomUUID() : classId;
+    const className =
+      executionClassId === classId ? "example.SharedExecution" : `example.SharedExecution${index}`;
+    if (executionClassId !== classId) {
+      await harness.rawQuery(
+        `INSERT INTO case_definitions
+          (id,project_id,source_id,class_name,package_name,display_name,enabled,groups_json,current_version,created_at,updated_at)
+          SELECT ?,project_id,source_id,?,package_name,?,enabled,groups_json,current_version,created_at,updated_at
+          FROM case_definitions WHERE id=?`,
+        [executionClassId, className, className, classId],
+      );
+      await harness.rawQuery(
+        "INSERT INTO case_versions(id,case_definition_id,source_id,version,snapshot_json,created_at) VALUES (?,?,?,1,'{}',?)",
+        [randomUUID(), executionClassId, sourceId, now],
+      );
+    }
+    await harness.rawQuery(
+      "UPDATE execution_runs SET case_type=?,case_definition_id=?,execution_case_definition_id=?,class_name=?,display_name=? WHERE id=?",
+      [
+        caseType,
+        caseType === "ddt" ? randomUUID() : executionClassId,
+        executionClassId,
+        className,
+        index === 0 ? caseId : `${caseId}-${index}`,
+        queuedRunId,
+      ],
+    );
+  }
+  if (caseType === "ddt") {
+    await harness.rawQuery("UPDATE run_batches SET adapter_runtime_json=? WHERE id=?", [
+      JSON.stringify({
+        suiteName: "DDT",
+        testName: "DDT",
+        environmentAddresses: [],
+        environmentAddressByRunId: {},
+        fallbackEnvironmentAddress: "",
+      }),
+      batchId,
+    ]);
+  }
+  return caseId;
+}
+
+function refillSchedulingService(
+  harness: RefillHarness,
+  now: string,
+  projectMaximumConcurrency = 128,
+): RunBatchSchedulingService {
+  return new RunBatchSchedulingService(
+    harness.batches,
+    {} as CaseSuiteRepository,
+    {} as RunnerRepository,
+    { now: () => new Date(now) },
+    { next: () => randomUUID() },
+    {
+      maximumCpuUtilizationPercent: 80,
+      maximumMemoryUtilizationPercent: 85,
+      maximumLoadPerCpu: 1,
+    },
+    45,
+    undefined,
+    projectMaximumConcurrency,
+  );
+}
+
 async function insertCaseHistoryRun(
   harness: RefillHarness,
   caseId: string,
@@ -181,6 +340,109 @@ async function insertCaseHistoryRun(
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("reads scoped concurrency counts, shared reservations and DDT requirements without transferring case or runtime bodies", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-10T00:00:00.000Z";
+    try {
+      const before = await harness.batches.readConcurrencySnapshot(harness.batchRunningId, now);
+      const runningId = await insertQueuedRun(harness, harness.batchRunningId);
+      const ghostId = await insertQueuedRun(harness, harness.batchRunningId);
+      for (const [runId, status] of [
+        [runningId, "running"],
+        [ghostId, "failed"],
+      ] as const) {
+        await harness.rawQuery("UPDATE execution_runs SET status=? WHERE id=?", [status, runId]);
+        await harness.rawQuery(
+          "INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES (?,?,?,1,'running',1,?)",
+          [randomUUID(), runId, harness.runnerId, now],
+        );
+      }
+      const readyId = await insertQueuedRun(harness, harness.batchRunningId);
+      const heldId = await insertQueuedRun(harness, harness.batchRunningId);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET case_type='ddt',class_data_json=? WHERE id=?",
+        [JSON.stringify({ privateBody: "case-body-secret".repeat(2000) }), readyId],
+      );
+      await harness.rawQuery("UPDATE execution_runs SET held_round=2 WHERE id=?", [heldId]);
+      await harness.rawQuery("UPDATE run_batches SET adapter_runtime_json=? WHERE id=?", [
+        JSON.stringify({
+          suiteName: "DDT",
+          testName: "DDT",
+          environmentAddresses: ["private-env"],
+          environmentAddressByRunId: Object.fromEntries(
+            Array.from({ length: 2000 }, (_, index) => [`run-${index}`, "private-env"]),
+          ),
+          fallbackEnvironmentAddress: "private-env",
+        }),
+        harness.batchRunningId,
+      ]);
+      const snapshot = await harness.batches.readConcurrencySnapshot(harness.batchRunningId, now, [
+        harness.projectId,
+      ]);
+      expect(snapshot).toMatchObject({
+        readyRuns: 1,
+        heldRuns: 1,
+        runningRuns: 1,
+        assignedRuns: 0,
+        projectActiveRuns: before!.projectActiveRuns + 1,
+      });
+      expect(snapshot?.nodes[0]).toMatchObject({
+        batchReservedSlots: 1,
+        reservedSlots: before!.nodes[0]!.reservedSlots + 1,
+      });
+      expect(snapshot?.requiredCapabilities).toEqual(
+        expect.arrayContaining([
+          "adapter:cotest-testng-v1",
+          "adapter:ddt-case-id-v1",
+          "adapter:ddt-insight-url-v1",
+        ]),
+      );
+      // A capability-incompatible selected Runner must remain visible so the reason can be explained.
+      expect(snapshot?.nodes).toHaveLength(1);
+      const serialized = JSON.stringify(snapshot);
+      expect(serialized).not.toContain("private-env");
+      expect(serialized).not.toContain("case-body-secret");
+      expect(serialized).not.toContain("credentialHash");
+      expect(serialized.length).toBeLessThan(10_000);
+      expect(
+        await harness.batches.readConcurrencySnapshot(harness.batchRunningId, now, []),
+      ).toBeNull();
+      expect(
+        await harness.batches.readConcurrencySnapshot(harness.batchRunningId, now, [randomUUID()]),
+      ).toBeNull();
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("reports the persisted dynamic concurrency cap instead of the base policy", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-10T00:00:00.000Z";
+    try {
+      await harness.rawQuery("UPDATE run_batches SET current_round=2,policy_json=? WHERE id=?", [
+        JSON.stringify({
+          executor: "testng",
+          concurrency: 40,
+          runnerLabels: [],
+          artifactPatterns: [],
+          retryConcurrencyRules: [{ id: "cap", executionRound: 2, concurrency: 20 }],
+        }),
+        harness.batchRunningId,
+      ]);
+      await harness.rawQuery(
+        "INSERT INTO run_batch_retry_concurrency_states(batch_id,rule_id,rule_index,concurrency,activated_round,updated_at) VALUES (?,'cap',0,20,2,?)",
+        [harness.batchRunningId, now],
+      );
+      const snapshot = await harness.batches.readConcurrencySnapshot(harness.batchRunningId, now);
+      expect(snapshot?.targetConcurrency).toBe(20);
+      expect(snapshot?.batch.policy?.concurrency).toBe(40);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("atomically shares one memory budget across concurrently scheduled batches and releases reservations", async () => {
     const harness = await createHarness();
     const now = "2026-08-10T00:00:00.000Z";
@@ -382,6 +644,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         suiteId: randomUUID(),
         suiteName: "DDT CaseID",
         suiteVersion: 1,
+        policy: { executor: "testng", concurrency: 1, runnerLabels: [], artifactPatterns: [] },
         retryLimit: 0,
         environmentVariables: [],
         runnerIds: [harness.runnerId],
@@ -400,6 +663,16 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         ],
         createdAt: now,
       });
+      // A terminal DDT run can retain a stale attempt during recovery; it owns no batch slot.
+      const terminalRunId = await insertQueuedRun(harness, batchId);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET status='failed',case_type='ddt' WHERE id=?",
+        [terminalRunId],
+      );
+      await harness.rawQuery(
+        "INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES (?,?,?,1,'running',1,?)",
+        [randomUUID(), terminalRunId, harness.runnerId, now],
+      );
       const reservation = {
         batchId,
         decisions: [
@@ -1287,6 +1560,357 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       expect(ids).toContain(harness.batchRunningId);
       expect(ids).toContain(harness.batchQueuedId);
       expect(ids).not.toContain(harness.batchSucceededId);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it.each(["testng", "ddt"] as const)(
+    "skips a full 40-case %s batch so the other task type can refill one slot",
+    async (blockedType) => {
+      const harness = await createHarness();
+      const now = "2026-08-10T00:10:00.000Z";
+      try {
+        const policy = JSON.stringify({
+          executor: "testng",
+          concurrency: 40,
+          runnerLabels: [],
+          artifactPatterns: [],
+        });
+        const queuedRunByBatch = new Map<string, string>();
+        for (const batchId of [harness.batchRunningId, harness.batchQueuedId]) {
+          await harness.rawQuery(
+            "UPDATE run_batches SET policy_json = ?, status = 'running' WHERE id = ?",
+            [policy, batchId],
+          );
+          queuedRunByBatch.set(batchId, await insertQueuedRun(harness, batchId));
+        }
+        const waitingType = blockedType === "testng" ? "ddt" : "testng";
+        await harness.rawQuery("UPDATE execution_runs SET case_type=? WHERE batch_id=?", [
+          blockedType,
+          harness.batchRunningId,
+        ]);
+        await harness.rawQuery("UPDATE execution_runs SET case_type=? WHERE batch_id=?", [
+          waitingType,
+          harness.batchQueuedId,
+        ]);
+        await harness.rawQuery("UPDATE run_batches SET priority = 100 WHERE id = ?", [
+          harness.batchRunningId,
+        ]);
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          harness.batchQueuedId,
+          harness.runnerId,
+        ]);
+        const blockedRuns: string[] = [];
+        for (const [batchId, count, caseType] of [
+          [harness.batchRunningId, 40, blockedType],
+          [harness.batchQueuedId, 5, waitingType],
+        ] as const) {
+          for (let index = 0; index < count; index++) {
+            const runId = await insertQueuedRun(harness, batchId);
+            await harness.rawQuery(
+              "UPDATE execution_runs SET status='running',case_type=? WHERE id=?",
+              [caseType, runId],
+            );
+            await harness.rawQuery(
+              "INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES (?,?,?,1,'running',1,?)",
+              [randomUUID(), runId, harness.runnerId, now],
+            );
+            if (caseType === blockedType) blockedRuns.push(runId);
+          }
+        }
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchQueuedId]);
+        expect((await harness.batches.listSchedulableBatchIds(10, now))[0]).toBe(
+          harness.batchQueuedId,
+        );
+        // Preserve legacy policy semantics: NULL has no cap; an empty object defaults to four.
+        await harness.rawQuery("UPDATE run_batches SET policy_json=NULL WHERE id=?", [
+          harness.batchRunningId,
+        ]);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchRunningId]);
+        await harness.rawQuery("UPDATE run_batches SET policy_json='{}' WHERE id=?", [
+          harness.batchRunningId,
+        ]);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchQueuedId]);
+        // The active rule, rather than the original base setting, owns the current cap.
+        await harness.rawQuery("UPDATE run_batches SET policy_json=?, current_round=2 WHERE id=?", [
+          JSON.stringify({
+            executor: "testng",
+            concurrency: 80,
+            retryConcurrencyRules: [{ id: "cap", executionRound: 2, concurrency: 40 }],
+            runnerLabels: [],
+            artifactPatterns: [],
+          }),
+          harness.batchRunningId,
+        ]);
+        await harness.rawQuery(
+          "INSERT INTO run_batch_retry_concurrency_states(batch_id,rule_id,rule_index,concurrency,activated_round,updated_at) VALUES (?,'cap',0,40,2,?)",
+          [harness.batchRunningId, now],
+        );
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchQueuedId]);
+        // Assigned-but-unclaimed work consumes the same budget as running attempts.
+        await harness.rawQuery(
+          "UPDATE run_attempts SET status='assigned' WHERE execution_run_id=?",
+          [blockedRuns[0]!],
+        );
+        await harness.rawQuery("UPDATE execution_runs SET status='assigned' WHERE id=?", [
+          blockedRuns[0]!,
+        ]);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchQueuedId]);
+        await refillAndClaimWaitingTask(
+          harness,
+          queuedRunByBatch.get(harness.batchQueuedId)!,
+          waitingType,
+          now,
+        );
+        expect((await harness.batches.getSummary(harness.batchQueuedId))?.assignedRuns).toBe(6);
+        expect((await harness.batches.getSummary(harness.batchRunningId))?.assignedRuns).toBe(40);
+        // Releasing a real slot makes the higher-priority task eligible again.
+        await harness.rawQuery(
+          "UPDATE run_attempts SET status='succeeded' WHERE execution_run_id=?",
+          [blockedRuns[0]!],
+        );
+        await harness.rawQuery("UPDATE execution_runs SET status='succeeded' WHERE id=?", [
+          blockedRuns[0]!,
+        ]);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchRunningId]);
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it.each(["testng", "ddt"] as const)(
+    "lets a later %s task refill before an older task reclaims the shared slot",
+    async (laterType) => {
+      const harness = await createHarness();
+      const now = "2026-08-10T00:10:00.000Z";
+      try {
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          harness.batchQueuedId,
+          harness.runnerId,
+        ]);
+        let laterQueuedRunId = "";
+        for (const [batchId, caseType, concurrency, activeCount, scheduledFor] of [
+          [
+            harness.batchRunningId,
+            laterType === "ddt" ? "testng" : "ddt",
+            30,
+            29,
+            "2026-08-10T00:00:00.000Z",
+          ],
+          [harness.batchQueuedId, laterType, 40, 5, "2026-08-10T00:09:30.000Z"],
+        ] as const) {
+          await harness.rawQuery(
+            "UPDATE run_batches SET status='running',priority=0,scheduled_for=?,policy_json=? WHERE id=?",
+            [
+              scheduledFor,
+              JSON.stringify({
+                executor: "testng",
+                concurrency,
+                runnerLabels: [],
+                artifactPatterns: [],
+              }),
+              batchId,
+            ],
+          );
+          const queuedRunId = await insertQueuedRun(harness, batchId);
+          if (batchId === harness.batchQueuedId) laterQueuedRunId = queuedRunId;
+          await harness.rawQuery("UPDATE execution_runs SET case_type=? WHERE id=?", [
+            caseType,
+            queuedRunId,
+          ]);
+          for (let index = 0; index < activeCount; index++) {
+            const runId = await insertQueuedRun(harness, batchId);
+            await harness.rawQuery(
+              "UPDATE execution_runs SET status='running',case_type=? WHERE id=?",
+              [caseType, runId],
+            );
+            await harness.rawQuery(
+              "INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES (?,?,?,1,'running',1,?)",
+              [randomUUID(), runId, harness.runnerId, now],
+            );
+          }
+        }
+        // The first task has just completed one case: 30 -> 29. Both tasks can accept work.
+        // Its older creation time must not give it every released slot ahead of the task at five.
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchQueuedId]);
+        expect((await harness.batches.listSchedulableBatchIds(10, now))[0]).toBe(
+          harness.batchQueuedId,
+        );
+        await refillAndClaimWaitingTask(harness, laterQueuedRunId, laterType, now, {
+          maxConcurrency: 35,
+          busySlots: 34,
+        });
+        expect((await harness.batches.getSummary(harness.batchQueuedId))?.assignedRuns).toBe(6);
+        expect((await harness.batches.getSummary(harness.batchRunningId))?.assignedRuns).toBe(29);
+        // Explicit priority still takes precedence over equal-priority balancing.
+        await harness.rawQuery("UPDATE run_batches SET priority=1 WHERE id=?", [
+          harness.batchRunningId,
+        ]);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+        ).toEqual([harness.batchRunningId]);
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it.each([40, 128])(
+    "shares eight ten-slot Runners between 30-case and 40-case tasks under project budget %i",
+    async (projectMaximumConcurrency) => {
+      const harness = await createHarness();
+      const now = "2026-08-10T00:10:00.000Z";
+      const additionalRunnerIds: string[] = [];
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET status='succeeded' WHERE project_id=? AND id NOT IN (?,?)",
+          [harness.projectId, harness.batchRunningId, harness.batchQueuedId],
+        );
+        await harness.rawQuery(
+          `UPDATE runners SET max_concurrency=10,busy_slots=0,
+            labels_json='["linux","java","testng"]',
+            capabilities_json='["executor:testng-v1","isolation:cgroup-v2","java:21.0.8","testng:7.11.0","adapter:cotest-testng-v1","adapter:ddt-case-id-v1","adapter:ddt-insight-url-v1"]',
+            cpu_utilization_percent=30,memory_utilization_percent=12.5,
+            memory_total_bytes=?,memory_available_bytes=?,load_average_1m=0,
+            logical_cpu_count=16,metrics_observed_at=?,last_seen_at=? WHERE id=?`,
+          [32 * 1024 ** 3, 28 * 1024 ** 3, now, now, harness.runnerId],
+        );
+        for (let index = 1; index < 8; index++) {
+          const runnerId = randomUUID();
+          await harness.rawQuery(
+            `INSERT INTO runners
+              (id,credential_hash,name,os,architecture,agent_version,protocol_version,
+               labels_json,capabilities_json,max_concurrency,busy_slots,last_seen_at,
+               created_at,updated_at,cpu_utilization_percent,memory_utilization_percent,
+               memory_total_bytes,memory_available_bytes,load_average_1m,logical_cpu_count,metrics_observed_at)
+              SELECT ?,?,?,'linux','amd64','0.2.2',1,labels_json,capabilities_json,10,0,
+                ?,?,?,30,12.5,memory_total_bytes,memory_available_bytes,0,16,?
+              FROM runners WHERE id=?`,
+            [runnerId, `hash-${runnerId}`, `Runner ${index}`, now, now, now, now, harness.runnerId],
+          );
+          additionalRunnerIds.push(runnerId);
+        }
+        for (const [batchId, caseType, concurrency] of [
+          [harness.batchRunningId, "testng", 30],
+          [harness.batchQueuedId, "ddt", 40],
+        ] as const) {
+          for (const runnerId of [harness.runnerId, ...additionalRunnerIds]) {
+            await harness.rawQuery(
+              "INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?) ON CONFLICT DO NOTHING",
+              [batchId, runnerId],
+            );
+          }
+          await harness.rawQuery("UPDATE run_batches SET policy_json=?,total_runs=? WHERE id=?", [
+            JSON.stringify({
+              executor: "testng",
+              concurrency,
+              runnerLabels: [],
+              artifactPatterns: [],
+            }),
+            concurrency,
+            batchId,
+          ]);
+          const queuedRunIds: string[] = [];
+          for (let index = 0; index < concurrency; index++) {
+            queuedRunIds.push(await insertQueuedRun(harness, batchId));
+          }
+          await prepareRefillExecutions(harness, batchId, queuedRunIds, caseType, now);
+        }
+        const scheduling = refillSchedulingService(harness, now, projectMaximumConcurrency);
+        await scheduling.schedule(harness.batchRunningId);
+        await scheduling.schedule(harness.batchQueuedId);
+        expect((await harness.batches.getSummary(harness.batchRunningId))?.assignedRuns).toBe(30);
+        expect((await harness.batches.getSummary(harness.batchQueuedId))?.assignedRuns).toBe(
+          projectMaximumConcurrency === 40 ? 10 : 40,
+        );
+        const snapshot = await harness.batches.getSchedulingSnapshot(harness.batchQueuedId, now);
+        expect(snapshot?.projectActiveRuns).toBe(Math.min(70, projectMaximumConcurrency));
+        expect(snapshot?.candidates).toHaveLength(8);
+        expect(snapshot?.candidates.every((candidate) => candidate.reservedSlots <= 10)).toBe(true);
+        // When the first task ends, its project and Runner reservations belong to the shared pool.
+        await harness.rawQuery(
+          "UPDATE run_attempts SET status='succeeded' WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+          [harness.batchRunningId],
+        );
+        await harness.rawQuery("UPDATE execution_runs SET status='succeeded' WHERE batch_id=?", [
+          harness.batchRunningId,
+        ]);
+        await harness.rawQuery("UPDATE assignments SET status='completed' WHERE batch_id=?", [
+          harness.batchRunningId,
+        ]);
+        await harness.rawQuery("UPDATE run_batches SET status='succeeded' WHERE id=?", [
+          harness.batchRunningId,
+        ]);
+        await scheduling.scheduleForRunner(harness.runnerId);
+        expect((await harness.batches.getSummary(harness.batchQueuedId))?.assignedRuns).toBe(40);
+        const refilled = await harness.batches.getSchedulingSnapshot(harness.batchQueuedId, now);
+        expect(refilled?.projectActiveRuns).toBe(40);
+        expect(refilled?.candidates.every((candidate) => candidate.reservedSlots <= 10)).toBe(true);
+      } finally {
+        try {
+          await harness.rawQuery("DELETE FROM run_batches WHERE project_id=?", [harness.projectId]);
+          for (const runnerId of additionalRunnerIds) {
+            await harness.rawQuery("DELETE FROM runners WHERE id=?", [runnerId]);
+          }
+        } finally {
+          await harness.dispose();
+          await cleanupTemporaryDirectories();
+        }
+      }
+    },
+  );
+
+  it("preserves waiting-time promotion for a lower-priority task with no in-flight work", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-10T00:10:00.000Z";
+    try {
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+        harness.batchQueuedId,
+        harness.runnerId,
+      ]);
+      await insertQueuedRun(harness, harness.batchQueuedId);
+      await insertQueuedRun(harness, harness.batchRunningId);
+      const activeRunId = await insertQueuedRun(harness, harness.batchRunningId);
+      await harness.rawQuery("UPDATE execution_runs SET status='running' WHERE id=?", [
+        activeRunId,
+      ]);
+      await harness.rawQuery(
+        "INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES (?,?,?,1,'running',1,?)",
+        [randomUUID(), activeRunId, harness.runnerId, now],
+      );
+      await harness.rawQuery(
+        "UPDATE run_batches SET priority=-1,scheduled_for='2026-08-09T23:00:00.000Z' WHERE id=?",
+        [harness.batchQueuedId],
+      );
+      expect(
+        await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+      ).toEqual([harness.batchQueuedId]);
+      await harness.rawQuery("UPDATE run_batches SET scheduled_for=? WHERE id=?", [
+        now,
+        harness.batchQueuedId,
+      ]);
+      expect(
+        await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 1, now),
+      ).toEqual([harness.batchRunningId]);
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();

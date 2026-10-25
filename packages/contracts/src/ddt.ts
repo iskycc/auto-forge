@@ -240,6 +240,19 @@ export const removeCaseSuiteDdtItemsInputSchema = z.object({
   ddtCaseIds: z.array(z.string().min(1).max(128)).min(1).max(100_000),
 });
 
+export const CASE_SUITE_DDT_MATCH_BATCH_SIZE = 200;
+export const matchCaseSuiteDdtItemsInputSchema = z.object({
+  projectVersionId: z.string().min(1).max(128),
+  testStageId: z.string().min(1).max(128),
+  caseIds: z.array(z.string().trim().min(1).max(512)).min(1).max(CASE_SUITE_DDT_MATCH_BATCH_SIZE),
+});
+export const caseSuiteDdtSelectionSchema = z.object({
+  items: z.array(z.object({ id: z.string().min(1), caseId: z.string().min(1) })),
+  unmatchedCaseIds: z.array(z.string()),
+});
+export type MatchCaseSuiteDdtItemsInput = z.infer<typeof matchCaseSuiteDdtItemsInputSchema>;
+export type CaseSuiteDdtSelection = z.infer<typeof caseSuiteDdtSelectionSchema>;
+
 export const ddtTemplateFieldTypeSchema = z.enum(["string", "number", "boolean", "date"]);
 export const ddtTemplateFieldRuleSchema = z.object({
   field: z.string().trim().min(1).max(256),

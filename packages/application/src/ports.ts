@@ -2186,6 +2186,11 @@ export type SingleCaseExecutionEntry = {
 };
 
 export interface RunBatchRepository {
+  readConcurrencySnapshot(
+    batchId: string,
+    offlineBefore: string,
+    projectIds?: readonly string[],
+  ): Promise<import("./concurrency-snapshot").ConcurrencySnapshot | null>;
   /** Batch-wide column selection is independent of export scope and outcome filters. */
   hasDdtRuns(batchId: string): Promise<boolean>;
   readExportPage(

@@ -17,6 +17,7 @@ export * from "./runner-group";
 export * from "./case-suite-activity";
 export * from "./case-suite-pins";
 export * from "./execution-exceptions";
+export * from "./concurrency-diagnostics";
 export * from "./export-validation";
 
 export * from "./read-models";

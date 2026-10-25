@@ -3,6 +3,7 @@ import { DomainError } from "@autoforge/domain";
 import type { RunBatchRepository } from "@autoforge/application";
 
 export const EXECUTION_VIEW_READ_METHODS = [
+  "readConcurrencySnapshot",
   "get",
   "getSummary",
   "getAttemptLogSnapshot",
@@ -20,6 +21,12 @@ const identifier = z.string().min(1).max(160);
 const projectScope = z.array(identifier).max(10_000).optional();
 const batchArgs = z.tuple([identifier, projectScope]);
 const readSchema = z.discriminatedUnion("method", [
+  z
+    .object({
+      method: z.literal("readConcurrencySnapshot"),
+      args: z.tuple([identifier, z.iso.datetime(), projectScope]),
+    })
+    .strict(),
   z
     .object({
       method: z.literal("readSingleCaseExecutionEntries"),

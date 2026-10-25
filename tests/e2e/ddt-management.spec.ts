@@ -4500,6 +4500,212 @@ test("DDT advanced search unions added conditions and preserves pagination and c
   expect(invalidResponse.status()).toBe(400);
 });
 
+test("DDT list selection removes only matched members from the chosen task with preview, cancellation and retry", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const rows = Array.from({ length: 205 }, (_, index) => ({
+    CaseID: `REMOVE-${String(index).padStart(3, "0")}`,
+    srNum: "REMOVE-SR",
+  }));
+  await importDdtApiFixture(page, hierarchy, rows[0]!.CaseID, 0, [
+    ...rows,
+    { CaseID: "中文-Case", srNum: "REMOVE-SR" },
+  ]);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const ordinary = await importExecutionClass(
+    page,
+    hierarchy,
+    `com.example.RemovalOrdinary${Date.now()}Test`,
+  );
+  const createTask = async (name: string) => {
+    const result = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+      method: "POST",
+      body: {
+        projectId: hierarchy.projectId,
+        projectVersionId: hierarchy.versionId,
+        name: `${name} ${hierarchy.suffix}`,
+      },
+    });
+    expect(result.status).toBe(201);
+    return { id: result.body.id, name: `${name} ${hierarchy.suffix}` };
+  };
+  const target = await createTask("移除目标");
+  const other = await createTask("其他任务");
+  const empty = await createTask("空任务");
+  for (const [suiteId, caseIds] of [
+    [target.id, ["REMOVE-000", "REMOVE-203", "中文-Case"]],
+    [other.id, ["REMOVE-203"]],
+  ] as const) {
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suiteId}/ddt-cases`, {
+          method: "POST",
+          body: { testStageId: hierarchy.stageId, caseIds: [...caseIds] },
+        })
+      ).status,
+    ).toBe(200);
+  }
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${target.id}/cases`, {
+        method: "POST",
+        body: { caseDefinitionIds: [ordinary.id] },
+      })
+    ).status,
+  ).toBe(200);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/stages`,
+    { method: "POST", body: { name: "保留其他阶段" } },
+  );
+  expect(stage.status).toBe(201);
+  await importDdtApiFixture(page, { ...hierarchy, stageId: stage.body.id }, "REMOVE-203", 0, [
+    { CaseID: "REMOVE-203", srNum: "REMOVE-SR" },
+  ]);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${target.id}/ddt-cases`, {
+        method: "POST",
+        body: { testStageId: stage.body.id, caseIds: ["REMOVE-203"] },
+      })
+    ).status,
+  ).toBe(200);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto(`/cases?tab=ddt&ddtView=cases&targetSuiteId=${target.id}`);
+  const navigation = page.getByRole("region", { name: "DDT 用例导航" });
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(60);
+  await page.getByRole("button", { name: "按清单选择", exact: true }).click();
+  const selection = page.getByRole("dialog", { name: "按清单选择 DDT 用例", exact: true });
+  await selection
+    .getByLabel("粘贴 DDT CaseID")
+    .fill("CaseID\nremove-203\n中文-case\nREMOVE-001\nMISSING");
+  await selection.getByRole("button", { name: "解析并预览", exact: true }).click();
+  await expect(selection.getByRole("status")).toHaveText("匹配 3 个 · 未匹配 1 个");
+  await selection.getByRole("button", { name: "勾选匹配用例", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "已选择 3 条用例", exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-task-removal-actions-${width}`);
+  }
+  await page.getByRole("button", { name: "从用例任务移除", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "从任务移除 3 条 DDT 用例", exact: true });
+  const confirm = dialog.getByRole("button", { name: /确认移除/u });
+  await expect(confirm).toBeDisabled();
+  const matchingUrl = `/api/v1/case-suites/${target.id}/ddt-cases/matching`;
+  const anonymous = await request.post(matchingUrl, {
+    headers: { Origin: "http://127.0.0.1:3100" },
+    data: {
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+      caseIds: ["REMOVE-203"],
+    },
+  });
+  expect(anonymous.status()).toBe(401);
+  const foreignVersion = await browserJson<{ error: { code: string } }>(page, matchingUrl, {
+    method: "POST",
+    body: {
+      projectVersionId: "foreign-version",
+      testStageId: hierarchy.stageId,
+      caseIds: ["REMOVE-203"],
+    },
+  });
+  expect(foreignVersion.body.error.code).toBe("DDT_CASE_VERSION_MISMATCH");
+  await page.route(
+    `**${matchingUrl}`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: { code: "PLATFORM_BUSY", message: "任务匹配暂时繁忙，请重试。" } },
+      }),
+    { times: 1 },
+  );
+  await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("任务匹配暂时繁忙");
+  await expect(confirm).toBeDisabled();
+  await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("匹配 2 条任务成员 · 跳过 1 条");
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  type Members = {
+    items: Array<{ caseDefinition: { id: string } }>;
+    ddtItems: Array<{ ddtCase: { id: string; caseId: string; testStageId: string } }>;
+  };
+  const before = await browserJson<Members>(page, `/api/v1/case-suites/${target.id}`);
+  expect(before.body.ddtItems).toHaveLength(4);
+  await page.getByRole("button", { name: "从用例任务移除", exact: true }).click();
+  const taskPicker = dialog.getByRole("combobox", { name: "移除用例的目标任务", exact: true });
+  await taskPicker.click();
+  await page
+    .locator(".ant-select-dropdown:visible")
+    .getByTitle(empty.name, { exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("匹配 0 条任务成员 · 跳过 3 条");
+  await expect(confirm).toBeDisabled();
+  await taskPicker.click();
+  await page
+    .locator(".ant-select-dropdown:visible")
+    .getByTitle(target.name, { exact: true })
+    .click();
+  await expect(confirm).toBeDisabled();
+  await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("匹配 2 条任务成员 · 跳过 1 条");
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") {
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      await page.getByRole("button", { name: "从用例任务移除", exact: true }).click();
+      await dialog.getByRole("button", { name: "预览匹配", exact: true }).click();
+      await expect(dialog.getByRole("status")).toContainText("匹配 2 条任务成员 · 跳过 1 条");
+    }
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-task-removal-preview-${theme}-${width}`);
+    }
+  }
+  await page.route(
+    `**/api/v1/case-suites/${target.id}/ddt-cases`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: { code: "PLATFORM_BUSY", message: "移除暂时繁忙，请重试。" } },
+      }),
+    { times: 1 },
+  );
+  await confirm.click();
+  await expect(dialog.getByRole("alert")).toContainText("移除暂时繁忙");
+  await expect(confirm).toBeEnabled();
+  const removed = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/case-suites/${target.id}/ddt-cases`) &&
+      response.request().method() === "DELETE",
+  );
+  await confirm.click();
+  expect((await removed).status()).toBe(200);
+  await expect(dialog).toBeHidden();
+  const after = await browserJson<Members>(page, `/api/v1/case-suites/${target.id}`);
+  expect(after.body.items.map((item) => item.caseDefinition.id)).toEqual([ordinary.id]);
+  expect(
+    after.body.ddtItems.map((item) => [item.ddtCase.caseId, item.ddtCase.testStageId]).sort(),
+  ).toEqual(
+    [
+      ["REMOVE-000", hierarchy.stageId],
+      ["REMOVE-203", stage.body.id],
+    ].sort(),
+  );
+  expect(
+    (await browserJson<Members>(page, `/api/v1/case-suites/${other.id}`)).body.ddtItems,
+  ).toHaveLength(1);
+  expect((await browserJson(page, ddtPath(hierarchy, "cases/REMOVE-203"))).status).toBe(200);
+  await page.reload();
+  await expect(navigation.locator(".ddt-case-list-row")).toHaveCount(60);
+});
+
 test("DDT selects existing cases from Excel or text across unloaded pages and adds them to a task", async ({
   page,
 }) => {

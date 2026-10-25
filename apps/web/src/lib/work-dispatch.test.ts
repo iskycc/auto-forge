@@ -64,6 +64,7 @@ describe("execution control work dispatch", () => {
     expect(cancelRun).not.toHaveBeenCalled();
   });
   it.each([
+    "readConcurrencySnapshot",
     "readExceptionRecords",
     "getAttemptLogSnapshot",
     "listAttemptsForExecutionRun",

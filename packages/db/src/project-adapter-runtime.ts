@@ -98,12 +98,23 @@ export function adapterEnvironmentAddressFromExecutionSpec(snapshot: string): st
 export function projectAdapterRequiredCapabilities(
   runtime: ProjectAdapterRuntime | undefined,
 ): string[] {
-  if (!runtime) return [...REQUIRED_EXECUTION_CAPABILITIES];
-  const capabilities =
-    runtime.jdk && runtime.jarBundle
-      ? [COTEST_ADAPTER_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
-      : [COTEST_ADAPTER_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
-  return runtime.requiresDdtCaseId
+  return projectAdapterCapabilitiesForFeatures({
+    adapterEnabled: !!runtime,
+    projectRuntimeAssets: !!(runtime?.jdk && runtime.jarBundle),
+    ddtCaseId: runtime?.requiresDdtCaseId === true,
+  });
+}
+
+export function projectAdapterCapabilitiesForFeatures(features: {
+  adapterEnabled: boolean;
+  projectRuntimeAssets: boolean;
+  ddtCaseId: boolean;
+}): string[] {
+  if (!features.adapterEnabled) return [...REQUIRED_EXECUTION_CAPABILITIES];
+  const capabilities = features.projectRuntimeAssets
+    ? [COTEST_ADAPTER_CAPABILITY, PROJECT_RUNTIME_ASSETS_CAPABILITY]
+    : [COTEST_ADAPTER_CAPABILITY, ...REQUIRED_EXECUTION_CAPABILITIES];
+  return features.ddtCaseId
     ? [...capabilities, DDT_CASE_ID_CAPABILITY, DDT_INSIGHT_URL_CAPABILITY]
     : capabilities;
 }

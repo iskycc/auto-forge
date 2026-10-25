@@ -6,8 +6,13 @@ import type {
   DeleteCaseSuiteInput,
   SetCaseSuitePinInput,
   RoundRecoveryCredentialSourcesPage,
+  MatchCaseSuiteDdtItemsInput,
+  CaseSuiteDdtSelection,
 } from "@autoforge/contracts";
-import { roundRecoveryCredentialSourceCursorSchema } from "@autoforge/contracts";
+import {
+  CASE_SUITE_DDT_MATCH_BATCH_SIZE,
+  roundRecoveryCredentialSourceCursorSchema,
+} from "@autoforge/contracts";
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
@@ -674,6 +679,43 @@ export class CaseSuiteService {
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
     });
+  }
+
+  async matchDdtCases(
+    suiteId: string,
+    input: MatchCaseSuiteDdtItemsInput,
+    projectIds?: readonly string[],
+  ): Promise<CaseSuiteDdtSelection> {
+    const suite = await this.getSummary(suiteId, projectIds);
+    if (suite.policy.projectVersionId !== input.projectVersionId)
+      throw new DomainError(
+        "DDT_CASE_VERSION_MISMATCH",
+        "目标任务与当前用例版本不一致，请重新选择任务。",
+      );
+    if (input.caseIds.length === 0 || input.caseIds.length > CASE_SUITE_DDT_MATCH_BATCH_SIZE)
+      throw new DomainError("CASE_SUITE_SELECTION_INVALID", "每次最多匹配 200 条 DDT 用例。");
+    const key = (id: string) => id.trim().toLocaleLowerCase("en-US");
+    const caseIds = [...new Map(input.caseIds.map((id) => [key(id), id.trim()])).values()];
+    // Only bounded metadata crosses this path; task members and case JSON stay in the repositories.
+    const page = await this.requireDdtRepository().listCases({
+      projectId: suite.projectId,
+      projectVersionId: input.projectVersionId,
+      testStageId: input.testStageId,
+      caseIds,
+      filters: [],
+      limit: CASE_SUITE_DDT_MATCH_BATCH_SIZE,
+    });
+    const memberIds = new Set(
+      await this.suites.findMemberDdtCaseIds(
+        suiteId,
+        page.items.map((item) => item.id),
+      ),
+    );
+    const items = page.items
+      .filter((item) => memberIds.has(item.id))
+      .map(({ id, caseId }) => ({ id, caseId }));
+    const matchedIds = new Set(items.map((item) => key(item.caseId)));
+    return { items, unmatchedCaseIds: caseIds.filter((id) => !matchedIds.has(key(id))) };
   }
 
   async removeDdtCases(

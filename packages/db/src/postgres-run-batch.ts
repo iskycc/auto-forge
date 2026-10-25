@@ -1,4 +1,13 @@
 import { executionRecordKindCondition } from "./execution-record-kind";
+import {
+  concurrencyCountsQuery,
+  runnerReservationsQuery,
+  projectReservationsQuery,
+  concurrencySnapshot,
+  type ConcurrencyCountRow,
+  type RunnerReservationRow,
+} from "./concurrency-diagnostics-query";
+import { schedulableBatchCapacitySql, schedulableBatchOrderSql } from "./schedulable-batch-query";
 import { finalFailureRunCondition } from "./final-failure-selection";
 import {
   previousCaseLogAssignmentQuery,
@@ -1172,14 +1181,13 @@ export class PostgresRunBatchRepository
       `SELECT id FROM run_batches
        WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
          AND scheduled_for <= $1
+         AND ${schedulableBatchCapacitySql("postgres", "run_batches")}
          AND EXISTS (
            SELECT 1 FROM execution_runs run
            WHERE run.batch_id = run_batches.id
              AND run.status = 'queued' AND run.held_round = 0
          )
-       ORDER BY priority + LEAST(100, GREATEST(0, FLOOR(
-         EXTRACT(EPOCH FROM ($1::timestamptz-scheduled_for::timestamptz)) / 60 / $2
-       ))) DESC, scheduled_for, id LIMIT $3`,
+       ORDER BY ${schedulableBatchOrderSql("postgres", "run_batches")} LIMIT $3`,
       [now, agingIntervalMinutes, limit],
     );
     return result.rows.map((row) => row.id);
@@ -1196,17 +1204,63 @@ export class PostgresRunBatchRepository
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
        WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
          AND b.cancel_requested_at IS NULL AND b.scheduled_for <= $2
+         AND ${schedulableBatchCapacitySql("postgres", "b")}
          AND EXISTS (
            SELECT 1 FROM execution_runs run
            WHERE run.batch_id = b.id
              AND run.status = 'queued' AND run.held_round = 0
          )
-       ORDER BY b.priority + LEAST(100, GREATEST(0, FLOOR(
-         EXTRACT(EPOCH FROM ($2::timestamptz-b.scheduled_for::timestamptz)) / 60 / $3
-       ))) DESC, b.scheduled_for, b.id LIMIT $4`,
+       ORDER BY ${schedulableBatchOrderSql("postgres", "b")} LIMIT $4`,
       [runnerId, now, agingIntervalMinutes, limit],
     );
     return result.rows.map((row) => row.id);
+  }
+
+  async readConcurrencySnapshot(
+    batchId: string,
+    offlineBefore: string,
+    projectIds?: readonly string[],
+  ): Promise<import("@autoforge/application").ConcurrencySnapshot | null> {
+    const metadata = await this.getMetadata(batchId, projectIds);
+    if (!metadata) return null;
+    const countRows = await this.handle.db.execute<ConcurrencyCountRow>(
+      concurrencyCountsQuery("postgres", batchId),
+    );
+    const counts = countRows.rows[0];
+    if (!counts) return null;
+    const selectedIds = metadata.selectedRunnerIds.slice(0, 64);
+    const runnerColumns = getTableColumns(pgRunners);
+    const safeColumns = Object.fromEntries(
+      Object.entries(runnerColumns).filter(
+        ([name]) => name !== "credentialHash" && name !== "previousCredentialHash",
+      ),
+    ) as Omit<typeof runnerColumns, "credentialHash" | "previousCredentialHash">;
+    const nodes = selectedIds.length
+      ? (
+          await this.handle.db
+            .select(safeColumns)
+            .from(pgRunners)
+            .where(inArray(pgRunners.id, selectedIds))
+            .orderBy(pgRunners.id)
+        ).map((row) => mapStoredRunner(row, offlineBefore))
+      : [];
+    const reservations = selectedIds.length
+      ? (
+          await this.handle.db.execute<RunnerReservationRow>(
+            runnerReservationsQuery(batchId, selectedIds),
+          )
+        ).rows
+      : [];
+    const projectCounts = await this.handle.db.execute<{ value: string | number }>(
+      projectReservationsQuery(metadata.projectId),
+    );
+    return concurrencySnapshot(
+      metadata,
+      counts,
+      nodes,
+      reservations,
+      Number(projectCounts.rows[0]?.value ?? 0),
+    );
   }
 
   async getSchedulingSnapshot(

@@ -364,6 +364,22 @@ Lite/Full 均按范围及规范化 CaseID 索引精确查找，仅返回摘要�
 完成后才应用选择，取消或失败不会应用部分结果，也不会因只读匹配清空浏览器缓存。输入文件复用普通用例
 的首列读取器（32 MiB、首个工作表最多 100,001 行），但编号不使用 Java 类路径的斜杠规范化规则。
 
+### 按清单从任务移除
+
+在 DDT 管理页通过“按清单选择”上传表格或粘贴 CaseID，勾选匹配用例后，右侧操作区提供“从用例任务移除”。手动勾选、筛选结果和清单勾选使用同一入口，包含左侧尚未加载的已选用例。选择当前项目版本的目标任务，点击“预览匹配”，完成后显示任务内匹配数量与跳过数量，每类最多预览八条；“确认移除”只在完整预览且存在匹配时可用。更换任务清除预览，取消或匹配失败不写入；没有匹配时禁止提交。
+
+移除范围绑定当前版本和测试阶段，以平台用例 ID 执行，避免误删其他阶段的同名 CaseID。普通成员、其他任务的相同成员、用例库及既有执行记录保留。只改变任务成员关系，并沿用既有任务版本快照和操作审计；不立即执行或取消批次。最终匹配／跳过计数指预览时的交集，重复提交相同用例为幂等操作。请求超时会明确提示任务可能已更新，可重试核对。
+
+新增只读 `POST /api/v1/case-suites/{suiteId}/ddt-cases/matching`：输入 `projectVersionId`、`testStageId`、`caseIds`，每次最多 200 个 CaseID，请求体最多 512 KiB。项目从已授权任务推导，版本不一致明确拒绝；要求对应项目 `case_suite.manage` 并检查同源。响应为 `items: [{id, caseId}]` 和 `unmatchedCaseIds`，只查询轻量用例摘要与候选成员 ID，不读取完整任务、DDT 正文、日志或执行历史，也不生成任务版本。客户端串行收集完整结果后，调用原有 `DELETE /api/v1/case-suites/{suiteId}/ddt-cases`，以一次事务和一次版本快照完成移除，事务内部继续有界分批 SQL。整体沿用 100,000 条任务成员能力。
+
+Lite 使用 SQLite 任务成员表和已有短写事务，Full 使用 PostgreSQL 对应实现；没有新增迁移、依赖或配置，不涉及队列、对象存储、缓存事实或 Runner Agent 协议。页面仅使用现有 Ant Design 和离线资源。
+
+验证（2026-10-25）：45 项定向测试通过，包含真实 SQLite/PostgreSQL 的按阶段匹配、仅移除指定任务成员、用例正文和执行快照保留、重复提交不重复更新任务版本；应用测试确认不读取完整任务及 DDT 正文，客户端测试覆盖每批 200 条的分页、中断和失败。主要命令为 `AUTOFORGE_TEST_POSTGRES_URL=<一次性数据库> pnpm exec vitest run packages/db/test/suite-ddt-removal.integration.test.ts packages/application/test/match-suite-ddt-selection.test.ts packages/application/test/manage-case-suites.test.ts apps/web/src/lib/suite-ddt-removal-selection.test.ts apps/web/src/lib/ddt-case-selection.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1`。
+
+Web 与测试 TypeScript、变更文件 Prettier/ESLint、Web 生产构建通过。生产 Lite 使用 `pnpm exec playwright test tests/e2e/ddt-management.spec.ts --grep 'DDT list selection removes|DDT selects existing cases from Excel or text' --workers=1` 分别验证新增移除和原有清单添加。新场景包含未加载用例、中文 CaseID、空任务、版本不一致拒绝、匿名 401、取消、匹配与移除失败后重试，以及普通成员、其他任务及其他阶段同名用例保留。首次新场景因夹具未切换项目上下文而在导入普通用例前失败，补齐上下文后单独复验通过；没有增加重试或放宽断言。
+
+已实际查看操作区及预览弹窗在 1024×768、1536×960 深浅色下的六张截图，窄桌面按钮自然换行，弹窗、列宽、文字与底部操作无新增变形或越界。构建和测试串行限制 1 CPU、4 GiB，证据位于 `/var/tmp/autoforge-list-removal-20261025/`。本轮未重跑整仓测试、Full 全栈、真实 Runner 或完整离线部署验收；临时数据库及服务已清理。
+
 ### 匿名用例查询
 
 固定范围前缀为 `/api/v1/public/ddt/projects/{projectId}/versions/{projectVersionId}/stages/{testStageId}`，三个 ID 使用平台稳定 ID，项目或版本改名不改变已有地址。前缀下提供两个等价入口：

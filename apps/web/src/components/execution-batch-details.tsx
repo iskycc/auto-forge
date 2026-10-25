@@ -10,7 +10,8 @@ import {
 } from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
-import { AlertTriangle, ListPlus, OctagonX, RotateCcw } from "lucide-react";
+import { AlertTriangle, Gauge, ListPlus, OctagonX, RotateCcw } from "lucide-react";
+import { ConcurrencyDiagnosticsDialog } from "./concurrency-diagnostics-dialog";
 import { ExecutionExceptionsDialog } from "./execution-exceptions-dialog";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -58,6 +59,7 @@ export function ExecutionBatchDetails({
   canReadLogs,
   canReadAttemptEvents,
   canReadArtifacts,
+  canReadConcurrencyDiagnostics = false,
   artifactsEnabled,
   runnerDirectory,
   accessToken,
@@ -77,6 +79,7 @@ export function ExecutionBatchDetails({
   canReadLogs: boolean;
   canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
+  canReadConcurrencyDiagnostics?: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
   accessToken?: string;
@@ -97,6 +100,7 @@ export function ExecutionBatchDetails({
   const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
   const [failureTaskDialogOpen, setFailureTaskDialogOpen] = useState(false);
   const [exceptionsDialogOpen, setExceptionsDialogOpen] = useState(false);
+  const [concurrencyDialogOpen, setConcurrencyDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
   const statisticsState = batch.statistics?.state;
   const statisticsPending = !!batch.statistics && !batch.statistics.generation;
@@ -294,6 +298,7 @@ export function ExecutionBatchDetails({
       </section>
 
       {(analysisScope ||
+        (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
         batch.status === "failed" ||
         canCancelRuns ||
         (canCreateRuns && retrySuiteId) ||
@@ -325,6 +330,16 @@ export function ExecutionBatchDetails({
             </span>
           </div>
           <div className={cn("button-row", uiPatterns["button-row"])}>
+            {activeBatch && canReadConcurrencyDiagnostics && !publicAccess ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setConcurrencyDialogOpen(true)}
+              >
+                <Gauge size={16} />
+                并发诊断
+              </Button>
+            ) : null}
             {batch.status === "failed" ? (
               <Button
                 type="button"
@@ -411,6 +426,12 @@ export function ExecutionBatchDetails({
         </section>
       )}
 
+      {concurrencyDialogOpen && !publicAccess ? (
+        <ConcurrencyDiagnosticsDialog
+          batchId={batch.id}
+          onClose={() => setConcurrencyDialogOpen(false)}
+        />
+      ) : null}
       {exceptionsDialogOpen ? (
         <ExecutionExceptionsDialog
           batchId={batch.id}

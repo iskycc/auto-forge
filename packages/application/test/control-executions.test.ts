@@ -149,7 +149,7 @@ describe("Runner execution compatibility", () => {
       closedBatchIds: ["batch-closed", "batch-foreign"],
     });
     expect(executions.claim).toHaveBeenCalledOnce();
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup", 1, 1);
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup", 8, 1);
     const input = {
       inputId: "runtime-1",
       kind: "jar-bundle",
@@ -261,7 +261,7 @@ describe("Runner execution compatibility", () => {
     });
 
     expect(appended).toHaveLength(1);
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1", 1, 1);
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1", 8, 1);
     expect(appended[0]).toEqual([
       expect.objectContaining({
         batchId: "batch-1",

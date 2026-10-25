@@ -4,20 +4,28 @@ import { DomainError } from "@autoforge/domain";
 import {
   registerRunnerFastPathBridge,
   type RunnerFastPathContext,
+  type RunnerFastPathRoute,
 } from "./runner-fast-path-bridge";
 
-const calls = vi.hoisted(() => ({ allow: vi.fn(), renew: vi.fn() }));
+const calls = vi.hoisted(() => ({
+  allow: vi.fn(),
+  renew: vi.fn(),
+  complete: vi.fn(),
+  refill: vi.fn(),
+  scheduleBatch: vi.fn(),
+}));
 vi.mock("./services", () => ({
   getPlatformServices: async () => ({
     runnerRequestLimiter: { allow: calls.allow },
-    runnerProtocol: { renewLease: calls.renew },
+    runnerProtocol: { renewLease: calls.renew, complete: calls.complete },
+    runScheduling: { scheduleForRunner: calls.refill, schedule: calls.scheduleBatch },
   }),
 }));
 
 const runtime = globalThis as typeof globalThis & {
   __autoforgeRunnerFastPath?: {
     dispatch(
-      route: { kind: "renew-lease"; runnerId: string; leaseId: string },
+      route: RunnerFastPathRoute,
       context: RunnerFastPathContext,
     ): Promise<{ status: number; payload: unknown }>;
   };
@@ -41,11 +49,52 @@ function context(
 }
 beforeEach(() => {
   calls.allow.mockReset().mockResolvedValue(true);
+  calls.complete.mockReset();
+  calls.refill.mockReset().mockResolvedValue(0);
+  calls.scheduleBatch.mockReset();
   calls.renew.mockReset().mockImplementation(async (_runnerId, _credential, _leaseId, value) => ({
     ...renewLeaseInputSchema.parse(value),
     instruction: "continue",
   }));
   registerRunnerFastPathBridge();
+});
+
+describe("completion fast path shares released capacity across tasks", () => {
+  const completeRoute = { kind: "complete" as const, attemptId: "attempt" };
+  it.each(["accepted", "duplicate"] as const)(
+    "refills the authenticated Runner after %s even when the source batch is closed",
+    async (disposition) => {
+      const response = {
+        disposition,
+        batchId: "finished-batch",
+        batchClosed: true,
+        hasSchedulableRuns: false,
+      };
+      calls.complete.mockResolvedValue(response);
+      const result = await runtime.__autoforgeRunnerFastPath!.dispatch(completeRoute, {
+        ...context(),
+        runnerIdHeader: "runner",
+      });
+      expect(result).toEqual({ status: 200, payload: response });
+      expect(calls.complete).toHaveBeenCalledWith("runner", "runner-credential", "attempt", input);
+      expect(calls.refill).toHaveBeenCalledWith("runner");
+      expect(calls.scheduleBatch).not.toHaveBeenCalled();
+      expect(calls.complete.mock.invocationCallOrder[0]).toBeLessThan(
+        calls.refill.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
+  it("does not trigger scheduling after rejected completion authentication", async () => {
+    calls.complete.mockRejectedValue(new DomainError("RUNNER_AUTH_REQUIRED", "Rejected Runner"));
+    expect(
+      await runtime.__autoforgeRunnerFastPath!.dispatch(completeRoute, {
+        ...context(),
+        runnerIdHeader: "runner",
+      }),
+    ).toMatchObject({ status: 401 });
+    expect(calls.refill).not.toHaveBeenCalled();
+  });
 });
 
 describe("lease renewal fast path preserves protocol boundaries", () => {

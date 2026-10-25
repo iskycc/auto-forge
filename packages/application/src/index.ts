@@ -54,6 +54,8 @@ export * from "./inherit-ddt-cases";
 export * from "./initialize-project-version";
 export * from "./ddt-change-requests";
 export * from "./read-execution-exceptions";
+export * from "./concurrency-snapshot";
+export * from "./read-concurrency-diagnostics";
 export * from "./project-version-copy-ports";
 export * from "./project-version-copy-records";
 export * from "./copy-project-version";

@@ -54,6 +54,7 @@ import { ActionDialog } from "./action-dialog";
 import { DdtSrTagManager } from "./ddt-sr-tag-manager";
 import { DdtCaseInspector } from "./ddt-case-inspector";
 import { DdtCaseSelectionDialog } from "./ddt-case-selection-dialog";
+import { RemoveDdtFromSuiteDialog } from "./remove-ddt-from-suite-dialog";
 import { DdtInheritanceDialog, type DdtInheritanceVersion } from "./ddt-inheritance-dialog";
 import type {
   DdtExecutionStatistics,
@@ -315,6 +316,7 @@ export function DdtManagementWorkspace({
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [showAddToSuite, setShowAddToSuite] = useState(false);
+  const [showRemoveFromSuite, setShowRemoveFromSuite] = useState(false);
   const [showCaseSelection, setShowCaseSelection] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{
     completed: number;
@@ -1239,17 +1241,26 @@ export function DdtManagementWorkspace({
                   </>
                 ) : null}
                 {canManageSuites ? (
-                  <Button
-                    className={cn(
-                      "button button-secondary",
-                      uiPatterns["button"],
-                      uiPatterns["button-secondary"],
-                    )}
-                    type="button"
-                    onClick={() => setShowAddToSuite(true)}
-                  >
-                    <ListPlus size={15} /> 加入用例任务
-                  </Button>
+                  <>
+                    <Button
+                      className={cn(
+                        "button button-secondary",
+                        uiPatterns["button"],
+                        uiPatterns["button-secondary"],
+                      )}
+                      type="button"
+                      onClick={() => setShowAddToSuite(true)}
+                    >
+                      <ListPlus size={15} /> 加入用例任务
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setShowRemoveFromSuite(true)}
+                    >
+                      从用例任务移除
+                    </Button>
+                  </>
                 ) : null}
                 <Button
                   type="button"
@@ -1502,6 +1513,23 @@ export function DdtManagementWorkspace({
           onComplete={async (suiteName) => {
             toast.success(`已将 ${selected.size} 条 DDT 用例加入任务“${suiteName}”。`);
             setShowAddToSuite(false);
+            setSelected(new Set());
+            router.refresh();
+          }}
+        />
+      ) : null}
+      {showRemoveFromSuite ? (
+        <RemoveDdtFromSuiteDialog
+          caseIds={[...selected]}
+          scope={scope}
+          suites={suites}
+          initialSuiteId={searchParameters.get("targetSuiteId") ?? undefined}
+          onClose={() => setShowRemoveFromSuite(false)}
+          onComplete={(suiteName, matchedCount, skippedCount) => {
+            toast.success(
+              `任务“${suiteName}”成员移除完成：匹配 ${matchedCount} 条，跳过 ${skippedCount} 条。`,
+            );
+            setShowRemoveFromSuite(false);
             setSelected(new Set());
           }}
         />
@@ -3422,7 +3450,7 @@ const ddtManagementWorkspaceStyles = {
   "ddt-section":
     "[&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-3 [&_>_header_>_div]:grid [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-[3px] [&_>_header_>_div]:mr-auto [&_>_header_>_div_>_span]:text-muted-foreground [&_>_header_>_div_>_span]:text-xs grid min-w-0 gap-4",
   "ddt-selection-bar":
-    "flex items-center gap-[9px] border border-solid border-border rounded-lg py-[9px] px-3 bg-info/10 [&_strong]:mr-auto [&_strong]:text-info",
+    "flex min-w-0 flex-wrap items-center gap-[9px] border border-solid border-border rounded-lg py-[9px] px-3 bg-info/10 [&_strong]:mr-auto [&_strong]:text-info",
   "ddt-status":
     "inline-flex w-fit rounded-full py-1 px-2 bg-muted text-muted-foreground text-xs [font-style:normal] whitespace-nowrap [&.running]:bg-info/10 [&.running]:text-info [&.queued]:bg-info/10 [&.queued]:text-info [&.succeeded]:bg-success/10 [&.succeeded]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.previewed]:bg-warning/10 [&.previewed]:text-warning [&.partially\\_succeeded]:bg-warning/10 [&.partially\\_succeeded]:text-warning",
   "ddt-subtabs":

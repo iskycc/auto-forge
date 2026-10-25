@@ -3,7 +3,7 @@ import { uploadLogChunksInputSchema } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 
 import { mapApiError, rejectRateLimited } from "./api-error-mapping";
-import { refillBatchAfterCompletion } from "./refill-batch-after-completion";
+import { refillRunnerAfterCompletion } from "./refill-runner-after-completion";
 import { getPlatformServices } from "./services";
 
 /**
@@ -144,10 +144,8 @@ async function execute(
         attemptId,
         parseJsonBody(context.rawBody),
       );
-      await refillBatchAfterCompletion(result, (batchId) =>
-        result.hasSchedulableRuns === false
-          ? Promise.resolve()
-          : services.runScheduling.schedule(batchId),
+      await refillRunnerAfterCompletion(result, () =>
+        services.runScheduling.scheduleForRunner(runnerId),
       );
       return result;
     }
