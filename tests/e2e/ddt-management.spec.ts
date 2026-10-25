@@ -5259,6 +5259,7 @@ test("independent SR tags persist across stages and select only matching or unta
     { CaseID: "TAG-2", srNum: "Wallet-SR" },
     { CaseID: "TAG-3", srNum: "Other-SR" },
     { CaseID: "TAG-4", srNum: "Untagged-SR" },
+    { CaseID: "TAG-5", srNum: "Wallet-Other-SR" },
   ];
   await importDdtApiFixture(page, hierarchy, "TAG-1", 0, rows);
   await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
@@ -5276,17 +5277,23 @@ test("independent SR tags persist across stages and select only matching or unta
   );
   await dialog.getByRole("button", { name: "新建标签", exact: true }).click();
   const tag = (await (await created).json()) as { id: string };
-  const selector = dialog.getByRole("combobox", { name: "SR Wallet-SR 的标签", exact: true });
-  await expect(selector).toBeEnabled();
-  await selector.click();
-  const assigned = page.waitForResponse(
-    (response) => response.url().includes("/ddt/sr-tags") && response.request().method() === "POST",
-  );
-  await page.locator(".ant-select-dropdown:visible").getByTitle("Wallet", { exact: true }).click();
-  expect((await assigned).status()).toBe(200);
-  await selector.press("Escape");
-  await expect(selector).toBeEnabled();
-  await expect(dialog.getByTitle("Wallet", { exact: true })).toBeVisible();
+  for (const srNum of ["Wallet-SR", "Wallet-Other-SR"]) {
+    const selector = dialog.getByRole("combobox", { name: `SR ${srNum} 的标签`, exact: true });
+    await expect(selector).toBeEnabled();
+    await selector.click();
+    const assigned = page.waitForResponse(
+      (response) =>
+        response.url().includes("/ddt/sr-tags") && response.request().method() === "POST",
+    );
+    await page
+      .locator(".ant-select-dropdown:visible")
+      .getByTitle("Wallet", { exact: true })
+      .click();
+    expect((await assigned).status()).toBe(200);
+    await selector.press("Escape");
+    await expect(selector).toBeEnabled();
+  }
+  await expect(dialog.getByTitle("Wallet", { exact: true })).toHaveCount(2);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await expectUiIntegrity(page);
@@ -5348,14 +5355,47 @@ test("independent SR tags persist across stages and select only matching or unta
   await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
   const tree = page.getByRole("tree", { name: "按 SR 分组的 DDT 用例" });
   await expect(tree.getByText("Wallet", { exact: true }).first()).toBeVisible();
+  const walletSr = page.getByRole("checkbox", { name: "选择 SR Wallet-SR", exact: true });
+  const sharedSr = page.getByRole("checkbox", { name: "选择 SR wallet-sr", exact: true });
+  const otherWalletSr = page.getByRole("checkbox", {
+    name: "选择 SR Wallet-Other-SR",
+    exact: true,
+  });
+  const otherSr = page.getByRole("checkbox", { name: "选择 SR Other-SR", exact: true });
+  const untaggedSr = page.getByRole("checkbox", { name: "选择 SR Untagged-SR", exact: true });
+  const walletGroup = tree.getByRole("treeitem").filter({ has: walletSr });
+  await expect(walletGroup).toHaveAttribute("data-open", "false");
+  await expect(walletSr).not.toBeChecked();
+  await tree.getByRole("button", { name: "勾选带 Wallet 标签的 SR", exact: true }).first().click();
+  await expect(walletSr).toBeChecked();
+  await expect(sharedSr).toBeChecked();
+  await expect(otherWalletSr).toBeChecked();
+  await expect(otherSr).not.toBeChecked();
+  await expect(untaggedSr).not.toBeChecked();
+  await expect(walletGroup).toHaveAttribute("data-open", "false");
+  await expect(page.getByRole("button", { name: "批量移除（4）", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
+  await expect(
+    page.getByText("已勾选 3 个 SR 分组，包含 4 个 DDT 用例", { exact: true }),
+  ).toBeVisible();
   const picker = page.getByRole("combobox", { name: "DDT SR 标签", exact: true });
+  await picker.focus();
+  await picker.press("Backspace");
   await picker.fill("Wal");
   await page.locator(".ant-select-dropdown:visible").getByTitle("Wallet", { exact: true }).click();
   await picker.press("Escape");
-  await page.getByRole("button", { name: "选择带标签的用例", exact: true }).click();
-  await expect(page.getByRole("button", { name: "批量移除（3）", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "选择不带标签的用例", exact: true }).click();
+  await page.getByRole("button", { name: "勾选带标签的 SR", exact: true }).click();
+  await expect(page.getByRole("button", { name: "批量移除（4）", exact: true })).toBeVisible();
+  await expect(walletSr).toBeChecked();
+  await expect(sharedSr).toBeChecked();
+  await expect(otherWalletSr).toBeChecked();
+  await page.getByRole("button", { name: "勾选不带标签的 SR", exact: true }).click();
   await expect(page.getByRole("button", { name: "批量移除（2）", exact: true })).toBeVisible();
+  await expect(walletSr).not.toBeChecked();
+  await expect(sharedSr).not.toBeChecked();
+  await expect(otherWalletSr).not.toBeChecked();
+  await expect(otherSr).toBeChecked();
+  await expect(untaggedSr).toBeChecked();
   await expect(page.getByRole("button", { name: "批量移除（1）", exact: true })).toBeVisible();
   for (const theme of ["light", "dark"]) {
     if (theme === "dark")
@@ -5363,6 +5403,24 @@ test("independent SR tags persist across stages and select only matching or unta
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page.getByRole("region", { name: "DDT 用例树", exact: true }).scrollIntoViewIfNeeded();
+      const quickSelection = tree
+        .getByRole("button", { name: "勾选带 Wallet 标签的 SR", exact: true })
+        .first();
+      await quickSelection.press("Enter");
+      await expect(walletSr).toBeChecked();
+      await expect(sharedSr).toBeChecked();
+      await expect(otherWalletSr).toBeChecked();
+      await expect(otherSr).not.toBeChecked();
+      await expect(untaggedSr).not.toBeChecked();
+      await expect(walletGroup).toHaveAttribute("data-open", "false");
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `suite-sr-tags-matched-${theme}-${width}`);
+      await page.getByRole("button", { name: "勾选不带标签的 SR", exact: true }).click();
+      await expect(otherSr).toBeChecked();
+      await expect(untaggedSr).toBeChecked();
+      await expect(walletSr).not.toBeChecked();
+      await expect(sharedSr).not.toBeChecked();
+      await expect(otherWalletSr).not.toBeChecked();
       await expectUiIntegrity(page);
       await captureDdtUi(page, `suite-sr-tags-${theme}-${width}`);
     }

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { Tag, Tooltip } from "antd";
 import type { DdtSrTag, DdtSrTagMembers } from "@autoforge/contracts";
 import { ddtSrTagLookupSchema, ddtSrTagMembersSchema } from "@autoforge/contracts";
@@ -9,13 +9,42 @@ import { DdtSrTagPicker } from "./ddt-sr-tag-picker";
 import { Button } from "./ui/button";
 import { Notice } from "./ui/notice";
 
-export function SrTagBadges({ tags }: { tags: DdtSrTag[] }) {
+export function SrTagBadges({
+  tags,
+  disabled,
+  onSelectTag,
+}: {
+  tags: DdtSrTag[];
+  disabled?: boolean;
+  onSelectTag?: ((tag: DdtSrTag) => void) | undefined;
+}) {
   if (!tags.length) return null;
   return (
     <span className="inline-flex min-w-0 shrink-0 items-center gap-1" aria-label="SR 标签">
       {tags.slice(0, 2).map((tag) => (
-        <Tooltip key={tag.id} title={tag.name}>
-          <Tag className="!m-0 max-w-28 truncate">{tag.name}</Tag>
+        <Tooltip
+          key={tag.id}
+          title={onSelectTag ? `勾选本任务中带「${tag.name}」标签的全部 SR 及其用例` : tag.name}
+        >
+          {onSelectTag ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="min-w-0 max-w-28 !px-2 !text-xs"
+              aria-label={`勾选带 ${tag.name} 标签的 SR`}
+              disabled={disabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectTag(tag);
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <span className="truncate">{tag.name}</span>
+            </Button>
+          ) : (
+            <Tag className="!m-0 max-w-28 truncate">{tag.name}</Tag>
+          )}
         </Tooltip>
       ))}
       {tags.length > 2 ? (
@@ -85,7 +114,7 @@ export function useSuiteSrTags(suiteId: string, srNums: string[], revision: numb
     retry: () => setRetry((value) => value + 1),
   };
 }
-export function SuiteSrTagSelection({
+function useSuiteSrTagSelection({
   suiteId,
   revision,
   disabled,
@@ -104,10 +133,12 @@ export function SuiteSrTagSelection({
   const [result, setResult] = useState("");
   const request = useRef<AbortController | null>(null);
   const url = `/api/v1/case-suites/${encodeURIComponent(suiteId)}/sr-tags`;
-  useEffect(() => () => request.current?.abort(), []);
-  async function select(match: "include" | "exclude") {
+  useEffect(() => () => request.current?.abort(), [suiteId, revision]);
+  async function select(match: "include" | "exclude", selectedTags = tagIds) {
+    if (disabled || request.current || selectedTags.length === 0) return;
     const controller = new AbortController();
     request.current = controller;
+    setTagIds(selectedTags);
     setProgress(0);
     setError("");
     setResult("");
@@ -120,7 +151,7 @@ export function SuiteSrTagSelection({
             revision: String(revision),
             match,
           });
-          for (const id of tagIds) parameters.append("tagId", id);
+          for (const id of selectedTags) parameters.append("tagId", id);
           if (cursor) parameters.set("cursor", cursor);
           return ddtSrTagMembersSchema.parse(
             await requestDdtJson<DdtSrTagMembers>(`${url}?${parameters}`, {
@@ -134,7 +165,8 @@ export function SuiteSrTagSelection({
       );
       controller.signal.throwIfAborted();
       onSelect(members);
-      setResult(`已选择 ${members.length} 个 DDT 用例`);
+      const srCount = new Set(members.map((member) => member.srNum)).size;
+      setResult(`已勾选 ${srCount} 个 SR 分组，包含 ${members.length} 个 DDT 用例`);
     } catch (cause) {
       if (!controller.signal.aborted)
         setError(cause instanceof Error ? cause.message : "按标签选择失败，请重试。");
@@ -147,10 +179,41 @@ export function SuiteSrTagSelection({
     }
   }
   const busy = progress !== undefined;
+  return {
+    url,
+    tagIds,
+    setTagIds,
+    progress,
+    error,
+    result,
+    busy,
+    select,
+    cancel: () => request.current?.abort(),
+  };
+}
+
+export function SuiteSrTagSelection({
+  selectionRef,
+  ...options
+}: {
+  selectionRef: Ref<SuiteSrTagSelectionActions>;
+  suiteId: string;
+  revision: number;
+  disabled: boolean;
+  onBusyChange: (busy: boolean) => void;
+  onSelect: (members: DdtSrTagMembers["items"]) => void;
+}) {
+  const { url, tagIds, setTagIds, busy, select, cancel, progress, error, result } =
+    useSuiteSrTagSelection(options);
+  const { disabled } = options;
+  // Keep paged progress local to this toolbar instead of re-rendering the task tree per page.
+  useImperativeHandle(selectionRef, () => ({
+    selectTag: (tagId) => void select("include", [tagId]),
+  }));
   return (
-    <div className="grid gap-2 border-b border-border p-3" aria-label="按 SR 标签选择任务用例">
+    <div className="grid gap-2 border-b border-border p-3" aria-label="按标签勾选任务 SR">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-muted-foreground">按 SR 标签选择</span>
+        <span className="text-sm text-muted-foreground">按标签勾选 SR</span>
         <div className="min-w-56 flex-1">
           <DdtSrTagPicker
             url={url}
@@ -165,7 +228,7 @@ export function SuiteSrTagSelection({
           disabled={!tagIds.length || disabled || busy}
           onClick={() => void select("include")}
         >
-          选择带标签的用例
+          勾选带标签的 SR
         </Button>
         <Button
           type="button"
@@ -173,18 +236,19 @@ export function SuiteSrTagSelection({
           disabled={!tagIds.length || disabled || busy}
           onClick={() => void select("exclude")}
         >
-          选择不带标签的用例
+          勾选不带标签的 SR
         </Button>
         {busy ? (
-          <Button type="button" variant="ghost" onClick={() => request.current?.abort()}>
-            取消选择
+          <Button type="button" variant="ghost" onClick={cancel}>
+            取消勾选
           </Button>
         ) : null}
       </div>
       <small className="text-muted-foreground" role="status">
         {busy
           ? `正在读取：${progress} 个用例…`
-          : result || "多标签按任一匹配；不带标签包含未打标签的 SR。仅替换本任务 DDT 用例的勾选。"}
+          : result ||
+            "点击 SR 旁的标签可直接勾选同标签的全部 SR；包含未展开分组的任务内用例，多标签按任一匹配。仅替换 DDT 勾选。"}
       </small>
       {error ? (
         <Notice tone="error" role="alert">
@@ -194,3 +258,7 @@ export function SuiteSrTagSelection({
     </div>
   );
 }
+
+export type SuiteSrTagSelectionActions = {
+  selectTag(tagId: string): void;
+};

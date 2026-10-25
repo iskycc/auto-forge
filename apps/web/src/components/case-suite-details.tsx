@@ -1,5 +1,10 @@
 "use client";
-import { SrTagBadges, SuiteSrTagSelection, useSuiteSrTags } from "./suite-sr-tags";
+import {
+  SrTagBadges,
+  SuiteSrTagSelection,
+  useSuiteSrTags,
+  type SuiteSrTagSelectionActions,
+} from "./suite-sr-tags";
 import { LoadingStateMessage } from "@/components/ui/loading-state-message";
 
 import { LoadingIcon } from "@/components/ui/loading-icon";
@@ -23,7 +28,7 @@ type CaseSuiteItem = SuiteDirectoryPart["items"][number];
 type CaseSuiteDdtItem = SuiteDirectoryPart["ddtItems"][number];
 type CaseSuiteDetails = CaseSuite & SuiteDirectoryPart;
 import { ChevronRight, DatabaseZap, FolderTree, Search, Trash2 } from "lucide-react";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { useConfirm } from "@/components/ui-feedback";
 import { useCaseSuiteRevision } from "@/components/case-suite-revision";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
@@ -78,6 +83,7 @@ export function CaseSuiteDetailsView({
   }
   const [knownMembers, setKnownMembers] = useState<SuiteDirectoryPart>({ items: [], ddtItems: [] });
   const [tagMembers, setTagMembers] = useState<Array<{ id: string; srNum: string }>>([]);
+  const tagSelection = useRef<SuiteSrTagSelectionActions>(null);
   const [collecting, setCollecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [selectedDdtIds, setSelectedDdtIds] = useState<ReadonlySet<string>>(new Set());
@@ -534,6 +540,7 @@ export function CaseSuiteDetailsView({
               </div>
               {canManage && suite.policy.projectVersionId ? (
                 <SuiteSrTagSelection
+                  selectionRef={tagSelection}
                   suiteId={suite.id}
                   revision={revision}
                   disabled={removing || collecting || filtering}
@@ -581,6 +588,10 @@ export function CaseSuiteDetailsView({
                       selectedIds={selectedDdtIds}
                       srNum={srNum}
                       tags={srTags.tags[srNum] ?? []}
+                      tagSelectionDisabled={removing || collecting || filtering}
+                      onSelectTag={
+                        canManage ? (tag) => tagSelection.current?.selectTag(tag.id) : undefined
+                      }
                     />
                   ))}
                   {visibleGroupCount < ddtGroups.length ? (
@@ -788,6 +799,8 @@ function SuiteDdtGroup({
   selectedIds,
   srNum,
   tags,
+  tagSelectionDisabled,
+  onSelectTag,
 }: {
   directory?: LazySuiteGroup | undefined;
   canManage: boolean;
@@ -799,6 +812,8 @@ function SuiteDdtGroup({
   selectedIds: ReadonlySet<string>;
   srNum: string;
   tags: import("@autoforge/contracts").DdtSrTag[];
+  tagSelectionDisabled: boolean;
+  onSelectTag?: ((tag: import("@autoforge/contracts").DdtSrTag) => void) | undefined;
 }) {
   const expansionKey = `${directory?.source.projection.status.id}:${directory?.descriptor.kind}:${directory?.descriptor.path}`;
   const [open, setOpen] = useState(directory?.expansion.get(expansionKey) ?? false);
@@ -844,7 +859,7 @@ function SuiteDdtGroup({
           <span className={cn("suite-tree-folder", caseSuiteDetailsStyles["suite-tree-folder"])}>
             SR · {srNum}
           </span>
-          <SrTagBadges tags={tags} />
+          <SrTagBadges tags={tags} disabled={tagSelectionDisabled} onSelectTag={onSelectTag} />
           <small>{count} 个 DDT 用例</small>
         </>
       }

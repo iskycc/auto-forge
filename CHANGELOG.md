@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+## 1.20.15 - 2026-10-25
+
+### Added
+
+- 任务详情支持点击 SR 旁的标签，直接勾选本任务中带该标签的全部 SR 及其用例，包含未展开分组和跨测试阶段成员。原标签选择按钮明确为“勾选带标签的 SR”“勾选不带标签的 SR”，完成后显示 SR 分组数及 DDT 用例数；普通用例勾选保持不变。
+
+### Compatibility
+
+- Lite/Full 复用现有分页接口，不新增数据库迁移、配置、依赖或 Runner 协议变化。
+- 按维护者要求快速发布，仅运行 Release 的双架构构建、内置资源校验、SBOM、签名和发布流程；CI、Full distributed acceptance、Published Release acceptance、Release checks 和 Dependency security 本次不运行，不记为通过。发布结束后恢复其原有启用状态。
+
+### Validation
+
+- 20 项分页选择及 Ant Design 定向测试、受影响文件 Prettier/ESLint、测试 TypeScript 和 Web 生产构建通过。
+- 生产 Lite Playwright 覆盖点击标签、多个 SR、跨阶段同名 SR、折叠分组、键盘 Enter、匹配／反选、普通用例勾选保留及实际移除后刷新。实际审查 1024×768、1536×960 深浅色八张结果截图，按钮、复选框、计数和布局无新增异常。
+- 本次为共享前端改动，未重跑双数据库集成、Full 全栈、真实 Runner 或完整离线部署验收；详细记录见 `docs/architecture/ddt-sr-tags.md`。
+
 ## 1.20.14 - 2026-10-24
 
 ### Added
