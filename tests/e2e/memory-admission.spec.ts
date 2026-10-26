@@ -6,6 +6,7 @@ import {
   concurrencyDiagnosticsSchema,
   type PlatformConfigurationView,
   type ClaimAssignmentsResponse,
+  type RenewLeaseResponse,
 } from "@autoforge/contracts";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { browserJson, ensureAdministrator, selectProjectContext } from "./support/session";
@@ -103,9 +104,7 @@ async function saveSettings(page: Page) {
   const response = await saved;
   expect(response.status()).toBe(200);
   const configuration = (await response.json()) as PlatformConfigurationView;
-  // Policy changes use the existing restart-only scheduler lifecycle.
-  if (configuration.restartRequired)
-    expect(configuration.restartRequiredFields).toContain("调度阈值");
+  expect(configuration.restartRequiredFields).not.toContain("调度阈值");
 }
 
 test("memory admission dispatches to a Runner without cgroup v2 using the active policy", async ({
@@ -196,14 +195,15 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
   expect(registration.status()).toBe(201);
   const identity = (await registration.json()) as { runnerId: string; credential: string };
   const authorization = { authorization: `Bearer ${identity.credential}` };
-  try {
+  const assignments: ClaimAssignmentsResponse["assignments"] = [];
+  async function sendHeartbeat(memoryUtilizationPercent: number, memoryAvailableBytes: number) {
     const heartbeat = await page.request.post(
       `/api/v1/runner-agents/${identity.runnerId}/heartbeat`,
       {
         headers: authorization,
         data: {
           schemaVersion: 1,
-          busySlots: 0,
+          busySlots: assignments.length,
           labels,
           capabilities,
           maxConcurrency: 8,
@@ -211,9 +211,9 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
           terminalEnabled: false,
           resourceSnapshot: {
             cpuUtilizationPercent: 10,
-            memoryUtilizationPercent: activeMode === "disabled" ? 100 : 25,
+            memoryUtilizationPercent,
             memoryTotalBytes: 16 * 1024 ** 3,
-            memoryAvailableBytes: activeMode === "disabled" ? 0 : 12 * 1024 ** 3,
+            memoryAvailableBytes,
             loadAverage1m: 0,
             logicalCpuCount: 16,
             observedAt: new Date().toISOString(),
@@ -222,23 +222,8 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
       },
     );
     expect(heartbeat.status()).toBe(200);
-    await configureTaskExecution(page, suiteId, identity.runnerId, {
-      concurrency: 8,
-      retryLimit: 0,
-    });
-    const batch = await createTaskRun(page, suiteId);
-    const initialDiagnostic = await page.request.get(
-      `/api/v1/run-batches/${batch.id}/concurrency-diagnostics`,
-    );
-    expect(initialDiagnostic.status()).toBe(200);
-    const initialBudget = concurrencyDiagnosticsSchema.parse(await initialDiagnostic.json());
-    const policySlots = activeMode === "reserved" ? 4 : 8;
-    const nodeBudget = initialBudget.nodes.find((node) => node.id === identity.runnerId)!;
-    expect(nodeBudget.availableSlots + nodeBudget.reservedSlots).toBe(policySlots);
-    // Aggregate recovery harnesses deliberately cap each project at one slot.
-    // Keep the exact policy budget assertion while also respecting that separate limit.
-    const expected = Math.min(policySlots, initialBudget.projectMaximumConcurrency);
-    const assignments: ClaimAssignmentsResponse["assignments"] = [];
+  }
+  async function claimTo(expected: number) {
     await expect
       .poll(
         async () => {
@@ -263,6 +248,50 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
         { timeout: 15000 },
       )
       .toBe(expected);
+  }
+  async function renewLeases() {
+    for (const { lease } of assignments) {
+      const response = await page.request.post(
+        `/api/v1/runner-agents/${identity.runnerId}/leases/${lease.leaseId}/renew`,
+        {
+          headers: authorization,
+          data: {
+            schemaVersion: 1,
+            requestId: randomUUID(),
+            leaseToken: lease.token,
+            leaseVersion: lease.version,
+          },
+        },
+      );
+      expect(response.status()).toBe(200);
+      const renewed = (await response.json()) as RenewLeaseResponse;
+      expect(renewed.instruction).toBe("continue");
+      lease.version = renewed.leaseVersion;
+    }
+  }
+  const original = await readPlatformConfiguration(page);
+  try {
+    await sendHeartbeat(
+      activeMode === "disabled" ? 100 : 25,
+      activeMode === "disabled" ? 0 : 12 * 1024 ** 3,
+    );
+    await configureTaskExecution(page, suiteId, identity.runnerId, {
+      concurrency: 8,
+      retryLimit: 0,
+    });
+    const batch = await createTaskRun(page, suiteId);
+    const initialDiagnostic = await page.request.get(
+      `/api/v1/run-batches/${batch.id}/concurrency-diagnostics`,
+    );
+    expect(initialDiagnostic.status()).toBe(200);
+    const initialBudget = concurrencyDiagnosticsSchema.parse(await initialDiagnostic.json());
+    const policySlots = activeMode === "reserved" ? 4 : 8;
+    const nodeBudget = initialBudget.nodes.find((node) => node.id === identity.runnerId)!;
+    expect(nodeBudget.availableSlots + nodeBudget.reservedSlots).toBe(policySlots);
+    // Aggregate recovery harnesses deliberately cap each project at one slot.
+    // Keep the exact policy budget assertion while also respecting that separate limit.
+    const expected = Math.min(policySlots, initialBudget.projectMaximumConcurrency);
+    await claimTo(expected);
     const diagnostic = await page.request.get(
       `/api/v1/run-batches/${batch.id}/concurrency-diagnostics`,
     );
@@ -286,7 +315,33 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
         path: testInfo.outputPath(`memory-diagnostics-${activeMode}-${width}.png`),
       });
     }
+    if (activeMode === "reserved") {
+      await renewLeases();
+      await saveScheduler(page, { memoryAdmissionMode: "threshold", projectMaximumConcurrency: 6 });
+      await sendHeartbeat(25, 12 * 1024 ** 3);
+      await claimTo(6);
+      await saveScheduler(page, { memoryAdmissionMode: "reserved", projectMaximumConcurrency: 1 });
+      const restricted = await page.request.get(
+        `/api/v1/run-batches/${batch.id}/concurrency-diagnostics`,
+      );
+      expect(restricted.status()).toBe(200);
+      expect(await restricted.json()).toMatchObject({
+        runningRuns: 6,
+        projectMaximumConcurrency: 1,
+        thresholds: { memoryAdmissionMode: "reserved" },
+      });
+      await claimTo(6);
+      await renewLeases();
+      await saveScheduler(page, { memoryAdmissionMode: "disabled", projectMaximumConcurrency: 8 });
+      await sendHeartbeat(99, 0);
+      await claimTo(8);
+      await diagnosticDialog.getByRole("button", { name: "刷新诊断", exact: true }).click();
+      await expect(
+        diagnosticDialog.getByText(`内存调度策略：${modeLabels.disabled}。`, { exact: false }),
+      ).toBeVisible();
+    }
   } finally {
+    await saveScheduler(page, original.scheduler);
     const response = await page.request.patch(`/api/v1/runners/${identity.runnerId}`, {
       headers: { origin: new URL(page.url()).origin },
       data: { state: "disabled" },
@@ -294,3 +349,31 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
     expect(response.status()).toBe(200);
   }
 });
+
+async function readPlatformConfiguration(page: Page): Promise<PlatformConfigurationView> {
+  const response = await page.request.get("/api/v1/settings/platform");
+  expect(response.status()).toBe(200);
+  return response.json();
+}
+
+async function saveScheduler(
+  page: Page,
+  scheduler: Partial<PlatformConfigurationView["scheduler"]>,
+) {
+  const current = await readPlatformConfiguration(page);
+  const response = await page.request.patch("/api/v1/settings/platform", {
+    headers: { origin: new URL(page.url()).origin },
+    data: {
+      revision: current.revision,
+      mode: current.mode,
+      web: current.web,
+      limits: current.limits,
+      scheduler: { ...current.scheduler, ...scheduler },
+      worker: current.worker,
+    },
+  });
+  expect(response.status()).toBe(200);
+  const saved = (await response.json()) as PlatformConfigurationView;
+  expect(saved.restartRequired).toBe(false);
+  expect(saved.restartRequiredFields).toEqual([]);
+}

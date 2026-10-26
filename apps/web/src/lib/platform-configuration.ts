@@ -57,6 +57,7 @@ export function platformConfigurationActivation(
     changed(current.limits.ddtImportZipSpreadsheetLimit, saved.limits.ddtImportZipSpreadsheetLimit)
       ? "DDT 导入数量限制"
       : undefined,
+    changed(current.scheduler, saved.scheduler) ? "调度策略与阈值" : undefined,
   ].filter((value): value is string => Boolean(value));
   const restartRequiredFields = [
     changed(current.mode, saved.mode) ? "部署模式" : undefined,
@@ -66,7 +67,6 @@ export function platformConfigurationActivation(
       ? "公开大盘刷新间隔"
       : undefined,
     changed(restartOnlyLimits(current), restartOnlyLimits(saved)) ? "容量与会话限制" : undefined,
-    changed(current.scheduler, saved.scheduler) ? "调度阈值" : undefined,
     changed(current.worker, saved.worker) ? "后台 worker" : undefined,
     changed(current.full, saved.full) ? "Full 基础设施" : undefined,
   ].filter((value): value is string => Boolean(value));

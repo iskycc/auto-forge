@@ -1379,7 +1379,7 @@ public class MixedVisibleTest {
   });
 
   // 用例名称本身必须进入独立详情页；该页按时间分页展示全部任务记录。每个任务只回填
-  // 一个总结结果：存在通过轮次时展示通过轮次，避免把本批次的中间失败重复记入用例历史。
+  // 最后一次已结束的实际执行：重跑成功后展示第二轮，避免重复列出中间失败。
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByRole("link", { name: `查看 ${taskCase.displayName} 详情` }).click();
@@ -1388,8 +1388,8 @@ public class MixedVisibleTest {
   await expect(page.getByRole("heading", { name: "失败分析结论（1）" })).toBeVisible();
   await expect(page.getByText("结算状态字段与接口契约不一致")).toBeVisible();
   await expect(page.getByText("BUG-E2E-4096")).toBeVisible();
-  await expect(page.getByRole("button", { name: "查看第 1 轮总结日志" })).toHaveCount(0);
-  await page.getByRole("button", { name: "查看第 2 轮总结日志" }).click();
+  await expect(page.getByRole("button", { name: "查看第 1 轮日志" })).toHaveCount(0);
+  await page.getByRole("button", { name: "查看第 2 轮日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("retry passed");
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
@@ -1422,7 +1422,7 @@ public class MixedVisibleTest {
   await expect(caseInspector.locator(".case-execution-history")).not.toContainText(
     /TESTNG_|succeeded|failed/,
   );
-  await caseInspector.getByRole("button", { name: "查看第 2 轮总结日志" }).click();
+  await caseInspector.getByRole("button", { name: "查看第 2 轮日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("retry passed");
   await page.keyboard.press("Escape");
   await expect(caseInspector.getByRole("heading", { name: "失败分析结论（1）" })).toBeVisible();

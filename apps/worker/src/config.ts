@@ -48,6 +48,7 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
       region: configuration.full.minio.region,
     },
     scheduling: { ...configuration.scheduler },
+    readSchedulingConfiguration: () => configurationStore.readScheduler(),
     maxJarBytes: configuration.limits.maxJarBytes,
     testNgTargetJavaVersion: configuration.limits.testNgTargetJavaVersion,
     caseExecutionTimeoutSeconds: configuration.limits.caseExecutionTimeoutSeconds,

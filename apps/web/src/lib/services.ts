@@ -608,6 +608,7 @@ async function createPlatformServices() {
       runnerGroupsRepository,
       config.caseExecutionTimeoutSeconds * 1_000,
       () => configurationStore.read().limits.artifactCollectionEnabled,
+      () => configurationStore.readScheduler(),
     ),
     config.mode === "lite" ? dispatcher : undefined,
     dispatcher,
@@ -1001,16 +1002,19 @@ async function createPlatformServices() {
       readExecutionOverview(batches, readModels, batchId, projectIds),
     executionExceptions: (input: Parameters<typeof readExecutionExceptions>[1]) =>
       readExecutionExceptions(batches, input),
-    concurrencyDiagnostics: new ConcurrencyDiagnosticsService(batches, clock, () => ({
-      thresholds: {
-        maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
-        maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
-        memoryAdmissionMode: config.scheduler.memoryAdmissionMode ?? "reserved",
-        maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
-      },
-      metricsMaximumAgeSeconds: config.scheduler.metricsMaximumAgeSeconds,
-      projectMaximumConcurrency: config.scheduler.projectMaximumConcurrency,
-    })),
+    concurrencyDiagnostics: new ConcurrencyDiagnosticsService(batches, clock, () => {
+      const scheduler = configurationStore.readScheduler();
+      return {
+        thresholds: {
+          maximumCpuUtilizationPercent: scheduler.maximumCpuUtilizationPercent,
+          maximumMemoryUtilizationPercent: scheduler.maximumMemoryUtilizationPercent,
+          memoryAdmissionMode: scheduler.memoryAdmissionMode,
+          maximumLoadPerCpu: scheduler.maximumLoadPerCpu,
+        },
+        metricsMaximumAgeSeconds: scheduler.metricsMaximumAgeSeconds,
+        projectMaximumConcurrency: scheduler.projectMaximumConcurrency,
+      };
+    }),
     executionExceptionExport: (input: Parameters<typeof prepareExecutionExceptionExport>[1]) =>
       prepareExecutionExceptionExport(batches, input),
     runners,

@@ -42,10 +42,12 @@ describe("worker configuration", () => {
       {
         ...fullConfiguration,
         limits: { ...fullConfiguration.limits, artifactCollectionEnabled: false },
+        scheduler: { ...fullConfiguration.scheduler, memoryAdmissionMode: "threshold" },
       },
       fullConfiguration.revision,
     );
 
     expect(worker.artifactCollectionEnabled()).toBe(false);
+    expect(worker.readSchedulingConfiguration().memoryAdmissionMode).toBe("threshold");
   });
 });

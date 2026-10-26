@@ -194,7 +194,9 @@ export class PlatformConfigurationConflictError extends Error {
 
 export class PlatformConfigurationManagedError extends Error {
   constructor() {
-    super("分布式平台配置由部署文件统一管理，请更新所有节点的配置文件并重启 Web 和 worker。");
+    super(
+      "分布式平台配置由部署文件统一管理，请同步所有节点的配置；监听和基础设施等变更仍需重启 Web 和 worker。",
+    );
     this.name = "PlatformConfigurationManagedError";
   }
 }
@@ -213,6 +215,8 @@ export function isPlatformConfigurationConflictError(
 
 export class PlatformConfigurationStore {
   readonly paths: PlatformConfigurationPaths;
+  private schedulerSnapshot:
+    { fingerprint: string; scheduler: PersistedPlatformConfiguration["scheduler"] } | undefined;
 
   constructor(dataDirectory: string) {
     const normalizedDataDirectory = resolve(dataDirectory);
@@ -252,6 +256,16 @@ export class PlatformConfigurationStore {
     assertPrivateFile(this.paths.configurationFile);
     const parsedJson: unknown = JSON.parse(readFileSync(this.paths.configurationFile, "utf8"));
     return persistedPlatformConfigurationSchema.parse(parsedJson);
+  }
+
+  readScheduler(): PersistedPlatformConfiguration["scheduler"] {
+    const file = statSync(this.paths.configurationFile, { bigint: true });
+    const fingerprint = `${file.dev}:${file.ino}:${file.mtimeNs}:${file.ctimeNs}:${file.size}:${file.mode}`;
+    if (this.schedulerSnapshot?.fingerprint !== fingerprint) {
+      this.schedulerSnapshot = { fingerprint, scheduler: this.read().scheduler };
+    }
+    // File replacement is visible to every process; callers receive an isolated pass snapshot.
+    return { ...this.schedulerSnapshot.scheduler };
   }
 
   replace(

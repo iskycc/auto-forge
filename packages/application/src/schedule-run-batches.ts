@@ -131,6 +131,12 @@ function takeLiveCapacities(source: Map<string, number>): RunnerLiveCapacity[] {
 
 export type { CaseLogRerunLogTarget } from "./ports";
 
+export type LiveSchedulingConfiguration = SchedulingThresholds & {
+  metricsMaximumAgeSeconds: number;
+  projectMaximumConcurrency: number;
+  priorityAgingIntervalMinutes: number;
+};
+
 export class RunBatchSchedulingService {
   // runner_metrics 节流：记录每个 runner 最近一次写入资源快照事件的时间。
   private readonly lastRunnerMetricsAt = new Map<string, Date>();
@@ -163,7 +169,28 @@ export class RunBatchSchedulingService {
     private readonly runnerGroups?: RunnerGroupRepository,
     private readonly caseExecutionTimeoutMs = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS * 1_000,
     private readonly artifactCollectionEnabled: () => boolean = () => true,
+    private readonly readSchedulingConfiguration?: () => LiveSchedulingConfiguration,
   ) {}
+
+  private currentSchedulingConfiguration() {
+    const {
+      metricsMaximumAgeSeconds,
+      projectMaximumConcurrency,
+      priorityAgingIntervalMinutes,
+      ...thresholds
+    } = this.readSchedulingConfiguration?.() ?? {
+      ...this.thresholds,
+      metricsMaximumAgeSeconds: this.metricsMaximumAgeSeconds,
+      projectMaximumConcurrency: this.projectMaximumConcurrency,
+      priorityAgingIntervalMinutes: this.priorityAgingIntervalMinutes,
+    };
+    return {
+      thresholds,
+      metricsMaximumAgeSeconds,
+      projectMaximumConcurrency,
+      priorityAgingIntervalMinutes,
+    };
+  }
 
   async create(
     input: CreateRunBatchInput,
@@ -1032,10 +1059,11 @@ export class RunBatchSchedulingService {
       if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       return { batch, reserved: 0 };
     }
+    const configuration = this.currentSchedulingConfiguration();
     const snapshot = await this.batches.getSchedulingSnapshot(
       batchId,
       offlineBefore(now),
-      Math.min(MAXIMUM_SCHEDULING_WINDOW, this.projectMaximumConcurrency),
+      Math.min(MAXIMUM_SCHEDULING_WINDOW, configuration.projectMaximumConcurrency),
     );
     if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     // 队列/outbox 的 availableAt 是第一道门；此处是权威防线，避免恢复、Runner
@@ -1121,7 +1149,7 @@ export class RunBatchSchedulingService {
           : Math.max(0, effectiveBatchConcurrency - snapshot.batch.assignedRuns);
       const projectMaximumAssignments = Math.max(
         0,
-        this.projectMaximumConcurrency - snapshot.projectActiveRuns,
+        configuration.projectMaximumConcurrency - snapshot.projectActiveRuns,
       );
       const maxAssignments =
         suiteMaximumAssignments === undefined
@@ -1141,8 +1169,8 @@ export class RunBatchSchedulingService {
             snapshot.batch.policy?.executor !== "testng-container" ||
             runner.capabilities.includes("executor:testng-container-v1"),
         ),
-        thresholds: this.thresholds,
-        metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
+        thresholds: configuration.thresholds,
+        metricsFreshAfter: metricsFreshAfter(now, configuration.metricsMaximumAgeSeconds),
         excludedRunnerIdsByRun: new Map(
           Object.entries(snapshot.runnerFailureIdsByRun ?? {}).map(([runId, runnerIds]) => [
             runId,
@@ -1174,11 +1202,14 @@ export class RunBatchSchedulingService {
           const reservation = await this.batches.reserveAssignments({
             batchId,
             eventId: this.ids.next(),
-            projectMaximumConcurrency: this.projectMaximumConcurrency,
+            projectMaximumConcurrency: configuration.projectMaximumConcurrency,
             decisions: chunk,
-            thresholds: this.thresholds,
+            thresholds: configuration.thresholds,
             offlineBefore: offlineBefore(reservationTime),
-            metricsFreshAfter: metricsFreshAfter(reservationTime, this.metricsMaximumAgeSeconds),
+            metricsFreshAfter: metricsFreshAfter(
+              reservationTime,
+              configuration.metricsMaximumAgeSeconds,
+            ),
             scheduledAt: reservationTime.toISOString(),
             ...(liveCapacities.length > 0 ? { runnerLiveCapacities: liveCapacities } : {}),
           });
@@ -1305,7 +1336,7 @@ export class RunBatchSchedulingService {
     const batchIds = await this.batches.listSchedulableBatchIds(
       limit,
       this.clock.now().toISOString(),
-      this.priorityAgingIntervalMinutes,
+      this.currentSchedulingConfiguration().priorityAgingIntervalMinutes,
     );
     return this.scheduleBatchIds(batchIds);
   }
@@ -1319,7 +1350,7 @@ export class RunBatchSchedulingService {
       runnerId,
       limit,
       this.clock.now().toISOString(),
-      this.priorityAgingIntervalMinutes,
+      this.currentSchedulingConfiguration().priorityAgingIntervalMinutes,
     );
     return this.scheduleBatchIds(
       batchIds,
@@ -1721,7 +1752,11 @@ export class RunBatchSchedulingService {
   }
 
   policy(): SchedulingThresholds & { metricsMaximumAgeSeconds: number } {
-    return { ...this.thresholds, metricsMaximumAgeSeconds: this.metricsMaximumAgeSeconds };
+    const configuration = this.currentSchedulingConfiguration();
+    return {
+      ...configuration.thresholds,
+      metricsMaximumAgeSeconds: configuration.metricsMaximumAgeSeconds,
+    };
   }
 
   private async ensureRunnersExist(

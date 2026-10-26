@@ -30,28 +30,29 @@ export function caseExecutionHistoryPageQuery(
   query: CaseExecutionHistoryQuery,
 ): SQL {
   const cursor = decodeCaseExecutionHistoryCursor(query.cursor);
-  return sql`SELECT r.id AS "runId", r.batch_id AS "batchId", r.status,
+  // Pending retries and batch cancellation must not hide the last actual execution.
+  return sql`SELECT r.id AS "runId", r.batch_id AS "batchId",
+      CASE COALESCE(a.outcome, a.status)
+        WHEN 'succeeded' THEN 'succeeded' WHEN 'cancelled' THEN 'cancelled'
+        ELSE 'failed' END AS status,
       r.created_at AS "createdAt", b.sequence_number AS "batchSequenceNumber",
       b.suite_name AS "batchName", a.id AS "attemptId", a.attempt_number AS "attemptNumber",
-      a.execution_round AS "executionRound", a.status AS "attemptStatus",
+      a.execution_round AS "executionRound", COALESCE(a.outcome, a.status) AS "attemptStatus",
       a.runner_id AS "runnerId", runner.name AS "runnerName", a.result_code AS "resultCode",
       a.duration_ms AS "durationMs", a.created_at AS "attemptCreatedAt", a.finished_at AS "finishedAt"
     FROM execution_runs r
     JOIN run_batches b ON b.id = r.batch_id
     JOIN run_attempts a ON a.id = (
-      SELECT preferred.id FROM run_attempts preferred
-      WHERE preferred.execution_run_id = r.id
-      ORDER BY CASE WHEN COALESCE(preferred.outcome, preferred.status) = 'succeeded' THEN 0 ELSE 1 END,
-        preferred.attempt_number DESC
+      SELECT executed.id FROM run_attempts executed
+      WHERE executed.execution_run_id = r.id
+        AND executed.status IN ('succeeded', 'failed', 'timed_out', 'cancelled')
+        AND COALESCE(executed.outcome, executed.status) IN ('succeeded', 'failed', 'timed_out', 'cancelled')
+        AND executed.started_at IS NOT NULL AND executed.finished_at IS NOT NULL
+      ORDER BY executed.attempt_number DESC
       LIMIT 1
     )
     LEFT JOIN runners runner ON runner.id = a.runner_id
     WHERE r.case_definition_id = ${caseDefinitionId} AND b.batch_kind <> 'case_log_rerun'
-      AND r.status IN ('succeeded', 'failed')
-      AND COALESCE(r.terminal_outcome, r.status) IN ('succeeded', 'failed', 'timed_out')
-      AND a.status IN ('succeeded', 'failed', 'timed_out')
-      AND COALESCE(a.outcome, a.status) IN ('succeeded', 'failed', 'timed_out')
-      AND a.started_at IS NOT NULL AND a.finished_at IS NOT NULL
       ${cursor ? sql`AND (r.created_at < ${cursor.createdAt} OR (r.created_at = ${cursor.createdAt} AND r.id < ${cursor.runId}))` : sql``}
     ORDER BY r.created_at DESC, r.id DESC LIMIT ${query.limit + 1}`;
 }

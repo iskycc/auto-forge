@@ -22,7 +22,7 @@ export function caseSuiteStatisticsQuery(
     input.suiteIds.map((id) => sql`${id}`),
     sql`, `,
   );
-  // Match execution history: any successful attempt wins; only runs without attempts
+  // Task statistics retain the summary rule: any successful attempt wins; runs without attempts
   // fall back to their terminal outcome. Retries must never count as extra cases.
   const passedCases = sql`(
     SELECT COUNT(*) FROM execution_runs run

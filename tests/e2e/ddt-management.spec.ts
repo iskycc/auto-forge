@@ -29,7 +29,93 @@ import {
 } from "./support/session";
 import { expectReadableText, expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 import { insertDdtImportJobFixture } from "./support/ddt-import-job-fixture";
+import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
 import type { ClaimAssignmentsResponse, DdtExecutionStatistics } from "@autoforge/contracts";
+
+test("DDT history retains each case's last executed result in interrupted tasks on detail and preview", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const caseId = `钱包-历史-${hierarchy.suffix}`;
+  await importDdtApiFixture(page, hierarchy, caseId, 1);
+  const item = await browserJson<{ id: string }>(
+    page,
+    ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}`),
+  );
+  expect(item.status).toBe(200);
+  const runner = await registerDdtTaskRunner(page);
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  const postgresUrl = process.env.AUTOFORGE_E2E_POSTGRES_URL;
+  await insertCaseExecutionHistoryFixture({
+    ...(directory ? { directory } : {}),
+    ...(postgresUrl ? { postgresUrl } : {}),
+    projectId: hierarchy.projectId,
+    projectVersionId: hierarchy.versionId,
+    caseId: item.body.id,
+    caseType: "ddt",
+    runnerId: runner.runnerId,
+    completedCount: 7,
+  });
+  const api = await browserJson<{
+    items: Array<{ status: string; attempts: Array<{ executionRound: number }> }>;
+  }>(page, ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}/executions`));
+  expect(api.status).toBe(200);
+  expect(api.body.items).toHaveLength(7);
+  expect(api.body.items[0]).toMatchObject({
+    status: "cancelled",
+    attempts: [{ executionRound: 1 }],
+  });
+  expect(api.body.items[2]).toMatchObject({ status: "failed", attempts: [{ executionRound: 2 }] });
+  expect(api.body.items[3]).toMatchObject({
+    status: "succeeded",
+    attempts: [{ executionRound: 3 }],
+  });
+  await page.goto(
+    `/cases/ddt?${new URLSearchParams({
+      caseId,
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+    })}`,
+  );
+  const history = page.locator(".case-execution-history");
+  const assertHistory = async () => {
+    await expect(history.locator("tbody tr")).toHaveCount(7);
+    await expect(history).toContainText("第 3 轮");
+    await expect(history).toContainText("执行已取消");
+    await expect(history).not.toContainText("隐藏历史");
+    const lastFailure = history.locator("tbody tr").filter({ hasText: "已完成历史 5" });
+    await expect(lastFailure).toContainText("第 2 轮");
+    await expect(lastFailure).toContainText("TestNG 断言失败");
+    await expect(lastFailure).not.toContainText("TestNG 通过");
+  };
+  await assertHistory();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await history.locator("thead").evaluate((element) => {
+      element.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-last-history-detail-${width}`);
+  }
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: `快速预览 ${caseId}`, exact: true }).click();
+  await assertHistory();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await history.locator("thead").evaluate((element) => {
+      element.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-last-history-preview-${width}`);
+  }
+});
 
 test("DDT inheritance copies another version with pause, recovery and safe duplicate handling", async ({
   page,

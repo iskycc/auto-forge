@@ -17,6 +17,7 @@ import type {
   RunnerRepository,
 } from "@autoforge/application";
 import { RunBatchSchedulingService } from "@autoforge/application";
+import { PlatformConfigurationStore } from "@autoforge/platform-config";
 import {
   createPostgresDatabase,
   createSqliteDatabase,
@@ -282,32 +283,37 @@ async function insertCaseHistoryRun(
   caseId: string,
   input: {
     status: "queued" | "assigned" | "running" | "succeeded" | "failed" | "cancelled";
+    batchId?: string;
+    batchStatus?: "running" | "succeeded" | "failed" | "cancelled";
     createdAt?: string;
     diagnostic?: boolean;
     attempts: Array<{
       status: "assigned" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
       outcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
+      executionRound?: number;
       started?: boolean;
       finished?: boolean;
     }>;
   },
 ) {
-  const batchId = randomUUID();
+  const batchId = input.batchId ?? randomUUID();
   const runId = randomUUID();
   const createdAt = input.createdAt ?? "2026-08-10T00:00:00.000Z";
-  await harness.rawQuery(
-    `INSERT INTO run_batches
+  if (!input.batchId)
+    await harness.rawQuery(
+      `INSERT INTO run_batches
        (id, suite_id, suite_name, suite_version, project_id, status, retry_limit,
         environment_json, total_runs, batch_kind, created_at, updated_at)
-     VALUES (?, 'history-suite', 'History task', 1, ?, 'running', 0, '{}', 1, ?, ?, ?)`,
-    [
-      batchId,
-      harness.projectId,
-      input.diagnostic ? "case_log_rerun" : "standard",
-      createdAt,
-      createdAt,
-    ],
-  );
+     VALUES (?, 'history-suite', 'History task', 1, ?, ?, 0, '{}', 1, ?, ?, ?)`,
+      [
+        batchId,
+        harness.projectId,
+        input.batchStatus ?? "running",
+        input.diagnostic ? "case_log_rerun" : "standard",
+        createdAt,
+        createdAt,
+      ],
+    );
   await harness.rawQuery(
     `INSERT INTO execution_runs
        (id, batch_id, case_definition_id, case_version, display_name, class_name,
@@ -328,7 +334,7 @@ async function insertCaseHistoryRun(
         runId,
         harness.runnerId,
         index + 1,
-        index + 1,
+        attempt.executionRound ?? index + 1,
         attempt.status,
         attempt.outcome ?? null,
         createdAt,
@@ -338,10 +344,101 @@ async function insertCaseHistoryRun(
     );
     attemptIds.push(attemptId);
   }
-  return { runId, attemptIds };
+  return { batchId, runId, attemptIds };
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("applies saved memory and project limits to subsequent reservations without interrupting existing attempts", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-10T00:00:00.000Z";
+    const directory = await mkdtemp(resolve(tmpdir(), "live-scheduling-"));
+    temporaryDirectories.push(directory);
+    const writer = new PlatformConfigurationStore(directory);
+    writer.initialize();
+    const reader = new PlatformConfigurationStore(directory);
+    const configure = (
+      memoryAdmissionMode: "reserved" | "threshold" | "disabled",
+      projectMaximumConcurrency: number,
+    ) => {
+      const current = writer.read();
+      writer.replace(
+        {
+          ...current,
+          scheduler: { ...current.scheduler, memoryAdmissionMode, projectMaximumConcurrency },
+        },
+        current.revision,
+      );
+    };
+    try {
+      await harness.rawQuery(
+        "UPDATE run_batches SET status='succeeded' WHERE project_id=? AND id<>?",
+        [harness.projectId, harness.batchQueuedId],
+      );
+      await harness.rawQuery("UPDATE run_batches SET total_runs=8 WHERE id=?", [
+        harness.batchQueuedId,
+      ]);
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+        harness.batchQueuedId,
+        harness.runnerId,
+      ]);
+      await harness.rawQuery(
+        `UPDATE runners SET max_concurrency=8,busy_slots=0,labels_json='["linux","java","testng"]',
+        cpu_utilization_percent=10,memory_utilization_percent=25,memory_total_bytes=?,memory_available_bytes=?,
+        load_average_1m=0,logical_cpu_count=16,metrics_observed_at=?,last_seen_at=? WHERE id=?`,
+        [16 * 1024 ** 3, 12 * 1024 ** 3, now, now, harness.runnerId],
+      );
+      const runIds: string[] = [];
+      for (let index = 0; index < 8; index++)
+        runIds.push(await insertQueuedRun(harness, harness.batchQueuedId));
+      await prepareRefillExecutions(harness, harness.batchQueuedId, runIds, "testng", now);
+      const service = new RunBatchSchedulingService(
+        harness.batches,
+        {} as CaseSuiteRepository,
+        {} as RunnerRepository,
+        { now: () => new Date(now) },
+        { next: () => randomUUID() },
+        {
+          maximumCpuUtilizationPercent: 85,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        45,
+        undefined,
+        128,
+        5,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => reader.readScheduler(),
+      );
+      const reserved = async () =>
+        (await harness.batches.getSchedulingSnapshot(harness.batchQueuedId, now))?.candidates[0]
+          ?.reservedSlots;
+      await service.schedule(harness.batchQueuedId);
+      expect(await reserved()).toBe(4);
+      configure("threshold", 6);
+      await service.schedule(harness.batchQueuedId);
+      expect(await reserved()).toBe(6);
+      configure("reserved", 1);
+      await service.schedule(harness.batchQueuedId);
+      expect(await reserved()).toBe(6);
+      await harness.rawQuery(
+        "UPDATE runners SET memory_utilization_percent=99,memory_available_bytes=0 WHERE id=?",
+        [harness.runnerId],
+      );
+      configure("disabled", 8);
+      await service.schedule(harness.batchQueuedId);
+      expect(await reserved()).toBe(8);
+      const batch = await harness.batches.get(harness.batchQueuedId);
+      expect(batch?.attempts).toHaveLength(8);
+      expect(batch?.attempts.every((attempt) => attempt.status === "assigned")).toBe(true);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("seeds paginated execution history and task progress using the active database", async () => {
     const harness = await createHarness();
     const scope = { projectId: harness.projectId, projectVersionId: randomUUID() };
@@ -1157,60 +1254,200 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
-  it("shows only completed case results and never substitutes an earlier result for an unfinished summary", async () => {
+  it("retains each case's last executed result in interrupted batches instead of a preferred success", async () => {
+    const harness = await createHarness();
+    try {
+      for (const batchStatus of ["cancelled", "failed"] as const) {
+        const thirdRoundCase = `case-third-round-${randomUUID()}`;
+        const thirdRound = await insertCaseHistoryRun(harness, thirdRoundCase, {
+          batchStatus,
+          status: "cancelled",
+          attempts: [{ status: "failed" }, { status: "failed" }, { status: "timed_out" }],
+        });
+        const examples: Array<{
+          attempts: Parameters<typeof insertCaseHistoryRun>[2]["attempts"];
+          selected: number;
+          status: "succeeded" | "failed" | "cancelled";
+        }> = [
+          { attempts: [{ status: "succeeded" }], selected: 0, status: "succeeded" },
+          {
+            attempts: [{ status: "failed" }, { status: "succeeded" }],
+            selected: 1,
+            status: "succeeded",
+          },
+          { attempts: [{ status: "failed" }, { status: "failed" }], selected: 1, status: "failed" },
+          {
+            attempts: [{ status: "succeeded" }, { status: "failed" }],
+            selected: 1,
+            status: "failed",
+          },
+          {
+            attempts: [{ status: "failed" }, { status: "cancelled", started: false }],
+            selected: 0,
+            status: "failed",
+          },
+          {
+            attempts: [{ status: "failed" }, { status: "cancelled" }],
+            selected: 1,
+            status: "cancelled",
+          },
+          {
+            attempts: [{ status: "failed" }, { status: "succeeded", executionRound: 1 }],
+            selected: 1,
+            status: "succeeded",
+          },
+        ];
+        for (const example of examples) {
+          const caseId = `case-last-round-${randomUUID()}`;
+          const record = await insertCaseHistoryRun(harness, caseId, {
+            batchId: thirdRound.batchId,
+            status: "cancelled",
+            attempts: example.attempts,
+          });
+          const page = await harness.listCaseExecutionHistory(caseId, {
+            limit: 50,
+            includeRunnerNames: true,
+          });
+          expect(page.items).toEqual([
+            expect.objectContaining({
+              batchId: thirdRound.batchId,
+              runId: record.runId,
+              status: example.status,
+              attempts: [
+                expect.objectContaining({
+                  id: record.attemptIds[example.selected],
+                  attemptNumber: example.selected + 1,
+                  executionRound:
+                    example.attempts[example.selected]?.executionRound ?? example.selected + 1,
+                  runnerName: "runner-refill",
+                }),
+              ],
+            }),
+          ]);
+        }
+        await expect(
+          harness.listCaseExecutionHistory(thirdRoundCase, { limit: 50 }),
+        ).resolves.toMatchObject({
+          items: [
+            {
+              status: "failed",
+              attempts: [{ id: thirdRound.attemptIds[2], executionRound: 3, status: "timed_out" }],
+            },
+          ],
+        });
+        for (const attempts of [[], [{ status: "cancelled", started: false }]] as const) {
+          const neverStartedCase = `case-never-started-${randomUUID()}`;
+          await insertCaseHistoryRun(harness, neverStartedCase, {
+            batchId: thirdRound.batchId,
+            status: "cancelled",
+            attempts: [...attempts],
+          });
+          await expect(
+            harness.listCaseExecutionHistory(neverStartedCase, { limit: 50 }),
+          ).resolves.toEqual({ items: [] });
+        }
+      }
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("preserves executed history when manual termination cancels an unclaimed retry", async () => {
+    const harness = await createHarness();
+    const caseId = `case-manual-termination-${randomUUID()}`;
+    const neverStartedCase = `case-unclaimed-${randomUUID()}`;
+    try {
+      const record = await insertCaseHistoryRun(harness, caseId, {
+        status: "assigned",
+        attempts: [{ status: "failed" }, { status: "assigned", started: false, finished: false }],
+      });
+      await insertCaseHistoryRun(harness, neverStartedCase, {
+        batchId: record.batchId,
+        status: "queued",
+        attempts: [],
+      });
+      await harness.rawQuery("UPDATE run_batches SET total_runs = 2 WHERE id = ?", [
+        record.batchId,
+      ]);
+      await expect(
+        harness.executions.terminateBatch({
+          batchId: record.batchId,
+          actorId: "history-operator",
+          reason: "Manual termination before retry claim",
+          eventId: randomUUID(),
+          requestedAt: "2026-08-10T00:01:00.000Z",
+        }),
+      ).resolves.toBe(2);
+      await expect(harness.batches.get(record.batchId)).resolves.toMatchObject({
+        status: "cancelled",
+      });
+      await expect(harness.listCaseExecutionHistory(caseId, { limit: 50 })).resolves.toMatchObject({
+        items: [
+          {
+            runId: record.runId,
+            status: "failed",
+            attempts: [{ id: record.attemptIds[0], executionRound: 1 }],
+          },
+        ],
+      });
+      await expect(
+        harness.listCaseExecutionHistory(neverStartedCase, { limit: 50 }),
+      ).resolves.toEqual({ items: [] });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("keeps the last finished attempt while later work is queued, unclaimed or still running", async () => {
     const harness = await createHarness();
     const caseId = `case-completed-history-${randomUUID()}`;
     try {
       const expected: string[] = [];
-      for (const outcome of ["succeeded", "failed", "timed_out"] as const) {
+      for (const status of ["queued", "assigned", "running", "cancelled"] as const) {
         const record = await insertCaseHistoryRun(harness, caseId, {
-          status: outcome === "succeeded" ? "succeeded" : "failed",
-          attempts: [{ status: outcome }],
+          status,
+          attempts: [{ status: "failed" }, { status: "assigned", started: false, finished: false }],
         });
         expected.push(record.runId);
       }
-      const recovered = await insertCaseHistoryRun(harness, caseId, {
-        status: "succeeded",
-        attempts: [{ status: "succeeded" }, { status: "failed" }, { status: "succeeded" }],
+      const running = await insertCaseHistoryRun(harness, caseId, {
+        status: "running",
+        attempts: [{ status: "succeeded" }, { status: "running", finished: false }],
       });
-      expected.push(recovered.runId);
-      for (const status of ["queued", "assigned", "running", "cancelled"] as const)
-        await insertCaseHistoryRun(harness, caseId, {
-          status,
-          attempts: [{ status: "failed" }],
-        });
-      await insertCaseHistoryRun(harness, caseId, { status: "failed", attempts: [] });
-      for (const status of ["assigned", "running", "cancelled"] as const)
-        await insertCaseHistoryRun(harness, caseId, {
-          status: "failed",
-          attempts: [{ status: "failed" }, { status }],
-        });
-      await insertCaseHistoryRun(harness, caseId, {
-        status: "failed",
-        attempts: [{ status: "failed", started: false }],
-      });
-      await insertCaseHistoryRun(harness, caseId, {
-        status: "failed",
-        attempts: [{ status: "failed", finished: false }],
-      });
-      await insertCaseHistoryRun(harness, caseId, {
+      expected.push(running.runId);
+      const outcome = await insertCaseHistoryRun(harness, caseId, {
         status: "failed",
         attempts: [{ status: "failed", outcome: "cancelled" }],
       });
+      expected.push(outcome.runId);
+      const hidden = [
+        [],
+        [{ status: "assigned", started: false, finished: false }],
+        [{ status: "running", finished: false }],
+        [{ status: "cancelled", started: false }],
+        [{ status: "failed", started: false }],
+        [{ status: "failed", finished: false }],
+      ] satisfies Array<Parameters<typeof insertCaseHistoryRun>[2]["attempts"]>;
+      for (const attempts of hidden) {
+        await insertCaseHistoryRun(harness, caseId, { status: "cancelled", attempts });
+      }
       await insertCaseHistoryRun(harness, caseId, {
         status: "failed",
         diagnostic: true,
         attempts: [{ status: "failed" }],
       });
-      const page = await harness.listCaseExecutionHistory(caseId, {
-        limit: 50,
-        includeRunnerNames: true,
-      });
+      const page = await harness.listCaseExecutionHistory(caseId, { limit: 50 });
       expect(page.items.map((item) => item.runId).sort()).toEqual(expected.sort());
       expect(page.items.every((item) => item.attempts.length === 1)).toBe(true);
-      expect(page.items.find((item) => item.runId === recovered.runId)?.attempts).toEqual([
-        expect.objectContaining({ id: recovered.attemptIds[2], runnerName: "runner-refill" }),
-      ]);
+      expect(page.items.find((item) => item.runId === running.runId)).toMatchObject({
+        status: "succeeded",
+        attempts: [{ id: running.attemptIds[0] }],
+      });
+      expect(page.items.find((item) => item.runId === outcome.runId)).toMatchObject({
+        status: "cancelled",
+      });
       expect(page.nextCursor).toBeUndefined();
     } finally {
       await harness.dispose();
@@ -1218,7 +1455,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
-  it("filters cancelled and unexecuted records before cursor pagination without losing older completed results", async () => {
+  it("filters never-started records before cursor pagination without losing older executed results", async () => {
     const harness = await createHarness();
     const caseId = `case-paged-history-${randomUUID()}`;
     try {

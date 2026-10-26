@@ -16,7 +16,7 @@ describe("platform configuration mapping", () => {
     expect(view).not.toHaveProperty("secrets");
   });
 
-  it("preserves the memory strategy on legacy writes and requires restart for explicit changes", () => {
+  it("preserves the memory strategy on legacy writes and applies scheduler changes live", () => {
     const current = configuration();
     current.scheduler.memoryAdmissionMode = "threshold";
     const { memoryAdmissionMode: omitted, ...legacyScheduler } = current.scheduler;
@@ -37,9 +37,9 @@ describe("platform configuration mapping", () => {
       scheduler: { ...legacyScheduler, memoryAdmissionMode: "disabled" },
     });
     expect(changed.scheduler.memoryAdmissionMode).toBe("disabled");
-    expect(platformConfigurationActivation(current, changed).restartRequiredFields).toContain(
-      "调度阈值",
-    );
+    const activation = platformConfigurationActivation(current, changed);
+    expect(activation.appliedImmediatelyFields).toContain("调度策略与阈值");
+    expect(activation.restartRequiredFields).toEqual([]);
   });
 
   it("requires complete Full infrastructure settings on first enable", () => {

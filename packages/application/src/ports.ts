@@ -853,6 +853,7 @@ export type CaseExecutionHistoryItem = {
   batchId: string;
   batchSequenceNumber: number;
   batchName: string;
+  /** Result of the selected actual execution, independent of the run's retry/cancel state. */
   status: ExecutionRun["status"];
   createdAt: string;
   attempts: CaseExecutionHistoryAttempt[];
@@ -865,7 +866,7 @@ export type CaseExecutionHistoryQuery = {
 };
 
 export type CaseExecutionHistoryPage = {
-  /** Only completed runs with a started, finished and non-cancelled summary attempt. */
+  /** Last started and finished attempt per case execution, including interrupted batches. */
   items: CaseExecutionHistoryItem[];
   nextCursor?: string;
 };

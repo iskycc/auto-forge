@@ -122,6 +122,7 @@ const batches = new RunBatchSchedulingService(
   undefined,
   config.caseExecutionTimeoutSeconds * 1_000,
   config.artifactCollectionEnabled,
+  config.readSchedulingConfiguration,
 );
 const localAttemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
 const nodeLogs =

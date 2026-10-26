@@ -106,7 +106,7 @@ test("task list and detail execution shortcuts submit the selected task through 
   }
 });
 
-test("case detail and preview list only completed executions and keep filtered pagination and empty states", async ({
+test("case detail and preview retain the last executed round of interrupted tasks with pagination and empty states", async ({
   page,
 }) => {
   await ensureAdministrator(page);
@@ -168,13 +168,18 @@ test("case detail and preview list only completed executions and keep filtered p
   const history = page.locator(".case-execution-history");
   const assertHistory = async (count: number) => {
     await expect(history.locator("tbody tr")).toHaveCount(count);
-    await expect(history).not.toContainText(
-      /隐藏历史|已取消|等待资源|已分配|执行中|尚未生成执行尝试/u,
-    );
+    await expect(history).not.toContainText(/隐藏历史|等待资源|已分配|执行中|尚未生成执行尝试/u);
     await expect(history).toContainText("TestNG 通过");
     await expect(history).toContainText("TestNG 断言失败");
     await expect(history).toContainText("执行超时");
-    await expect(history.getByRole("button", { name: "查看第 1 轮总结日志" })).toHaveCount(count);
+    await expect(history).toContainText("执行已取消");
+    await expect(
+      history.getByRole("button", { name: "查看第 3 轮日志", exact: true }),
+    ).not.toHaveCount(0);
+    const lastFailure = history.locator("tbody tr").filter({ hasText: "已完成历史 47" });
+    await expect(lastFailure).toContainText("第 2 轮");
+    await expect(lastFailure).toContainText("TestNG 断言失败");
+    await expect(lastFailure).not.toContainText("TestNG 通过");
   };
   for (const theme of ["light", "dark"]) {
     await page
@@ -214,7 +219,7 @@ test("case detail and preview list only completed executions and keep filtered p
     }
     await history.getByRole("button", { name: "加载更早的执行历史" }).click();
     await assertHistory(51);
-    await history.getByRole("button", { name: "查看第 1 轮总结日志" }).first().click();
+    await history.getByRole("button", { name: "查看第 1 轮日志" }).first().click();
     await expect(page.locator(".execution-log")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator(".execution-log")).toHaveCount(0);

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PlatformConfigurationConflictError,
@@ -12,6 +12,28 @@ import {
 } from "../src/platform-configuration";
 
 describe("platform configuration store", () => {
+  it("refreshes scheduler snapshots across stores without reparsing an unchanged file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "live-scheduler-"));
+    const writer = new PlatformConfigurationStore(directory);
+    const initial = writer.initialize();
+    const reader = new PlatformConfigurationStore(directory);
+    const read = vi.spyOn(reader, "read");
+    const first = reader.readScheduler();
+    first.memoryAdmissionMode = "disabled";
+    expect(reader.readScheduler().memoryAdmissionMode).toBe("reserved");
+    expect(read).toHaveBeenCalledTimes(1);
+    writer.replace(
+      { ...initial, scheduler: { ...initial.scheduler, memoryAdmissionMode: "threshold" } },
+      initial.revision,
+    );
+    expect(reader.readScheduler().memoryAdmissionMode).toBe("threshold");
+    expect(read).toHaveBeenCalledTimes(2);
+    writeFileSync(writer.paths.configurationFile, "{invalid", { mode: 0o600 });
+    expect(() => reader.readScheduler()).toThrow();
+    writeFileSync(writer.paths.configurationFile, JSON.stringify(initial), { mode: 0o600 });
+    expect(reader.readScheduler().memoryAdmissionMode).toBe("reserved");
+  });
+
   it("creates a standalone Lite configuration and private bootstrap material", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
     const store = new PlatformConfigurationStore(dataDirectory);

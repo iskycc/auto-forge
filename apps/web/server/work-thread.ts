@@ -624,6 +624,7 @@ function schedulingService(): RunBatchSchedulingService {
       collaborators.runnerGroups,
       configuration.caseExecutionTimeoutSeconds * 1_000,
       () => platformConfigurationStore.read().limits.artifactCollectionEnabled,
+      () => platformConfigurationStore.readScheduler(),
     );
   }
   return scheduler;

@@ -16,6 +16,76 @@ import type {
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 
+describe("live scheduling configuration", () => {
+  it("applies new policies between passes and keeps one policy throughout an atomic reservation", async () => {
+    const thresholds = {
+      maximumCpuUtilizationPercent: 85,
+      maximumMemoryUtilizationPercent: 85,
+      maximumLoadPerCpu: 1,
+    };
+    let configuration = {
+      ...thresholds,
+      memoryAdmissionMode: "reserved" as "reserved" | "disabled",
+      metricsMaximumAgeSeconds: 45,
+      projectMaximumConcurrency: 3,
+      priorityAgingIntervalMinutes: 5,
+    };
+    const runner = schedulingRunner();
+    runner.resourceSnapshot.memoryUtilizationPercent = 99;
+    const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
+      getSchedulingSnapshot: vi.fn(async () => {
+        // A concurrent administrator change must not alter an already started pass.
+        configuration = { ...configuration, memoryAdmissionMode: "reserved" };
+        return {
+          batch: { id: "batch-1", assignedRuns: 0 },
+          queuedRuns: Array.from({ length: 8 }, (_, index) => queuedRun(`run-${index}`)),
+          candidates: [{ runner, reservedSlots: 0 }],
+          projectActiveRuns: 0,
+        };
+      }),
+      reserveAssignments: vi.fn(async (input: { decisions: Array<{ attemptId: string }> }) => ({
+        reserved: input.decisions.length,
+        acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+      })),
+      appendSchedulingEvents: vi.fn(),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1" }),
+    };
+    const service = new RunBatchSchedulingService(
+      batches as unknown as RunBatchRepository,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => randomUUID() },
+      thresholds,
+      45,
+      undefined,
+      128,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => configuration,
+    );
+
+    await service.schedule("batch-1");
+    expect(batches.reserveAssignments).not.toHaveBeenCalled();
+    configuration = { ...configuration, memoryAdmissionMode: "disabled" };
+    await service.schedule("batch-1");
+    expect(batches.reserveAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectMaximumConcurrency: 3,
+        thresholds: expect.objectContaining({ memoryAdmissionMode: "disabled" }),
+        decisions: expect.arrayContaining([expect.any(Object)]),
+      }),
+    );
+    expect(batches.reserveAssignments.mock.calls[0]![0].decisions).toHaveLength(3);
+    await service.schedule("batch-1");
+    expect(batches.reserveAssignments).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("public log rerun authorization context", () => {
   it.each(["case_log_rerun", "standard"] as const)(
     "reads a %s manual attempt state without loading the batch snapshot",

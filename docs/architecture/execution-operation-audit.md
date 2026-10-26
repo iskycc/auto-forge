@@ -516,3 +516,69 @@ DDT 两项完整生产 Lite Playwright 最终通过，覆盖分栏浏览、动�
 操作栏视觉场景另一次 CI 暴露轮次切换的测试竞态：初始与全部轮次均为五行，单凭数量断言可能拿到即将卸载的旧表格，滚动等待因节点替换失败。测试先确认轮次按钮 `aria-current` 已生效，再读取行，并在同一次浏览器同步求值中完成即时滚动，避免跨帧持有旧节点；不修改产品表格、不跳过断言、不增加场景重试。定向生产 Lite Playwright 通过，覆盖登录／匿名、深浅色、1024px／1536px 与两种轮次的 16 组布局，类型与 Lint 通过；格式整理后复查通过，实际查看 1024px 控制台和 1536px 公开深色截图，操作按钮保持单行。
 
 发布范围调整：维护者要求停止等待完整验收，改用最快发布路径。v1.20.18 保留已经通过的本地验证、依赖安全及分区证据，取消仍在运行的非发布作业；临时暂停 CI、Full distributed acceptance、Published Release acceptance、Release checks、Dependency security，仅触发 Release。双架构资源、SBOM、签名与清单检查仍为必需，发布结束恢复全部工作流；未完成的标准检查不声明为通过。内存策略入口为“平台设置 → 平台配置 → 内存调度策略”，位于 CPU／内存阈值上方，保存后重启 Web，Full 同时重启独立 worker。
+
+## 2026-10-26：调度配置保存后实时生效
+
+v1.20.18 的调度服务、隔离工作线程和独立 Full worker 在构造时保存调度配置，设置页只更新文件，因此原先需要重启。这次将内存策略、CPU／内存／负载阈值、指标有效期、项目并发和优先级老化间隔改为通过组合根注入动态配置读取函数，领域与应用层不读取文件或环境变量。服务每次调度采用一份完整快照，计划与所有原子预留分块共用它；一次调度中途的配置变化由后续轮次读取，不把不同版本阈值混用。
+
+配置仓储以文件设备／inode／修改及变更时间、大小和权限组成指纹，未变更时复用校验结果，仅返回调度字段的副本；文件变化后重新校验，损坏配置明确报错，恢复后重新读取，不静默沿用错误旧值，也不在每个用例分配中解析完整配置。Web、隔离调度线程、诊断进程和 Full worker 各自读取同一持久配置，配置落盘后无需新建队列或依赖 Redis/NATS 消息才能生效。单机 Full 的 Web／worker 共用数据卷；分布式部署继续由部署方同步所有节点文件，页面保持只读，不放宽已有集群配置管理规则。
+
+保存反馈将调度设置列为立即应用；后续调度、补槽和诊断读取新值。已有执行和已经取得的预留继续运行，收紧项目并发或内存预算时等待占用释放，不取消已有 attempt。监听、基础设施、后台线程数量、会话／执行期限等原本需重启的设置保持相应生命周期，未将全部配置错误标为可实时更新。无新数据库迁移、生产依赖或 Agent 协议变更。
+
+验证：
+
+- 先增加两项复现断言，原实现失败、已有 49 项通过；再接入动态配置。
+- 八个定向文件 109 项通过，覆盖一轮快照一致、跨轮读取、旧客户端保留、缓存不重复解析且不泄漏可变对象、损坏配置恢复、Full worker 读取、诊断权限与 UI 约定。
+- 真实 SQLite／PostgreSQL 回归共 74 项通过：同一服务实例持久化切换策略及项目额度，预留从 4 增至 6、收紧到 1 后保持已有六项、关闭内存限制后在内存 99%／可用零的采样下增至 8；原有 attempt 均保留。
+- 生产 Lite Playwright 两项通过，整个过程中 Web 与执行线程没有重启。保存三种策略后继续测试同一批次领取 4 → 6 → 8；项目额度降到 1 时拒绝追加，已有执行续租仍返回 continue，诊断手动刷新显示最新策略；没有启动业务 JVM，不能等价为 SLES 12 实机压测。
+- 全仓类型、Web／worker 生产构建、受影响格式／Lint、许可证、18 行 E2E 矩阵和差异检查通过。浏览器末尾格式检查发现更新提示后的格式差异，单独整理并复查通过。实际查看设置浅色兼容模式、深色关闭模式及诊断共六张 1024×768／1536×960 截图，提示换行、控件和边界正常，无新增布局变形。
+
+实际命令：
+
+```sh
+pnpm exec vitest run packages/application/test/schedule-run-batches.test.ts packages/platform-config/test/platform-configuration.test.ts packages/platform-config/test/distributed-configuration.test.ts apps/web/src/lib/platform-configuration.test.ts apps/worker/src/config.test.ts apps/web/src/components/ui-usage.test.ts packages/application/test/read-concurrency-diagnostics.test.ts apps/web/src/lib/concurrency-diagnostics-route.test.ts --maxWorkers=1
+# 使用一次性 AUTOFORGE_TEST_POSTGRES_URL，同时实际运行双数据库。
+pnpm exec vitest run packages/db/test/scheduling-refill.integration.test.ts --maxWorkers=1
+pnpm typecheck
+pnpm --filter @autoforge/web build
+pnpm --filter @autoforge/worker build
+pnpm exec playwright test tests/e2e/memory-admission.spec.ts --workers=1
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm licenses:check
+pnpm test:e2e:matrix
+git diff --check
+```
+
+证据位于 `/var/tmp/autoforge-live-scheduler-20261026/`，重任务串行限制 1 CPU／4 GiB。本次未运行完整 Full 中间件部署、真实 Agent／Java、SLES 实机或离线镜像全流程；调度热更新随 v1.20.19 交付，v1.20.18 仍沿用启动时配置。
+
+## 2026-10-26：异常终止任务的用例历史
+
+用例快速预览和完整详情改为按每个批次、每个用例选择最后一次有起止时间且已终态的实际 attempt。
+移除对 `ExecutionRun` 必须成功/失败的前置条件，以及历史查询“优先成功轮次”的规则。
+实际执行后中断的记录可见；后续未领取取消、无尝试或尚未结束的重跑不会替换此前已结束的执行。
+状态、轮次、结果、Runner、耗时和日志引用统一来自选中 attempt。
+普通 TestNG 和 DDT 共用同一 SQL、映射和组件；原任务总结、通过率、分析、调度与诊断重跑隔离不变。
+
+查询仍以用例 ID 和游标限制范围，数据库内先选中最后实际执行再分页，只返回 `limit + 1` 条；
+不读取全任务快照、其他用例或所有 attempt。沿用现有用例历史与 attempt 序号索引，无迁移、缓存、配置或协议变化。
+已保存但被旧查询隐藏的历史直接恢复可读，无需补写事实或重跑。
+
+先增加复现回归，旧实现两个场景失败；修复后 133 项定向检查通过，
+包含 78 项 SQLite/PostgreSQL 调度/完成/历史契约及 12 项任务统计契约。
+手动结束测试真实调用两个适配器的 terminateBatch，确认取消未领取重跑后仍保留前一轮结果。
+两项生产 Lite Playwright 覆盖普通用例与中文 DDT 的完整详情、快速预览、末次结果、过滤、分页和日志入口。
+实际查看 1024×768、1536×960 共 13 张深浅色截图，没有新增布局变形；窄预览保留表格内部滚动。
+工作区及 E2E 类型检查、Web 生产构建、范围内格式/ESLint、18 行 E2E 矩阵和 diff 检查通过。
+
+证据与命令见[用例历史规则](./case-execution-history.md#本次验证2026-10-26)及
+`/var/tmp/autoforge-last-case-history-20261026/`。
+本地未运行 Full 整套部署、真实 Agent、离线包或 2,000 用例压测；
+本次已覆盖真实 PostgreSQL 与 SQLite 查询，不改变执行控制和调度流程。历史修复随 v1.20.19 交付。
+
+## 2026-10-26：v1.20.19 快速发布范围
+
+维护者要求整理代码、提交推送并按快速路径发布补丁版本。v1.20.19 包含调度配置实时应用和异常终止任务的用例历史读取修复，复用上述已完成的本地测试、真实双数据库及生产 Lite UI 证据；提交前再次检查全部改动 TypeScript 的格式／ESLint、许可证和差异。
+
+发布时临时暂停 CI、Full distributed acceptance、Published Release acceptance、Release checks、Dependency security，仅由已存在且指向本次提交的语义版本标签触发 Release；不修改工作流定义，完成后恢复原有启用状态。Release 必须完成原生 amd64／arm64 构建、内置双架构 Agent 与 Adapter 校验、Jenkins 插件、部署包、五份 SBOM、签名和完整资产发布，任一目标失败不得交付部分版本。
+
+快速路径未执行的标准验收不记为通过。发布后核对远程分支／标签、Release 提交与资产集合，验证签名、摘要、清单及双架构源提交一致，并确认五条暂停的工作流全部恢复。

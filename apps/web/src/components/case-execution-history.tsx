@@ -111,11 +111,11 @@ export function CaseExecutionHistory({
             <h2>全部执行历史</h2>
             <p>
               {compact ? (
-                `已加载 ${items.length} 条已完成记录 · 每个任务展示总结结果`
+                `已加载 ${items.length} 条记录 · 每个批次取本用例最后执行结果`
               ) : (
                 <>
-                  仅展示已执行结束的总结结果：任一轮通过则记录通过轮次，否则记录最后一轮；已加载{" "}
-                  {items.length} 条执行记录。
+                  每个批次展示本用例最后一次已结束的实际执行，任务中断也保留；未执行不记录。已加载{" "}
+                  {items.length} 条记录。
                 </>
               )}
             </p>
@@ -167,7 +167,7 @@ export function CaseExecutionHistory({
                       </TableCell>
                       <TableCell>{caseExecutionStatusLabel(item.status)}</TableCell>
                       <TableCell>
-                        <strong>第 {attempt.executionRound} 轮总结</strong>
+                        <strong>第 {attempt.executionRound} 轮</strong>
                         <span
                           className={cn(
                             "case-history-attempt-result",
@@ -200,7 +200,7 @@ export function CaseExecutionHistory({
                         >
                           {canReadLogs ? (
                             <Button
-                              aria-label={`查看第 ${attempt.executionRound} 轮总结日志`}
+                              aria-label={`查看第 ${attempt.executionRound} 轮日志`}
                               className={cn(
                                 "button button-secondary compact-button",
                                 uiPatterns["button"],

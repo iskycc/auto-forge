@@ -178,8 +178,8 @@ export function PlatformSettings({
           className={cn("implementation-notice", platformSettingsStyles["implementation-notice"])}
           role="status"
         >
-          分布式运行配置由部署文件统一管理。修改后请同步所有节点并重启；节点 IP
-          和端口可在“平台节点”中单独更新。
+          分布式运行配置由部署文件统一管理。调度配置同步所有节点后无需重启；监听和基础设施等变更仍需重启。节点
+          IP 和端口可在“平台节点”中单独更新。
         </Notice>
       ) : null}
       <nav
@@ -468,8 +468,8 @@ export function PlatformSettings({
                 ))}
               </Select>
               <small>
-                {memoryAdmissionDescriptions[memoryAdmissionMode]} 保存后重启 Web
-                {initial.mode === "full" ? " 和 worker" : ""} 生效。
+                {memoryAdmissionDescriptions[memoryAdmissionMode]}
+                保存后立即用于后续调度与补槽，无需重启，不中断正在运行的用例。
               </small>
             </label>
             <NumberInput
