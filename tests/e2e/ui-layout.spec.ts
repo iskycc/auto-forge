@@ -4877,10 +4877,21 @@ test("execution case actions stay on one line in console and shared details", as
         for (const width of [1024, 1536]) {
           await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
           for (const round of ["初始轮次", "全部轮次"]) {
-            await target.getByRole("button", { name: round, exact: true }).click();
+            const roundSelector = target.getByRole("button", { name: round, exact: true });
+            await roundSelector.click();
+            // Both scopes have five rows; count alone can still observe the previous scope.
+            await expect(roundSelector).toHaveAttribute("aria-current", "true");
             const actions = target.locator(".round-row-actions");
             await expect(actions).toHaveCount(5);
-            await actions.first().scrollIntoViewIfNeeded();
+            await actions
+              .first()
+              .evaluate((element) =>
+                element.scrollIntoView({
+                  block: "nearest",
+                  inline: "nearest",
+                  behavior: "instant",
+                }),
+              );
             await waitForUiTransitions(target);
             await captureUi(
               target,
