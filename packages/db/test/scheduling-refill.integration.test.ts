@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { insertCaseExecutionHistoryFixture } from "../../../tests/e2e/support/case-execution-history-fixture";
+import { insertExecutionRecordsFixture } from "../../../tests/e2e/support/execution-records-fixture";
+import { insertSuiteProgressFixture } from "../../../tests/e2e/support/suite-progress-fixture";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -340,6 +342,42 @@ async function insertCaseHistoryRun(
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("seeds paginated execution history and task progress using the active database", async () => {
+    const harness = await createHarness();
+    const scope = { projectId: harness.projectId, projectVersionId: randomUUID() };
+    try {
+      await insertExecutionRecordsFixture(
+        harness.sqliteDataDirectory,
+        scope,
+        2,
+        postgresConnectionString,
+      );
+      await insertSuiteProgressFixture(
+        harness.sqliteDataDirectory,
+        scope,
+        [
+          { id: "history-all-pass", name: "全部通过", passedRuns: 2 },
+          { id: "history-all-fail", name: "全部失败", passedRuns: 0 },
+        ],
+        postgresConnectionString,
+      );
+      const batches = await harness.batches.list(20, [scope.projectId], scope.projectVersionId);
+      expect(batches).toHaveLength(6);
+      expect(new Set(batches.map((batch) => batch.sequenceNumber)).size).toBe(6);
+      expect(batches.find((batch) => batch.suiteId === "history-all-pass")).toMatchObject({
+        status: "succeeded",
+        succeededRuns: 2,
+      });
+      expect(batches.find((batch) => batch.suiteId === "history-all-fail")).toMatchObject({
+        status: "failed",
+        failedRuns: 2,
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("reads scoped concurrency counts, shared reservations and DDT requirements without transferring case or runtime bodies", async () => {
     const harness = await createHarness();
     const now = "2026-08-10T00:00:00.000Z";

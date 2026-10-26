@@ -37,10 +37,11 @@ for (const view of ["task", "single"] as const)
       { method: "POST", body: { name: uniqueName("分页版本") } },
     );
     expect(version.status).toBe(201);
-    insertExecutionRecordsFixture(
+    await insertExecutionRecordsFixture(
       process.env.AUTOFORGE_E2E_DATA_DIR!,
       { projectId: project.projectId, projectVersionId: version.body.id },
       23,
+      process.env.AUTOFORGE_E2E_POSTGRES_URL,
     );
     await selectProjectContext(page, project.projectId, version.body.id);
     await page.goto(`/execution-records?view=${view}&limit=10&status=succeeded`);
@@ -133,9 +134,12 @@ for (const targetMode of ["new", "existing"] as const)
     const scale = process.env.E2E_VERSION_COPY_SCALE === "1";
     if (scale) await insertVersionCopyScaleFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, source);
     const targetProject = await createInitializationProject(page);
-    insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, source, [
-      { id: source.suiteId, name: source.suiteName, passedRuns: 0 },
-    ]);
+    await insertSuiteProgressFixture(
+      process.env.AUTOFORGE_E2E_DATA_DIR,
+      source,
+      [{ id: source.suiteId, name: source.suiteName, passedRuns: 0 }],
+      process.env.AUTOFORGE_E2E_POSTGRES_URL,
+    );
     await selectProjectContext(page, source.projectId, source.projectVersionId, source.testStageId);
     await page.goto("/settings/projects");
     await page.getByRole("button", { name: "复制整个版本", exact: true }).click();

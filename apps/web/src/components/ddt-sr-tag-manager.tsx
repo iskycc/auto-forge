@@ -9,7 +9,7 @@ import type {
   DdtSrTagScope,
   DdtSrTagMutation,
 } from "@autoforge/contracts";
-import { ddtSrTagGroupsSchema, ddtSrTagPageSchema } from "@autoforge/contracts";
+import { ddtSrTagGroupsSchema, ddtSrTagPageSchema, ddtSrTagSchema } from "@autoforge/contracts";
 import { requestDdtJson } from "@/lib/ddt-client";
 import { SrTagFileTransfer } from "./sr-tag-file-transfer";
 import { ActionDialog } from "./action-dialog";
@@ -118,17 +118,25 @@ function SrTagEditor({
       window.clearTimeout(timer);
     };
   }, [url, tagQuery, refresh]);
+  function refreshAssociations() {
+    setLoading(true);
+    setRefresh((value) => value + 1);
+  }
   async function mutate(input: DdtSrTagMutation) {
     setBusy(true);
     setError("");
     try {
-      await requestDdtJson(url, {
+      const result = await requestDdtJson<unknown>(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
       });
-      if (input.operation === "create") setName("");
-      setRefresh((value) => value + 1);
+      if (input.operation === "create") {
+        const created = ddtSrTagSchema.parse(result);
+        setTags((current) => [created, ...current.filter((tag) => tag.id !== created.id)]);
+        setName("");
+      }
+      refreshAssociations();
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -162,7 +170,7 @@ function SrTagEditor({
         open={importOpen}
         onOpenChange={onImportOpenChange}
         onBusyChange={setBusy}
-        onImported={() => setRefresh((value) => value + 1)}
+        onImported={refreshAssociations}
       />
       {error ? (
         <Notice tone="error" role="alert">
@@ -172,7 +180,7 @@ function SrTagEditor({
             variant="link"
             onClick={() => {
               setError("");
-              setRefresh((value) => value + 1);
+              refreshAssociations();
             }}
           >
             重试

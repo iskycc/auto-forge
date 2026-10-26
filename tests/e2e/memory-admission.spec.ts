@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { zipSync } from "fflate";
 import {
   memoryAdmissionModeSchema,
+  concurrencyDiagnosticsSchema,
   type PlatformConfigurationView,
   type ClaimAssignmentsResponse,
 } from "@autoforge/contracts";
@@ -226,8 +227,18 @@ test("memory admission dispatches to a Runner without cgroup v2 using the active
       retryLimit: 0,
     });
     const batch = await createTaskRun(page, suiteId);
+    const initialDiagnostic = await page.request.get(
+      `/api/v1/run-batches/${batch.id}/concurrency-diagnostics`,
+    );
+    expect(initialDiagnostic.status()).toBe(200);
+    const initialBudget = concurrencyDiagnosticsSchema.parse(await initialDiagnostic.json());
+    const policySlots = activeMode === "reserved" ? 4 : 8;
+    const nodeBudget = initialBudget.nodes.find((node) => node.id === identity.runnerId)!;
+    expect(nodeBudget.availableSlots + nodeBudget.reservedSlots).toBe(policySlots);
+    // Aggregate recovery harnesses deliberately cap each project at one slot.
+    // Keep the exact policy budget assertion while also respecting that separate limit.
+    const expected = Math.min(policySlots, initialBudget.projectMaximumConcurrency);
     const assignments: ClaimAssignmentsResponse["assignments"] = [];
-    const expected = activeMode === "reserved" ? 4 : 8;
     await expect
       .poll(
         async () => {

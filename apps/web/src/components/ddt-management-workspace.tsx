@@ -796,7 +796,12 @@ export function DdtManagementWorkspace({
           <strong>DDT 工作台</strong>
           <span>CaseID 在当前项目版本与测试阶段内唯一</span>
         </div>
-        <div className="ddt-workspace-actions flex min-w-0 flex-wrap items-center gap-2">
+        <div
+          className={cn(
+            "ddt-workspace-actions flex min-w-0 flex-wrap items-center gap-2",
+            tab === "cases" && "max-xl:gap-1 max-xl:[&_.ant-btn]:px-2",
+          )}
+        >
           <Button
             type="button"
             variant="secondary"

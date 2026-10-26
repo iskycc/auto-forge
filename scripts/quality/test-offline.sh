@@ -88,7 +88,11 @@ export AUTOFORGE_OFFLINE_ACCEPTANCE_DIR="${acceptance_directory}"
 export AUTOFORGE_OFFLINE_E2E_SPECS="${offline_e2e_specs}"
 export AUTOFORGE_OFFLINE_VERIFY_LDAP_DIRECTORY="${verify_ldap_directory}"
 export AUTOFORGE_OFFLINE_VERIFY_BACKUP_RESTORE="${verify_backup_restore}"
-export E2E_PROJECT_MAXIMUM_CONCURRENCY=1
+if [[ "${acceptance_phase}" == "operations" ]]; then
+  export E2E_PROJECT_MAXIMUM_CONCURRENCY=128
+else
+  export E2E_PROJECT_MAXIMUM_CONCURRENCY=1
+fi
 
 if unshare --user --map-root-user --net true >/dev/null 2>&1; then
   unshare --user --map-root-user --net bash -Eeuo pipefail -c '

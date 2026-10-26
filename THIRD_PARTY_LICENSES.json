@@ -2097,7 +2097,7 @@
     {
       "ecosystem": "npm",
       "name": "zod",
-      "version": "4.4.3",
+      "version": "4.6.6",
       "license": "MIT",
       "homepage": "https://zod.dev"
     }

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
-import { resolve } from "node:path";
 import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
+import { openHistoryFixtureConnection } from "./history-fixture-connection";
 
 type HistoryFixtureState = {
   status: ExecutionRun["status"];
@@ -10,51 +9,6 @@ type HistoryFixtureState = {
   started?: boolean;
   finished?: boolean;
 };
-
-type FixtureConnection = {
-  nextBatchSequence: string;
-  execute: (statement: string, parameters?: Array<string | number | null>) => Promise<void>;
-  close: () => Promise<void>;
-};
-
-async function openFixtureConnection(input: {
-  directory?: string;
-  postgresUrl?: string;
-}): Promise<FixtureConnection> {
-  if (input.directory) {
-    const database = new DatabaseSync(resolve(input.directory, "db", "autoforge.sqlite"));
-    database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000");
-    return {
-      nextBatchSequence: "(SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM run_batches)",
-      execute: async (statement, parameters = []) => {
-        database.prepare(statement).run(...parameters);
-      },
-      close: async () => database.close(),
-    };
-  }
-  if (!input.postgresUrl)
-    throw new Error(
-      "AUTOFORGE_E2E_DATA_DIR or AUTOFORGE_E2E_POSTGRES_URL is required for history fixtures.",
-    );
-  const { createPostgresDatabase } = await import("@autoforge/db/postgres");
-  const database = createPostgresDatabase({
-    connectionString: input.postgresUrl,
-    migrationsFolder: resolve(import.meta.dirname, "../../../packages/db/drizzle/postgresql"),
-    poolMax: 1,
-  });
-  await database.ready;
-  return {
-    nextBatchSequence: "nextval('run_batch_sequence_numbers')",
-    execute: async (statement, parameters = []) => {
-      let index = 0;
-      await database.pool.query(
-        statement.replaceAll("?", () => `$${++index}`),
-        parameters,
-      );
-    },
-    close: () => database.close(),
-  };
-}
 
 const completedStates: HistoryFixtureState[] = [
   { status: "succeeded", attemptStatus: "succeeded", resultCode: "TESTNG_SUCCEEDED" },
@@ -81,7 +35,7 @@ export async function insertCaseExecutionHistoryFixture(input: {
   runnerId: string;
   completedCount?: number;
 }) {
-  const database = await openFixtureConnection(input);
+  const database = await openHistoryFixtureConnection(input);
   const completedRunIds: string[] = [];
   try {
     await database.execute(input.directory ? "BEGIN IMMEDIATE" : "BEGIN");

@@ -478,8 +478,8 @@ test("tab navigation protects configuration drafts and respects reduced motion",
   await expect(tabs.locator('[role="tab"][aria-selected="true"]')).toContainText("用例");
   expect(
     await page
-      .locator(".ddt-workspace > .tab-content")
-      .evaluate((element) => element.getAnimations().length),
+      .getByRole("region", { name: "DDT 管理工作台", exact: true })
+      .evaluate((element) => element.getAnimations({ subtree: true }).length),
   ).toBe(0);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: 960 });

@@ -4598,7 +4598,7 @@ test("DDT list selection removes only matched members from the chosen task with 
   await expect(confirm).toBeDisabled();
   const matchingUrl = `/api/v1/case-suites/${target.id}/ddt-cases/matching`;
   const anonymous = await request.post(matchingUrl, {
-    headers: { Origin: "http://127.0.0.1:3100" },
+    headers: { Origin: new URL(page.url()).origin },
     data: {
       projectVersionId: hierarchy.versionId,
       testStageId: hierarchy.stageId,

@@ -3871,7 +3871,7 @@ test("task pass-rate bars keep their full track at zero, partial and complete va
     suites.push({ ...suite, name, passedRuns });
   }
   await createUiSuite(page, scope, "暂无执行记录的任务");
-  insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
+  await insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
   await page.goto("/case-suites");
   const bars = page.getByRole("progressbar", { name: "近 7 天平均通过率", exact: true });
   await expect(bars).toHaveCount(3, { timeout: 30_000 });
@@ -4017,7 +4017,7 @@ test("populated tables keep page scrolling vertical and wide columns scrollable 
       const suite = await createUiSuite(page, scope, name);
       suites.push({ ...suite, name, passedRuns: 2 });
     }
-    insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
+    await insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, suites);
     const jar = zipSync({
       "com/example/ScrollBoundaryTest.class": buildClassFile({
         className: "com.example.ScrollBoundaryTest",
@@ -4945,7 +4945,7 @@ test("execution records keep their first visible column layout during hydration 
   await ensureAdministrator(page);
   const scope = await createUiProject(page);
   const suite = await createUiSuite(page, scope, "首屏布局验证任务");
-  insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, [
+  await insertSuiteProgressFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, scope, [
     { ...suite, name: "首屏布局验证任务", passedRuns: 0 },
   ]);
   await page.addInitScript(() => {
@@ -5073,7 +5073,7 @@ test("execution record actions stay on one line after sharing and resizing saved
     suites.push({ ...suite, name, passedRuns: index === 4 ? 0 : 2 });
   }
   const directory = process.env.AUTOFORGE_E2E_DATA_DIR!;
-  insertSuiteProgressFixture(directory, scope, suites);
+  await insertSuiteProgressFixture(directory, scope, suites);
   const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
   try {
     database.exec("PRAGMA busy_timeout=5000");

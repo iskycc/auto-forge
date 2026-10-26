@@ -397,7 +397,10 @@ initialize_platform_configuration() {
         maximumMemoryUtilizationPercent: 85,
         maximumLoadPerCpu: 1,
         metricsMaximumAgeSeconds: 45,
-        projectMaximumConcurrency: phase === "browser-background" ? 500 : 1,
+        projectMaximumConcurrency: {
+          "browser-background": 500,
+          "browser-governance": 128,
+        }[phase] ?? 1,
         priorityAgingIntervalMinutes: 5,
       },
       worker: {

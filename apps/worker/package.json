@@ -19,7 +19,7 @@
     "@autoforge/testng-discovery": "workspace:*",
     "better-sqlite3": "13.0.3",
     "nats": "2.29.3",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

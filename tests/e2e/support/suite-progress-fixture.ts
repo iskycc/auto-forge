@@ -1,28 +1,25 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
-import { resolve } from "node:path";
+import { openHistoryFixtureConnection } from "./history-fixture-connection";
 
 /** Completed history for visual checks; execution protocol coverage lives in Runner E2E. */
-export function insertSuiteProgressFixture(
-  dataDirectory: string,
+export async function insertSuiteProgressFixture(
+  dataDirectory: string | undefined,
   scope: { projectId: string; projectVersionId: string },
   suites: Array<{ id: string; name: string; passedRuns: number }>,
+  postgresUrl?: string,
 ) {
-  const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
+  const database = await openHistoryFixtureConnection({ directory: dataDirectory, postgresUrl });
   const recordedAt = new Date().toISOString();
   try {
-    database.exec("PRAGMA busy_timeout=5000");
-    database.exec("BEGIN IMMEDIATE");
+    await database.execute(dataDirectory ? "BEGIN IMMEDIATE" : "BEGIN");
     for (const suite of suites) {
       const batchId = randomUUID();
-      database
-        .prepare(
-          `INSERT INTO run_batches
+      await database.execute(
+        `INSERT INTO run_batches
           (id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,
            environment_json,total_runs,project_id,policy_json,created_at,updated_at)
-          VALUES (?,1,?,?,1,?,0,'[]',2,?,?,?,?)`,
-        )
-        .run(
+          VALUES (?,${database.nextBatchSequence},?,?,1,?,0,'[]',2,?,?,?,?)`,
+        [
           batchId,
           suite.id,
           suite.name,
@@ -31,17 +28,16 @@ export function insertSuiteProgressFixture(
           JSON.stringify({ projectVersionId: scope.projectVersionId }),
           recordedAt,
           recordedAt,
-        );
+        ],
+      );
       for (let index = 0; index < 2; index++) {
         const outcome = index < suite.passedRuns ? "succeeded" : "failed";
-        database
-          .prepare(
-            `INSERT INTO execution_runs
+        await database.execute(
+          `INSERT INTO execution_runs
             (id,batch_id,case_definition_id,case_version,display_name,class_name,status,
              attempt_count,terminal_outcome,created_at,updated_at)
             VALUES (?,?,?,1,?,?,?,0,?,?,?)`,
-          )
-          .run(
+          [
             randomUUID(),
             batchId,
             randomUUID(),
@@ -51,14 +47,15 @@ export function insertSuiteProgressFixture(
             outcome,
             recordedAt,
             recordedAt,
-          );
+          ],
+        );
       }
     }
-    database.exec("COMMIT");
+    await database.execute("COMMIT");
   } catch (error) {
-    if (database.isTransaction) database.exec("ROLLBACK");
+    await database.execute("ROLLBACK");
     throw error;
   } finally {
-    database.close();
+    await database.close();
   }
 }
