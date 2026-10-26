@@ -16,6 +16,32 @@ describe("platform configuration mapping", () => {
     expect(view).not.toHaveProperty("secrets");
   });
 
+  it("preserves the memory strategy on legacy writes and requires restart for explicit changes", () => {
+    const current = configuration();
+    current.scheduler.memoryAdmissionMode = "threshold";
+    const { memoryAdmissionMode: omitted, ...legacyScheduler } = current.scheduler;
+    expect(omitted).toBe("threshold");
+    const request = {
+      revision: current.revision,
+      mode: current.mode,
+      web: current.web,
+      limits: current.limits,
+      scheduler: legacyScheduler,
+      worker: current.worker,
+    };
+    expect(mergePlatformConfiguration(current, request).scheduler.memoryAdmissionMode).toBe(
+      "threshold",
+    );
+    const changed = mergePlatformConfiguration(current, {
+      ...request,
+      scheduler: { ...legacyScheduler, memoryAdmissionMode: "disabled" },
+    });
+    expect(changed.scheduler.memoryAdmissionMode).toBe("disabled");
+    expect(platformConfigurationActivation(current, changed).restartRequiredFields).toContain(
+      "调度阈值",
+    );
+  });
+
   it("requires complete Full infrastructure settings on first enable", () => {
     const current = configuration();
     expect(() =>
@@ -210,6 +236,7 @@ function configuration(
       ddtImportZipSpreadsheetLimit: 200,
     },
     scheduler: {
+      memoryAdmissionMode: "reserved",
       maximumCpuUtilizationPercent: 85,
       maximumMemoryUtilizationPercent: 85,
       maximumLoadPerCpu: 1,

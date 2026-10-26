@@ -538,6 +538,7 @@ run_current_release_browser() {
         tests/e2e/identity-rbac.spec.ts
         tests/e2e/management-operations.spec.ts
         tests/e2e/platform-operations.spec.ts
+        tests/e2e/memory-admission.spec.ts
       )
       ;;
     *)

@@ -591,6 +591,7 @@ async function createPlatformServices() {
       {
         maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
         maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
+        memoryAdmissionMode: config.scheduler.memoryAdmissionMode ?? "reserved",
         maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
       },
       config.scheduler.metricsMaximumAgeSeconds,
@@ -1004,6 +1005,7 @@ async function createPlatformServices() {
       thresholds: {
         maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
         maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
+        memoryAdmissionMode: config.scheduler.memoryAdmissionMode ?? "reserved",
         maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
       },
       metricsMaximumAgeSeconds: config.scheduler.metricsMaximumAgeSeconds,

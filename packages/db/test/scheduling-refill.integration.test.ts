@@ -443,9 +443,14 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
-  it.each([0, 4 * 1024 ** 3])(
-    "atomically shares a memory budget with %i bytes already measured across concurrent batches",
-    async (executionCredit) => {
+  it.each([
+    { executionCredit: 0, memoryAdmissionMode: "reserved" as const, expectedTotal: 4 },
+    { executionCredit: 4 * 1024 ** 3, memoryAdmissionMode: "reserved" as const, expectedTotal: 6 },
+    { executionCredit: 0, memoryAdmissionMode: "threshold" as const, expectedTotal: 8 },
+    { executionCredit: 0, memoryAdmissionMode: "disabled" as const, expectedTotal: 8 },
+  ])(
+    "atomically applies $memoryAdmissionMode admission with $executionCredit bytes measured across batches",
+    async ({ executionCredit, memoryAdmissionMode, expectedTotal }) => {
       const harness = await createHarness();
       const now = "2026-08-10T00:00:00.000Z";
       const sourceId = randomUUID();
@@ -504,6 +509,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
               assignmentId: randomUUID(),
             })),
             thresholds: {
+              memoryAdmissionMode,
               maximumCpuUtilizationPercent: 80,
               maximumMemoryUtilizationPercent: 85,
               maximumLoadPerCpu: 1,
@@ -525,10 +531,10 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
           batchIds.map((batchId, index) => reserve(batchId, runIdsByBatch[index]!)),
         );
         expect(reservations.reduce((count, reservation) => count + reservation.reserved, 0)).toBe(
-          4,
+          expectedTotal - (executionCredit ? 2 : 0),
         );
         const snapshot = await harness.batches.getSchedulingSnapshot(harness.batchRunningId, now);
-        expect(snapshot?.candidates[0]?.reservedSlots).toBe(executionCredit ? 6 : 4);
+        expect(snapshot?.candidates[0]?.reservedSlots).toBe(expectedTotal);
         expect(snapshot?.candidates[0]?.runner.resourceSnapshot).toMatchObject({
           memoryTotalBytes: 16 * 1024 ** 3,
           memoryAvailableBytes: 12 * 1024 ** 3,
@@ -554,7 +560,16 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
             );
           }),
         );
-        expect(refilled.reduce((count, reservation) => count + reservation.reserved, 0)).toBe(1);
+        expect(refilled.reduce((count, reservation) => count + reservation.reserved, 0)).toBe(
+          memoryAdmissionMode === "reserved" ? 1 : 0,
+        );
+        const afterRelease = await harness.batches.getSchedulingSnapshot(
+          harness.batchRunningId,
+          now,
+        );
+        expect(afterRelease?.candidates[0]?.reservedSlots).toBe(
+          memoryAdmissionMode === "reserved" ? expectedTotal : expectedTotal - 1,
+        );
       } finally {
         await harness.dispose();
         await cleanupTemporaryDirectories();

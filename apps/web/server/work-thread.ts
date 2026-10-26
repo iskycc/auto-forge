@@ -605,6 +605,7 @@ function schedulingService(): RunBatchSchedulingService {
       {
         maximumCpuUtilizationPercent: configuration.scheduler.maximumCpuUtilizationPercent,
         maximumMemoryUtilizationPercent: configuration.scheduler.maximumMemoryUtilizationPercent,
+        memoryAdmissionMode: configuration.scheduler.memoryAdmissionMode ?? "reserved",
         maximumLoadPerCpu: configuration.scheduler.maximumLoadPerCpu,
       },
       configuration.scheduler.metricsMaximumAgeSeconds,

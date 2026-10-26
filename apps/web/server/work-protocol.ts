@@ -1,3 +1,4 @@
+import type { MemoryAdmissionMode } from "@autoforge/contracts/memory-admission";
 import type { RuntimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 /**
  * Web 进程内执行工作线程的配置与消息协议。Lite 与 Full 共用同一线程池，
@@ -16,6 +17,7 @@ export type WorkThreadConfiguration = {
   caseExecutionTimeoutSeconds: number;
   artifactCollectionEnabled: boolean;
   scheduler: {
+    memoryAdmissionMode?: MemoryAdmissionMode;
     maximumCpuUtilizationPercent: number;
     maximumMemoryUtilizationPercent: number;
     maximumLoadPerCpu: number;

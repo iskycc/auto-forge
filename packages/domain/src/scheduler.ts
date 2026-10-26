@@ -5,7 +5,10 @@ import {
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
 } from "./runner-compatibility";
 
+export type MemoryAdmissionMode = "reserved" | "threshold" | "disabled";
+
 export type SchedulingThresholds = {
+  memoryAdmissionMode?: MemoryAdmissionMode;
   maximumCpuUtilizationPercent: number;
   maximumMemoryUtilizationPercent: number;
   maximumLoadPerCpu: number;
@@ -197,7 +200,10 @@ export function evaluateRunnerForScheduling(
   if (metrics.cpuUtilizationPercent > thresholds.maximumCpuUtilizationPercent) {
     reasons.push("cpu_limit_exceeded");
   }
-  if (metrics.memoryUtilizationPercent > thresholds.maximumMemoryUtilizationPercent) {
+  if (
+    thresholds.memoryAdmissionMode !== "disabled" &&
+    metrics.memoryUtilizationPercent > thresholds.maximumMemoryUtilizationPercent
+  ) {
     reasons.push("memory_limit_exceeded");
   }
   const loadPerCpu = metrics.loadAverage1m / metrics.logicalCpuCount;
@@ -270,10 +276,10 @@ function schedulingScore(
     metrics.cpuUtilizationPercent,
     thresholds.maximumCpuUtilizationPercent,
   );
-  const memoryHeadroom = headroom(
-    metrics.memoryUtilizationPercent,
-    thresholds.maximumMemoryUtilizationPercent,
-  );
+  const memoryHeadroom =
+    thresholds.memoryAdmissionMode === "disabled"
+      ? 1
+      : headroom(metrics.memoryUtilizationPercent, thresholds.maximumMemoryUtilizationPercent);
   const loadHeadroom = headroom(loadPerCpu, thresholds.maximumLoadPerCpu);
   return rounded(
     100 *
@@ -297,6 +303,11 @@ function availableMemorySlots(
 }
 
 function runnerMemoryBudget(candidate: SchedulingCandidate, thresholds: SchedulingThresholds) {
+  if (
+    thresholds.memoryAdmissionMode === "threshold" ||
+    thresholds.memoryAdmissionMode === "disabled"
+  )
+    return null;
   const metrics = candidate.runner.resourceSnapshot;
   if (metrics?.memoryTotalBytes === undefined && metrics?.memoryAvailableBytes === undefined)
     return null;

@@ -114,7 +114,7 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /scenario: identity\n\s+specs: .*identity-rbac.*all-rounds/);
   assert.match(
     workflow,
-    /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill/,
+    /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill.*memory-admission/,
   );
   for (let shard = 1; shard <= 3; shard += 1) {
     assert.match(

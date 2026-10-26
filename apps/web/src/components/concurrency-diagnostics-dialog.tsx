@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Table as AntTable, Tag, Tooltip } from "antd";
 import { Gauge, RefreshCw, X } from "lucide-react";
+import { memoryAdmissionLabels, memoryAdmissionDescriptions } from "@/lib/memory-admission";
+
 import { concurrencyDiagnosticsSchema, type ConcurrencyDiagnostics } from "@autoforge/contracts";
 import { Dialog } from "./ui/dialog";
 import { Button } from "./ui/button";
@@ -118,13 +120,16 @@ export function ConcurrencyDiagnosticsDialog({
               </span>
             </Notice>
             <p className="m-0 text-xs leading-relaxed text-muted-foreground">
-              准入阈值：CPU ≤ {result.thresholds.maximumCpuUtilizationPercent}% · 内存 ≤{" "}
-              {result.thresholds.maximumMemoryUtilizationPercent}% · 每 CPU 负载 ≤{" "}
-              {result.thresholds.maximumLoadPerCpu} · 指标有效期 {result.metricsMaximumAgeSeconds}{" "}
-              秒。
-              内存保留系统预算，未启动用例预留完整上限；已运行用例只补足尚可能增长的内存，避免重复计入实测占用。旧
-              Agent
-              或无可靠采集时仍完整预留。诊断以持久化占用和最近心跳计算，实时领取请求还会校正心跳槽位滞后。
+              内存调度策略：
+              {memoryAdmissionLabels[result.thresholds.memoryAdmissionMode ?? "reserved"]}。
+              {memoryAdmissionDescriptions[result.thresholds.memoryAdmissionMode ?? "reserved"]}
+              准入阈值：CPU ≤ {result.thresholds.maximumCpuUtilizationPercent}% · 内存{" "}
+              {result.thresholds.memoryAdmissionMode === "disabled"
+                ? "不参与限制"
+                : `≤ ${result.thresholds.maximumMemoryUtilizationPercent}%`}{" "}
+              · 每 CPU 负载 ≤ {result.thresholds.maximumLoadPerCpu} · 指标有效期{" "}
+              {result.metricsMaximumAgeSeconds} 秒。
+              诊断以持久化占用和最近心跳计算，实时领取请求还会校正心跳槽位滞后。
               实际补位还受任务上限、项目额度和剩余用例数约束。
             </p>
             <AntTable<Node>

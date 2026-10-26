@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { memoryAdmissionModeSchema } from "./memory-admission";
+
 import { DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM } from "./ddt";
 
 export const DEFAULT_PLATFORM_TIME_ZONE = "Asia/Shanghai";
@@ -21,6 +23,8 @@ export const platformTimeZoneSchema = z
   .refine(isSupportedTimeZone, "请输入有效的 IANA 时区，例如 Asia/Shanghai。");
 
 const schedulerConfigurationSchema = z.object({
+  // Omission by an older v1 client must preserve the saved administrator choice.
+  memoryAdmissionMode: memoryAdmissionModeSchema.optional(),
   maximumCpuUtilizationPercent: z.number().min(1).max(100),
   maximumMemoryUtilizationPercent: z.number().min(1).max(100),
   maximumLoadPerCpu: z.number().min(0.1).max(100),

@@ -30,3 +30,5 @@ export * from "./ddt-change-requests";
 export * from "./project-version-copy";
 
 export * from "./ddt-sr-tags";
+
+export * from "./memory-admission";

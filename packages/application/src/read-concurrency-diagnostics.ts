@@ -123,7 +123,10 @@ export class ConcurrencyDiagnosticsService {
       availableNodeSlots,
       omittedNodes: snapshot.omittedNodes,
       nodes,
-      thresholds: configuration.thresholds,
+      thresholds: {
+        ...configuration.thresholds,
+        memoryAdmissionMode: configuration.thresholds.memoryAdmissionMode ?? "reserved",
+      },
       metricsMaximumAgeSeconds: configuration.metricsMaximumAgeSeconds,
       reasons: summarizeReasons(
         snapshot,

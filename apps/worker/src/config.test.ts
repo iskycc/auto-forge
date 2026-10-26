@@ -16,6 +16,7 @@ describe("worker configuration", () => {
       {
         ...current,
         mode: "full",
+        scheduler: { ...current.scheduler, memoryAdmissionMode: "disabled" },
         full: {
           databaseUrl: "postgresql://autoforge:secret@postgres:5432/autoforge",
           databasePoolMax: 10,
@@ -35,6 +36,7 @@ describe("worker configuration", () => {
     const worker = loadWorkerConfig({ dataDirectory, workspaceRoot: "/workspace" });
 
     expect(worker.artifactCollectionEnabled()).toBe(true);
+    expect(worker.scheduling.memoryAdmissionMode).toBe("disabled");
 
     store.replace(
       {

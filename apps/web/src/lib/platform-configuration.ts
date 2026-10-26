@@ -109,7 +109,11 @@ export function mergePlatformConfiguration(
       ddtImportZipSpreadsheetLimit:
         input.limits.ddtImportZipSpreadsheetLimit ?? current.limits.ddtImportZipSpreadsheetLimit,
     },
-    scheduler: { ...input.scheduler },
+    scheduler: {
+      ...input.scheduler,
+      memoryAdmissionMode:
+        input.scheduler.memoryAdmissionMode ?? current.scheduler.memoryAdmissionMode,
+    },
     worker: { ...input.worker },
     ...(input.mode === "full" || input.full
       ? { full: mergedFullConfiguration(current.full, input.full) }

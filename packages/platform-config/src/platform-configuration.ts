@@ -42,6 +42,7 @@ const platformTimeZoneSchema = z
   .refine(isSupportedTimeZone, "请输入有效的 IANA 时区，例如 Asia/Shanghai。");
 
 const schedulerSchema = z.object({
+  memoryAdmissionMode: z.enum(["reserved", "threshold", "disabled"]).default("reserved"),
   maximumCpuUtilizationPercent: z.number().min(1).max(100),
   maximumMemoryUtilizationPercent: z.number().min(1).max(100),
   maximumLoadPerCpu: z.number().min(0.1).max(100),
@@ -347,6 +348,7 @@ function defaultConfiguration(
       ddtImportZipSpreadsheetLimit: DEFAULT_DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
     },
     scheduler: {
+      memoryAdmissionMode: "reserved",
       maximumCpuUtilizationPercent: 85,
       maximumMemoryUtilizationPercent: 85,
       maximumLoadPerCpu: 1,

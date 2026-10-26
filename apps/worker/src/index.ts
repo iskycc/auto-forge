@@ -111,6 +111,7 @@ const batches = new RunBatchSchedulingService(
   {
     maximumCpuUtilizationPercent: config.scheduling.maximumCpuUtilizationPercent,
     maximumMemoryUtilizationPercent: config.scheduling.maximumMemoryUtilizationPercent,
+    memoryAdmissionMode: config.scheduling.memoryAdmissionMode,
     maximumLoadPerCpu: config.scheduling.maximumLoadPerCpu,
   },
   config.scheduling.metricsMaximumAgeSeconds,

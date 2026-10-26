@@ -50,6 +50,32 @@ describe("platform configuration store", () => {
     expect(store.read().limits.ddtImportZipSpreadsheetLimit).toBe(200);
   });
 
+  it("defaults legacy files to reserved mode and persists every explicit memory strategy", () => {
+    const store = new PlatformConfigurationStore(mkdtempSync(join(tmpdir(), "memory-mode-")));
+    store.initialize();
+    const legacy = JSON.parse(readFileSync(store.paths.configurationFile, "utf8")) as {
+      scheduler: { memoryAdmissionMode?: string };
+    };
+    delete legacy.scheduler.memoryAdmissionMode;
+    writeFileSync(store.paths.configurationFile, JSON.stringify(legacy), { mode: 0o600 });
+    expect(store.read().scheduler.memoryAdmissionMode).toBe("reserved");
+    for (const memoryAdmissionMode of ["threshold", "disabled", "reserved"] as const) {
+      const current = store.read();
+      store.replace(
+        { ...current, scheduler: { ...current.scheduler, memoryAdmissionMode } },
+        current.revision,
+      );
+      expect(store.read().scheduler.memoryAdmissionMode).toBe(memoryAdmissionMode);
+    }
+    const current = store.read();
+    expect(() =>
+      store.replace(
+        { ...current, scheduler: { ...current.scheduler, maximumMemoryUtilizationPercent: 200 } },
+        current.revision,
+      ),
+    ).toThrow();
+  });
+
   it("uses revision conditions and preserves generated secrets", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
     const store = new PlatformConfigurationStore(dataDirectory);

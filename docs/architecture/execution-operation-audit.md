@@ -450,3 +450,47 @@ git diff --check
 按维护者要求仅运行 Release，保留双架构镜像、内置 Agent／Adapter 校验、SBOM、清单、签名及完整资产发布；其他五条 workflow 在推送前暂停，发布流程结束后恢复原状态。正式资产从指向本次提交的不可变 `v1.20.17` tag 构建，发布后核对资产集合、签名、元数据校验和、源码 revision 和工作流恢复状态，证据保存于 `/var/tmp/autoforge-release-1.20.17/`。
 
 升级新增 SQLite 0083／PostgreSQL 0081 可空抵扣列，应按现有运维流程备份后更新平台及 Full worker，并同步更新独立执行节点 Agent、启用 cgroup v2。旧 Agent 继续兼容并采用保守预算；本地验证不等于用户现场 70 个 JVM 的业务压测，也不承诺外部进程抢占等边界下绝无 OOM。
+
+## 2026-10-26：三种内存调度策略与旧节点兼容
+
+为避免 SLES 12 等无 cgroup v2 的现有节点只能承受完整内存预留，平台配置新增 `scheduler.memoryAdmissionMode`。管理员可在“平台设置 → 平台配置 → 内存调度策略”选择默认 `reserved`（阈值与预留）、`threshold`（仅按内存使用率）或 `disabled`（不限制内存）；不通过填写超过 100% 的阈值隐式绕过。百分比仍只接受 1–100%，设为 100% 不会关闭每例预留。
+
+新字段通过 Web、隔离调度工作线程与独立 Full worker 的组合根传入同一领域规则，SQLite/PostgreSQL 原子预留继续复核同一策略；诊断展示当前进程生效策略，非预留模式不展示无效的系统／增长预算。三种模式均保留 CPU、负载、指标新鲜度、节点槽位、任务与项目并发以及兼容性检查，节点均分与重试轮换不变。
+
+配置沿用既有生命周期，保存后提示重启 Web，Full 同时重启 worker 后应用。旧配置缺字段时默认保留保护；旧 v1 客户端省略策略的配置写入会保留管理员当前选择。无需数据库迁移、生产依赖、Agent 协议变更或节点升级，分布式部署仍由统一部署配置管理。策略不改变 Agent 已有的执行器硬限制，也不授予修改配置以外的权限。
+
+验证结果：
+
+- 先增加复现测试：旧规则在低使用率但完整预留耗尽时拒绝追加，也无法显式关闭内存检查；两项新行为断言失败后才接入策略分支。
+- 最终十个 Vitest 文件 160 项通过，含真实 SQLite/PostgreSQL 分配回归 70 项；覆盖默认保护、阈值／关闭模式、跨任务原子预算及释放、CPU／槽位／过期指标仍拦截、配置默认／持久化、旧客户端写入保留、200% 拒绝及 Full worker 配置读取。
+- Web／worker 生产构建、配置／契约／数据库／应用／worker 与 Web 服务／工作线程和 E2E 类型、受影响格式／Lint、许可、18 行 E2E 矩阵与差异检查通过。服务端 NodeNext 配置类型通过契约独立入口读取，不改变全局模块解析或放宽类型校验。
+- 最终生产 Lite Playwright 四个场景全部通过：一个设置场景，以及三个独立进程配置下的实际调度与 Runner 领取。模拟节点不声明 cgroup v2、上报旧 Agent 版本与绝对内存指标，任务并发和节点槽位均为 8；默认模式在 16 GiB／可用 12 GiB 时领取 4 个，阈值模式领取 8 个，关闭模式在内存 100%／可用零时仍领取 8 个。该结果是协议分配验证，不表示实际启动八个 JVM 或运行 SLES 12 实机。
+- 设置场景实际操作三个 Ant Design 选项，验证保存／刷新、重启提示、旧客户端保留和 HTTP 拒绝 200%；实际查看最终 10 张 1024×768／1536×960 截图，覆盖设置页浅色兼容模式／深色关闭模式以及诊断三种策略，未发现新增错位、控件变形或页面越界。
+- 浏览器首轮修正了测试对表单桥接、任务卡片可访问名称和异步导入等待的假设；异步导入使用已有测试相同的 20／60 秒有界等待，最终从新目录完整跑通，没有放宽调度并发断言。
+- v1.20.18 标准发布整理时，新增场景接入 CI 的 Lite 操作分区、Full 治理分区及源码／已发布镜像的离线治理验收；没有关闭任何工作流。发布前全仓 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、八项发布工作流契约测试、三个验收脚本的 `bash -n`、E2E 矩阵与差异检查均通过，重任务继续限制 1 CPU／4 GiB 串行执行。
+
+实际命令：
+
+```sh
+# 双数据库测试使用一次性 AUTOFORGE_TEST_POSTGRES_URL。
+pnpm exec vitest run packages/domain/test/scheduler.test.ts packages/platform-config/test/platform-configuration.test.ts packages/platform-config/test/distributed-configuration.test.ts packages/contracts/test/memory-admission.test.ts packages/db/test/scheduling-refill.integration.test.ts packages/application/test/read-concurrency-diagnostics.test.ts apps/web/src/lib/platform-configuration.test.ts apps/web/src/lib/config.test.ts apps/web/src/components/ui-usage.test.ts apps/worker/src/config.test.ts --maxWorkers=1
+pnpm --filter @autoforge/platform-config typecheck
+pnpm --filter @autoforge/contracts typecheck
+pnpm --filter @autoforge/db typecheck
+pnpm --filter @autoforge/application typecheck
+pnpm --filter @autoforge/worker typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.server.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.worker.json
+pnpm --filter @autoforge/web build
+pnpm --filter @autoforge/worker build
+# 每次分别在匹配的隔离 Web 配置下运行，环境变量仅供测试断言识别活动策略。
+AUTOFORGE_E2E_MEMORY_ADMISSION_MODE=reserved pnpm exec playwright test tests/e2e/memory-admission.spec.ts --workers=1
+AUTOFORGE_E2E_MEMORY_ADMISSION_MODE=threshold pnpm exec playwright test tests/e2e/memory-admission.spec.ts --grep 'dispatches to a Runner' --workers=1
+AUTOFORGE_E2E_MEMORY_ADMISSION_MODE=disabled pnpm exec playwright test tests/e2e/memory-admission.spec.ts --grep 'dispatches to a Runner' --workers=1
+pnpm licenses:check
+pnpm test:e2e:matrix
+git diff --check
+```
+
+证据位于 `/var/tmp/autoforge-memory-modes-20261026/`。所有重任务串行限制 1 CPU／4 GiB，临时 Web 和私有 PostgreSQL 在检查后停止。本次未运行 Full 整套中间件、SLES 12 实机、真实业务 Java 压测或完整离线镜像验收；无 cgroup v2 时缺少同等级的单用例内存硬保护，兼容／关闭策略降低准入保护，不能承诺无 OOM。平台“系统运行资源优先级”保护与执行器资源限制不受此调度选项关闭。

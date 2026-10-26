@@ -32,7 +32,10 @@ function runner(overrides: Partial<Runner> = {}): Runner {
     ...overrides,
   };
 }
-function fixture(overrides: Partial<ConcurrencySnapshot> = {}) {
+function fixture(
+  overrides: Partial<ConcurrencySnapshot> = {},
+  memoryAdmissionMode: "reserved" | "threshold" | "disabled" = "reserved",
+) {
   const snapshot: ConcurrencySnapshot = {
     batch: {
       id: "batch",
@@ -59,6 +62,7 @@ function fixture(overrides: Partial<ConcurrencySnapshot> = {}) {
     { now: () => new Date(now) },
     () => ({
       thresholds: {
+        memoryAdmissionMode,
         maximumCpuUtilizationPercent: 80,
         maximumMemoryUtilizationPercent: 85,
         maximumLoadPerCpu: 1,
@@ -131,6 +135,31 @@ describe("on-demand concurrency diagnosis", () => {
       memoryReservedGrowthBytes: 2 * 1024 ** 3,
     });
   });
+  it.each(["threshold", "disabled"] as const)(
+    "explains %s mode without showing a reservation shortage",
+    async (mode) => {
+      const node = runner({ busySlots: 5 });
+      node.resourceSnapshot = {
+        ...node.resourceSnapshot!,
+        memoryTotalBytes: 32 * 1024 ** 3,
+        memoryAvailableBytes: 12 * 1024 ** 3,
+      };
+      const f = fixture(
+        { nodes: [{ runner: node, reservedSlots: 5, batchReservedSlots: 2 }] },
+        mode,
+      );
+      const result = await f.service.read("batch");
+      expect(result.thresholds.memoryAdmissionMode).toBe(mode);
+      expect(result.nodes[0]).toMatchObject({
+        availableSlots: 5,
+        memoryAvailableSlots: null,
+        memoryReservedGrowthBytes: null,
+      });
+      expect(result.nodes[0]?.reasons).not.toContainEqual(
+        expect.objectContaining({ code: "memory_reservation_exhausted" }),
+      );
+    },
+  );
   it("reports free capacity as awaiting refill and retains percentage-only Agent compatibility", async () => {
     const f = fixture({
       nodes: [{ runner: runner({ busySlots: 4 }), reservedSlots: 5, batchReservedSlots: 2 }],

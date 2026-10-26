@@ -562,6 +562,7 @@ run_full_browser_flow() {
         tests/e2e/management-operations.spec.ts
         tests/e2e/security-audit.spec.ts
         tests/e2e/platform-operations.spec.ts
+        tests/e2e/memory-admission.spec.ts
       )
       ;;
     recovery)
@@ -576,6 +577,7 @@ run_full_browser_flow() {
         tests/e2e/management-operations.spec.ts
         tests/e2e/security-audit.spec.ts
         tests/e2e/platform-operations.spec.ts
+        tests/e2e/memory-admission.spec.ts
         tests/e2e/project-isolation.spec.ts
       )
       ;;

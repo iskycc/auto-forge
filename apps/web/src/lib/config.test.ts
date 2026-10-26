@@ -14,6 +14,7 @@ describe("persisted application configuration", () => {
 
     expect(config.mode).toBe("lite");
     expect(config.scheduler).toEqual({
+      memoryAdmissionMode: "reserved",
       maximumCpuUtilizationPercent: 85,
       maximumMemoryUtilizationPercent: 85,
       maximumLoadPerCpu: 1,
@@ -34,6 +35,7 @@ describe("persisted application configuration", () => {
         ...current,
         limits: { ...current.limits, testNgTargetJavaVersion: 17 },
         scheduler: {
+          memoryAdmissionMode: "threshold",
           maximumCpuUtilizationPercent: 70,
           maximumMemoryUtilizationPercent: 75,
           maximumLoadPerCpu: 0.8,
@@ -47,6 +49,7 @@ describe("persisted application configuration", () => {
 
     const config = loadAppConfig({ dataDirectory, workspaceRoot: "/workspace" });
     expect(config.testNgTargetJavaVersion).toBe(17);
+    expect(config.scheduler.memoryAdmissionMode).toBe("threshold");
     expect(config.scheduler.maximumCpuUtilizationPercent).toBe(70);
     expect(config.scheduler.metricsMaximumAgeSeconds).toBe(60);
   });

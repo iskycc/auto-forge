@@ -7,7 +7,10 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input, Select, Textarea } from "@/components/ui";
+
+import { memoryAdmissionModeSchema, type MemoryAdmissionMode } from "@autoforge/contracts";
+import { memoryAdmissionLabels, memoryAdmissionDescriptions } from "@/lib/memory-admission";
 
 import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
@@ -43,6 +46,9 @@ export function PlatformSettings({
   const toast = useToast();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [revision, setRevision] = useState(initial.revision);
+  const [memoryAdmissionMode, setMemoryAdmissionMode] = useState<MemoryAdmissionMode>(
+    initial.scheduler.memoryAdmissionMode ?? "reserved",
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
@@ -90,6 +96,7 @@ export function PlatformSettings({
             ddtImportZipSpreadsheetLimit: numberValue(form, "ddtImportZipSpreadsheetLimit"),
           },
           scheduler: {
+            memoryAdmissionMode: form.get("memoryAdmissionMode"),
             maximumCpuUtilizationPercent: numberValue(form, "maximumCpuUtilizationPercent"),
             maximumMemoryUtilizationPercent: numberValue(form, "maximumMemoryUtilizationPercent"),
             maximumLoadPerCpu: numberValue(form, "maximumLoadPerCpu"),
@@ -429,7 +436,13 @@ export function PlatformSettings({
               name="ddtImportZipSpreadsheetLimit"
               value={initial.limits.ddtImportZipSpreadsheetLimit}
             />
-            <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
+            <label
+              className={cn(
+                "checkbox-field",
+                uiPatterns["checkbox-field"],
+                uiPatterns["settings-wide-field"],
+              )}
+            >
               <Input
                 defaultChecked={initial.limits.artifactCollectionEnabled}
                 name="artifactCollectionEnabled"
@@ -438,12 +451,40 @@ export function PlatformSettings({
               启用产物收集（关闭后执行不扫描、不上传产物，详情页不展示产物）
               <small>保存后立即应用到新建批次；已创建批次保持原有执行快照。</small>
             </label>
+            <label className={uiPatterns["settings-wide-field"]}>
+              内存调度策略
+              <Select
+                aria-label="内存调度策略"
+                name="memoryAdmissionMode"
+                value={memoryAdmissionMode}
+                onChange={(event) =>
+                  setMemoryAdmissionMode(memoryAdmissionModeSchema.parse(event.target.value))
+                }
+              >
+                {Object.entries(memoryAdmissionLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <small>
+                {memoryAdmissionDescriptions[memoryAdmissionMode]} 保存后重启 Web
+                {initial.mode === "full" ? " 和 worker" : ""} 生效。
+              </small>
+            </label>
             <NumberInput
               label="调度 CPU 上限（%）"
               name="maximumCpuUtilizationPercent"
               value={initial.scheduler.maximumCpuUtilizationPercent}
             />
             <NumberInput
+              min={1}
+              max={100}
+              description={
+                memoryAdmissionMode === "disabled"
+                  ? "当前策略不使用此阈值，保留数值便于重新开启限制。"
+                  : "仅接受 1–100%；设为 100% 不会改变调度策略。"
+              }
               label="调度内存上限（%）"
               name="maximumMemoryUtilizationPercent"
               value={initial.scheduler.maximumMemoryUtilizationPercent}

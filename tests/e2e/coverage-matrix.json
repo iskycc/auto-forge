@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-07",
+  "updatedAt": "2026-10-26",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -185,7 +185,8 @@
         "tests/e2e/lite-high-concurrency.spec.ts",
         "tests/e2e/real-agent.spec.ts",
         "tests/e2e/scheduling-refill.spec.ts",
-        "tests/e2e/single-case-run.spec.ts"
+        "tests/e2e/single-case-run.spec.ts",
+        "tests/e2e/memory-admission.spec.ts"
       ],
       "coverage": {
         "lite": "partial",
@@ -300,7 +301,8 @@
       "evidence": [
         "tests/e2e/jar-import.spec.ts",
         "tests/e2e/platform-operations.spec.ts",
-        ".github/workflows/ci.yml"
+        ".github/workflows/ci.yml",
+        "tests/e2e/memory-admission.spec.ts"
       ],
       "coverage": {
         "lite": "partial",

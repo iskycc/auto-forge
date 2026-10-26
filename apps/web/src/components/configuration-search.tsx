@@ -91,6 +91,12 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "maximumCpuUtilizationPercent",
   ),
   platformField(
+    "内存调度策略",
+    "阈值与预留、仅按内存使用率或不限制内存；兼容 SLES 12",
+    "scheduler memory cgroup SLES",
+    "memoryAdmissionMode",
+  ),
+  platformField(
     "内存调度阈值",
     "Runner 内存利用率调度保护",
     "scheduler memory",

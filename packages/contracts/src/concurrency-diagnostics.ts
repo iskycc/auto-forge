@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { memoryAdmissionModeSchema } from "./memory-admission";
 
 const count = z.number().int().nonnegative();
 const reason = z.object({ code: z.string().min(1).max(80), message: z.string().max(2048) });
@@ -15,6 +16,7 @@ export const concurrencyDiagnosticsSchema = z.object({
   availableNodeSlots: count,
   omittedNodes: count,
   thresholds: z.object({
+    memoryAdmissionMode: memoryAdmissionModeSchema.optional(),
     maximumCpuUtilizationPercent: z.number(),
     maximumMemoryUtilizationPercent: z.number(),
     maximumLoadPerCpu: z.number(),

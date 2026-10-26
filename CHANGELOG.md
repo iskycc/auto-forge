@@ -4,7 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.20.18 - 2026-10-26
+
+### Added
+
+- 平台设置新增三种内存调度策略：默认阈值与预留、仅按内存使用率、不限制内存。兼容策略不要求 cgroup v2，可用于既有 SLES 12 节点；CPU、节点、任务与项目限制继续生效。
+- 并发诊断显示当前生效策略和对应预算。旧配置保持默认保护，旧客户端省略策略时不会覆盖已有选择。
+
+### Configuration
+
+- 新增持久配置 `scheduler.memoryAdmissionMode`，保存后重启 Web／独立 Full worker 生效。无数据库迁移或 Agent 协议变化，不要求节点为策略开关升级。
+- 内存百分比仍仅接受 1–100%；200% 不能作为隐式绕过。兼容或关闭策略降低内存保护，仍有 OOM 风险。
+
+### Validation
+
+- 十个定向测试文件 160 项通过，包含真实 SQLite/PostgreSQL；Web／worker 构建与相关类型、格式、Lint 检查通过。
+- 生产 Lite Playwright 四个场景通过，覆盖三种策略下的实际协议分配；已审查 1024×768、1536×960 的设置与诊断截图，共 10 张，未发现新增布局问题。该验证未启动业务 JVM，亦非 SLES 12 实机压测。
+- 新增场景接入 CI、Full 和离线浏览器验收分区；本次采用标准发布流程，保持全部工作流启用。完整验证证据及边界见 `docs/architecture/execution-operation-audit.md`。
 
 ## 1.20.17 - 2026-10-26
 

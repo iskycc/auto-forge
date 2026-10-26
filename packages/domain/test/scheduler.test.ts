@@ -155,6 +155,76 @@ describe("dynamic execution scheduler", () => {
     ).toHaveLength(2);
   });
 
+  it("lets legacy nodes use threshold-only admission without per-attempt reservations", () => {
+    const node = runner("legacy", { cpu: 10, memory: 60, load: 0, concurrency: 10 });
+    node.busySlots = 5;
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: 32 * 1024 ** 3,
+      memoryAvailableBytes: 12 * 1024 ** 3,
+    };
+    const input = {
+      runs: Array.from({ length: 10 }, (_, i) => run(`legacy-${i}`)),
+      candidates: [{ runner: node, reservedSlots: 5 }],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    };
+    expect(scheduleExecutionRuns(input).decisions).toHaveLength(0);
+    expect(
+      scheduleExecutionRuns({
+        ...input,
+        thresholds: { ...thresholds, memoryAdmissionMode: "threshold" },
+      }).decisions,
+    ).toHaveLength(5);
+  });
+
+  it("only the explicit disabled mode bypasses both memory gates", () => {
+    const node = runner("legacy", { cpu: 10, memory: 99, load: 0, concurrency: 10 });
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: 16 * 1024 ** 3,
+      memoryAvailableBytes: 0,
+    };
+    const candidate = { runner: node, reservedSlots: 0 };
+    expect(
+      evaluateRunnerForScheduling(
+        candidate,
+        { ...thresholds, memoryAdmissionMode: "threshold" },
+        freshAfter,
+      ).blockReasons,
+    ).toEqual(["memory_limit_exceeded"]);
+    expect(
+      evaluateRunnerForScheduling(
+        candidate,
+        { ...thresholds, memoryAdmissionMode: "disabled" },
+        freshAfter,
+      ),
+    ).toMatchObject({ eligible: true, availableSlots: 10, blockReasons: [] });
+    expect(
+      evaluateRunnerForScheduling(
+        candidate,
+        { ...thresholds, maximumMemoryUtilizationPercent: 100 },
+        freshAfter,
+      ).blockReasons,
+    ).toContain("memory_reservation_exhausted");
+    for (const updated of [
+      { ...node, state: "offline" as const },
+      { ...node, busySlots: 10 },
+      { ...node, resourceSnapshot: { ...node.resourceSnapshot!, cpuUtilizationPercent: 99 } },
+      {
+        ...node,
+        resourceSnapshot: { ...node.resourceSnapshot!, observedAt: "2020-01-01T00:00:00.000Z" },
+      },
+    ])
+      expect(
+        evaluateRunnerForScheduling(
+          { runner: updated, reservedSlots: 0 },
+          { ...thresholds, memoryAdmissionMode: "disabled" },
+          freshAfter,
+        ).eligible,
+      ).toBe(false);
+  });
+
   it("includes live occupied slots and never lets a claim hint bypass persisted memory reservations", () => {
     const node = runner("memory-bound", { cpu: 10, memory: 25, load: 0.1, concurrency: 32 });
     node.resourceSnapshot = {

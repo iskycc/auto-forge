@@ -1,3 +1,4 @@
+import type { MemoryAdmissionMode } from "@autoforge/contracts/memory-admission";
 import { resolve } from "node:path";
 
 import {
@@ -35,6 +36,7 @@ type CommonConfig = {
     runnerBaseUrl?: string;
   };
   scheduler: {
+    memoryAdmissionMode?: MemoryAdmissionMode;
     maximumCpuUtilizationPercent: number;
     maximumMemoryUtilizationPercent: number;
     maximumLoadPerCpu: number;
