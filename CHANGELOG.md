@@ -29,7 +29,7 @@ and known limitations.
 
 - 十个定向测试文件 160 项通过，包含真实 SQLite/PostgreSQL；Web／worker 构建与相关类型、格式、Lint 检查通过。
 - 生产 Lite Playwright 四个场景通过，覆盖三种策略下的实际协议分配；已审查 1024×768、1536×960 的设置与诊断截图，共 10 张，未发现新增布局问题。该验证未启动业务 JVM，亦非 SLES 12 实机压测。
-- 新增场景接入 CI、Full 和离线浏览器验收分区；本次采用标准发布流程，保持全部工作流启用。完整验证证据及边界见 `docs/architecture/execution-operation-audit.md`。
+- 新增场景接入 CI、Full 和离线浏览器验收分区。标准检查过程中发现的问题已修正；按维护者最新要求转为快速发布，仅保留 Release 构建、资源校验、SBOM、签名与发布，其余检查暂停后恢复，未完成的检查不记为通过。完整验证证据及边界见 `docs/architecture/execution-operation-audit.md`。
 - 标准检查发现的问题修正后，254 项依赖兼容回归、72 项真实双数据库回归、七项生产 Lite 操作场景及两项 DDT 完整场景通过；这些测试存在交叉，不累加计数。DDT 补充审查 1024px／1536px 工具栏与标签弹窗截图。
 
 ## 1.20.17 - 2026-10-26
