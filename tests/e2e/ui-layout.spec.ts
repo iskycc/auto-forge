@@ -4883,15 +4883,13 @@ test("execution case actions stay on one line in console and shared details", as
             await expect(roundSelector).toHaveAttribute("aria-current", "true");
             const actions = target.locator(".round-row-actions");
             await expect(actions).toHaveCount(5);
-            await actions
-              .first()
-              .evaluate((element) =>
-                element.scrollIntoView({
-                  block: "nearest",
-                  inline: "nearest",
-                  behavior: "instant",
-                }),
-              );
+            await actions.first().evaluate((element) => {
+              element.scrollIntoView({
+                block: "nearest",
+                inline: "nearest",
+                behavior: "instant",
+              });
+            });
             await waitForUiTransitions(target);
             await captureUi(
               target,
