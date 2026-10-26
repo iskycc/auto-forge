@@ -384,7 +384,23 @@ describe("runner memory budget compatibility", () => {
       }).resourceSnapshot,
     ).toMatchObject({ memoryTotalBytes: 4000, memoryAvailableBytes: 0 });
   });
+  it("preserves measured execution credit without making it required for older Agents", () => {
+    expect(
+      runnerHeartbeatInputSchema.parse({
+        ...heartbeat,
+        resourceSnapshot: {
+          ...metrics,
+          memoryTotalBytes: 4000,
+          memoryAvailableBytes: 1000,
+          memoryExecutionCreditBytes: 2000,
+        },
+      }).resourceSnapshot,
+    ).toMatchObject({ memoryExecutionCreditBytes: 2000 });
+  });
   it.each([
+    { memoryExecutionCreditBytes: 0 },
+    { memoryTotalBytes: 4000, memoryAvailableBytes: 1000, memoryExecutionCreditBytes: 3001 },
+    { memoryTotalBytes: 4000, memoryAvailableBytes: 1000, memoryExecutionCreditBytes: -1 },
     { memoryTotalBytes: 4000 },
     { memoryAvailableBytes: 0 },
     { memoryTotalBytes: 4000, memoryAvailableBytes: 4001 },

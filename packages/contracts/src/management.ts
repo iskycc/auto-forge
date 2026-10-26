@@ -660,6 +660,12 @@ export const runnerHeartbeatInputSchema = z.object({
       memoryUtilizationPercent: z.number().finite().min(0).max(100),
       memoryTotalBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
       memoryAvailableBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+      memoryExecutionCreditBytes: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(Number.MAX_SAFE_INTEGER)
+        .optional(),
       loadAverage1m: z.number().finite().nonnegative().max(100_000),
       logicalCpuCount: z.number().int().min(1).max(4_096),
       observedAt: z.string().datetime(),
@@ -673,6 +679,18 @@ export const runnerHeartbeatInputSchema = z.object({
       {
         message:
           "Memory capacity requires both total and available bytes, with available no greater than total.",
+      },
+    )
+    .refine(
+      (snapshot) =>
+        snapshot.memoryExecutionCreditBytes === undefined ||
+        (snapshot.memoryTotalBytes !== undefined &&
+          snapshot.memoryAvailableBytes !== undefined &&
+          snapshot.memoryExecutionCreditBytes <=
+            snapshot.memoryTotalBytes - snapshot.memoryAvailableBytes),
+      {
+        message:
+          "Execution memory credit requires capacity and cannot exceed measured used memory.",
       },
     )
     .optional(),

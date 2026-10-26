@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +110,17 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 		specification executor.Spec,
 		options executor.RunOptions,
 	) (executor.Result, error) {
+		prepareWorkspace := options.PrepareWorkspace
+		options.PrepareWorkspace = func(workspace string) error {
+			if err := prepareWorkspace(workspace); err != nil {
+				return err
+			}
+			scopes := supervisor.MemoryScopeNames()
+			if len(scopes) != 1 || scopes[0] != executor.ResourceScopeName(workspace) {
+				return fmt.Errorf("active execution memory scope missing: %v", scopes)
+			}
+			return nil
+		}
 		options.ResourcePolicy = executor.ResourcePolicy{}
 		return executor.Run(ctx, specification, options)
 	}
@@ -126,6 +138,9 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 	}
 	cancel()
 	supervisor.Close()
+	if scopes := supervisor.MemoryScopeNames(); len(scopes) != 0 {
+		t.Fatalf("completed work retained memory scopes: %v", scopes)
+	}
 	var diagnostics strings.Builder
 	for len(uploadedLogs) > 0 {
 		diagnostics.WriteString((<-uploadedLogs).Content)

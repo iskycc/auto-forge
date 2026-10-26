@@ -60,6 +60,7 @@ describe("RunnerControlService credentials", () => {
         memoryUtilizationPercent: 100,
         memoryTotalBytes: 4096,
         memoryAvailableBytes: 0,
+        memoryExecutionCreditBytes: 2048,
         loadAverage1m: 0,
         logicalCpuCount: 4,
         observedAt: "2099-01-01T00:00:00.000Z",
@@ -70,6 +71,7 @@ describe("RunnerControlService credentials", () => {
         resourceSnapshot: expect.objectContaining({
           memoryTotalBytes: 4096,
           memoryAvailableBytes: 0,
+          memoryExecutionCreditBytes: 2048,
           observedAt: now.toISOString(),
         }),
       }),

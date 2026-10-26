@@ -610,6 +610,7 @@ export const pgRunners = pgTable(
     memoryUtilizationPercent: doublePrecision("memory_utilization_percent"),
     memoryTotalBytes: bigint("memory_total_bytes", { mode: "number" }),
     memoryAvailableBytes: bigint("memory_available_bytes", { mode: "number" }),
+    memoryExecutionCreditBytes: bigint("memory_execution_credit_bytes", { mode: "number" }),
     loadAverage1m: doublePrecision("load_average_1m"),
     logicalCpuCount: integer("logical_cpu_count"),
     metricsObservedAt: text("metrics_observed_at"),

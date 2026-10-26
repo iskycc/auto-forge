@@ -122,7 +122,9 @@ export function ConcurrencyDiagnosticsDialog({
               {result.thresholds.maximumMemoryUtilizationPercent}% · 每 CPU 负载 ≤{" "}
               {result.thresholds.maximumLoadPerCpu} · 指标有效期 {result.metricsMaximumAgeSeconds}{" "}
               秒。
-              内存按每个在途执行预留完整上限，并保留系统余量；使用率未超阈值也可能没有预留额度。诊断以持久化占用和最近心跳计算，实时领取请求还会校正心跳槽位滞后。
+              内存保留系统预算，未启动用例预留完整上限；已运行用例只补足尚可能增长的内存，避免重复计入实测占用。旧
+              Agent
+              或无可靠采集时仍完整预留。诊断以持久化占用和最近心跳计算，实时领取请求还会校正心跳槽位滞后。
               实际补位还受任务上限、项目额度和剩余用例数约束。
             </p>
             <AntTable<Node>
@@ -245,8 +247,14 @@ function NodeResources({ node }: { node: Node }) {
       </span>
       {node.systemMemoryReserveBytes !== null ? (
         <span className="text-muted-foreground">
-          系统余量 {gibibytes(node.systemMemoryReserveBytes)} · 每例{" "}
+          系统保留 {gibibytes(node.systemMemoryReserveBytes)} · 每例{" "}
           {gibibytes(node.memoryPerAttemptBytes)}
+        </span>
+      ) : null}
+      {node.memoryReservedGrowthBytes !== null && node.memoryReservedGrowthBytes !== undefined ? (
+        <span className="text-muted-foreground">
+          增长预留 {gibibytes(node.memoryReservedGrowthBytes)} · 已计入{" "}
+          {gibibytes(node.memoryExecutionCreditBytes ?? 0)}
         </span>
       ) : null}
     </div>

@@ -116,6 +116,21 @@ describe("on-demand concurrency diagnosis", () => {
     ]);
     expect(result.nodes[0]).not.toHaveProperty("capabilities");
   });
+  it("exposes growth and already-counted memory using the same admission budget", async () => {
+    const node = runner({ busySlots: 5 });
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: 32 * 1024 ** 3,
+      memoryAvailableBytes: 14 * 1024 ** 3,
+      memoryExecutionCreditBytes: 8 * 1024 ** 3,
+    };
+    const f = fixture({ nodes: [{ runner: node, reservedSlots: 5, batchReservedSlots: 2 }] });
+    expect((await f.service.read("batch")).nodes[0]).toMatchObject({
+      memoryAvailableSlots: 3,
+      memoryExecutionCreditBytes: 8 * 1024 ** 3,
+      memoryReservedGrowthBytes: 2 * 1024 ** 3,
+    });
+  });
   it("reports free capacity as awaiting refill and retains percentage-only Agent compatibility", async () => {
     const f = fixture({
       nodes: [{ runner: runner({ busySlots: 4 }), reservedSlots: 5, batchReservedSlots: 2 }],

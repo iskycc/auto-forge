@@ -46,7 +46,8 @@ type resourceHandshake struct {
 	startWrite *os.File
 }
 
-func resourceScopeName(workspace string) string {
+// ResourceScopeName identifies the controlled scope for one execution workspace.
+func ResourceScopeName(workspace string) string {
 	digest := sha256.Sum256([]byte(filepath.Base(workspace)))
 	return "attempt-" + hex.EncodeToString(digest[:12])
 }

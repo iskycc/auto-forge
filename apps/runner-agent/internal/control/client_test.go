@@ -135,7 +135,7 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&heartbeat); err != nil {
 				t.Errorf("decode heartbeat: %v", err)
 			}
-			if heartbeat.ResourceSnapshot == nil || heartbeat.ResourceSnapshot.MemoryTotalBytes != 10<<30 || heartbeat.ResourceSnapshot.MemoryAvailableBytes != 7<<30 {
+			if heartbeat.ResourceSnapshot == nil || heartbeat.ResourceSnapshot.MemoryTotalBytes != 10<<30 || heartbeat.ResourceSnapshot.MemoryAvailableBytes != 7<<30 || heartbeat.ResourceSnapshot.MemoryExecutionCreditBytes != 1<<30 {
 				t.Errorf("heartbeat lost effective memory capacity: %+v", heartbeat.ResourceSnapshot)
 			}
 			if len(heartbeat.CachedBatchIDs) != 1 || heartbeat.CachedBatchIDs[0] != "batch-1" {
@@ -163,7 +163,7 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 	if terminalToken != "registration-terminal-ticket" {
 		t.Fatalf("registration terminal token = %q", terminalToken)
 	}
-	snapshot := &metrics.Snapshot{MemoryTotalBytes: 10 << 30, MemoryAvailableBytes: 7 << 30, CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
+	snapshot := &metrics.Snapshot{MemoryTotalBytes: 10 << 30, MemoryAvailableBytes: 7 << 30, MemoryExecutionCreditBytes: 1 << 30, CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
 	heartbeat, err := client.Heartbeat(
 		context.Background(),
 		identity,

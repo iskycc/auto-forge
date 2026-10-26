@@ -40,6 +40,121 @@ describe("dynamic execution scheduler", () => {
     ).toMatchObject({ eligible: true, availableSlots: 1 });
   });
 
+  it("deducts only unaccounted growth while reserving new assignments at their full limit", () => {
+    const node = runner("memory-bound", { cpu: 6.5, memory: 57.78, load: 0.1, concurrency: 10 });
+    node.busySlots = 5;
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: Math.floor(31.4 * 1024 ** 3),
+      memoryAvailableBytes: Math.floor(13.26 * 1024 ** 3),
+      memoryExecutionCreditBytes: 8 * 1024 ** 3,
+    };
+    const input = {
+      runs: Array.from({ length: 10 }, (_, index) => run(`memory-${index}`)),
+      candidates: [{ runner: node, reservedSlots: 5 }],
+      thresholds: { ...thresholds, maximumMemoryUtilizationPercent: 90 },
+      metricsFreshAfter: freshAfter,
+    };
+    // 13.26 available + 8 already counted - 3.14 retained - 5*2 committed = 8.12 GiB.
+    expect(scheduleExecutionRuns(input).decisions).toHaveLength(4);
+    expect(
+      scheduleExecutionRuns({ ...input, candidates: [{ runner: node, reservedSlots: 9 }] })
+        .decisions,
+    ).toHaveLength(0);
+    delete node.resourceSnapshot.memoryExecutionCreditBytes;
+    expect(scheduleExecutionRuns(input).decisions).toHaveLength(0);
+  });
+
+  it("spreads 70 shared reservations across eight healthy nodes despite different resource scores", () => {
+    const candidates = Array.from({ length: 8 }, (_, index) => ({
+      runner: runner(`node-${index}`, {
+        cpu: 5 + index * 7,
+        memory: 10 + index * 5,
+        load: index / 10,
+        concurrency: 10,
+      }),
+      reservedSlots: 0,
+    }));
+    const first = scheduleExecutionRuns({
+      runs: Array.from({ length: 30 }, (_, index) => run(`ordinary-${index}`)),
+      candidates,
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    for (const decision of first.decisions)
+      candidates.find(({ runner }) => runner.id === decision.runnerId)!.reservedSlots++;
+    const second = scheduleExecutionRuns({
+      runs: Array.from({ length: 40 }, (_, index) => run(`ddt-${index}`)),
+      candidates,
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    const counts = candidates.map(
+      ({ runner: node, reservedSlots }) =>
+        reservedSlots + second.decisions.filter(({ runnerId }) => runnerId === node.id).length,
+    );
+    expect(second.decisions).toHaveLength(40);
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+    expect(counts.reduce((sum, count) => sum + count, 0)).toBe(70);
+  });
+
+  it("never lends stale execution credit to pending assignments after live work ended", () => {
+    const node = runner("node", { cpu: 10, memory: 30, load: 0, concurrency: 10 });
+    node.busySlots = 4;
+    node.resourceSnapshot = {
+      ...node.resourceSnapshot!,
+      memoryTotalBytes: 16 * 1024 ** 3,
+      memoryAvailableBytes: 12 * 1024 ** 3,
+      memoryExecutionCreditBytes: 4 * 1024 ** 3,
+    };
+    const plan = scheduleExecutionRuns({
+      runs: Array.from({ length: 10 }, (_, i) => run(`pending-${i}`)),
+      candidates: [{ runner: node, reservedSlots: 0, liveAvailableSlots: 10 }],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    expect(plan.decisions).toHaveLength(4);
+  });
+
+  it("preserves worst-case growth for every active JVM across all memory observations", () => {
+    const gib = 1024 ** 3;
+    for (let busy = 0; busy <= 10; busy++)
+      for (let usage = 0; usage <= busy * 2; usage++) {
+        const node = runner("node", { cpu: 10, memory: 20, load: 0, concurrency: 10 });
+        node.busySlots = busy;
+        node.resourceSnapshot = {
+          ...node.resourceSnapshot!,
+          memoryTotalBytes: 32 * gib,
+          memoryAvailableBytes: (26 - usage) * gib,
+          memoryExecutionCreditBytes: usage * gib,
+        };
+        const plan = scheduleExecutionRuns({
+          runs: Array.from({ length: 10 }, (_, i) => run(`growth-${i}`)),
+          candidates: [{ runner: node, reservedSlots: busy }],
+          thresholds,
+          metricsFreshAfter: freshAfter,
+        });
+        // External working set is 6 GiB; every current/new JVM may grow to 2 GiB.
+        expect(
+          6 * gib + (busy + plan.decisions.length) * 2 * gib + Math.ceil(32 * gib * 0.15),
+        ).toBeLessThanOrEqual(32 * gib);
+        expect(busy + plan.decisions.length).toBeLessThanOrEqual(10);
+      }
+  });
+
+  it("counts new assignments above live occupied slots even when database occupancy lags", () => {
+    const node = runner("live", { cpu: 10, memory: 20, load: 0, concurrency: 10 });
+    node.busySlots = 8;
+    expect(
+      scheduleExecutionRuns({
+        runs: Array.from({ length: 10 }, (_, i) => run(`live-${i}`)),
+        candidates: [{ runner: node, reservedSlots: 0 }],
+        thresholds,
+        metricsFreshAfter: freshAfter,
+      }).decisions,
+    ).toHaveLength(2);
+  });
+
   it("includes live occupied slots and never lets a claim hint bypass persisted memory reservations", () => {
     const node = runner("memory-bound", { cpu: 10, memory: 25, load: 0.1, concurrency: 32 });
     node.resourceSnapshot = {
@@ -214,6 +329,27 @@ describe("dynamic execution scheduler", () => {
     expect(afterA.decisions[0]?.runnerId).toBe("runner-b");
     expect(afterB.decisions[0]?.runnerId).toBe("runner-c");
     expect(afterC.decisions[0]?.runnerId).toBe("runner-a");
+  });
+
+  it("balances simultaneous retries before using their cyclic tie breaker", () => {
+    const candidates = Array.from({ length: 8 }, (_, index) => ({
+      runner: runner(`node-${index}`, { cpu: 10, memory: 20, load: 0, concurrency: 10 }),
+      reservedSlots: 0,
+    }));
+    const runs = Array.from({ length: 40 }, (_, index) => run(`retry-${index}`));
+    const plan = scheduleExecutionRuns({
+      runs,
+      candidates,
+      runnerHistoryByRun: new Map(runs.map(({ id }) => [id, ["node-0"]])),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    expect(plan.decisions[0]?.runnerId).toBe("node-1");
+    expect(
+      candidates.map(
+        ({ runner: node }) => plan.decisions.filter(({ runnerId }) => runnerId === node.id).length,
+      ),
+    ).toEqual(Array(8).fill(5));
   });
 
   it("skips an unavailable next Runner while retaining infrastructure exclusions", () => {

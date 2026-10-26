@@ -76,11 +76,17 @@ for (const dialect of ["sqlite", "postgres"] as const)
           });
           await context.repository.heartbeat({
             ...base,
-            resourceSnapshot: { ...metrics, memoryTotalBytes: 4096, memoryAvailableBytes: 0 },
+            resourceSnapshot: {
+              ...metrics,
+              memoryTotalBytes: 4096,
+              memoryAvailableBytes: 0,
+              memoryExecutionCreditBytes: 2048,
+            },
           });
           expect((await context.repository.get(id, atMinute(-1)))?.resourceSnapshot).toMatchObject({
             memoryTotalBytes: 4096,
             memoryAvailableBytes: 0,
+            memoryExecutionCreditBytes: 2048,
           });
           expect(
             (await context.repository.listByIds([id], atMinute(-1)))[0]?.resourceSnapshot,
@@ -93,6 +99,7 @@ for (const dialect of ["sqlite", "postgres"] as const)
           const legacy = (await context.repository.get(id, atMinute(-1)))?.resourceSnapshot;
           expect(legacy).not.toHaveProperty("memoryTotalBytes");
           expect(legacy).not.toHaveProperty("memoryAvailableBytes");
+          expect(legacy).not.toHaveProperty("memoryExecutionCreditBytes");
           expect(legacy?.memoryUtilizationPercent).toBe(20);
         } finally {
           await context.close();

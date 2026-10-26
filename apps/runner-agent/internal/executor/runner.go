@@ -88,7 +88,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 	}
 	resourceScope, err := prepareResourceScope(
 		options.ResourcePolicy,
-		resourceScopeName(workspace),
+		ResourceScopeName(workspace),
 		spec.Limits,
 	)
 	if err != nil {

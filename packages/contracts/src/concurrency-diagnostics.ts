@@ -36,6 +36,8 @@ export const concurrencyDiagnosticsSchema = z.object({
         memoryAvailableSlots: count.nullable(),
         memoryPerAttemptBytes: count,
         systemMemoryReserveBytes: count.nullable(),
+        memoryExecutionCreditBytes: count.nullable().optional(),
+        memoryReservedGrowthBytes: count.nullable().optional(),
         metrics: z
           .object({
             cpuUtilizationPercent: z.number(),

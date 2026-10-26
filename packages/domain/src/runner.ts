@@ -6,6 +6,8 @@ export type RunnerResourceSnapshot = {
   /** Effective host/cgroup capacity. Optional for older Runner Agents. */
   memoryTotalBytes?: number;
   memoryAvailableBytes?: number;
+  /** Execution anonymous memory already deducted from effective availability. */
+  memoryExecutionCreditBytes?: number;
   loadAverage1m: number;
   logicalCpuCount: number;
   observedAt: string;

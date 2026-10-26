@@ -61,8 +61,8 @@ type ScheduleExecutionRunsInput = {
   // Runner 基础设施异常后的重调度优先避开曾使该 run 异常的节点；若没有其他
   // 合格节点则允许回退，避免单 Runner 部署永久卡住。
   excludedRunnerIdsByRun?: ReadonlyMap<string, ReadonlySet<string>>;
-  // 每个 run 的历史 Runner 按 attempt 顺序排列。首次执行仍使用资源评分；重试
-  // 从上一次 Runner 的下一个节点开始确定性轮询，健康与容量约束始终优先。
+  // 每个 run 的历史 Runner 按 attempt 顺序排列。健康和共享占用优先；
+  // 占用相同时，重试从上一次 Runner 的下一个节点开始确定性轮询。
   runnerHistoryByRun?: ReadonlyMap<string, readonly string[]>;
   // 批次策略的并发上限换算成本轮最多新增的 assignment 数；缺省表示不限制。
   maxAssignments?: number;
@@ -104,7 +104,7 @@ export function scheduleExecutionRuns(input: ScheduleExecutionRunsInput): Schedu
       continue;
     }
     decisions.push({ executionRunId: run.id, runnerId: selected.runner.id, score: selected.score });
-    selected.candidate.reservedSlots += 1;
+    selected.candidate.reservedSlots = occupiedRunnerSlots(selected.candidate) + 1;
   }
 
   return { decisions, evaluations, unassignedRunIds };
@@ -161,6 +161,7 @@ function roundRobinRetryCandidate(
   };
   const selected = pool.sort(
     (left, right) =>
+      occupiedRunnerSlots(left.candidate) - occupiedRunnerSlots(right.candidate) ||
       cyclicDistance(left.runner.id) - cyclicDistance(right.runner.id) ||
       left.runner.id.localeCompare(right.runner.id),
   )[0]!;
@@ -241,6 +242,7 @@ function bestCandidate(
     )
     .sort(
       (left, right) =>
+        occupiedRunnerSlots(left.candidate) - occupiedRunnerSlots(right.candidate) ||
         right.evaluation.score - left.evaluation.score ||
         left.runner.id.localeCompare(right.runner.id),
     )
@@ -279,46 +281,78 @@ function schedulingScore(
   );
 }
 
-/** Reserve each active or newly planned JVM's full execution limit, even before metrics catch up.
- * Existing RSS remains in measured usage: the conservative margin also protects non-test processes.
+/** Commit every occupied JVM's full limit, discounting only execution memory already
+ * included in the same resource sample. Missing telemetry keeps the conservative budget.
  */
 function availableMemorySlots(
   candidate: SchedulingCandidate,
   thresholds: SchedulingThresholds,
 ): number {
+  const budget = runnerMemoryBudget(candidate, thresholds);
+  if (!budget) return Number.POSITIVE_INFINITY;
+  return Math.max(
+    0,
+    Math.floor(budget.availableForNewBytes / DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes),
+  );
+}
+
+function runnerMemoryBudget(candidate: SchedulingCandidate, thresholds: SchedulingThresholds) {
   const metrics = candidate.runner.resourceSnapshot;
-  if (metrics?.memoryTotalBytes === undefined && metrics?.memoryAvailableBytes === undefined) {
-    return Number.POSITIVE_INFINITY;
-  }
+  if (metrics?.memoryTotalBytes === undefined && metrics?.memoryAvailableBytes === undefined)
+    return null;
   const total = metrics?.memoryTotalBytes;
   const available = metrics?.memoryAvailableBytes;
-  if (
-    total === undefined ||
-    available === undefined ||
-    !Number.isSafeInteger(total) ||
-    total <= 0 ||
-    !Number.isSafeInteger(available) ||
-    available < 0 ||
-    available > total
-  )
-    return 0;
-  const systemReserveBytes = total * (1 - thresholds.maximumMemoryUtilizationPercent / 100);
-  const slots = Math.floor(
-    Math.max(0, available - systemReserveBytes) / DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes,
+  const committedBytes =
+    occupiedRunnerSlots(candidate) * DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes;
+  const reportedCredit = metrics?.memoryExecutionCreditBytes ?? 0;
+  const valid =
+    total !== undefined &&
+    available !== undefined &&
+    Number.isSafeInteger(total) &&
+    total > 0 &&
+    Number.isSafeInteger(available) &&
+    available >= 0 &&
+    available <= total &&
+    Number.isSafeInteger(reportedCredit) &&
+    reportedCredit >= 0 &&
+    reportedCredit <= total - available;
+  if (!valid)
+    return {
+      systemReserveBytes: 0,
+      executionCreditBytes: 0,
+      reservedGrowthBytes: committedBytes,
+      availableForNewBytes: 0,
+    };
+  const systemReserveBytes = Math.ceil(
+    total * (1 - thresholds.maximumMemoryUtilizationPercent / 100),
   );
-  return Math.max(0, slots - occupiedRunnerSlots(candidate));
+  // A late heartbeat may still include already completed processes; never credit more
+  // than the entire current commitment, nor treat the credit as extra physical RAM.
+  const executionCreditBytes = Math.min(
+    reportedCredit,
+    committedBytes,
+    liveOccupiedRunnerSlots(candidate) * DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes,
+  );
+  const reservedGrowthBytes = committedBytes - executionCreditBytes;
+  return {
+    systemReserveBytes,
+    executionCreditBytes,
+    reservedGrowthBytes,
+    availableForNewBytes: Math.max(0, available - systemReserveBytes - reservedGrowthBytes),
+  };
 }
 
 function occupiedRunnerSlots(candidate: SchedulingCandidate): number {
+  // Persisted assignments include work not yet started by the Agent.
+  return Math.max(liveOccupiedRunnerSlots(candidate), candidate.reservedSlots);
+}
+
+function liveOccupiedRunnerSlots(candidate: SchedulingCandidate): number {
   const runner = candidate.runner;
-  const liveBusySlots =
-    candidate.liveAvailableSlots === undefined
-      ? runner.busySlots
-      : runner.maxConcurrency -
+  return candidate.liveAvailableSlots === undefined
+    ? runner.busySlots
+    : runner.maxConcurrency -
         Math.min(runner.maxConcurrency, Math.max(0, candidate.liveAvailableSlots));
-  // 数据库中已预留但尚未被 Agent 启动的 assignment 也必须占槽，实时提示不能
-  // 越过权威预留；它只用于消除已完成任务仍残留在心跳 busySlots 中的假占用。
-  return Math.max(liveBusySlots, candidate.reservedSlots);
 }
 
 /** Read-only explanation of the same admission budget used by the scheduler. */
@@ -328,15 +362,14 @@ export function explainRunnerSchedulingCapacity(
 ) {
   const occupiedSlots = occupiedRunnerSlots(candidate);
   const memorySlots = availableMemorySlots(candidate, thresholds);
-  const total = candidate.runner.resourceSnapshot?.memoryTotalBytes;
+  const budget = runnerMemoryBudget(candidate, thresholds);
   return {
     concurrencyAvailableSlots: Math.max(0, candidate.runner.maxConcurrency - occupiedSlots),
     memoryAvailableSlots: Number.isFinite(memorySlots) ? memorySlots : null,
     memoryPerAttemptBytes: DEFAULT_EXECUTION_RESOURCE_LIMITS.memoryBytes,
-    systemMemoryReserveBytes:
-      total === undefined
-        ? null
-        : Math.max(0, Math.ceil(total * (1 - thresholds.maximumMemoryUtilizationPercent / 100))),
+    systemMemoryReserveBytes: budget?.systemReserveBytes ?? null,
+    memoryExecutionCreditBytes: budget?.executionCreditBytes ?? null,
+    memoryReservedGrowthBytes: budget?.reservedGrowthBytes ?? null,
   };
 }
 

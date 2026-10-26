@@ -45,6 +45,7 @@ type attemptSupervisor struct {
 	waitGroup     sync.WaitGroup
 	mutex         sync.Mutex
 	cancellations map[string]context.CancelFunc
+	memoryScopes  map[string]struct{}
 	claimCancel   context.CancelFunc
 	claimWake     chan struct{}
 	runExecution  func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
@@ -114,6 +115,16 @@ func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
 
 func (supervisor *attemptSupervisor) BusySlots() int {
 	return int(supervisor.busy.Load())
+}
+
+func (supervisor *attemptSupervisor) MemoryScopeNames() []string {
+	supervisor.mutex.Lock()
+	defer supervisor.mutex.Unlock()
+	names := make([]string, 0, len(supervisor.memoryScopes))
+	for name := range supervisor.memoryScopes {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (supervisor *attemptSupervisor) CachedBatchIDs() []string {
@@ -468,6 +479,12 @@ func (supervisor *attemptSupervisor) runTestNG(
 		streamedWatermarks = <-liveLogWatermarks
 	}
 	defer stopLiveLogs()
+	memoryScopeName := ""
+	defer func() {
+		supervisor.mutex.Lock()
+		delete(supervisor.memoryScopes, memoryScopeName)
+		supervisor.mutex.Unlock()
+	}()
 	result, runErr := supervisor.runExecution(ctx, specification, executor.RunOptions{
 		DataDirectory: supervisor.configuration.DataDirectory,
 		KeepWorkspace: true,
@@ -488,6 +505,13 @@ func (supervisor *attemptSupervisor) runTestNG(
 		},
 		LogSink: processLogs.Write,
 		PrepareWorkspace: func(workspace string) error {
+			memoryScopeName = executor.ResourceScopeName(workspace)
+			supervisor.mutex.Lock()
+			if supervisor.memoryScopes == nil {
+				supervisor.memoryScopes = make(map[string]struct{})
+			}
+			supervisor.memoryScopes[memoryScopeName] = struct{}{}
+			supervisor.mutex.Unlock()
 			if executionSpec.BatchID != "" {
 				// 批次共享：同批次输入只下载解压一次，attempt 工作目录通过
 				// 文件级硬链接与受控 JDK 目录链接引用共享目录内容。

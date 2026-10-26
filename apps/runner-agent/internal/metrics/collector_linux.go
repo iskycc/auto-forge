@@ -15,17 +15,19 @@ import (
 )
 
 type Snapshot struct {
-	CPUUtilizationPercent    float64 `json:"cpuUtilizationPercent"`
-	MemoryUtilizationPercent float64 `json:"memoryUtilizationPercent"`
-	MemoryTotalBytes         uint64  `json:"memoryTotalBytes"`
-	MemoryAvailableBytes     uint64  `json:"memoryAvailableBytes"`
-	LoadAverage1m            float64 `json:"loadAverage1m"`
-	LogicalCPUCount          int     `json:"logicalCpuCount"`
-	ObservedAt               string  `json:"observedAt"`
+	CPUUtilizationPercent      float64 `json:"cpuUtilizationPercent"`
+	MemoryUtilizationPercent   float64 `json:"memoryUtilizationPercent"`
+	MemoryTotalBytes           uint64  `json:"memoryTotalBytes"`
+	MemoryExecutionCreditBytes uint64  `json:"memoryExecutionCreditBytes"`
+	MemoryAvailableBytes       uint64  `json:"memoryAvailableBytes"`
+	LoadAverage1m              float64 `json:"loadAverage1m"`
+	LogicalCPUCount            int     `json:"logicalCpuCount"`
+	ObservedAt                 string  `json:"observedAt"`
 }
 
 type Collector struct {
 	executionCgroupRoot string
+	executionScopeNames func() []string
 	mu                  sync.Mutex
 	previousCPU         cpuTimes
 	hasPrevious         bool
@@ -36,14 +38,18 @@ type cpuTimes struct {
 	idle  uint64
 }
 
-func NewCollector(executionCgroupRoot string) *Collector {
-	return &Collector{executionCgroupRoot: executionCgroupRoot}
+func NewCollector(executionCgroupRoot string, executionScopeNames func() []string) *Collector {
+	return &Collector{executionCgroupRoot: executionCgroupRoot, executionScopeNames: executionScopeNames}
 }
 
 func (collector *Collector) Collect() (Snapshot, error) {
 	cpuContent, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read CPU statistics: %w", err)
+	}
+	execution, err := collectExecutionMemory(collector.executionCgroupRoot, collector.executionScopeNames(), os.ReadFile)
+	if err != nil {
+		return Snapshot{}, err
 	}
 	memoryContent, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -62,23 +68,29 @@ func (collector *Collector) Collect() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	// Read the controlled scopes on both sides of the host sample. Using the
+	// smaller observation avoids crediting a burst or a process that just exited.
+	after, err := collectExecutionMemory(collector.executionCgroupRoot, collector.executionScopeNames(), os.ReadFile)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	execution = intersectExecutionMemory(execution, after)
+	memory.executionCredit = min(execution.anonymousBytes, memory.total-memory.available)
 	membership, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read memory cgroup membership: %w", err)
 	}
-	memory, err = effectiveMemoryCapacity(memory, string(membership), "/sys/fs/cgroup", os.ReadFile)
-	if err != nil {
-		return Snapshot{}, err
-	}
+	memberships := []string{string(membership)}
 	if collector.executionCgroupRoot != "" {
 		relative, pathErr := filepath.Rel("/sys/fs/cgroup", collector.executionCgroupRoot)
 		if pathErr != nil || (relative != "." && !filepath.IsLocal(relative)) {
 			return Snapshot{}, errors.New("execution memory cgroup escapes /sys/fs/cgroup")
 		}
-		memory, err = effectiveMemoryCapacity(memory, "0::/"+relative, "/sys/fs/cgroup", os.ReadFile)
-		if err != nil {
-			return Snapshot{}, err
-		}
+		memberships = append(memberships, "0::/"+relative)
+	}
+	memory, err = effectiveRunnerMemoryCapacity(memory, memberships, "/sys/fs/cgroup", execution, os.ReadFile)
+	if err != nil {
+		return Snapshot{}, err
 	}
 	loadAverage, err := parseLoadAverage(string(loadContent))
 	if err != nil {
@@ -100,13 +112,14 @@ func (collector *Collector) Collect() (Snapshot, error) {
 	}
 
 	return Snapshot{
-		CPUUtilizationPercent:    roundedPercent(cpuUtilization),
-		MemoryUtilizationPercent: roundedPercent(memory.utilizationPercent()),
-		MemoryTotalBytes:         memory.total,
-		MemoryAvailableBytes:     memory.available,
-		LoadAverage1m:            loadAverage,
-		LogicalCPUCount:          runtime.NumCPU(),
-		ObservedAt:               time.Now().UTC().Format(time.RFC3339Nano),
+		CPUUtilizationPercent:      roundedPercent(cpuUtilization),
+		MemoryUtilizationPercent:   roundedPercent(memory.utilizationPercent()),
+		MemoryTotalBytes:           memory.total,
+		MemoryAvailableBytes:       memory.available,
+		MemoryExecutionCreditBytes: memory.executionCredit,
+		LoadAverage1m:              loadAverage,
+		LogicalCPUCount:            runtime.NumCPU(),
+		ObservedAt:                 time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
 }
 

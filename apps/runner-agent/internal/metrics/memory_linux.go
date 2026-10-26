@@ -14,8 +14,9 @@ import (
 const maximumJSONInteger = uint64(1<<53 - 1)
 
 type memoryCapacity struct {
-	total     uint64
-	available uint64
+	total           uint64
+	available       uint64
+	executionCredit uint64
 }
 
 func (capacity memoryCapacity) utilizationPercent() float64 {
@@ -62,17 +63,32 @@ type memoryCgroupHierarchy struct {
 
 // Account for all ancestors, since a service/container limit can be smaller than
 // the physical host. No process scan or allocation probe is needed on a heartbeat.
-func effectiveMemoryCapacity(host memoryCapacity, membership, cgroupRoot string, readFile func(string) ([]byte, error)) (memoryCapacity, error) {
+func effectiveMemoryCapacity(host memoryCapacity, membership, cgroupRoot string, execution executionMemory, readFile func(string) ([]byte, error)) (memoryCapacity, error) {
+	return effectiveRunnerMemoryCapacity(host, []string{membership}, cgroupRoot, execution, readFile)
+}
+
+func effectiveRunnerMemoryCapacity(host memoryCapacity, memberships []string, cgroupRoot string, execution executionMemory, readFile func(string) ([]byte, error)) (memoryCapacity, error) {
+	capacity := host
+	for _, membership := range memberships {
+		var err error
+		capacity, err = constrainMemoryHierarchy(capacity, host.total, membership, cgroupRoot, execution, readFile)
+		if err != nil {
+			return memoryCapacity{}, err
+		}
+	}
+	return capacity, nil
+}
+
+func constrainMemoryHierarchy(capacity memoryCapacity, hostTotal uint64, membership, cgroupRoot string, execution executionMemory, readFile func(string) ([]byte, error)) (memoryCapacity, error) {
 	hierarchy, err := memoryHierarchy(membership, cgroupRoot)
 	if err != nil {
 		return memoryCapacity{}, err
 	}
 	if hierarchy.path == "" {
-		return host, nil
+		return capacity, nil
 	}
-	capacity := host
 	for directory := hierarchy.path; ; directory = filepath.Dir(directory) {
-		capacity, err = constrainCgroupMemory(capacity, host.total, hierarchy, directory, readFile)
+		capacity, err = constrainCgroupMemory(capacity, hostTotal, hierarchy, directory, execution, readFile)
 		if err != nil {
 			return memoryCapacity{}, err
 		}
@@ -123,7 +139,7 @@ func memoryHierarchy(membership, cgroupRoot string) (memoryCgroupHierarchy, erro
 	return hierarchy, nil
 }
 
-func constrainCgroupMemory(capacity memoryCapacity, hostTotal uint64, hierarchy memoryCgroupHierarchy, directory string, readFile func(string) ([]byte, error)) (memoryCapacity, error) {
+func constrainCgroupMemory(capacity memoryCapacity, hostTotal uint64, hierarchy memoryCgroupHierarchy, directory string, execution executionMemory, readFile func(string) ([]byte, error)) (memoryCapacity, error) {
 	content, err := readFile(filepath.Join(directory, hierarchy.limitFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return capacity, nil
@@ -150,9 +166,43 @@ func constrainCgroupMemory(capacity memoryCapacity, hostTotal uint64, hierarchy 
 	if err != nil {
 		return memoryCapacity{}, fmt.Errorf("parse memory cgroup usage %s: %w", directory, err)
 	}
-	available := uint64(0)
-	if usage < limit {
-		available = limit - usage
+	// Only inactive file pages are discounted. Cached/shmem, dirty pages and
+	// anonymous memory must never be added wholesale to cgroup availability.
+	reclaimable, err := inactiveFileBytes(directory, hierarchy.limitFile == "memory.max", readFile)
+	if err != nil {
+		return memoryCapacity{}, err
 	}
-	return memoryCapacity{total: min(capacity.total, limit), available: min(capacity.available, available)}, nil
+	workingUsage := usage - min(usage, reclaimable)
+	available := limit - min(limit, workingUsage)
+	credit := uint64(0)
+	if hierarchy.limitFile == "memory.max" && containsCgroup(directory, execution.root) {
+		credit = min(execution.anonymousBytes, workingUsage)
+	}
+	adjusted := min(capacity.available+capacity.executionCredit, limit, available+credit)
+	available = min(capacity.available, available)
+	return memoryCapacity{total: min(capacity.total, limit), available: available, executionCredit: adjusted - available}, nil
+}
+
+func inactiveFileBytes(directory string, unified bool, readFile func(string) ([]byte, error)) (uint64, error) {
+	content, err := readFile(filepath.Join(directory, "memory.stat"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read cgroup reclaimable memory %s: %w", directory, err)
+	}
+	keys := []string{"inactive_file", "file_dirty", "file_writeback"}
+	if !unified {
+		keys = []string{"total_inactive_file", "total_dirty", "total_writeback"}
+	}
+	values := make([]uint64, len(keys))
+	for index, key := range keys {
+		values[index], err = memoryStatValue(string(content), key)
+		if err != nil {
+			return 0, fmt.Errorf("parse cgroup reclaimable memory %s: %w", directory, err)
+		}
+	}
+	// Dirty/writeback pages still require I/O; do not promise them to new JVMs.
+	clean := values[0] - min(values[0], values[1])
+	return clean - min(clean, values[2]), nil
 }

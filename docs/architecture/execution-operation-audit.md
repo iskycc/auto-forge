@@ -398,3 +398,55 @@ git diff --check
 本版整理并发布按清单移除 DDT 任务成员、独立任务持续补槽修复与按需并发诊断，复用前述已完成的双数据库、生产构建、浏览器及视觉验证。发布前核对远端主分支与版本、整理变更日志，再执行有界的格式、许可、矩阵和提交差异检查。
 
 按维护者要求走最快发布路径：仅触发 Release，保留双架构镜像、内置 Agent／Adapter 校验、SBOM、清单、签名及完整资产发布。其他五条 workflow 在推送前临时暂停，发布结束后恢复原状态；未运行的流程不记为通过。发布从指向已检查提交的 `v1.20.16` tag 构建，完成后核对资产集合、签名、元数据校验和、源码 revision 和工作流状态。发布过程与最终校验证据保存于 `/var/tmp/autoforge-release-1.20.16/`。
+
+## 2026-10-25：内存增长预留与节点均分
+
+现场并发诊断显示节点有效总量 31.4 GiB、可用 13.26 GiB、系统保留约 3.14 GiB、每例 2 GiB，却无法继续派发。旧算法在有效可用量之外，又为所有在途用例重复预留完整上限；已有执行的真实占用越大，额外保守空间越多。
+
+新规则保留系统预算和每例上限，只抵扣同一心跳采样中已经计入的受控执行匿名内存，继续预留到各自上限的增长空间。抵扣还受实时／心跳忙碌槽位限制，实时 claim 确认旧执行结束后，不把旧抵扣借给未启动的 assignment。数据库原子预留复用相同领域规则，跨任务共享预算，指标过期或预算不足只停止新增，不终止已有用例。
+
+Agent 只读取当前 supervisor 跟踪的最多 64 个执行组，采样前后按同组取较小匿名占用；孤儿执行组不授予抵扣。宿主机继续使用 `MemAvailable`，各层 cgroup 仅回收干净非活跃文件页，排除脏页和写回页；不扫描全机进程，不把整份 Cached 或共享内存当成可借用预算。Agent 及执行目录的祖先限制逐级求交。字段、公式、迁移与限制详见 [Runner 内存准入](./runner-agent.md#内存准入与进程终止诊断2026-10-24)。
+
+首次分配与重试均优先补齐健康节点较少的共享在途占用，同占用再比较资源评分或重试轮换；基础设施排除、能力、资源阈值、任务／项目限额继续优先。真实 SQLite/PostgreSQL 仓储的八节点测试中，普通任务 30、DDT 任务 40、项目额度 128 时，最终每节点 8 或 9 个预留；没有启动 70 个 JVM。
+
+验证结果：
+
+- 最终八个 Vitest 文件 182 项通过，其中双数据库集成 76 项，包含并发预留、冷热指标、任务间共享、完成补位、分页诊断、心跳落库、上一版迁移升级及失败 DDL 回滚；SQLite 和 PostgreSQL 均实际执行。
+- `go test ./...`、`go vet ./...`、格式检查通过，执行生命周期测试验证当前 workspace 的组注册及完成后的清理，匿名占用单元测试排除未跟踪的遗留组、非执行内存、重复组、进出采样窗口及不包含执行目录的限制。
+- 在一次性 systemd 委派目录中运行真实进程，子组硬限 64 MiB、实际触碰 16 MiB；Agent 在父组 4 GiB 限制内识别约 17 MiB 的已计入匿名内存，进程结束后抵扣归零，`oom_kill=0`。测试不探测宿主机 OOM，不等同于真实业务 JVM 压测。
+- Linux amd64／arm64 Agent 静态构建通过现有脚本的 ELF、架构、无解释器／动态库依赖及 CGO 校验；未新增依赖、外部服务或运行时下载。
+- 数据库、应用、领域、Web 服务／工作线程、测试类型和 Web／独立 worker 构建通过；18 行 E2E 覆盖矩阵、受影响文件格式／Lint 与差异检查通过。
+- 最终生产 Lite Playwright 两项通过：诊断实际读取并展示新内存预算、权限／按需读取／错误恢复／节点分页；原即时补槽用例继续覆盖满载、实时领取、失败重试、重复完成、日志和终态／取消流程。第一次运行因更新测试时误改旧满载场景的断言失败，纠正后两项从新数据目录完整重跑通过。
+- 实际查看最终 11 张截图，覆盖 1024×768 与 1536×960 的深浅色概览／节点表格、页面入口及错误态；未发现新增对齐、换行或控件变形，内容沿既有弹窗滚动边界显示，页脚操作保持可见。
+
+实际命令（重任务串行、限制 1 CPU／4 GiB）：
+
+```sh
+# 集成测试使用一次性 AUTOFORGE_TEST_POSTGRES_URL，不连接生产数据库。
+pnpm exec vitest run packages/domain/test/scheduler.test.ts packages/contracts/test/management.test.ts packages/db/test/runner-resource-samples.integration.test.ts packages/db/test/runner-memory-migration.integration.test.ts packages/db/test/scheduling-refill.integration.test.ts packages/application/test/read-concurrency-diagnostics.test.ts packages/application/test/manage-runners.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1
+go -C apps/runner-agent test ./...
+go -C apps/runner-agent vet ./...
+# 单独的一次性委派 unit 中运行编译后的真实内存采集测试。
+AUTOFORGE_TEST_LIVE_MEMORY=1 ./metrics.test -test.run='^TestLiveExecutionMemoryCredit$' -test.v -test.timeout=20s
+pnpm --filter @autoforge/db typecheck
+pnpm --filter @autoforge/application typecheck
+pnpm --filter @autoforge/domain typecheck
+pnpm exec tsc --noEmit -p tsconfig.tests.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.server.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.worker.json
+pnpm --filter @autoforge/web build
+pnpm --filter @autoforge/worker build
+pnpm exec playwright test tests/e2e/scheduling-refill.spec.ts --workers=1
+pnpm test:e2e:matrix
+git diff --check
+```
+
+完整日志、脚本、双架构校验物与截图在 `/var/tmp/autoforge-memory-admission-20261025/`。新增 SQLite 0083／PostgreSQL 0081 可空列，旧 Agent 缺失抵扣时清空旧值并继续保守计算；没有绝对容量的更旧 Agent 保留既有百分比行为。生效需同步更新平台、Full worker 和独立节点 Agent，并启用现有 cgroup v2 配置。未运行 Full 整套部署、真实业务 Java 批跑或完整离线镜像验收，也未接入用户局域网；外部进程突发分配、运维收紧限额或用例自身突破上限仍可能 OOM，不能承诺任意现场绝不中断。
+
+## 2026-10-26：v1.20.17 快速发布
+
+本版发布内存增长预留、可回收缓存采集、节点均分和内存诊断展示，复用上一节已完成的 182 项定向测试、Go／真实 cgroup／双架构静态构建，以及两项生产 Lite Playwright 和 11 张视觉截图证据；不重复启动高负载验收。发布前检查远端主分支与已有版本、变更日志、格式、许可证、矩阵和提交差异。
+
+按维护者要求仅运行 Release，保留双架构镜像、内置 Agent／Adapter 校验、SBOM、清单、签名及完整资产发布；其他五条 workflow 在推送前暂停，发布流程结束后恢复原状态。正式资产从指向本次提交的不可变 `v1.20.17` tag 构建，发布后核对资产集合、签名、元数据校验和、源码 revision 和工作流恢复状态，证据保存于 `/var/tmp/autoforge-release-1.20.17/`。
+
+升级新增 SQLite 0083／PostgreSQL 0081 可空抵扣列，应按现有运维流程备份后更新平台及 Full worker，并同步更新独立执行节点 Agent、启用 cgroup v2。旧 Agent 继续兼容并采用保守预算；本地验证不等于用户现场 70 个 JVM 的业务压测，也不承诺外部进程抢占等边界下绝无 OOM。

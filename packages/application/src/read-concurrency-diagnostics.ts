@@ -24,7 +24,7 @@ const blockMessages: Record<string, string> = {
   capacity_exhausted: "节点并发槽位已占满",
   cpu_limit_exceeded: "CPU 使用率超过调度阈值",
   memory_limit_exceeded: "内存使用率超过调度阈值",
-  memory_reservation_exhausted: "内存保守预留预算不足",
+  memory_reservation_exhausted: "内存增长预留预算不足",
   load_limit_exceeded: "每 CPU 负载超过调度阈值",
 };
 

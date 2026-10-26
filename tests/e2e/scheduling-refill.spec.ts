@@ -79,7 +79,7 @@ test("execution concurrency diagnostics explains shared capacity without backgro
   const dialog = page.getByRole("dialog", { name: "并发诊断", exact: true });
   await expect(dialog.getByText("本次采样结论", { exact: true })).toBeVisible();
   await expect(dialog.getByText(/1 个用例已分配、等待 Agent 领取/)).toBeVisible();
-  await expect(dialog.getByText(/内存保守预留预算不足，详见下表/)).toBeVisible();
+  await expect(dialog.getByText(/内存增长预留预算不足，详见下表/)).toBeVisible();
   const actual = await page.request.get(endpoint);
   expect(actual.status()).toBe(200);
   expect(await actual.json()).toMatchObject({
@@ -88,7 +88,14 @@ test("execution concurrency diagnostics explains shared capacity without backgro
     assignedRuns: 1,
     readyRuns: 3,
     projectActiveRuns: 4,
-    availableNodeSlots: 0,
+    availableNodeSlots: 1,
+    nodes: expect.arrayContaining([
+      expect.objectContaining({
+        memoryExecutionCreditBytes: 6 * 1024 ** 3,
+        memoryReservedGrowthBytes: 2 * 1024 ** 3,
+        memoryAvailableSlots: 1,
+      }),
+    ]),
   });
   for (const theme of ["light", "dark"] as const) {
     // Reload the saved preference so the server document and dialog use the same theme.
@@ -555,6 +562,13 @@ test("completion immediately refills free runner slots without waiting for the w
     assignedRuns: 0,
     readyRuns: 3,
     availableNodeSlots: 0,
+    nodes: expect.arrayContaining([
+      expect.objectContaining({
+        memoryExecutionCreditBytes: null,
+        memoryReservedGrowthBytes: null,
+        memoryAvailableSlots: null,
+      }),
+    ]),
   });
   // 没有空闲槽时领不到新任务。
   await expectNoAssignment(page, identity);

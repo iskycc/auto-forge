@@ -81,6 +81,11 @@ export function insertConcurrencyDiagnosticsFixture(
         Math.floor(32 * 1024 ** 3 * 0.3),
         index === 1 ? new Date(Date.now() - 120_000).toISOString() : now,
       );
+      if (index === 0)
+        db.prepare("UPDATE runners SET memory_execution_credit_bytes=? WHERE id=?").run(
+          6 * 1024 ** 3,
+          runnerId,
+        );
       db.prepare("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)").run(
         batchId,
         runnerId,

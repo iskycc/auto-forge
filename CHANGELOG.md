@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+## 1.20.17 - 2026-10-26
+
+### Changed
+
+- 内存准入扣除同一采样中已经计入的执行匿名内存，仅补足其到 2 GiB 上限的增长空间；未启动执行仍完整预留，保留系统预算和双数据库跨任务原子校验。
+- cgroup 可用内存计入干净非活跃文件缓存，排除脏页／写回页，逐级核验宿主机、Agent 与执行子组约束；首次派发和重试优先补齐共享占用较少的健康节点。
+- 并发诊断增加执行抵扣和增长预留，系统预算改称“系统保留”，避免与操作系统可用内存混淆。
+
+### Upgrade
+
+- SQLite 0083、PostgreSQL 0081 新增可空执行内存抵扣列；需升级主平台、Full worker 和独立执行节点 Agent，使用 cgroup v2 才启用可靠抵扣。旧节点继续兼容并采用保守预留。
+
+### Validation
+
+- 最终 182 项定向测试通过，含真实 SQLite/PostgreSQL 集成；Go 测试／vet、真实受限 cgroup 内存采集、双架构 Agent 静态构建、受影响类型与 Web／worker 构建通过。
+- 两项生产 Lite Playwright 通过，实际审查 1024×768、1536×960 深浅色、节点预算、入口与错误态共 11 张截图，未发现新增变形。验证范围与限制见 `docs/architecture/execution-operation-audit.md`。
+- 按维护者要求快速发布，仅触发 Release 的双架构构建、资源校验、SBOM、签名及发布流程，其他五条 workflow 临时暂停、结束后恢复，不记为通过。
+
 ## 1.20.16 - 2026-10-25
 
 ### Added

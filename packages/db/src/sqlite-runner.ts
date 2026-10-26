@@ -147,6 +147,8 @@ export class SqliteRunnerRepository implements RunnerRepository {
                 memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
                 memoryTotalBytes: input.resourceSnapshot.memoryTotalBytes ?? null,
                 memoryAvailableBytes: input.resourceSnapshot.memoryAvailableBytes ?? null,
+                memoryExecutionCreditBytes:
+                  input.resourceSnapshot.memoryExecutionCreditBytes ?? null,
                 loadAverage1m: input.resourceSnapshot.loadAverage1m,
                 logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
                 metricsObservedAt: input.resourceSnapshot.observedAt,

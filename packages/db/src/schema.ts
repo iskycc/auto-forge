@@ -488,6 +488,7 @@ export const runners = sqliteTable(
     memoryUtilizationPercent: real("memory_utilization_percent"),
     memoryTotalBytes: integer("memory_total_bytes"),
     memoryAvailableBytes: integer("memory_available_bytes"),
+    memoryExecutionCreditBytes: integer("memory_execution_credit_bytes"),
     loadAverage1m: real("load_average_1m"),
     logicalCpuCount: integer("logical_cpu_count"),
     metricsObservedAt: text("metrics_observed_at"),
