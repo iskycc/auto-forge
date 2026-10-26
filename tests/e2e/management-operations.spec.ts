@@ -65,7 +65,10 @@ for (const view of ["task", "single"] as const)
     expect(first).toHaveLength(10);
     await expect(card).toContainText(view === "task" ? "任务历史" : "单用例历史");
     await expect(card).not.toContainText(view === "task" ? "单用例历史" : "任务历史");
-    await pagination.getByRole("link", { name: "下一页", exact: true }).click();
+    await Promise.all([
+      page.waitForURL((url) => url.searchParams.get("cursorPage") === "2"),
+      pagination.getByRole("link", { name: "下一页", exact: true }).click(),
+    ]);
     await expect(pagination).toContainText("第 2 页 · 本页 10 条");
     await expect(rows).toHaveCount(10);
     const second = await keys();
@@ -101,15 +104,24 @@ for (const view of ["task", "single"] as const)
         await expectUiIntegrity(page);
       }
     }
-    await pagination.getByRole("link", { name: "下一页", exact: true }).click();
+    await Promise.all([
+      page.waitForURL((url) => url.searchParams.get("cursorPage") === "3"),
+      pagination.getByRole("link", { name: "下一页", exact: true }).click(),
+    ]);
     await expect(pagination).toContainText("第 3 页 · 本页 3 条");
     await expect(rows).toHaveCount(3);
     expect(new Set([...first, ...second, ...(await keys())]).size).toBe(23);
     await expect(pagination.getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
-    await pagination.getByRole("link", { name: "上一页", exact: true }).click();
+    await Promise.all([
+      page.waitForURL((url) => url.searchParams.get("cursorPage") === "2"),
+      pagination.getByRole("link", { name: "上一页", exact: true }).click(),
+    ]);
     await expect(pagination).toContainText("第 2 页 · 本页 10 条");
     expect(await keys()).toEqual(second);
-    await pagination.getByRole("link", { name: "第一页", exact: true }).click();
+    await Promise.all([
+      page.waitForURL((url) => !url.searchParams.has("cursorPage")),
+      pagination.getByRole("link", { name: "第一页", exact: true }).click(),
+    ]);
     await expect(pagination).toContainText("第 1 页 · 本页 10 条");
     expect(await keys()).toEqual(first);
     const filter = page.locator(".run-history-filter");

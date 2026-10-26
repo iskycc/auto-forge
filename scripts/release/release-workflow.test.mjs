@@ -161,12 +161,16 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /needs\.jenkins-plugins\.result/);
 });
 
-test("reserves bounded CI headroom for Lite and Full asset lifecycle acceptance", async () => {
+test("reserves bounded CI headroom for longer browser acceptance partitions", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
   const defaultDeadline = workflow.match(
     /timeout-minutes: \$\{\{ matrix\.timeout_minutes \|\| (\d+) \}\}/,
   );
-  for (const phaseName of ["Full · asset lifecycle", "Network-blocked Lite · assets"]) {
+  for (const phaseName of [
+    "Full · asset lifecycle",
+    "Network-blocked Lite · assets",
+    "Network-blocked Lite · operations and deployment",
+  ]) {
     const assetPhase = workflow.match(
       new RegExp(`- name: ${phaseName}\\n([\\s\\S]*?)(?=\\n\\s+- name:|$)`),
     );
