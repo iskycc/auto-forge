@@ -7,6 +7,8 @@ const anonymousEndpoints = new Set([
   "GET /health/ready",
   "GET /time",
   "GET /public/statistics",
+  "GET /public/case-suites/[suiteId]",
+  "GET /integrations/jenkins/[plugin]/download",
   "GET /auth/setup-status",
   "POST /auth/bootstrap",
   "POST /auth/login",
