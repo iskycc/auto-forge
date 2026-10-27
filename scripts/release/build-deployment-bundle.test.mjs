@@ -75,6 +75,7 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
     );
     const packagedFiles = await readdir(packageDirectory, { recursive: true });
     await assertFiveHostTemplates(packageDirectory, packagedFiles);
+    await assertBindMountTemplates(packageDirectory, packagedFiles);
     for (const template of [
       "distributed/platform/docker-compose.yml",
       "distributed/infrastructure/docker-compose.yml",
@@ -116,6 +117,29 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
     await rm(extractedDirectory, { recursive: true, force: true });
   }
 });
+
+async function assertBindMountTemplates(packageDirectory, packagedFiles) {
+  for (const component of ["postgres", "redis", "nats", "minio", "platform", "nginx"]) {
+    for (const filename of ["docker-compose.yml", ".env.example"]) {
+      const relativePath = `full-bind/${component}/${filename}`;
+      assert.ok(packagedFiles.includes(relativePath), `missing bind deployment: ${relativePath}`);
+    }
+    const compose = await readFile(
+      resolve(packageDirectory, `full-bind/${component}/docker-compose.yml`),
+      "utf8",
+    );
+    assert.doesNotMatch(compose, /^volumes:/m, "bind templates must not declare named volumes");
+    assert.match(compose, /type: bind/);
+    assert.match(compose, /create_host_path: false/);
+  }
+  assert.match(
+    await readFile(resolve(packageDirectory, "full-bind/platform/.env.example"), "utf8"),
+    /autoforge\/backend:1\.2\.3-amd64/,
+  );
+  const instructions = await readFile(resolve(packageDirectory, "full-bind/README.md"), "utf8");
+  assert.match(instructions, /\]\(\.\.\/docs\/operations\/backup-recovery\.md#full-多机器部署\)/);
+  assert.ok(packagedFiles.includes("full-bind/nginx/nginx.conf"));
+}
 
 async function assertFiveHostTemplates(packageDirectory, packagedFiles) {
   for (const host of ["platform-1", "platform-2", "platform-3", "nginx", "infrastructure"]) {

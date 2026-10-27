@@ -6,6 +6,10 @@ and known limitations.
 
 ## Unreleased
 
+### Added
+
+- 新增 Full 分主机本地目录绑定 Compose 套件：PostgreSQL、Redis、NATS、MinIO、平台与 Nginx 各自独立启动，持久数据使用宿主机 bind mount，缺失源目录时拒绝启动；包含权限、认证、离线镜像、初始化、旧卷迁移和分机备份说明，并随部署包交付。
+
 ## 1.20.22 - 2026-10-27
 
 ### Fixed

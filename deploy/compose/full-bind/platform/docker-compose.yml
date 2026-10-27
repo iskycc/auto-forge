@@ -1,0 +1,66 @@
+name: autoforge-platform
+
+services:
+  web:
+    image: ${AUTOFORGE_BACKEND_IMAGE:?set a verified loaded release image}
+    pull_policy: never
+    cpus: ${AUTOFORGE_WEB_CPUS:-0}
+    mem_limit: ${AUTOFORGE_WEB_MEMORY_LIMIT:-0}
+    cpu_shares: 2048
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${AUTOFORGE_NODE_BIND:?set this platform host private IP}:${AUTOFORGE_HTTP_PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: ${AUTOFORGE_PLATFORM_DATA_DIR:?set an absolute platform data directory}
+        target: /var/lib/autoforge
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    stop_grace_period: 45s
+
+  worker:
+    image: ${AUTOFORGE_BACKEND_IMAGE:?set a verified loaded release image}
+    pull_policy: never
+    cpus: ${AUTOFORGE_WORKER_CPUS:-0}
+    mem_limit: ${AUTOFORGE_WORKER_MEMORY_LIMIT:-0}
+    cpu_shares: 1024
+    command: ["node", "apps/worker/dist/worker.mjs", "--data-dir=/var/lib/autoforge"]
+    profiles: ["worker"]
+    init: true
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ${AUTOFORGE_PLATFORM_DATA_DIR:?set an absolute platform data directory}
+        target: /var/lib/autoforge
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    stop_grace_period: 45s

@@ -40,6 +40,13 @@ for host in platform-1 platform-2 platform-3 nginx infrastructure; do
     config --quiet
 done
 
+for component in postgres redis nats minio platform nginx; do
+  docker compose \
+    --env-file "deploy/compose/full-bind/${component}/.env.example" \
+    --file "deploy/compose/full-bind/${component}/docker-compose.yml" \
+    config --quiet
+done
+
 mkdir -p "${temporary_directory}/first" "${temporary_directory}/second"
 SOURCE_DATE_EPOCH=1786233600 \
   bash scripts/release/build-deployment-bundle.sh 1.2.3 "${temporary_directory}/first"

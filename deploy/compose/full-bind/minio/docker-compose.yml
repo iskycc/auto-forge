@@ -1,0 +1,67 @@
+name: autoforge-minio
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set this host private IP}:${AUTOFORGE_MINIO_PORT:-9000}:9000"
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    volumes:
+      - type: bind
+        source: ${AUTOFORGE_MINIO_DATA_DIR:?set an absolute MinIO data directory}
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    stop_grace_period: 30s
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    pull_policy: never
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - >-
+        minio_user="$$(cat /run/secrets/minio-root-user)";
+        minio_password="$$(cat /run/secrets/minio-root-password)";
+        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$${minio_user}" "$${minio_password}";
+        mc --config-dir /tmp/.mc mb --ignore-existing --region us-east-1 autoforge/autoforge-objects
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+secrets:
+  minio-root-user:
+    file: ${AUTOFORGE_SECRETS_DIR:?set an absolute secrets directory}/minio-root-user
+  minio-root-password:
+    file: ${AUTOFORGE_SECRETS_DIR:?set an absolute secrets directory}/minio-root-password

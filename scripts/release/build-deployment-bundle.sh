@@ -55,6 +55,7 @@ done < <(find "${repository_root}/deploy/compose" \
     -o -name nginx.conf -o -name prepare-secrets.mjs \) -print0)
 sed -i 's|../../../docs/|../docs/|g' \
   "${package_directory}/distributed/README.md" \
+  "${package_directory}/full-bind/README.md" \
   "${package_directory}/full-five-hosts/README.md"
 # Five-host deployment is part of the standard signed deployment asset. Fail the
 # release build if a host template or its IP-only proxy configuration is missing.
