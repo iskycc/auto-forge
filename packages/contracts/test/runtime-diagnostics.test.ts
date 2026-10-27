@@ -5,6 +5,15 @@ import {
 } from "@autoforge/contracts/runtime-diagnostics";
 
 describe("runtime diagnostics", () => {
+  it("does not pause business background work for an independent log storage timeout", () => {
+    expect(
+      isRuntimeDatabaseContention({
+        operation: "logs.append",
+        database: "attempt-logs",
+        errorCode: "57014",
+      }),
+    ).toBe(false);
+  });
   it("keeps the worker operation and nested lock code through a serialized error", () => {
     const error = new Error("SQL containing credentials must never enter notifications", {
       cause: Object.assign(new Error("locked"), { code: "SQLITE_BUSY" }),

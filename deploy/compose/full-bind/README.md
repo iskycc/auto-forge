@@ -11,6 +11,9 @@ Web 与 dispatcher worker 是两个独立容器，同属一个平台节点，共
 只有三台主机且不使用 Nginx 时，采用[三主机直连方案](./three-hosts/README.md)：
 A 运行 Web／worker，B 运行 PostgreSQL／Redis，C 运行 MinIO／NATS，复用本套独立组件模板。
 
+Full 还可使用[独立 PostgreSQL 日志库](./log-postgres/README.md)，通过平台设置登记多个库、实时切换新批次写入库；
+每个批次的存储位置持久化，旧日志仍从原库／原节点读取。
+
 ## 主机与目录规划
 
 以下 IP 均需替换为实际地址；可以调整端口，各主机的数据目录也可单独改到 `/data` 等实际数据盘。
@@ -32,7 +35,7 @@ A 运行 Web／worker，B 运行 PostgreSQL／Redis，C 运行 MinIO／NATS，�
 校验 Release 签名和 `SHA256SUMS` 后，在平台主机导入与 CPU 架构匹配的镜像，例如：
 
 ```bash
-docker load --input autoforge-backend-1.20.22-amd64.docker.tar
+docker load --input autoforge-backend-1.20.23-amd64.docker.tar
 ```
 
 将 `platform/.env.example` 复制为 `.env`，把镜像中的 `VERSION` 改为实际版本；arm64 主机改用
@@ -75,7 +78,7 @@ mkdir -p /secure/autoforge-bootstrap
 docker run --rm --pull never --network none --user 0:0 \
   --mount "type=bind,source=$PWD/../distributed/infrastructure,target=/templates,readonly" \
   --mount type=bind,source=/secure/autoforge-bootstrap,target=/output \
-  autoforge/backend:1.20.22-amd64 \
+  autoforge/backend:1.20.23-amd64 \
   node /templates/prepare-secrets.mjs /output/secrets
 ```
 

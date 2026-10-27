@@ -92,12 +92,19 @@ export async function warmPoolConnections(pool: Pool, poolMax: number): Promise<
   }
 }
 
-async function runPostgresMigrations(pool: Pool, migrationsFolder: string): Promise<void> {
+export async function runPostgresMigrations(
+  pool: Pool,
+  migrationsFolder: string,
+  budgets?: { statementTimeoutMs: number; lockTimeoutMs: number },
+): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     // Schema upgrades run before readiness and may rebuild large indexes; request budgets do not apply.
-    await client.query("SET LOCAL statement_timeout = 0; SET LOCAL lock_timeout = 0");
+    await client.query(
+      "SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$2,true)",
+      [String(budgets?.statementTimeoutMs ?? 0), String(budgets?.lockTimeoutMs ?? 0)],
+    );
     await client.query("SELECT pg_advisory_xact_lock(hashtext('autoforge_migrations'))");
     await client.query(`
       CREATE TABLE IF NOT EXISTS _autoforge_migrations (

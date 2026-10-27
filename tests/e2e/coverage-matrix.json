@@ -301,6 +301,7 @@
       "evidence": [
         "tests/e2e/jar-import.spec.ts",
         "tests/e2e/platform-operations.spec.ts",
+        "tests/e2e/log-databases.spec.ts",
         ".github/workflows/ci.yml",
         "tests/e2e/memory-admission.spec.ts"
       ],

@@ -7,6 +7,7 @@ import { constants as zlibConstants, gunzip, gzip, gunzipSync, gzipSync } from "
 import Database from "better-sqlite3";
 import { DomainError } from "@autoforge/domain";
 import { retrySqliteLockContention } from "./database";
+import { readAttemptLogPage } from "./attempt-log-pagination";
 
 // 用例日志从主数据库剥离后，每个执行批次使用一个独立 SQLite 文件。
 // 这些文件是日志内容的唯一权威来源；批次删除或保留策略触发时整个文件被移除。
@@ -16,9 +17,6 @@ const MAX_OPEN_STORES = 16;
 const MAX_STAT_ENTRIES = 10_000;
 const MINIMUM_COMPRESSION_BYTES = 1_024;
 const MINIMUM_COMPRESSION_SAVING_BYTES = 64;
-const LOG_READ_BATCH_ROWS = 32;
-const LOG_READ_PAGE_BYTES = 1024 * 1024;
-const LOG_SEARCH_MAXIMUM_ROWS = 4096;
 // zlib 异步 API 与文件、DNS、部分加密操作共享进程级 libuv 工作队列。批跑上传一次
 // 最多包含 256 块；若直接 Promise.all，多个请求会把数千个 gzip 排在公开日志的
 // gunzip 前面，使整个控制面看起来卡死。每个运行上下文只提交少量在途任务，并让
@@ -354,58 +352,14 @@ export function createAttemptLogStore(
 
     async listChunks(input) {
       assertBatchId(input.batchId);
-      const items: AttemptLogItem[] = [];
-      let afterSequence = input.afterSequence;
-      let exhausted = false;
-      let returnedBytes = 0;
-      let scannedRows = 0;
-      while (items.length <= input.limit && !exhausted) {
-        // 不跨异步解压持有句柄。其他批次的并发访问可能在 await 期间触发 LRU
-        // 驱逐；每次同步查询重新命中/打开句柄即可避免继续使用已关闭连接。
+      return readAttemptLogPage(input, async (afterSequence, limit) => {
         const handle = openBatch(input.batchId, "read");
-        if (!handle) break;
-        const rows = readStoredRows(
-          handle,
-          {
-            ...input,
-            afterSequence,
-          },
-          Math.min(
-            LOG_READ_BATCH_ROWS,
-            input.query ? LOG_READ_BATCH_ROWS : input.limit + 1 - items.length,
-          ),
+        if (!handle) return [];
+        return decodeStoredRows(
+          readStoredRows(handle, { ...input, afterSequence }, limit),
+          compression,
         );
-        exhausted =
-          rows.length <
-          Math.min(
-            LOG_READ_BATCH_ROWS,
-            input.query ? LOG_READ_BATCH_ROWS : input.limit + 1 - items.length,
-          );
-        if (rows.length === 0) break;
-        afterSequence = rows.at(-1)?.sequence ?? afterSequence;
-        const decoded = await decodeStoredRows(rows, compression);
-        scannedRows += rows.length;
-        for (const item of decoded) {
-          if (input.query && !item.content.includes(input.query)) continue;
-          const sizeBytes = Buffer.byteLength(item.content, "utf8");
-          if (
-            items.length === input.limit ||
-            (items.length > 0 && returnedBytes + sizeBytes > LOG_READ_PAGE_BYTES)
-          )
-            return { items, hasMore: true };
-          items.push(item);
-          returnedBytes += sizeBytes;
-        }
-        if (input.query && !exhausted && scannedRows >= LOG_SEARCH_MAXIMUM_ROWS)
-          throw new DomainError(
-            "PLATFORM_LOG_QUERY_TOO_BROAD",
-            "日志搜索范围过大，请缩小时间范围后重试。",
-          );
-      }
-      return {
-        items: items.slice(0, input.limit),
-        hasMore: items.length > input.limit,
-      };
+      });
     },
 
     acknowledgedSequence(batchId, attemptId, stream) {

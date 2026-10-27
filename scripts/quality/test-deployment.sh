@@ -40,7 +40,7 @@ for host in platform-1 platform-2 platform-3 nginx infrastructure; do
     config --quiet
 done
 
-for component in postgres redis nats minio platform nginx; do
+for component in postgres log-postgres redis nats minio platform nginx; do
   docker compose \
     --env-file "deploy/compose/full-bind/${component}/.env.example" \
     --file "deploy/compose/full-bind/${component}/docker-compose.yml" \

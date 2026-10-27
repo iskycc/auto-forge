@@ -22,6 +22,10 @@ PostgreSQL 与 Redis 位于 B，避免数据库与平台计算争抢同一主机
 如果总共只有三台机器，应另行评估 JVM 执行与平台、数据库共机时的资源预留。
 本方案使用单平台、单实例基础设施，不提供主机故障自动切换。
 
+需要把执行日志正文写入 PostgreSQL 时，可在 C 增加[独立日志 PostgreSQL 组件](../log-postgres/README.md)，
+默认使用 `5433`、独立凭据和本地目录，与 B 的业务数据库分开。此时 C 还需导入相同的 PostgreSQL 离线镜像，
+并允许 A 访问日志端口；MinIO 与原平台本地历史日志仍保留。资源与磁盘不足时使用独立日志主机。
+
 ```mermaid
 flowchart LR
     Clients["浏览器 / Jenkins / Runner"] -->|"HTTP / WebSocket :3000"| A["A：Web + worker"]
@@ -69,15 +73,15 @@ flowchart LR
 每台机器只需保留对应的组件目录；A 额外保留凭据生成器。各组件依然独立启动，
 两台主机上的两个组件不需要合并成一个 Compose，也不依赖 Docker 跨主机网络。
 
-以 `amd64` 和正式平台 `v1.20.22` 为例，镜像分配如下：
+以 `amd64` 和正式平台 `v1.20.23` 为例，镜像分配如下：
 
 | 主机 | 离线 Docker tar |
 | --- | --- |
-| A | `autoforge-backend-1.20.22-amd64.docker.tar` |
+| A | `autoforge-backend-1.20.23-amd64.docker.tar` |
 | B | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar` |
 | C | `autoforge-infra-minio-RELEASE.2025-04-22T22-12-26Z-amd64.docker.tar`、`autoforge-infra-minio-client-RELEASE.2025-04-16T18-13-26Z-amd64.docker.tar`、`autoforge-infra-nats-2.14.3-alpine3.22-amd64.docker.tar` |
 
-主平台镜像来自[正式 v1.20.22](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22)，
+主平台镜像来自[正式 v1.20.23](https://github.com/iskycc/auto-forge/releases/tag/v1.20.23)，
 其余五个镜像来自[基础设施临时包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。
 不下载 Nginx 镜像。MinIO Client 只用于一次性创建 `autoforge-objects` bucket，完成后退出；
 离线主机保留该镜像，供以后再次初始化。校验步骤遵循各自 Release 的说明，
@@ -128,7 +132,7 @@ install -d -m 0700 /secure/autoforge-bootstrap
 docker run --rm --pull never --network none --user 0:0 \
   --mount "type=bind,source=$PWD/../distributed/infrastructure,target=/templates,readonly" \
   --mount type=bind,source=/secure/autoforge-bootstrap,target=/output \
-  autoforge/backend:1.20.22-amd64 \
+  autoforge/backend:1.20.23-amd64 \
   node /templates/prepare-secrets.mjs /output/secrets
 ```
 
@@ -151,7 +155,7 @@ A 的准备目录保留原始凭据，供初始化填写；NATS token 取 `nats-
 **A：`platform/.env`**
 
 ```dotenv
-AUTOFORGE_BACKEND_IMAGE=autoforge/backend:1.20.22-amd64
+AUTOFORGE_BACKEND_IMAGE=autoforge/backend:1.20.23-amd64
 AUTOFORGE_NODE_BIND=10.20.0.11
 AUTOFORGE_HTTP_PORT=3000
 AUTOFORGE_PLATFORM_DATA_DIR=/srv/autoforge/platform

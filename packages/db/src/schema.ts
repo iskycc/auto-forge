@@ -11,6 +11,28 @@ import {
   unique,
 } from "drizzle-orm/sqlite-core";
 
+export const logDatabases = sqliteTable("log_databases", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  address: text("address").notNull(),
+  connectionEncrypted: text("connection_encrypted").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+export const logDatabaseSettings = sqliteTable("log_database_settings", {
+  id: integer("id").primaryKey(),
+  activeDatabaseId: text("active_database_id").references(() => logDatabases.id),
+  revision: integer("revision").notNull().default(1),
+});
+export const runBatchLogStorage = sqliteTable(
+  "run_batch_log_storage",
+  {
+    batchId: text("batch_id").primaryKey(),
+    databaseId: text("database_id").references(() => logDatabases.id),
+    storedBytes: integer("stored_bytes").notNull().default(0),
+  },
+  (table) => [index("run_batch_log_storage_database_idx").on(table.databaseId, table.batchId)],
+);
+
 export const projects = sqliteTable(
   "projects",
   {
@@ -2158,6 +2180,9 @@ export const ddtSrTagAssignments = sqliteTable(
 );
 
 export const schema = {
+  logDatabases,
+  logDatabaseSettings,
+  runBatchLogStorage,
   ddtSrTags: ddtSrTags,
   ddtSrTagAssignments: ddtSrTagAssignments,
   ddtChangeRequests,

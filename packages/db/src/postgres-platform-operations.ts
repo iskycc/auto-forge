@@ -646,7 +646,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   async executeRetention(input: Parameters<PlatformOperationsRepository["executeRetention"]>[0]) {
     await this.ready();
     if (input.category === "log" && this.attemptLogs) {
-      // 日志保存在每批次独立 SQLite 文件中；按批次文件整体回收，主库无日志行可删。
+      // Whole-batch cleanup follows the log store's persisted file/database route.
       // Freeze an accepted preview under a short policy row lock; filesystem work stays outside it.
       const limited = await withTransaction(this.handle, async (client) => {
         await assertPostgresRetentionRevision(client, input);
@@ -664,7 +664,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     const result = await withTransaction(this.handle, (client) =>
       executePostgresRetention(client, input),
     );
-    // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
+    // Payload cleanup follows the business commit; the log store retains failed orphan routes.
     for (const batchId of result.removedBatchStoreIds) {
       await this.attemptLogs?.removeBatchStore(batchId);
     }

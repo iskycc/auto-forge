@@ -20,6 +20,8 @@ import { LocalObjectStore } from "../../object-store/src/local-object-store";
 import { AesGcmSecretCipher } from "../../../apps/web/src/lib/secret-cipher-core";
 import { createAttemptLogStore } from "../src/attempt-log-store";
 import { createPostgresDatabase } from "../src/postgres-database";
+import { PostgresLogDatabaseRepository } from "../src/postgres-log-databases";
+import { PostgresRoutedAttemptLogStore } from "../src/postgres-routed-attempt-logs";
 import { PostgresProjectVersionCopyRepository } from "../src/postgres-version-copy";
 import { SqliteProjectStructureRepository } from "../src/sqlite-project-structure";
 import { PostgresProjectStructureRepository } from "../src/postgres-project-structure";
@@ -599,7 +601,7 @@ for (const dialect of ["sqlite", "postgres"] as const)
               ).toString(),
             ).toBe(object.content);
           }
-          f.logs.removeBatchStore(batchId);
+          await f.logs.removeBatchStore(batchId);
           expect(
             (
               await f.logs.listChunks({
@@ -727,7 +729,40 @@ for (const dialect of ["sqlite", "postgres"] as const)
     },
   );
 
-async function fixture(dialect: "sqlite" | "postgres") {
+describe.skipIf(!postgresUrl)("version copy with independent PostgreSQL log payloads", () => {
+  it("reads the source's original database and pins copied batches to the selected target database", async () => {
+    const f = await fixture("postgres", { postgresLogs: true });
+    try {
+      await f.switchLogDatabase(1);
+      const job = await f.requests.create(input, "operator");
+      await f.service.execute(job.id, new AbortController().signal);
+      const state = (await f.repository.get(job.id))!;
+      expect(state.status).toBe("completed");
+      const targetBatch = versionCopyId(state, batchId);
+      const page = await f.logs.listChunks({
+        batchId: targetBatch,
+        attemptId: versionCopyId(state, attemptId),
+        stream: "stdout",
+        afterSequence: -1,
+        limit: 100,
+      });
+      expect(page.items).toHaveLength(65);
+      expect(page.items[0]?.content).toBe("首条中文日志");
+      expect(
+        await f.rows("SELECT database_id FROM run_batch_log_storage WHERE batch_id=?", [batchId]),
+      ).toEqual([{ database_id: f.logDatabaseIds[0] }]);
+      expect(
+        await f.rows("SELECT database_id FROM run_batch_log_storage WHERE batch_id=?", [
+          targetBatch,
+        ]),
+      ).toEqual([{ database_id: f.logDatabaseIds[1] }]);
+    } finally {
+      await f.close();
+    }
+  }, 60000);
+});
+
+async function fixture(dialect: "sqlite" | "postgres", options: { postgresLogs?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "version-copy-test-"));
   let admin: Client | undefined;
   let databaseName = "";
@@ -791,20 +826,55 @@ async function fixture(dialect: "sqlite" | "postgres") {
     : new PostgresPublicExecutionAccessRepository(postgres!);
   const objects = new LocalObjectStore(directory);
   await objects.ready();
-  const logs = createAttemptLogStore(join(directory, "attempt-logs"));
+  let logs: ReturnType<typeof createAttemptLogStore> | PostgresRoutedAttemptLogStore =
+    createAttemptLogStore(join(directory, "attempt-logs"));
   const cipher = new AesGcmSecretCipher(Buffer.alloc(32, 3).toString("base64"));
+  const logDatabaseNames: string[] = [];
+  const logDatabaseIds: string[] = [];
+  let logRegistry: PostgresLogDatabaseRepository | undefined;
+  const switchLogDatabase = async (index: number) => {
+    if (!logRegistry) throw new Error("This fixture does not use PostgreSQL log payloads.");
+    await logRegistry.select(logDatabaseIds[index]!, (await logRegistry.settings()).revision);
+  };
   const close = async () => {
-    logs.close();
+    await logs.close();
     await repository.close();
     sqlite?.close();
     await postgres?.close();
     if (admin) {
+      for (const name of logDatabaseNames) await admin.query(`DROP DATABASE ${name}`);
       await admin.query(`DROP DATABASE ${databaseName}`);
       await admin.end();
     }
     await rm(directory, { recursive: true, force: true });
   };
   try {
+    if (postgres && options.postgresLogs) {
+      logRegistry = new PostgresLogDatabaseRepository(
+        postgres,
+        cipher,
+        "version-copy-platform",
+        resolve("packages/db/drizzle/log-postgresql"),
+      );
+      logs = new PostgresRoutedAttemptLogStore(logRegistry, logs);
+      for (let index = 0; index < 2; index++) {
+        const name = `version_copy_logs_${randomUUID().replaceAll("-", "")}`;
+        logDatabaseNames.push(name);
+        await admin!.query(`CREATE DATABASE ${name}`);
+        const logUrl = new URL(postgresUrl!);
+        logUrl.pathname = `/${name}`;
+        logDatabaseIds.push(
+          (
+            await logRegistry.register(
+              randomUUID(),
+              { name: `日志库 ${index}`, databaseUrl: logUrl.toString() },
+              now,
+            )
+          ).id,
+        );
+      }
+      await switchLogDatabase(0);
+    }
     const common = { created_at: now, updated_at: now };
     const scope = { project_id: "source", project_version_id: "version", test_stage_id: "stage" };
     for (const id of ["source", "target"])
@@ -1135,6 +1205,8 @@ async function fixture(dialect: "sqlite" | "postgres") {
     });
     return {
       directory,
+      logDatabaseIds,
+      switchLogDatabase,
       rows,
       repository,
       structures,

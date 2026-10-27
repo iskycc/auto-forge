@@ -1988,6 +1988,28 @@ export const pgPlatformNodes = pgTable("platform_nodes", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const pgLogDatabases = pgTable("log_databases", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  address: text("address").notNull(),
+  connectionEncrypted: text("connection_encrypted").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+export const pgLogDatabaseSettings = pgTable("log_database_settings", {
+  id: integer("id").primaryKey(),
+  activeDatabaseId: text("active_database_id").references(() => pgLogDatabases.id),
+  revision: integer("revision").notNull().default(1),
+});
+export const pgRunBatchLogStorage = pgTable(
+  "run_batch_log_storage",
+  {
+    batchId: text("batch_id").primaryKey(),
+    databaseId: text("database_id").references(() => pgLogDatabases.id),
+    storedBytes: bigint("stored_bytes", { mode: "number" }).notNull().default(0),
+  },
+  (table) => [index("run_batch_log_storage_database_idx").on(table.databaseId, table.batchId)],
+);
+
 export const pgRunBatchLogLocations = pgTable(
   "run_batch_log_locations",
   {
@@ -2181,6 +2203,9 @@ export const pgDdtSrTagAssignments = pgTable(
 );
 
 export const postgresSchema = {
+  logDatabases: pgLogDatabases,
+  logDatabaseSettings: pgLogDatabaseSettings,
+  runBatchLogStorage: pgRunBatchLogStorage,
   ddtSrTags: pgDdtSrTags,
   ddtSrTagAssignments: pgDdtSrTagAssignments,
   ddtChangeRequests: pgDdtChangeRequests,

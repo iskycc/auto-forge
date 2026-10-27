@@ -39,6 +39,10 @@ public schema、平台数据卷和 MinIO bucket，因此必须显式传 `--repla
 
 ## Full 多机器部署
 
+启用独立 PostgreSQL 日志库时，还须在同一停止窗口备份所有已登记日志库，包括迁移历史和
+`log_storage_identity`；记录库 ID 与备份的对应关系。主库中的批次绑定不能代替正文，
+平台主密钥用于恢复加密连接串。现有 Full 单机备份脚本不自动收集这些额外数据库。
+
 上述 `full-backup.sh` / `full-restore.sh` 只适用于单机 Full Compose，不能自动收集分布在各机器上的日志。
 分布式备份前暂停入口写入并停止全部 Web、worker；在同一停止窗口保存共享 PostgreSQL、MinIO，
 以及每个节点的 `config/platform.json` 和完整日志卷（含 SQLite WAL/SHM）。同时保存节点 ID 与机器、

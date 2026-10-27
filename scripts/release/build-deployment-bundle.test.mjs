@@ -119,7 +119,15 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
 });
 
 async function assertBindMountTemplates(packageDirectory, packagedFiles) {
-  for (const component of ["postgres", "redis", "nats", "minio", "platform", "nginx"]) {
+  for (const component of [
+    "postgres",
+    "log-postgres",
+    "redis",
+    "nats",
+    "minio",
+    "platform",
+    "nginx",
+  ]) {
     for (const filename of ["docker-compose.yml", ".env.example"]) {
       const relativePath = `full-bind/${component}/${filename}`;
       assert.ok(packagedFiles.includes(relativePath), `missing bind deployment: ${relativePath}`);

@@ -1,5 +1,6 @@
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import { NodeAttemptLogStore } from "./node-attempt-log-store";
+import { PostgresRoutedAttemptLogStore } from "./postgres-routed-attempt-logs";
 import type {
   AttemptRecoveryReason,
   ClaimedAssignmentRecord,
@@ -653,7 +654,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 
   private async recordAttemptLogsPath(batchId: string): Promise<void> {
     if (this.recordedAttemptLogPaths.has(batchId)) return;
-    // 此字段保留相对路径；分布式归属另存节点表，正文始终在所属节点的 SQLite 文件中。
+    // Compatibility marker for legacy files; the immutable database binding owns PostgreSQL routing.
     const path = this.attemptLogs.relativeStorePath(batchId);
     await retryPostgresWrite(() =>
       this.handle.pool.query(
@@ -671,7 +672,10 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     attemptId: string,
     client: PoolClient,
   ): Promise<{ stdout: number; stderr: number; agent: number }> {
-    if (this.attemptLogs instanceof NodeAttemptLogStore) {
+    if (
+      this.attemptLogs instanceof NodeAttemptLogStore ||
+      this.attemptLogs instanceof PostgresRoutedAttemptLogStore
+    ) {
       return {
         stdout: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout", client),
         stderr: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr", client),
@@ -1679,7 +1683,10 @@ async function persistCompletionMetadata(
   if (result.logWatermarks) {
     // 单机水位随本地日志保存；分布式水位与完成元数据共同写入 PostgreSQL。
     const watermarks = { batchId, attemptId, watermarks: result.logWatermarks, recordedAt };
-    if (attemptLogs instanceof NodeAttemptLogStore) {
+    if (
+      attemptLogs instanceof NodeAttemptLogStore ||
+      attemptLogs instanceof PostgresRoutedAttemptLogStore
+    ) {
       // Share completion metadata in the existing transaction; peer I/O happens only
       // during log transfer, before its acknowledgement and outside control transactions.
       await attemptLogs.recordWatermarks(watermarks, client);

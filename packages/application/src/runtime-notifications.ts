@@ -10,7 +10,7 @@ const descriptions: Record<RuntimeIncident["kind"], string> = {
   execution_control:
     "执行控制工作线程异常，领取、续租或上报可能需要重试。请检查节点诊断日志与数据库状态。",
   log_io:
-    "日志读取或写入出现超时、拥塞或磁盘错误。日志查询使用独立线程；失败的上传由执行机保留并重试。请检查平台节点磁盘空间、I/O 延迟和诊断日志。",
+    "日志读取或写入出现超时、拥塞、磁盘或独立日志数据库错误。失败的上传由执行机保留并重试。请检查对应日志存储的容量、连接、I/O 延迟和诊断日志。",
   background_refresh:
     "后台刷新或维护任务暂时失败，统计页面继续使用上一次成功快照。请检查节点诊断日志、数据库与存储资源状态。",
   web_pressure:
@@ -83,6 +83,7 @@ function incidentDetails(incident: RuntimeIncident): string {
     context.requestId && `请求：${context.requestId}`,
     context.batchId && `执行批次：${context.batchId}`,
     context.projectId && `项目：${context.projectId}`,
+    context.logDatabaseId && `日志数据库：${context.logDatabaseId}`,
     `发生时间：${incident.createdAt}`,
   ].filter(Boolean);
   return ` ${labels.join("；")}。${incident.kind === "database_busy" ? "此处记录发生等待的操作，持锁方需结合数据库诊断确认。" : ""}`;

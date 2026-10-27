@@ -61,10 +61,10 @@ const workPool = new WorkerPool(
       ? { sqlite: { databasePath: platformConfiguration.databasePath } }
       : {
           full: {
+            masterKey: platformConfiguration.masterKey,
             ...(platformConfiguration.distributed
               ? {
                   nodeId: platformConfiguration.nodeId!,
-                  masterKey: platformConfiguration.masterKey,
                 }
               : {}),
             databaseUrl: platformConfiguration.databaseUrl,

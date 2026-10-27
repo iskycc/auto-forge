@@ -1,0 +1,38 @@
+name: autoforge-log-postgres
+
+services:
+  postgres:
+    image: postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set this host private IP}:${AUTOFORGE_POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: autoforge_logs
+      POSTGRES_USER: autoforge_logs
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets:
+      - postgres-password
+    volumes:
+      - type: bind
+        source: ${AUTOFORGE_POSTGRES_DATA_DIR:?set an absolute log PostgreSQL data directory}
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoforge_logs -d autoforge_logs"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s
+
+secrets:
+  postgres-password:
+    file: ${AUTOFORGE_SECRETS_DIR:?set an absolute log database secrets directory}/postgres-password

@@ -5,6 +5,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 import Link from "next/link";
 import { CursorPagination } from "@/components/cursor-pagination";
 import { PlatformNodes } from "@/components/platform-nodes";
+import { LogDatabases } from "@/components/log-databases";
 import { hasPermission } from "@autoforge/domain";
 
 import { PlatformSettings } from "@/components/platform-settings";
@@ -18,7 +19,7 @@ import { SectionTabs } from "@/components/section-tabs";
 import { storageInventoryCategorySchema } from "@autoforge/contracts";
 
 type PlatformSection =
-  "nodes" | "configuration" | "accounts" | "retention" | "diagnostics" | "storage";
+  "logs" | "nodes" | "configuration" | "accounts" | "retention" | "diagnostics" | "storage";
 
 export default async function PlatformSettingsPage({
   searchParams,
@@ -29,6 +30,7 @@ export default async function PlatformSettingsPage({
     query?: string;
     focus?: string;
     nodeCursor?: string;
+    logCursor?: string;
     cursor?: string;
     status?: string;
   }>;
@@ -40,6 +42,7 @@ export default async function PlatformSettingsPage({
   const requestedSection = parameters.section;
   const activeSection: PlatformSection =
     (requestedSection === "nodes" && Boolean(services.platformNodes)) ||
+    (requestedSection === "logs" && Boolean(services.logDatabases)) ||
     requestedSection === "accounts" ||
     requestedSection === "retention" ||
     requestedSection === "diagnostics" ||
@@ -53,6 +56,10 @@ export default async function PlatformSettingsPage({
       ? await services.platformNodes.list(parameters.nodeCursor)
       : { items: [] };
   const heading = platformSectionHeading(activeSection);
+  const logPage =
+    activeSection === "logs" && services.logDatabases
+      ? await services.logDatabases.list(parameters.logCursor?.slice(0, 128))
+      : undefined;
   const storageCategory = storageInventoryCategorySchema.safeParse(parameters.category).data;
   const platformView = platformConfigurationView(
     configuration,
@@ -100,6 +107,15 @@ export default async function PlatformSettingsPage({
       <SectionTabs
         label="平台设置模块"
         tabs={[
+          ...(services.logDatabases
+            ? [
+                {
+                  href: "/settings/platform?section=logs",
+                  label: "日志数据库",
+                  active: activeSection === "logs",
+                },
+              ]
+            : []),
           ...(services.platformNodes
             ? [
                 {
@@ -137,6 +153,9 @@ export default async function PlatformSettingsPage({
         ]}
       />
       <TabContent activeKey={activeSection} className="gap-5">
+        {logPage ? (
+          <LogDatabases initial={logPage} canManage={hasPermission(identity, "settings.manage")} />
+        ) : null}
         {activeSection === "nodes" ? (
           <>
             <PlatformNodes
@@ -200,6 +219,11 @@ export default async function PlatformSettingsPage({
 
 function platformSectionHeading(section: PlatformSection): { title: string; description: string } {
   switch (section) {
+    case "logs":
+      return {
+        title: "日志数据库",
+        description: "管理独立 PostgreSQL 日志库、扩展存储并切换新批次的写入位置。",
+      };
     case "nodes":
       return {
         title: "平台节点",

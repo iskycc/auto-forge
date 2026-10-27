@@ -6,6 +6,7 @@ export type RuntimeDiagnosticContext = {
   requestId?: string;
   batchId?: string;
   projectId?: string;
+  logDatabaseId?: string;
 };
 
 const identifier = /^[a-zA-Z0-9_.:-]{1,120}$/;
@@ -31,7 +32,14 @@ export function runtimeDiagnosticContext(
 
 function copyIdentifiers(source: unknown, target: RuntimeDiagnosticContext): void {
   if (!source || typeof source !== "object") return;
-  for (const field of ["operation", "errorCode", "requestId", "batchId", "projectId"] as const) {
+  for (const field of [
+    "operation",
+    "errorCode",
+    "requestId",
+    "batchId",
+    "projectId",
+    "logDatabaseId",
+  ] as const) {
     if (field in source) {
       const value = (source as Record<string, unknown>)[field];
       if (typeof value === "string" && identifier.test(value)) target[field] = value;
@@ -45,6 +53,7 @@ function copyIdentifiers(source: unknown, target: RuntimeDiagnosticContext): voi
 }
 
 export function isRuntimeDatabaseContention(context: RuntimeDiagnosticContext): boolean {
+  if (context.database === "attempt-logs") return false;
   return /^(SQLITE_(BUSY|LOCKED)(_|$)|55P03$|57014$|40P01$|40001$)/.test(context.errorCode ?? "");
 }
 

@@ -24,6 +24,20 @@ export interface MappedApiError {
  * 两者必须产出完全一致的状态码与错误结构。
  */
 export function mapApiError(error: unknown, requestId: string): MappedApiError {
+  if (isDomainError(error) && error.code === "PLATFORM_LOG_DATABASE_UNAVAILABLE") {
+    runtimePriority().report(
+      "log_io",
+      runtimeDiagnosticContext(error, {
+        operation: "log-database.io",
+        database: "attempt-logs",
+        requestId,
+      }),
+    );
+    return {
+      status: 503,
+      body: { error: { code: error.code, message: error.message, requestId } },
+    };
+  }
   if (isDatabaseContention(error)) {
     runtimePriority().report(
       "database_busy",
@@ -121,6 +135,7 @@ function domainErrorStatus(code: string): number {
       "PLATFORM_LOG_BUSY",
       "PLATFORM_LOG_TIMEOUT",
       "PLATFORM_LOG_UNAVAILABLE",
+      "PLATFORM_LOG_DATABASE_UNAVAILABLE",
       "PLATFORM_BUSY",
     ].includes(code)
   )

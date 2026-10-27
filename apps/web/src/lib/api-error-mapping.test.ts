@@ -4,6 +4,18 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it("keeps independent log database lock failures separate from business database contention", () => {
+    const cause = Object.assign(new Error("log storage lock timeout"), { code: "55P03" });
+    expect(
+      mapApiError(
+        new DomainError("PLATFORM_LOG_DATABASE_UNAVAILABLE", "日志库暂不可用。", { cause }),
+        "log-request",
+      ),
+    ).toMatchObject({
+      status: 503,
+      body: { error: { code: "PLATFORM_LOG_DATABASE_UNAVAILABLE" } },
+    });
+  });
   it.each([
     "VERSION_COPY_TARGET_NOT_EMPTY",
     "VERSION_COPY_TARGET_RESERVED",

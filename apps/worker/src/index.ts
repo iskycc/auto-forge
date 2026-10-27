@@ -24,6 +24,8 @@ import {
   createPostgresDatabase,
   createPostgresClock,
   NodeAttemptLogStore,
+  PostgresLogDatabaseRepository,
+  PostgresRoutedAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseSuiteRepository,
   PostgresRunBatchRepository,
@@ -41,6 +43,7 @@ import { connect } from "nats";
 import { loadWorkerConfig } from "./config";
 import { closeServer, startHealthServer } from "./health-server";
 import { logger } from "./logger";
+import { AesGcmSecretCipher } from "../../web/src/lib/secret-cipher-core";
 import { runWithTransientRecovery } from "./transient-recovery";
 
 const config = loadWorkerConfig();
@@ -137,7 +140,15 @@ const nodeLogs =
       )
     : undefined;
 if (nodeLogs) await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
-const attemptLogs = nodeLogs ?? localAttemptLogs;
+const attemptLogs = new PostgresRoutedAttemptLogStore(
+  new PostgresLogDatabaseRepository(
+    database,
+    new AesGcmSecretCipher(config.masterKey),
+    createHash("sha256").update(config.masterKey).digest("hex"),
+    join(config.migrationsFolder, "../log-postgresql"),
+  ),
+  nodeLogs ?? localAttemptLogs,
+);
 const platformOperationsRepository = new PostgresPlatformOperationsRepository(
   database,
   attemptLogs,
@@ -184,9 +195,8 @@ const backgroundPool = new BackgroundWorkerPool(
     artifactCollectionEnabled: config.artifactCollectionEnabled(),
     scheduler: config.scheduling,
     full: {
-      ...(config.distributed && config.nodeId
-        ? { nodeId: config.nodeId, masterKey: config.masterKey }
-        : {}),
+      masterKey: config.masterKey,
+      ...(config.distributed && config.nodeId ? { nodeId: config.nodeId } : {}),
       databaseUrl: config.databaseUrl,
       databasePoolMax: config.databasePoolMax,
       minio: config.minio,
@@ -315,11 +325,9 @@ const health = {
 };
 const healthServer = await startHealthServer(config.healthPort, health);
 const loops = Promise.all([
-  nodeLogs
-    ? runPeriodic(shutdown.signal, 60_000, "logs.cleanupOrphans", async () => {
-        if (canRefresh()) await backgroundPool.runPlatformMaintenance("orphan-logs");
-      })
-    : Promise.resolve(),
+  runPeriodic(shutdown.signal, 60_000, "logs.cleanupOrphans", async () => {
+    if (canRefresh()) await backgroundPool.runPlatformMaintenance("orphan-logs");
+  }),
   runWithTransientRecovery(shutdown.signal, () => dispatchWorker.run(shutdown.signal), logger, {
     operationName: "dispatch consumer",
   }),

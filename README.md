@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- Full 可选[独立 PostgreSQL 日志库](./deploy/compose/full-bind/log-postgres/README.md)，在“平台设置 → 日志数据库”登记多个库并实时选择新批次写入库；主库持久化每批次库 ID，历史和在途日志按原库读取，旧本地日志保持兼容。日志数据库与业务数据库分开部署，连接串加密保存，具体语义见 [ADR 0015](./docs/adr/0015-full-postgresql-log-databases.md)。
+
 - 活动任务执行详情提供“并发诊断”，按需显示未达并发上限的当前条件、执行中／待领取占额、项目额度、节点本任务／其他任务占用，以及 CPU、内存预留和资源指标状态。诊断复用调度准入规则，通过隔离只读进程读取，不随页面轮询；具有执行记录和节点查看权限的用户可手动刷新，匿名公开页不展示。详见[执行任务并发诊断](./docs/architecture/execution-concurrency-diagnostics.md)。
 
 - 用例调试的可见、正在跟随的执行日志使用现有 WebSocket 通道推送首条输出，持久分页仍负责断线补读与失败回退；绘制与日志窗口有界，隐藏、暂停或结束时释放连接。Runner 首次持久化业务输出后立即唤醒上传，后续保持原批量节拍；复用 JDK/依赖压缩包时在复制过程中校验大小和 SHA-256，减少一次整包读取，完整验证后才原子发布工作副本。
@@ -639,7 +641,7 @@ pnpm build
 
 - [Lite Compose](./deploy/compose/lite/docker-compose.yml) 只启动 AutoForge，持久化 SQLite 和本地对象目录；
 - [Full Compose](./deploy/compose/full/docker-compose.yml) 启动 AutoForge、PostgreSQL、NATS JetStream、MinIO 和 Redis，并通过一次性初始化任务创建对象 bucket。
-- [Full 多机器部署](./deploy/compose/distributed/README.md) 分别部署基础设施、多个平台 Web/worker 和 Nginx；各平台共享 PostgreSQL/Redis/NATS/MinIO，并在“平台设置 → 平台节点”管理彼此的 IP 和端口。日志正文仍保存在所属节点本地，PostgreSQL 记录节点归属与确认水位，Redis 缓存并转发近期实时日志。
+- [Full 多机器部署](./deploy/compose/distributed/README.md) 分别部署基础设施、多个平台 Web/worker 和 Nginx；各平台共享 PostgreSQL/Redis/NATS/MinIO，并在“平台设置 → 平台节点”管理彼此的 IP 和端口。默认日志正文保存在所属节点本地，也可配置独立 PostgreSQL 日志库；主库记录位置与确认水位，Redis 缓存并转发近期实时日志。
 - [Full 五主机部署](./deploy/compose/full-five-hosts/README.md) 提供三个主平台、一台 Nginx、一台数据库与中间件主机各自完整的 Compose 和环境模板；Nginx 使用 IP，无需域名，五套文件一起纳入 Release 部署包。
 - [Full 本地目录绑定部署](./deploy/compose/full-bind/README.md) 提供 PostgreSQL、Redis、NATS、MinIO、平台与 Nginx 各自独立的 Compose；组件分主机启动，所有持久数据绑定宿主机绝对路径，不使用 named volume，并说明初始化、权限、旧卷迁移和备份。
 - [Full 三主机直连方案](./deploy/compose/full-bind/three-hosts/README.md) 将 Web／worker、PostgreSQL／Redis、MinIO／NATS 分别部署到三台机器，浏览器和 Runner 直连平台，无需 Nginx；包含离线镜像分配、逐机配置、初始化与验收步骤。

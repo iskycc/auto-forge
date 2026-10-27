@@ -2,6 +2,7 @@ import { publicSuiteExecutionContextSchema, executionActorSchema } from "@autofo
 import { AesGcmSecretCipher } from "../src/lib/secret-cipher-core";
 import { runtimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 import { createHash, randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   CaseSourceService,
@@ -80,6 +81,8 @@ import {
   PostgresPlatformOperationsRepository,
   createPostgresClock,
   NodeAttemptLogStore,
+  PostgresLogDatabaseRepository,
+  PostgresRoutedAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseCatalogRepository,
   PostgresIdentityAccessRepository,
@@ -123,6 +126,7 @@ let postgresDatabase: PostgresDatabaseHandle | undefined;
 let scheduler: RunBatchSchedulingService | undefined;
 let attemptLogs: AttemptLogStore | undefined;
 let nodeLogs: NodeAttemptLogStore | undefined;
+let routedLogs: PostgresRoutedAttemptLogStore | undefined;
 let executionControl:
   SqliteExecutionControlRepository | PostgresExecutionControlRepository | undefined;
 let work = Promise.resolve();
@@ -372,7 +376,8 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
       if (!backgroundAllowed()) return false;
       if (task.operation === "orphan-logs") {
         const logs = configuration.mode === "full" ? fullLogStore() : logStore();
-        if (logs instanceof NodeAttemptLogStore) await logs.cleanupOrphans();
+        if (logs instanceof PostgresRoutedAttemptLogStore) await logs.cleanupOrphans();
+        await nodeLogs?.cleanupOrphans();
         return true;
       }
       const operations = platformOperations();
@@ -723,18 +728,28 @@ function fullSettings(): NonNullable<WorkThreadConfiguration["full"]> {
   return configuration.full;
 }
 
-function fullLogStore(): AttemptLogStore | NodeAttemptLogStore {
+function fullLogStore(): AttemptLogStore | PostgresRoutedAttemptLogStore {
   const settings = fullSettings();
-  if (!settings.nodeId || !settings.masterKey) return logStore();
-  nodeLogs ??= new NodeAttemptLogStore(
-    postgresHandle(),
-    settings.nodeId,
-    logStore(),
-    createNodeLogTransport(settings.masterKey, settings.nodeId, clock),
-    configuration.attemptLogsDirectory,
-    clock,
+  if (!settings.masterKey) return logStore();
+  if (settings.nodeId)
+    nodeLogs ??= new NodeAttemptLogStore(
+      postgresHandle(),
+      settings.nodeId,
+      logStore(),
+      createNodeLogTransport(settings.masterKey, settings.nodeId, clock),
+      configuration.attemptLogsDirectory,
+      clock,
+    );
+  routedLogs ??= new PostgresRoutedAttemptLogStore(
+    new PostgresLogDatabaseRepository(
+      postgresHandle(),
+      new AesGcmSecretCipher(settings.masterKey),
+      createHash("sha256").update(settings.masterKey).digest("hex"),
+      join(configuration.migrationsFolder, "../log-postgresql"),
+    ),
+    nodeLogs ?? logStore(),
   );
-  return nodeLogs;
+  return routedLogs;
 }
 
 function logStore(): AttemptLogStore {
@@ -776,6 +791,7 @@ function serializedError(error: unknown): Extract<WorkResponse, { ok: false }>["
 
 process.once("exit", () => {
   attemptLogs?.close();
+  void routedLogs?.close();
   liteDatabase?.close();
   // 进程退出事件循环已近终止，连接池尽力关闭即可；未完成的套接字随进程回收。
   void postgresDatabase?.close();

@@ -571,6 +571,7 @@ class WorkerLane {
       const context = response.error.runtimeContext;
       if (context && isRuntimeDatabaseContention(context))
         runtimePriority().report("database_busy", context);
+      else if (context?.database === "attempt-logs") runtimePriority().report("log_io", context);
       request.reject(workerError(response.error));
     }
     this.notifyDrained();

@@ -180,6 +180,8 @@ async function createPlatformServices() {
   const configurationStore = appConfigurationStore(config);
   let platformNodes: import("@autoforge/application").PlatformNodeRepository | undefined;
   let nodeLogs: import("@autoforge/db/postgres").NodeAttemptLogStore | undefined;
+  let routedLogs: import("@autoforge/db/postgres").PostgresRoutedAttemptLogStore | undefined;
+  let logDatabases: import("@autoforge/application").LogDatabaseService | undefined;
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let suiteActivityRepository: CaseSuiteActivityRepository;
@@ -275,6 +277,8 @@ async function createPlatformServices() {
         createPostgresClock,
         PostgresPlatformNodeRepository,
         NodeAttemptLogStore,
+        PostgresLogDatabaseRepository,
+        PostgresRoutedAttemptLogStore,
         createNodeLogTransport,
         PostgresAttemptLogShareRepository,
         PostgresPublicExecutionAccessRepository,
@@ -381,6 +385,16 @@ async function createPlatformServices() {
         await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
         attemptLogs = nodeLogs;
       }
+      const logRegistry = new PostgresLogDatabaseRepository(
+        database,
+        new AesGcmSecretCipher(config.masterKey),
+        createHash("sha256").update(config.masterKey).digest("hex"),
+        join(config.migrationsFolder, "../log-postgresql"),
+      );
+      routedLogs = new PostgresRoutedAttemptLogStore(logRegistry, attemptLogs);
+      attemptLogs = routedLogs;
+      const { LogDatabaseService } = await import("@autoforge/application");
+      logDatabases = new LogDatabaseService(logRegistry, clock, { next: () => uuidV7() });
       const nats = await connect({
         servers: config.natsServers,
         ...(config.natsToken ? { token: config.natsToken } : {}),
@@ -883,11 +897,15 @@ async function createPlatformServices() {
             await webhooks.dispatchDue(`lite-web-${process.pid}-webhooks`);
         })
       : Promise.resolve();
-  const nodeCleanupLoop = nodeLogs
-    ? runPeriodic(scheduleAbort.signal, 60_000, "logs.cleanupOrphans", async () => {
-        if (runtimePriority().backgroundAllowed()) await nodeLogs!.cleanupOrphans();
-      })
-    : Promise.resolve();
+  const nodeCleanupLoop =
+    nodeLogs || routedLogs
+      ? runPeriodic(scheduleAbort.signal, 60_000, "logs.cleanupOrphans", async () => {
+          if (runtimePriority().backgroundAllowed()) {
+            await routedLogs?.cleanupOrphans();
+            await nodeLogs?.cleanupOrphans();
+          }
+        })
+      : Promise.resolve();
   const retentionLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 3_600_000, "retention.cleanup", async () => {
@@ -968,6 +986,7 @@ async function createPlatformServices() {
     configurationStore,
     platformNodes,
     nodeLogs,
+    logDatabases,
     catalog,
     discovery,
     objectStore,

@@ -65,3 +65,5 @@ export * from "./ddt-sr-tags";
 
 export * from "./import-ddt-sr-tags";
 export * from "./public-suite-execution";
+
+export * from "./log-databases";

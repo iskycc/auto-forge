@@ -34,3 +34,6 @@ export { PostgresProjectVersionCopyRepository } from "./postgres-version-copy";
 export { VersionCopyArchive } from "./version-copy-archive";
 
 export * from "./postgres-ddt-sr-tags";
+
+export * from "./postgres-log-databases";
+export * from "./postgres-routed-attempt-logs";
