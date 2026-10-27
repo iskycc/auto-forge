@@ -228,3 +228,20 @@ test("shares the release asset contract with published acceptance", async () => 
   assert.match(acceptanceScript, /AUTOFORGE_E2E_DATA_DIR="\$\{current_data\}"/);
   assert.doesNotMatch(acceptanceScript, /manifest\.artifacts\.length !== \d+/);
 });
+
+test("prepares embedded Jenkins plugins before disconnecting source acceptance from the network", async () => {
+  const offline = await readFile("scripts/quality/test-offline.sh", "utf8");
+  assert.ok(offline.indexOf("pnpm build:jenkins-resources") < offline.indexOf("if unshare --user"));
+  for (const path of [
+    "scripts/quality/test-real-agent.sh",
+    "scripts/quality/test-container-executor.sh",
+  ]) {
+    const script = await readFile(path, "utf8");
+    assert.match(script, /run_network_blocked_browser_flow\(\) \{\n  pnpm build:jenkins-resources/);
+  }
+  const ci = await readFile(".github/workflows/ci.yml", "utf8");
+  assert.match(
+    ci,
+    /Build verified Agent resources for Runner update controls[\s\S]*?Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/,
+  );
+});

@@ -1,12 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { PlatformConfigurationStore } from "@autoforge/platform-config";
 
 const e2eDataDirectory =
   process.env.AUTOFORGE_E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "autoforge-e2e-"));
 const externalServer = process.env.AUTOFORGE_E2E_EXTERNAL_SERVER === "1";
+// Maven preparation belongs to the test build phase, before the server's bounded startup clock.
+// Network-blocked harnesses prepare the same verified resources before entering their namespace.
+if (!externalServer)
+  execFileSync(process.execPath, [resolve("scripts/release/ensure-jenkins-resources.mjs")], {
+    stdio: "inherit",
+  });
 if (externalServer && !process.env.AUTOFORGE_E2E_DATA_DIR)
   throw new Error("External E2E server requires its existing AUTOFORGE_E2E_DATA_DIR.");
 process.env.AUTOFORGE_E2E_DATA_DIR = e2eDataDirectory;

@@ -94,19 +94,8 @@ verify_current_release() {
     "${current_release_directory}/release-signing-public-key.pem"
   verify_signature "${current_release_directory}"
   (cd "${current_release_directory}" && sha256sum --check --strict SHA256SUMS)
-  local manifest_schema_version
-  manifest_schema_version="$(node -p \
-    "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).schemaVersion" \
-    "${current_release_directory}/release-manifest.json")"
-  if [[ "${manifest_schema_version}" == "2" || "${manifest_schema_version}" == "3" ]]; then
-    mkdir -p "${current_metadata_root}"
-    tar -xzf \
-      "${current_release_directory}/autoforge-release-metadata-${current_version}.tar.gz" \
-      -C "${current_metadata_root}"
-  elif [[ "${manifest_schema_version}" != "1" ]]; then
-    printf 'Unsupported Release manifest schema: %s\n' "${manifest_schema_version}" >&2
-    return 1
-  fi
+  node "${repository_root}/scripts/release/extract-release-metadata.mjs" \
+    "${current_release_directory}" "${current_version}" "${current_metadata_root}"
   node --input-type=module - \
     "${repository_root}" "${current_release_directory}" "${current_version}" \
     "${current_metadata_root}/autoforge-release-metadata-${current_version}" <<'NODE'

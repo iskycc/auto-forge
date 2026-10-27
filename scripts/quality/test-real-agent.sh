@@ -218,6 +218,7 @@ prepare_cgroup_delegation() {
 }
 
 run_network_blocked_browser_flow() {
+  pnpm build:jenkins-resources
   # Both wrappers bring the isolated loopback up while they still hold the
   # capability to do so; the acceptance script must not retry `ip link` after
   # setpriv has dropped privileges, because it fails with RTNETLINK EPERM.

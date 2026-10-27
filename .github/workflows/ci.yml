@@ -208,6 +208,12 @@ jobs:
       - name: Build verified Agent resources for Runner update controls
         if: matrix.agent_resources
         run: pnpm build:agent-resources
+      - name: Set up Java for embedded Jenkins plugins
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"

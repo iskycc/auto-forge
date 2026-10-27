@@ -161,3 +161,5 @@ SOURCE_DATE_EPOCH=0 \
 镜像和其中的 Agent 在离线运行时不会下载依赖或发送遥测。
 
 构建脚本默认限制单个 Docker 原生归档不超过 180 MiB，避免构建缓存或开发依赖再次进入正式镜像。特殊诊断构建可通过 `AUTOFORGE_BACKEND_IMAGE_MAX_BYTES` 临时调整预算；正式发布不得仅为绕过体积回归而提高该值。
+
+源码 E2E 构建在 WebServer 的启动计时前准备内置 Jenkins 资源；断网 Lite、真实 Agent 与容器执行器验收在进入网络命名空间前准备 HPI。UI 验收先用 Java 8 构建 Adapter，再切换 Java 21 准备 Jenkins 插件；断网后只消费已校验资源。发布资产的 metadata 解包复用清单版本常量，并保留 schema 1/2/3 兼容，避免新版资产在解包阶段被旧分支拒绝。
