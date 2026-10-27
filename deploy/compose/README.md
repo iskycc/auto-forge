@@ -7,6 +7,7 @@
 - `distributed/`：多机器 Full，分离基础设施、平台节点和 Nginx；节点本地日志通过已认证的内部接口互访，详见[分布式部署说明](./distributed/README.md)。
 - `full-five-hosts/`：固定五主机方案，三个主平台、一台使用 IP 的 Nginx、一台集中数据库与中间件；每台提供独立 Compose 和 `.env.example`，详见[五主机部署说明](./full-five-hosts/README.md)。
 - `full-bind/`：PostgreSQL、Redis、NATS、MinIO、平台、Nginx 分主机独立启动，持久数据全部绑定宿主机本地目录，不使用 named volume；详见[本地目录绑定部署](./full-bind/README.md)。
+- `full-bind/three-hosts/`：三主机直连方案，分别运行 Web／worker、PostgreSQL／Redis、MinIO／NATS；复用本地目录绑定模板，无需 Nginx，详见[三主机部署方案](./full-bind/three-hosts/README.md)。
 
 以上模板均进入 Release 的 `autoforge-deploy-VERSION.tar.gz`。五主机方案请直接按其说明准备
 共享凭据、三个节点配置和启动顺序；下文的初始化命令面向单机 `lite/` 与 `full/`。

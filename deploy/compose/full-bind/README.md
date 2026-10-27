@@ -8,6 +8,9 @@ PostgreSQL、Redis、NATS、MinIO、平台和 Nginx 分别提供独立 Compose�
 Web 与 dispatcher worker 是两个独立容器，同属一个平台节点，共享该主机的本地数据目录。
 每个组件都可独立启停。此处的“分主机”不代表 PostgreSQL、MinIO 等组件已配置多副本或自动高可用。
 
+只有三台主机且不使用 Nginx 时，采用[三主机直连方案](./three-hosts/README.md)：
+A 运行 Web／worker，B 运行 PostgreSQL／Redis，C 运行 MinIO／NATS，复用本套独立组件模板。
+
 ## 主机与目录规划
 
 以下 IP 均需替换为实际地址；可以调整端口，各主机的数据目录也可单独改到 `/data` 等实际数据盘。
