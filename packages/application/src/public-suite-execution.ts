@@ -84,6 +84,10 @@ export class PublicSuiteExecutionService {
       caseCount: suite.caseCount,
       concurrency: suite.policy.concurrency,
       retryLimit: suite.policy.retryLimit,
+      adapterEnabled: suite.policy.adapter.enabled,
+      environmentAddresses: suite.policy.adapter.enabled
+        ? suite.policy.adapter.environmentAddresses
+        : [],
       publisher,
       executable: !unavailableReason,
       unavailableReason,
@@ -110,6 +114,9 @@ export class PublicSuiteExecutionService {
             publisher,
             initiator: actor,
             requestKey: validated.requestKey,
+            ...(validated.environmentAddresses
+              ? { environmentAddresses: validated.environmentAddresses }
+              : {}),
           },
         );
     const progressPath = await this.publicAccess.publishBatch(batch.id, actor.id);

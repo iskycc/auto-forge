@@ -19,7 +19,7 @@ export async function POST(request: Request, context: { params: Promise<{ suiteI
     const query = publicSuiteLinkQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams),
     );
-    const input = startPublicSuiteExecutionSchema.parse(await readJsonBody(request, 2048));
+    const input = startPublicSuiteExecutionSchema.parse(await readJsonBody(request, 16 * 1024));
     const services = await getPlatformServices();
     if (
       !(await services.runnerRequestLimiter.allow(

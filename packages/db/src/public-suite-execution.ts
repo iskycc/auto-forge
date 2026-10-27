@@ -1,3 +1,4 @@
+import { batchEnvironmentAddresses } from "./run-batch-environment-addresses";
 import { storedActor } from "./run-batch-actors";
 import type { PublicSuiteExecutionRepository } from "@autoforge/application";
 import {
@@ -23,6 +24,7 @@ class PublicSuiteExecutionQueries implements PublicSuiteExecutionRepository {
   constructor(
     private readonly query: Query,
     private readonly parameter: (index: number) => string,
+    private readonly environmentProjection: string,
   ) {}
 
   async publish(suiteId: string, publisherId: string, createdAt: string) {
@@ -46,18 +48,18 @@ class PublicSuiteExecutionQueries implements PublicSuiteExecutionRepository {
   }
   async executions(suiteId: string) {
     const active = await this.query(
-      `SELECT ${BATCH_COLUMNS} FROM run_batches WHERE suite_id=${this.parameter(1)} AND status IN ('queued','dispatching','scheduled','running') AND batch_kind<>'case_log_rerun' ORDER BY created_at DESC,id DESC LIMIT 10`,
+      `SELECT ${BATCH_COLUMNS}, ${this.environmentProjection} AS environment_addresses_json FROM run_batches WHERE suite_id=${this.parameter(1)} AND status IN ('queued','dispatching','scheduled','running') AND batch_kind<>'case_log_rerun' ORDER BY created_at DESC,id DESC LIMIT 10`,
       [suiteId],
     );
     const recent = await this.query(
-      `SELECT ${BATCH_COLUMNS} FROM run_batches WHERE suite_id=${this.parameter(1)} AND public_execution_json IS NOT NULL AND status IN ('succeeded','failed','cancelled') ORDER BY created_at DESC,id DESC LIMIT 5`,
+      `SELECT ${BATCH_COLUMNS}, ${this.environmentProjection} AS environment_addresses_json FROM run_batches WHERE suite_id=${this.parameter(1)} AND public_execution_json IS NOT NULL AND status IN ('succeeded','failed','cancelled') ORDER BY created_at DESC,id DESC LIMIT 5`,
       [suiteId],
     );
     return { active: active.map(publicBatch), recent: recent.map(publicBatch) };
   }
   async batch(suiteId: string, batchId: string) {
     const [row] = await this.query(
-      `SELECT ${BATCH_COLUMNS} FROM run_batches WHERE suite_id=${this.parameter(1)} AND id=${this.parameter(2)}`,
+      `SELECT ${BATCH_COLUMNS}, ${this.environmentProjection} AS environment_addresses_json FROM run_batches WHERE suite_id=${this.parameter(1)} AND id=${this.parameter(2)}`,
       [suiteId, batchId],
     );
     return row ? publicBatch(row) : null;
@@ -84,6 +86,9 @@ function publicBatch(row: Record<string, unknown>) {
     : null;
   const terminatedBy = row.terminated_by_json ? storedActor(String(row.terminated_by_json)) : null;
   return publicSuiteBatchSchema.parse({
+    environmentAddresses: batchEnvironmentAddresses(
+      row.environment_addresses_json as string | null,
+    ),
     id: row.id,
     sequenceNumber: row.sequence_number,
     status: row.status,
@@ -113,6 +118,7 @@ export class SqlitePublicSuiteExecutionRepository extends PublicSuiteExecutionQu
             });
       },
       () => "?",
+      "coalesce(json_extract(policy_json, '$.environmentAddresses'), json_extract(adapter_runtime_json, '$.environmentAddresses'))",
     );
   }
 }
@@ -127,6 +133,7 @@ export class PostgresPublicSuiteExecutionRepository extends PublicSuiteExecution
         );
       },
       (index) => `$${index}`,
+      "coalesce(policy_json::jsonb ->> 'environmentAddresses', adapter_runtime_json::jsonb ->> 'environmentAddresses')",
     );
   }
 }

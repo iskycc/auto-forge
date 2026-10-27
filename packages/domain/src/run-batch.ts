@@ -125,6 +125,8 @@ export type RunBatch = {
   secretBindings: ExecutionEnvironmentSecretBinding[];
   selectedRunnerIds: string[];
   policy?: RunBatchExecutionPolicy;
+  // 从本批次 Adapter 运行快照读取，不追随任务后续修改。
+  environmentAddresses?: string[];
   totalRuns: number;
   queuedRuns: number;
   assignedRuns: number;

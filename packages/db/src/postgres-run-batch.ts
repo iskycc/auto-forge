@@ -1,3 +1,8 @@
+import {
+  batchEnvironmentAddresses,
+  batchSnapshotEnvironmentAddresses,
+  serializeBatchPolicy,
+} from "./run-batch-environment-addresses";
 import { publicRequestKey } from "./public-suite-execution";
 import { runBatchActors } from "./run-batch-actors";
 import { executionRecordKindCondition } from "./execution-record-kind";
@@ -337,7 +342,10 @@ export class PostgresRunBatchRepository
           uploadTimeoutMs,
           environmentJson: JSON.stringify(record.environmentVariables),
           secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
-          policyJson: record.policy ? JSON.stringify(record.policy) : null,
+          policyJson: serializeBatchPolicy(
+            record.policy,
+            adapterRuntime?.environmentAddresses ?? [],
+          ),
           adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
           totalRuns: record.runs.length,
           scheduledFor,
@@ -929,7 +937,12 @@ export class PostgresRunBatchRepository
       Object.entries(batchColumns).filter(([column]) => column !== "adapterRuntimeJson"),
     ) as Omit<typeof batchColumns, "adapterRuntimeJson">;
     const rows = await this.handle.db
-      .select(metadataColumns)
+      .select({
+        ...metadataColumns,
+        environmentAddressesJson: sql<
+          string | null
+        >`coalesce(${pgRunBatches.policyJson}::jsonb ->> 'environmentAddresses', ${pgRunBatches.adapterRuntimeJson}::jsonb ->> 'environmentAddresses')`,
+      })
       .from(pgRunBatches)
       .where(
         and(
@@ -948,6 +961,7 @@ export class PostgresRunBatchRepository
     return this.mapBatchMetadataRow(
       row,
       runners.map((runner) => runner.id),
+      batchEnvironmentAddresses(row.environmentAddressesJson),
     );
   }
 
@@ -2110,6 +2124,10 @@ export class PostgresRunBatchRepository
   ): RunBatch {
     return {
       ...this.mapBatchMetadataRow(row, selectedRunnerIds),
+      environmentAddresses: batchSnapshotEnvironmentAddresses(
+        row.policyJson,
+        row.adapterRuntimeJson,
+      ),
       queuedRuns: byStatus.get("queued") ?? 0,
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
       runningRuns: byStatus.get("running") ?? 0,
@@ -2123,9 +2141,11 @@ export class PostgresRunBatchRepository
   private mapBatchMetadataRow(
     row: Omit<typeof pgRunBatches.$inferSelect, "adapterRuntimeJson">,
     selectedRunnerIds: string[],
+    environmentAddresses?: string[],
   ): import("@autoforge/application").RunBatchMetadata {
     const policy = batchPolicy(row.policyJson);
     return {
+      ...(environmentAddresses ? { environmentAddresses } : {}),
       id: row.id,
       sequenceNumber: row.sequenceNumber,
       projectId: row.projectId,

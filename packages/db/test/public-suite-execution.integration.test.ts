@@ -111,6 +111,37 @@ for (const adapter of ["sqlite", "postgres"] as const)
           expect(JSON.stringify(state)).not.toContain("requestKey");
         });
       });
+      it("reads every execution environment from the immutable batch snapshot, including older batches", async () => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          const record = h.record();
+          const addresses = ["10.0.0.21", "2001:db8::21"];
+          record.adapterRuntimeSnapshot!.environmentAddresses = addresses;
+          record.policy = {
+            executor: "testng",
+            concurrency: 1,
+            runnerLabels: [],
+            artifactPatterns: [],
+          };
+          const batch = await h.batches.create(record);
+          expect((await h.batches.getMetadata(batch.id))?.environmentAddresses).toEqual(addresses);
+          expect((await h.batches.getSummary(batch.id))?.environmentAddresses).toEqual(addresses);
+          expect((await h.links.executions(h.suite.id)).active[0]?.environmentAddresses).toEqual(
+            addresses,
+          );
+          expect((await h.links.batch(h.suite.id, batch.id))?.environmentAddresses).toEqual(
+            addresses,
+          );
+          const { publicExecution: _publicExecution, ...ordinary } = h.record();
+          void _publicExecution;
+          ordinary.adapterRuntimeSnapshot!.environmentAddresses = ["legacy.internal"];
+          const legacy = await h.batches.create(ordinary);
+          expect((await h.batches.getMetadata(legacy.id))?.environmentAddresses).toEqual([
+            "legacy.internal",
+          ]);
+          expect((await h.batches.getMetadata(batch.id))?.environmentAddresses).toEqual(addresses);
+        });
+      });
       it("rechecks grants inside creation and detects an existing ordinary execution", async () => {
         await withHarness(adapter, async (h) => {
           await expect(h.batches.create(h.record())).rejects.toMatchObject({

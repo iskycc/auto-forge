@@ -209,6 +209,9 @@ export class RunBatchSchedulingService {
       : undefined;
     const validated = createRunBatchInputSchema.parse(input);
     const suite = await this.suites.get(validated.suiteId);
+    if (context?.environmentAddresses && !suite?.policy.adapter.enabled) {
+      throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "任务未启用 Adapter，不能修改环境 IP。");
+    }
     const preflight = await this.preflightValidated(validated, { suite });
     if (!preflight.ready) {
       throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "执行配置预检未通过。", {
@@ -271,7 +274,16 @@ export class RunBatchSchedulingService {
     };
     try {
       await this.batches.create({
-        ...(context ? { publicExecution: context } : {}),
+        ...(context
+          ? {
+              // The environment override belongs to the runtime snapshot, not the actor record.
+              publicExecution: {
+                publisher: context.publisher,
+                initiator: context.initiator,
+                requestKey: context.requestKey,
+              },
+            }
+          : {}),
         id: batchId,
         projectId,
         eventId: this.ids.next(),
@@ -315,7 +327,9 @@ export class RunBatchSchedulingService {
           enabled: suitePolicy.adapter.enabled,
           suiteName: suitePolicy.adapter.suiteName,
           testName: suitePolicy.adapter.testName,
-          environmentAddresses: [...suitePolicy.adapter.environmentAddresses],
+          environmentAddresses: [
+            ...(context?.environmentAddresses ?? suitePolicy.adapter.environmentAddresses),
+          ],
         },
         runs: [
           ...enabledCases.map((item) => ({

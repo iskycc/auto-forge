@@ -8,6 +8,7 @@ import type { RunBatch } from "@autoforge/domain";
  */
 export type ExecutionBatchView = Pick<
   RunBatch,
+  | "environmentAddresses"
   | "id"
   | "status"
   | "retryLimit"
@@ -46,6 +47,7 @@ export function toExecutionBatchView(
   const batch = overview.batch;
   return {
     ...(overview.statistics ? { statistics: overview.statistics } : {}),
+    ...(batch.environmentAddresses ? { environmentAddresses: batch.environmentAddresses } : {}),
     id: batch.id,
     status: batch.status,
     ...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {}),

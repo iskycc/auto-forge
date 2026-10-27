@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
+import { COTEST_ADAPTER_CAPABILITY } from "@autoforge/domain";
+import type { ClaimAssignmentsResponse } from "@autoforge/contracts";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createServer } from "node:http";
@@ -20,7 +22,12 @@ import { configureTaskExecution, createTaskRun } from "./support/task-execution"
 import { expectUiIntegrity } from "./support/ui-guard";
 import { insertCaseExecutionHistoryFixture } from "./support/case-execution-history-fixture";
 
-const lifecycleRunnerCapabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
+const lifecycleRunnerCapabilities = [
+  "executor:testng-v1",
+  "java:21.0.8",
+  "testng:7.11.0",
+  COTEST_ADAPTER_CAPABILITY,
+];
 
 test("public task links execute with login only, share live status, record actors and provide embedded Jenkins plugins", async ({
   page,
@@ -42,10 +49,42 @@ test("public task links execute with login only, share live status, record actor
   const name = `Wallet 支付与账户回归 · ${"多环境长任务名称验证".repeat(5)}`;
   const suite = await createVersionSuite(page, project.id, project.versionId, name, definition.id);
   const runner = await registerRunner(page, suffix);
+  const originalAddresses = ["10.0.0.11", "10.0.0.12", "2001:db8:85a3:8d3:1319:8a2e:370:7348"];
+  const overrideAddresses = ["10.20.0.21", "2001:db8::21"];
+  const dependencyJar = zipSync({
+    "example/Dependency.class": buildClassFile({ className: "example.Dependency", methods: [] }),
+  });
+  const dependency = await page.request.post(
+    `/api/v1/projects/${project.id}/runtime-assets/upload?kind=jar-bundle&archiveFormat=zip`,
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "content-type": "application/octet-stream",
+        "x-autoforge-file-name": "public-task-runtime.zip",
+      },
+      data: Buffer.from(zipSync({ "dependency.jar": dependencyJar })),
+    },
+  );
+  expect(dependency.status(), await dependency.text()).toBe(201);
+  const dependencyId = ((await dependency.json()) as { id: string }).id;
+  expect(
+    (
+      await browserJson(
+        page,
+        `/api/v1/projects/${project.id}/versions/${project.versionId}/adapter-configuration`,
+        { method: "PUT", body: { jarBundleAssetId: dependencyId, expectedRevision: 0 } },
+      )
+    ).status,
+  ).toBe(200);
   await configureTaskExecution(page, suite.id, runner.id, {
     concurrency: 1,
     retryLimit: 0,
-    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+    adapter: {
+      enabled: true,
+      suiteName: "Public task suite",
+      testName: "Public task test",
+      environmentAddresses: originalAddresses,
+    },
   });
   const username = `visitor-${Date.now()}`;
   const password = "PublicTask!Visitor123";
@@ -153,7 +192,45 @@ test("public task links execute with login only, share live status, record actor
       await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await captureUi(visitor, `public-task-ready-${width}`);
       await expectUiIntegrity(visitor);
+      await visitor.getByRole("button", { name: "切换到深色模式" }).click();
+      await captureUi(visitor, `public-task-ready-dark-${width}`);
+      await visitor.getByRole("button", { name: "切换到浅色模式" }).click();
     }
+    const environment = visitor.getByRole("region", { name: "执行环境", exact: true });
+    for (const address of originalAddresses) await expect(environment).toContainText(address);
+    await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
+    const environmentDialog = visitor.getByRole("dialog", {
+      name: "修改本次执行环境 IP",
+      exact: true,
+    });
+    await environmentDialog
+      .getByRole("textbox", { name: "本次执行环境 IP" })
+      .fill("10.0.0.1\n10.0.0.1");
+    await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await expect(environmentDialog.getByRole("alert")).toContainText("不能为空或重复");
+    await environmentDialog
+      .getByRole("textbox", { name: "本次执行环境 IP" })
+      .fill(overrideAddresses.join("\n"));
+    for (const width of [1024, 1536]) {
+      await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await captureUi(visitor, `public-task-environment-dialog-${width}`);
+      await expectUiIntegrity(visitor);
+      await environmentDialog.getByRole("button", { name: "取消", exact: true }).click();
+      await visitor.getByRole("button", { name: "切换到深色模式" }).click();
+      await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
+      await environmentDialog
+        .getByRole("textbox", { name: "本次执行环境 IP" })
+        .fill(overrideAddresses.join("\n"));
+      await captureUi(visitor, `public-task-environment-dialog-dark-${width}`);
+      await environmentDialog.getByRole("button", { name: "取消", exact: true }).click();
+      await visitor.getByRole("button", { name: "切换到浅色模式" }).click();
+      await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
+      await environmentDialog
+        .getByRole("textbox", { name: "本次执行环境 IP" })
+        .fill(overrideAddresses.join("\n"));
+    }
+    await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await expect(environment).toContainText("仅本次执行");
     await visitor.evaluate(() => {
       const original = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
       globalThis.crypto.getRandomValues = () => {
@@ -198,8 +275,19 @@ test("public task links execute with login only, share live status, record actor
     const popup = await popupPromise;
     await expect(popup).toHaveURL(new RegExp(`/Execution\\?BatchId=${first.batchId}`));
     await expect(popup.getByRole("heading", { name, exact: true })).toBeVisible();
+    for (const address of overrideAddresses) {
+      await expect(popup.getByRole("region", { name: "本次执行环境", exact: true })).toContainText(
+        address,
+      );
+      await expect(observer.getByRole("article", { name: /执行批次/ }).first()).toContainText(
+        address,
+      );
+    }
     await popup.close();
+    // Resume foreground animations after opening the public progress tab.
+    await visitor.bringToFront();
     const claim = await claimDeletionAttempt(page, runner);
+    expect(overrideAddresses).toContain(claim.assignment.executionSpec.adapter?.environmentAddress);
     await uploadDeletionLog(page, runner, claim, "Public task execution functional test\n");
     await completeDeletionAttempt(page, runner, claim, "succeeded");
     await expect(execute).toBeEnabled({ timeout: 15000 });
@@ -208,6 +296,7 @@ test("public task links execute with login only, share live status, record actor
       `/api/v1/run-batches/${first.batchId}?view=summary`,
     );
     expect(firstSummary.body).toMatchObject({
+      environmentAddresses: overrideAddresses,
       publicExecution: {
         publisher: { id: publisherId, username: E2E_ADMIN_USERNAME },
         initiator: { username },
@@ -217,6 +306,31 @@ test("public task links execute with login only, share live status, record actor
     await page.goto(`/run-batches/${first.batchId}`);
     await expect(page.getByLabel("执行操作人")).toContainText(E2E_ADMIN_USERNAME);
     await expect(page.getByLabel("执行操作人")).toContainText(username);
+    for (const address of overrideAddresses)
+      await expect(page.getByRole("region", { name: "本次执行环境", exact: true })).toContainText(
+        address,
+      );
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page
+        .getByRole("region", { name: "本次执行环境", exact: true })
+        .scrollIntoViewIfNeeded();
+      await captureUi(page, `execution-environment-${width}`);
+      await expectUiIntegrity(page);
+      await page.getByRole("button", { name: "切换到深色模式" }).click();
+      await captureUi(page, `execution-environment-dark-${width}`);
+      await page.getByRole("button", { name: "切换到浅色模式" }).click();
+    }
+    for (const address of originalAddresses) await expect(environment).toContainText(address);
+    const savedSuite = await browserJson<{
+      policy: { adapter: { environmentAddresses: string[] } };
+    }>(page, `/api/v1/case-suites/${suite.id}?view=summary`);
+    expect(savedSuite.body.policy.adapter.environmentAddresses).toEqual(originalAddresses);
+    await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
+    await environmentDialog
+      .getByRole("textbox", { name: "本次执行环境 IP" })
+      .fill(overrideAddresses.join("\n"));
+    await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
     await visitor.getByLabel("启动方式", { exact: true }).click();
     await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
     await visitor.getByRole("spinbutton", { name: "倒计时秒数" }).fill("3");
@@ -237,9 +351,15 @@ test("public task links execute with login only, share live status, record actor
     expect(
       Date.parse(delayedSummary.body.scheduledFor) - Date.parse(delayedSummary.body.createdAt),
     ).toBe(3000);
+    expect(
+      (delayed.request().postDataJSON() as { environmentAddresses: string[] }).environmentAddresses,
+    ).toEqual(overrideAddresses);
     // Closing the initiating document does not cancel the persisted countdown.
     await visitor.reload();
     const runningClaim = await claimDeletionAttempt(page, runner);
+    expect(overrideAddresses).toContain(
+      runningClaim.assignment.executionSpec.adapter?.environmentAddress,
+    );
     await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toBeEnabled({
       timeout: 15000,
     });
@@ -271,6 +391,36 @@ test("public task links execute with login only, share live status, record actor
       await captureUi(page, `execution-public-actors-${width}`);
     }
 
+    const defaultRun = await browserJson<{ batchId: string }>(visitor, startPath, {
+      method: "POST",
+      body: { requestKey: crypto.randomUUID(), delaySeconds: 3600 },
+    });
+    expect(defaultRun.status).toBe(201);
+    const defaultSummary = await browserJson<{ environmentAddresses: string[] }>(
+      page,
+      `/api/v1/run-batches/${defaultRun.body.batchId}?view=summary`,
+    );
+    expect(defaultSummary.body.environmentAddresses).toEqual(originalAddresses);
+    expect(
+      (
+        await browserJson(
+          visitor,
+          `/api/v1/public/case-suites/${suite.id}/executions/${defaultRun.body.batchId}/terminate?PublisherId=${publisherId}`,
+          { method: "POST" },
+        )
+      ).status,
+    ).toBe(200);
+    await expect
+      .poll(
+        async () =>
+          (
+            await browserJson<{ status: string }>(
+              page,
+              `/api/v1/run-batches/${defaultRun.body.batchId}?view=summary`,
+            )
+          ).body.status,
+      )
+      .toBe("cancelled");
     await visitor.getByText("Jenkins 对接指导与插件下载", { exact: true }).click();
     await expect(visitor.getByText("创建服务账号和 Jenkins 凭据", { exact: true })).toBeVisible();
     await expect(visitor.locator("pre")).toContainText(suite.id);
@@ -907,7 +1057,7 @@ test("newly created tasks can be deleted immediately without reappearing after r
   expect((await browserJson(page, `/api/v1/case-suites/${suite.id}`)).status).toBe(404);
 });
 
-type DeletionClaim = { assignment: { attemptId: string }; lease: { token: string } };
+type DeletionClaim = ClaimAssignmentsResponse["assignments"][number];
 type DeletionRunner = { id: string; credential: string };
 
 async function claimDeletionAttempt(page: Page, runner: DeletionRunner): Promise<DeletionClaim> {
@@ -923,7 +1073,7 @@ async function claimDeletionAttempt(page: Page, runner: DeletionRunner): Promise
             availableSlots: 1,
             waitSeconds: 0,
             labels: ["linux", "java", "testng"],
-            capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+            capabilities: lifecycleRunnerCapabilities,
           },
         });
         expect(response.status()).toBe(200);
@@ -1955,7 +2105,7 @@ test("terminal execution failures create a reusable task with the execution conf
         availableSlots: 2,
         waitSeconds: 0,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+        capabilities: lifecycleRunnerCapabilities,
       },
     });
     expect(response.status()).toBe(200);

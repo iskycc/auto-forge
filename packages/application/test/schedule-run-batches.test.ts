@@ -552,6 +552,23 @@ describe("run batch preflight", () => {
 });
 
 describe("run batch creation with suite policy", () => {
+  it("rejects public environment overrides when the saved task disables Adapter", async () => {
+    const service = preflightService({
+      suites: { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runners: runnersFake(),
+      catalog: readyCatalogFake(),
+      objectStore: objectStoreFake(),
+    });
+    const actor = { id: "visitor", username: "visitor", source: "local" as const };
+    await expect(
+      service.create({ suiteId: "suite-1" }, undefined, {
+        publisher: actor,
+        initiator: actor,
+        requestKey: randomUUID(),
+        environmentAddresses: ["10.0.0.21"],
+      }),
+    ).rejects.toMatchObject({ code: "RUN_BATCH_PREFLIGHT_FAILED" });
+  });
   it.each([undefined, "local", "ldap"] as const)(
     "freezes suite policy and initiator snapshot (%s)",
     async (source) => {

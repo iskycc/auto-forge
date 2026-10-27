@@ -13,6 +13,8 @@ import { JenkinsTaskGuide } from "./jenkins-task-guide";
 import { useLoginDialog } from "./login-dialog-provider";
 import { SessionLoginButton } from "./session-login-button";
 import { usePublicSuite } from "./use-public-suite";
+import { PublicSuiteEnvironment } from "./public-suite-environment";
+import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
 import { usePlatformNow } from "./platform-time";
 import { ApiClientError, throwApiErrorResponse } from "@/lib/client-api";
 import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
@@ -33,6 +35,8 @@ export function PublicSuiteExecution({
   const [error, setError] = useState("");
   const [stop, setStop] = useState<PublicSuiteBatch | null>(null);
   const [progressPath, setProgressPath] = useState("");
+  const [environmentOverride, setEnvironmentOverride] = useState<string[]>();
+  const [unconfirmedRequest, setUnconfirmedRequest] = useState(false);
   const requestKey = useRef<string | null>(null);
   const submitting = useRef(false);
   const authenticated = session.status === "authenticated";
@@ -52,18 +56,26 @@ export function PublicSuiteExecution({
         body: JSON.stringify({
           requestKey: requestKey.current,
           delaySeconds: mode === "delay" ? delay : 0,
+          ...(view.adapterEnabled && environmentOverride
+            ? { environmentAddresses: environmentOverride }
+            : {}),
         }),
       });
       if (!response.ok) await throwApiErrorResponse(response, "执行请求失败，请重试。");
       const result = publicSuiteExecutionResultSchema.parse(await response.json());
       setProgressPath(result.progressPath);
       requestKey.current = null;
+      setUnconfirmedRequest(false);
+      setEnvironmentOverride(undefined);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "执行失败。");
       if (cause instanceof ApiClientError && cause.status === 401) openLogin();
       // No request was submitted if key generation failed; recovery needs no status fetch.
       if (requestKey.current) await refresh();
+      if (cause instanceof ApiClientError && cause.status >= 400 && cause.status < 500)
+        requestKey.current = null;
+      setUnconfirmedRequest(!!requestKey.current);
     } finally {
       submitting.current = false;
       setPending(false);
@@ -150,6 +162,21 @@ export function PublicSuiteExecution({
                   },
                 ]}
               />
+              <PublicSuiteEnvironment
+                addresses={
+                  view.adapterEnabled ? (environmentOverride ?? view.environmentAddresses) : []
+                }
+                enabled={view.adapterEnabled}
+                disabled={
+                  !authenticated ||
+                  pending ||
+                  view.active.length > 0 ||
+                  !!refreshError ||
+                  unconfirmedRequest
+                }
+                overridden={view.adapterEnabled && !!environmentOverride}
+                onChange={setEnvironmentOverride}
+              />
             </Card>
           </div>
           <Card
@@ -178,7 +205,7 @@ export function PublicSuiteExecution({
                     aria-label="启动方式"
                     virtual={false}
                     value={mode}
-                    disabled={pending || view.active.length > 0}
+                    disabled={pending || view.active.length > 0 || unconfirmedRequest}
                     onChange={setMode}
                     options={[
                       { value: "immediate", label: "立即执行" },
@@ -199,7 +226,7 @@ export function PublicSuiteExecution({
                       precision={0}
                       value={delay}
                       onChange={setDelay}
-                      disabled={pending || view.active.length > 0}
+                      disabled={pending || view.active.length > 0 || unconfirmedRequest}
                       className="!w-full"
                     />
                   </Form.Item>
@@ -377,7 +404,7 @@ function ExecutionRow({
       className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-muted p-4"
       aria-label={`执行批次 ${batch.sequenceNumber}`}
     >
-      <div className="grid min-w-0 gap-2">
+      <div className="grid min-w-0 flex-1 gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <strong>批次 #{batch.sequenceNumber}</strong>
           <Tag color={active ? "blue" : batch.status === "failed" ? "error" : "default"}>
@@ -399,6 +426,12 @@ function ExecutionRow({
           {batch.terminatedBy ? <span>终止人：{batch.terminatedBy}</span> : null}
           <time title={batch.createdAt}>{formatPlatformDateTime(batch.createdAt)}</time>
         </div>
+        {batch.environmentAddresses.length ? (
+          <div className="grid min-w-0 gap-2">
+            <span className="text-xs text-muted-foreground">本次执行环境 IP</span>
+            <ExecutionEnvironmentAddresses addresses={batch.environmentAddresses} />
+          </div>
+        ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-3">
         {batch.progressPath ? (

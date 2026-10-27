@@ -134,6 +134,24 @@ describe("public task execution HTTP boundary", () => {
     expect((await start(request("POST", { requestKey: key }), context)).status).toBe(403);
     expect(f.start).not.toHaveBeenCalled();
   });
+  it("accepts a full 128-address pool without relaxing other task overrides", async () => {
+    const environmentAddresses = Array.from(
+      { length: 128 },
+      (_, index) => `2001:db8:0:1:2:3:4:${index.toString(16)}`,
+    );
+    expect(
+      (await start(request("POST", { requestKey: key, environmentAddresses }), context)).status,
+    ).toBe(201);
+    expect(f.start).toHaveBeenCalledWith(
+      "suite",
+      "owner",
+      { requestKey: key, delaySeconds: 0, environmentAddresses },
+      actor,
+    );
+    expect(
+      (await start(request("POST", { requestKey: key, environmentAddresses: [] }), context)).status,
+    ).toBe(400);
+  });
   it("uses the authenticated terminator rather than request body attribution", async () => {
     expect((await terminate(request("POST", { actor: { id: "forged" } }), context)).status).toBe(
       200,

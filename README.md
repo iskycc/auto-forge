@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 任务公开执行页展示全部环境 IP，登录后可修改本次立即／倒计时执行的环境，提交后恢复任务默认地址，不改变任务原配置；当前批次、历史批次和执行详情展示实际执行快照中的多环境地址，详见[任务公开执行](./docs/architecture/public-task-execution.md)。
+
 - Full 可选[独立 PostgreSQL 日志库](./deploy/compose/full-bind/log-postgres/README.md)，在“平台设置 → 日志数据库”登记多个库并实时选择新批次写入库；主库持久化每批次库 ID，历史和在途日志按原库读取，旧本地日志保持兼容。日志数据库与业务数据库分开部署，连接串加密保存，具体语义见 [ADR 0015](./docs/adr/0015-full-postgresql-log-databases.md)。
 
 - 活动任务执行详情提供“并发诊断”，按需显示未达并发上限的当前条件、执行中／待领取占额、项目额度、节点本任务／其他任务占用，以及 CPU、内存预留和资源指标状态。诊断复用调度准入规则，通过隔离只读进程读取，不随页面轮询；具有执行记录和节点查看权限的用户可手动刷新，匿名公开页不展示。详见[执行任务并发诊断](./docs/architecture/execution-concurrency-diagnostics.md)。

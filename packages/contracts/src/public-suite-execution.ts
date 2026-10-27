@@ -1,4 +1,23 @@
 import { z } from "zod";
+import { caseSuiteAdapterConfigurationSchema } from "./management";
+
+export const publicSuiteEnvironmentAddressesSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .max(45)
+      .pipe(z.union([z.ipv4(), z.ipv6()])),
+  )
+  .min(1)
+  .max(128)
+  .refine(
+    (addresses) =>
+      new Set(addresses.map((address) => address.toLowerCase())).size === addresses.length,
+    {
+      message: "环境 IP 不能重复。",
+    },
+  );
 
 export const executionActorSchema = z
   .object({
@@ -14,6 +33,7 @@ export const publicSuiteExecutionContextSchema = z
     publisher: executionActorSchema,
     initiator: executionActorSchema,
     requestKey: z.uuid(),
+    environmentAddresses: publicSuiteEnvironmentAddressesSchema.optional(),
   })
   .strict();
 
@@ -32,6 +52,7 @@ export const startPublicSuiteExecutionSchema = z
   .object({
     requestKey: z.uuid(),
     delaySeconds: z.number().int().min(0).max(604800).default(0),
+    environmentAddresses: publicSuiteEnvironmentAddressesSchema.optional(),
   })
   .strict();
 
@@ -63,6 +84,7 @@ export const publicSuiteBatchSchema = z.object({
   createdAt: z.string(),
   publicExecution: z.boolean(),
   progressPath: z.string().nullable(),
+  environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses,
 });
 
 export const publicSuiteViewSchema = z.object({
@@ -74,6 +96,8 @@ export const publicSuiteViewSchema = z.object({
   caseCount: z.number().int().nonnegative(),
   concurrency: z.number().int().positive(),
   retryLimit: z.number().int().nonnegative(),
+  adapterEnabled: z.boolean().default(false),
+  environmentAddresses: caseSuiteAdapterConfigurationSchema.shape.environmentAddresses,
   publisher: executionActorSchema,
   executable: z.boolean(),
   unavailableReason: z.string().nullable(),

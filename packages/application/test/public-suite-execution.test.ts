@@ -90,6 +90,39 @@ describe("public task execution", () => {
     expect(f.runs.getSummary).toHaveBeenCalledWith("batch");
     expect(f.runs.create).not.toHaveBeenCalled();
   });
+  it("passes one-time environment addresses into the authorized execution context", async () => {
+    const environmentAddresses = ["10.0.0.21", "2001:db8::21"];
+    await f.service.start(
+      "suite",
+      "maintainer",
+      { requestKey: key, delaySeconds: 120, environmentAddresses },
+      actor,
+    );
+    expect(f.runs.create).toHaveBeenCalledWith(
+      { suiteId: "suite", delaySeconds: 120 },
+      { username: actor.username, source: actor.source },
+      { publisher, initiator: actor, requestKey: key, environmentAddresses },
+    );
+    await f.service.start("suite", "maintainer", { requestKey: key }, actor);
+    expect(f.runs.create.mock.calls[1]?.[2]).not.toHaveProperty("environmentAddresses");
+  });
+  it("shows all saved environment addresses without returning the full policy", async () => {
+    f.getSummary.mockResolvedValue({
+      ...suite,
+      policy: {
+        ...suite.policy,
+        adapter: {
+          ...suite.policy.adapter,
+          enabled: true,
+          environmentAddresses: ["10.0.0.11", "2001:db8::11"],
+        },
+      },
+    });
+    expect(await f.service.read("suite", "maintainer")).toMatchObject({
+      adapterEnabled: true,
+      environmentAddresses: ["10.0.0.11", "2001:db8::11"],
+    });
+  });
   it("rejects missing/revoked grants before reading task or creating executions", async () => {
     f.links.publisher.mockResolvedValue(null);
     await expect(

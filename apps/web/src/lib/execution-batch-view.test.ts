@@ -25,6 +25,7 @@ describe("execution batch public view", () => {
       status: "succeeded",
       totalRuns: 1,
       succeededRuns: 1,
+      environmentAddresses: ["10.0.0.21", "2001:db8::21"],
       finalSummary: { totalRuns: 1, passed: 1 },
       roundRecoveries: [],
     });
@@ -64,6 +65,7 @@ function batchDetails(): RunBatchDetails {
       { name: "LEGACY_SECRET", secretId: "secret-1", secretVersionId: "secret-version-1" },
     ],
     selectedRunnerIds: ["runner-1"],
+    environmentAddresses: ["10.0.0.21", "2001:db8::21"],
     policy: {
       executor: "testng",
       concurrency: 10,

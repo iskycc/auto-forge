@@ -1,5 +1,6 @@
 "use client";
 import { ExecutionActors } from "./execution-actors";
+import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -302,6 +303,20 @@ export function ExecutionBatchDetails({
         {...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {})}
         {...(batch.terminatedBy ? { terminatedBy: batch.terminatedBy } : {})}
       />
+      {batch.environmentAddresses?.length ? (
+        <section
+          aria-label="本次执行环境"
+          className="grid min-w-0 gap-3 rounded-lg border border-border bg-card px-5 py-4"
+        >
+          <span className="text-sm font-medium">
+            本次执行环境 IP{" "}
+            <span className="ml-2 font-normal text-muted-foreground">
+              {batch.environmentAddresses.length} 个
+            </span>
+          </span>
+          <ExecutionEnvironmentAddresses addresses={batch.environmentAddresses} />
+        </section>
+      ) : null}
 
       {(analysisScope ||
         (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
