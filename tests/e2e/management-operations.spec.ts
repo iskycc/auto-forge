@@ -140,6 +140,12 @@ for (const targetMode of ["new", "existing"] as const)
   test(`whole-version copy into ${targetMode} version retains historical executions`, async ({
     page,
   }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: undefined,
+        configurable: true,
+      });
+    });
     await ensureAdministrator(page);
     const sourceProject = await createInitializationProject(page);
     const source = await seedInitializationSource(page, sourceProject.projectId);
@@ -204,7 +210,7 @@ for (const targetMode of ["new", "existing"] as const)
       await page
         .context()
         .addCookies([
-          { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
+          { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
         ]);
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       for (const viewport of [

@@ -7,6 +7,7 @@ import type { DdtChangeSelection } from "@autoforge/contracts";
 import { ActionDialog } from "./action-dialog";
 import { DdtChangeDiff } from "./ddt-change-diff";
 import { debugRequest } from "@/lib/case-debug-client";
+import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
 import { useToast } from "./ui-feedback";
 
 type CandidatePage = { items: DdtChangeCandidate[]; nextCursor?: string };
@@ -99,8 +100,8 @@ export function DdtChangeSubmitDialog({
     }
     setBusy(true);
     setError("");
-    requestId.current ||= crypto.randomUUID();
     try {
+      requestId.current ||= createClientIdempotencyKey();
       await debugRequest(baseUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },

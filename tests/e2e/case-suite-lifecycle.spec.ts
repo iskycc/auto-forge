@@ -2382,8 +2382,9 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(
     sharedCasePage.getByRole("heading", { name: `Lifecycle display ${suffix}` }),
   ).toBeVisible();
-  await expect(sharedCasePage.getByText(className, { exact: true })).toBeVisible();
-  await expect(sharedCasePage.getByText("永久只读链接", { exact: true })).toBeVisible();
+  const sharedCaseDetails = sharedCasePage.getByRole("main");
+  await expect(sharedCaseDetails.getByText(className, { exact: true })).toBeVisible();
+  await expect(sharedCaseDetails.getByText("永久只读链接", { exact: true })).toBeVisible();
   await expect(sharedCasePage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
   for (const viewport of [
     { width: 1024, height: 768 },

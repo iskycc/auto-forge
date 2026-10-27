@@ -12,6 +12,7 @@ import {
 import { ActionDialog } from "./action-dialog";
 import { Button, Input, Select } from "./ui";
 import { readApiError } from "@/lib/client-api";
+import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
 
 const PHASES: Record<ProjectVersionCopy["phase"], string> = {
   snapshot: "生成一致性快照",
@@ -215,7 +216,7 @@ function VersionCopyDialog({
     setPending(true);
     setError("");
     try {
-      requestKey.current ||= crypto.randomUUID();
+      requestKey.current ||= createClientIdempotencyKey();
       const response = await fetch(
         action && job
           ? `/api/v1/project-version-copies/${job.id}`

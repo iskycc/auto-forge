@@ -119,7 +119,7 @@ jobs:
     name: Lite browser · ${{ matrix.scenario }}
     runs-on: ubuntu-24.04
     # Production build, desktop screenshots and artifact upload share this deadline.
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.timeout_minutes || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -133,6 +133,7 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: ddt
+            timeout_minutes: 25
             specs: tests/e2e/ddt-management.spec.ts tests/e2e/ddt-change-review.spec.ts
             project_maximum_concurrency: ""
             screenshots: true

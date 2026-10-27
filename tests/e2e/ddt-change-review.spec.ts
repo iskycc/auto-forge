@@ -14,6 +14,17 @@ import {
 } from "./support/version-initialization";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+function disableSecureContextUuid() {
+  Object.defineProperty(globalThis.crypto, "randomUUID", {
+    value: undefined,
+    configurable: true,
+  });
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(disableSecureContextUuid);
+});
+
 test("personal DDT differences require scoped review and preserve private fields and immutable history", async ({
   page,
 }) => {
@@ -54,6 +65,7 @@ test("personal DDT differences require scoped review and preserve private fields
     ).status,
   ).toBe(204);
   const author = await page.context().browser()!.newContext({ baseURL: headers.origin });
+  await author.addInitScript(disableSecureContextUuid);
   try {
     expect(
       (
