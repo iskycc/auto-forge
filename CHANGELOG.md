@@ -4,6 +4,36 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+## 1.20.20 - 2026-10-27
+
+### Added
+
+- 任务增加公开执行入口：已登录用户无需项目执行权限即可立即执行或倒计时执行，支持多人状态同步、平滑终止和新标签页查看公开进展，执行详情保留分享人、拉起人和终止人。任务详情和列表提供可撤销链接及 Jenkins 接入指导。
+- 公开日志页及日志浮窗的“执行此用例”增加环境 IP 确认弹窗：默认只读，点击“修改”后可输入本次使用的 IPv4／IPv6 地址；取消不执行，提交失败保留输入并显示原因。
+
+### Changed
+
+- 两个 Jenkins 插件合入主系统，提供版本与 SHA-256 校验下载；Release 不再单独发布 HPI，manifest 升为 schema 4。源码构建按摘要复用插件资源，缺少时仅在构建阶段通过 Maven 准备，运行时不构建或联网下载。
+- 日志诊断重跑默认取原始批次该用例的环境地址，一次性修改只固化在新手动批次中，不改变任务、原批次或下次重跑的默认 IP。从修改过 IP 的手动日志再次发起也回到原地址；Runner 历史轮询和任务批跑的环境池轮询保持原规则。
+- 日志重跑的环境读取和创建均走 Lite／Full 共享的隔离工作线程，沿用项目日志读取、重跑权限、同源保护和有界请求；该 IP 调整不引入数据库迁移、持久配置字段、依赖或 Runner 协议变更。
+
+### Fixed
+
+- 批次已经结束时，不再显示“任务正在终止／等待正在执行的用例完成”，避免与终态状态冲突。
+
+### Compatibility
+
+- 本版本使用标准发布流程：保留 CI、Full distributed acceptance、Dependency security、Release checks、Release 及发布后验收。发布检查的生产构建使用 Java 21 准备内置 Jenkins 插件，Adapter 专用 Java 8 字节码与运行验证保持独立。
+- 任务公开执行新增 SQLite `0084`／PostgreSQL `0082` 迁移，保存链接授权和批次操作人；旧任务不会自动公开。历史 schema 1/2/3 发布包继续按原资产集合验收，内置 HPI 计入主平台镜像 SBOM。
+
+### Validation
+
+- 任务公开执行的契约、应用和 HTTP 权限检查通过；104 项真实 SQLite／PostgreSQL 定向集成、升级回滚、51 项发布工具检查，以及带数据的生产 Lite 多会话 Playwright 全流程通过。实际审查 1024×768、1536×960 深浅色截图，覆盖任务列表、任务接入、公开页、操作人和 Jenkins 指导；验证范围与限制见公开任务执行说明。
+- 220 项定向检查通过，含真实 SQLite／PostgreSQL、项目权限、源任务隔离和冷／热工作线程；普通 501 用例批次与中文 DDT 两项生产 Lite Playwright 场景通过，验证单次下发新 IP、下次恢复原 IP。
+- 已实际查看 1024×768、1536×960 深浅色与编辑态六张弹窗截图，无新增布局变形；相关类型、Web 构建、格式／Lint、许可证和 E2E 矩阵检查通过，验证边界见日志重跑环境说明。
+
 ## 1.20.19 - 2026-10-26
 
 ### Changed

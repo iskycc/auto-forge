@@ -9,21 +9,16 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.doesNotMatch(workflow, /^  offline-acceptance:/m);
   assert.doesNotMatch(workflow, /signed-release-candidate/);
   assert.match(workflow, /  adapter:\n[\s\S]*?    needs: prepare/);
-  assert.match(workflow, /  backend:\n[\s\S]*?    needs: \[prepare, adapter\]/);
+  assert.match(workflow, /  backend:\n[\s\S]*?    needs: \[prepare, adapter, jenkins-plugins\]/);
   assert.match(workflow, /  jenkins-plugins:\n[\s\S]*?    needs: prepare/);
   assert.match(
     workflow,
     /mvn --batch-mode --no-transfer-progress[\s\S]*?integrations\/jenkins\/pom\.xml/,
   );
-  assert.match(
-    workflow,
-    /file: dist\/release\/autoforge-jenkins-execution-\$\{\{ needs\.prepare\.outputs\.version \}\}\.hpi/,
-  );
-  assert.match(
-    workflow,
-    /file: dist\/release\/autoforge-jenkins-dependency-publisher-\$\{\{ needs\.prepare\.outputs\.version \}\}\.hpi/,
-  );
-  assert.doesNotMatch(workflow, /path: dist\/release\/autoforge-jenkins-.*\.hpi/);
+  assert.match(workflow, /node scripts\/release\/stage-jenkins-resources\.mjs/);
+  assert.match(workflow, /name: embedded-jenkins-plugins/);
+  assert.match(workflow, /path: resources\/jenkins\/\*/);
+  assert.doesNotMatch(workflow, /autoforge-jenkins-.*\.hpi/);
   assert.match(workflow, /GITHUB_EVENT_NAME.*workflow_dispatch.*revision.*GITHUB_SHA/);
   assert.doesNotMatch(workflow, /^  toolchain:/m);
   assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, jenkins-plugins\]/);
@@ -70,6 +65,20 @@ test("builds the embedded CoTest Adapter with a pinned Java 8 compiler", async (
   for (const workflow of [ciWorkflow, releaseChecksWorkflow]) {
     assert.match(workflow, /-Dtestng\.version=7\.11\.0 test/);
   }
+});
+
+test("builds embedded Jenkins plugins on Java 21 while retaining the Java 8 Adapter verification", async () => {
+  const tagged = await readFile(".github/workflows/release-checks.yml", "utf8");
+  const ci = await readFile(".github/workflows/ci.yml", "utf8");
+  assert.match(tagged, /if: matrix\.name == 'unit and integration'\n[\s\S]*?java-version: "8"/);
+  assert.match(
+    tagged,
+    /if: matrix\.name == 'CoTest Adapter current runtime' \|\| matrix\.name == 'production build'\n[\s\S]*?java-version: "21"/,
+  );
+  assert.match(
+    ci,
+    /  build:\n[\s\S]*?Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/,
+  );
 });
 
 test("partitions tagged and published checks without polling inside a test job", async () => {

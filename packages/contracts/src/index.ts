@@ -11,6 +11,7 @@ export * from "./operations";
 export * from "./project-structure";
 export * from "./attempt-log-share";
 export * from "./public-execution-links";
+export * from "./public-suite-execution";
 export * from "./ddt";
 export * from "./ddt-import-progress";
 export * from "./runner-group";

@@ -249,6 +249,7 @@ export function AppShell({
     pathname.startsWith("/share/") ||
     pathname === "/CaseLog" ||
     pathname === "/Execution" ||
+    pathname === "/RunTask" ||
     pathname.startsWith("/progress/") ||
     (pathname === "/" && !userName)
   ) {

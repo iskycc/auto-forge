@@ -1,10 +1,32 @@
 import { NextResponse } from "next/server";
+import {
+  caseLogRerunConfigurationSchema,
+  rerunCaseFromAttemptInputSchema,
+} from "@autoforge/contracts";
 
-import { apiErrorResponse } from "@/lib/api-response";
+import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ attemptId: string }> };
+
+export async function GET(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    const identity = await authenticateRequest(request);
+    const { attemptId } = await context.params;
+    const services = await getPlatformServices();
+    const rerunContext = await services.runBatches.getAttemptRerunContext(attemptId);
+    services.identityAccess.authorize(identity, "log.read", rerunContext.projectId);
+    services.identityAccess.authorize(identity, "run.retry", rerunContext.projectId);
+    const configuration = await services.runBatches.getCaseLogRerunConfiguration(attemptId);
+    return NextResponse.json(caseLogRerunConfigurationSchema.parse(configuration), {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
+  }
+}
 
 export async function POST(request: Request, context: Context): Promise<NextResponse> {
   const currentRequestId = requestId(request);
@@ -16,10 +38,19 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const rerunContext = await services.runBatches.getAttemptRerunContext(attemptId);
     services.identityAccess.authorize(identity, "log.read", rerunContext.projectId);
     services.identityAccess.authorize(identity, "run.retry", rerunContext.projectId);
-    const batch = await services.runBatches.rerunCaseFromAttempt(attemptId, {
-      username: identity.user.username,
-      source: identity.user.source,
-    });
+    const input = rerunCaseFromAttemptInputSchema.parse(
+      !request.body || request.headers.get("content-length") === "0"
+        ? {}
+        : await readJsonBody(request, 1024),
+    );
+    const batch = await services.runBatches.rerunCaseFromAttempt(
+      attemptId,
+      {
+        username: identity.user.username,
+        source: identity.user.source,
+      },
+      input,
+    );
     const logTarget = await services.runBatches.getCaseLogRerunLogTarget(batch.id);
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "run_attempt.rerun",

@@ -1,3 +1,5 @@
+import { publicRequestKey } from "./public-suite-execution";
+import { runBatchActors } from "./run-batch-actors";
 import { executionRecordKindCondition } from "./execution-record-kind";
 import {
   concurrencyCountsQuery,
@@ -9,7 +11,7 @@ import {
 import { schedulableBatchCapacitySql, schedulableBatchOrderSql } from "./schedulable-batch-query";
 import { finalFailureRunCondition } from "./final-failure-selection";
 import {
-  previousCaseLogAssignmentQuery,
+  sourceCaseLogAssignmentQuery,
   previousCaseLogRunnerQuery,
 } from "./case-log-rerun-history-query";
 import {
@@ -260,6 +262,37 @@ export class SqliteRunBatchRepository
             .get();
           assertCaseSuiteRevision(suite?.revision, record.expectedSuiteRevision);
         }
+        if (record.publicExecution) {
+          const context = record.publicExecution;
+          const key = publicRequestKey(record.suiteId, context.publisher.id, context.requestKey);
+          const replay = this.handle.client
+            .prepare("SELECT id FROM run_batches WHERE public_request_key=?")
+            .get(key) as { id: string } | undefined;
+          if (replay)
+            throw new DomainError("PUBLIC_EXECUTION_REPLAY", "重复的执行请求。", {
+              details: replay.id,
+            });
+          const link = this.handle.client
+            .prepare(
+              "SELECT 1 FROM public_suite_execution_links l JOIN users u ON u.id=l.publisher_id WHERE l.suite_id=? AND l.publisher_id=? AND l.revoked_at IS NULL AND u.status='active'",
+            )
+            .get(record.suiteId, context.publisher.id);
+          if (!link)
+            throw new DomainError(
+              "PUBLIC_SUITE_LINK_NOT_FOUND",
+              "公开执行链接已撤销或分享人已停用。",
+            );
+          const active = this.handle.client
+            .prepare(
+              "SELECT id FROM run_batches WHERE suite_id=? AND status IN ('queued','dispatching','scheduled','running') AND batch_kind<>'case_log_rerun' LIMIT 1",
+            )
+            .get(record.suiteId);
+          if (active)
+            throw new DomainError(
+              "PUBLIC_SUITE_EXECUTION_ACTIVE",
+              "此任务已有待执行或执行中的批次，请等待结束后再执行。",
+            );
+        }
         // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
         const nextSequence = (
           this.handle.client
@@ -280,6 +313,16 @@ export class SqliteRunBatchRepository
             batchKind: record.kind ?? "standard",
             parentBatchId: record.parentBatchId,
             sourceExecutionRunId: record.sourceExecutionRunId,
+            publicExecutionJson: record.publicExecution
+              ? JSON.stringify({ ...record.publicExecution, schemaVersion: 1 })
+              : null,
+            publicRequestKey: record.publicExecution
+              ? publicRequestKey(
+                  record.suiteId,
+                  record.publicExecution.publisher.id,
+                  record.publicExecution.requestKey,
+                )
+              : null,
             requestedByUsername: record.requestedBy?.username,
             requestedBySource: record.requestedBy?.source,
             status: "queued",
@@ -300,6 +343,12 @@ export class SqliteRunBatchRepository
             updatedAt: record.createdAt,
           })
           .run();
+        if (record.publicExecution)
+          this.handle.client
+            .prepare(
+              "INSERT INTO public_batch_access(batch_id,created_by,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+            )
+            .run(record.id, record.publicExecution.initiator.id, record.createdAt);
         this.handle.db
           .insert(runBatchRoundConcurrencies)
           .values({
@@ -732,9 +781,9 @@ export class SqliteRunBatchRepository
       .where(eq(runBatches.id, batchId))
       .get();
     const runtime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
-    const previousAdapterEnvironmentAddress =
+    const sourceAdapterEnvironmentAddress =
       runtime && selection.executionRunId
-        ? previousCaseLogAdapterEnvironmentAddress(
+        ? sourceCaseLogAdapterEnvironmentAddress(
             this.handle,
             batchId,
             selection.executionRunId,
@@ -781,9 +830,7 @@ export class SqliteRunBatchRepository
             },
           }
         : {}),
-      ...(previousAdapterEnvironmentAddress
-        ? { caseLogRerunRotation: { previousAdapterEnvironmentAddress } }
-        : {}),
+      ...(sourceAdapterEnvironmentAddress ? { sourceAdapterEnvironmentAddress } : {}),
       roundRecoveries: recoveries,
       runs: runRows.map((run) => ({
         id: run.id,
@@ -1901,6 +1948,7 @@ export class SqliteRunBatchRepository
       suiteName: row.suiteName,
       suiteVersion: row.suiteVersion,
       kind: row.batchKind,
+      ...runBatchActors(row),
       ...(row.parentBatchId ? { parentBatchId: row.parentBatchId } : {}),
       ...(row.sourceExecutionRunId ? { sourceExecutionRunId: row.sourceExecutionRunId } : {}),
       ...(row.requestedByUsername && row.requestedBySource
@@ -2464,37 +2512,14 @@ function assignEnvironmentAddresses(
   );
 }
 
-function previousCaseLogAdapterEnvironmentAddress(
+function sourceCaseLogAdapterEnvironmentAddress(
   handle: SqliteDatabaseHandle,
   parentBatchId: string,
   sourceExecutionRunId: string,
   sourceRuntime: ProjectAdapterRuntime,
 ): string | undefined {
-  const latestDiagnostic = handle.client
-    .prepare(
-      `SELECT batch.adapter_runtime_json AS adapterRuntimeJson, run.id AS executionRunId
-       FROM run_batches batch
-       JOIN execution_runs run ON run.batch_id = batch.id
-       WHERE batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = ?
-         AND batch.source_execution_run_id = ?
-       ORDER BY batch.created_at DESC, batch.id DESC, run.id DESC LIMIT 1`,
-    )
-    .get(parentBatchId, sourceExecutionRunId) as
-    { adapterRuntimeJson: string | null; executionRunId: string } | undefined;
-  const diagnosticRuntime = parseProjectAdapterRuntime(
-    latestDiagnostic?.adapterRuntimeJson ?? null,
-  );
-  if (latestDiagnostic && diagnosticRuntime) {
-    const address = adapterEnvironmentAddress(
-      diagnosticRuntime,
-      latestDiagnostic.executionRunId,
-      1,
-    );
-    if (address) return address;
-  }
-
   const actualAssignment = handle.db.all<{ executionSpecJson: string }>(
-    previousCaseLogAssignmentQuery(parentBatchId, sourceExecutionRunId),
+    sourceCaseLogAssignmentQuery(parentBatchId, sourceExecutionRunId),
   )[0];
   const actualAddress = actualAssignment
     ? adapterEnvironmentAddressFromExecutionSpec(actualAssignment.executionSpecJson)

@@ -106,6 +106,11 @@ export type RunBatch = {
     username: string;
     source: "local" | "ldap";
   };
+  publicExecution?: {
+    publisher: { id: string; username: string; source: "local" | "ldap" };
+    initiator: { id: string; username: string; source: "local" | "ldap" };
+  };
+  terminatedBy?: { id: string; username: string; source: "local" | "ldap" };
   status: RunBatchStatus;
   priority: number;
   retryLimit: number;

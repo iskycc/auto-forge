@@ -31,9 +31,6 @@ test("creates a deterministic manifest and checksum list", async () => {
       );
     }
     await writeFile(resolve(directory, "autoforge-deploy-1.2.3.tar.gz"), "compose");
-    for (const plugin of ["dependency-publisher", "execution"]) {
-      await writeFile(resolve(directory, `autoforge-jenkins-${plugin}-1.2.3.hpi`), plugin);
-    }
     await writeFile(resolve(directory, "autoforge-release-metadata-1.2.3.tar.gz"), "metadata");
     await writeFile(resolve(directory, "release-signing-public-key.pem"), "public-key");
     await createReleaseMetadata("1.2.3", directory);
@@ -41,7 +38,7 @@ test("creates a deterministic manifest and checksum list", async () => {
     const manifest = JSON.parse(
       await readFile(resolve(directory, "release-manifest.json"), "utf8"),
     );
-    assert.equal(manifest.schemaVersion, 3);
+    assert.equal(manifest.schemaVersion, 4);
     assert.equal(manifest.version, "1.2.3");
     assert.deepEqual(
       manifest.backendImages.map((image) => [image.variant, image.version, image.architecture]),
@@ -59,8 +56,7 @@ test("creates a deterministic manifest and checksum list", async () => {
     assert.doesNotMatch(checksums, /autoforge-agent/);
     assert.doesNotMatch(checksums, /runner-toolchain/);
     assert.match(checksums, /autoforge-deploy-1\.2\.3\.tar\.gz/);
-    assert.match(checksums, /autoforge-jenkins-execution-1\.2\.3\.hpi/);
-    assert.match(checksums, /autoforge-jenkins-dependency-publisher-1\.2\.3\.hpi/);
+    assert.doesNotMatch(checksums, /\.hpi/);
     assert.match(checksums, /autoforge-release-metadata-1\.2\.3\.tar\.gz/);
     assert.match(checksums, /release-manifest\.json/);
     assert.match(checksums, /release-signing-public-key\.pem/);

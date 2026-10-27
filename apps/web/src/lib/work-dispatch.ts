@@ -81,11 +81,19 @@ export function workerBackedBatchCreation(
   const create = dispatcher?.createBatch?.bind(dispatcher);
   const createSingleDdtCase =
     caseExecutionDispatcher?.createSingleDdtCase?.bind(caseExecutionDispatcher);
+  const getCaseLogRerunConfiguration =
+    caseExecutionDispatcher?.getCaseLogRerunConfiguration?.bind(caseExecutionDispatcher);
   const rerunCaseFromAttempt =
     caseExecutionDispatcher?.rerunCaseFromAttempt?.bind(caseExecutionDispatcher);
   const createVersionCaseExecution =
     caseExecutionDispatcher?.createVersionCaseExecution?.bind(caseExecutionDispatcher);
-  if (!create && !createSingleDdtCase && !rerunCaseFromAttempt && !createVersionCaseExecution)
+  if (
+    !create &&
+    !createSingleDdtCase &&
+    !rerunCaseFromAttempt &&
+    !createVersionCaseExecution &&
+    !getCaseLogRerunConfiguration
+  )
     return local;
   return new Proxy(local, {
     get(target, property) {
@@ -103,10 +111,14 @@ export function workerBackedBatchCreation(
             ...(stageScope ? { stageScope } : {}),
           }) as ReturnType<RunBatchSchedulingService["createVersionCaseExecution"]>;
       if (property === "create" && create)
-        return (...[input, requestedBy]: Parameters<RunBatchSchedulingService["create"]>) =>
-          create({ input, ...(requestedBy ? { requestedBy } : {}) }) as ReturnType<
-            RunBatchSchedulingService["create"]
-          >;
+        return (
+          ...[input, requestedBy, publicExecution]: Parameters<RunBatchSchedulingService["create"]>
+        ) =>
+          create({
+            input,
+            ...(requestedBy ? { requestedBy } : {}),
+            ...(publicExecution ? { publicExecution } : {}),
+          }) as ReturnType<RunBatchSchedulingService["create"]>;
       if (property === "createSingleDdtCase" && createSingleDdtCase)
         return (
           ...[scope, caseId, input, requestedBy]: Parameters<
@@ -119,13 +131,22 @@ export function workerBackedBatchCreation(
             input,
             ...(requestedBy ? { requestedBy } : {}),
           }) as ReturnType<RunBatchSchedulingService["createSingleDdtCase"]>;
+      if (property === "getCaseLogRerunConfiguration" && getCaseLogRerunConfiguration)
+        return (attemptId: string) =>
+          getCaseLogRerunConfiguration({ attemptId }) as ReturnType<
+            RunBatchSchedulingService["getCaseLogRerunConfiguration"]
+          >;
       if (property === "rerunCaseFromAttempt" && rerunCaseFromAttempt)
         return (
-          ...[attemptId, requestedBy]: Parameters<RunBatchSchedulingService["rerunCaseFromAttempt"]>
-        ) =>
-          rerunCaseFromAttempt({ attemptId, requestedBy }) as ReturnType<
+          ...[attemptId, requestedBy, input]: Parameters<
             RunBatchSchedulingService["rerunCaseFromAttempt"]
-          >;
+          >
+        ) =>
+          rerunCaseFromAttempt({
+            attemptId,
+            requestedBy,
+            ...(input ? { input } : {}),
+          }) as ReturnType<RunBatchSchedulingService["rerunCaseFromAttempt"]>;
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },

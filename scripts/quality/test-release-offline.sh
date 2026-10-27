@@ -124,7 +124,7 @@ const {
 );
 const manifest = JSON.parse(readFileSync(join(directory, "release-manifest.json"), "utf8"));
 if (
-  ![1, 2, releaseManifestSchemaVersion].includes(manifest.schemaVersion) ||
+  ![1, 2, 3, releaseManifestSchemaVersion].includes(manifest.schemaVersion) ||
   manifest.product !== "AutoForge" ||
   manifest.version !== expectedVersion
 ) {
@@ -185,7 +185,9 @@ const expectedNames = (
     ? legacyExpectedArtifactNames(expectedVersion)
     : manifest.schemaVersion === 2
       ? schema2ExpectedArtifactNames(expectedVersion)
-      : expectedArtifactNames(expectedVersion)
+      : manifest.schemaVersion === 3
+        ? schema2ExpectedArtifactNames(expectedVersion).filter(name => !name.includes("-musl"))
+        : expectedArtifactNames(expectedVersion)
 ).sort();
 const actualNames = manifest.artifacts.map((artifact) => artifact.name).sort();
 if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
@@ -241,7 +243,9 @@ const expectedMetadataNames = manifest.schemaVersion === 1
   ? expectedNames.filter((entry) => entry.endsWith(".spdx.json"))
   : manifest.schemaVersion === 2
     ? schema2MetadataBundleFileNames(expectedVersion).sort()
-    : expectedMetadataBundleFileNames(expectedVersion).sort();
+    : manifest.schemaVersion === 3
+      ? schema2MetadataBundleFileNames(expectedVersion).filter(name => !name.includes("-musl")).sort()
+      : expectedMetadataBundleFileNames(expectedVersion).sort();
 if (manifest.schemaVersion >= 2) {
   const actualMetadataNames = listFiles(metadataDirectory).sort();
   if (JSON.stringify(actualMetadataNames) !== JSON.stringify(expectedMetadataNames)) {

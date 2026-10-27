@@ -1,4 +1,5 @@
 "use client";
+import { ExecutionActors } from "./execution-actors";
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -297,6 +298,11 @@ export function ExecutionBatchDetails({
         />
       </section>
 
+      <ExecutionActors
+        {...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {})}
+        {...(batch.terminatedBy ? { terminatedBy: batch.terminatedBy } : {})}
+      />
+
       {(analysisScope ||
         (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
         batch.status === "failed" ||
@@ -314,14 +320,18 @@ export function ExecutionBatchDetails({
           <div>
             <strong>
               {batch.terminationRequestedAt
-                ? "任务正在终止"
+                ? activeBatch
+                  ? "任务正在终止"
+                  : "任务已终止"
                 : activeBatch
                   ? "批次仍在执行"
                   : "批次已进入终态"}
             </strong>
             <span>
               {batch.terminationRequestedAt
-                ? "后续调度已停止，等待正在执行的用例自然完成。"
+                ? activeBatch
+                  ? "后续调度已停止，等待正在执行的用例自然完成。"
+                  : "本批次的执行与收尾已结束，执行记录和结果已保留。"
                 : batch.status === "failed"
                   ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
                   : retrySuiteId

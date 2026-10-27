@@ -1,3 +1,4 @@
+import { verifyJenkinsResources } from "./verify-jenkins-resources.mjs";
 import { verifyAndRecordFrontendAssets } from "./frontend-assets.mjs";
 import { createRequire } from "node:module";
 import {
@@ -35,6 +36,7 @@ const requiredDirectories = [
   "apps/worker/dist",
   "packages/db/drizzle",
   "resources/agents",
+  "resources/jenkins",
 ];
 
 const explicitlyExternalModules = [
@@ -130,6 +132,7 @@ export async function assertPackagedNextRoutes(destination) {
 async function packageRuntime(destination) {
   const runtimeDestination = assertSafeRuntimeDestination(destination);
   await assertBuildOutputsExist();
+  await verifyJenkinsResources(resolveRepositoryPath("resources/jenkins"));
 
   const runtimeFiles = new Set();
   for (const path of requiredFiles) addRuntimePath(runtimeFiles, resolveRepositoryPath(path));

@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 const manifestFileName = "release-manifest.json";
 const checksumsFileName = "SHA256SUMS";
 const releaseVariants = ["amd64", "arm64"];
-export const releaseManifestSchemaVersion = 3;
+export const releaseManifestSchemaVersion = 4;
 
 async function sha256(filePath) {
   return createHash("sha256")
@@ -42,8 +42,6 @@ export function expectedArtifactNames(version) {
   return [
     ...platformArtifacts,
     `autoforge-deploy-${version}.tar.gz`,
-    `autoforge-jenkins-dependency-publisher-${version}.hpi`,
-    `autoforge-jenkins-execution-${version}.hpi`,
     `autoforge-release-metadata-${version}.tar.gz`,
     "release-signing-public-key.pem",
   ];
@@ -62,8 +60,6 @@ export function expectedMetadataBundleFileNames(version) {
     "THIRD_PARTY_LICENSES.json",
     ...releaseVariants.map((variant) => `sbom/autoforge-backend-${version}-${variant}.spdx.json`),
     `sbom/autoforge-deploy-${version}.spdx.json`,
-    `sbom/autoforge-jenkins-dependency-publisher-${version}.spdx.json`,
-    `sbom/autoforge-jenkins-execution-${version}.spdx.json`,
   ];
 }
 

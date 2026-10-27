@@ -132,6 +132,29 @@ describe("execution control work dispatch", () => {
     },
   );
 
+  it("preserves the public grant and both actors when creating a batch in the scheduling worker", async () => {
+    const createBatch = vi.fn().mockResolvedValue({ id: "worker-public-batch" });
+    const local = { create: vi.fn() } as unknown as RunBatchSchedulingService;
+    const dispatcher = { createBatch } as unknown as WorkDispatcher;
+    const actor = { id: "visitor", username: "visitor", source: "local" as const };
+    const context = {
+      publisher: { ...actor, id: "publisher", username: "publisher" },
+      initiator: actor,
+      requestKey: "019aa000-0000-7000-8000-000000000001",
+    };
+    await workerBackedBatchCreation(local, dispatcher).create(
+      { suiteId: "suite", delaySeconds: 60 },
+      actor,
+      context,
+    );
+    expect(createBatch).toHaveBeenCalledWith({
+      input: { suiteId: "suite", delaySeconds: 60 },
+      requestedBy: actor,
+      publicExecution: context,
+    });
+    expect(local.create).not.toHaveBeenCalled();
+  });
+
   it.each(["local", "ldap"] as const)(
     "preserves a %s initiator through DDT dispatch in both modes",
     async (source) => {
@@ -207,10 +230,33 @@ describe("execution control work dispatch", () => {
           attemptId: "attempt",
           requestedBy,
         });
+        await service.rerunCaseFromAttempt("attempt", requestedBy, { environmentIp: "10.0.0.99" });
+        expect(rerunCaseFromAttempt).toHaveBeenLastCalledWith({
+          attemptId: "attempt",
+          requestedBy,
+          input: { environmentIp: "10.0.0.99" },
+        });
       }
       expect(local.rerunCaseFromAttempt).not.toHaveBeenCalled();
     },
   );
+
+  it("loads log rerun configuration in the worker for both deployment compositions", async () => {
+    const local = { getCaseLogRerunConfiguration: vi.fn() } as unknown as RunBatchSchedulingService;
+    const getCaseLogRerunConfiguration = vi
+      .fn()
+      .mockResolvedValue({ adapterEnabled: true, environmentIp: "10.0.0.21" });
+    const dispatcher = { getCaseLogRerunConfiguration } as unknown as WorkDispatcher;
+    for (const batchDispatcher of [dispatcher, undefined]) {
+      await expect(
+        workerBackedBatchCreation(local, batchDispatcher, dispatcher).getCaseLogRerunConfiguration(
+          "attempt",
+        ),
+      ).resolves.toMatchObject({ environmentIp: "10.0.0.21" });
+    }
+    expect(getCaseLogRerunConfiguration).toHaveBeenLastCalledWith({ attemptId: "attempt" });
+    expect(local.getCaseLogRerunConfiguration).not.toHaveBeenCalled();
+  });
 
   it("offloads DDT snapshot creation in both modes without sending case data through the Web", async () => {
     const local = {

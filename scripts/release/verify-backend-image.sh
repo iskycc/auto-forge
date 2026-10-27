@@ -85,6 +85,15 @@ for _ in $(seq 1 60); do
           }
         }
         process.stdout.write(`Verified ${frontend.assets.length} offline frontend assets.\n`);
+        const jenkinsRoot="/app/resources/jenkins";
+        const jenkins=JSON.parse(readFileSync(`${jenkinsRoot}/manifest.json`, "utf8"));
+        if (jenkins.schemaVersion!==1 || jenkins.plugins.length!==2) throw new Error("Jenkins manifest missing");
+        for (const kind of ["execution","dependency-publisher"]) {
+          const plugin=jenkins.plugins.find(plugin=>plugin.kind===kind);
+          if (!plugin || plugin.fileName!==`autoforge-jenkins-${kind}-${jenkins.version}.hpi`) throw new Error("Jenkins manifest invalid");
+          const content=readFileSync(`${jenkinsRoot}/${plugin.fileName}`);
+          if (content.length!==plugin.sizeBytes || createHash("sha256").update(content).digest("hex")!==plugin.sha256) throw new Error("Jenkins checksum invalid");
+        }
         const root = "/app/resources/agents";
         const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
         for (const key of ["linux-amd64", "linux-arm64", "installer", "adapter"]) {

@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import type { RunBatchSchedulingService } from "@autoforge/application";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { PlatformConfigurationStore } from "@autoforge/platform-config";
 import { createSqliteDatabase, type SqliteDatabaseHandle } from "../../../packages/db/src/database";
 import { workerBackedBatchCreation } from "../src/lib/work-dispatch";
 import { webResourcePlan } from "../src/lib/worker-sizing";
@@ -21,6 +22,25 @@ it.each(["cold", "warm"] as const)(
     const handle = createSqliteDatabase({ databasePath, migrationsFolder });
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const configurationStore = new PlatformConfigurationStore(directory);
+    const persisted = configurationStore.initialize();
+    const scheduler = {
+      ...persisted.scheduler,
+      maximumCpuUtilizationPercent: 90,
+      maximumMemoryUtilizationPercent: 90,
+      maximumLoadPerCpu: 2,
+      metricsMaximumAgeSeconds: 60,
+      projectMaximumConcurrency: 500,
+      priorityAgingIntervalMinutes: 1,
+    };
+    configurationStore.replace(
+      {
+        ...persisted,
+        scheduler,
+        limits: { ...persisted.limits, artifactCollectionEnabled: false },
+      },
+      persisted.revision,
+    );
     const pool = new WorkerPool(
       {
         mode: "lite",
@@ -30,14 +50,7 @@ it.each(["cold", "warm"] as const)(
         sqlite: { databasePath },
         caseExecutionTimeoutSeconds: 60,
         artifactCollectionEnabled: false,
-        scheduler: {
-          maximumCpuUtilizationPercent: 90,
-          maximumMemoryUtilizationPercent: 90,
-          maximumLoadPerCpu: 2,
-          metricsMaximumAgeSeconds: 60,
-          projectMaximumConcurrency: 500,
-          priorityAgingIntervalMinutes: 1,
-        },
+        scheduler,
       },
       1,
       1_000,
@@ -65,10 +78,14 @@ it.each(["cold", "warm"] as const)(
         handle.client.exec("ROLLBACK");
         releaseTimer = undefined;
       }, 500);
-      const rerun = service.rerunCaseFromAttempt("failed-attempt", {
-        username: "重跑操作人",
-        source: "local",
-      });
+      const rerun = service.rerunCaseFromAttempt(
+        "failed-attempt",
+        {
+          username: "重跑操作人",
+          source: "local",
+        },
+        { environmentIp: "10.0.0.99" },
+      );
       pending = Promise.allSettled([rerun]);
       const latencies: number[] = [];
       for (let probe = 0; probe < 5; probe++) {
@@ -87,6 +104,14 @@ it.each(["cold", "warm"] as const)(
         kind: "case_log_rerun",
         parentBatchId: "source",
         totalRuns: 1,
+      });
+      const runtime = handle.client
+        .prepare("SELECT adapter_runtime_json FROM run_batches WHERE id = ?")
+        .get(batch.id) as { adapter_runtime_json: string };
+      expect(JSON.parse(runtime.adapter_runtime_json).environmentAddresses).toEqual(["10.0.0.99"]);
+      await expect(service.getCaseLogRerunConfiguration("failed-attempt")).resolves.toEqual({
+        adapterEnabled: true,
+        environmentIp: "10.0.0.11",
       });
       const run = handle.client
         .prepare(

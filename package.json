@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "pnpm --filter @autoforge/web dev",
     "build": "pnpm build:agent-resources && pnpm --filter @autoforge/web build && pnpm --filter @autoforge/worker build",
+    "build:jenkins-resources": "node scripts/release/ensure-jenkins-resources.mjs",
     "build:agent-resources": "bash scripts/release/build-agent-resources.sh",
     "start": "pnpm --filter @autoforge/web start",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,css,yaml,yml}\" && go -C apps/runner-agent fmt ./...",

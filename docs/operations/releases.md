@@ -87,7 +87,7 @@ ELF 无程序解释器和动态库依赖，不需要复制一份仅有 `musl` �
 运维脚本、许可证和部署所需手册。五主机目录提供三个主平台、一台 Nginx 和一台集中基础设施
 的完整文件；打包时检查文件齐全并替换后端镜像版本，排除实际配置、密码和数据。不携带设计图、归档审计、
 roadmap 或内部实现资料。`autoforge-release-metadata-VERSION.tar.gz` 集中保存两个架构镜像、
-部署包与两个 Jenkins HPI 的 SPDX JSON SBOM，以及 `LICENSE`、`NOTICE`、第三方许可证清单、
+部署包的 SPDX JSON SBOM（镜像 SBOM 同时覆盖内置的两个 Jenkins HPI），以及 `LICENSE`、`NOTICE`、第三方许可证清单、
 兼容矩阵和变更记录。SBOM 内容没有删除，只是不再平铺为多个顶层 Release 资产。
 
 Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 签名
@@ -99,6 +99,8 @@ Java 8 字节码，同时在 CI 中复验 JDK 21 + TestNG 7.11.0；不为不同 
 正式 Release 不提供 JDK/TestNG 工具链资产；管理员在项目设置中上传彼此兼容的 JDK 与完整依赖
 JAR 压缩包，或登记主平台可访问的内网 HTTP(S) 链接、精确大小和 SHA-256。部署包仍生成对应的
 SPDX JSON SBOM。
+
+Jenkins 插件从任务页面的“执行接入”下载，不再单独发布 HPI。发布时先构建、验证插件并生成 `resources/jenkins/manifest.json`，两个后端镜像内置同一份受校验资源；本地构建镜像也必须先准备同版本插件资源。`release-manifest.json` 从此变更起使用 schema 4；历史 schema 1/2/3 验收继续按原资产集合处理。
 
 ## 离线校验与启动
 

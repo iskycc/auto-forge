@@ -16,6 +16,7 @@ const runtime = vi.hoisted(() => ({
   telemetry: vi.fn(async () => ({ samples: [] })),
   diagnostics: vi.fn(async () => ({ generatedAt: "2026-09-30T00:00:00Z" })),
   rerun: vi.fn(async () => ({ id: "rerun-batch" })),
+  rerunConfiguration: vi.fn(async () => ({ adapterEnabled: true, environmentIp: "10.0.0.21" })),
   versionCase: vi.fn(async () => ({ id: "single-batch", sequenceNumber: 1, status: "queued" })),
 }));
 vi.mock("./services", () => ({
@@ -36,6 +37,7 @@ vi.mock("./services", () => ({
       createVersionCaseExecution: runtime.versionCase,
       getAttemptRerunContext: async () => ({ projectId: "project-operator" }),
       rerunCaseFromAttempt: runtime.rerun,
+      getCaseLogRerunConfiguration: runtime.rerunConfiguration,
       getCaseLogRerunLogTarget: async () => ({ batchStatus: "queued", attempt: null }),
     },
     projectStructures: {
@@ -54,7 +56,10 @@ import { GET as group } from "../app/api/v1/runner-groups/[groupId]/route";
 import { GET as telemetry } from "../app/api/v1/runners/[runnerId]/telemetry/route";
 import { GET as diagnostics } from "../app/api/v1/settings/diagnostics/route";
 import { POST as terminalSession } from "../app/api/v1/terminal-sessions/route";
-import { POST as rerunAttempt } from "../app/api/v1/run-attempts/[attemptId]/rerun/route";
+import {
+  POST as rerunAttempt,
+  GET as readRerunConfiguration,
+} from "../app/api/v1/run-attempts/[attemptId]/rerun/route";
 import { POST as executeVersionCase } from "../app/api/v1/projects/[projectId]/versions/[versionId]/case-executions/route";
 import { POST as executeStageCase } from "../app/api/v1/projects/[projectId]/versions/[versionId]/stages/[stageId]/case-executions/route";
 import { authenticateRequest, authorizeRequest } from "./auth";
@@ -163,6 +168,60 @@ describe("project role execution resource access", () => {
       expect(runtime.rerun).toHaveBeenCalledTimes(status === 201 ? 1 : 0);
     },
   );
+  it.each([
+    { permissions: ["log.read", "run.retry"] as Permission[], status: 200 },
+    { permissions: ["log.read"] as Permission[], status: 403 },
+    { permissions: ["run.retry"] as Permission[], status: 403 },
+  ])(
+    "authorizes the rerun environment preview before loading it: $permissions",
+    async ({ permissions, status }) => {
+      runtime.identity = {
+        ...identityFor("execution-operator", projectId),
+        projectPermissions: { [projectId]: permissions },
+      };
+      const response = await readRerunConfiguration(request(), {
+        params: Promise.resolve({ attemptId: "attempt" }),
+      });
+      expect(response.status).toBe(status);
+      expect(runtime.rerunConfiguration).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
+      if (status === 200) {
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(await response.json()).toEqual({ adapterEnabled: true, environmentIp: "10.0.0.21" });
+      }
+    },
+  );
+  it.each([
+    { input: { environmentIp: "10.0.0.99" }, status: 201 },
+    { input: { environmentIp: "2001:db8::99" }, status: 201 },
+    { input: { environmentIp: "10.0.0.999" }, status: 400 },
+    { input: { environmentIp: "10.0.0.99", suiteId: "other" }, status: 400 },
+  ])("validates the one-off rerun IP at the HTTP boundary: $input", async ({ input, status }) => {
+    runtime.identity = {
+      ...identityFor("execution-operator", projectId),
+      projectPermissions: { [projectId]: ["log.read", "run.retry"] },
+    };
+    const response = await rerunAttempt(
+      new Request("http://localhost/api/v1/run-attempts/attempt/rerun", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          cookie: "autoforge_session=session",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+      }),
+      { params: Promise.resolve({ attemptId: "attempt" }) },
+    );
+    expect(response.status).toBe(status);
+    expect(runtime.rerun).toHaveBeenCalledTimes(status === 201 ? 1 : 0);
+    if (status === 201)
+      expect(runtime.rerun).toHaveBeenCalledWith(
+        "attempt",
+        expect.objectContaining({ username: runtime.identity.user.username }),
+        input,
+      );
+  });
+
   it("does not allow an API token to open a personal terminal even with a terminal permission", async () => {
     runtime.identity = {
       ...identityFor("execution-operator", projectId),

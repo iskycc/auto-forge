@@ -1,3 +1,4 @@
+import { TaskExecutionAccess } from "@/components/task-execution-access";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 import { ArrowLeft, BookOpenText } from "lucide-react";
@@ -125,7 +126,9 @@ export default async function CaseSuitePage({ params }: Props) {
         <a href="#suite-settings">任务配置</a>
         <a href="#suite-schedule">执行计划</a>
         <a href="#suite-notifications">完成通知</a>
+        <a href="#suite-access">执行接入</a>
       </nav>
+
       <CaseSuiteRevisionProvider initialRevision={suite.revision} key={suite.id}>
         <div id="suite-members">
           <CachedSuiteDirectory
@@ -172,6 +175,13 @@ export default async function CaseSuitePage({ params }: Props) {
             configurations={webhookConfigurations}
             initialWebhookIds={webhookIds}
             suiteId={suiteId}
+          />
+        </div>
+        <div id="suite-access">
+          <TaskExecutionAccess
+            suiteId={suite.id}
+            baseUrl={services.configurationStore.read().web.publicBaseUrl}
+            canPublish={canManage && canExecute}
           />
         </div>
       </CaseSuiteRevisionProvider>

@@ -990,10 +990,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       if (!batch.cancel_requested_at) {
         const termination = this.handle.client
           .prepare(
-            `UPDATE run_batches SET cancel_requested_at = ?, updated_at = ?, version = version + 1
+            `UPDATE run_batches SET cancel_requested_at = ?, updated_at = ?, terminated_by_json = ?, version = version + 1
              WHERE id = ? AND version = ? AND cancel_requested_at IS NULL`,
           )
-          .run(input.requestedAt, input.requestedAt, input.batchId, batch.version);
+          .run(
+            input.requestedAt,
+            input.requestedAt,
+            input.actor ? JSON.stringify({ ...input.actor, schemaVersion: 1 }) : null,
+            input.batchId,
+            batch.version,
+          );
         if (termination.changes !== 1) {
           throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
         }

@@ -13,6 +13,7 @@ export interface WorkDispatcher {
   createSingleDdtCase?(input: unknown): Promise<unknown>;
   createVersionCaseExecution?(input: unknown): Promise<unknown>;
   rerunCaseFromAttempt?(input: unknown): Promise<unknown>;
+  getCaseLogRerunConfiguration?(input: unknown): Promise<unknown>;
   searchDdtValues?(input: unknown, signal: AbortSignal): Promise<unknown>;
   initializeVersion?(input: unknown, signal: AbortSignal): Promise<unknown>;
   inheritTestNgCases?(input: unknown, signal: AbortSignal): Promise<unknown>;

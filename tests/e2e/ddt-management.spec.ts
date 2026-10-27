@@ -3157,12 +3157,24 @@ test("public logs rerun failed Chinese DDT cases and their manual reruns without
             `/api/v1/run-attempts/${claim.assignment.attemptId}/rerun`,
       );
       await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "执行此用例", exact: true });
+      const ip = dialog.getByRole("textbox", { name: "本次重跑环境 IP", exact: true });
+      await expect(ip).toHaveValue("10.0.0.21");
+      await expect(ip).toHaveAttribute("readonly", "");
+      if (status === "failed") {
+        await dialog.getByRole("button", { name: "修改", exact: true }).click();
+        await ip.fill("10.0.0.88");
+      }
+      await dialog.getByRole("button", { name: "确认执行", exact: true }).click();
       const health = await page.request.get("/api/v1/health/live", { timeout: 5_000 });
       expect(health.status()).toBe(200);
       const response = await submitted;
       expect(response.status(), await response.text()).toBe(201);
       const manual = (await response.json()) as { batchId: string };
       claim = await claimCase(manual.batchId);
+      expect(claim.assignment.executionSpec.adapter?.environmentAddress).toBe(
+        status === "failed" ? "10.0.0.88" : "10.0.0.21",
+      );
       await completeCase(claim, status);
       await openLog(claim.assignment.attemptId);
       await expectLogCaseDetail(page, detailPath, caseId);

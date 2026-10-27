@@ -22,6 +22,325 @@ import { insertCaseExecutionHistoryFixture } from "./support/case-execution-hist
 
 const lifecycleRunnerCapabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
 
+test("public task links execute with login only, share live status, record actors and provide embedded Jenkins plugins", async ({
+  page,
+  browser,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("public-task");
+  const project = await createProject(page, suffix);
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  const className = `example.PublicTask${Date.now()}Test`;
+  await importJar(page, project, `${suffix}.jar`, className, ["verify"]);
+  const definition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    className,
+  );
+  const name = `Wallet 支付与账户回归 · ${"多环境长任务名称验证".repeat(5)}`;
+  const suite = await createVersionSuite(page, project.id, project.versionId, name, definition.id);
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, suite.id, runner.id, {
+    concurrency: 1,
+    retryLimit: 0,
+    adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
+  });
+  const username = `visitor-${Date.now()}`;
+  const password = "PublicTask!Visitor123";
+  expect(
+    (
+      await browserJson(page, "/api/v1/users", {
+        method: "POST",
+        body: { username, displayName: "公开执行验证用户", password, forcePasswordChange: false },
+      })
+    ).status,
+  ).toBe(201);
+  await page.goto(`/case-suites/${suite.id}`);
+  const access = page.getByRole("region", { name: "任务公开执行链接" });
+  await access.getByRole("button", { name: "生成本人的公开执行链接" }).click();
+  const address = access.getByRole("textbox", { name: "公开执行链接" });
+  await expect(address).toHaveValue(/\/RunTask\?SuiteId=/);
+  const url = await address.inputValue();
+  const parsed = new URL(url);
+  const publisherId = parsed.searchParams.get("PublisherId")!;
+  expect(parsed.searchParams.get("SuiteId")).toBe(suite.id);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await access.scrollIntoViewIfNeeded();
+    await captureUi(page, `task-execution-access-${width}`);
+    await expectUiIntegrity(page);
+  }
+  await page.goto("/case-suites");
+  const card = page.getByRole("article", { name: `任务 ${name}`, exact: true });
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await card.scrollIntoViewIfNeeded();
+    await captureUi(page, `task-list-public-execution-${width}`);
+    await expectUiIntegrity(page);
+  }
+  await card.getByRole("button", { name: "执行接入" }).click();
+  await expect(page.getByRole("dialog", { name: "任务执行接入" })).toBeVisible();
+  await page.getByRole("tab", { name: "Jenkins 对接", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText("Jenkins 对接指导与插件下载")).toBeVisible();
+  await page.getByRole("dialog").getByText("Jenkins 对接指导与插件下载", { exact: true }).click();
+  await expect(
+    page.getByRole("dialog").getByText("创建服务账号和 Jenkins 凭据", { exact: true }),
+  ).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expect
+      .poll(() =>
+        page.getByRole("dialog").evaluate((element) => element.scrollWidth - element.clientWidth),
+      )
+      .toBeLessThanOrEqual(0);
+    await captureUi(page, `task-list-execution-access-${width}`);
+    await expectUiIntegrity(page);
+  }
+  await page.getByRole("dialog").getByRole("button", { name: "关闭任务执行接入" }).click();
+
+  const context = await browser.newContext();
+  const observerContext = await browser.newContext();
+  const visitor = await context.newPage();
+  const observer = await observerContext.newPage();
+  const startPath = `/api/v1/public/case-suites/${suite.id}/executions?PublisherId=${publisherId}`;
+  try {
+    await visitor.goto(url);
+    await expect(visitor.getByRole("heading", { name, exact: true })).toBeVisible();
+    expect(
+      (
+        await browserJson(visitor, startPath, {
+          method: "POST",
+          body: { requestKey: crypto.randomUUID() },
+        })
+      ).status,
+    ).toBe(401);
+    await visitor.getByRole("button", { name: "登录后执行任务", exact: true }).click();
+    const loginDialog = visitor.getByRole("dialog", { name: "登录控制台" });
+    await loginDialog.getByLabel("用户名", { exact: true }).fill(username);
+    await loginDialog.getByLabel("密码", { exact: true }).fill(password);
+    await loginDialog.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(loginDialog).toHaveCount(0);
+    await expect(visitor).toHaveURL(url);
+    const execute = visitor.getByRole("button", { name: "执行任务", exact: true });
+    await expect(execute).toBeEnabled();
+    expect(
+      (
+        await browserJson(visitor, "/api/v1/run-batches", {
+          method: "POST",
+          body: { suiteId: suite.id },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await browserJson(visitor, `/api/v1/case-suites/${suite.id}/execution-link`, {
+          method: "POST",
+        })
+      ).status,
+    ).toBe(403);
+    await observer.goto(url);
+    for (const width of [1024, 1536]) {
+      await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await captureUi(visitor, `public-task-ready-${width}`);
+      await expectUiIntegrity(visitor);
+    }
+    const startResponse = visitor.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(`/case-suites/${suite.id}/executions`),
+    );
+    await refreshRunnerHeartbeat(page, runner);
+    await execute.click();
+    const created = await startResponse;
+    expect(created.status()).toBe(201);
+    const first = (await created.json()) as { batchId: string; progressPath: string };
+    const originalRequest = created.request().postDataJSON() as {
+      requestKey: string;
+      delaySeconds: number;
+    };
+    expect(
+      (await browserJson(visitor, startPath, { method: "POST", body: originalRequest })).body,
+    ).toMatchObject({ batchId: first.batchId });
+    expect(
+      (
+        await browserJson(visitor, startPath, {
+          method: "POST",
+          body: { requestKey: crypto.randomUUID() },
+        })
+      ).status,
+    ).toBe(409);
+    await expect(observer.getByText("任务正在执行或等待启动", { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(observer.getByRole("button", { name: "终止执行", exact: true })).toBeDisabled();
+    const popupPromise = visitor.waitForEvent("popup");
+    await visitor.getByRole("link", { name: "新标签页查看执行进展" }).click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL(new RegExp(`/Execution\\?BatchId=${first.batchId}`));
+    await expect(popup.getByRole("heading", { name, exact: true })).toBeVisible();
+    await popup.close();
+    const claim = await claimDeletionAttempt(page, runner);
+    await uploadDeletionLog(page, runner, claim, "Public task execution functional test\n");
+    await completeDeletionAttempt(page, runner, claim, "succeeded");
+    await expect(execute).toBeEnabled({ timeout: 15000 });
+    const firstSummary = await browserJson(
+      page,
+      `/api/v1/run-batches/${first.batchId}?view=summary`,
+    );
+    expect(firstSummary.body).toMatchObject({
+      publicExecution: {
+        publisher: { id: publisherId, username: E2E_ADMIN_USERNAME },
+        initiator: { username },
+      },
+      requestedBy: { username },
+    });
+    await page.goto(`/run-batches/${first.batchId}`);
+    await expect(page.getByLabel("执行操作人")).toContainText(E2E_ADMIN_USERNAME);
+    await expect(page.getByLabel("执行操作人")).toContainText(username);
+    await visitor.getByLabel("启动方式", { exact: true }).click();
+    await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
+    await visitor.getByRole("spinbutton", { name: "倒计时秒数" }).fill("3");
+    const delayedResponse = visitor.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(`/case-suites/${suite.id}/executions`),
+    );
+    await refreshRunnerHeartbeat(page, runner);
+    await visitor.getByRole("button", { name: "开始倒计时", exact: true }).click();
+    const delayed = await delayedResponse;
+    expect(delayed.status()).toBe(201);
+    const second = (await delayed.json()) as { batchId: string };
+    const delayedSummary = await browserJson<{ scheduledFor: string; createdAt: string }>(
+      page,
+      `/api/v1/run-batches/${second.batchId}?view=summary`,
+    );
+    expect(
+      Date.parse(delayedSummary.body.scheduledFor) - Date.parse(delayedSummary.body.createdAt),
+    ).toBe(3000);
+    // Closing the initiating document does not cancel the persisted countdown.
+    await visitor.reload();
+    const runningClaim = await claimDeletionAttempt(page, runner);
+    await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toBeEnabled({
+      timeout: 15000,
+    });
+    await visitor.getByRole("button", { name: "终止执行", exact: true }).click();
+    const confirm = visitor.getByRole("dialog", { name: "终止任务执行" });
+    await expect(confirm).toContainText("已领取的用例");
+    await captureUi(visitor, "public-task-terminate-dialog-1536");
+    await confirm.getByRole("button", { name: "确认终止", exact: true }).click();
+    await expect(confirm).toHaveCount(0);
+    await uploadDeletionLog(
+      page,
+      runner,
+      runningClaim,
+      "Finishing the already claimed case after termination\n",
+    );
+    await completeDeletionAttempt(page, runner, runningClaim, "succeeded");
+    await expect(visitor.getByText(`终止人：${username}`, { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    await page.goto(`/run-batches/${second.batchId}`);
+    await expect(page.getByLabel("执行操作人")).toContainText(`任务终止人：${username}`);
+    await expect(
+      page.getByRole("region", { name: "批次操作" }).getByText("任务已终止", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("任务正在终止", { exact: true })).toHaveCount(0);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.getByLabel("执行操作人").scrollIntoViewIfNeeded();
+      await captureUi(page, `execution-public-actors-${width}`);
+    }
+
+    await visitor.getByText("Jenkins 对接指导与插件下载", { exact: true }).click();
+    await expect(visitor.getByText("创建服务账号和 Jenkins 凭据", { exact: true })).toBeVisible();
+    await expect(visitor.locator("pre")).toContainText(suite.id);
+    for (const kind of ["execution", "dependency-publisher"]) {
+      const download = await context.request.get(
+        `${parsed.origin}/api/v1/integrations/jenkins/${kind}/download`,
+      );
+      expect(download.status()).toBe(200);
+      expect(download.headers()["content-disposition"]).toMatch(/\.hpi/);
+      expect((await download.body()).subarray(0, 2).toString()).toBe("PK");
+    }
+    for (const width of [1024, 1536]) {
+      await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      const guidance = visitor.getByRole("region", { name: "Jenkins 对接指导", exact: true });
+      await guidance.scrollIntoViewIfNeeded();
+      if (process.env.AUTOFORGE_UI_SCREENSHOT_DIR)
+        await guidance.screenshot({
+          path: resolve(
+            process.env.AUTOFORGE_UI_SCREENSHOT_DIR,
+            `public-task-jenkins-${width}.png`,
+          ),
+        });
+      await expectUiIntegrity(visitor);
+      await visitor.getByRole("button", { name: "切换到深色模式" }).click();
+      await captureUi(visitor, `public-task-dark-${width}`);
+      if (process.env.AUTOFORGE_UI_SCREENSHOT_DIR)
+        await guidance.screenshot({
+          path: resolve(
+            process.env.AUTOFORGE_UI_SCREENSHOT_DIR,
+            `public-task-jenkins-dark-${width}.png`,
+          ),
+        });
+      await visitor.getByRole("button", { name: "切换到浅色模式" }).click();
+    }
+    await visitor.goto(url);
+    await expect(visitor.getByRole("button", { name: "执行任务", exact: true })).toBeEnabled();
+    await context.clearCookies();
+    await visitor.getByRole("button", { name: "执行任务", exact: true }).click();
+    const expiredLogin = visitor.getByRole("dialog", { name: "登录控制台", exact: true });
+    await expect(expiredLogin).toBeVisible();
+    await expiredLogin.getByLabel("用户名", { exact: true }).fill(username);
+    await expiredLogin.getByLabel("密码", { exact: true }).fill(password);
+    await expiredLogin.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(expiredLogin).toHaveCount(0);
+    await expect(visitor).toHaveURL(url);
+    const policy = await browserJson<{ revision: number; policy: Record<string, unknown> }>(
+      page,
+      `/api/v1/case-suites/${suite.id}?view=summary`,
+    );
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suite.id}`, {
+          method: "PATCH",
+          body: { enabled: false, expectedRevision: policy.body.revision },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await browserJson(visitor, startPath, {
+          method: "POST",
+          body: { requestKey: crypto.randomUUID() },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await browserJson(page, `/api/v1/case-suites/${suite.id}/execution-link`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(200);
+    await visitor.reload();
+    await expect(visitor.getByText("公开执行链接不可用", { exact: true })).toBeVisible();
+    expect(
+      (
+        await browserJson(observer, startPath, {
+          method: "POST",
+          body: { requestKey: crypto.randomUUID() },
+        })
+      ).status,
+    ).toBe(401);
+  } finally {
+    await context.close();
+    await observerContext.close();
+  }
+});
+
 test("task list and detail execution shortcuts submit the selected task through preflight", async ({
   page,
 }) => {
@@ -1914,7 +2233,11 @@ async function captureUi(page: Page, name: string): Promise<void> {
   if (!screenshotDirectory) return;
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
-  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: false });
+  await page.screenshot({
+    path: resolve(absoluteDirectory, `${name}.png`),
+    fullPage: false,
+    animations: "disabled",
+  });
 }
 
 async function expectHorizontalIntegrity(locator: Locator): Promise<void> {

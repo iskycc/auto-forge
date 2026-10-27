@@ -21,6 +21,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       identity.user.id,
       batchId,
       input.reason,
+      { id: identity.user.id, username: identity.user.username, source: identity.user.source },
     );
     const current = await services.runBatches.getSummary(batchId, projectIds);
     await services.identityAccess.recordAuthorizedOperation(identity, {

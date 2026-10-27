@@ -73,6 +73,29 @@ export const rerunFinalFailuresInputSchema = z
 
 export type RerunFinalFailuresInput = z.input<typeof rerunFinalFailuresInputSchema>;
 
+export const rerunCaseFromAttemptInputSchema = z
+  .object({
+    environmentIp: z
+      .string()
+      .trim()
+      .max(45)
+      .pipe(z.union([z.ipv4(), z.ipv6()]))
+      .optional(),
+  })
+  .strict();
+
+export type RerunCaseFromAttemptInput = z.input<typeof rerunCaseFromAttemptInputSchema>;
+
+export const caseLogRerunConfigurationSchema = z
+  .object({
+    adapterEnabled: z.boolean(),
+    // Existing task snapshots may contain hostnames; only edited values require an IP.
+    environmentIp: z.string().max(2_048).nullable(),
+  })
+  .strict();
+
+export type CaseLogRerunConfiguration = z.infer<typeof caseLogRerunConfigurationSchema>;
+
 export const createSingleCaseRunInputSchema = z
   .object({
     ...executionInputFields,

@@ -387,19 +387,90 @@ test("log detail reruns a completed case from an active 501-case batch and its m
   const keyboardDetails = await keyboardPopup;
   try {
     await expect(keyboardDetails).toHaveURL(new URL(detailPath, page.url()).href);
+    await keyboardDetails
+      .locator(".case-execution-history")
+      .getByRole("button", { name: "查看第 1 轮日志", exact: true })
+      .click();
+    const logDialog = keyboardDetails.getByRole("dialog", { name: /执行日志/u });
+    await logDialog.getByRole("button", { name: "执行此用例", exact: true }).click();
+    const confirmation = keyboardDetails.getByRole("dialog", { name: "执行此用例", exact: true });
+    await expect(
+      confirmation.getByRole("textbox", { name: "本次重跑环境 IP", exact: true }),
+    ).toHaveValue("10.0.0.21");
+    await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(logDialog).toBeVisible();
+    await keyboardDetails.keyboard.press("Escape");
+    await expect(logDialog).toBeHidden();
   } finally {
     await keyboardDetails.close();
   }
   await page.goto(originalLog.body.shareUrl);
+  const captureRerunDialog = async (name: string) => {
+    const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+    if (!directory) return;
+    await mkdir(directory, { recursive: true });
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: resolve(directory, `${name}.png`), animations: "disabled" });
+  };
   for (let execution = 0; execution < 2; execution += 1) {
     const submission = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
         new URL(response.url()).pathname.endsWith("/rerun"),
     );
+    if (execution === 0) {
+      await page.route(
+        "**/api/v1/run-attempts/*/rerun",
+        (route) =>
+          route.fulfill({
+            status: 503,
+            json: { error: { code: "PLATFORM_BUSY", message: "环境信息暂时不可用，请重试。" } },
+          }),
+        { times: 1 },
+      );
+    }
     await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "执行此用例", exact: true });
+    const ip = dialog.getByRole("textbox", { name: "本次重跑环境 IP", exact: true });
+    if (execution === 0) {
+      await expect(dialog.getByRole("alert")).toContainText("环境信息暂时不可用");
+      await expect(dialog.getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+      await dialog.getByRole("button", { name: "重试加载", exact: true }).click();
+    }
+    await expect(ip).toHaveValue("10.0.0.21");
+    await expect(ip).toHaveAttribute("readonly", "");
+    if (execution === 0) {
+      await dialog.getByRole("button", { name: "修改", exact: true }).click();
+      await ip.fill("10.0.0.98");
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+      await expect(ip).toHaveValue("10.0.0.21");
+      await expect(ip).toHaveAttribute("readonly", "");
+      await dialog.getByRole("button", { name: "修改", exact: true }).click();
+      await expect(ip).toBeEditable();
+      await ip.fill("10.0.0.98");
+      await dialog.getByRole("button", { name: "恢复原 IP", exact: true }).click();
+      await expect(ip).toHaveValue("10.0.0.21");
+      await expect(ip).toHaveAttribute("readonly", "");
+      await dialog.getByRole("button", { name: "修改", exact: true }).click();
+      await ip.fill("invalid-ip");
+      await dialog.getByRole("button", { name: "确认执行", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toContainText("请输入有效的 IPv4 或 IPv6 地址");
+      await ip.fill("10.0.0.99");
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await expectUiIntegrity(page);
+        await captureRerunDialog(`log-rerun-ip-edit-${width}`);
+      }
+    }
+    await dialog.getByRole("button", { name: "确认执行", exact: true }).click();
     const response = await submission;
     expect(response.status(), await response.text()).toBe(201);
+    expect(response.request().postDataJSON()).toEqual(
+      execution === 0 ? { environmentIp: "10.0.0.99" } : {},
+    );
     const manual = (await response.json()) as { batchId: string };
     if (execution === 0) {
       const activeSource = await browserJson<{ status: string }>(page, summaryUrl);
@@ -428,7 +499,7 @@ test("log detail reruns a completed case from an active 501-case batch and its m
     expect(manualClaim!.assignment.executionSpec.adapter).toMatchObject({
       suiteName: "Large batch log rerun",
       testName: "Log rerun case",
-      environmentAddress: "10.0.0.21",
+      environmentAddress: execution === 0 ? "10.0.0.99" : "10.0.0.21",
     });
     await finishSuccessfulAttempt(page, runner, manualClaim!);
 
@@ -443,6 +514,11 @@ test("log detail reruns a completed case from an active 501-case batch and its m
     await expectLogCaseDetail(page, detailPath, sourceDisplayName);
   }
 
+  const unchangedTask = await browserJson<{
+    policy: { adapter: { environmentAddresses: string[] } };
+  }>(page, `/api/v1/case-suites/${suite.body.id}?view=summary`);
+  expect(unchangedTask.status).toBe(200);
+  expect(unchangedTask.body.policy.adapter.environmentAddresses).toEqual(["10.0.0.21"]);
   const finalSource = await browserJson<{ status: string; totalRuns: number }>(page, summaryUrl);
   expect(finalSource.body.totalRuns).toBe(501);
   expect(finalSource.body.status).toBe("cancelled");
@@ -454,12 +530,18 @@ test("log detail reruns a completed case from an active 501-case batch and its m
       ]);
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", theme);
+    await page.getByRole("button", { name: "执行此用例", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "执行此用例", exact: true });
+    await expect(dialog.getByRole("textbox", { name: "本次重跑环境 IP", exact: true })).toHaveValue(
+      "10.0.0.21",
+    );
     for (const viewport of [
       { width: 1024, height: 768 },
       { width: 1536, height: 960 },
     ]) {
       await page.setViewportSize(viewport);
       await expectUiIntegrity(page);
+      await captureRerunDialog(`log-rerun-ip-default-${theme}-${viewport.width}`);
       const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
       if (screenshotDirectory) {
         await mkdir(screenshotDirectory, { recursive: true });
@@ -472,6 +554,8 @@ test("log detail reruns a completed case from an active 501-case batch and its m
         });
       }
     }
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(dialog).toBeHidden();
   }
 });
 

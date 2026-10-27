@@ -217,8 +217,11 @@ export function copyVersionRecord(input: {
   if (columnPresent(row, "lease_owner")) copied.lease_owner = null;
   if (columnPresent(row, "lease_expires_at")) copied.lease_expires_at = null;
   if (collection === "case_import_jobs") copied.idempotency_key = `${job.id}:${String(row.id)}`;
-  if (collection === "run_batches")
+  if (collection === "run_batches") {
     copied.attempt_logs_path = `attempt-logs/${mapId(String(row.id))}.sqlite`;
+    // The copied historical execution keeps its actors, but is never a replay target for the source link.
+    if (columnPresent(row, "public_request_key")) copied.public_request_key = null;
+  }
   if (collection === "failure_analysis_claims" && typeof row.rerun_proof_attempt_id === "string")
     copied.rerun_proof_url = `/CaseLog?ExecutionId=${encodeURIComponent(mapId(row.rerun_proof_attempt_id))}`;
   if (

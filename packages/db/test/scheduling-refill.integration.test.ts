@@ -1617,7 +1617,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
           executionRunId: sourceRunId,
         }),
       ).resolves.toMatchObject({
-        caseLogRerunRotation: { previousAdapterEnvironmentAddress: "10.0.0.12" },
+        sourceAdapterEnvironmentAddress: "10.0.0.11",
       });
       const scheduling = await harness.batches.getSchedulingSnapshot(
         harness.batchQueuedId,

@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 
-/** Keep assignment and Runner history lookups inside one case's diagnostic family. */
+/** Keep Runner history lookups inside one case's diagnostic family. */
 function caseLogRerunExecutionRunIds(parentBatchId: string, sourceExecutionRunId: string) {
   return sql`
     SELECT source.id FROM execution_runs source
@@ -12,16 +12,17 @@ function caseLogRerunExecutionRunIds(parentBatchId: string, sourceExecutionRunId
       AND batch.source_execution_run_id = ${sourceExecutionRunId}`;
 }
 
-export function previousCaseLogAssignmentQuery(
-  parentBatchId: string,
-  sourceExecutionRunId: string,
-) {
+/** Manual overrides never become the default environment for the next rerun. */
+export function sourceCaseLogAssignmentQuery(parentBatchId: string, sourceExecutionRunId: string) {
   return sql`
     SELECT assignment.execution_spec_json AS "executionSpecJson"
     FROM assignments assignment
     WHERE assignment.attempt_id IN (
       SELECT attempt.id FROM run_attempts attempt
-      WHERE attempt.execution_run_id IN (${caseLogRerunExecutionRunIds(parentBatchId, sourceExecutionRunId)})
+      WHERE attempt.execution_run_id IN (
+        SELECT source.id FROM execution_runs source
+        WHERE source.batch_id = ${parentBatchId} AND source.id = ${sourceExecutionRunId}
+      )
     )
     ORDER BY assignment.created_at DESC, assignment.id DESC LIMIT 1`;
 }

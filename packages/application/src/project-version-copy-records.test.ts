@@ -50,6 +50,27 @@ const cipher = {
 };
 
 describe("version-copy record boundaries", () => {
+  it("keeps historical actors without copying the source public execution replay key", () => {
+    const actors = JSON.stringify({
+      schemaVersion: 1,
+      publisher: { id: "original-user", username: "owner", source: "local" },
+    });
+    const copied = copyVersionRecord({
+      job,
+      collection: "run_batches",
+      cipher,
+      row: {
+        id: "batch",
+        suite_id: "suite",
+        public_request_key: "source-request",
+        public_execution_json: actors,
+        terminated_by_json: actors,
+      },
+    });
+    expect(copied.public_request_key).toBeNull();
+    expect(copied.public_execution_json).toBe(actors);
+    expect(copied.terminated_by_json).toBe(actors);
+  });
   it("requires exactly one new-version name or existing-version ID", () => {
     const input = {
       sourceProjectId: "source",

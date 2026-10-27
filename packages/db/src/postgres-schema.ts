@@ -786,6 +786,9 @@ export const pgRunBatches = pgTable(
     parentBatchId: text("parent_batch_id"),
     sourceExecutionRunId: text("source_execution_run_id"),
     requestedByUsername: text("requested_by_username"),
+    publicExecutionJson: text("public_execution_json"),
+    publicRequestKey: text("public_request_key"),
+    terminatedByJson: text("terminated_by_json"),
     requestedBySource: text("requested_by_source", { enum: ["local", "ldap"] }),
     status: text("status", {
       enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],

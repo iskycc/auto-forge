@@ -312,6 +312,12 @@ jobs:
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
+      - name: Set up Java for embedded Jenkins plugins
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
       - name: Install locked dependencies
         run: |
           corepack enable
@@ -350,6 +356,17 @@ jobs:
           cache-dependency-path: apps/runner-agent/go.mod
       - name: Record reproducible build time
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+      - name: Set up Java for embedded Jenkins plugins
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build embedded Jenkins plugins for the verification image
+        run: |
+          mvn --batch-mode --no-transfer-progress --file integrations/jenkins/pom.xml -Drevision="${VERIFICATION_VERSION}" -Dchangelist= -DskipTests package
+          bash scripts/verify-jenkins-hpis.sh "${VERIFICATION_VERSION}"
+          node scripts/release/stage-jenkins-resources.mjs "${VERIFICATION_VERSION}"
       - name: Build Docker-native verification image
         run: >-
           bash scripts/release/build-backend-image.sh

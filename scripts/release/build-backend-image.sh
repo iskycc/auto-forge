@@ -27,6 +27,8 @@ readonly docker_archive="${output_directory}/autoforge-backend-${version}-${vari
 readonly build_date="$(release_created_at)"
 readonly revision="${AUTOFORGE_RELEASE_REVISION:-$(git -C "${repository_root}" rev-parse HEAD)}"
 
+node "${repository_root}/scripts/release/verify-jenkins-resources.mjs" "${repository_root}/resources/jenkins" "${version}"
+
 bash "${repository_root}/scripts/release/build-agent-resources.sh" \
   "${version}" "${repository_root}/resources/agents"
 

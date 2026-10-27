@@ -1,4 +1,5 @@
 "use client";
+import { TaskExecutionAccessButton } from "./task-execution-access";
 import { Notice } from "@/components/ui/notice";
 
 import { LoadingIcon } from "@/components/ui/loading-icon";
@@ -207,6 +208,11 @@ export function CaseSuiteCard({
           {exporting ? <LoadingIcon size={15} /> : <Download size={15} />}
           {exporting ? "导出中" : "导出用例"}
         </Button>
+        <TaskExecutionAccessButton
+          suiteId={suite.id}
+          baseUrl={undefined}
+          canPublish={canManage && canExecute}
+        />
         {canManage ? (
           <DeleteCaseSuiteButton
             suiteId={suite.id}

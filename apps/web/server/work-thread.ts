@@ -1,3 +1,4 @@
+import { publicSuiteExecutionContextSchema, executionActorSchema } from "@autoforge/contracts";
 import { AesGcmSecretCipher } from "../src/lib/secret-cipher-core";
 import { runtimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 import { createHash, randomBytes } from "node:crypto";
@@ -21,6 +22,7 @@ import {
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
   createVersionCaseExecutionSchema,
+  rerunCaseFromAttemptInputSchema,
   ddtScopeSchema,
   ddtValueSearchInputSchema,
   inheritDdtCasesInputSchema,
@@ -275,14 +277,15 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
       );
     }
     case "create-batch": {
-      const { input, requestedBy } = z
+      const { input, requestedBy, publicExecution } = z
         .object({
+          publicExecution: publicSuiteExecutionContextSchema.optional(),
           input: createRunBatchInputSchema,
           requestedBy: runInitiatorSchema.optional(),
         })
         .strict()
         .parse(task.input);
-      return schedulingService().create(input, requestedBy);
+      return schedulingService().create(input, requestedBy, publicExecution);
     }
     case "create-single-ddt-case": {
       const { scope, caseId, input, requestedBy } = z
@@ -317,15 +320,23 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
         stageScope,
       );
     }
+    case "case-log-rerun-configuration": {
+      const { attemptId } = z
+        .object({ attemptId: z.string().min(1).max(160) })
+        .strict()
+        .parse(task.input);
+      return schedulingService().getCaseLogRerunConfiguration(attemptId);
+    }
     case "rerun-case-from-attempt": {
-      const { attemptId, requestedBy } = z
+      const { attemptId, requestedBy, input } = z
         .object({
           attemptId: z.string().min(1).max(160),
           requestedBy: runInitiatorSchema,
+          input: rerunCaseFromAttemptInputSchema.default({}),
         })
         .strict()
         .parse(task.input);
-      return schedulingService().rerunCaseFromAttempt(attemptId, requestedBy);
+      return schedulingService().rerunCaseFromAttempt(attemptId, requestedBy, input);
     }
     case "trigger-schedules":
       return platformOperations().triggerDueSchedules(
@@ -405,7 +416,17 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
       return executionRepository().resolveAttemptSchedulingContexts(task.attemptIds);
     case "terminate-batch":
       return executionRepository().terminateBatch(
-        task.input as Parameters<ExecutionControlRepository["terminateBatch"]>[0],
+        z
+          .object({
+            batchId: z.string().min(1).max(160),
+            actorId: z.string().min(1).max(160),
+            actor: executionActorSchema.optional(),
+            reason: z.string().max(2048),
+            eventId: z.string().min(1).max(160),
+            requestedAt: z.iso.datetime(),
+          })
+          .strict()
+          .parse(task.input),
       );
     case "cancel-run":
       return executionRepository().cancelRun(

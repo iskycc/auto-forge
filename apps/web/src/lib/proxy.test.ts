@@ -12,6 +12,8 @@ describe("anonymous page routing", () => {
   it("admits exact business-ID public routes without opening similarly named private routes", () => {
     expect(isPublicPath("/CaseLog")).toBe(true);
     expect(isPublicPath("/Execution")).toBe(true);
+    expect(isPublicPath("/RunTask")).toBe(true);
+    expect(isPublicPath("/RunTask/private")).toBe(false);
     expect(isPublicPath("/Execution/private")).toBe(false);
     expect(isPublicPath("/CaseLogs")).toBe(false);
     expect(isPublicPath("/CaseLog/private")).toBe(false);

@@ -94,6 +94,25 @@ describe("work thread recovery", () => {
     },
   );
   it.each(["lite", "full"] as const)(
+    "loads %s log rerun configuration in the scheduling worker",
+    async (mode) => {
+      const executor = diagnosticPool(mode);
+      try {
+        const input = { attemptId: "attempt" };
+        const pending = executor.getCaseLogRerunConfiguration(input);
+        const worker = workers[0]!;
+        const request = worker.requests[0]!;
+        expect(request.task).toEqual({ kind: "case-log-rerun-configuration", input });
+        const configuration = { adapterEnabled: true, environmentIp: "10.0.0.21" };
+        worker.emit("message", { id: request.id, ok: true, value: configuration });
+        await expect(pending).resolves.toEqual(configuration);
+      } finally {
+        await executor.close();
+      }
+    },
+  );
+
+  it.each(["lite", "full"] as const)(
     "runs %s log reruns in a scheduling worker and preserves a domain rejection",
     async (mode) => {
       const executor = diagnosticPool(mode);

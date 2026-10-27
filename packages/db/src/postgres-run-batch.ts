@@ -1,3 +1,5 @@
+import { publicRequestKey } from "./public-suite-execution";
+import { runBatchActors } from "./run-batch-actors";
 import { executionRecordKindCondition } from "./execution-record-kind";
 import {
   concurrencyCountsQuery,
@@ -10,7 +12,7 @@ import {
 import { schedulableBatchCapacitySql, schedulableBatchOrderSql } from "./schedulable-batch-query";
 import { finalFailureRunCondition } from "./final-failure-selection";
 import {
-  previousCaseLogAssignmentQuery,
+  sourceCaseLogAssignmentQuery,
   previousCaseLogRunnerQuery,
 } from "./case-log-rerun-history-query";
 import {
@@ -266,8 +268,36 @@ export class PostgresRunBatchRepository
           .select({ revision: pgCaseSuites.revision })
           .from(pgCaseSuites)
           .where(eq(pgCaseSuites.id, record.suiteId))
-          .for("share");
+          .for(record.publicExecution ? "update" : "share");
         assertCaseSuiteRevision(suite?.revision, record.expectedSuiteRevision);
+      }
+      if (record.publicExecution) {
+        const context = record.publicExecution;
+        const key = publicRequestKey(record.suiteId, context.publisher.id, context.requestKey);
+        const replay = await transaction.execute(
+          sql`SELECT id FROM run_batches WHERE public_request_key=${key}`,
+        );
+        if (replay.rows[0])
+          throw new DomainError("PUBLIC_EXECUTION_REPLAY", "重复的执行请求。", {
+            details: String(replay.rows[0].id),
+          });
+        // Lock the grant so revocation and execution creation have a defined commit order.
+        const link = await transaction.execute(
+          sql`SELECT l.publisher_id FROM public_suite_execution_links l JOIN users u ON u.id=l.publisher_id WHERE l.suite_id=${record.suiteId} AND l.publisher_id=${context.publisher.id} AND l.revoked_at IS NULL AND u.status='active' FOR SHARE OF l`,
+        );
+        if (link.rows.length === 0)
+          throw new DomainError(
+            "PUBLIC_SUITE_LINK_NOT_FOUND",
+            "公开执行链接已撤销或分享人已停用。",
+          );
+        const active = await transaction.execute(
+          sql`SELECT id FROM run_batches WHERE suite_id=${record.suiteId} AND status IN ('queued','dispatching','scheduled','running') AND batch_kind<>'case_log_rerun' LIMIT 1`,
+        );
+        if (active.rows.length > 0)
+          throw new DomainError(
+            "PUBLIC_SUITE_EXECUTION_ACTIVE",
+            "此任务已有待执行或执行中的批次，请等待结束后再执行。",
+          );
       }
       // 展示编号在同一插入语句内取序列（nextval 不参与回滚，空洞不影响展示），
       // RETURNING 直接带回完整批次行，创建完成后无需再往返读取摘要。
@@ -285,6 +315,16 @@ export class PostgresRunBatchRepository
           batchKind: record.kind ?? "standard",
           parentBatchId: record.parentBatchId,
           sourceExecutionRunId: record.sourceExecutionRunId,
+          publicExecutionJson: record.publicExecution
+            ? JSON.stringify({ ...record.publicExecution, schemaVersion: 1 })
+            : null,
+          publicRequestKey: record.publicExecution
+            ? publicRequestKey(
+                record.suiteId,
+                record.publicExecution.publisher.id,
+                record.publicExecution.requestKey,
+              )
+            : null,
           requestedByUsername: record.requestedBy?.username,
           requestedBySource: record.requestedBy?.source,
           status: "queued",
@@ -306,6 +346,10 @@ export class PostgresRunBatchRepository
         })
         .returning();
       createdRow = insertedRows[0];
+      if (record.publicExecution)
+        await transaction.execute(
+          sql`INSERT INTO public_batch_access(batch_id,created_by,created_at) VALUES (${record.id},${record.publicExecution.initiator.id},${record.createdAt}) ON CONFLICT DO NOTHING`,
+        );
       await transaction.insert(pgRunBatchStatusEvents).values({
         id: record.eventId ?? record.id,
         batchId: record.id,
@@ -725,9 +769,9 @@ export class PostgresRunBatchRepository
       .where(eq(pgRunBatches.id, batchId))
       .limit(1);
     const runtime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
-    const previousAdapterEnvironmentAddress =
+    const sourceAdapterEnvironmentAddress =
       runtime && selection.executionRunId
-        ? await previousCaseLogAdapterEnvironmentAddress(
+        ? await sourceCaseLogAdapterEnvironmentAddress(
             this.handle,
             batchId,
             selection.executionRunId,
@@ -772,9 +816,7 @@ export class PostgresRunBatchRepository
             },
           }
         : {}),
-      ...(previousAdapterEnvironmentAddress
-        ? { caseLogRerunRotation: { previousAdapterEnvironmentAddress } }
-        : {}),
+      ...(sourceAdapterEnvironmentAddress ? { sourceAdapterEnvironmentAddress } : {}),
       roundRecoveries: recoveries.rows,
       runs: runRows.map((run) => ({
         id: run.id,
@@ -2093,6 +2135,7 @@ export class PostgresRunBatchRepository
       suiteName: row.suiteName,
       suiteVersion: row.suiteVersion,
       kind: row.batchKind,
+      ...runBatchActors(row),
       ...(row.parentBatchId ? { parentBatchId: row.parentBatchId } : {}),
       ...(row.sourceExecutionRunId ? { sourceExecutionRunId: row.sourceExecutionRunId } : {}),
       ...(row.requestedByUsername && row.requestedBySource
@@ -2723,39 +2766,14 @@ function assignEnvironmentAddresses(
   );
 }
 
-async function previousCaseLogAdapterEnvironmentAddress(
+async function sourceCaseLogAdapterEnvironmentAddress(
   handle: PostgresDatabaseHandle,
   parentBatchId: string,
   sourceExecutionRunId: string,
   sourceRuntime: ProjectAdapterRuntime,
 ): Promise<string | undefined> {
-  const latestDiagnostic = await handle.pool.query<{
-    adapterRuntimeJson: string | null;
-    executionRunId: string;
-  }>(
-    `SELECT batch.adapter_runtime_json AS "adapterRuntimeJson", run.id AS "executionRunId"
-     FROM run_batches batch
-     JOIN execution_runs run ON run.batch_id = batch.id
-     WHERE batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = $1
-       AND batch.source_execution_run_id = $2
-     ORDER BY batch.created_at DESC, batch.id DESC, run.id DESC LIMIT 1`,
-    [parentBatchId, sourceExecutionRunId],
-  );
-  const latestDiagnosticRow = latestDiagnostic.rows[0];
-  const diagnosticRuntime = parseProjectAdapterRuntime(
-    latestDiagnosticRow?.adapterRuntimeJson ?? null,
-  );
-  if (latestDiagnosticRow && diagnosticRuntime) {
-    const address = adapterEnvironmentAddress(
-      diagnosticRuntime,
-      latestDiagnosticRow.executionRunId,
-      1,
-    );
-    if (address) return address;
-  }
-
   const actualAssignment = await handle.db.execute<{ executionSpecJson: string }>(
-    previousCaseLogAssignmentQuery(parentBatchId, sourceExecutionRunId),
+    sourceCaseLogAssignmentQuery(parentBatchId, sourceExecutionRunId),
   );
   const actualAddress = actualAssignment.rows[0]
     ? adapterEnvironmentAddressFromExecutionSpec(actualAssignment.rows[0].executionSpecJson)

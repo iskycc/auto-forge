@@ -1,4 +1,8 @@
 import {
+  publicSuiteExecutionContextSchema,
+  type PublicSuiteExecutionContext,
+} from "@autoforge/contracts";
+import {
   createCaseDebugRunSchema,
   type CreateCaseDebugRunInput,
   createRunBatchInputSchema,
@@ -6,6 +10,9 @@ import {
   createVersionCaseExecutionSchema,
   type CreateVersionCaseExecutionInput,
   rerunFinalFailuresInputSchema,
+  rerunCaseFromAttemptInputSchema,
+  type RerunCaseFromAttemptInput,
+  type CaseLogRerunConfiguration,
   type CreateRunBatchInput,
   type CreateSingleCaseRunInput,
   type RerunFinalFailuresInput,
@@ -195,7 +202,11 @@ export class RunBatchSchedulingService {
   async create(
     input: CreateRunBatchInput,
     requestedBy?: RunBatch["requestedBy"],
+    publicExecution?: PublicSuiteExecutionContext,
   ): Promise<RunBatch> {
+    const context = publicExecution
+      ? publicSuiteExecutionContextSchema.parse(publicExecution)
+      : undefined;
     const validated = createRunBatchInputSchema.parse(input);
     const suite = await this.suites.get(validated.suiteId);
     const preflight = await this.preflightValidated(validated, { suite });
@@ -258,65 +269,80 @@ export class RunBatchSchedulingService {
       kind: "dispatch-run" as const,
       payload: { batchId },
     };
-    await this.batches.create({
-      id: batchId,
-      projectId,
-      eventId: this.ids.next(),
-      suiteId: suite.id,
-      suiteName: suite.name,
-      suiteVersion: suite.version,
-      expectedSuiteRevision: suite.revision,
-      ...(requestedBy ? { requestedBy: { ...requestedBy } } : {}),
-      retryLimit: suitePolicy.retryLimit,
-      retryMode: suitePolicy.retryMode,
-      priority: suitePolicy.priority,
-      queueTimeoutMs: suitePolicy.queueTimeoutMs,
-      claimTimeoutMs: suitePolicy.claimTimeoutMs,
-      executionTimeoutMs: this.caseExecutionTimeoutMs,
-      uploadTimeoutMs: suitePolicy.uploadTimeoutMs,
-      environmentVariables: [],
-      secretBindings: [],
-      runnerIds,
-      policy: {
-        executor: suitePolicy.executor,
-        concurrency: suitePolicy.concurrency,
-        ...(suitePolicy.projectVersionId ? { projectVersionId: suitePolicy.projectVersionId } : {}),
-        runnerLabels: [...suitePolicy.runnerLabels],
-        artifactPatterns: this.artifactCollectionEnabled() ? [...suitePolicy.artifactPatterns] : [],
-        retryConcurrencyRules: (suitePolicy.retryConcurrencyRules ?? []).map((rule) => ({
-          ...rule,
+    try {
+      await this.batches.create({
+        ...(context ? { publicExecution: context } : {}),
+        id: batchId,
+        projectId,
+        eventId: this.ids.next(),
+        suiteId: suite.id,
+        suiteName: suite.name,
+        suiteVersion: suite.version,
+        expectedSuiteRevision: suite.revision,
+        ...(requestedBy ? { requestedBy: { ...requestedBy } } : {}),
+        retryLimit: suitePolicy.retryLimit,
+        retryMode: suitePolicy.retryMode,
+        priority: suitePolicy.priority,
+        queueTimeoutMs: suitePolicy.queueTimeoutMs,
+        claimTimeoutMs: suitePolicy.claimTimeoutMs,
+        executionTimeoutMs: this.caseExecutionTimeoutMs,
+        uploadTimeoutMs: suitePolicy.uploadTimeoutMs,
+        environmentVariables: [],
+        secretBindings: [],
+        runnerIds,
+        policy: {
+          executor: suitePolicy.executor,
+          concurrency: suitePolicy.concurrency,
+          ...(suitePolicy.projectVersionId
+            ? { projectVersionId: suitePolicy.projectVersionId }
+            : {}),
+          runnerLabels: [...suitePolicy.runnerLabels],
+          artifactPatterns: this.artifactCollectionEnabled()
+            ? [...suitePolicy.artifactPatterns]
+            : [],
+          retryConcurrencyRules: (suitePolicy.retryConcurrencyRules ?? []).map((rule) => ({
+            ...rule,
+          })),
+        },
+        roundRecoveries: roundRecoveryRules.map((rule) => ({
+          ruleId: rule.id,
+          afterRound: rule.afterRound,
+          jenkinsJobUrl: rule.jenkinsJobUrl,
+          apiKeyCiphertext: roundRecoveryCredentials[rule.id]!,
+          waitMinutes: rule.waitMinutes,
         })),
-      },
-      roundRecoveries: roundRecoveryRules.map((rule) => ({
-        ruleId: rule.id,
-        afterRound: rule.afterRound,
-        jenkinsJobUrl: rule.jenkinsJobUrl,
-        apiKeyCiphertext: roundRecoveryCredentials[rule.id]!,
-        waitMinutes: rule.waitMinutes,
-      })),
-      adapter: {
-        enabled: suitePolicy.adapter.enabled,
-        suiteName: suitePolicy.adapter.suiteName,
-        testName: suitePolicy.adapter.testName,
-        environmentAddresses: [...suitePolicy.adapter.environmentAddresses],
-      },
-      runs: [
-        ...enabledCases.map((item) => ({
-          id: this.ids.next(),
-          caseDefinitionId: item.caseDefinition.id,
-          executionCaseDefinitionId: item.caseDefinition.id,
-          caseVersion: item.caseDefinition.currentVersion,
-          displayName: item.caseDefinition.displayName,
-          className: item.caseDefinition.className,
-          caseType: "testng" as const,
-          parameters: { ...item.caseDefinition.parameters },
-        })),
-        ...enabledDdtCases.map((item) => ddtExecutionRun(this.ids.next(), item.ddtCase)),
-      ],
-      dispatchJob,
-      scheduledFor,
-      createdAt,
-    });
+        adapter: {
+          enabled: suitePolicy.adapter.enabled,
+          suiteName: suitePolicy.adapter.suiteName,
+          testName: suitePolicy.adapter.testName,
+          environmentAddresses: [...suitePolicy.adapter.environmentAddresses],
+        },
+        runs: [
+          ...enabledCases.map((item) => ({
+            id: this.ids.next(),
+            caseDefinitionId: item.caseDefinition.id,
+            executionCaseDefinitionId: item.caseDefinition.id,
+            caseVersion: item.caseDefinition.currentVersion,
+            displayName: item.caseDefinition.displayName,
+            className: item.caseDefinition.className,
+            caseType: "testng" as const,
+            parameters: { ...item.caseDefinition.parameters },
+          })),
+          ...enabledDdtCases.map((item) => ddtExecutionRun(this.ids.next(), item.ddtCase)),
+        ],
+        dispatchJob,
+        scheduledFor,
+        createdAt,
+      });
+    } catch (cause) {
+      if (
+        cause instanceof DomainError &&
+        cause.code === "PUBLIC_EXECUTION_REPLAY" &&
+        typeof cause.details === "string"
+      )
+        return this.getSummary(cause.details);
+      throw cause;
+    }
     return this.schedule(batchId);
   }
 
@@ -805,10 +831,57 @@ export class RunBatchSchedulingService {
     return result;
   }
 
+  async getCaseLogRerunConfiguration(attemptId: string): Promise<CaseLogRerunConfiguration> {
+    const { snapshot } = await this.resolveCaseLogRerunSource(attemptId);
+    return caseLogRerunConfiguration(snapshot);
+  }
+
   async rerunCaseFromAttempt(
     attemptId: string,
     requestedBy: NonNullable<RunBatch["requestedBy"]>,
+    input: RerunCaseFromAttemptInput = {},
   ): Promise<RunBatch> {
+    const overrides = rerunCaseFromAttemptInputSchema.parse(input);
+    const { snapshot, run, runIndex, rootBatchId, rootExecutionRunId, policy } =
+      await this.resolveCaseLogRerunSource(attemptId);
+    const configuration = caseLogRerunConfiguration(snapshot);
+    if (overrides.environmentIp && !configuration.adapterEnabled) {
+      throw new DomainError(
+        "RUN_RERUN_ENVIRONMENT_UNAVAILABLE",
+        "原执行未启用 Adapter，无法修改重跑环境 IP。",
+      );
+    }
+    const environmentIp = overrides.environmentIp ?? configuration.environmentIp;
+    if (configuration.adapterEnabled && !environmentIp) {
+      throw new DomainError(
+        "RUN_RERUN_ENVIRONMENT_UNAVAILABLE",
+        "原执行未记录环境 IP，请填写本次重跑环境 IP。",
+      );
+    }
+    return this.createDerivedBatch({
+      snapshot,
+      kind: "case_log_rerun",
+      runtimeAssetSource: "current_project_version",
+      parentBatchId: rootBatchId,
+      sourceExecutionRunId: rootExecutionRunId,
+      requestedBy,
+      suiteName: `${snapshot.batch.suiteName} · ${run.displayName} 诊断重跑`,
+      retryLimit: 0,
+      retryMode: "immediate",
+      policy: {
+        ...policy,
+        concurrency: 1,
+        runnerLabels: [...policy.runnerLabels],
+        artifactPatterns: [...policy.artifactPatterns],
+        retryConcurrencyRules: [],
+      },
+      roundRecoveries: [],
+      selectedRuns: [{ run, sourceIndex: runIndex }],
+      adapterEnvironmentAddresses: environmentIp ? [environmentIp] : [],
+    });
+  }
+
+  private async resolveCaseLogRerunSource(attemptId: string) {
     const source = await this.batches.resolveAttemptRerunSource(attemptId);
     if (!source) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
     if (source.attemptStatus === "assigned" || source.attemptStatus === "running") {
@@ -834,31 +907,14 @@ export class RunBatchSchedulingService {
     if (!run || !snapshot.batch.policy) {
       throw new DomainError("RUN_RERUN_SOURCE_INVALID", "原始执行配置快照不完整，无法重新执行。");
     }
-    const diagnosticAdapterAddresses = rotateAddressesAfter(
-      snapshot.adapterRuntime?.environmentAddresses ?? [],
-      snapshot.caseLogRerunRotation?.previousAdapterEnvironmentAddress,
-    );
-    return this.createDerivedBatch({
+    return {
       snapshot,
-      kind: "case_log_rerun",
-      runtimeAssetSource: "current_project_version",
-      parentBatchId: rootBatchId,
-      sourceExecutionRunId: rootExecutionRunId,
-      requestedBy,
-      suiteName: `${snapshot.batch.suiteName} · ${run.displayName} 诊断重跑`,
-      retryLimit: 0,
-      retryMode: "immediate",
-      policy: {
-        ...snapshot.batch.policy,
-        concurrency: 1,
-        runnerLabels: [...snapshot.batch.policy.runnerLabels],
-        artifactPatterns: [...snapshot.batch.policy.artifactPatterns],
-        retryConcurrencyRules: [],
-      },
-      roundRecoveries: [],
-      selectedRuns: [{ run, sourceIndex: runIndex }],
-      adapterEnvironmentAddresses: diagnosticAdapterAddresses,
-    });
+      run,
+      runIndex,
+      rootBatchId,
+      rootExecutionRunId,
+      policy: snapshot.batch.policy,
+    };
   }
 
   async getAttemptRerunContext(attemptId: string): Promise<{ projectId: string }> {
@@ -1842,12 +1898,16 @@ export class RunBatchSchedulingService {
   }
 }
 
-function rotateAddressesAfter(addresses: readonly string[], previousAddress?: string): string[] {
-  if (addresses.length < 2 || !previousAddress) return [...addresses];
-  const previousIndex = addresses.indexOf(previousAddress);
-  if (previousIndex < 0) return [...addresses];
-  const nextIndex = (previousIndex + 1) % addresses.length;
-  return [...addresses.slice(nextIndex), ...addresses.slice(0, nextIndex)];
+function caseLogRerunConfiguration(
+  snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>,
+): CaseLogRerunConfiguration {
+  const runtime = snapshot.adapterRuntime;
+  return {
+    adapterEnabled: Boolean(runtime),
+    environmentIp: runtime
+      ? (snapshot.sourceAdapterEnvironmentAddress ?? runtime.environmentAddresses[0] ?? null)
+      : null,
+  };
 }
 
 function ddtExecutionRun(

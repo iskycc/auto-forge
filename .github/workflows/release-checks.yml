@@ -113,15 +113,15 @@ jobs:
           cache-dependency-path: apps/runner-agent/go.mod
 
       - name: Set up Java 8 for Adapter build
-        if: matrix.name == 'unit and integration' || matrix.name == 'production build'
+        if: matrix.name == 'unit and integration'
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "8"
           cache: maven
 
-      - name: Set up Java 21 for current Adapter runtime
-        if: matrix.name == 'CoTest Adapter current runtime'
+      - name: Set up Java 21 for current runtime and embedded Jenkins plugins
+        if: matrix.name == 'CoTest Adapter current runtime' || matrix.name == 'production build'
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin

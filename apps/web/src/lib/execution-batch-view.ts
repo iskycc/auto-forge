@@ -18,6 +18,8 @@ export type ExecutionBatchView = Pick<
   | "failedRuns"
   | "timedOutRuns"
   | "terminationRequestedAt"
+  | "publicExecution"
+  | "terminatedBy"
   | "scheduledFor"
   | "updatedAt"
 > &
@@ -46,6 +48,8 @@ export function toExecutionBatchView(
     ...(overview.statistics ? { statistics: overview.statistics } : {}),
     id: batch.id,
     status: batch.status,
+    ...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {}),
+    ...(batch.terminatedBy ? { terminatedBy: batch.terminatedBy } : {}),
     retryLimit: batch.retryLimit,
     retryMode: batch.retryMode,
     currentRound: batch.currentRound,

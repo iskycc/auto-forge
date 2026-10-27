@@ -307,7 +307,7 @@ for (const mode of ["sqlite", "postgres"] as const) {
         const snapshot = await fixture.batches.getRerunSnapshot("batch", {
           executionRunId: "run-ddt",
         });
-        expect(snapshot?.caseLogRerunRotation?.previousAdapterEnvironmentAddress).toBe("10.0.0.22");
+        expect(snapshot?.sourceAdapterEnvironmentAddress).toBe("10.0.0.22");
         await fixture.execute(
           `INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,batch_kind,parent_batch_id,source_execution_run_id,environment_json,created_at,updated_at) VALUES ('manual','suite','Manual',1,'queued',0,1,'case_log_rerun','batch','run-ddt','[]',?,?)`,
           [timestamp, timestamp],
@@ -316,6 +316,20 @@ for (const mode of ["sqlite", "postgres"] as const) {
           `INSERT INTO execution_runs(id,batch_id,case_definition_id,case_version,display_name,class_name,case_type,status,created_at,updated_at) VALUES ('manual-run','manual','ddt',1,'订单支付_中文001','example.Checkout','ddt','queued',?,?)`,
           [timestamp, timestamp],
         );
+        await fixture.execute(
+          "UPDATE run_batches SET adapter_runtime_json = ? WHERE id = 'manual'",
+          [
+            JSON.stringify({
+              suiteName: "Manual",
+              testName: "Override",
+              environmentAddresses: ["10.0.0.88"],
+              environmentAddressByRunId: { "manual-run": "10.0.0.88" },
+            }),
+          ],
+        );
+        await expect(
+          fixture.batches.getRerunSnapshot("batch", { executionRunId: "run-ddt" }),
+        ).resolves.toMatchObject({ sourceAdapterEnvironmentAddress: "10.0.0.22" });
         const scheduling = await fixture.batches.getSchedulingSnapshot("manual", timestamp);
         expect(scheduling?.runnerHistoryByRun).toEqual({ "manual-run": ["runner"] });
         if (fixture.sqliteQueryPlan) {
@@ -323,13 +337,12 @@ for (const mode of ["sqlite", "postgres"] as const) {
           const historyReads = queries.filter((statement) =>
             /SELECT (?:assignment\.execution_spec_json|attempt\.runner_id) AS/u.test(statement),
           );
-          expect(historyReads).toHaveLength(2);
+          expect(historyReads).toHaveLength(3);
           for (const statement of historyReads) {
             const plan = fixture.sqliteQueryPlan(statement, [
               "batch",
               "run-ddt",
-              "batch",
-              "run-ddt",
+              ...(statement.includes("UNION ALL") ? ["batch", "run-ddt"] : []),
             ]);
             expect(plan.join("\n")).not.toMatch(/SCAN (?:assignment|attempt)\b/u);
           }

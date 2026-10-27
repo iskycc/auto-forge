@@ -544,10 +544,16 @@ export class ExecutionControlService {
     return projectId;
   }
 
-  async terminateBatch(actorId: string, batchId: string, reason: string): Promise<number> {
+  async terminateBatch(
+    actorId: string,
+    batchId: string,
+    reason: string,
+    actor?: import("@autoforge/domain").RunBatch["terminatedBy"],
+  ): Promise<number> {
     return this.executions.terminateBatch({
       batchId,
       actorId,
+      ...(actor ? { actor } : {}),
       reason,
       eventId: this.ids.next(),
       requestedAt: this.clock.now().toISOString(),

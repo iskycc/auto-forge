@@ -4,6 +4,8 @@ import {
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
   runBatchPreflightResultSchema,
+  rerunCaseFromAttemptInputSchema,
+  caseLogRerunConfigurationSchema,
 } from "../src/scheduling";
 
 describe("createRunBatchInputSchema", () => {
@@ -97,5 +99,36 @@ describe("createRunBatchInputSchema", () => {
         ],
       }),
     ).toMatchObject({ ready: false, blockers: [{ runnerId: "runner-1" }] });
+  });
+});
+
+describe("log rerun environment override", () => {
+  it("keeps the existing task address length for read-only legacy defaults", () => {
+    const environmentIp = "x".repeat(2048);
+    expect(caseLogRerunConfigurationSchema.parse({ adapterEnabled: true, environmentIp })).toEqual({
+      adapterEnabled: true,
+      environmentIp,
+    });
+  });
+  it("accepts an optional single IPv4 or IPv6 address and trims it", () => {
+    expect(rerunCaseFromAttemptInputSchema.parse({})).toEqual({});
+    expect(rerunCaseFromAttemptInputSchema.parse({ environmentIp: " 10.0.0.99 " })).toEqual({
+      environmentIp: "10.0.0.99",
+    });
+    expect(rerunCaseFromAttemptInputSchema.parse({ environmentIp: "2001:db8::99" })).toEqual({
+      environmentIp: "2001:db8::99",
+    });
+  });
+  it.each(["", "10.0.0.999", "node.example", "10.0.0.1,10.0.0.2", "http://10.0.0.1"])(
+    "rejects an invalid edited IP: %s",
+    (environmentIp) => {
+      expect(rerunCaseFromAttemptInputSchema.safeParse({ environmentIp }).success).toBe(false);
+    },
+  );
+  it("rejects task or Adapter configuration changes", () => {
+    expect(
+      rerunCaseFromAttemptInputSchema.safeParse({ environmentIp: "10.0.0.99", suiteId: "task" })
+        .success,
+    ).toBe(false);
   });
 });

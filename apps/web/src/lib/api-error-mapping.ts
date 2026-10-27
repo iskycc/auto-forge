@@ -113,6 +113,7 @@ function domainErrorStatus(code: string): number {
     ].includes(code)
   )
     return 409;
+  if (code === "PUBLIC_SUITE_EXECUTION_ACTIVE") return 409;
   if (code === "EXPORT_DATA_INVALID") return 422;
   if (code === "STORAGE_INVENTORY_SNAPSHOT_EXPIRED") return 409;
   if (
@@ -132,6 +133,7 @@ function domainErrorStatus(code: string): number {
     return 409;
   if (code === "REQUEST_BODY_TOO_LARGE" || code.endsWith("_TOO_LARGE")) return 413;
   if (code === "RATE_LIMITED") return 429;
+  if (code === "JENKINS_PLUGIN_UNAVAILABLE") return 503;
   if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;
   if (code === "RUNTIME_ASSET_STORAGE_FULL") return 507;
   if (code === "ATTEMPT_INPUT_DOWNLOAD_FAILED") return 502;

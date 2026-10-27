@@ -6,7 +6,9 @@ import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { RunAttempt } from "@autoforge/domain";
+import type { RerunCaseFromAttemptInput } from "@autoforge/contracts";
 
+import { AttemptRerunDialog } from "@/components/attempt-rerun-dialog";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { Button } from "./ui";
 import { useToast } from "./ui-feedback";
@@ -25,6 +27,7 @@ export function AttemptRerunAction({
 }) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [trackingBatchId, setTrackingBatchId] = useState("");
   const [liveAttempt, setLiveAttempt] = useState<LiveLogAttempt | null>(null);
 
@@ -66,16 +69,19 @@ export function AttemptRerunAction({
     };
   }, [liveAttempt, onOpenLiveLogs, onRerunAttemptAvailable, toast, trackingBatchId]);
 
-  async function rerunCase(): Promise<void> {
+  async function rerunCase(input: RerunCaseFromAttemptInput): Promise<void> {
     setPending(true);
     try {
       const response = await fetch(`/api/v1/run-attempts/${encodeURIComponent(attemptId)}/rerun`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
       });
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "执行此用例失败。"))!);
       }
       const target = (await response.json()) as CaseLogRerunTargetResponse;
+      setDialogOpen(false);
       setTrackingBatchId(target.batchId);
       setLiveAttempt(target.attempt);
       if (target.attempt) onRerunAttemptAvailable?.(target.attempt);
@@ -84,8 +90,6 @@ export function AttemptRerunAction({
           ? "手动执行已经调度，可以查看实时日志。"
           : "已提交手动执行，正在等待调度；实时日志入口会自动出现。",
       );
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "执行此用例失败。");
     } finally {
       setPending(false);
     }
@@ -106,12 +110,21 @@ export function AttemptRerunAction({
           compact && cn("compact-button", uiPatterns["compact-button"]),
         )}
         disabled={pending}
-        onClick={() => void rerunCase()}
+        onClick={() => setDialogOpen(true)}
         type="button"
       >
         <RotateCcw size={15} />
         {pending ? "正在提交…" : "执行此用例"}
       </Button>
+      {dialogOpen ? (
+        <AttemptRerunDialog
+          key={attemptId}
+          attemptId={attemptId}
+          pending={pending}
+          onClose={() => setDialogOpen(false)}
+          onConfirm={rerunCase}
+        />
+      ) : null}
       {liveAttempt && onOpenLiveLogs ? (
         <Button
           className={cn(

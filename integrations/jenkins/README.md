@@ -1,3 +1,5 @@
+> 两个 HPI 现在随 AutoForge 主平台镜像交付，从任务页或公开执行页的“Jenkins 对接指导与插件下载”获取，不再作为单独的 GitHub Release 资产。离线 Jenkins 仍需预先安装 Pipeline 和 Credentials Binding 等依赖。
+
 # AutoForge Jenkins 插件
 
 `autoforge-execution` 提供 `autoforgeRun`，`autoforge-dependency-publisher` 提供

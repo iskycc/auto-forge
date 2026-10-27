@@ -274,6 +274,10 @@ export class WorkerPool implements WorkDispatcher {
     return this.nextSchedulingLane().dispatch({ kind: "create-single-ddt-case", input });
   }
 
+  getCaseLogRerunConfiguration(input: unknown): Promise<unknown> {
+    return this.nextSchedulingLane().dispatch({ kind: "case-log-rerun-configuration", input });
+  }
+
   rerunCaseFromAttempt(input: unknown): Promise<unknown> {
     return this.nextSchedulingLane().dispatch({ kind: "rerun-case-from-attempt", input });
   }

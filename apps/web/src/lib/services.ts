@@ -1,4 +1,12 @@
 import {
+  PublicSuiteExecutionService,
+  type PublicSuiteExecutionRepository,
+} from "@autoforge/application";
+import {
+  SqlitePublicSuiteExecutionRepository,
+  PostgresPublicSuiteExecutionRepository,
+} from "@autoforge/db";
+import {
   runtimeDiagnosticContext,
   isRuntimeDatabaseContention,
 } from "@autoforge/contracts/runtime-diagnostics";
@@ -191,6 +199,7 @@ async function createPlatformServices() {
   let roundRecoveries: RoundRecoveryRepository;
   let attemptLogSharesRepository: AttemptLogShareRepository;
   let publicExecutionAccessRepository: PublicExecutionAccessRepository;
+  let publicSuiteExecutionRepository: PublicSuiteExecutionRepository;
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
@@ -243,6 +252,7 @@ async function createPlatformServices() {
     roundRecoveries = new SqliteRoundRecoveryRepository(database);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     publicExecutionAccessRepository = new SqlitePublicExecutionAccessRepository(database);
+    publicSuiteExecutionRepository = new SqlitePublicSuiteExecutionRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
@@ -450,6 +460,7 @@ async function createPlatformServices() {
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     publicExecutionAccessRepository = new PostgresPublicExecutionAccessRepository(database);
+    publicSuiteExecutionRepository = new PostgresPublicSuiteExecutionRepository(database);
     objectStore = new MinioObjectStore(config.minio);
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
@@ -1030,6 +1041,16 @@ async function createPlatformServices() {
     runnerProtocol,
     attemptLogShares,
     publicExecutionAccess,
+    publicSuiteExecutions: new PublicSuiteExecutionService(
+      publicSuiteExecutionRepository,
+      suites,
+      identities,
+      projectStructuresRepository,
+      runBatches,
+      executionControl,
+      publicExecutionAccess,
+      clock,
+    ),
     runBatchExport,
     publicStatistics,
     dashboardSnapshots,

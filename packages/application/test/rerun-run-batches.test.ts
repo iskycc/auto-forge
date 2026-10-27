@@ -14,6 +14,118 @@ import type {
 const now = "2026-08-26T02:00:00.000Z";
 
 describe("derived run batches", () => {
+  it.each([
+    ["testng", "10.0.0.99"],
+    ["ddt", "10.0.0.99"],
+    ["testng", "10.0.0.13"],
+    ["ddt", "10.0.0.13"],
+  ] as const)(
+    "uses IP %s / %s only for this log rerun and resets the next one",
+    async (caseType, environmentIp) => {
+      const snapshot = rerunSnapshot();
+      snapshot.runs[1]!.caseType = caseType;
+      const original = structuredClone(snapshot);
+      const { batches, created } = rerunRepository(snapshot, {
+        batchId: snapshot.batch.id,
+        executionRunId: "run-failed",
+        attemptStatus: "failed",
+      });
+      const service = schedulingService(batches);
+      const initiator = { username: "operator", source: "local" as const };
+      await service.rerunCaseFromAttempt("attempt-failed", initiator, {
+        environmentIp,
+      });
+      expect(created[0]?.adapter?.environmentAddresses).toEqual([environmentIp]);
+      expect(snapshot).toEqual(original);
+      vi.spyOn(batches, "getMetadata").mockResolvedValue({
+        ...snapshot.batch,
+        id: "manual",
+        kind: "case_log_rerun",
+        parentBatchId: snapshot.batch.id,
+        sourceExecutionRunId: "run-failed",
+        totalRuns: 1,
+      });
+      await expect(service.getCaseLogRerunConfiguration("manual-attempt")).resolves.toEqual({
+        adapterEnabled: true,
+        environmentIp: "10.0.0.12",
+      });
+      await service.rerunCaseFromAttempt("manual-attempt", initiator);
+      expect(created[1]?.adapter?.environmentAddresses).toEqual(["10.0.0.12"]);
+      expect(snapshot).toEqual(original);
+    },
+  );
+
+  it("validates an edited IP before reading or creating execution state", async () => {
+    const { batches, created } = rerunRepository(rerunSnapshot(), {
+      batchId: "batch-source",
+      executionRunId: "run-failed",
+      attemptStatus: "failed",
+    });
+    const service = schedulingService(batches);
+    for (const environmentIp of ["", "invalid", "10.0.0.999", "10.0.0.1,10.0.0.2"]) {
+      await expect(
+        service.rerunCaseFromAttempt(
+          "attempt-failed",
+          { username: "operator", source: "local" },
+          { environmentIp },
+        ),
+      ).rejects.toThrow();
+    }
+    expect(batches.resolveAttemptRerunSource).not.toHaveBeenCalled();
+    expect(created).toEqual([]);
+  });
+
+  it("reads the original environment without creating a batch or persisting changes", async () => {
+    const { batches, created } = rerunRepository(rerunSnapshot(), {
+      batchId: "batch-source",
+      executionRunId: "run-failed",
+      attemptStatus: "failed",
+    });
+    await expect(
+      schedulingService(batches).getCaseLogRerunConfiguration("attempt-failed"),
+    ).resolves.toEqual({ adapterEnabled: true, environmentIp: "10.0.0.12" });
+    expect(created).toEqual([]);
+  });
+
+  it("accepts IPv6 for one manual execution", async () => {
+    const { batches, created } = rerunRepository(rerunSnapshot(), {
+      batchId: "batch-source",
+      executionRunId: "run-failed",
+      attemptStatus: "failed",
+    });
+    await schedulingService(batches).rerunCaseFromAttempt(
+      "attempt-failed",
+      { username: "operator", source: "local" },
+      { environmentIp: "2001:db8::99" },
+    );
+    expect(created[0]?.adapter?.environmentAddresses).toEqual(["2001:db8::99"]);
+  });
+
+  it("keeps an execution without Adapter unchanged and rejects an IP override", async () => {
+    const snapshot = rerunSnapshot();
+    delete snapshot.adapterRuntime;
+    const { batches, created } = rerunRepository(snapshot, {
+      batchId: "batch-source",
+      executionRunId: "run-failed",
+      attemptStatus: "failed",
+    });
+    const service = schedulingService(batches);
+    await expect(service.getCaseLogRerunConfiguration("attempt-failed")).resolves.toEqual({
+      adapterEnabled: false,
+      environmentIp: null,
+    });
+    await expect(
+      service.rerunCaseFromAttempt(
+        "attempt-failed",
+        { username: "operator", source: "local" },
+        { environmentIp: "10.0.0.99" },
+      ),
+    ).rejects.toMatchObject({ code: "RUN_RERUN_ENVIRONMENT_UNAVAILABLE" });
+    expect(created).toEqual([]);
+    await service.rerunCaseFromAttempt("attempt-failed", { username: "operator", source: "local" });
+    expect(created[0]).not.toHaveProperty("adapter");
+  });
+
   it("preserves a Chinese DDT CaseId and its execution class when creating a log rerun", async () => {
     const snapshot = rerunSnapshot();
     const run = snapshot.runs.find((item) => item.id === "run-failed")!;
@@ -189,7 +301,7 @@ describe("derived run batches", () => {
         enabled: true,
         suiteName: "adapter-suite",
         testName: "adapter-test",
-        environmentAddresses: ["10.0.0.13", "10.0.0.11", "10.0.0.12"],
+        environmentAddresses: ["10.0.0.12"],
       },
       runs: [
         expect.objectContaining({
@@ -431,9 +543,7 @@ function rerunSnapshot(): RunBatchRerunSnapshot {
         archiveFormat: "zip",
       },
     },
-    caseLogRerunRotation: {
-      previousAdapterEnvironmentAddress: "10.0.0.12",
-    },
+    sourceAdapterEnvironmentAddress: "10.0.0.12",
     roundRecoveries: [
       {
         ruleId: "recover-1",

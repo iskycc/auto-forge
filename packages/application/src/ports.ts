@@ -586,6 +586,7 @@ export interface ExecutionControlRepository {
   terminateBatch(input: {
     batchId: string;
     actorId: string;
+    actor?: RunBatch["terminatedBy"];
     reason: string;
     eventId: string;
     requestedAt: string;
@@ -1693,6 +1694,7 @@ export type CreateRunBatchRecord = {
   parentBatchId?: string;
   sourceExecutionRunId?: string;
   requestedBy?: RunBatch["requestedBy"];
+  publicExecution?: import("@autoforge/contracts").PublicSuiteExecutionContext;
   retryLimit: number;
   retryMode?: "immediate" | "round";
   priority?: number;
@@ -1761,13 +1763,8 @@ export type RunBatchRerunSnapshot = {
   /** Rerun configuration does not need aggregate counters from the source batch. */
   batch: RunBatchMetadata;
   adapterRuntime?: RunBatchAdapterRuntimeSnapshot;
-  /**
-   * 公开日志页的单用例诊断重跑会创建新的 ExecutionRun。这里保留同一原始
-   * 用例族最近一次已分配的 Adapter 环境，避免新 run 又从环境池首项开始。
-   */
-  caseLogRerunRotation?: {
-    previousAdapterEnvironmentAddress?: string;
-  };
+  /** Original case's assigned environment, never an address from a manual rerun. */
+  sourceAdapterEnvironmentAddress?: string;
   roundRecoveries: NonNullable<CreateRunBatchRecord["roundRecoveries"]>;
   runs: CreateRunBatchRecord["runs"];
 };
