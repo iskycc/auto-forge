@@ -15,6 +15,7 @@ import { SessionLoginButton } from "./session-login-button";
 import { usePublicSuite } from "./use-public-suite";
 import { usePlatformNow } from "./platform-time";
 import { ApiClientError, throwApiErrorResponse } from "@/lib/client-api";
+import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export function PublicSuiteExecution({
@@ -43,8 +44,8 @@ export function PublicSuiteExecution({
     submitting.current = true;
     setPending(true);
     setError("");
-    requestKey.current ??= crypto.randomUUID();
     try {
+      requestKey.current ??= createClientIdempotencyKey();
       const response = await fetch(`${endpoint}/executions?${query}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -61,7 +62,8 @@ export function PublicSuiteExecution({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "执行失败。");
       if (cause instanceof ApiClientError && cause.status === 401) openLogin();
-      await refresh();
+      // No request was submitted if key generation failed; recovery needs no status fetch.
+      if (requestKey.current) await refresh();
     } finally {
       submitting.current = false;
       setPending(false);

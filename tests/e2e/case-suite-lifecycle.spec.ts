@@ -101,6 +101,13 @@ test("public task links execute with login only, share live status, record actor
   await page.getByRole("dialog").getByRole("button", { name: "关闭任务执行接入" }).click();
 
   const context = await browser.newContext();
+  // LAN HTTP deployments expose getRandomValues but not the secure-context randomUUID API.
+  await context.addInitScript(() => {
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: undefined,
+      configurable: true,
+    });
+  });
   const observerContext = await browser.newContext();
   const visitor = await context.newPage();
   const observer = await observerContext.newPage();
@@ -125,6 +132,7 @@ test("public task links execute with login only, share live status, record actor
     await expect(visitor).toHaveURL(url);
     const execute = visitor.getByRole("button", { name: "执行任务", exact: true });
     await expect(execute).toBeEnabled();
+    expect(await visitor.evaluate(() => typeof globalThis.crypto.randomUUID)).toBe("undefined");
     expect(
       (
         await browserJson(visitor, "/api/v1/run-batches", {
@@ -146,6 +154,16 @@ test("public task links execute with login only, share live status, record actor
       await captureUi(visitor, `public-task-ready-${width}`);
       await expectUiIntegrity(visitor);
     }
+    await visitor.evaluate(() => {
+      const original = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+      globalThis.crypto.getRandomValues = () => {
+        globalThis.crypto.getRandomValues = original;
+        throw new Error("验证请求标识失败后的恢复");
+      };
+    });
+    await execute.click();
+    await expect(visitor.getByText("验证请求标识失败后的恢复", { exact: true })).toBeVisible();
+    await expect(execute).toBeEnabled();
     const startResponse = visitor.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
