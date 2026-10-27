@@ -3555,10 +3555,16 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
           publicPage.getByRole("heading", { name: ddtAttempt.caseId, exact: true }),
         ).toBeVisible();
         await expect(
-          publicPage.locator(".share-log-fact").filter({ hasText: "执行类路径" }),
+          publicPage
+            .getByRole("complementary")
+            .locator(".share-log-fact")
+            .filter({ hasText: "执行类路径" }),
         ).toContainText(className);
         await expect(
-          publicPage.locator(".share-log-fact").filter({ hasText: "用例名称（CaseID）" }),
+          publicPage
+            .getByRole("complementary")
+            .locator(".share-log-fact")
+            .filter({ hasText: "用例名称（CaseID）" }),
         ).toContainText(ddtAttempt.caseId);
         for (const width of [1024, 1536]) {
           await publicPage.setViewportSize({ width, height: 960 });
