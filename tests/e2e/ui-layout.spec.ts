@@ -1789,6 +1789,132 @@ test("project member filters stay below stable section tabs", async ({ page }) =
   }
 });
 
+test("dependency import opens the scoped Jenkins quick guide with a downloadable plugin and stable desktop layout", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const scope = await createUiProject(page);
+  const nextVersionName = "钱包 Wallet's v1.21 · 长期回归验证版本";
+  const nextVersion = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${scope.projectId}/versions`,
+    { method: "POST", body: { name: nextVersionName } },
+  );
+  expect(nextVersion.status).toBe(201);
+  const asset = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${scope.projectId}/runtime-assets/url`,
+    {
+      method: "POST",
+      body: {
+        kind: "jar-bundle",
+        archiveFormat: "zip",
+        fileName: "wallet-test-dependencies-for-regression.zip",
+        url: "http://runtime.invalid/wallet-dependencies.zip",
+        sha256: "a".repeat(64),
+        sizeBytes: 1234567,
+      },
+    },
+  );
+  expect(asset.status).toBe(201);
+  const structurePath = `/api/v1/projects/${scope.projectId}/structure`;
+  const structure = await browserJson<{
+    versions: Array<{ id: string; adapterConfiguration: { revision: number } }>;
+  }>(page, structurePath);
+  const revision = structure.body.versions.find((version) => version.id === scope.projectVersionId)!
+    .adapterConfiguration.revision;
+  expect(
+    (
+      await browserJson(
+        page,
+        `/api/v1/projects/${scope.projectId}/versions/${scope.projectVersionId}/adapter-configuration`,
+        { method: "PUT", body: { jarBundleAssetId: asset.body.id, expectedRevision: revision } },
+      )
+    ).status,
+  ).toBe(200);
+  const savedStructure = (await browserJson(page, structurePath)).body;
+  const entry = page.getByRole("button", { name: "Jenkins 接入指导", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Jenkins 导入依赖接入快速指导", exact: true });
+  for (const appearance of ["light", "dark"] as const) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
+      ]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.goto("/settings/projects");
+      await expect(page.locator(".project-runtime-summary")).toContainText(
+        "wallet-test-dependencies-for-regression.zip",
+      );
+      await entry.scrollIntoViewIfNeeded();
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`jenkins-dependency-entry-${appearance}-${width}.png`),
+        animations: "disabled",
+      });
+      await entry.click();
+      await expect(dialog).toContainText(scope.projectId);
+      await expect(dialog).toContainText("UI 验证版本");
+      await expect(dialog).toContainText("project.manage");
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`jenkins-dependency-quick-${appearance}-${width}.png`),
+        animations: "disabled",
+      });
+      await dialog.getByRole("button", { name: "查看 Pipeline 示例", exact: true }).click();
+      const code = dialog.getByLabel("依赖发布 Pipeline 示例");
+      await expect(code).toContainText(`projectId: '${scope.projectId}'`);
+      await expect(code).toContainText("version: 'UI 验证版本'");
+      await expect(code).toContainText("baseUrl: 'http://127.0.0.1:3100'");
+      await code.locator(".ant-typography-copy").click();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+        "autoforgePublishDependencies(",
+      );
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`jenkins-dependency-pipeline-${appearance}-${width}.png`),
+        animations: "disabled",
+      });
+      await dialog.getByRole("tab", { name: "参数说明", exact: true }).click();
+      await expect(dialog).toContainText("必填参数");
+      await dialog.getByText("选填参数", { exact: true }).scrollIntoViewIfNeeded();
+      await expect(dialog).toContainText("archiveFormat");
+      await expectUiIntegrity(page);
+      await dialog
+        .getByRole("button", { name: "关闭Jenkins 导入依赖接入快速指导", exact: true })
+        .click();
+      await expect(dialog).toHaveCount(0);
+      await expect(entry).toBeFocused();
+      await expect(page).toHaveURL(/\/settings\/projects$/);
+    }
+  }
+  await page
+    .getByRole("complementary", { name: "配置所属版本" })
+    .getByRole("button", { name: new RegExp("钱包 Wallet's") })
+    .click();
+  await entry.click();
+  await expect(dialog).toContainText(nextVersionName);
+  await dialog.getByRole("tab", { name: "Pipeline 示例", exact: true }).click();
+  await expect(dialog.getByLabel("依赖发布 Pipeline 示例")).toContainText(
+    "version: '钱包 Wallet\\'s v1.21 · 长期回归验证版本'",
+  );
+  await dialog.getByRole("tab", { name: "快速接入", exact: true }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await dialog.getByRole("link", { name: "下载依赖发布插件（HPI）", exact: true }).click();
+  const plugin = await downloadPromise;
+  expect(plugin.suggestedFilename()).toMatch(
+    /^autoforge-jenkins-dependency-publisher-[0-9A-Za-z.-]+\.hpi$/,
+  );
+  expect(Object.keys(unzipSync(await readFile((await plugin.path())!)))).toContain(
+    "META-INF/MANIFEST.MF",
+  );
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  expect((await browserJson(page, structurePath)).body).toEqual(savedStructure);
+});
+
 test("many project versions stay compact and configure only the selected version", async ({
   page,
 }) => {

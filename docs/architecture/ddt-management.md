@@ -24,6 +24,30 @@ Tab，避免读取到旧 URL 时撤回刚才的切换。浏览器前进、后退
 测量；后续窗口、工具栏变化仍使用有界的 ResizeObserver 和帧合并，隐藏面板不覆盖已保存布局。
 此规则由 Lite/Full 共用前端实现，不改变 API、数据存储、队列或 Runner 协议。
 
+## 回收站按 SR 整理与清空
+
+回收站按 SR 文件夹展示，每页最多显示 30 个分组，展开时才读取该 SR 的 60 条摘要；文件夹和用例分别使用游标翻页，不将全部回收记录加载到浏览器。同一规范化 SR 的不同大小写共用分组，空 SR 显示“未填写 SR”。页面保留单条恢复和永久删除，显示完整回收数量，支持手动刷新。
+
+“清空回收站”在确认后清理当前项目、版本、测试阶段的全部回收记录，覆盖未展开的 SR 和其他分页。首次请求由平台时钟确定截止时间，后续批次复用该时间，期间新移入的记录保留到下一次明确清空。每批最多删除 200 条，页面显示已清理数量；失败提示完成数量，可再次确认后清理剩余记录，不回滚已完成的批次。切换页面会取消后续请求。
+
+`GET /api/v1/ddt/recycle/groups` 提供 `items`、`totalCases`、`totalGroups` 和 `nextCursor`；现有回收列表 `GET /api/v1/ddt/recycle` 增加可选 `srNum` 精确分组查询。`DELETE /api/v1/ddt/recycle` 接受空对象或上一页返回的 `deletedBefore`，返回 `deletedCount`、`hasMore` 与 `deletedBefore`。路径均要求三层范围参数，读取要求 `case.read`，清空要求 `case.manage` 和原有同源校验，每批写入审计。
+
+Lite/Full 使用共享应用规则；分组和摘要读取经过可中断的独立只读进程，清空在维护线程中以短事务执行，不占 Web 或 Runner 续租车道。PostgreSQL 跳过正在恢复/清除的行，遇到暂时无法推进的页面返回可重试错误。活动用例、任务与执行记录不在清理范围。无需数据库迁移、新配置、生产依赖或 Runner 协议变更。
+
+## 导入覆盖后的修改历史刷新
+
+表格覆盖原本已在 SQLite/PostgreSQL 的同一导入事务中保存 `import_overwrite`、修改前后快照、字段差异、操作者和来源。缺陷发生在工作台：后台导入完成只刷新列表和任务状态，已选用例的正文及历史仍保留旧快照，返回“用例”页后会继续显示旧值或“暂无修改历史”。
+
+工作台现在在观察到导入终态后标记内容代次，当前用例可安全替换时重新读取正文与修改历史；隐藏的用例页待返回时再同步。正在编辑的草稿保留，取消编辑后读取最新内容，保存仍使用原有修订冲突保护。没有变化的重复导入、“跳过已有用例”与失败回滚继续不创建覆盖历史。
+
+### 2026-10-28 验证
+
+- 修复前，生产 Lite 页面复现“同一次导入的历史 API 已返回 1 条 `import_overwrite`，返回已打开用例后仍显示 0 条”。修复后验证正文、来源和修改历史同步，手动刷新遵循未保存修改确认，选择继续编辑保留草稿，取消编辑并刷新后读取最新版本；重复导入相同内容不新增历史。
+- `pnpm exec vitest run packages/application/test/manage-ddt-cases.test.ts packages/db/test/ddt-recycle.integration.test.ts packages/db/test/sqlite-ddt.integration.test.ts packages/db/test/postgres-ddt.integration.test.ts apps/web/src/lib/ddt-case-reads.test.ts apps/web/src/lib/ddt-recycle-api.test.ts apps/web/src/lib/work-dispatch.test.ts apps/web/server/worker-pool.test.ts apps/web/src/components/ui-usage.test.ts --maxWorkers=1 --no-file-parallelism`：首次 104 项通过，补充两种部署的维护车道／续租隔离后，单文件 14 项复验通过，共覆盖 106 个定向场景。使用真实 SQLite/PostgreSQL，包含分组大小写与空 SR、两级游标、超过 200 条的清空、截止时间、跨范围隔离、导入覆盖历史、恢复、权限、CSRF、审计与繁忙错误。
+- `pnpm exec playwright test tests/e2e/ddt-management.spec.ts --grep='DDT recycle folders paginate|DDT import refreshes an already opened|DDT workspace imports, edits' --workers=1`：生产 Lite 的三项场景覆盖 236 条回收记录、32 个 SR、文件夹与用例翻页、恢复／单条永久删除、取消清空、第二批失败后保留错误及已完成数量、重试剩余记录、活动用例和其他阶段保留，以及导入后历史与原有模板、编辑、批量修改、任务加入、导出、回收恢复、范围隔离闭环。
+- 已实际查看 1024×768、1536×960 的浅色／深色文件夹截图、导入历史截图，以及旧生命周期场景中的长 CaseID 排版；删除时间和操作按钮单行显示，表格高度有界，无新增横向溢出或操作挤出单元格。
+- 受影响文件 ESLint、`pnpm format:check`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、数据库／Web／worker 类型、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和差异检查通过。重检查串行限额运行；未重跑 Full 整栈、真实 Runner 或十万规模压测，本次也不增加数据库迁移。
+
 ## 已融合能力
 
 | ddt-insight 能力                           | AutoForge 实现                                                                                                                 |

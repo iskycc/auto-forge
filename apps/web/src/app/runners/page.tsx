@@ -15,6 +15,7 @@ import {
 } from "@autoforge/domain";
 
 import { RunnerTelemetryButton } from "@/components/runner-telemetry-dialog";
+import { RunnerDiskAlerts, RunnerDiskStatus } from "@/components/runner-disk-alerts";
 import { RunnerAdminActions } from "@/components/runner-admin-actions";
 import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
 import { RunnerTerminal } from "@/components/runner-terminal";
@@ -151,10 +152,15 @@ export default async function RunnersPage({
     <div
       className={cn(
         uiPatterns["page-stack"],
-        "page-stack runner-page",
+        "page-stack runner-page pb-16",
         runners.length > 0 && cn("has-runners", pageStyles["has-runners"]),
       )}
     >
+      <RunnerDiskAlerts
+        initialRunners={runners}
+        observedAt={new Date().toISOString()}
+        timeZone={timeZone}
+      />
       <section className={cn("page-hero", uiPatterns["page-hero"])}>
         <div>
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>Runner Control</span>
@@ -321,6 +327,7 @@ export default async function RunnersPage({
                         {runner.busySlots} / {runner.maxConcurrency} 槽位
                       </strong>
                       <small>{runnerResourceSummary(runner)}</small>
+                      <RunnerDiskStatus snapshot={runner.resourceSnapshot} />
                     </div>
                     <div role="cell">
                       <span>最近心跳</span>

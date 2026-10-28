@@ -3,8 +3,201 @@ import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { ensureAdministrator, uniqueName } from "./support/session";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 import { insertRunnerPaginationFixture } from "./support/runner-pagination-fixture";
+import { DatabaseSync } from "node:sqlite";
+
+test("Runner disk warnings cover all pages, respect the 20% boundary and refresh without changing layout", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const prefix = uniqueName("disk-warning");
+  const fixture = insertRunnerPaginationFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, prefix);
+  const database = new DatabaseSync(
+    resolve(process.env.AUTOFORGE_E2E_DATA_DIR!, "db/autoforge.sqlite"),
+  );
+  const now = new Date().toISOString();
+  let registeredRunnerId: string | undefined;
+  try {
+    const registration = await page.request.post("/api/v1/runner-agents/register", {
+      headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+      data: {
+        schemaVersion: 1,
+        name: `${prefix}-heartbeat`,
+        labels: [],
+        capabilities: ["executor:process"],
+        maxConcurrency: 2,
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "999.0.0",
+        protocolVersion: 1,
+        terminalEnabled: false,
+      },
+    });
+    expect(registration.status()).toBe(201);
+    const { runnerId, credential } = (await registration.json()) as {
+      runnerId: string;
+      credential: string;
+    };
+    registeredRunnerId = runnerId;
+    const heartbeat = async (availableBytes?: number) => {
+      const response = await page.request.post(`/api/v1/runner-agents/${runnerId}/heartbeat`, {
+        headers: { authorization: `Bearer ${credential}` },
+        data: {
+          schemaVersion: 1,
+          busySlots: 0,
+          labels: [],
+          capabilities: ["executor:process"],
+          maxConcurrency: 2,
+          agentVersion: "999.0.0",
+          terminalEnabled: false,
+          resourceSnapshot: {
+            cpuUtilizationPercent: 10,
+            memoryUtilizationPercent: 40,
+            loadAverage1m: 0.4,
+            logicalCpuCount: 16,
+            observedAt: new Date().toISOString(),
+            ...(availableBytes === undefined
+              ? {}
+              : {
+                  disk: {
+                    path: "/var/lib/autoforge-agent",
+                    totalBytes: 100 * 1024 ** 3,
+                    availableBytes,
+                  },
+                }),
+          },
+        },
+      });
+      expect(response.status()).toBe(200);
+    };
+    database.exec("PRAGMA busy_timeout=5000");
+    const update = database.prepare(
+      "UPDATE runners SET cpu_utilization_percent=10, memory_utilization_percent=40, load_average_1m=0.4, logical_cpu_count=16, metrics_observed_at=?, disk_path=?, disk_total_bytes=?, disk_available_bytes=? WHERE id=?",
+    );
+    // Alerts outside the visible list and the current filter must remain discoverable.
+    for (const id of fixture.runnerIds.slice(0, 5))
+      update.run(now, "/var/lib/autoforge-agent", 100 * 1024 ** 3, 10 * 1024 ** 3, id);
+    database
+      .prepare("UPDATE runners SET name=?, disk_path=? WHERE id=?")
+      .run(
+        `${prefix}-01-超长执行节点名称用于检查磁盘空间提醒的自动换行和整体布局`,
+        "/var/lib/autoforge-agent/isolated-execution-data/long-storage-directory/work-cache-and-logs",
+        fixture.runnerIds[0]!,
+      );
+    database
+      .prepare("UPDATE runners SET last_seen_at=?, metrics_observed_at=? WHERE id=?")
+      .run("2000-01-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z", fixture.runnerIds[4]!);
+    await heartbeat(20 * 1024 ** 3);
+    const anonymous = await browser.newContext({ baseURL: "http://127.0.0.1:3100" });
+    try {
+      expect((await anonymous.request.get("/api/v1/runners?limit=500")).status()).toBe(401);
+    } finally {
+      await anonymous.close();
+    }
+    await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-heartbeat`)}`);
+    await expect(page.locator(".runner-list-item")).toContainText("磁盘可用 20%");
+    await expect(page.getByRole("button", { name: "磁盘空间不足：5 台节点" })).toBeVisible();
+    await heartbeat(0);
+    await page.reload();
+    await expect(page.locator(".runner-list-item")).toContainText("磁盘可用 0%");
+    for (const theme of ["light", "dark"] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+        ]);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.goto(`/runners?query=${encodeURIComponent(prefix)}`);
+        const warning = page.getByRole("button", { name: "磁盘空间不足：6 台节点" });
+        await page.evaluate(() =>
+          window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" }),
+        );
+        const paginationBounds = await page.getByLabel("执行机分页", { exact: true }).boundingBox();
+        const warningBounds = await warning.boundingBox();
+        expect(paginationBounds!.y + paginationBounds!.height).toBeLessThan(warningBounds!.y);
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+        await warning.hover();
+        const popup = page.getByRole("region", { name: "节点磁盘空间提醒" });
+        await expect(popup).toBeVisible();
+        await expect(popup).toContainText("可用 0%");
+        await waitForUiTransitions(page);
+        const firstPageBounds = await popup.boundingBox();
+        await popup.getByTitle("下一页", { exact: true }).click();
+        await expect(popup).toContainText("历史数据，请确认节点状态");
+        await waitForUiTransitions(page);
+        const lastPageBounds = await popup.boundingBox();
+        expect(Math.abs(lastPageBounds!.height - firstPageBounds!.height)).toBeLessThanOrEqual(1);
+        expect(Math.abs(lastPageBounds!.y - firstPageBounds!.y)).toBeLessThanOrEqual(1);
+        await popup.getByTitle("上一页", { exact: true }).click();
+        await page.screenshot({
+          path: testInfo.outputPath(`runner-disk-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+        const bounds = await popup.boundingBox();
+        expect(bounds!.x).toBeGreaterThanOrEqual(0);
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+        expect(bounds!.y).toBeGreaterThanOrEqual(0);
+        await expectUiIntegrity(page);
+        await page.mouse.move(0, 0);
+      }
+    }
+    await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-heartbeat`)}`);
+    const warning = page.getByRole("button", { name: "磁盘空间不足：6 台节点" });
+    await warning.hover();
+    await expect(page.getByRole("region", { name: "节点磁盘空间提醒" })).toBeVisible();
+    await page.getByRole("heading", { name: "执行节点", exact: true }).click();
+    await page.route(
+      "**/api/v1/runners?limit=500",
+      (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "PLATFORM_BUSY", message: "磁盘状态读取暂不可用" },
+          }),
+        }),
+      { times: 1 },
+    );
+    const failedPoll = page.waitForResponse(
+      (response) => response.url().endsWith("/api/v1/runners?limit=500"),
+      { timeout: 45_000 },
+    );
+    await failedPoll;
+    await warning.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("region", { name: "节点磁盘空间提醒" })).toContainText(
+      "状态更新失败，保留上次上报",
+    );
+    await page.getByRole("heading", { name: "执行节点", exact: true }).click();
+    const listResponse = page.waitForResponse((response) =>
+      response.url().endsWith("/api/v1/runners?limit=500"),
+    );
+    await heartbeat(25 * 1024 ** 3);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await listResponse;
+    await expect(page.getByRole("button", { name: "磁盘空间不足：5 台节点" })).toBeVisible();
+    await heartbeat();
+    await page.reload();
+    await expect(page.locator(".runner-list-item")).toContainText("磁盘余量：未上报");
+    database
+      .prepare("UPDATE runners SET disk_available_bytes=disk_total_bytes WHERE id IN (?,?,?,?,?)")
+      .run(...fixture.runnerIds.slice(0, 5));
+    await page.reload();
+    await expect(page.getByRole("button", { name: /磁盘空间不足：/ })).toHaveCount(0);
+  } finally {
+    if (registeredRunnerId) {
+      database
+        .prepare("DELETE FROM runner_resource_samples WHERE runner_id=?")
+        .run(registeredRunnerId);
+      database.prepare("DELETE FROM runners WHERE id=?").run(registeredRunnerId);
+    }
+    database.close();
+    fixture.dispose();
+  }
+});
 
 test("Runner pagination stays aligned with more than one page and preserves the node filter", async ({
   page,

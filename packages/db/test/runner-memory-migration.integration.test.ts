@@ -7,7 +7,11 @@ import { Client } from "pg";
 import { describe, expect, it } from "vitest";
 
 const postgresUrl = process.env.AUTOFORGE_TEST_POSTGRES_URL;
-for (const migration of ["runner_memory_budget", "runner_memory_credit"] as const)
+for (const migration of [
+  "runner_memory_budget",
+  "runner_memory_credit",
+  "runner_disk_capacity",
+] as const)
   for (const dialect of ["sqlite", "postgresql"] as const)
     describe.skipIf(dialect === "postgresql" && !postgresUrl)(
       `${dialect} ${migration} upgrade`,
@@ -47,7 +51,9 @@ for (const migration of ["runner_memory_budget", "runner_memory_credit"] as cons
             const column =
               migration === "runner_memory_budget"
                 ? "memory_total_bytes"
-                : "memory_execution_credit_bytes";
+                : migration === "runner_memory_credit"
+                  ? "memory_execution_credit_bytes"
+                  : "disk_total_bytes";
             const sql = await readFile(resolve(folder, latest), "utf8");
             await execute("BEGIN");
             await expect(
@@ -70,6 +76,11 @@ for (const migration of ["runner_memory_budget", "runner_memory_credit"] as cons
             expect(await rows(`SELECT ${column} FROM runners WHERE id='legacy'`)).toEqual([
               { [column]: null },
             ]);
+            if (migration === "runner_disk_capacity") {
+              expect(
+                await rows("SELECT disk_path, disk_available_bytes FROM runners WHERE id='legacy'"),
+              ).toEqual([{ disk_path: null, disk_available_bytes: null }]);
+            }
           } finally {
             sqlite?.close();
             await postgres?.end();

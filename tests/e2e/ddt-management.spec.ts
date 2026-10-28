@@ -1395,6 +1395,212 @@ test("DDT conflict resolution preserves identity choices when renaming reveals a
   expect(jobs.body.items).toHaveLength(1);
 });
 
+test("DDT recycle folders paginate and safely clear all pages with recoverable failures", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const removed = Array.from({ length: 236 }, (_, index) => ({
+    CaseID: `REC-${String(index).padStart(3, "0")}`,
+    srNum: index < 205 ? "Wallet" : `Z-SR-${String(index - 204).padStart(2, "0")}`,
+    marker: index,
+  }));
+  await importDdtApiFixture(page, hierarchy, "ACTIVE", 1, [
+    ...removed,
+    { CaseID: "ACTIVE", srNum: "Wallet", marker: 999 },
+  ]);
+  expect(
+    (
+      await browserJson(page, ddtPath(hierarchy, "cases/bulk-delete"), {
+        method: "POST",
+        body: { caseIds: removed.map((row) => row.CaseID) },
+      })
+    ).status,
+  ).toBe(200);
+  const otherStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${hierarchy.projectId}/versions/${hierarchy.versionId}/stages`,
+    { method: "POST", body: { name: "回收隔离阶段" } },
+  );
+  expect(otherStage.status).toBe(201);
+  const other = { ...hierarchy, stageId: otherStage.body.id };
+  await importDdtApiFixture(page, other, "OTHER", 1);
+  expect(
+    (
+      await browserJson(page, ddtPath(other, "cases/bulk-delete"), {
+        method: "POST",
+        body: { caseIds: ["OTHER"] },
+      })
+    ).status,
+  ).toBe(200);
+
+  const caseReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/ddt/recycle" && request.method() === "GET")
+      caseReads.push(request.url());
+  });
+  await page.goto("/cases?tab=ddt&ddtView=recycle");
+  const recycle = page.getByRole("region", { name: "DDT 回收站", exact: true });
+  await expect(recycle).toContainText("共 236 条用例，32 个 SR");
+  expect(caseReads).toHaveLength(0);
+  await expect(recycle.locator(".ddt-recycle-table")).toHaveCount(0);
+  await recycle.getByRole("button", { name: "下一页SR 文件夹", exact: true }).click();
+  await expect(recycle).toContainText("第 2 页");
+  await recycle.getByRole("button", { name: "上一页SR 文件夹", exact: true }).click();
+  await recycle.getByRole("tab", { name: /Wallet/u }).click();
+  const rows = recycle.locator(".ddt-recycle-table tbody tr");
+  await expect(rows).toHaveCount(60);
+  for (const appearance of ["light", "dark"]) {
+    if (appearance === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.mouse.move(0, 0);
+      await waitForUiTransitions(page);
+      await captureDdtUi(page, `ddt-recycle-folders-${appearance}-${width}`);
+    }
+  }
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await recycle.getByRole("button", { name: "下一页SR 用例", exact: true }).click();
+  await expect(recycle.getByRole("navigation", { name: "SR 用例分页" })).toContainText("第 2 页");
+  await expect(rows).toHaveCount(60);
+  const restoredId = await rows.first().locator("td").first().innerText();
+  await rows.first().getByRole("button", { name: "恢复", exact: true }).click();
+  await expect(recycle).toContainText("共 235 条用例");
+  expect(
+    (await browserJson(page, ddtPath(hierarchy, `cases/${encodeURIComponent(restoredId)}`))).status,
+  ).toBe(200);
+  await rows.first().getByRole("button", { name: "永久删除", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "永久删除 DDT 用例", exact: true })
+    .getByRole("button", { name: "永久删除", exact: true })
+    .click();
+  await expect(recycle).toContainText("共 234 条用例");
+  await recycle.getByRole("button", { name: "清空回收站", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "清空 DDT 回收站", exact: true });
+  await expect(confirmation).toContainText("全部用例（当前 234 条）");
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(recycle).toContainText("共 234 条用例");
+
+  let clearRequests = 0;
+  await page.route("**/api/v1/ddt/recycle?*", async (route) => {
+    if (route.request().method() !== "DELETE") return route.continue();
+    clearRequests++;
+    if (clearRequests === 2)
+      return route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "PLATFORM_BUSY",
+            message: "清空验收：数据库暂时繁忙",
+            requestId: "recycle-retry",
+          },
+        },
+      });
+    return route.continue();
+  });
+  await recycle.getByRole("button", { name: "清空回收站", exact: true }).click();
+  await confirmation.getByRole("button", { name: "确认清空", exact: true }).click();
+  await expect(recycle.getByRole("alert")).toContainText("已清理 200 条");
+  await expect(recycle).toContainText("共 34 条用例");
+  await recycle.getByRole("button", { name: "清空回收站", exact: true }).click();
+  await confirmation.getByRole("button", { name: "确认清空", exact: true }).click();
+  await expect(recycle).toContainText("回收站为空");
+  await expect(recycle.getByRole("button", { name: "清空回收站", exact: true })).toBeDisabled();
+  expect(clearRequests).toBe(3);
+  expect((await browserJson(page, ddtPath(other, "recycle/groups"))).body).toMatchObject({
+    totalCases: 1,
+  });
+  expect((await browserJson(page, ddtPath(hierarchy, "cases/ACTIVE"))).status).toBe(200);
+  expect(
+    (await browserJson(page, ddtPath(hierarchy, `cases/${encodeURIComponent(restoredId)}`))).status,
+  ).toBe(200);
+});
+
+test("DDT import refreshes an already opened case and shows its persisted change history", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const caseId = `HISTORY-${hierarchy.suffix}`;
+  await importDdtApiFixture(page, hierarchy, caseId, 1);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  const detail = page.getByRole("region", { name: "DDT 用例详情", exact: true });
+  await expect(detail).toContainText(caseId);
+  await expect(detail.locator(".ddt-history")).toContainText("暂无修改历史");
+  await page.getByRole("button", { name: "导入表格", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "history-overwrite.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(`CaseID,srNum,marker\n${caseId},API-SR,2\n`),
+  });
+  await dialog.getByRole("button", { name: "开始预检", exact: true }).click();
+  await expect(dialog.locator(".ddt-preview-summary")).toContainText("预计更新1");
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().includes("/confirm?") && response.request().method() === "POST",
+    ),
+    dialog.getByRole("button", { name: /确认并后台导入/u }).click(),
+  ]);
+  expect(response.status()).toBe(200);
+  const job = (await response.json()) as { id: string };
+  await expect
+    .poll(
+      async () =>
+        (await browserJson<{ status: string }>(page, ddtPath(hierarchy, `imports/${job.id}`))).body
+          .status,
+    )
+    .toBe("succeeded");
+  const persisted = await browserJson<{ items: Array<{ changeType: string }> }>(
+    page,
+    ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}/history`),
+  );
+  expect(persisted.body.items).toHaveLength(1);
+  expect(persisted.body.items[0]!.changeType).toBe("import_overwrite");
+  await expect(page.locator(".ddt-job").first()).toContainText("已完成");
+  await page.getByRole("tab", { name: "用例", exact: true }).click();
+  await page.screenshot({ path: test.info().outputPath("import-history-return.png") });
+  await expect(detail.locator(".ddt-history article")).toHaveCount(1);
+  await expect(detail.locator(".ddt-history")).toContainText("导入覆盖");
+  await expect(detail.locator(".ddt-history")).toContainText("history-overwrite.csv");
+  await expect(detail.locator(".ddt-field-card", { hasText: "marker" }).locator("pre")).toHaveText(
+    "2",
+  );
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await detail.locator(".ddt-history").scrollIntoViewIfNeeded();
+    await captureDdtUi(page, `ddt-import-history-${width}`);
+  }
+  await detail.getByRole("button", { name: "编辑字段 marker", exact: true }).click();
+  await detail.getByRole("textbox", { name: "marker 的值", exact: true }).fill("99");
+  await importDdtApiFixture(page, hierarchy, caseId, 3);
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "放弃未保存的修改", exact: true })
+    .getByRole("button", { name: "继续编辑", exact: true })
+    .click();
+  await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+  await expect(detail.getByRole("textbox", { name: "marker 的值", exact: true })).toHaveValue("99");
+  await detail.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(detail.locator(".ddt-history article")).toHaveCount(2);
+  await expect(detail.locator(".ddt-field-card", { hasText: "marker" }).locator("pre")).toHaveText(
+    "3",
+  );
+  await importDdtApiFixture(page, hierarchy, caseId, 3);
+  const unchanged = await browserJson<{ items: unknown[] }>(
+    page,
+    ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}/history`),
+  );
+  expect(unchanged.body.items).toHaveLength(2);
+});
+
 test("DDT CaseID conflict strategies preserve existing data and report the outcome", async ({
   page,
 }) => {
@@ -1803,6 +2009,10 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await expect(page.getByText(`已将 1 条用例移入回收站。`)).toBeVisible();
   await page.unroute(deleteRoute, delayDelete);
   await page.getByRole("tab", { name: /回收站/u }).click();
+  await page
+    .getByRole("region", { name: "DDT 回收站", exact: true })
+    .getByRole("tab", { name: /^AUTH/u })
+    .click();
   const deletedRow = page.getByRole("row", { name: new RegExp(`LOGIN-${hierarchy.suffix}`) });
   await expect(deletedRow).toBeVisible();
   for (const appearance of ["light", "dark"] as const) {
@@ -1815,7 +2025,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
         .first()
         .evaluate((cell) => {
           const range = document.createRange();
-          range.selectNodeContents(cell.querySelector("strong")!);
+          range.selectNodeContents(cell);
           const cellBounds = cell.getBoundingClientRect();
           return Array.from(range.getClientRects()).every(
             (line) => line.left >= cellBounds.left && line.right <= cellBounds.right,
@@ -1839,6 +2049,7 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     }
   }
   await deletedRow.getByRole("button", { name: "恢复" }).click();
+  await expect(deletedRow).toHaveCount(0);
   await page.getByRole("tab", { name: "用例", exact: true }).click();
   await expect(
     page.getByRole("button", { name: `LOGIN-${hierarchy.suffix}`, exact: true }),

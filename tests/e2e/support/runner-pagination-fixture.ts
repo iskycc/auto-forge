@@ -42,6 +42,7 @@ export function insertRunnerPaginationFixture(directory: string, prefix: string)
     database.close();
   }
   return {
+    runnerIds: ids,
     dispose() {
       const cleanup = new DatabaseSync(databasePath);
       try {

@@ -167,6 +167,20 @@ export class WorkerPool implements WorkDispatcher {
     return this.diagnosticLane.dispatch({ kind: "read-ddt-cases", input });
   }
 
+  purgeDdtRecyclePage(input: unknown, signal: AbortSignal): Promise<unknown> {
+    const lane = this.maintenanceLanes.reduce((least, candidate) =>
+      candidate.pendingCount < least.pendingCount ? candidate : least,
+    );
+    if (lane.pendingCount >= 2)
+      return Promise.reject(
+        Object.assign(new Error("清空回收站服务繁忙，请稍后重试。"), {
+          name: "DomainError",
+          code: "PLATFORM_BUSY",
+        }),
+      );
+    return lane.dispatch({ kind: "purge-ddt-recycle-page", input }, signal);
+  }
+
   readExecutionView(input: unknown): Promise<unknown> {
     return this.diagnosticLane.dispatch({ kind: "read-execution-view", input });
   }
@@ -494,6 +508,7 @@ class WorkerLane {
         finishForeground:
           diagnostic ||
           task.kind === "platform-maintenance" ||
+          task.kind === "purge-ddt-recycle-page" ||
           task.kind === "background-job" ||
           task.kind === "search-ddt-values" ||
           task.kind === "inherit-ddt-cases" ||

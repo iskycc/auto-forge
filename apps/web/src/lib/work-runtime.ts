@@ -7,6 +7,7 @@ export interface WorkDispatcher {
   listSchedulingEvents?(input: unknown): Promise<unknown>;
   readRunnerResourceSamples?(input: unknown): Promise<unknown>;
   readDdtCases?(input: unknown): Promise<unknown>;
+  purgeDdtRecyclePage?(input: unknown, signal: AbortSignal): Promise<unknown>;
   readExecutionView?(input: unknown): Promise<unknown>;
   cancelExecutionRun?(input: unknown): Promise<unknown>;
   createBatch?(input: unknown): Promise<unknown>;

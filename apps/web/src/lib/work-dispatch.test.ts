@@ -372,7 +372,7 @@ describe("execution control work dispatch", () => {
 });
 
 describe("DDT read dispatch", () => {
-  it.each(["listCases", "readExportCasesPage"] as const)(
+  it.each(["listCases", "readExportCasesPage", "listDeletedGroups", "listDeletedCases"] as const)(
     "isolates %s without falling back when the reader is busy",
     async (method) => {
       const local = {

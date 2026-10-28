@@ -138,6 +138,9 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 			if heartbeat.ResourceSnapshot == nil || heartbeat.ResourceSnapshot.MemoryTotalBytes != 10<<30 || heartbeat.ResourceSnapshot.MemoryAvailableBytes != 7<<30 || heartbeat.ResourceSnapshot.MemoryExecutionCreditBytes != 1<<30 {
 				t.Errorf("heartbeat lost effective memory capacity: %+v", heartbeat.ResourceSnapshot)
 			}
+			if heartbeat.ResourceSnapshot == nil || heartbeat.ResourceSnapshot.Disk == nil || heartbeat.ResourceSnapshot.Disk.Path != "/agent-data" || heartbeat.ResourceSnapshot.Disk.AvailableBytes != 0 || heartbeat.ResourceSnapshot.Disk.TotalBytes != 100<<30 {
+				t.Errorf("heartbeat lost full data filesystem capacity: %+v", heartbeat.ResourceSnapshot)
+			}
 			if len(heartbeat.CachedBatchIDs) != 1 || heartbeat.CachedBatchIDs[0] != "batch-1" {
 				t.Errorf("heartbeat cachedBatchIds = %v, want [batch-1]", heartbeat.CachedBatchIDs)
 			}
@@ -164,6 +167,7 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 		t.Fatalf("registration terminal token = %q", terminalToken)
 	}
 	snapshot := &metrics.Snapshot{MemoryTotalBytes: 10 << 30, MemoryAvailableBytes: 7 << 30, MemoryExecutionCreditBytes: 1 << 30, CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
+	snapshot.Disk = &metrics.DiskCapacity{Path: "/agent-data", TotalBytes: 100 << 30, AvailableBytes: 0}
 	heartbeat, err := client.Heartbeat(
 		context.Background(),
 		identity,

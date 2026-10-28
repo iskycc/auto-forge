@@ -307,10 +307,16 @@ function heartbeatResourceSnapshot(
   snapshot: NonNullable<RunnerHeartbeatInput["resourceSnapshot"]>,
   observedAt: string,
 ): NonNullable<Runner["resourceSnapshot"]> {
-  const { memoryTotalBytes, memoryAvailableBytes, memoryExecutionCreditBytes, ...percentages } =
-    snapshot;
+  const {
+    disk,
+    memoryTotalBytes,
+    memoryAvailableBytes,
+    memoryExecutionCreditBytes,
+    ...percentages
+  } = snapshot;
   return {
     ...percentages,
+    ...(disk === undefined ? {} : { disk }),
     ...(memoryExecutionCreditBytes === undefined ? {} : { memoryExecutionCreditBytes }),
     observedAt,
     ...(memoryTotalBytes !== undefined && memoryAvailableBytes !== undefined

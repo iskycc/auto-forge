@@ -1,4 +1,7 @@
 import type {
+  DdtRecycleGroupsInput,
+  DdtRecycleGroupPage,
+  DdtRecycleCasesInput,
   ExecutionException,
   ExecutionExceptionCursor,
   AssignmentDto,
@@ -1196,7 +1199,8 @@ export interface DdtRepository {
     actorId?: string;
     deletedAt: string;
   }): Promise<number>;
-  listDeletedCases(input: DdtScope & { query?: string; cursor?: string; limit: number }): Promise<{
+  listDeletedGroups(input: DdtRecycleGroupsInput): Promise<DdtRecycleGroupPage>;
+  listDeletedCases(input: DdtRecycleCasesInput): Promise<{
     items: DdtDeletedCase[];
     nextCursor?: string;
   }>;
@@ -1207,6 +1211,9 @@ export interface DdtRepository {
     actorId?: string;
   }): Promise<DdtCase>;
   purgeDeletedCase(scope: DdtScope, recycleId: string): Promise<boolean>;
+  purgeDeletedCases(
+    input: DdtScope & { deletedBefore: string },
+  ): Promise<{ deletedCount: number; hasMore: boolean }>;
   listHistory(input: DdtScope & { caseId: string; cursor?: string; limit: number }): Promise<{
     items: DdtCaseHistory[];
     nextCursor?: string;

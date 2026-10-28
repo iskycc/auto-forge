@@ -23,7 +23,12 @@ export function workerBackedDdtReads(
   if (!read) return local;
   return new Proxy(local, {
     get(target, property) {
-      if (property === "listCases" || property === "readExportCasesPage")
+      if (
+        property === "listCases" ||
+        property === "readExportCasesPage" ||
+        property === "listDeletedGroups" ||
+        property === "listDeletedCases"
+      )
         return (input: unknown) => read({ method: property, input });
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;

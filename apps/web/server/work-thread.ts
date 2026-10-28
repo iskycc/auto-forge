@@ -13,6 +13,7 @@ import {
   CaseDefinitionService,
   PlatformOperationsService,
   DdtImportService,
+  DdtCaseService,
   ImportTestNgJarService,
   ReadModelSnapshotService,
   searchDdtValues,
@@ -25,6 +26,7 @@ import {
   createVersionCaseExecutionSchema,
   rerunCaseFromAttemptInputSchema,
   ddtScopeSchema,
+  ddtRecyclePurgeInputSchema,
   ddtValueSearchInputSchema,
   inheritDdtCasesInputSchema,
   inheritTestNgCasesInputSchema,
@@ -207,6 +209,22 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
   await clockInitialization;
   clock.now();
   switch (task.kind) {
+    case "purge-ddt-recycle-page": {
+      if (!backgroundAllowed())
+        throw new DomainError("PLATFORM_BUSY", "平台正在处理高优先级工作，请稍后重试清空回收站。");
+      const { scope, input } = z
+        .object({ scope: ddtScopeSchema, input: ddtRecyclePurgeInputSchema })
+        .strict()
+        .parse(task.input);
+      const repository =
+        configuration.mode === "lite"
+          ? new SqliteDdtRepository(sqliteHandle())
+          : new PostgresDdtRepository(postgresHandle());
+      return new DdtCaseService(repository, clock, { next: () => uuidV7() }).purgeDeletedPage(
+        scope,
+        input,
+      );
+    }
     case "initialize-version": {
       if (!backgroundAllowed())
         throw new DomainError("PLATFORM_BUSY", "平台正在处理高优先级工作，请稍后继续初始化。");

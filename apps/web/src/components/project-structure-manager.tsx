@@ -15,7 +15,7 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
 } from "@autoforge/domain";
-import { CheckCircle2, FolderTree, Link2, Trash2, UploadCloud } from "lucide-react";
+import { CheckCircle2, FolderTree, Link2, Trash2 } from "lucide-react";
 import { Tag } from "antd";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -27,6 +27,7 @@ import { ActionDialog } from "@/components/action-dialog";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 import { ProjectVersionCopyButton } from "./project-version-copy-dialog";
+import { JenkinsDependencyGuideButton } from "./jenkins-dependency-guide";
 
 export function ProjectStructureManager({
   projectId,
@@ -34,12 +35,14 @@ export function ProjectStructureManager({
   initialVersionId,
   canManage,
   canCopy = false,
+  baseUrl,
 }: {
   projectId: string;
   initialStructure: ProjectStructure;
   initialVersionId?: string;
   canManage: boolean;
   canCopy?: boolean;
+  baseUrl: string | undefined;
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
@@ -579,7 +582,11 @@ export function ProjectStructureManager({
                 <h2>JDK 与依赖 JAR 压缩包</h2>
                 <p>资源仅应用于当前配置版本，支持上传、内网链接或从其他版本继承。</p>
               </div>
-              <UploadCloud size={22} aria-hidden="true" />
+              <JenkinsDependencyGuideButton
+                projectId={projectId}
+                version={selectedVersion?.name}
+                baseUrl={baseUrl}
+              />
             </div>
             <div className="project-runtime-summary grid min-w-0 grid-cols-2 gap-3">
               <RuntimeAssetSummary

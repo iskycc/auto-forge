@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ddtCaseListInputSchema, ddtScopeSchema, ddtCategoryIdsSchema } from "@autoforge/contracts";
+import { ddtRecycleGroupsInputSchema, ddtRecycleCasesInputSchema } from "@autoforge/contracts";
 import type { DdtRepository } from "@autoforge/application";
 
 export const ddtExportSelectionSchema = z.object({
@@ -9,6 +10,8 @@ export const ddtExportSelectionSchema = z.object({
 });
 
 const readSchema = z.discriminatedUnion("method", [
+  z.object({ method: z.literal("listDeletedGroups"), input: ddtRecycleGroupsInputSchema }).strict(),
+  z.object({ method: z.literal("listDeletedCases"), input: ddtRecycleCasesInputSchema }).strict(),
   z.object({ method: z.literal("listCases"), input: ddtCaseListInputSchema }).strict(),
   z
     .object({
@@ -26,6 +29,8 @@ const readSchema = z.discriminatedUnion("method", [
 /** Only bounded, read-only DDT operations may enter the disposable reader. */
 export function readDdtCases(repository: DdtRepository, value: unknown): Promise<unknown> {
   const request = readSchema.parse(value);
+  if (request.method === "listDeletedGroups") return repository.listDeletedGroups(request.input);
+  if (request.method === "listDeletedCases") return repository.listDeletedCases(request.input);
   const input = request.input;
   const selection = {
     projectId: input.projectId,

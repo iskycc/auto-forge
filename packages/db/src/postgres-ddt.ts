@@ -1,4 +1,10 @@
 import { ddtCaseListPageSql } from "./ddt-case-list-page";
+import { DDT_RECYCLE_PURGE_PAGE_SIZE } from "@autoforge/contracts";
+import {
+  ddtRecycleGroupPage,
+  type DdtRecycleGroupRow,
+  type DdtRecycleTotalsRow,
+} from "./ddt-recycle-page";
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import {
   ddtExecutionStatistics,
@@ -941,9 +947,30 @@ export class PostgresDdtRepository implements DdtRepository {
     });
   }
 
-  async listDeletedCases(input: DdtScope & { query?: string; cursor?: string; limit: number }) {
+  async listDeletedGroups(input: Parameters<DdtRepository["listDeletedGroups"]>[0]) {
+    await this.ready();
+    const values: PgValue[] = scopeValues(input);
+    const cursor =
+      input.cursor !== undefined
+        ? `AND sr_num_normalized COLLATE "C" > $${values.push(input.cursor)}`
+        : "";
+    const [totals, groups] = await Promise.all([
+      this.handle.pool.query<DdtRecycleTotalsRow>(
+        `SELECT COUNT(*) AS total_cases, COUNT(DISTINCT sr_num_normalized) AS total_groups FROM ddt_deleted_cases WHERE project_id=$1 AND project_version_id=$2 AND test_stage_id=$3`,
+        scopeValues(input),
+      ),
+      this.handle.pool.query<DdtRecycleGroupRow>(
+        `SELECT MIN(sr_num COLLATE "C") AS sr_num, sr_num_normalized, COUNT(*) AS case_count FROM ddt_deleted_cases WHERE project_id=$1 AND project_version_id=$2 AND test_stage_id=$3 ${cursor} GROUP BY sr_num_normalized ORDER BY sr_num_normalized COLLATE "C" LIMIT $${values.push(input.limit + 1)}`,
+        values,
+      ),
+    ]);
+    return ddtRecycleGroupPage(groups.rows, totals.rows[0]!, input.limit);
+  }
+
+  async listDeletedCases(input: Parameters<DdtRepository["listDeletedCases"]>[0]) {
     await this.ready();
     const builder = new PgWhereBuilder(input);
+    if (input.srNum !== undefined) builder.add("sr_num_normalized =", normalize(input.srNum));
     if (input.query) {
       const pattern = `%${escapeLike(normalize(input.query))}%`;
       const value = builder.value(pattern);
@@ -1024,6 +1051,22 @@ export class PostgresDdtRepository implements DdtRepository {
       ),
     );
     return result.rowCount === 1;
+  }
+
+  async purgeDeletedCases(input: Parameters<DdtRepository["purgeDeletedCases"]>[0]) {
+    await this.ready();
+    return transaction(this.handle, async (client) => {
+      const values = [...scopeValues(input), input.deletedBefore];
+      const removed = await client.query(
+        `WITH candidates AS (SELECT id FROM ddt_deleted_cases WHERE project_id=$1 AND project_version_id=$2 AND test_stage_id=$3 AND deleted_at <= $4 ORDER BY deleted_at,id LIMIT $5 FOR UPDATE SKIP LOCKED) DELETE FROM ddt_deleted_cases AS deleted USING candidates WHERE deleted.id=candidates.id RETURNING deleted.id`,
+        [...values, DDT_RECYCLE_PURGE_PAGE_SIZE],
+      );
+      const remaining = await client.query(
+        `SELECT 1 FROM ddt_deleted_cases WHERE project_id=$1 AND project_version_id=$2 AND test_stage_id=$3 AND deleted_at <= $4 LIMIT 1`,
+        values,
+      );
+      return { deletedCount: removed.rowCount ?? 0, hasMore: remaining.rows.length > 0 };
+    });
   }
 
   async listHistory(input: DdtScope & { caseId: string; cursor?: string; limit: number }) {

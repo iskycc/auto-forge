@@ -22,6 +22,11 @@ import {
   failureAnalysisHistoryPageSchema,
   updateDdtCaseInputSchema,
   upsertDdtTemplateInputSchema,
+  ddtRecycleGroupsInputSchema,
+  ddtRecycleGroupPageSchema,
+  ddtRecycleCasesInputSchema,
+  ddtRecyclePurgeInputSchema,
+  ddtRecyclePurgePageSchema,
 } from "@autoforge/contracts";
 import type { AuthenticatedIdentity, DdtScope, Permission } from "@autoforge/domain";
 import { loadDdtCaseDetail } from "@/lib/load-ddt-case-detail";
@@ -209,14 +214,34 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     if (matches(path, "templates")) {
       return NextResponse.json({ items: await services.ddtCases.templates(scope) });
     }
+    if (matches(path, "recycle", "groups")) {
+      const input = ddtRecycleGroupsInputSchema.parse({
+        ...scope,
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: boundedLimit(url, 30, 100),
+      });
+      return NextResponse.json(
+        ddtRecycleGroupPageSchema.parse(await services.ddtCases.deletedGroups(input)),
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
     if (matches(path, "recycle")) {
+      const input = ddtRecycleCasesInputSchema.parse({
+        ...scope,
+        srNum: url.searchParams.get("srNum") ?? undefined,
+        query: url.searchParams.get("query") ?? undefined,
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: boundedLimit(url, 60, 100),
+      });
       return NextResponse.json(
         await services.ddtCases.listDeleted(
           scope,
-          url.searchParams.get("query") ?? undefined,
-          url.searchParams.get("cursor") ?? undefined,
-          boundedLimit(url, 60, 100),
+          input.query,
+          input.cursor,
+          input.limit,
+          input.srNum,
         ),
+        { headers: { "Cache-Control": "private, no-store" } },
       );
     }
     if (matches(path, "imports")) {
@@ -641,6 +666,21 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
           recycleId: path[1],
         });
         return new NextResponse(null, { status: 204 });
+      }
+      if (matches(path, "recycle")) {
+        const input = ddtRecyclePurgeInputSchema.parse(await readJsonBody(request, 2 * 1_024));
+        const dispatcher = workDispatcher();
+        if (!dispatcher?.purgeDdtRecyclePage)
+          throw new DomainError("PLATFORM_BUSY", "清空回收站服务暂时不可用，请稍后重试。");
+        const result = ddtRecyclePurgePageSchema.parse(
+          await dispatcher.purgeDdtRecyclePage({ scope, input }, request.signal),
+        );
+        await audit(identity, services, scope, currentRequestId, "ddt_case.recycle_clear", {
+          deletedCount: result.deletedCount,
+          deletedBefore: result.deletedBefore,
+        });
+        if (result.deletedCount) await services.readModels.invalidate(scope.projectId);
+        return NextResponse.json(result);
       }
       throw routeNotFound();
     },

@@ -1,4 +1,10 @@
 import { ddtCaseListPageSql } from "./ddt-case-list-page";
+import { DDT_RECYCLE_PURGE_PAGE_SIZE } from "@autoforge/contracts";
+import {
+  ddtRecycleGroupPage,
+  type DdtRecycleGroupRow,
+  type DdtRecycleTotalsRow,
+} from "./ddt-recycle-page";
 import {
   ddtExecutionStatistics,
   ddtExecutionTimelineSql,
@@ -1040,13 +1046,37 @@ export class SqliteDdtRepository implements DdtRepository {
     });
   }
 
-  async listDeletedCases(input: DdtScope & { query?: string; cursor?: string; limit: number }) {
+  async listDeletedGroups(input: Parameters<DdtRepository["listDeletedGroups"]>[0]) {
+    const scope = scopeParameters(input);
+    const totals = this.handle.client
+      .prepare(
+        `SELECT COUNT(*) AS total_cases, COUNT(DISTINCT sr_num_normalized) AS total_groups FROM ddt_deleted_cases WHERE project_id=? AND project_version_id=? AND test_stage_id=?`,
+      )
+      .get(...scope) as DdtRecycleTotalsRow;
+    const parameters = [
+      ...scope,
+      ...(input.cursor !== undefined ? [input.cursor] : []),
+      input.limit + 1,
+    ];
+    const rows = this.handle.client
+      .prepare(
+        `SELECT MIN(sr_num) AS sr_num, sr_num_normalized, COUNT(*) AS case_count FROM ddt_deleted_cases WHERE project_id=? AND project_version_id=? AND test_stage_id=? ${input.cursor !== undefined ? "AND sr_num_normalized > ?" : ""} GROUP BY sr_num_normalized ORDER BY sr_num_normalized LIMIT ?`,
+      )
+      .all(...parameters) as DdtRecycleGroupRow[];
+    return ddtRecycleGroupPage(rows, totals, input.limit);
+  }
+
+  async listDeletedCases(input: Parameters<DdtRepository["listDeletedCases"]>[0]) {
     const where = scopeSql(input);
     const parameters: SqlValue[] = scopeParameters(input);
     if (input.query) {
       where.push("(case_id_normalized LIKE ? ESCAPE '\\' OR sr_num_normalized LIKE ? ESCAPE '\\')");
       const pattern = `%${escapeLike(normalize(input.query))}%`;
       parameters.push(pattern, pattern);
+    }
+    if (input.srNum !== undefined) {
+      where.push("sr_num_normalized = ?");
+      parameters.push(normalize(input.srNum));
     }
     if (input.cursor) {
       where.push("id < ?");
@@ -1134,6 +1164,23 @@ export class SqliteDdtRepository implements DdtRepository {
         )
       ).changes > 0
     );
+  }
+
+  async purgeDeletedCases(input: Parameters<DdtRepository["purgeDeletedCases"]>[0]) {
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const parameters = [...scopeParameters(input), input.deletedBefore];
+      const removed = this.handle.client
+        .prepare(
+          `DELETE FROM ddt_deleted_cases WHERE id IN (SELECT id FROM ddt_deleted_cases WHERE project_id=? AND project_version_id=? AND test_stage_id=? AND deleted_at <= ? ORDER BY deleted_at,id LIMIT ?) RETURNING id`,
+        )
+        .all(...parameters, DDT_RECYCLE_PURGE_PAGE_SIZE);
+      const remaining = this.handle.client
+        .prepare(
+          `SELECT 1 FROM ddt_deleted_cases WHERE project_id=? AND project_version_id=? AND test_stage_id=? AND deleted_at <= ? LIMIT 1`,
+        )
+        .get(...parameters);
+      return { deletedCount: removed.length, hasMore: remaining !== undefined };
+    });
   }
 
   async listHistory(input: DdtScope & { caseId: string; cursor?: string; limit: number }) {

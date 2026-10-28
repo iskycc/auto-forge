@@ -114,6 +114,13 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		if metricsErr != nil {
 			fmt.Fprintf(diagnostics, "resource metrics unavailable: %v\n", metricsErr)
 		} else {
+			disk, diskErr := metrics.CollectDiskCapacity(configuration.DataDirectory)
+			if diskErr != nil {
+				// Missing disk telemetry must not interrupt heartbeats or leases.
+				fmt.Fprintf(diagnostics, "disk metrics unavailable: %v\n", diskErr)
+			} else {
+				collected.Disk = &disk
+			}
 			resourceSnapshot = &collected
 		}
 		response, heartbeatErr := client.Heartbeat(

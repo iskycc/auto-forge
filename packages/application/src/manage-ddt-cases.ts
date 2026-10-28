@@ -1,5 +1,10 @@
 import type { DdtCaseListInput, DdtCellValue, UpsertDdtTemplateInput } from "@autoforge/contracts";
 import {
+  ddtRecycleGroupsInputSchema,
+  ddtRecyclePurgeInputSchema,
+  type DdtRecycleGroupsInput,
+} from "@autoforge/contracts";
+import {
   DomainError,
   diffDdtCaseData,
   normalizeDdtCaseData,
@@ -310,13 +315,30 @@ export class DdtCaseService {
     });
   }
 
-  listDeleted(scope: DdtScope, query?: string, cursor?: string, limit = 60) {
+  listDeleted(scope: DdtScope, query?: string, cursor?: string, limit = 60, srNum?: string) {
     return this.repository.listDeletedCases({
       ...scope,
       ...(query ? { query } : {}),
       ...(cursor ? { cursor } : {}),
+      ...(srNum !== undefined ? { srNum } : {}),
       limit,
     });
+  }
+
+  deletedGroups(input: DdtRecycleGroupsInput) {
+    return this.repository.listDeletedGroups(ddtRecycleGroupsInputSchema.parse(input));
+  }
+
+  async purgeDeletedPage(scope: DdtScope, input: unknown) {
+    const options = ddtRecyclePurgeInputSchema.parse(input);
+    const deletedBefore = options.deletedBefore
+      ? new Date(options.deletedBefore).toISOString()
+      : this.clock.now().toISOString();
+    const result = await this.repository.purgeDeletedCases({ ...scope, deletedBefore });
+    if (result.hasMore && result.deletedCount === 0) {
+      throw new DomainError("PLATFORM_BUSY", "剩余回收站记录正在被其他操作使用，请稍后重试清空。");
+    }
+    return { ...result, deletedBefore };
   }
 
   restoreDeleted(scope: DdtScope, recycleId: string, actorId?: string) {

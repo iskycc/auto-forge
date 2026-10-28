@@ -29,3 +29,23 @@ it("bounds isolated DDT reads and rejects writes or oversized selections before 
   expect(listCases).toHaveBeenCalledOnce();
   expect(readExportCasesPage).toHaveBeenCalledOnce();
 });
+
+it.each(["listDeletedGroups", "listDeletedCases"] as const)(
+  "isolates bounded %s reads and keeps an explicitly empty SR",
+  async (method) => {
+    const read = vi.fn().mockResolvedValue({ items: [] });
+    const repository = { [method]: read } as unknown as DdtRepository;
+    const scope = { projectId: "p", projectVersionId: "v", testStageId: "s" };
+    await readDdtCases(repository, {
+      method,
+      input: { ...scope, ...(method === "listDeletedCases" ? { srNum: "" } : {}) },
+    });
+    expect(read).toHaveBeenCalledWith({
+      ...scope,
+      limit: method === "listDeletedGroups" ? 30 : 60,
+      ...(method === "listDeletedCases" ? { srNum: "" } : {}),
+    });
+    expect(() => readDdtCases(repository, { method, input: { ...scope, limit: 101 } })).toThrow();
+    expect(read).toHaveBeenCalledOnce();
+  },
+);

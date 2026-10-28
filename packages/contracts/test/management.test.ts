@@ -372,6 +372,26 @@ describe("runner memory budget compatibility", () => {
     logicalCpuCount: 4,
     observedAt: "2026-10-24T00:00:00.000Z",
   };
+  it("preserves optional Agent filesystem capacity, including a completely full disk", () => {
+    const disk = { path: "/var/lib/autoforge-agent", totalBytes: 4096, availableBytes: 0 };
+    expect(
+      runnerHeartbeatInputSchema.parse({ ...heartbeat, resourceSnapshot: { ...metrics, disk } })
+        .resourceSnapshot?.disk,
+    ).toEqual(disk);
+  });
+  it.each([
+    { path: "", totalBytes: 4096, availableBytes: 10 },
+    { path: "/data", totalBytes: 0, availableBytes: 0 },
+    { path: "/data", totalBytes: 4096, availableBytes: -1 },
+    { path: "/data", totalBytes: 4096, availableBytes: 4097 },
+    { path: "/data", totalBytes: Number.MAX_SAFE_INTEGER + 1, availableBytes: 0 },
+    { path: "/data", totalBytes: 4096 },
+  ])("rejects incomplete or unsafe filesystem capacity %j", (disk) => {
+    expect(
+      runnerHeartbeatInputSchema.safeParse({ ...heartbeat, resourceSnapshot: { ...metrics, disk } })
+        .success,
+    ).toBe(false);
+  });
   it("keeps old Agents compatible and preserves zero available bytes", () => {
     expect(
       runnerHeartbeatInputSchema.parse({ ...heartbeat, resourceSnapshot: metrics })

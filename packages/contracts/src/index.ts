@@ -13,6 +13,7 @@ export * from "./attempt-log-share";
 export * from "./public-execution-links";
 export * from "./public-suite-execution";
 export * from "./ddt";
+export * from "./ddt-recycle";
 export * from "./ddt-import-progress";
 export * from "./runner-group";
 export * from "./case-suite-activity";

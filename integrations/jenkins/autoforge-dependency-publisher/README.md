@@ -6,6 +6,10 @@ AutoForge。
 
 最低支持 Jenkins `2.479.3` 和 Pipeline: Step API `700.v6e45cb_a_5a_a_21`，安装与兼容性验证见[插件说明](../README.md)。
 
+平台内入口：打开“项目设置”，选择目标版本，在“JDK 与依赖 JAR 压缩包”标题旁点击“Jenkins 接入指导”。弹窗包含快速步骤、主平台内置 HPI 下载、必填／选填参数以及可复制的 Pipeline 示例；当前项目 ID、版本名称和平台外部访问地址自动填入，未配置外部地址时使用当前浏览器地址。切换版本后重新打开会生成对应版本的示例，查看或复制指导不会修改现有依赖。
+
+平台示例放入 Pipeline 的 `steps` 块，要求先生成 `target/autoforge-dependencies.zip`，并使用 Linux `sha256sum`、`stat` 计算完整性元数据。默认 Jenkins Artifact URL 仅作示例；必须确认候选 Runner 能直接下载，不能依赖浏览器已登录 Cookie。发布成功后刷新版本配置核对“依赖包”。本功能只替换版本依赖，不更新 JDK、不导入测试类、不自动执行任务，也不改变已创建批次的执行快照。
+
 ## 最小 Pipeline 示例
 
 ```groovy

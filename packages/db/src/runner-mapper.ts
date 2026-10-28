@@ -24,6 +24,9 @@ type StoredRunner = {
   memoryTotalBytes: number | null;
   memoryAvailableBytes: number | null;
   memoryExecutionCreditBytes: number | null;
+  diskPath: string | null;
+  diskTotalBytes: number | null;
+  diskAvailableBytes: number | null;
   loadAverage1m: number | null;
   logicalCpuCount: number | null;
   metricsObservedAt: string | null;
@@ -61,6 +64,17 @@ export function mapStoredRunner(row: StoredRunner, offlineBefore?: string): Runn
     ...(hasCompleteResourceSnapshot(row)
       ? {
           resourceSnapshot: {
+            ...(row.diskPath !== null &&
+            row.diskTotalBytes !== null &&
+            row.diskAvailableBytes !== null
+              ? {
+                  disk: {
+                    path: row.diskPath,
+                    totalBytes: row.diskTotalBytes,
+                    availableBytes: row.diskAvailableBytes,
+                  },
+                }
+              : {}),
             cpuUtilizationPercent: row.cpuUtilizationPercent,
             memoryUtilizationPercent: row.memoryUtilizationPercent,
             ...(row.memoryTotalBytes !== null && row.memoryAvailableBytes !== null

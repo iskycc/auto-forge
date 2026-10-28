@@ -5,6 +5,8 @@ import {
   ddtCaseFilterParameters,
 } from "@/lib/ddt-filtered-case-selection";
 import { DdtImportFileResults } from "./ddt-import-file-results";
+import { DdtRecycleBrowser } from "./ddt-recycle-browser";
+import type { DdtRecycleGroupPage } from "@autoforge/contracts";
 import { ddtImportStatusLabel as statusLabel } from "@/lib/ddt-import-status";
 import { ddtImportJobSummaryPageSchema, type DdtImportJobSummary } from "@autoforge/contracts";
 import { DdtChangeReview } from "./ddt-change-review";
@@ -23,15 +25,6 @@ import { Tabs } from "./ui/tabs";
 import { Disclosure } from "@/components/ui/disclosure";
 
 import { Card } from "@/components/ui/card";
-import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-} from "@/components/ui/table";
-
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -87,7 +80,6 @@ import {
   PencilLine,
   Plus,
   RefreshCw,
-  RotateCcw,
   Search,
   Trash2,
   Upload,
@@ -162,13 +154,6 @@ type Template = Scope & {
   rules: TemplateRule[];
   revision: number;
 };
-type DeletedCase = {
-  id: string;
-  caseId: string;
-  srNum: string;
-  sourceName: string;
-  deletedAt: string;
-};
 type WorkspaceTab =
   "overview" | "cases" | "imports" | "templates" | "recycle" | "api" | "search" | "reviews";
 
@@ -237,7 +222,7 @@ export function DdtManagementWorkspace({
   const requestedTab = workspaceTab(searchParameters.get("ddtView"));
   const [tab, setActiveTab] = useState<WorkspaceTab>(requestedTab);
   const isApiTab = tab === "api";
-  const isIndependentTab = isApiTab || tab === "search" || tab === "reviews";
+  const isIndependentTab = isApiTab || tab === "search" || tab === "reviews" || tab === "recycle";
   const setTab = (value: WorkspaceTab) => {
     // Let the guarded URL synchronization below commit the selected tab. An
     // optimistic local change can be reverted by the previous URL snapshot.
@@ -251,7 +236,7 @@ export function DdtManagementWorkspace({
   const [nextCursor, setNextCursor] = useState<string>();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [imports, setImports] = useState<DdtImportJobSummary[]>([]);
-  const [deletedCases, setDeletedCases] = useState<DeletedCase[]>([]);
+  const [deletedCaseCount, setDeletedCaseCount] = useState(0);
   const query = searchParameters.get("ddtQuery") ?? "";
   const srNum = searchParameters.get("ddtGroup") ?? "";
   const categoryIds = searchParameters.getAll("ddtCategory");
@@ -283,7 +268,10 @@ export function DdtManagementWorkspace({
   const [detailError, setDetailError] = useState("");
   const [editorEpoch, setEditorEpoch] = useState(0);
   const editorStatus = useRef<DdtEditorStatus>("idle");
-  const [savingCase, setSavingCase] = useState(false);
+  const [editorMode, setEditorMode] = useState<DdtEditorStatus>("idle");
+  const savingCase = editorMode === "saving";
+  const [caseContentEpoch, setCaseContentEpoch] = useState(0);
+  const detailContentEpoch = useRef(0);
   const detailRequest = useRef<AbortController | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
@@ -383,7 +371,7 @@ export function DdtManagementWorkspace({
         requestJson<unknown>(endpoint("imports", new URLSearchParams({ view: "summary" }))).then(
           (page) => ddtImportJobSummaryPageSchema.parse(page),
         ),
-        requestJson<{ items: DeletedCase[] }>(endpoint("recycle")),
+        requestJson<DdtRecycleGroupPage>(endpoint("recycle/groups")),
       ]);
       if (generation !== loadGeneration.current) return;
       let casePage = initialCasePage;
@@ -402,13 +390,14 @@ export function DdtManagementWorkspace({
           { cache: "reload" },
         );
         if (generation !== loadGeneration.current) return;
+        setCaseContentEpoch((epoch) => epoch + 1);
       }
       observedImportStates.current = new Map(importPage.items.map((job) => [job.id, job.status]));
       setCases(casePage.items);
       setNextCursor(casePage.nextCursor);
       setTemplates(templatePage.items);
       setImports(importPage.items);
-      setDeletedCases(recyclePage.items);
+      setDeletedCaseCount(recyclePage.totalCases);
     } catch (loadError) {
       if (generation === loadGeneration.current) setError(messageOf(loadError));
     } finally {
@@ -434,7 +423,8 @@ export function DdtManagementWorkspace({
     setNextCursor,
     setTemplates,
     setImports,
-    setDeletedCases,
+    setDeletedCaseCount,
+    setCaseContentEpoch,
   ]);
 
   useEffect(() => {
@@ -509,16 +499,42 @@ export function DdtManagementWorkspace({
         if (controller.signal.aborted) return;
         setDetail(item);
         setHistory(historyPage.items);
+        detailContentEpoch.current = caseContentEpoch;
       } catch (openError) {
         if (!controller.signal.aborted) setDetailError(messageOf(openError));
       } finally {
         if (!controller.signal.aborted) setDetailLoading(false);
       }
     },
-    [endpoint, setActiveCaseId, setDetail, setHistory, setDetailError, setDetailLoading],
+    [
+      endpoint,
+      caseContentEpoch,
+      setActiveCaseId,
+      setDetail,
+      setHistory,
+      setDetailError,
+      setDetailLoading,
+    ],
   );
 
   useEffect(() => () => detailRequest.current?.abort(), [endpoint]);
+
+  useEffect(() => {
+    if (
+      tab !== "cases" ||
+      busy ||
+      refreshing ||
+      !detail ||
+      !activeCaseId ||
+      editorMode !== "idle" ||
+      editorStatus.current !== "idle" ||
+      detailContentEpoch.current === caseContentEpoch
+    )
+      return;
+    // Imports commit outside this editor. Refresh both snapshots once it is safe
+    // to replace the view; a draft retains its original revision conflict guard.
+    void openCase(activeCaseId);
+  }, [tab, busy, refreshing, detail, activeCaseId, editorMode, caseContentEpoch, openCase]);
 
   useEffect(() => {
     if (tab !== "cases" || busy || refreshing || activeCaseId || !cases[0]) return;
@@ -584,6 +600,7 @@ export function DdtManagementWorkspace({
     toast.success(`已保存 ${next.caseId}`);
     setActiveCaseId(next.caseId);
     setDetail(next);
+    detailContentEpoch.current = caseContentEpoch;
     await load();
     try {
       const historyPage = await requestJson<{ items: HistoryItem[] }>(
@@ -772,9 +789,7 @@ export function DdtManagementWorkspace({
           label: (
             <span className="inline-flex items-center gap-2">
               <Icon size={16} /> {label}
-              {value === "recycle" && deletedCases.length ? (
-                <small>{deletedCases.length}</small>
-              ) : null}
+              {value === "recycle" && deletedCaseCount ? <small>{deletedCaseCount}</small> : null}
             </span>
           ),
         }))}
@@ -1323,7 +1338,7 @@ export function DdtManagementWorkspace({
                 onPreview={() => void previewCase(detail.caseId)}
                 onStatusChange={(status) => {
                   editorStatus.current = status;
-                  setSavingCase(status === "saving");
+                  setEditorMode(status);
                 }}
                 onPrevious={previousCase ? () => void navigateCase(previousCase.caseId) : undefined}
                 onNext={nextCase ? () => void navigateCase(nextCase.caseId) : undefined}
@@ -1421,27 +1436,12 @@ export function DdtManagementWorkspace({
             }}
           />
         ) : null}
-        {!busy && tab === "recycle" ? (
-          <Recycle
-            items={deletedCases}
+        {tab === "recycle" ? (
+          <DdtRecycleBrowser
+            key={`${scope.projectId}:${scope.projectVersionId}:${scope.testStageId}`}
+            endpoint={endpoint}
             canManage={canManage}
-            onRestore={async (id) => {
-              await requestJson(endpoint(`recycle/${id}/restore`), { method: "POST" });
-              await load();
-            }}
-            onPurge={async (id) => {
-              if (
-                !(await confirmAction({
-                  title: "永久删除 DDT 用例",
-                  description: "永久删除后无法恢复，请确认不再需要这条用例。",
-                  confirmLabel: "永久删除",
-                  tone: "danger",
-                }))
-              )
-                return;
-              await requestJson(endpoint(`recycle/${id}`), { method: "DELETE" });
-              await load();
-            }}
+            onCountChange={setDeletedCaseCount}
           />
         ) : null}
       </div>
@@ -1797,91 +1797,6 @@ function Templates({
           title="还没有字段模板"
           description="模板是可选的；创建后会在预检与编辑时统一校验。"
         />
-      )}
-    </div>
-  );
-}
-
-function Recycle({
-  items,
-  canManage,
-  onRestore,
-  onPurge,
-}: {
-  items: DeletedCase[];
-  canManage: boolean;
-  onRestore(id: string): Promise<void>;
-  onPurge(id: string): Promise<void>;
-}) {
-  return (
-    <div className={cn("ddt-section", ddtManagementWorkspaceStyles["ddt-section"])}>
-      <header>
-        <div>
-          <strong>回收站</strong>
-          <span>删除先进入回收站，永久清除需再次确认</span>
-        </div>
-      </header>
-      {items.length ? (
-        <div className={cn("ddt-table-shell", ddtManagementWorkspaceStyles["ddt-table-shell"])}>
-          <Table
-            className={cn(
-              "data-table ddt-recycle-table",
-              uiPatterns["data-table"],
-              "table-fixed [&_td]:[overflow-wrap:anywhere]",
-            )}
-          >
-            <TableHeader>
-              <TableRow>
-                <TableHead>CaseID</TableHead>
-                <TableHead>srNum</TableHead>
-                <TableHead>来源</TableHead>
-                <TableHead className="w-36">删除时间</TableHead>
-                <TableHead className="w-56">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>
-                    <strong>{item.caseId}</strong>
-                  </TableCell>
-                  <TableCell>{item.srNum}</TableCell>
-                  <TableCell>{item.sourceName}</TableCell>
-                  <TableCell>{formatDate(item.deletedAt)}</TableCell>
-                  <TableCell>
-                    {canManage ? (
-                      <div
-                        className={cn(
-                          "table-actions",
-                          ddtManagementWorkspaceStyles["table-actions"],
-                        )}
-                      >
-                        <Button
-                          className={cn("text-button", uiPatterns["text-button"])}
-                          type="button"
-                          onClick={() => void onRestore(item.id)}
-                        >
-                          <RotateCcw size={14} /> 恢复
-                        </Button>
-                        <Button
-                          className={cn("text-button danger", uiPatterns["text-button"])}
-                          type="button"
-                          onClick={() => void onPurge(item.id)}
-                        >
-                          <Trash2 size={14} /> 永久删除
-                        </Button>
-                      </div>
-                    ) : (
-                      "—"
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      ) : (
-        <Empty title="回收站为空" description="被删除的 DDT 用例会保留在这里，直到永久清除。" />
       )}
     </div>
   );

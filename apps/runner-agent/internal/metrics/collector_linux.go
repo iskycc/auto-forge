@@ -15,14 +15,15 @@ import (
 )
 
 type Snapshot struct {
-	CPUUtilizationPercent      float64 `json:"cpuUtilizationPercent"`
-	MemoryUtilizationPercent   float64 `json:"memoryUtilizationPercent"`
-	MemoryTotalBytes           uint64  `json:"memoryTotalBytes"`
-	MemoryExecutionCreditBytes uint64  `json:"memoryExecutionCreditBytes"`
-	MemoryAvailableBytes       uint64  `json:"memoryAvailableBytes"`
-	LoadAverage1m              float64 `json:"loadAverage1m"`
-	LogicalCPUCount            int     `json:"logicalCpuCount"`
-	ObservedAt                 string  `json:"observedAt"`
+	Disk                       *DiskCapacity `json:"disk,omitempty"`
+	CPUUtilizationPercent      float64       `json:"cpuUtilizationPercent"`
+	MemoryUtilizationPercent   float64       `json:"memoryUtilizationPercent"`
+	MemoryTotalBytes           uint64        `json:"memoryTotalBytes"`
+	MemoryExecutionCreditBytes uint64        `json:"memoryExecutionCreditBytes"`
+	MemoryAvailableBytes       uint64        `json:"memoryAvailableBytes"`
+	LoadAverage1m              float64       `json:"loadAverage1m"`
+	LogicalCPUCount            int           `json:"logicalCpuCount"`
+	ObservedAt                 string        `json:"observedAt"`
 }
 
 type Collector struct {

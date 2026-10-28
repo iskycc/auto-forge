@@ -72,6 +72,44 @@ function pool() {
 
 describe("work thread recovery", () => {
   it.each(["lite", "full"] as const)(
+    "keeps bounded %s recycle clearing away from lease renewal",
+    async (mode) => {
+      const executor = diagnosticPool(mode);
+      try {
+        const input = {
+          scope: { projectId: "p", projectVersionId: "v", testStageId: "s" },
+          input: {},
+        };
+        const first = executor.purgeDdtRecyclePage(input, new AbortController().signal);
+        const second = executor.purgeDdtRecyclePage(input, new AbortController().signal);
+        await expect(
+          executor.purgeDdtRecyclePage(input, new AbortController().signal),
+        ).rejects.toMatchObject({ code: "PLATFORM_BUSY" });
+        const clearing = workers.find((worker) =>
+          worker.requests.some((request) => request.task.kind === "purge-ddt-recycle-page"),
+        )!;
+        expect(clearing.requests).toHaveLength(2);
+        const renewal = executor.renewLease({ attemptId: "a" });
+        const control = workers.find((worker) =>
+          worker.requests.some((request) => request.task.kind === "renew-lease"),
+        )!;
+        expect(control).not.toBe(clearing);
+        const lease = control.requests.find((request) => request.task.kind === "renew-lease")!;
+        control.emit("message", { id: lease.id, ok: true, value: { renewed: true } });
+        await expect(renewal).resolves.toEqual({ renewed: true });
+        for (const request of clearing.requests)
+          clearing.emit("message", {
+            id: request.id,
+            ok: true,
+            value: { deletedCount: 200, hasMore: true },
+          });
+        await Promise.all([first, second]);
+      } finally {
+        await executor.close();
+      }
+    },
+  );
+  it.each(["lite", "full"] as const)(
     "dispatches version-scoped case execution to the %s scheduling worker",
     async (mode) => {
       const executor = diagnosticPool(mode);

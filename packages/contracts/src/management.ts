@@ -644,6 +644,16 @@ export const runnerAgentRollbackResultSchema = z.object({
   serviceName: z.literal("autoforge-agent.service"),
 });
 
+export const runnerDiskCapacitySchema = z
+  .object({
+    path: z.string().min(1).max(4096),
+    totalBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    availableBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .refine((disk) => disk.availableBytes <= disk.totalBytes, {
+    message: "Available disk space cannot exceed total capacity.",
+  });
+
 export const runnerHeartbeatInputSchema = z.object({
   schemaVersion: z.literal(1),
   busySlots: z.number().int().min(0).max(64),
@@ -656,6 +666,7 @@ export const runnerHeartbeatInputSchema = z.object({
   cachedBatchIds: z.array(z.string().trim().min(1).max(128)).max(1_024).optional(),
   resourceSnapshot: z
     .object({
+      disk: runnerDiskCapacitySchema.optional(),
       cpuUtilizationPercent: z.number().finite().min(0).max(100),
       memoryUtilizationPercent: z.number().finite().min(0).max(100),
       memoryTotalBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),

@@ -4,6 +4,7 @@ import { Alert, Collapse, Tag, Typography } from "antd";
 import { CopyableText } from "./ui/copyable-text";
 import { useClientReadiness } from "./ui/use-client-readiness";
 import { Download, PlugZap } from "lucide-react";
+import { groovyStringLiteral } from "@/lib/jenkins-pipeline-guide";
 
 export function JenkinsTaskGuide({
   suiteId,
@@ -15,7 +16,7 @@ export function JenkinsTaskGuide({
   const clientReady = useClientReadiness();
   const browserBaseUrl = clientReady ? window.location.origin : "";
   const pipeline =
-    `withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {\n  def result = autoforgeRun(\n    baseUrl: '${groovyString(baseUrl || browserBaseUrl || "https://autoforge.example")}',\n    apiKey: env.AUTOFORGE_API_KEY,\n    suiteId: '${groovyString(suiteId)}'\n  )\n  currentBuild.description = "AutoForge: $` +
+    `withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {\n  def result = autoforgeRun(\n    baseUrl: ${groovyStringLiteral(baseUrl || browserBaseUrl || "https://autoforge.example")},\n    apiKey: env.AUTOFORGE_API_KEY,\n    suiteId: ${groovyStringLiteral(suiteId)}\n  )\n  currentBuild.description = "AutoForge: $` +
     `{result.totalPassed}/$` +
     `{result.totalCases}"\n}`;
   return (
@@ -118,12 +119,4 @@ export function JenkinsTaskGuide({
       />
     </section>
   );
-}
-
-function groovyString(value: string) {
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll("'", "\\'")
-    .replaceAll("\r", "")
-    .replaceAll("\n", "");
 }

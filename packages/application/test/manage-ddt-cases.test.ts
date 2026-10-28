@@ -6,6 +6,40 @@ import { ddtCaseListInputSchema } from "@autoforge/contracts";
 
 const scope = { projectId: "project-1", projectVersionId: "version-1", testStageId: "stage-1" };
 const timestamp = "2026-08-28T00:00:00.000Z";
+
+describe("clearing the DDT recycle bin", () => {
+  it("captures one server cutoff and reuses it for later pages without reading payloads", async () => {
+    const purgeDeletedCases = vi.fn().mockResolvedValue({ deletedCount: 200, hasMore: true });
+    const service = new DdtCaseService(
+      { purgeDeletedCases } as unknown as DdtRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+    expect(await service.purgeDeletedPage(scope, {})).toEqual({
+      deletedCount: 200,
+      hasMore: true,
+      deletedBefore: timestamp,
+    });
+    const earlier = "2026-08-27T23:59:59.000Z";
+    await service.purgeDeletedPage(scope, { deletedBefore: earlier });
+    expect(purgeDeletedCases).toHaveBeenLastCalledWith({ ...scope, deletedBefore: earlier });
+    await expect(service.purgeDeletedPage(scope, { deletedBefore: "invalid" })).rejects.toThrow();
+    await expect(service.purgeDeletedPage(scope, { projectId: "other" })).rejects.toThrow();
+    expect(purgeDeletedCases).toHaveBeenCalledTimes(2);
+  });
+  it("stops a locked page without spinning or hiding the remaining records", async () => {
+    const purgeDeletedCases = vi.fn().mockResolvedValue({ deletedCount: 0, hasMore: true });
+    const service = new DdtCaseService(
+      { purgeDeletedCases } as unknown as DdtRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+    await expect(service.purgeDeletedPage(scope, {})).rejects.toMatchObject({
+      code: "PLATFORM_BUSY",
+    });
+    expect(purgeDeletedCases).toHaveBeenCalledOnce();
+  });
+});
 const executionClass = {
   caseDefinitionId: "class-1",
   className: "com.example.CheckoutDdtTest",

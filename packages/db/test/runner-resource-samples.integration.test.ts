@@ -81,16 +81,30 @@ for (const dialect of ["sqlite", "postgres"] as const)
               memoryTotalBytes: 4096,
               memoryAvailableBytes: 0,
               memoryExecutionCreditBytes: 2048,
+              disk: { path: "/var/lib/autoforge-agent", totalBytes: 8192, availableBytes: 0 },
             },
           });
           expect((await context.repository.get(id, atMinute(-1)))?.resourceSnapshot).toMatchObject({
             memoryTotalBytes: 4096,
             memoryAvailableBytes: 0,
             memoryExecutionCreditBytes: 2048,
+            disk: { path: "/var/lib/autoforge-agent", totalBytes: 8192, availableBytes: 0 },
           });
           expect(
             (await context.repository.listByIds([id], atMinute(-1)))[0]?.resourceSnapshot,
-          ).toMatchObject({ memoryTotalBytes: 4096, memoryAvailableBytes: 0 });
+          ).toMatchObject({
+            memoryTotalBytes: 4096,
+            memoryAvailableBytes: 0,
+            disk: { availableBytes: 0 },
+          });
+          expect(
+            (await context.repository.list(atMinute(-1), 500)).find((runner) => runner.id === id)
+              ?.resourceSnapshot?.disk,
+          ).toEqual({ path: "/var/lib/autoforge-agent", totalBytes: 8192, availableBytes: 0 });
+          await context.repository.heartbeat({ ...base, recordedAt: atMinute(1) });
+          expect((await context.repository.get(id))?.resourceSnapshot?.disk?.availableBytes).toBe(
+            0,
+          );
           await context.repository.heartbeat({
             ...base,
             recordedAt: atMinute(1),
@@ -100,6 +114,7 @@ for (const dialect of ["sqlite", "postgres"] as const)
           expect(legacy).not.toHaveProperty("memoryTotalBytes");
           expect(legacy).not.toHaveProperty("memoryAvailableBytes");
           expect(legacy).not.toHaveProperty("memoryExecutionCreditBytes");
+          expect(legacy).not.toHaveProperty("disk");
           expect(legacy?.memoryUtilizationPercent).toBe(20);
         } finally {
           await context.close();

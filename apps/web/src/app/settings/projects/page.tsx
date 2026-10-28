@@ -70,6 +70,7 @@ export default async function ProjectsPage({
           initialStructure={structure}
           {...(hierarchy.projectVersionId ? { initialVersionId: hierarchy.projectVersionId } : {})}
           projectId={project.id}
+          baseUrl={services.configurationStore.read().web.publicBaseUrl}
         />
       ) : (
         <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>

@@ -1,6 +1,8 @@
 export type RunnerState = "online" | "offline" | "draining" | "disabled";
 
 export type RunnerResourceSnapshot = {
+  /** Space available to the Agent on its data directory's filesystem. */
+  disk?: { path: string; totalBytes: number; availableBytes: number };
   cpuUtilizationPercent: number;
   memoryUtilizationPercent: number;
   /** Effective host/cgroup capacity. Optional for older Runner Agents. */

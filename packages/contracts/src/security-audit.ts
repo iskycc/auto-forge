@@ -83,6 +83,7 @@ const actionsByCategory = {
     "ddt_case.recycle_restore": "从回收站恢复数据驱动用例",
     "ddt_case.update": "修改数据驱动用例",
     "ddt_case.recycle_purge": "永久删除数据驱动用例",
+    "ddt_case.recycle_clear": "清空数据驱动用例回收站",
     "ddt_template.create": "创建数据驱动字段模板",
     "ddt_template.update": "修改数据驱动字段模板",
     "ddt_template.delete": "删除数据驱动字段模板",
