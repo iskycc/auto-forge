@@ -21,7 +21,7 @@ export function exportColumnWidth(
   return Math.min(maximum, Math.max(minimum, headerWidth + 2, sampleWidth + 2));
 }
 
-/** Offline workbook theme: neutral surfaces, restrained semantic colors only for results. */
+/** Offline workbook theme: soft header regions and restrained result colors. */
 export const EXPORT_COLORS = {
   header: "FFE8EEF5",
   headerText: "FF334155",
@@ -32,6 +32,17 @@ export const EXPORT_COLORS = {
   alternate: "FFF8FAFC",
   link: "FF2563A6",
 } as const;
+export const EXPORT_HEADER_COLORS = {
+  neutral: EXPORT_COLORS.header,
+  identity: "FFE8EFF8",
+  metadata: "FFE4F0EE",
+  result: "FFF7EADC",
+  time: "FFEEE9F5",
+  analysis: "FFEBF0E2",
+  evidence: "FFF7F0D9",
+  link: "FFE5EFF3",
+} as const;
+export type ExportHeaderGroup = keyof typeof EXPORT_HEADER_COLORS;
 const FONT_NAME = "Microsoft YaHei UI";
 export type ExportTone = "success" | "error" | "warning" | "info" | "neutral";
 const RESULT_COLORS: Record<ExportTone, { fill: string; text: string }> = {
@@ -57,16 +68,23 @@ export function exportWorksheetOptions(frozenColumns = 1): Partial<ExcelJS.AddWo
   };
 }
 
-export function styleExportHeader(row: ExcelJS.Row): void {
+export function styleExportHeader(
+  row: ExcelJS.Row,
+  groups: readonly ExportHeaderGroup[] = [],
+): void {
   row.height = 28;
-  row.eachCell((cell) => {
+  row.eachCell((cell, column) => {
     cell.font = {
       name: FONT_NAME,
       size: 10.5,
       bold: true,
       color: { argb: EXPORT_COLORS.headerText },
     };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: EXPORT_COLORS.header } };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: EXPORT_HEADER_COLORS[groups[column - 1] ?? "neutral"] },
+    };
     cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     cell.border = { bottom: { style: "thin", color: { argb: "FFCBD5E1" } } };
   });

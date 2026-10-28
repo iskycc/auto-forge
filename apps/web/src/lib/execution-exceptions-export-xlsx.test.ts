@@ -87,12 +87,25 @@ describe("execution exception Excel downloads", () => {
     expect(sheet.getCell("C4").value).toBe(3);
     expect(sheet.getCell("G4").value).toBe("EXECUTION_TIMEOUT");
     expect(sheet.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EEF5" } });
+    for (const [columns, color] of [
+      [["D", "E"], "FFE8EFF8"],
+      [["F", "G", "H", "I"], "FFF7EADC"],
+      [["J", "K"], "FFEEE9F5"],
+    ] as const)
+      for (const column of columns)
+        expect(sheet.getCell(`${column}1`).fill).toMatchObject({ fgColor: { argb: color } });
     expect(sheet.getCell("A3").fill).toMatchObject({ fgColor: { argb: "FFF8FAFC" } });
     expect(sheet.getColumn(8).width).toBeGreaterThan(sheet.getColumn(1).width!);
     expect(sheet.getCell("H2").alignment.wrapText).toBe(true);
     sheet.getRow(2).eachCell((cell) => expect(cell.alignment.indent ?? 0).toBe(0));
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1, xSplit: 3 });
     expect(workbook.getWorksheet("判定概览")!.getCell("B7").value).toBe(3);
+    expect(workbook.getWorksheet("判定概览")!.getCell("A1").fill).toMatchObject({
+      fgColor: { argb: "FFE8EFF8" },
+    });
+    expect(workbook.getWorksheet("判定概览")!.getCell("B1").fill).toMatchObject({
+      fgColor: { argb: "FFF7EADC" },
+    });
   });
   it("returns a useful empty workbook with the status mismatch preserved", async () => {
     const firstPage = {

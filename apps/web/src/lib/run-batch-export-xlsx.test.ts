@@ -53,6 +53,79 @@ const completedClaim: FailureAnalysisClaim = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
+  it.each(
+    (["results", "failure-analysis"] as const).flatMap((template) =>
+      (["round", "final", "all"] as const).flatMap((scope) =>
+        [false, true].map((includesDdt) => ({ template, scope, includesDdt })),
+      ),
+    ),
+  )(
+    "groups $template headers by purpose for $scope exports (DDT=$includesDdt) in both writers",
+    async ({ template, scope, includesDdt }) => {
+      const input = {
+        batchId: "header-colors",
+        template,
+        scope,
+        round: 2,
+        includesDdt,
+        rows: [failedRow],
+        shareLinks: new Map<string, string>(),
+      };
+      const normal = await buildRunBatchExportWorkbook(input);
+      const streamed = await createRunBatchExportWorkbookStream(
+        (async function* () {
+          yield input;
+        })(),
+        new AbortController().signal,
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of streamed.stream) chunks.push(Buffer.from(chunk));
+      expect(await streamed.completed).toBeUndefined();
+      const expectedColors: Readonly<Record<string, string>> = {
+        轮次: "FFE8EEF5",
+        用例路径: "FFE8EFF8",
+        名称: "FFE8EFF8",
+        用例编号: "FFE8EFF8",
+        用例名称: "FFE8EFF8",
+        CaseName: "FFE4F0EE",
+        SRID: "FFE4F0EE",
+        执行结果: "FFF7EADC",
+        错误描述: "FFF7EADC",
+        失败堆栈: "FFF7EADC",
+        执行开始时间: "FFEEE9F5",
+        执行结束时间: "FFEEE9F5",
+        "执行耗时(s)": "FFEEE9F5",
+        分析责任人: "FFEBF0E2",
+        分析结果: "FFEBF0E2",
+        问题根因: "FFEBF0E2",
+        备注: "FFEBF0E2",
+        问题单号或用例修改证明: "FFF7F0D9",
+        重跑通过截图: "FFF7F0D9",
+        日志链接: "FFE5EFF3",
+        用例日志链接: "FFE5EFF3",
+      };
+      for (const bytes of [normal.buffer, Buffer.concat(chunks)]) {
+        const sheet = (await loadWorkbook(bytes)).worksheets[0]!;
+        const colors = new Set<string>();
+        sheet.getRow(1).eachCell((cell) => {
+          const color = expectedColors[cell.text];
+          expect(color, cell.text).toBeDefined();
+          expect(cell.fill, cell.text).toMatchObject({
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: color },
+          });
+          expect(cell.font).toMatchObject({ bold: true, color: { argb: "FF334155" } });
+          expect(cell.alignment).toMatchObject({ horizontal: "center", vertical: "middle" });
+          colors.add(color!);
+        });
+        expect(colors.size).toBeGreaterThanOrEqual(4);
+        expect(sheet.getRow(1).height).toBe(28);
+        expect(sheet.getRow(2).height).toBe(template === "results" ? 22 : 20);
+        expect(sheet.getCell("A2").fill).toMatchObject({ fgColor: { argb: "FFFFFFFF" } });
+      }
+    },
+  );
   it.each(["results", "failure-analysis"] as const)(
     "keeps DDT columns across %s pages when the first page contains only a standard case",
     async (template) => {
@@ -369,7 +442,7 @@ describe("buildRunBatchExportWorkbook", () => {
     });
     expect(sheet!.getRow(1).getCell(1).fill).toMatchObject({
       type: "pattern",
-      fgColor: { argb: "FFE8EEF5" },
+      fgColor: { argb: "FFE8EFF8" },
     });
 
     const dataRow = sheet!.getRow(2);
@@ -418,7 +491,7 @@ describe("buildRunBatchExportWorkbook", () => {
     const workbook = await loadWorkbook(result.buffer);
     const sheet = workbook.getWorksheet("执行结果")!;
     expect(sheet.getRow(1).values).toContain("执行结果");
-    expect(sheet.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EEF5" } });
+    expect(sheet.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EFF8" } });
     expect(sheet.getCell("C2").fill).toMatchObject({ fgColor: { argb: "FFFEF2F2" } });
     expect(sheet.getCell("G2").value).toBe(60);
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1, showGridLines: false });

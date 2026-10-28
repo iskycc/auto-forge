@@ -17,17 +17,17 @@ import { runBatchStatusLabel } from "./run-batch-presentation";
 
 const MAXIMUM_SHEET_RECORDS = 1_048_575;
 const EXCEPTION_COLUMNS = [
-  { header: "轮次", minimum: 8, maximum: 10 },
-  { header: "步骤", minimum: 16, maximum: 18 },
-  { header: "尝试", minimum: 8, maximum: 10 },
-  { header: "用例名称", minimum: 20, maximum: 36 },
-  { header: "用例类路径", minimum: 28, maximum: 52 },
-  { header: "异常类型", minimum: 16, maximum: 20 },
-  { header: "原因码", minimum: 24, maximum: 38 },
-  { header: "说明", minimum: 36, maximum: 64 },
-  { header: "判定影响", minimum: 14, maximum: 16 },
-  { header: "发生时间", minimum: 26, maximum: 26 },
-  { header: "原始时间（UTC）", minimum: 28, maximum: 28 },
+  { header: "轮次", group: "neutral", minimum: 8, maximum: 10 },
+  { header: "步骤", group: "neutral", minimum: 16, maximum: 18 },
+  { header: "尝试", group: "neutral", minimum: 8, maximum: 10 },
+  { header: "用例名称", group: "identity", minimum: 20, maximum: 36 },
+  { header: "用例类路径", group: "identity", minimum: 28, maximum: 52 },
+  { header: "异常类型", group: "result", minimum: 16, maximum: 20 },
+  { header: "原因码", group: "result", minimum: 24, maximum: 38 },
+  { header: "说明", group: "result", minimum: 36, maximum: 64 },
+  { header: "判定影响", group: "result", minimum: 14, maximum: 16 },
+  { header: "发生时间", group: "time", minimum: 26, maximum: 26 },
+  { header: "原始时间（UTC）", group: "time", minimum: 28, maximum: 28 },
 ] as const;
 
 type ExceptionWorkbookInput = {
@@ -96,7 +96,10 @@ async function writeWorkbook(
     sheet.columns = definitions;
     sheet.autoFilter = { from: "A1", to: "K1" };
     const header = sheet.getRow(1);
-    styleExportHeader(header);
+    styleExportHeader(
+      header,
+      EXCEPTION_COLUMNS.map((column) => column.group),
+    );
     header.commit();
     return sheet;
   }
@@ -164,7 +167,7 @@ function writeExceptionOverview(
     { header: "内容", width: 64 },
   ];
   const overviewHeader = overview.getRow(1);
-  styleExportHeader(overviewHeader);
+  styleExportHeader(overviewHeader, ["identity", "result"]);
   overviewHeader.commit();
   for (const cells of [
     ["批次编号", firstPage.batchId],

@@ -40,32 +40,32 @@ import {
 
 const LOG_LINK_COLUMN_WIDTH = { minimum: 64, maximum: 120 } as const;
 const DDT_EXPORT_COLUMNS = [
-  { header: "CaseName", minimum: 18, maximum: 36 },
-  { header: "SRID", minimum: 16, maximum: 32 },
+  { header: "CaseName", group: "metadata", minimum: 18, maximum: 36 },
+  { header: "SRID", group: "metadata", minimum: 16, maximum: 32 },
 ] as const;
 
 const EXPORT_COLUMNS = [
-  { header: "用例路径", minimum: 28, maximum: 52 },
-  { header: "名称", minimum: 18, maximum: 36 },
-  { header: "执行结果", minimum: 10, maximum: 18 },
-  { header: "错误描述", minimum: 24, maximum: 52 },
-  { header: "执行开始时间", minimum: 26, maximum: 26 },
-  { header: "执行结束时间", minimum: 26, maximum: 26 },
-  { header: "执行耗时(s)", minimum: 14, maximum: 16 },
-  { header: "日志链接", ...LOG_LINK_COLUMN_WIDTH },
+  { header: "用例路径", group: "identity", minimum: 28, maximum: 52 },
+  { header: "名称", group: "identity", minimum: 18, maximum: 36 },
+  { header: "执行结果", group: "result", minimum: 10, maximum: 18 },
+  { header: "错误描述", group: "result", minimum: 24, maximum: 52 },
+  { header: "执行开始时间", group: "time", minimum: 26, maximum: 26 },
+  { header: "执行结束时间", group: "time", minimum: 26, maximum: 26 },
+  { header: "执行耗时(s)", group: "time", minimum: 14, maximum: 16 },
+  { header: "日志链接", group: "link", ...LOG_LINK_COLUMN_WIDTH },
 ] as const;
 
-const FAILURE_ANALYSIS_HEADERS = [
-  "用例编号",
-  "用例名称",
-  "失败堆栈",
-  "分析责任人",
-  "分析结果",
-  "问题根因",
-  "问题单号或用例修改证明",
-  "重跑通过截图",
-  "备注",
-  "用例日志链接",
+const FAILURE_ANALYSIS_COLUMNS = [
+  { header: "用例编号", group: "identity" },
+  { header: "用例名称", group: "identity" },
+  { header: "失败堆栈", group: "result" },
+  { header: "分析责任人", group: "analysis" },
+  { header: "分析结果", group: "analysis" },
+  { header: "问题根因", group: "analysis" },
+  { header: "问题单号或用例修改证明", group: "evidence" },
+  { header: "重跑通过截图", group: "evidence" },
+  { header: "备注", group: "analysis" },
+  { header: "用例日志链接", group: "link" },
 ] as const;
 
 export const FAILURE_ANALYSIS_RESULTS = ["重跑通过", "用例问题已修改", "代码问题已提单"] as const;
@@ -228,7 +228,9 @@ function buildExecutionResultsSheet(
   const includeRound = input.scope === "all";
   const timestampFormatter = exportTimestampFormatter(input);
   const columns = [
-    ...(includeRound ? [{ header: "轮次", minimum: 6, maximum: 8 }] : []),
+    ...(includeRound
+      ? [{ header: "轮次", group: "neutral" as const, minimum: 6, maximum: 8 }]
+      : []),
     ...EXPORT_COLUMNS.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
     ...EXPORT_COLUMNS.slice(2),
@@ -249,7 +251,10 @@ function buildExecutionResultsSheet(
     ),
   }));
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
-  styleExportHeader(sheet.getRow(1));
+  styleExportHeader(
+    sheet.getRow(1),
+    columns.map((column) => column.group),
+  );
 
   return sheet;
 }
@@ -305,7 +310,8 @@ function buildFailureAnalysisSheet(
   name = "失败用例分析清单",
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(name, exportWorksheetOptions(2));
-  const headers = exportHeaders(input);
+  const columns = exportColumns(input);
+  const headers = columns.map((column) => column.header);
   const logColumnIndex = headers.length - 1;
   const logColumnWidth = exportColumnWidth(
     headers[logColumnIndex]!,
@@ -336,7 +342,10 @@ function buildFailureAnalysisSheet(
     width: index === logColumnIndex ? logColumnWidth : widths[index]!,
   }));
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
-  styleExportHeader(sheet.getRow(1));
+  styleExportHeader(
+    sheet.getRow(1),
+    columns.map((column) => column.group),
+  );
 
   return sheet;
 }
@@ -398,15 +407,20 @@ function emptyExportValidationReport(): ExportValidationReport {
 function exportHeaders(
   input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt">,
 ): readonly string[] {
-  const headers =
-    input.template === "failure-analysis"
-      ? FAILURE_ANALYSIS_HEADERS
-      : EXPORT_COLUMNS.map((column) => column.header);
+  return exportColumns(input).map((column) => column.header);
+}
+
+function exportColumns(
+  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt">,
+) {
+  const columns = input.template === "failure-analysis" ? FAILURE_ANALYSIS_COLUMNS : EXPORT_COLUMNS;
   return [
-    ...(input.template !== "failure-analysis" && input.scope === "all" ? ["轮次"] : []),
-    ...headers.slice(0, 2),
-    ...(input.includesDdt ? DDT_EXPORT_COLUMNS.map((column) => column.header) : []),
-    ...headers.slice(2),
+    ...(input.template !== "failure-analysis" && input.scope === "all"
+      ? [{ header: "轮次", group: "neutral" as const }]
+      : []),
+    ...columns.slice(0, 2),
+    ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
+    ...columns.slice(2),
   ];
 }
 
@@ -493,7 +507,15 @@ function exportWorkbookRows(
         { header: "字段与问题", width: 88 },
       ];
       issueSheet.autoFilter = { from: "A1", to: "G1" };
-      styleExportHeader(issueSheet.getRow(1));
+      styleExportHeader(issueSheet.getRow(1), [
+        "neutral",
+        "identity",
+        "identity",
+        "neutral",
+        "identity",
+        "identity",
+        "result",
+      ]);
       options.commitRow?.(issueSheet.getRow(1));
     }
     const excluded = issueSheet.addRow([

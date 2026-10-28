@@ -28,6 +28,31 @@ Excel 下载统一按“业务名称_清单用途_导出范围_批次编号_导�
 
 该规则只改变上述 Excel 文件的下载名称，不新增数据库查询、不改变数据筛选、行列、工作簿样式、公开授权或流式分页。Lite/Full 共享命名实现；CSV/JSON 分析导出、原始日志和上传文件保持各自现有名称。
 
+## 表头区域配色
+
+执行结果、失败用例分析清单和执行异常原因的 Excel 表头按字段用途分区，相邻的同类字段使用同一底色；同一字段在不同导出范围和模板中保持一致。不采用逐列随机配色，标题统一使用深灰色加粗文字。
+
+| 字段区域       | 底色                 | 适用字段示例                       |
+| -------------- | -------------------- | ---------------------------------- |
+| 用例身份       | 雾蓝 `#E8EFF8`       | 用例路径、编号、名称               |
+| DDT 原始字段   | 浅青绿 `#E4F0EE`     | CaseName、SRID                      |
+| 执行结果及异常 | 浅杏 `#F7EADC`       | 执行结果、错误描述、失败堆栈、原因码 |
+| 执行时间       | 淡紫 `#EEE9F5`       | 开始/结束时间、耗时、异常发生时间   |
+| 分析内容       | 浅鼠尾草绿 `#EBF0E2` | 分析责任人、分析结果、问题根因、备注 |
+| 证明材料       | 浅米黄 `#F7F0D9`     | 问题单号或用例修改证明、重跑通过截图 |
+| 日志入口       | 浅灰青 `#E5EFF3`     | 日志链接、用例日志链接               |
+
+轮次、步骤、尝试等定位字段保留浅灰蓝底色。异常原因的“判定概览”和数据校验失败后的“排除明细”也按身份、结果等区域区分。配色属于静态列定义，纯普通、全 DDT、混合任务和空表均使用相同规则；可选轮次列、DDT 列插入和流式分表不会使颜色错位。
+
+Lite/Full 共用同一生成器，仅表头底色变化，现有列顺序、宽度、行高、正文条纹、状态色、筛选、冻结、超链接、分析下拉和导出校验保持原有规则。任务成员清单、DDT 原始用例与 SR 标签等非执行结果模板继续使用原表头样式。
+
+### 2026-10-28 验证
+
+- 修改实现前，新增的 12 个执行结果/分析场景和 1 个异常导出场景均复现单色表头；修改后 `pnpm exec vitest run apps/web/src/lib/run-batch-export-xlsx.test.ts apps/web/src/lib/run-batch-export-file.test.ts apps/web/src/lib/run-batch-export-safety.test.ts apps/web/src/lib/execution-exceptions-export-xlsx.test.ts apps/web/src/lib/run-batch-export-api.test.ts apps/web/src/lib/execution-exceptions-export-api.test.ts apps/web/src/lib/ddt-export-xlsx.test.ts apps/web/src/lib/case-suite-export-xlsx.test.ts apps/web/src/lib/sr-tag-export.test.ts apps/web/src/lib/table-column-width.test.ts --maxWorkers=1 --no-file-parallelism`：10 个文件、97 项通过。覆盖两种写入方式、三种轮次范围、可选 DDT 列、实际颜色读回、排除明细、异常概览、跨页和超链接分表，以及非执行模板的兼容性。
+- `pnpm exec playwright test tests/e2e/ui-layout.spec.ts --grep='execution exports preserve DDT|execution export dialog' --workers=1`：独立 Lite 生产服务的两个场景通过。实际下载纯普通及混合任务的执行结果、分析清单，核对表头区域与 DDT 字段对应、数据、时区、分析下拉、筛选、日志和导出失败后重试。
+- 四份真实下载文件通过 ZIP CRC、全部 XML/关系部件解析与官方 ECMA 基础工作表/样式/工作簿 XSD 校验，并以 LibreOffice 打开后导出 PDF。已实际查看四份渲染图，以及 Playwright 的 1024×768、1536×960 和大屏深色截图，表头配色柔和，页面操作区域无新增错位或溢出；未使用 Microsoft Excel 桌面客户端验收。
+- `pnpm format:check`、受影响文件 ESLint、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm --filter @autoforge/web build`、`pnpm test:e2e:matrix` 和 `git diff --check` 通过。重检查串行限制到单核；没有适配器语义、数据库迁移、配置或 Runner 变更，本次未运行 Full 整栈或真实 Runner 验收。
+
 ## 列宽规则
 
 执行结果列宽使用 Excel 字符宽度单位：

@@ -1131,6 +1131,20 @@ test("execution exports preserve DDT CaseName and SRID while leaving mixed stand
       "CaseName",
       "SRID",
     ]);
+    for (const [names, color] of [
+      [[template === "results" ? "用例路径" : "用例编号"], "FFE8EFF8"],
+      [["CaseName", "SRID"], "FFE4F0EE"],
+      [[template === "results" ? "错误描述" : "失败堆栈"], "FFF7EADC"],
+      [
+        [template === "results" ? "执行开始时间" : "分析结果"],
+        template === "results" ? "FFEEE9F5" : "FFEBF0E2",
+      ],
+      [[template === "results" ? "日志链接" : "用例日志链接"], "FFE5EFF3"],
+    ] as const)
+      for (const name of names)
+        expect(sheet.getCell(1, headers.indexOf(name)).fill).toMatchObject({
+          fgColor: { argb: color },
+        });
     expect(sheet.rowCount).toBe(5);
     const valuesByName = new Map<string, [unknown, unknown]>();
     sheet.eachRow((row, index) => {

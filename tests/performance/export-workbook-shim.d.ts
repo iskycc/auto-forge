@@ -28,6 +28,7 @@ declare module "exceljs" {
     value: unknown;
     hyperlink?: string;
     dataValidation: { type?: string };
+    fill: { type: "pattern" | "gradient"; fgColor?: { argb?: string } };
   };
   type ExportedRow = {
     values: unknown[];

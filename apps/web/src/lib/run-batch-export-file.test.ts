@@ -135,6 +135,10 @@ describe("complete private export files", () => {
     expect(workbook.getWorksheet("失败用例分析清单")!.rowCount).toBe(1);
     expect(workbook.getWorksheet("排除明细")!.rowCount).toBe(104);
     expect(workbook.getWorksheet("排除明细")!.getCell("B104").value).toBe("bad-102");
+    const issueSheet = workbook.getWorksheet("排除明细")!;
+    expect(issueSheet.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFE8EEF5" } });
+    expect(issueSheet.getCell("B1").fill).toMatchObject({ fgColor: { argb: "FFE8EFF8" } });
+    expect(issueSheet.getCell("G1").fill).toMatchObject({ fgColor: { argb: "FFF7EADC" } });
   });
   it("does not finish file preparation when the client has already cancelled", async () => {
     controller.abort(new Error("user cancelled"));
