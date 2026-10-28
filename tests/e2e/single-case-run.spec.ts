@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import type { ClaimAssignmentsResponse } from "@autoforge/contracts";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { selectJarForInspection } from "./support/jar-import";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 import { expectUiIntegrity } from "./support/ui-guard";
 import { expectLogCaseDetail } from "./support/log-case-detail";
@@ -1063,7 +1064,7 @@ async function importCases(
     }).toString()}`,
   );
   await expect(page.locator(".global-project-switcher")).toContainText(project.name);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "single-case-fixture.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),

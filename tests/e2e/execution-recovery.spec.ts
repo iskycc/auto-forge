@@ -9,6 +9,7 @@ import { expectUiIntegrity } from "./support/ui-guard";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { selectJarForInspection } from "./support/jar-import";
 import {
   browserJson,
   ensureAdministrator,
@@ -707,9 +708,7 @@ async function createExecutableFixture(page: Page, caseCount = 1): Promise<Execu
     }).toString()}`,
   );
   await expect(page.locator(".global-project-switcher")).toContainText(project.body.name);
-  const jarInput = page.locator('input[type="file"]');
-  await expect(jarInput).toBeEnabled();
-  await jarInput.setInputFiles({
+  await selectJarForInspection(page, {
     name: "execution-recovery.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),

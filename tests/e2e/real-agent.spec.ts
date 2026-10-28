@@ -728,9 +728,7 @@ async function exerciseFailedJarImportRetry(page: Page, controlDirectory: string
   entries[`full-failure-${Date.now()}.txt`] = new TextEncoder().encode("failure retry fixture");
   const jar = zipSync(entries);
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  const fileInput = page.locator('input[type="file"]');
-  await expect(fileInput).toBeEnabled();
-  await fileInput.setInputFiles({
+  await selectJarForInspection(page, {
     name: "real-agent-full-retry.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),

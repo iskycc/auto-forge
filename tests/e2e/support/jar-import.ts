@@ -14,6 +14,8 @@ export async function selectJarForInspection(page: Page, payload: JarFilePayload
   const fileInput = jarImportFileInput(page);
   const inspectButton = page.getByRole("button", { name: "扫描测试类" });
 
+  // setInputFiles bypasses disabled inputs; React must have attached its change handler.
+  await expect(fileInput).toBeEnabled();
   await expect(async () => {
     await fileInput.setInputFiles([]);
     await fileInput.setInputFiles(payload);

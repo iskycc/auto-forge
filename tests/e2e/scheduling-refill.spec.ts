@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { selectJarForInspection } from "./support/jar-import";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -435,7 +436,7 @@ test("completion immediately refills free runner slots without waiting for the w
     ),
   );
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "refill-tests.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),
