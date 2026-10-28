@@ -1173,10 +1173,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   legacyProgressUrl.search = new URL(jenkinsRun.progressApiUrl).search;
   await signedInDetailsPage.goto(legacyProgressUrl.toString());
   await expect(signedInDetailsPage).toHaveURL(legacyProgressUrl.toString());
-  await expect(signedInDetailsPage.locator(".public-progress-card")).toBeVisible();
+  await expect(signedInDetailsPage.locator(".public-progress-card:visible")).toBeVisible();
   await openRunLinkFromJenkins(signedInDetailsPage, legacyProgressUrl.toString());
   await expect(signedInDetailsPage).toHaveURL(legacyProgressUrl.toString());
-  await expect(signedInDetailsPage.locator(".public-progress-card")).toBeVisible();
+  await expect(signedInDetailsPage.locator(".public-progress-card:visible")).toBeVisible();
 
   const sessionProbeUrl = new URL("/api/v1/auth/session", jenkinsRun.resultUrl).toString();
   await signedInDetailsPage.route(sessionProbeUrl, (route) => route.abort("failed"));

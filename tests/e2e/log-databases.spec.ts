@@ -11,7 +11,8 @@ test("log database settings isolate Full payloads, switch live and preserve hist
   page,
 }, testInfo) => {
   await ensureAdministrator(page);
-  const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  const dataDirectory =
+    process.env.AUTOFORGE_E2E_PLATFORM_CONFIG_DIR ?? process.env.AUTOFORGE_E2E_DATA_DIR;
   if (!dataDirectory) throw new Error("E2E platform directory is required.");
   const configuration = new PlatformConfigurationStore(dataDirectory).read();
   await page.goto("/settings/platform?section=logs");

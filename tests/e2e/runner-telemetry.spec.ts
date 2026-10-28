@@ -112,10 +112,13 @@ test("Runner disk warnings cover all pages, respect the 20% boundary and refresh
         await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
         await page.goto(`/runners?query=${encodeURIComponent(prefix)}`);
         const warning = page.getByRole("button", { name: "磁盘空间不足：6 台节点" });
+        const pagination = page.getByLabel("执行机分页", { exact: true });
+        await expect(pagination).toBeVisible();
+        await expect(warning).toBeVisible();
         await page.evaluate(() =>
           window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" }),
         );
-        const paginationBounds = await page.getByLabel("执行机分页", { exact: true }).boundingBox();
+        const paginationBounds = await pagination.boundingBox();
         const warningBounds = await warning.boundingBox();
         expect(paginationBounds!.y + paginationBounds!.height).toBeLessThan(warningBounds!.y);
         await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));

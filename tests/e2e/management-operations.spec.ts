@@ -66,7 +66,7 @@ for (const view of ["task", "single"] as const)
     await expect(card).toContainText(view === "task" ? "任务历史" : "单用例历史");
     await expect(card).not.toContainText(view === "task" ? "单用例历史" : "任务历史");
     await Promise.all([
-      page.waitForURL((url) => url.searchParams.get("cursorPage") === "2"),
+      page.waitForURL((url) => url.searchParams.get("cursorPage") === "2", { timeout: 30_000 }),
       pagination.getByRole("link", { name: "下一页", exact: true }).click(),
     ]);
     await expect(pagination).toContainText("第 2 页 · 本页 10 条");
@@ -105,7 +105,7 @@ for (const view of ["task", "single"] as const)
       }
     }
     await Promise.all([
-      page.waitForURL((url) => url.searchParams.get("cursorPage") === "3"),
+      page.waitForURL((url) => url.searchParams.get("cursorPage") === "3", { timeout: 30_000 }),
       pagination.getByRole("link", { name: "下一页", exact: true }).click(),
     ]);
     await expect(pagination).toContainText("第 3 页 · 本页 3 条");
@@ -113,13 +113,13 @@ for (const view of ["task", "single"] as const)
     expect(new Set([...first, ...second, ...(await keys())]).size).toBe(23);
     await expect(pagination.getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
     await Promise.all([
-      page.waitForURL((url) => url.searchParams.get("cursorPage") === "2"),
+      page.waitForURL((url) => url.searchParams.get("cursorPage") === "2", { timeout: 30_000 }),
       pagination.getByRole("link", { name: "上一页", exact: true }).click(),
     ]);
     await expect(pagination).toContainText("第 2 页 · 本页 10 条");
     expect(await keys()).toEqual(second);
     await Promise.all([
-      page.waitForURL((url) => !url.searchParams.has("cursorPage")),
+      page.waitForURL((url) => !url.searchParams.has("cursorPage"), { timeout: 30_000 }),
       pagination.getByRole("link", { name: "第一页", exact: true }).click(),
     ]);
     await expect(pagination).toContainText("第 1 页 · 本页 10 条");

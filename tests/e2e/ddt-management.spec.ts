@@ -2582,7 +2582,9 @@ test("DDT split workspace loads details on demand and keeps field edits and navi
   await expect(page).toHaveURL(/ddtGroup=AUTH/u);
   await details.getByRole("button", { name: "取消", exact: true }).click();
   await selectDdtGroup(navigation, "PAYMENT");
+  await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
   await selectDdtGroup(navigation, "AUTH");
+  await expect(details.getByRole("heading", { name: "CASE-000", exact: true })).toBeVisible();
   await page.goBack();
   await expect(details.getByRole("heading", { name: "CASE-061", exact: true })).toBeVisible();
   await navigation.getByLabel("搜索 DDT 用例").fill("DOES-NOT-EXIST");

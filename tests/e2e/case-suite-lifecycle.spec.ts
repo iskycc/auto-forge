@@ -2006,7 +2006,7 @@ test("a terminal task with no failures copies its unexecuted members into a new 
       await action.click();
       const dialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
       await expect(dialog).toContainText("未通过的 2 个用例");
-      await expect(dialog).toContainText("包含未执行、失败、超时、取消等结果");
+      await expect(dialog).toContainText("包含未执行、失败、超时、取消、执行异常等非 Pass 结果");
       await expectUiIntegrity(page);
       await captureUi(page, `non-pass-task-dialog-${theme}-${width}`);
       await dialog.getByRole("button", { name: "取消", exact: true }).click();
