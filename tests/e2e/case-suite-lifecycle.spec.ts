@@ -2136,8 +2136,13 @@ test("terminal execution failures create a reusable task with the execution conf
             leaseToken: claim.lease.token,
             result: {
               status,
-              resultCode: status === "timed_out" ? "EXECUTION_TIMEOUT" : "TESTNG_RESULT",
-              summary: status,
+              resultCode:
+                status === "timed_out"
+                  ? "EXECUTION_TIMEOUT"
+                  : status === "failed"
+                    ? "PROCESS_INTERRUPTED"
+                    : "TESTNG_RESULT",
+              summary: status === "failed" ? "TestNG exited with code 143." : status,
               durationMs: 100,
               logWatermarks: { stdout: -1, stderr: -1, agent: -1 },
               artifacts: [],
@@ -2181,6 +2186,70 @@ test("terminal execution failures create a reusable task with the execution conf
       await expect(dialog).toBeHidden();
     }
   }
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
+  const errorDialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });
+  await expect(errorDialog.getByLabel("任务名称", { exact: true })).toHaveValue(defaultName);
+  await page.route(
+    `**${endpoint}`,
+    (route) =>
+      route.fulfill({
+        status: 422,
+        json: {
+          error: {
+            code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+            message: "执行配置快照校验失败，无法复制任务，请查看具体字段。",
+            requestId: "failure-copy-diagnostic-request",
+            details: {
+              source: "batch_snapshot",
+              issues: [
+                { field: "concurrency", message: "不能小于 1。" },
+                { field: "adapter.environmentAddresses.0", message: "配置字段类型不正确。" },
+              ],
+            },
+          },
+        },
+      }),
+    { times: 1 },
+  );
+  await errorDialog.getByRole("button", { name: "创建任务", exact: true }).click();
+  await expect(errorDialog.getByRole("alert")).toContainText(
+    "执行批次配置快照 · 并发上限：不能小于 1。",
+  );
+  await expect(errorDialog.getByRole("alert")).toContainText("环境 IP");
+  await expect(errorDialog.getByRole("alert")).toContainText("failure-copy-diagnostic-request");
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureUi(page, `failure-task-error-${theme}-${width}`);
+    }
+    if (theme === "light") {
+      await errorDialog.getByRole("button", { name: "取消", exact: true }).click();
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+      await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
+      await expect(errorDialog.getByLabel("任务名称", { exact: true })).toHaveValue(defaultName);
+      await page.route(
+        `**${endpoint}`,
+        (route) =>
+          route.fulfill({
+            status: 400,
+            json: {
+              error: {
+                code: "VALIDATION_FAILED",
+                message: "请求数据校验失败。",
+                requestId: "failure-copy-name-request",
+                details: [{ code: "too_big", path: ["name"], maximum: 120, message: "Too big" }],
+              },
+            },
+          }),
+        { times: 1 },
+      );
+      await errorDialog.getByRole("button", { name: "创建任务", exact: true }).click();
+      await expect(errorDialog.getByRole("alert")).toContainText("任务名称：不能超过 120");
+    }
+  }
+  await errorDialog.getByRole("button", { name: "取消", exact: true }).click();
   // An open dialog may have an outdated suggestion after another window creates a task.
   await page.getByRole("button", { name: "以未通过用例创建任务", exact: true }).click();
   const defaultDialog = page.getByRole("dialog", { name: "以未通过用例创建任务", exact: true });

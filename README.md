@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- “以未通过用例创建任务”兼容新旧执行配置快照，复制本次实际环境，并保留异常、未执行、超时及取消等全部非 Pass 范围；创建失败时展示具体配置字段、不可用用例与请求编号，详见[未通过用例任务复制](./docs/architecture/failure-case-suite-naming.md)。
+
 - 任务公开执行页展示全部环境 IP，登录后可修改本次立即／倒计时执行的环境，提交后恢复任务默认地址，不改变任务原配置；当前批次、历史批次和执行详情展示实际执行快照中的多环境地址，详见[任务公开执行](./docs/architecture/public-task-execution.md)。
 
 - Full 可选[独立 PostgreSQL 日志库](./deploy/compose/full-bind/log-postgres/README.md)，在“平台设置 → 日志数据库”登记多个库并实时选择新批次写入库；主库持久化每批次库 ID，历史和在途日志按原库读取，旧本地日志保持兼容。日志数据库与业务数据库分开部署，连接串加密保存，具体语义见 [ADR 0015](./docs/adr/0015-full-postgresql-log-databases.md)。

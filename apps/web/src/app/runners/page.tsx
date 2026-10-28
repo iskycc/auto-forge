@@ -380,13 +380,15 @@ export default async function RunnersPage({
           </div>
         )}
         {pageCount > 1 ? (
-          <PagePagination
-            label="执行机分页"
-            current={currentPage}
-            total={filteredRunners.length}
-            pageSize={pageSize}
-            href={runnerPageHref(parameters, currentPage)}
-          />
+          <div className={pageStyles["runner-list-pagination"]}>
+            <PagePagination
+              label="执行机分页"
+              current={currentPage}
+              total={filteredRunners.length}
+              pageSize={pageSize}
+              href={runnerPageHref(parameters, currentPage)}
+            />
+          </div>
         ) : null}
       </Card>
     </div>
@@ -449,7 +451,8 @@ const pageStyles = {
   "has-runners":
     "[&_.runner-installer-launcher]:py-3 [&_.runner-installer-launcher]:px-4 [&_.runner-installer-heading_:is(.eyebrow,_p,_.settings-icon)]:hidden [&_.runner-installer-heading_h2]:m-0 [&_.runner-installer-heading_h2]:text-sm",
   "live-dot": "w-2 h-2 rounded-full bg-success shadow-xs",
-  pagination: "flex justify-end py-3.5 px-4.5 border-t border-solid border-border",
+  "runner-list-pagination":
+    "flex min-w-0 flex-wrap items-center justify-end gap-3 border-t border-solid border-border px-4.5 py-3.5",
   "runner-list": "grid gap-[7px] py-2.5 px-3",
   "runner-list-actions":
     "flex min-w-0 items-center flex-wrap justify-end gap-2 border-l border-solid border-border pl-3 max-[1281px]:col-span-full max-[1281px]:border-l-0 max-[1281px]:pl-0",

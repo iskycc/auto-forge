@@ -4,6 +4,107 @@ import { expect, test } from "@playwright/test";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { insertRunnerPaginationFixture } from "./support/runner-pagination-fixture";
+
+test("Runner pagination stays aligned with more than one page and preserves the node filter", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const prefix = uniqueName("runner-pages");
+  const fixture = insertRunnerPaginationFixture(process.env.AUTOFORGE_E2E_DATA_DIR!, prefix);
+  try {
+    for (const [suffix, count] of [
+      ["ten", 10],
+      ["twelve", 12],
+    ] as const) {
+      await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-${suffix}`)}`);
+      await expect(page.locator(".runner-list-item")).toHaveCount(count);
+      await expect(page.getByLabel("执行机分页", { exact: true })).toHaveCount(0);
+    }
+    await page.goto(`/runners?query=${encodeURIComponent(`${prefix}-thirteen`)}`);
+    await expect(page.getByLabel("执行机分页", { exact: true })).toContainText("共 13 条");
+
+    for (const theme of ["light", "dark"] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+        ]);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.goto(`/runners?query=${encodeURIComponent(prefix)}`);
+        const pagination = page.getByLabel("执行机分页", { exact: true });
+        await expect(page.locator(".runner-list-item")).toHaveCount(12);
+        await expect(pagination).toContainText("共 26 条 · 1–12");
+        await expect(
+          page.getByRole("button", { name: /^查看 .* 的资源监控$/ }).first(),
+        ).toBeEnabled();
+        await pagination.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: testInfo.outputPath(`runner-pagination-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+        const geometry = await pagination.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          const card = element.closest(".runner-list-card")!.getBoundingClientRect();
+          const controls = Array.from(
+            element.querySelectorAll(
+              ".ant-pagination-item, .ant-pagination-prev, .ant-pagination-next",
+            ),
+            (control) => {
+              const rect = control.getBoundingClientRect();
+              return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+            },
+          );
+          return {
+            height: bounds.height,
+            leftInset: bounds.left - card.left,
+            rightInset: card.right - bounds.right,
+            controls,
+          };
+        });
+        await testInfo.attach(`pagination-geometry-${theme}-${width}`, {
+          body: JSON.stringify(geometry),
+          contentType: "application/json",
+        });
+        expect(geometry.height).toBeLessThanOrEqual(48);
+        expect(geometry.leftInset).toBeGreaterThanOrEqual(12);
+        expect(geometry.rightInset).toBeGreaterThanOrEqual(12);
+        for (const control of geometry.controls) {
+          expect(control.width).toBeGreaterThanOrEqual(32);
+          expect(control.height).toBeGreaterThanOrEqual(32);
+          expect(Math.abs(control.top - geometry.controls[0]!.top)).toBeLessThanOrEqual(1);
+        }
+        await expectUiIntegrity(page);
+        await pagination.getByTitle("下一页", { exact: true }).click();
+        await expect(page).toHaveURL(
+          (url) => url.searchParams.get("page") === "2" && url.searchParams.get("query") === prefix,
+        );
+        await expect(pagination).toContainText("共 26 条 · 13–24");
+        await expect(page.locator(".runner-list-item")).toHaveCount(12);
+        await pagination.getByTitle("3", { exact: true }).click();
+        await expect(pagination).toContainText("共 26 条 · 25–26");
+        await expect(page.locator(".runner-list-item")).toHaveCount(2);
+        await expect(
+          page.getByRole("button", { name: /^查看 .* 的资源监控$/ }).first(),
+        ).toBeEnabled();
+        await pagination.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: testInfo.outputPath(`runner-pagination-last-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+        await expectUiIntegrity(page);
+        await pagination.getByTitle("上一页", { exact: true }).click();
+        await expect(pagination).toContainText("共 26 条 · 13–24");
+        await page.reload();
+        await expect(page.locator(".runner-list-item")).toHaveCount(12);
+        await expect(pagination).toContainText("共 26 条 · 13–24");
+      }
+    }
+  } finally {
+    fixture.dispose();
+  }
+});
 
 test("Runner terminal sends function keys once and cancels browser actions only inside xterm", async ({
   page,

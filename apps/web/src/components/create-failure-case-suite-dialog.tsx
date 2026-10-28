@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import { Button, Input } from "@/components/ui";
 import { Notice } from "@/components/ui/notice";
-import { readApiErrorMessage } from "@/lib/client-api";
+import { throwApiErrorResponse } from "@/lib/client-api";
+import { failureCaseSuiteError, type FailureCaseSuiteError } from "@/lib/failure-case-suite-error";
 
 export function CreateFailureCaseSuiteDialog({
   batchId,
@@ -31,7 +32,7 @@ export function CreateFailureCaseSuiteDialog({
   const [pendingAction, setPendingAction] = useState<"create" | "execute">();
   const [createdSuiteId, setCreatedSuiteId] = useState<string>();
   const submitting = useRef(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<FailureCaseSuiteError>();
   const pending = pendingAction !== undefined;
 
   useEffect(() => {
@@ -46,15 +47,13 @@ export function CreateFailureCaseSuiteDialog({
           },
         );
         if (!response.ok)
-          throw new Error(
-            (await readApiErrorMessage(response, "生成任务名称失败，请填写任务名称。"))!,
-          );
+          await throwApiErrorResponse(response, "生成任务名称失败，请填写任务名称。");
         const suggestion = (await response.json()) as { name?: string };
         if (!suggestion.name) throw new Error("平台未返回建议任务名称，请填写任务名称。");
         if (!customName.current) setName(suggestion.name);
       } catch (cause) {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "生成任务名称失败，请填写任务名称。");
+          setError(failureCaseSuiteError(cause, "生成任务名称失败，请填写任务名称。"));
       } finally {
         if (!controller.signal.aborted) setLoadingName(false);
       }
@@ -72,8 +71,7 @@ export function CreateFailureCaseSuiteDialog({
         body: JSON.stringify(customName.current ? { name: name.trim() } : {}),
       },
     );
-    if (!response.ok)
-      throw new Error((await readApiErrorMessage(response, "以未通过用例创建任务失败。"))!);
+    if (!response.ok) await throwApiErrorResponse(response, "以未通过用例创建任务失败。");
     const suite = (await response.json()) as { id?: string; name?: string };
     if (!suite.id) throw new Error("平台未返回新任务标识。");
     if (suite.name) setName(suite.name);
@@ -87,13 +85,12 @@ export function CreateFailureCaseSuiteDialog({
       body: JSON.stringify({ suiteId, delaySeconds: 0 }),
     };
     const preflightResponse = await fetch("/api/v1/run-batches/preflight", request);
-    if (!preflightResponse.ok)
-      throw new Error((await readApiErrorMessage(preflightResponse, "执行配置预检失败。"))!);
+    if (!preflightResponse.ok) await throwApiErrorResponse(preflightResponse, "执行配置预检失败。");
     const preflight = (await preflightResponse.json()) as RunBatchPreflightResult;
     if (!preflight.ready)
       throw new Error(preflight.blockers.map((blocker) => blocker.message).join("；"));
     const response = await fetch("/api/v1/run-batches", request);
-    if (!response.ok) throw new Error((await readApiErrorMessage(response, "立即执行任务失败。"))!);
+    if (!response.ok) await throwApiErrorResponse(response, "立即执行任务失败。");
     const batch = (await response.json()) as { id?: string };
     if (!batch.id) throw new Error("平台未返回新执行批次标识。");
     return batch.id;
@@ -102,12 +99,12 @@ export function CreateFailureCaseSuiteDialog({
   async function submit(action: "create" | "execute"): Promise<void> {
     if (submitting.current || loadingName || (action === "execute" && !canCreateRuns)) return;
     if (!name.trim()) {
-      setError("请填写任务名称。");
+      setError({ message: "请填写任务名称。", details: [] });
       return;
     }
     submitting.current = true;
     setPendingAction(action);
-    setError("");
+    setError(undefined);
     let suiteId = createdSuiteId;
     try {
       if (!suiteId) {
@@ -117,8 +114,11 @@ export function CreateFailureCaseSuiteDialog({
       if (action === "create") onCreated(suiteId);
       else onStarted(await startTask(suiteId));
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "以未通过用例创建任务失败。";
-      setError(suiteId ? `任务已创建，但立即执行失败：${message}` : message);
+      const problem = failureCaseSuiteError(cause, "以未通过用例创建任务失败。");
+      setError({
+        ...problem,
+        message: suiteId ? `任务已创建，但立即执行失败：${problem.message}` : problem.message,
+      });
     } finally {
       submitting.current = false;
       setPendingAction(undefined);
@@ -190,7 +190,8 @@ export function CreateFailureCaseSuiteDialog({
           <span className="text-muted-foreground">来源任务</span>
           <strong className="font-medium [overflow-wrap:anywhere]">{suiteName}</strong>
           <span className="text-muted-foreground">
-            用例范围：未通过 {nonPassedCount} 个，包含未执行、失败、超时、取消等结果。
+            用例范围：未通过 {nonPassedCount} 个，包含未执行、失败、超时、取消、执行异常等非 Pass
+            结果。
           </span>
         </div>
         <p className="m-0 text-sm leading-6 text-muted-foreground">
@@ -201,7 +202,19 @@ export function CreateFailureCaseSuiteDialog({
         ) : null}
         {error ? (
           <Notice tone="error" role="alert">
-            {error}
+            <div className="grid min-w-0 gap-2 text-sm [overflow-wrap:anywhere]">
+              <span>{error.message}</span>
+              {error.details.length ? (
+                <ul className="m-0 grid max-h-40 gap-1 overflow-y-auto pl-4">
+                  {error.details.map((detail, index) => (
+                    <li key={index}>{detail}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {error.requestId ? (
+                <span className="text-xs text-muted-foreground">请求编号：{error.requestId}</span>
+              ) : null}
+            </div>
           </Notice>
         ) : null}
       </form>

@@ -212,6 +212,29 @@ describe("create a reusable task from final execution failures", () => {
     expect(repository.copySuite).not.toHaveBeenCalled();
   });
 
+  it("identifies an unavailable case without creating an incomplete task", async () => {
+    const { service, repository } = fixture();
+    repository.listFinalFailureMemberPage.mockResolvedValue([
+      {
+        runId: "run-gone",
+        createdAt: "2026-10-06T00:00:00.000Z",
+        caseId: "ddt-gone",
+        caseType: "ddt",
+        available: false,
+      },
+    ]);
+    await expect(service.createFromFinalFailures("batch-1", {})).rejects.toMatchObject({
+      code: "CASE_SUITE_FAILURE_MEMBER_UNAVAILABLE",
+      details: {
+        source: "case_selection",
+        issues: [
+          { field: "case", message: expect.stringContaining("ddt-gone（执行记录 run-gone）") },
+        ],
+      },
+    });
+    expect(repository.copySuite).not.toHaveBeenCalled();
+  });
+
   it("rejects out-of-scope batches, missing configuration, diagnostic batches and archived versions", async () => {
     const { service, repository, structures } = fixture();
     repository.getFailureCopySource.mockResolvedValueOnce(null);

@@ -80,7 +80,12 @@ describe("failure task automatic naming API", () => {
       "project",
     ]);
     createFromFinalFailures.mockClear();
-    for (const body of [{ date: "20260101" }, { caseIds: ["other"] }, { name: " " }]) {
+    for (const body of [
+      { date: "20260101" },
+      { caseIds: ["other"] },
+      { name: " " },
+      { environmentAddresses: ["10.0.0.21"] },
+    ]) {
       expect((await POST(post(body), context)).status).toBe(400);
     }
     expect(createFromFinalFailures).not.toHaveBeenCalled();
@@ -98,5 +103,28 @@ describe("failure task automatic naming API", () => {
     });
     expect((await GET(new Request(endpoint), context)).status).toBe(403);
     expect(suggestFinalFailureName).not.toHaveBeenCalled();
+  });
+  it("returns the precise snapshot field and request number without claiming the request is invalid", async () => {
+    const details = {
+      source: "batch_snapshot",
+      issues: [{ field: "concurrency", message: "不能小于 1。" }],
+    };
+    createFromFinalFailures.mockRejectedValue(
+      new DomainError(
+        "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+        "执行配置快照校验失败，无法复制任务，请查看具体字段。",
+        { details },
+      ),
+    );
+    const response = await POST(post(), context);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+        details,
+        requestId: expect.any(String),
+      },
+    });
+    expect(recordAuthorizedOperation).not.toHaveBeenCalled();
   });
 });

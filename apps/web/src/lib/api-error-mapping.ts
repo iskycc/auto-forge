@@ -128,6 +128,7 @@ function domainErrorStatus(code: string): number {
   )
     return 409;
   if (code === "PUBLIC_SUITE_EXECUTION_ACTIVE") return 409;
+  if (code === "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID") return 422;
   if (code === "EXPORT_DATA_INVALID") return 422;
   if (code === "STORAGE_INVENTORY_SNAPSHOT_EXPIRED") return 409;
   if (

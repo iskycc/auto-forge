@@ -396,6 +396,17 @@ export class CaseSuiteService {
           throw new DomainError(
             "CASE_SUITE_FAILURE_MEMBER_UNAVAILABLE",
             "未通过用例中包含已删除、已回收或不属于原项目版本的用例，无法完整创建任务。",
+            {
+              details: {
+                source: "case_selection",
+                issues: [
+                  {
+                    field: "case",
+                    message: `${member.caseType === "ddt" ? "DDT" : "普通"}用例 ${member.caseId}（执行记录 ${member.runId}）不可用；请检查是否已删除、回收或移出原项目版本。`,
+                  },
+                ],
+              },
+            },
           );
         }
         selected[member.caseType].add(member.caseId);

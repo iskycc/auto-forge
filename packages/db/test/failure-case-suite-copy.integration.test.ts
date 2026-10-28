@@ -25,6 +25,7 @@ import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
 import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
 import { PostgresPlatformOperationsRepository } from "../src/postgres-platform-operations";
 import { PostgresCaseSuiteRepository } from "../src/postgres-platform-repository";
+import { serializeBatchPolicy } from "../src/run-batch-environment-addresses";
 
 const timestamp = "2026-10-06T00:00:00.000Z";
 const postgresUrl = process.env.AUTOFORGE_TEST_POSTGRES_URL;
@@ -260,6 +261,80 @@ async function seedFailedTestNgBatch(context: Fixture, caseCount: number) {
 
 for (const mode of ["sqlite", "postgres"] as const) {
   describe.skipIf(mode === "postgres" && !postgresUrl)(`${mode} failure task copy contract`, () => {
+    it("copies new batch address projections without changing the original task or losing exceptions", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service } = await seed(context);
+        const addresses = ["10.20.0.21", "2001:db8::21"];
+        await context.execute(
+          "UPDATE run_batches SET policy_json=?,status='failed',current_round=3 WHERE id='batch-1'",
+          [
+            serializeBatchPolicy(
+              {
+                executor: "testng",
+                concurrency: 17,
+                projectVersionId: "version-1",
+                runnerLabels: ["java"],
+                artifactPatterns: ["reports/**"],
+              },
+              addresses,
+            )!,
+          ],
+        );
+        await context.execute(
+          "INSERT INTO run_attempts (id,execution_run_id,runner_id,attempt_number,execution_round,status,result_code,result_summary,scheduling_score,created_at) VALUES ('abnormal-final','run-failure','runner-1',3,3,'failed','PROCESS_INTERRUPTED','TestNG exited with code 143.',1,?)",
+          [timestamp],
+        );
+        await context.execute(
+          "INSERT INTO run_attempts (id,execution_run_id,runner_id,attempt_number,execution_round,status,result_code,result_summary,scheduling_score,created_at) VALUES ('abnormal-after-pass','run-recovered','runner-1',3,3,'failed','ASSIGNMENT_LEASE_EXPIRED','Assignment lease expired before completion.',1,?)",
+          [timestamp],
+        );
+        await context.execute(
+          "UPDATE execution_runs SET attempt_count=3 WHERE id IN ('run-failure','run-recovered')",
+        );
+        const original = await context.suites.getSummary("suite-1");
+        const suggestion = await service.suggestFinalFailureName("batch-1");
+        expect(suggestion.name).toContain("Rerun-");
+        const copy = await service.createFromFinalFailures("batch-1", {});
+        expect(copy).toMatchObject({
+          caseCount: 4,
+          policy: { concurrency: 17, adapter: { environmentAddresses: addresses } },
+        });
+        const members = (await context.suites.listMemberPage({ suiteId: copy.id, limit: 100 }))!;
+        expect(members.items.map((item) => item.caseDefinition.id).sort()).toEqual([
+          "cancelled",
+          "failure",
+          "timeout",
+        ]);
+        expect(members.ddtItems.map((item) => item.ddtCase.id)).toEqual(["ddt-1"]);
+        expect(await context.suites.getSummary("suite-1")).toEqual(original);
+      } finally {
+        await context.close();
+      }
+    });
+
+    it("returns actionable persisted-field errors instead of request validation failures", async () => {
+      const context = await fixture(mode);
+      try {
+        const { service } = await seed(context);
+        await context.execute("UPDATE run_batches SET policy_json=? WHERE id='batch-1'", [
+          JSON.stringify({ concurrency: 0 }),
+        ]);
+        await expect(service.createFromFinalFailures("batch-1", {})).rejects.toMatchObject({
+          code: "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID",
+          details: {
+            source: "batch_snapshot",
+            issues: [expect.objectContaining({ field: "concurrency" })],
+          },
+        });
+        expect((await context.rows("SELECT id FROM case_suites")).map((row) => row.id)).toEqual([
+          "suite-1",
+        ]);
+      } finally {
+        await context.close();
+      }
+    });
+
     it("copies every non-passing member without broadening failure reruns or execution statistics", async () => {
       const context = await fixture(mode);
       try {
