@@ -12,7 +12,7 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { createPostgresDatabase } from "@autoforge/db/postgres";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { selectJarForInspection } from "./support/jar-import";
+import { jarImportFileInput, selectJarForInspection } from "./support/jar-import";
 import {
   expectPageFitsViewport,
   expectReadableText,
@@ -96,7 +96,7 @@ test("drops a JAR, validates selection and imports only after scan and confirmat
   const scope = await createAdditionalProjectHierarchy(page, project.body.id);
   await selectProjectContext(page, project.body.id, scope.projectVersionId, scope.testStageId);
   await page.goto("/cases/import");
-  const fileInput = page.locator('input[type="file"]');
+  const fileInput = jarImportFileInput(page);
   await expect(fileInput).toBeEnabled();
   const jar = zipSync({
     "drag/CheckoutTest.class": buildClassFile({
@@ -105,7 +105,7 @@ test("drops a JAR, validates selection and imports only after scan and confirmat
     }),
   });
   const jarName = `${"测试类导入-".repeat(12)}.jar`;
-  const dropzone = page.locator(".file-dropzone");
+  const dropzone = page.locator(".file-dropzone:visible");
   const scanButton = page.getByRole("button", { name: "扫描测试类", exact: true });
   const uploadRequests: string[] = [];
   page.on("request", (request) => {

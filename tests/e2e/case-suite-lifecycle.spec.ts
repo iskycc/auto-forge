@@ -1323,7 +1323,13 @@ test("personal task pins persist across browsers, sort naturally and recover aft
   }
   await expect(pin("任务 2")).toBeEnabled();
   await pin("任务 2").focus();
+  const unpinResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/case-suites/${tasks.get("任务 2")!.id}/pin`,
+  );
   await pin("任务 2").press("Space");
+  expect((await unpinResponse).status()).toBe(200);
+  await expect(pin("任务 2")).toBeEnabled();
   await expect(pin("任务 2")).not.toBeChecked();
   await expect(titles).toHaveText(["任务 100", "任务 1", "任务 2", "任务 10"]);
   await page.reload();

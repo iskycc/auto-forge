@@ -6,8 +6,12 @@ export interface JarFilePayload {
   buffer: Buffer;
 }
 
+export function jarImportFileInput(page: Page) {
+  return page.locator('.file-dropzone:visible input[type="file"]');
+}
+
 export async function selectJarForInspection(page: Page, payload: JarFilePayload): Promise<void> {
-  const fileInput = page.locator('input[type="file"]');
+  const fileInput = jarImportFileInput(page);
   const inspectButton = page.getByRole("button", { name: "扫描测试类" });
 
   await expect(async () => {
