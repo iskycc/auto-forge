@@ -28,14 +28,14 @@ for (const dialect of ["sqlite", "postgresql"] as const) {
         try {
           const folder = resolve(import.meta.dirname, "../drizzle", dialect);
           const files = (await readdir(folder)).filter((name) => /^\d+_.+\.sql$/.test(name)).sort();
-          const latest = files.at(-1)!;
-          expect(latest).toMatch(/_log_databases\.sql$/);
-          for (const file of files.slice(0, -1))
+          const migrationFile = files.find((file) => file.endsWith("_log_databases.sql"));
+          if (!migrationFile) throw new Error("Log database migration is missing.");
+          for (const file of files.filter((file) => file < migrationFile))
             await execute(await readFile(resolve(folder, file), "utf8"));
           await execute(
             "INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,environment_json,created_at,updated_at) VALUES('history','suite','History',1,'failed',0,1,'[]','2026-10-27','2026-10-27')",
           );
-          const migration = await readFile(resolve(folder, latest), "utf8");
+          const migration = await readFile(resolve(folder, migrationFile), "utf8");
           await execute("BEGIN");
           await expect(
             execute(`${migration}\nINSERT INTO missing_migration_table VALUES(1);`),

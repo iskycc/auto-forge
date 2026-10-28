@@ -102,9 +102,10 @@ for (const dialect of ["sqlite", "postgres"] as const)
               ?.resourceSnapshot?.disk,
           ).toEqual({ path: "/var/lib/autoforge-agent", totalBytes: 8192, availableBytes: 0 });
           await context.repository.heartbeat({ ...base, recordedAt: atMinute(1) });
-          expect((await context.repository.get(id))?.resourceSnapshot?.disk?.availableBytes).toBe(
-            0,
-          );
+          expect(
+            (await context.repository.get(id, atMinute(-1)))?.resourceSnapshot?.disk
+              ?.availableBytes,
+          ).toBe(0);
           await context.repository.heartbeat({
             ...base,
             recordedAt: atMinute(1),
