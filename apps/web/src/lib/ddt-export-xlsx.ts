@@ -1,7 +1,7 @@
 import "server-only";
 
 import { PassThrough } from "node:stream";
-import type { DdtCaseData } from "@autoforge/domain";
+import type { DdtCaseData, DdtCellValue } from "@autoforge/domain";
 import { buildDdtExportSheets } from "@autoforge/ddt-import";
 import ExcelJS from "exceljs";
 import {
@@ -9,7 +9,7 @@ import {
   EXPORT_WIDTH_SAMPLE_ROWS,
   exportWorksheetOptions,
   styleExportHeader,
-  styleExportRow,
+  stylePopulatedExportRow,
 } from "./export-workbook-style";
 
 export async function buildStyledDdtExportWorkbook(rows: DdtCaseData[]): Promise<Buffer> {
@@ -45,6 +45,9 @@ async function writeDdtWorkbook(
   workbook.creator = "AutoForge";
   for (const definition of sheets) {
     const sheet = workbook.addWorksheet(definition.name, exportWorksheetOptions());
+    const columnIndexes = new Map(
+      definition.columns.map((column, index) => [column.name, index + 1]),
+    );
     const samples = definition.rows.slice(0, EXPORT_WIDTH_SAMPLE_ROWS);
     sheet.columns = definition.columns.map((column) => ({
       header: column.name,
@@ -63,13 +66,29 @@ async function writeDdtWorkbook(
     styleExportHeader(header);
     header.commit();
     for (const cells of definition.rows) {
-      const row = sheet.addRow(definition.columns.map((column) => cells[column.name] ?? null));
-      styleExportRow(row, definition.columns.length);
-      row.commit();
+      appendStyledDdtExportRow(sheet, columnIndexes, Object.entries(cells));
     }
     sheet.commit();
   }
   await workbook.commit();
+}
+
+/** Preserve original values while omitting absent SR fields from XLSX cell records. */
+export function appendStyledDdtExportRow(
+  sheet: ExcelJS.Worksheet,
+  columnIndexes: ReadonlyMap<string, number>,
+  fields: Iterable<readonly [string, DdtCellValue]>,
+): void {
+  const row = sheet.addRow([]);
+  for (const [name, value] of fields) {
+    // Blank source cells remain blank through the header schema; preserve 0, false and spaces.
+    if (value === null || value === "") continue;
+    const column = columnIndexes.get(name);
+    if (column === undefined) throw new Error(`DDT 导出列映射缺失：${name}`);
+    row.getCell(column).value = value;
+  }
+  stylePopulatedExportRow(row, columnIndexes.size);
+  row.commit();
 }
 
 export function ddtColumnMinimumWidth(header: string): number {

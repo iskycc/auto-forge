@@ -1,12 +1,12 @@
 import "server-only";
 
 import type { FileHandle } from "node:fs/promises";
-import { Readable, PassThrough, Writable } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import { setImmediate as yieldTurn } from "node:timers/promises";
 import ExcelJS from "exceljs";
-import { ddtColumnMinimumWidth } from "./ddt-export-xlsx";
+import { appendStyledDdtExportRow, ddtColumnMinimumWidth } from "./ddt-export-xlsx";
 import {
   DomainError,
   ddtCaseCell,
@@ -27,7 +27,6 @@ import {
   exportColumnWidth,
   exportWorksheetOptions,
   styleExportHeader,
-  styleExportRow,
   EXPORT_WIDTH_SAMPLE_ROWS,
 } from "./export-workbook-style";
 
@@ -93,30 +92,33 @@ function observeFields(plan: SheetPlan, fields: DdtCaseStep, caseId: string) {
   );
 }
 
-/** Replay one on-disk snapshot; no open read stream can retain ownership of its FileHandle. */
+/** Pull one bounded file chunk at a time; no reader can prefetch or outlive cancellation. */
 async function* snapshotRows(file: FileHandle, signal: AbortSignal): AsyncGenerator<DdtCaseData> {
-  async function* chunks() {
-    let position = 0;
-    const buffer = Buffer.alloc(64 * 1_024);
-    while (true) {
+  const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.alloc(64 * 1_024);
+  const fragments: string[] = [];
+  let position = 0;
+  while (true) {
+    signal.throwIfAborted();
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
+    position += bytesRead;
+    const chunk = bytesRead ? decoder.write(buffer.subarray(0, bytesRead)) : decoder.end();
+    let start = 0;
+    let newline = chunk.indexOf("\n", start);
+    while (newline >= 0) {
       signal.throwIfAborted();
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
-      if (!bytesRead) return;
-      position += bytesRead;
-      yield Buffer.from(buffer.subarray(0, bytesRead));
-    }
-  }
-  const input = Readable.from(chunks());
-  const lines = createInterface({ input, crlfDelay: Infinity });
-  try {
-    for await (const line of lines) {
-      signal.throwIfAborted();
+      fragments.push(chunk.slice(start, newline));
+      const line = fragments.join("");
+      fragments.length = 0;
       yield JSON.parse(line) as DdtCaseData;
+      start = newline + 1;
+      newline = chunk.indexOf("\n", start);
     }
-  } finally {
-    lines.close();
-    input.destroy();
+    if (start < chunk.length) fragments.push(chunk.slice(start));
+    if (!bytesRead) break;
   }
+  signal.throwIfAborted();
+  if (fragments.length) yield JSON.parse(fragments.join("")) as DdtCaseData;
 }
 
 async function writeWorkbook(
@@ -144,6 +146,7 @@ async function writeWorkbook(
         Object.entries(row).map(([field, value]) => [headerByField.get(field)!, value]),
       ),
     );
+    const columnIndexes = new Map(columns.map((name, index) => [name, index + 1]));
     const sheet = workbook.addWorksheet(plan.name, exportWorksheetOptions());
     sheet.columns = columns.map((name) => ({
       header: name,
@@ -169,9 +172,7 @@ async function writeWorkbook(
       const normalized = new Map(
         Object.entries(fields).map(([field, value]) => [headerByField.get(field)!, value]),
       );
-      const row = sheet.addRow(columns.map((name) => normalized.get(name) ?? null));
-      styleExportRow(row, columns.length);
-      row.commit();
+      appendStyledDdtExportRow(sheet, columnIndexes, normalized);
       if (++written % 32 === 0 || performance.now() - yieldedAt >= 8) {
         await yieldTurn(undefined, { signal });
         yieldedAt = performance.now();

@@ -329,6 +329,7 @@ run_adapter_tests() {
       packages/db/test/postgres-runner-group.integration.test.ts \
       packages/db/test/postgres-runner-installation-profile.integration.test.ts \
       packages/db/test/scheduling-refill.integration.test.ts \
+      packages/db/test/random-execution-order-migration.integration.test.ts \
       packages/object-store/test/minio-object-store.integration.test.ts \
       packages/queue/test/jetstream-job-queue.integration.test.ts
 }

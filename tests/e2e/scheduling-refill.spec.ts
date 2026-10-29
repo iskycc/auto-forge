@@ -336,7 +336,13 @@ async function verifyColdPublicLogDuringUploads(
 ): Promise<number> {
   await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
-  const shareButton = page.getByRole("button", { name: "公开日志", exact: true });
+  const failedRow = page
+    .locator(".execution-case-table")
+    .getByRole("row")
+    .filter({
+      has: page.getByText("失败", { exact: true }),
+    });
+  const shareButton = failedRow.getByRole("button", { name: "公开日志", exact: true });
   await expect(shareButton).toBeVisible();
   let stopUploading = false;
   let uploadedChunks = 0;
@@ -574,8 +580,8 @@ test("completion immediately refills free runner slots without waiting for the w
   // 没有空闲槽时领不到新任务。
   await expectNoAssignment(page, identity);
 
-  // 第一个用例失败：其第二次 attempt 立即占用释放的槽位；此时首轮另一个
-  // attempt 仍在运行，证明立即重试不等待整轮结束，也不等待心跳。
+  // 第一个用例失败后立即重新进入等待集；另一首轮 attempt 保持运行，
+  // 验证无需等待整轮结束或下一次心跳。等待集的具体领取顺序允许随机。
   const first = await completeAttempt(
     page,
     identity,
@@ -601,11 +607,28 @@ test("completion immediately refills free runner slots without waiting for the w
   expect(duplicate.disposition).toBe("duplicate");
   expect(duplicate.retryScheduled).toBe(true);
   expect(duplicate.batchId).toBe(batch.id);
-  const retry = await claimOnce(page, identity, 1);
+  const completedBeforeRetry = new Set<string>();
+  let retry = await claimOnce(page, identity, 1);
   expect(retry).toHaveLength(1);
-  expect(retry[0]!.assignment.executionSpec.executionRunId).toBe(
-    initial[0]!.assignment.executionSpec.executionRunId,
-  );
+  while (
+    retry[0]!.assignment.executionSpec.executionRunId !==
+    initial[0]!.assignment.executionSpec.executionRunId
+  ) {
+    const runId = retry[0]!.assignment.executionSpec.executionRunId;
+    expect(runId).not.toBe(initial[1]!.assignment.executionSpec.executionRunId);
+    expect(completedBeforeRetry.has(runId)).toBe(false);
+    expect(completedBeforeRetry.size).toBeLessThan(caseNames.length - 2);
+    const completion = await completeAttempt(
+      page,
+      identity,
+      retry[0]!,
+      `e2e-before-retry-${runId}`,
+    );
+    expect(completion.batchClosed).toBe(false);
+    completedBeforeRetry.add(runId);
+    retry = await claimOnce(page, identity, 1);
+    expect(retry).toHaveLength(1);
+  }
 
   const liveWatermark = await verifyColdPublicLogDuringUploads(
     page,
@@ -622,29 +645,26 @@ test("completion immediately refills free runner slots without waiting for the w
     liveWatermark,
   );
   expect(second.batchClosed).toBe(false);
-  const refill1 = await claimOnce(page, identity, 1);
-  expect(refill1).toHaveLength(1);
-
-  const retried = await completeAttempt(page, identity, retry[0]!, "e2e-refill-retry");
-  expect(retried.retryScheduled).toBe(false);
-  expect(retried.batchClosed).toBe(false);
-  const refill2 = await claimOnce(page, identity, 1);
-  expect(refill2).toHaveLength(1);
-
-  const third = await completeAttempt(page, identity, refill1[0]!, "e2e-refill-r3");
-  expect(third.batchClosed).toBe(false);
-  const refill3 = await claimOnce(page, identity, 1);
-  expect(refill3).toHaveLength(1);
-
-  // 倒数第二个完成时仍有一个在途，且已经没有待补位用例；批次未关闭。
-  const fourth = await completeAttempt(page, identity, refill2[0]!, "e2e-refill-r4");
-  expect(fourth.batchId).toBe(batch.id);
-  expect(fourth.batchClosed).toBe(false);
+  const refill = await claimOnce(page, identity, 1);
+  expect(refill).toHaveLength(completedBeforeRetry.size < caseNames.length - 2 ? 1 : 0);
+  const active = [retry[0]!, ...refill];
+  const completed = new Set(completedBeforeRetry);
+  completed.add(initial[1]!.assignment.executionSpec.executionRunId);
+  while (active.length) {
+    const claim = active.shift()!;
+    const runId = claim.assignment.executionSpec.executionRunId;
+    expect(completed.has(runId)).toBe(false);
+    const result = await completeAttempt(page, identity, claim, `e2e-finish-${runId}`);
+    expect(result.retryScheduled).toBe(false);
+    expect(result.batchId).toBe(batch.id);
+    completed.add(runId);
+    expect(result.batchClosed).toBe(completed.size === caseNames.length);
+    const next = await claimOnce(page, identity, 1);
+    expect(next).toHaveLength(caseNames.length - completed.size - active.length > 0 ? 1 : 0);
+    active.push(...next);
+  }
+  expect(completed.size).toBe(caseNames.length);
   await expectNoAssignment(page, identity);
-  // 最后一个完成后 batchClosed=true。
-  const last = await completeAttempt(page, identity, refill3[0]!, "e2e-refill-r5");
-  expect(last.batchId).toBe(batch.id);
-  expect(last.batchClosed).toBe(true);
 
   const userHeaders = await browserSessionHeaders(page);
   await expect

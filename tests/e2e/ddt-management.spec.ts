@@ -8,7 +8,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
-import { zipSync } from "fflate";
+import { zipSync, unzipSync, strFromU8 } from "fflate";
 
 import {
   buildExportWorkbook,
@@ -4141,6 +4141,11 @@ test("DDT navigation bounds rendering, retries pages and exports every case inde
     selectedDownload.suggestedFilename(),
   ).rows;
   expect(selectedRows).toEqual([rows[0]]);
+  const filtered = await page.request.get(`${ddtPath(hierarchy, "export")}&srNum=WALLET`);
+  expect(filtered.status()).toBe(200);
+  expect(parseSpreadsheet(await filtered.body(), "wallet.xlsx").rows).toEqual(
+    rows.filter((row) => row.srNum === "WALLET"),
+  );
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
@@ -4165,6 +4170,121 @@ test("DDT navigation bounds rendering, retries pages and exports every case inde
     await expect(page.getByRole("button", { name: "导出全部用例", exact: true })).toBeEnabled();
   } finally {
     release();
+  }
+});
+
+test("DDT full and current-range exports preserve heterogeneous SR schemas without expanding blank cells", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const fileCount = 128;
+  const entries = Object.fromEntries(
+    Array.from({ length: fileCount }, (_, index) => {
+      const suffix = String(index).padStart(3, "0");
+      return [
+        `SR-${suffix}.csv`,
+        Buffer.from(
+          `CaseID,srNum,参数_${suffix}\nSCHEMA-${suffix}-0,Wallet-${suffix},值-${suffix}-0\nSCHEMA-${suffix}-1,Wallet-${suffix},值-${suffix}-1\n`,
+        ),
+      ];
+    }),
+  );
+  const headers = { origin: new URL(page.url()).origin };
+  const preview = await page.request.post(ddtPath(hierarchy, "imports/preview"), {
+    headers,
+    multipart: {
+      files: {
+        name: "schemas.zip",
+        mimeType: "application/zip",
+        buffer: Buffer.from(zipSync(entries)),
+      },
+    },
+  });
+  expect(preview.status()).toBe(201);
+  const job = (await preview.json()) as { id: string };
+  expect(
+    (
+      await page.request.post(ddtPath(hierarchy, `imports/${job.id}/confirm`), {
+        headers,
+        data: { conflictStrategy: "overwrite" },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (
+          (await (await page.request.get(ddtPath(hierarchy, `imports/${job.id}`))).json()) as {
+            status: string;
+          }
+        ).status,
+      { timeout: 60_000 },
+    )
+    .toBe("succeeded");
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await expect(
+    page
+      .getByRole("region", { name: "DDT 用例导航", exact: true })
+      .getByText("60 条已加载", { exact: true }),
+  ).toBeVisible();
+  for (const name of ["导出全部用例", "导出当前范围"]) {
+    const event = page.waitForEvent("download");
+    await page.getByRole("button", { name, exact: true }).click();
+    const download = await event;
+    expect(await download.failure()).toBeNull();
+    const path = testInfo.outputPath(
+      name === "导出全部用例" ? "heterogeneous-all.xlsx" : "heterogeneous-current.xlsx",
+    );
+    await download.saveAs(path);
+    const bytes = await readFile(path);
+    const sheet = strFromU8(unzipSync(bytes)["xl/worksheets/sheet1.xml"]!);
+    expect([...sheet.matchAll(/<c\s/g)]).toHaveLength(fileCount * 2 * 3 + fileCount + 2);
+    const exported = parseSpreadsheet(bytes, download.suggestedFilename());
+    expect(exported.rows).toHaveLength(fileCount * 2);
+    expect(exported.columns).toHaveLength(fileCount + 2);
+    expect(exported.columns).toEqual([
+      "CaseID",
+      "srNum",
+      ...Array.from({ length: fileCount }, (_, index) => `参数_${String(index).padStart(3, "0")}`),
+    ]);
+    const remainingIds = new Set(
+      Array.from({ length: fileCount }, (_, index) =>
+        [0, 1].map((offset) => `SCHEMA-${String(index).padStart(3, "0")}-${offset}`),
+      ).flat(),
+    );
+    for (const row of exported.rows) {
+      const caseId = String(row.CaseID);
+      expect(remainingIds.delete(caseId)).toBe(true);
+      const [, suffix, offset] = caseId.split("-");
+      expect(row).toEqual({
+        CaseID: caseId,
+        srNum: `Wallet-${suffix}`,
+        ...Object.fromEntries(
+          Array.from({ length: fileCount }, (_, index) => {
+            const columnSuffix = String(index).padStart(3, "0");
+            return [
+              `参数_${columnSuffix}`,
+              columnSuffix === suffix ? `值-${suffix}-${offset}` : "",
+            ];
+          }),
+        ),
+      });
+    }
+    expect(remainingIds.size).toBe(0);
+    await expect(page.getByRole("button", { name: "导出全部用例", exact: true })).toBeEnabled();
+  }
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`ddt-schema-export-${theme}-${width}.png`),
+      });
+    }
   }
 });
 
@@ -4208,7 +4328,7 @@ test("DDT full-scope export merges column aliases and can be imported again", as
     "step1.srNum",
     "step1.action",
   ]);
-  expect(exported.rows).toEqual([
+  const expectedRows = [
     { CaseID: "EXPORT-A", srNum: "EXPORT", CaseName: "First", owner: "Alice" },
     { CaseID: "EXPORT-B", srNum: "EXPORT", CaseName: "Second", owner: "Bob" },
     {
@@ -4225,15 +4345,18 @@ test("DDT full-scope export merges column aliases and can be imported again", as
         step1: { CaseID: "EXPORT-D", srNum: "EXPORT", action: "cancel" },
       },
     },
-  ]);
+  ];
+  expect(exported.rows).toEqual(expectedRows);
 
   const selected = await page.request.get(`${ddtPath(hierarchy, "export")}&caseId=EXPORT-B`);
   expect(selected.status()).toBe(200);
   expect(parseSpreadsheet(await selected.body(), "selected.xlsx").rows).toEqual([
     { CaseID: "EXPORT-B", srNum: "EXPORT", casename: "Second", Owner: "Bob" },
   ]);
-  const preview = await page.request.post(ddtPath(hierarchy, "imports/preview"), {
-    headers: { origin: new URL(page.url()).origin },
+  const target = await createHierarchy(page);
+  const headers = { origin: new URL(page.url()).origin };
+  const preview = await page.request.post(ddtPath(target, "imports/preview"), {
+    headers,
     multipart: {
       files: {
         name: "exported.xlsx",
@@ -4243,7 +4366,43 @@ test("DDT full-scope export merges column aliases and can be imported again", as
     },
   });
   expect(preview.status()).toBe(201);
-  expect(await preview.json()).toMatchObject({ validFiles: 1, totalRows: 4 });
+  const job = (await preview.json()) as { id: string; validFiles: number; totalRows: number };
+  expect(job).toMatchObject({ validFiles: 1, totalRows: 4 });
+  expect(
+    (
+      await page.request.post(ddtPath(target, `imports/${job.id}/confirm`), {
+        headers,
+        data: { conflictStrategy: "overwrite" },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(ddtPath(target, `imports/${job.id}`));
+        return ((await response.json()) as { status: string }).status;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("succeeded");
+  for (const expected of expectedRows) {
+    const stored = await page.request.get(
+      ddtPath(target, `cases/${encodeURIComponent(expected.CaseID)}`),
+    );
+    expect(stored.status()).toBe(200);
+    expect(((await stored.json()) as { data: unknown }).data).toEqual(expected);
+  }
+  const roundTrip = await page.request.get(ddtPath(target, "export"));
+  expect(roundTrip.status()).toBe(200);
+  expect(parseSpreadsheet(await roundTrip.body(), "round-trip.xlsx").rows).toEqual(expectedRows);
+  const original = await page.request.get(ddtPath(hierarchy, "cases/EXPORT-B"));
+  expect(original.status()).toBe(200);
+  expect(((await original.json()) as { data: unknown }).data).toEqual({
+    CaseID: "EXPORT-B",
+    srNum: "EXPORT",
+    casename: "Second",
+    Owner: "Bob",
+  });
 });
 
 test("DDT advanced search submits explicitly, searches only values and handles scoped results", async ({

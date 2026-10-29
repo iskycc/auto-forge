@@ -1,4 +1,8 @@
 import {
+  createExecutionDispatchOrderKey,
+  executionDispatchOrderExpression,
+} from "./execution-dispatch-order";
+import {
   batchEnvironmentAddresses,
   batchSnapshotEnvironmentAddresses,
   serializeBatchPolicy,
@@ -399,15 +403,16 @@ export class PostgresRunBatchRepository
             (id, batch_id, case_definition_id, execution_case_definition_id, case_version,
              display_name, class_name, case_type, class_data_json, class_data_size_bytes,
              class_data_sha256, ddt_sr_num, parameters_json, status, attempt_count,
-             queue_deadline_at, execution_timeout_ms, upload_timeout_ms, created_at, updated_at)
+             queue_deadline_at, execution_timeout_ms, upload_timeout_ms, created_at, updated_at, dispatch_order_key)
           SELECT s.id, ${record.id}, s.case_definition_id, s.execution_case_definition_id,
                  s.case_version, s.display_name, s.class_name, s.case_type, s.class_data_json,
                  s.class_data_size_bytes, s.class_data_sha256, s.ddt_sr_num,
                  s.parameters_json, 'queued', 0, ${queueDeadlineAt},
                  ${executionTimeoutMs}, ${uploadTimeoutMs}, ${record.createdAt},
-                 ${record.createdAt}
+                 ${record.createdAt}, s.dispatch_order_key
           FROM jsonb_to_recordset(${JSON.stringify(
             runs.map((run) => ({
+              dispatch_order_key: createExecutionDispatchOrderKey(),
               id: run.id,
               case_definition_id: run.caseDefinitionId,
               execution_case_definition_id: run.executionCaseDefinitionId ?? run.caseDefinitionId,
@@ -425,7 +430,7 @@ export class PostgresRunBatchRepository
                  AS s(id text, case_definition_id text, execution_case_definition_id text,
                       case_version integer, display_name text, class_name text, case_type text,
                       class_data_json text, class_data_size_bytes integer, class_data_sha256 text,
-                      ddt_sr_num text, parameters_json text)`);
+                      ddt_sr_num text, parameters_json text, dispatch_order_key text)`);
       }
       if (record.dispatchJob) {
         await transaction.execute(sql`
@@ -1338,7 +1343,7 @@ export class PostgresRunBatchRepository
               eq(pgExecutionRuns.heldRound, 0),
             ),
           )
-          .orderBy(pgExecutionRuns.createdAt, pgExecutionRuns.id)
+          .orderBy(executionDispatchOrderExpression(pgExecutionRuns), pgExecutionRuns.id)
           .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)));
     const queuedRunIds = queuedRows.map((run) => run.id);
     const attemptRows = [];
@@ -1767,6 +1772,7 @@ export class PostgresRunBatchRepository
               assigned_runner_id = decision.runner_id,
               attempt_count = run.attempt_count + 1,
               scheduling_score = decision.score,
+              dispatch_order_key = decision.dispatch_order_key,
               assigned_at = ${input.scheduledAt},
               updated_at = ${input.scheduledAt}
           FROM jsonb_to_recordset(${JSON.stringify(
@@ -1774,8 +1780,9 @@ export class PostgresRunBatchRepository
               run_id: decision.executionRunId,
               runner_id: decision.runnerId,
               score: decision.score,
+              dispatch_order_key: createExecutionDispatchOrderKey(),
             })),
-          )}::jsonb) AS decision(run_id text, runner_id text, score float8)
+          )}::jsonb) AS decision(run_id text, runner_id text, score float8, dispatch_order_key text)
           WHERE run.id = decision.run_id
             AND run.batch_id = ${input.batchId}
             AND run.status = 'queued'

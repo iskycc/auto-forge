@@ -348,6 +348,130 @@ async function insertCaseHistoryRun(
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("selects a bounded random-key window across the whole ordinary and DDT batch", async () => {
+    const harness = await createHarness();
+    const batchId = randomUUID();
+    const total = 8_193;
+    const runs = Array.from({ length: total }, (_, index) => ({
+      id: `${batchId}-${String(index).padStart(5, "0")}`,
+      caseDefinitionId: String(total - index).padStart(5, "0"),
+      caseVersion: 1,
+      caseType: index % 2 === 0 ? ("testng" as const) : ("ddt" as const),
+      className: "example.RandomOrder",
+      displayName: `case-${index}`,
+    }));
+    try {
+      await harness.batches.create({
+        id: batchId,
+        projectId: harness.projectId,
+        suiteId: randomUUID(),
+        suiteName: "Random dispatch",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: [],
+        runs,
+        createdAt: "2026-08-10T00:00:00.000Z",
+      });
+      // Missing creation keys would remove members, independently of their random values.
+      await harness.rawQuery(
+        "UPDATE execution_runs SET held_round=2 WHERE batch_id=? AND (dispatch_order_key IS NULL OR length(dispatch_order_key)<>32)",
+        [batchId],
+      );
+      expect(
+        (await harness.batches.getSchedulingSnapshot(batchId, "2026-08-09", 4096))?.queuedRuns,
+      ).toHaveLength(4096);
+      // Fix the permutation to prove selection happens before LIMIT, without probabilistic assertions.
+      await harness.rawQuery(
+        "UPDATE execution_runs SET dispatch_order_key=case_definition_id WHERE batch_id=?",
+        [batchId],
+      );
+      const first = await harness.batches.getSchedulingSnapshot(batchId, "2026-08-09", 2);
+      expect(first?.queuedRuns.map((run) => run.id)).toEqual([runs.at(-1)!.id, runs.at(-2)!.id]);
+      await harness.rawQuery("UPDATE execution_runs SET held_round=2 WHERE id=?", [
+        runs.at(-1)!.id,
+      ]);
+      await harness.rawQuery("UPDATE execution_runs SET status='cancelled' WHERE id=?", [
+        runs.at(-2)!.id,
+      ]);
+      const next = await harness.batches.getSchedulingSnapshot(batchId, "2026-08-09", 2);
+      expect(next?.queuedRuns.map((run) => run.id)).toEqual([runs.at(-3)!.id, runs.at(-4)!.id]);
+      // Display order remains independent of dispatch order.
+      const display = await harness.batches.listCasePage({
+        batchId,
+        scope: "summary",
+        sort: "none",
+        direction: "asc",
+        offset: 0,
+        limit: 2,
+      });
+      expect(display?.items.map((item) => item.run.id)).toEqual(
+        runs.slice(0, 2).map((run) => run.id),
+      );
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  }, 30_000);
+
+  it("uses UUID entropy for legacy queued executions without rewriting their history", async () => {
+    const harness = await createHarness();
+    try {
+      const first = await insertQueuedRun(harness, harness.batchQueuedId);
+      const second = await insertQueuedRun(harness, harness.batchQueuedId);
+      const earlyId = "01000000-0000-7000-8000-ffffffffffff";
+      const lateId = "02000000-0000-7000-8000-000000000000";
+      await harness.rawQuery(
+        "UPDATE execution_runs SET id=?,dispatch_order_key=NULL,created_at='2026-08-10' WHERE id=?",
+        [earlyId, first],
+      );
+      await harness.rawQuery(
+        "UPDATE execution_runs SET id=?,dispatch_order_key=NULL,created_at='2026-08-11' WHERE id=?",
+        [lateId, second],
+      );
+      expect(
+        (
+          await harness.batches.getSchedulingSnapshot(harness.batchQueuedId, "2026-08-09", 1)
+        )?.queuedRuns.map((run) => run.id),
+      ).toEqual([lateId]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it.each(["testng", "ddt"] as const)(
+    "refreshes the %s random key for every accepted reservation and future retry",
+    async (kind) => {
+      const harness = await createHarness();
+      try {
+        const runId = await insertQueuedRun(harness, harness.batchQueuedId);
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          harness.batchQueuedId,
+          harness.runnerId,
+        ]);
+        await harness.rawQuery(
+          "UPDATE execution_runs SET dispatch_order_key='before-reservation' WHERE id=?",
+          [runId],
+        );
+        await refillAndClaimWaitingTask(harness, runId, kind, "2026-08-10T00:00:00.000Z");
+        await harness.rawQuery(
+          "UPDATE execution_runs SET status='queued' WHERE id=? AND (dispatch_order_key='before-reservation' OR dispatch_order_key IS NULL OR length(dispatch_order_key)<>32)",
+          [runId],
+        );
+        const snapshot = await harness.batches.getSchedulingSnapshot(
+          harness.batchQueuedId,
+          "2026-08-09",
+          10,
+        );
+        expect(snapshot?.queuedRuns.map((run) => run.id)).not.toContain(runId);
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
   it("applies saved memory and project limits to subsequent reservations without interrupting existing attempts", async () => {
     const harness = await createHarness();
     const now = "2026-08-10T00:00:00.000Z";

@@ -1,4 +1,8 @@
 import {
+  createExecutionDispatchOrderKey,
+  executionDispatchOrderExpression,
+} from "./execution-dispatch-order";
+import {
   batchEnvironmentAddresses,
   batchSnapshotEnvironmentAddresses,
   serializeBatchPolicy,
@@ -411,6 +415,7 @@ export class SqliteRunBatchRepository
             .insert(executionRuns)
             .values(
               runs.map((run) => ({
+                dispatchOrderKey: createExecutionDispatchOrderKey(),
                 id: run.id,
                 caseDefinitionId: run.caseDefinitionId,
                 executionCaseDefinitionId: run.executionCaseDefinitionId ?? run.caseDefinitionId,
@@ -1327,7 +1332,7 @@ export class SqliteRunBatchRepository
               eq(executionRuns.heldRound, 0),
             ),
           )
-          .orderBy(executionRuns.createdAt, executionRuns.id)
+          .orderBy(executionDispatchOrderExpression(executionRuns), executionRuns.id)
           .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)))
           .all();
     const queuedRunIds = queuedRows.map((run) => run.id);
@@ -1674,9 +1679,10 @@ export class SqliteRunBatchRepository
                  assigned_runner_id = decision.column2,
                  attempt_count = attempt_count + 1,
                  scheduling_score = decision.column3,
+                 dispatch_order_key = decision.column4,
                  assigned_at = ?,
                  updated_at = ?
-             FROM (VALUES ${decisionChunk.map(() => "(?, ?, ?)").join(", ")}) AS decision
+             FROM (VALUES ${decisionChunk.map(() => "(?, ?, ?, ?)").join(", ")}) AS decision
              WHERE execution_runs.id = decision.column1
                AND execution_runs.batch_id = ?
                AND execution_runs.status = 'queued'
@@ -1692,6 +1698,7 @@ export class SqliteRunBatchRepository
               decision.executionRunId,
               decision.runnerId,
               decision.score,
+              createExecutionDispatchOrderKey(),
             ]),
             input.batchId,
             input.scheduledAt,

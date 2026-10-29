@@ -95,6 +95,14 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             cursor = page.nextCursor;
           } while (cursor);
           expect(exported).toEqual(expectedExport);
+          expect(exported).toEqual(
+            Array.from({ length: 67 }, (_, index) => ({
+              CaseID: `CASE-${String(index).padStart(3, "0")}`,
+              srNum: index % 2 ? "wallet-b" : "wallet-a",
+              CaseName: "Wallet in every body",
+              priority: index === 66 ? "P1" : "P2",
+            })),
+          );
           expect(await repository.readExportCasesPage({ ...scope, categoryIds: [] })).toEqual({
             items: [],
           });

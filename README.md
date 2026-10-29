@@ -16,6 +16,9 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 批量用例下发使用持久化随机排队键，普通、DDT 和混合任务的整个等待范围均参与随机；每次成功预留同时刷新后续重跑的排序键。Lite／Full 使用索引与有界窗口，保留 Runner 均衡、并发/资源保护、轮次屏障和页面自然排序。升级迁移见[调度说明](./docs/architecture/run-scheduling.md#用例随机执行顺序)。
+- DDT 全量、当前范围和勾选导出共享按实际非空字段写入的流程，保留全部表头和值，避免跨 SR 字段合并后补全海量空单元格。范围与格式说明见[DDT 导出](./docs/architecture/ddt-management.md#范围导出的空单元格膨胀保护)。
+
 - 项目设置支持修改当前项目名称，包括系统默认项目；项目 ID、默认标记、版本和执行历史关联保持不变。执行节点的“管理操作”支持通过已核验 SSH 连接完整卸载 Agent，清除本地执行数据和已保存连接，保留平台历史执行；旧 Agent 可直接由平台内置工具清理，失败可重试。操作范围与本机命令见[项目改名与 Agent 卸载](./docs/operations/runner-uninstall.md)。
 
 - “项目设置 → JDK 与依赖 JAR 压缩包”提供“Jenkins 接入指导”，在当前页查看依赖导入快速步骤、内置依赖发布插件下载、必填／选填参数和可复制 Pipeline；示例按当前选中项目与版本填写，使用服务账号 `project.manage` 权限，具体行为见[依赖发布插件指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。

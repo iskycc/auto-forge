@@ -92,29 +92,43 @@ export function styleExportHeader(
 
 export function styleExportRow(row: ExcelJS.Row, columnCount: number): void {
   row.height = 22;
-  // Touch all declared columns, including trailing empty notes, so the stripe remains continuous.
+  // Small fixed-column result tables keep continuous borders and stripes.
   for (let column = 1; column <= columnCount; column++) {
-    const cell = row.getCell(column);
-    const hasHyperlink =
-      typeof cell.value === "object" && cell.value !== null && "hyperlink" in cell.value;
-    cell.font = { name: FONT_NAME, size: 10, color: { argb: EXPORT_COLORS.text } };
-    cell.alignment = {
-      vertical: "middle",
-      horizontal: typeof cell.value === "number" ? "right" : "left",
-      wrapText: column === columnCount && !hasHyperlink,
-    };
-    cell.border = {
-      bottom: { style: "hair", color: { argb: EXPORT_COLORS.border } },
-      right: { style: "hair", color: { argb: EXPORT_COLORS.border } },
-    };
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: row.number % 2 === 0 ? EXPORT_COLORS.body : EXPORT_COLORS.alternate },
-    };
-    if (hasHyperlink) {
-      cell.font = { ...cell.font, color: { argb: EXPORT_COLORS.link }, underline: true };
-    }
+    styleExportCell(row.getCell(column), row.number, column, columnCount);
+  }
+}
+
+/** Heterogeneous DDT schemas must not materialize every missing field on every row. */
+export function stylePopulatedExportRow(row: ExcelJS.Row, columnCount: number): void {
+  row.height = 22;
+  row.eachCell((cell, column) => styleExportCell(cell, row.number, column, columnCount));
+}
+
+function styleExportCell(
+  cell: ExcelJS.Cell,
+  rowNumber: number,
+  column: number,
+  columnCount: number,
+): void {
+  const hasHyperlink =
+    typeof cell.value === "object" && cell.value !== null && "hyperlink" in cell.value;
+  cell.font = { name: FONT_NAME, size: 10, color: { argb: EXPORT_COLORS.text } };
+  cell.alignment = {
+    vertical: "middle",
+    horizontal: typeof cell.value === "number" ? "right" : "left",
+    wrapText: column === columnCount && !hasHyperlink,
+  };
+  cell.border = {
+    bottom: { style: "hair", color: { argb: EXPORT_COLORS.border } },
+    right: { style: "hair", color: { argb: EXPORT_COLORS.border } },
+  };
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: rowNumber % 2 === 0 ? EXPORT_COLORS.body : EXPORT_COLORS.alternate },
+  };
+  if (hasHyperlink) {
+    cell.font = { ...cell.font, color: { argb: EXPORT_COLORS.link }, underline: true };
   }
 }
 

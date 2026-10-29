@@ -1,3 +1,4 @@
+import { executionDispatchOrderExpression } from "./execution-dispatch-order";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -1005,6 +1006,7 @@ export const pgExecutionRuns = pgTable(
     }),
     attemptCount: integer("attempt_count").notNull(),
     executionRound: integer("execution_round").notNull().default(1),
+    dispatchOrderKey: text("dispatch_order_key"),
     schedulingScore: doublePrecision("scheduling_score"),
     createdAt: text("created_at").notNull(),
     assignedAt: text("assigned_at"),
@@ -1023,6 +1025,13 @@ export const pgExecutionRuns = pgTable(
   (table) => [
     uniqueIndex("execution_runs_batch_case_uq").on(table.batchId, table.caseDefinitionId),
     index("execution_runs_batch_status_idx").on(table.batchId, table.status),
+    index("execution_runs_dispatch_order_idx").on(
+      table.batchId,
+      table.status,
+      table.heldRound,
+      executionDispatchOrderExpression(table),
+      table.id,
+    ),
     index("execution_runs_batch_round_status_idx").on(
       table.batchId,
       table.executionRound,

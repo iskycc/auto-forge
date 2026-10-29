@@ -4,7 +4,29 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.21.4 - 2026-10-29
+
+### Changed
+
+- 普通、DDT 和混合任务改为对整个等待范围随机排序下发；随机键持久化并使用索引窗口读取，每次成功预留刷新后续重跑的随机键，页面排序、节点均衡、并发和租约规则保持有效。
+
+### Fixed
+
+- DDT 导出快照按有界块逐行回读，保留跨块中文字符，并避免取消时预读流遗留未处理异常。
+- DDT 全量／当前范围导出不再按“全部合并列 × 全部用例”生成并美化空单元格；保留全部表头和有效值，减少异构 SR 字段与大量空值导致的长时间等待，勾选导出使用相同流程。
+
+### Compatibility
+
+- SQLite 新增 `0089_random_execution_dispatch_order.sql`，PostgreSQL 新增 `0087_random_execution_dispatch_order.sql`，仅新增可空随机排序键与索引。旧等待记录使用 UUID 随机尾段兼容，不重写历史；Full 的 Web 与 worker 同步升级，无 Runner 协议或依赖变更。
+
+### Validation
+
+- 88 项 SQLite／PostgreSQL 调度及迁移回归通过，包含 8,193 个混合成员的跨窗口随机排序、旧记录兼容、每次预留刷新键、十万条索引计划、前版升级与失败回滚；新迁移回归已加入 Full 适配器验收。
+- 96 项 DDT 导入／导出、执行结果与分析导出及双数据库范围回归通过；独立 Excel 读取器逐条核对两万条／512 组异构字段的所有非空值，覆盖空列、0／false、空格、前导零、同名冲突、长文本、跨块中文、混合旅程及取消。128 条复现数据由 16,770 个单元格减至 514 个，后续分页的非法数据明确报错且不返回部分文件，不使用生产数据。
+- 最终生产构建下四项 Lite Playwright 场景通过，包含真实全量、当前范围、勾选与 SR 筛选下载、跨项目重新导入落库及再次导出的一致性核对，以及允许随机顺序的即时补槽、重试、并发日志与批次终止。异构字段下载逐项核对全部 256 条／130 列；实际查看 1024×768／1536×960 深浅色截图，无新增页面溢出。
+- 三份真实下载 XLSX 通过 ZIP CRC、XML／样式引用检查和 LibreOffice 打开另存后的完整单元格比对；已查看表格渲染，未使用 Microsoft Excel 桌面客户端验收。
+- 数据库／测试类型、受影响 ESLint、格式／许可证、E2E 覆盖登记以及 Web／Full worker 构建通过；未运行完整 Full 集群故障注入与真实 JVM 批跑，Runner 协议和执行器未变更。
+- 本次按最快发布路径交付，保留双架构构建、镜像及内置资源校验、SBOM、签名和完整资产上传；不执行其余远端验收流水线，以上本地验证不代表完整标准发布验收。
 
 ## 1.21.3 - 2026-10-29
 
