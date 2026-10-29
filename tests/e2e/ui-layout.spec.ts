@@ -224,7 +224,7 @@ test("runner update contains long identities and preserves host verification and
   await ensureAdministrator(page);
   const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
-  const profile = insertRunnerInstallationProfileFixture(directory);
+  const profile = await insertRunnerInstallationProfileFixture(directory);
   const name = uniqueName(`节点_${"PaymentRegression_".repeat(5)}`);
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
@@ -356,7 +356,7 @@ test("runner update contains long identities and preserves host verification and
       await batch.getByRole("button", { name: /^关闭/ }).click();
     }
   } finally {
-    profile.dispose();
+    await profile.dispose();
   }
 });
 
@@ -2120,21 +2120,28 @@ test("project settings preserve long project names and slugs within the administ
   const slug = uniqueName("long-project").padEnd(64, "x");
   await createUiProject(page, { name, slug });
   await page.goto("/settings/projects");
-  for (const viewport of [
-    { width: 1024, height: 768 },
-    { width: 1536, height: 1024 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await captureUi(page, "project-long-identifiers", viewport.width);
-    const summary = page.locator(".project-administration-summary");
-    const bounds = await summary.evaluate((element) => ({
-      width: element.clientWidth,
-      contentWidth: element.scrollWidth,
-    }));
-    expect(bounds.contentWidth).toBeLessThanOrEqual(bounds.width + 2);
-    expect((await summary.locator("strong").boundingBox())!.width).toBeGreaterThan(80);
-    await expect(summary).toContainText(slug);
-    await expectUiIntegrity(page);
+  for (const theme of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "修改项目名称", exact: true })).toBeEnabled();
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await captureUi(page, `project-long-identifiers-${theme}`, viewport.width);
+      const summary = page.locator(".project-administration-summary");
+      const bounds = await summary.evaluate((element) => ({
+        width: element.clientWidth,
+        contentWidth: element.scrollWidth,
+      }));
+      expect(bounds.contentWidth).toBeLessThanOrEqual(bounds.width + 2);
+      expect((await summary.locator("strong").boundingBox())!.width).toBeGreaterThan(80);
+      await expect(summary).toContainText(slug);
+      await expectUiIntegrity(page);
+    }
   }
 });
 
@@ -2221,7 +2228,7 @@ test("runner installer keeps connection and installation content inside the dial
   await ensureAdministrator(page);
   const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (!directory) throw new Error("AUTOFORGE_E2E_DATA_DIR is required");
-  const fixture = insertRunnerInstallationProfileFixture(directory);
+  const fixture = await insertRunnerInstallationProfileFixture(directory);
   let probeFails = false;
   let releaseInstallation: (() => void) | undefined;
   const installationRequests: Record<string, unknown>[] = [];
@@ -2357,7 +2364,7 @@ test("runner installer keeps connection and installation content inside the dial
   } finally {
     releaseInstallation?.();
     await page.context().clearCookies({ name: "autoforge-color-mode" });
-    fixture.dispose();
+    await fixture.dispose();
   }
 });
 

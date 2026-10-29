@@ -3,7 +3,7 @@ import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import WebSocket from "ws";
@@ -437,7 +437,7 @@ test("inherits TestNG cases from the JAR import page without reuploading or over
   );
 });
 
-test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
+test("imports TestNG methods from a JAR into the case library", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const jar = zipSync({
@@ -648,11 +648,11 @@ public class MixedVisibleTest {
     classes: [{ className: manyEntryClassName }],
   });
 
-  await selectJarForInspection(page, {
-    name: "valid-48-mib-tests.jar",
-    mimeType: "application/java-archive",
-    buffer: Buffer.from(validLargeJar),
-  });
+  // A filesystem-backed File keeps this real 48 MiB upload out of repeated CDP/base64 copies.
+  const largeJarPath = testInfo.outputPath("valid-48-mib-tests.jar");
+  await mkdir(testInfo.outputDir, { recursive: true });
+  await writeFile(largeJarPath, validLargeJar);
+  await selectJarForInspection(page, largeJarPath);
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText(largeClassName)).toBeVisible({ timeout: 60_000 });
   // Keep the observed progress state stable while taking screenshots. The real
@@ -1787,7 +1787,12 @@ public class MixedVisibleTest {
     await anonymousContext.close();
   }
 
+  // The simulated Runner has no periodic heartbeat during the visual audit.
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   const cancellationBatch = await createTaskRun(page, dailySuiteId);
+  // Claim before cancelling so the UI deterministically represents an executed attempt.
+  // A never-claimed case is intentionally displayed as not executed.
+  await claimAssignment(page, identity);
   await page.goto(`/run-batches/${encodeURIComponent(cancellationBatch.id)}`);
   await page.getByRole("button", { name: "取消该用例" }).click();
   const cancellationDialog = page.getByRole("dialog", { name: "取消用例执行" });

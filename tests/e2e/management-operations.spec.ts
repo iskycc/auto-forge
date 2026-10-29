@@ -96,12 +96,8 @@ test("default project can be renamed in place and keeps its selection after relo
 test("Agent uninstall requires consent and verified SSH while dialogs fit desktop themes", async ({
   page,
 }, testInfo) => {
-  test.skip(
-    Boolean(process.env.AUTOFORGE_E2E_POSTGRES_URL),
-    "Saved connection display fixture uses the Lite database; Full cleanup uses shared adapter contract tests.",
-  );
   await ensureAdministrator(page);
-  const profile = insertRunnerInstallationProfileFixture(process.env.AUTOFORGE_E2E_DATA_DIR!);
+  const profile = await insertRunnerInstallationProfileFixture();
   let runnerId: string | undefined;
   try {
     const registration = await page.request.post("/api/v1/runner-agents/register", {
@@ -177,7 +173,7 @@ test("Agent uninstall requires consent and verified SSH while dialogs fit deskto
     ).toBeUndefined();
   } finally {
     await page.unrouteAll({ behavior: "wait" });
-    profile.dispose();
+    await profile.dispose();
     if (runnerId) {
       await page.request.post(`/api/v1/runners/${runnerId}/deregister`);
       await page.request.delete(`/api/v1/runners/${runnerId}`);
@@ -520,7 +516,7 @@ test("version initialization inherits mapped cases and tasks and preserves progr
         },
       });
     },
-    { times: 1 },
+    { times: 8 },
   );
   await inherit.click();
   await expect(wizard.getByText(/测试暂时繁忙，允许继续/)).toBeVisible();

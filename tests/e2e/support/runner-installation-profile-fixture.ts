@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { PlatformConfigurationStore } from "@autoforge/platform-config";
+import { openHistoryFixtureConnection } from "./history-fixture-connection";
 import { AesGcmSecretCipher } from "../../../apps/web/src/lib/secret-cipher-core";
 
 /** Saved SSH metadata exercises the real server-rendered installer without contacting a host. */
-export function insertRunnerInstallationProfileFixture(directory: string) {
+export async function insertRunnerInstallationProfileFixture(
+  directory = process.env.AUTOFORGE_E2E_PLATFORM_CONFIG_DIR ?? process.env.AUTOFORGE_E2E_DATA_DIR,
+) {
+  if (!directory)
+    throw new Error("Runner installation fixture requires its platform configuration directory.");
   const id = randomUUID();
   const host = `${"runner-internal-".repeat(8)}example.test`;
   const name = `安装布局验证-${"长名称执行节点-".repeat(10)}`;
@@ -19,38 +22,40 @@ export function insertRunnerInstallationProfileFixture(directory: string) {
     }),
     `runner-installation-profile:${id}`,
   );
-  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  const connection = () =>
+    openHistoryFixtureConnection({
+      directory: process.env.AUTOFORGE_E2E_POSTGRES_URL ? undefined : directory,
+      postgresUrl: process.env.AUTOFORGE_E2E_POSTGRES_URL,
+    });
+  const database = await connection();
   try {
-    database.exec("PRAGMA busy_timeout = 5000");
-    database
-      .prepare(
-        `INSERT INTO runner_installation_profiles
+    await database.execute(
+      `INSERT INTO runner_installation_profiles
       (id,runner_name,connection_encrypted,expected_host_key_sha256,installation_mode,run_as_root,created_at,updated_at)
-      VALUES (?,?,?,?,'auto',0,?,?)`,
-      )
-      .run(
+      VALUES (?,?,?,?,'auto',FALSE,?,?)`,
+      [
         id,
         name,
         connectionEncrypted,
         fingerprint,
         new Date().toISOString(),
         new Date().toISOString(),
-      );
+      ],
+    );
   } finally {
-    database.close();
+    await database.close();
   }
   return {
     id,
     host,
     name,
     fingerprint,
-    dispose() {
-      const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+    async dispose() {
+      const database = await connection();
       try {
-        database.exec("PRAGMA busy_timeout = 5000");
-        database.prepare("DELETE FROM runner_installation_profiles WHERE id=?").run(id);
+        await database.execute("DELETE FROM runner_installation_profiles WHERE id=?", [id]);
       } finally {
-        database.close();
+        await database.close();
       }
     },
   };

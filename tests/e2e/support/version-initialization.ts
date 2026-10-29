@@ -25,7 +25,8 @@ export async function inheritInitializationStep(page: Page, wizard: Locator): Pr
         return true;
       },
       {
-        timeout: 5_000,
+        // Resource deferrals last five seconds; allow cooldown and the next bounded UI retry.
+        timeout: 15_000,
         intervals: [250, 500, 1_000],
         message: "initialization resumes after explicit priority deferral",
       },

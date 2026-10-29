@@ -80,7 +80,9 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
         )}
       >
         <strong title={project?.name}>{project?.name ?? "暂无项目"}</strong>
-        <span>
+        <span
+          title={project ? `${project.slug} · ${project.archived ? "已归档" : "启用"}` : undefined}
+        >
           {project
             ? `${project.slug} · ${project.archived ? "已归档" : "启用"}`
             : "请从顶栏新建项目"}
@@ -218,5 +220,5 @@ const projectActionsStyles = {
   "action-dialog-form": "mt-0",
   "project-administration-bar": "flex items-center justify-between gap-3 min-w-0 flex-wrap",
   "project-administration-summary":
-    "flex min-w-0 flex-1 items-baseline gap-3 [&_strong]:min-w-0 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_>_span]:shrink-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
+    "flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1 [&_strong]:min-w-0 [&_strong]:max-w-full [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_>_span]:min-w-0 [&_>_span]:max-w-full [&_>_span]:truncate [&_>_span]:text-muted-foreground [&_>_span]:text-xs",
 } as const;

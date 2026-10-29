@@ -600,20 +600,20 @@ jobs:
             command: bash scripts/quality/test-full-business-recovery.sh runtime-recovery
           - name: Full · asset lifecycle
             command: bash scripts/quality/test-full-business-recovery.sh browser-assets
-            timeout_minutes: 12
+            timeout_minutes: 15
           - name: Full distributed deployment
             command: pnpm test:distributed
           - name: Full · governance
             command: bash scripts/quality/test-full-business-recovery.sh browser-governance
-            timeout_minutes: 12
+            timeout_minutes: 15
           - name: Network-blocked Lite · assets
             command: bash scripts/quality/test-offline.sh assets
-            timeout_minutes: 12
+            timeout_minutes: 15
           - name: Network-blocked Lite · governance
             command: bash scripts/quality/test-offline.sh governance
           - name: Network-blocked Lite · operations and deployment
             command: bash scripts/quality/test-offline.sh operations && pnpm test:deployment
-            timeout_minutes: 12
+            timeout_minutes: 15
           - name: Network-blocked Lite · recovery
             command: bash scripts/quality/test-offline.sh recovery
     steps:

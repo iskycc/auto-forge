@@ -39,7 +39,7 @@ jobs:
   acceptance:
     name: Distributed · ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.phase == 'browser-background' && 30 || 25 }}
     strategy:
       fail-fast: false
       matrix:

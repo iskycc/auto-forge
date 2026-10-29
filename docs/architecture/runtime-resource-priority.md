@@ -130,13 +130,15 @@ Full 升级应先排空并停止旧 Web/Worker，再统一升级所有节点。�
 - 队列共享契约验证执行/后台隔离、租约、确认、重试和死信；真实 JetStream 额外验证旧 subject 搬运，SQLite 验证十万条后台积压下实际领取 SQL 的索引计划。
 - `file-parsing.integration.test.ts` 验证 Lite/Full 上传解析、重复列信息、队列过载与恢复。`worker-pool.test.ts` 验证线程意外退出时拒绝在途请求、退出前拒绝新任务、退出后重建以及忽略旧线程事件，防止等待中的请求永久占用工作槽。
 - 应用及双数据库集成测试覆盖对象清理、保留策略、通知、Webhook 重试、定时触发去重、轮次恢复、DDT 取消和快照清理。控制面辅助循环（租约恢复、outbox、时钟同步）保留有界批次与已有恢复协议，不因后台暂停停止续租或完成上报。
-- `pnpm test:background-resources`：先运行下述 Docker 验收，再启动两个 Full Web、两个独立 Worker 和真实 PostgreSQL/NATS/Redis/MinIO，各运行 10 项浏览器场景。混合负载包含 500 个用例协议执行、3 个各含 2,000 类的 JAR 导入、2 个各含 4,000 行的 DDT 导入及 CSV/JSON 分析导出，读取探针从导入入队前持续到批次创建、领取、日志上传、完成上报和所有后台作业终态，并验证导出文件内容非空。其余场景覆盖导入完整交互、DDT 编辑与恢复、统计缓存、权限/审计、通知和管理操作。`.github/workflows/distributed.yml` 的 `browser-background` 分区持续运行 Full 混合场景，并要求非空、无跳过、无重试的测试结果和 500 槽位响应报告。Docker 多核容量命令在有相应离线资源的验收主机运行。该命令不是强杀、断电或长时间 soak 测试；Full 故障矩阵仍使用既有 CI 验收入口。
+- `pnpm test:background-resources`：先运行下述 Docker 验收，再启动两个 Full Web、两个独立 Worker 和真实 PostgreSQL/NATS/Redis/MinIO，各运行所选文件的全部浏览器场景（当前 67 项）。混合负载包含 500 个用例协议执行、3 个各含 2,000 类的 JAR 导入、2 个各含 4,000 行的 DDT 导入及 CSV/JSON 分析导出，读取探针从导入入队前持续到批次创建、领取、日志上传、完成上报和所有后台作业终态，并验证导出文件内容非空。其余场景覆盖导入完整交互、DDT 编辑与恢复、统计缓存、权限/审计、通知和管理操作。`.github/workflows/distributed.yml` 的 `browser-background` 分区持续运行 Full 混合场景，并要求非空、无跳过、无重试的测试结果和 500 槽位响应报告。Docker 多核容量命令在有相应离线资源的验收主机运行。该命令不是强杀、断电或长时间 soak 测试；Full 故障矩阵仍使用既有 CI 验收入口。
 
 - `pnpm test:runtime-resources`：从当前生产构建生成临时验收镜像，在 1 CPU/4 GiB、4 CPU/4 GiB，以及 4 CPU/无额外内存限制的容器中使用同样的 256 MiB 日志负载验证多核 CPU 时间、吞吐、RSS、读取正确性与独立 HTTP 探针；第三组观察独占主机内存充裕时的进一步扩展。随后在同一镜像中启动完整 Lite Web，运行 500 槽位 Runner 协议和执行记录页面探针。日志微基准中的 HTTP 探针是事件循环隔离测试，完整 Web 响应由后续协议验收覆盖。
 
 容器验收要求本机至少 4 个可用 CPU，已安装构建依赖、浏览器与内置 Agent 资源，并已离线加载 `deploy/docker/backend.Dockerfile` 指定的固定 Node 基础镜像。可通过 `AUTOFORGE_RESOURCE_TEST_CPUS` 调整多核组配额；1 核组必须准确识别 quota，多核组平均 CPU 时间必须超过 1.2 核、吞吐至少提高 10%，并满足 HTTP P95 小于 1.5 秒与 RSS 小于容器内存的 80%。压测独占端口 3100，应在空闲验收主机运行。结果保存在 `test-results/runtime-resources`；它证明指定负载下的横向 CPU 利用能力，不代替生产硬件长期 soak 或真实 JVM 容量测试。
 
 Docker 浏览器夹具使用 Linux host 网络访问宿主机上的本地 Webhook 接收器，并只对临时测试目录使用可共享的创建权限，使容器内的非 root 用户可以删除宿主侧创建的测试对象。生产 Compose 的网络、用户和目录权限不因此改变。
+
+Full 后台并发浏览器分区会执行所选文件的全部场景，当前为 67 项，不只是最初的十项。该分区独立保留 30 分钟上限，覆盖首次资源构建、基础设施、完整测试与清理；其余分布式分区仍为 25 分钟。原 25 分钟作业已完成 65 项、在最后目录缓存场景运行时被总时限中断，未减少测试或增加浏览器重试。Agent 卸载弹窗的已保存连接夹具同时支持 SQLite 与 PostgreSQL，Full 不再跳过该场景。
 
 ## 空闲维护与锁来源诊断
 
