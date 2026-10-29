@@ -1792,12 +1792,24 @@ public class MixedVisibleTest {
   const cancellationBatch = await createTaskRun(page, dailySuiteId);
   // Claim before cancelling so the UI deterministically represents an executed attempt.
   // A never-claimed case is intentionally displayed as not executed.
-  await claimAssignment(page, identity);
+  const cancellationClaim = await claimAssignment(page, identity);
   await page.goto(`/run-batches/${encodeURIComponent(cancellationBatch.id)}`);
   await page.getByRole("button", { name: "取消该用例" }).click();
   const cancellationDialog = page.getByRole("dialog", { name: "取消用例执行" });
   await cancellationDialog.getByLabel("取消原因").fill("E2E single run cancellation");
   await cancellationDialog.getByRole("button", { name: "确认取消" }).click();
+  // A claimed attempt stays active until the Agent acknowledges process cleanup.
+  expect(
+    await completeAttempt(page, identity, cancellationClaim, {
+      completionId: "e2e-completion-cancelled",
+      status: "cancelled",
+      resultCode: "CANCELLED_BY_CONTROL_PLANE",
+      summary: "E2E single run cancellation",
+      durationMs: 0,
+      logWatermarks: { stdout: -1, stderr: -1, agent: -1 },
+      artifacts: [],
+    }),
+  ).toMatchObject({ disposition: "accepted" });
   await expect(page.getByText("已取消", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
   const cancelledBatchDetails = (await (
     await page.request.get(`/api/v1/run-batches/${encodeURIComponent(cancellationBatch.id)}`, {
@@ -2500,6 +2512,7 @@ async function completeAttempt(
     resultCode: string;
     summary: string;
     durationMs: number;
+    logWatermarks?: { stdout: number; stderr: number; agent: number };
     testNg?: ReturnType<typeof testNgResult>;
     artifacts: Array<Record<string, unknown>>;
   },
@@ -2518,7 +2531,7 @@ async function completeAttempt(
           summary: result.summary,
           durationMs: result.durationMs,
           ...(result.testNg ? { testNg: result.testNg } : {}),
-          logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
+          logWatermarks: result.logWatermarks ?? { stdout: 0, stderr: -1, agent: -1 },
           artifacts: result.artifacts,
         },
       },

@@ -260,3 +260,17 @@ test("prepares the offline viewer before browser startup deadlines and network i
     assert.ok(preparation >= 0 && preparation < script.indexOf("if unshare --user"), path);
   }
 });
+
+test("prepares pinned Node and locked frontend dependencies before building host-side viewers", async () => {
+  const workflow = await readFile(".github/workflows/release.yml", "utf8");
+  const backend = workflow.match(/  backend:\n([\s\S]*?)\n  jenkins-plugins:/)?.[1];
+  assert.ok(backend, "Both native backend targets must remain in the release matrix");
+  assert.match(backend, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
+  assert.match(backend, /node-version: 24\.16\.0/);
+  const installation = backend.indexOf("pnpm install --frozen-lockfile");
+  const imageBuild = backend.indexOf("bash scripts/release/build-backend-image.sh");
+  assert.ok(
+    installation >= 0 && installation < imageBuild,
+    "Viewer UI must resolve esbuild before image assembly",
+  );
+});

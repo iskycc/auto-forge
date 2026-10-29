@@ -13,7 +13,7 @@ git tag -s v0.2.2 -m "AutoForge v0.2.2"
 git push origin v0.2.2
 ```
 
-`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，两个 CPU 架构复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档直接发布 Docker 原生 tar，目标机不需要额外安装 zstd；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一架构、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
+`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，两个 CPU 架构复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。两个原生后端构建机在组装镜像前使用固定 Node 24 和 frozen-lockfile 安装依赖，以编译内置 Go 查看器的离线前端；构建期获取依赖不引入产品运行期网络要求。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档直接发布 Docker 原生 tar，目标机不需要额外安装 zstd；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一架构、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
 
 Release 附件逐个上传，每次最多等待 180 秒，超时后最多再留 10 秒结束进程；失败最多尝试三次，
 重试前分别等待 5 秒和 10 秒。任一附件持续失败会明确输出文件名并终止发布步骤，新 Release 保留为
