@@ -86,6 +86,7 @@ cd "${repository_root}"
 # Prepare redistributable plugins while build dependencies are reachable; the namespace below
 # must only consume the verified artifacts and must never need Maven repositories.
 pnpm build:jenkins-resources
+node scripts/release/ensure-log-viewer-resources.mjs
 export AUTOFORGE_E2E_DATA_DIR="${acceptance_directory}/platform-data"
 export AUTOFORGE_OFFLINE_ACCEPTANCE_DIR="${acceptance_directory}"
 export AUTOFORGE_OFFLINE_E2E_SPECS="${offline_e2e_specs}"

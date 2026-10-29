@@ -8,12 +8,15 @@ import { PlatformConfigurationStore } from "@autoforge/platform-config";
 const e2eDataDirectory =
   process.env.AUTOFORGE_E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "autoforge-e2e-"));
 const externalServer = process.env.AUTOFORGE_E2E_EXTERNAL_SERVER === "1";
-// Maven preparation belongs to the test build phase, before the server's bounded startup clock.
+// Executable and Maven preparation precede the server's bounded startup clock.
 // Network-blocked harnesses prepare the same verified resources before entering their namespace.
-if (!externalServer)
-  execFileSync(process.execPath, [resolve("scripts/release/ensure-jenkins-resources.mjs")], {
-    stdio: "inherit",
-  });
+if (!externalServer) {
+  for (const preparation of [
+    "scripts/release/ensure-jenkins-resources.mjs",
+    "scripts/release/ensure-log-viewer-resources.mjs",
+  ])
+    execFileSync(process.execPath, [resolve(preparation)], { stdio: "inherit" });
+}
 if (externalServer && !process.env.AUTOFORGE_E2E_DATA_DIR)
   throw new Error("External E2E server requires its existing AUTOFORGE_E2E_DATA_DIR.");
 process.env.AUTOFORGE_E2E_DATA_DIR = e2eDataDirectory;

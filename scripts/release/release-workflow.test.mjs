@@ -245,3 +245,18 @@ test("prepares embedded Jenkins plugins before disconnecting source acceptance f
     /Build verified Agent resources for Runner update controls[\s\S]*?Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/,
   );
 });
+
+test("prepares the offline viewer before browser startup deadlines and network isolation", async () => {
+  const playwright = await readFile("playwright.config.ts", "utf8");
+  const viewerPreparation = playwright.indexOf('"scripts/release/ensure-log-viewer-resources.mjs"');
+  assert.ok(viewerPreparation >= 0 && viewerPreparation < playwright.indexOf("webServer:"));
+  for (const path of [
+    "scripts/quality/test-offline.sh",
+    "scripts/quality/test-real-agent.sh",
+    "scripts/quality/test-container-executor.sh",
+  ]) {
+    const script = await readFile(path, "utf8");
+    const preparation = script.indexOf("node scripts/release/ensure-log-viewer-resources.mjs");
+    assert.ok(preparation >= 0 && preparation < script.indexOf("if unshare --user"), path);
+  }
+});
