@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { isDirectoryProjectionUsable, type DirectoryProjection } from "./directory-projection";
+import { describe, expect, it, vi } from "vitest";
+import {
+  isDirectoryProjectionUsable,
+  readDirectoryProjection,
+  type DirectoryProjection,
+} from "./directory-projection";
 
 const published: DirectoryProjection = {
   status: {
@@ -12,6 +16,29 @@ const published: DirectoryProjection = {
   synchronized: false,
 };
 describe("directory availability during execution", () => {
+  it("bounds a pending directory request without cancelling the whole page", async () => {
+    const page = new AbortController();
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const send = vi.fn<typeof fetch>(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+            once: true,
+          });
+        }),
+    );
+    try {
+      const pending = readDirectoryProjection("snapshot", "", page.signal, send);
+      const failed = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+      deadline.abort(new DOMException("directory deadline", "TimeoutError"));
+      await failed;
+      expect(page.signal.aborted).toBe(false);
+      expect(timeout).toHaveBeenCalledWith(15_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
   it("keeps a complete published directory readable while its replacement is deferred", () => {
     expect(isDirectoryProjectionUsable(published, { allowPublishedFallback: true })).toBe(true);
     expect(

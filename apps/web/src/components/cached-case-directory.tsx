@@ -58,7 +58,13 @@ export function CachedCaseDirectory({
     outcome: filter.outcome,
     ...(filter.missingSuiteId ? { missingSuiteId: filter.missingSuiteId } : {}),
   }).toString();
-  const result = useDirectoryTree(snapshot, filters, { allowPublishedFallback: true });
+  const visibilityRef = useRef<HTMLDivElement>(null);
+  const result = useDirectoryTree(
+    snapshot,
+    filters,
+    { allowPublishedFallback: true },
+    visibilityRef,
+  );
   const source = useMemo(
     () =>
       result.projection ? { projection: result.projection, refresh: result.refresh } : undefined,
@@ -86,6 +92,8 @@ export function CachedCaseDirectory({
       <ReadModelStatusBar
         snapshots={[result.projection?.status ?? snapshot]}
         onRefresh={result.refresh}
+        visibilityRef={visibilityRef}
+        inspectionEnabled={!result.loading && (!result.refreshing || Boolean(result.error))}
       />
       {result.error ? (
         <Notice
@@ -98,7 +106,9 @@ export function CachedCaseDirectory({
           role="alert"
         >
           {result.error}
-          <Button onClick={result.refresh}>重试</Button>
+          <Button disabled={result.retrying} onClick={() => void result.retry()}>
+            {result.retrying ? "正在重试…" : "重试"}
+          </Button>
         </Notice>
       ) : null}
       {result.loading && !result.projection ? (
@@ -107,7 +117,7 @@ export function CachedCaseDirectory({
         </LoadingStateMessage>
       ) : null}
       {progress ? <p role="status">{progress}</p> : null}
-      {result.refreshing ? (
+      {result.refreshing && !result.error ? (
         <Notice tone="info" role="status">
           当前显示上次完整目录，正在后台更新；可继续查看用例详情，更新完成后恢复批量选择。
         </Notice>

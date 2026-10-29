@@ -60,7 +60,9 @@ export function CachedSuiteDirectory({
           )}
         >
           {result.error}
-          <Button onClick={result.refresh}>重试</Button>
+          <Button disabled={result.retrying} onClick={() => void result.retry()}>
+            {result.retrying ? "正在重试…" : "重试"}
+          </Button>
         </Notice>
       ) : null}
       <SuiteTree

@@ -1001,27 +1001,25 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     if (caseDefinitionIds.length === 0) return [];
     const outcomes: LatestCaseRunOutcome[] = [];
     for (const batch of batchesOf([...new Set(caseDefinitionIds)], LATEST_RUN_BATCH_SIZE)) {
-      const placeholders = batch.map(() => "?").join(", ");
-      // 每个用例只取最新一条终态 run（succeeded/failed/cancelled）；
-      // created_at 相同时用 id（UUIDv7，时间有序）作为次序，保证结果确定。
-      // result_code 取该 run 最后一次 attempt 的结果码，供 blocked 口径分类。
+      const requestedCases = batch.map(() => "(?)").join(", ");
+      // Seek the latest eligible run before reading attempts. A window over all
+      // historical runs also evaluates the attempt subquery for every discarded run.
       const rows = this.handle.client
         .prepare(
-          `SELECT case_definition_id, status, terminal_outcome, created_at, result_code FROM (
-             SELECT r.case_definition_id, r.status, r.terminal_outcome, r.created_at,
-                    (SELECT a.result_code FROM run_attempts a
-                      WHERE a.execution_run_id = r.id
-                      ORDER BY a.attempt_number DESC LIMIT 1) AS result_code,
-                    ROW_NUMBER() OVER (
-                      PARTITION BY r.case_definition_id
-                      ORDER BY r.created_at DESC, r.id DESC
-                    ) AS row_number
-             FROM execution_runs r
-             JOIN run_batches b ON b.id = r.batch_id
-             WHERE r.case_definition_id IN (${placeholders})
+          `WITH requested(case_definition_id) AS (VALUES ${requestedCases})
+           SELECT r.case_definition_id, r.status, r.terminal_outcome, r.created_at,
+                  (SELECT a.result_code FROM run_attempts a
+                    WHERE a.execution_run_id = r.id
+                    ORDER BY a.attempt_number DESC LIMIT 1) AS result_code
+           FROM requested
+           JOIN execution_runs r ON r.id = (
+             SELECT candidate.id FROM execution_runs candidate
+             JOIN run_batches b ON b.id = candidate.batch_id
+             WHERE candidate.case_definition_id = requested.case_definition_id
                AND b.batch_kind <> 'case_log_rerun'
-               AND r.status IN ('succeeded', 'failed', 'cancelled')
-           ) WHERE row_number = 1`,
+               AND candidate.status IN ('succeeded', 'failed', 'cancelled')
+             ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1
+           ) ORDER BY r.case_definition_id`,
         )
         .all(...batch) as Array<{
         case_definition_id: string;

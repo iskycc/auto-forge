@@ -4,20 +4,25 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import { readModelStatusSchema, type ReadModelStatus } from "@autoforge/contracts";
 import { RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "./ui";
 import { useToast } from "./ui-feedback";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { requestReadModelRefresh } from "@/lib/read-model-refresh";
 
 const deferredRefreshCheckMs = 250;
 
 export function ReadModelStatusBar({
   snapshots: initialSnapshots,
   onRefresh,
+  inspectionEnabled = true,
+  visibilityRef,
 }: {
   snapshots: ReadModelStatus[];
   onRefresh?: () => void;
+  inspectionEnabled?: boolean;
+  visibilityRef?: RefObject<HTMLDivElement | null>;
 }) {
   const [snapshots, setSnapshots] = useState(initialSnapshots);
   const [previousSnapshots, setPreviousSnapshots] = useState(initialSnapshots);
@@ -25,7 +30,8 @@ export function ReadModelStatusBar({
     setPreviousSnapshots(initialSnapshots);
     setSnapshots(initialSnapshots);
   }
-  const container = useRef<HTMLDivElement>(null);
+  const ownContainer = useRef<HTMLDivElement>(null);
+  const container = visibilityRef ?? ownContainer;
   const notifiedSignature = useRef<string | undefined>(undefined);
   const router = useRouter();
   const toast = useToast();
@@ -46,7 +52,7 @@ export function ReadModelStatusBar({
     .sort()[0];
 
   useEffect(() => {
-    if (!ids) return;
+    if (!ids || !inspectionEnabled) return;
     const controller = new AbortController();
     let running = false;
     async function inspect() {
@@ -94,7 +100,7 @@ export function ReadModelStatusBar({
       clearTimeout(initial);
       document.removeEventListener("visibilitychange", inspect);
     };
-  }, [ids, unsettled, failed, offline, router]);
+  }, [ids, unsettled, failed, offline, router, inspectionEnabled, container]);
 
   useEffect(() => {
     if (receivedSignature === signature || receivedSignature === notifiedSignature.current) return;
@@ -116,17 +122,15 @@ export function ReadModelStatusBar({
     }
     applyReceivedSnapshot();
     return () => clearTimeout(deferredRefresh);
-  }, [receivedSignature, signature, onRefresh, router]);
+  }, [receivedSignature, signature, onRefresh, router, container]);
 
   async function refresh() {
     setRefreshing(true);
     try {
-      const response = await fetch("/api/v1/read-models/status", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ids: snapshots.map((snapshot) => snapshot.id) }),
-      });
-      if (!response.ok) throw new Error("请求更新失败，请稍后重试。");
+      await requestReadModelRefresh(
+        snapshots.map((snapshot) => snapshot.id),
+        AbortSignal.timeout(15_000),
+      );
       toast.info("已请求后台更新，当前内容仍可继续查看。");
       if (onRefresh) onRefresh();
       // Explicit refresh also reloads task metadata outside the directory projection.

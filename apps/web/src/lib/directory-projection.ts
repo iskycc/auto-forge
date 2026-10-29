@@ -39,7 +39,7 @@ export async function readDirectoryProjection(
   fetcher: typeof fetch = fetch,
 ): Promise<DirectoryProjection> {
   const response = await fetcher(`/api/v1/read-models/${baseId}/directory?${filters}`, {
-    signal,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
     cache: "no-store",
   });
   if (!response.ok) throw new Error(await directoryResponseError(response));

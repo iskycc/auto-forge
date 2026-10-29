@@ -407,6 +407,55 @@ describe("SqliteCaseCatalogRepository", () => {
     }
   });
 
+  it("reads attempt results only for each case's latest execution instead of its complete history", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-latest-outcome-"));
+    temporaryDirectories.push(directory);
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "autoforge.sqlite"),
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+    });
+    try {
+      seedLatestRunFixture(handle.client);
+      handle.client.exec(`
+        INSERT INTO run_batches
+          (id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,created_at,updated_at)
+        WITH RECURSIVE history(number) AS (VALUES(1) UNION ALL SELECT number+1 FROM history WHERE number<1000)
+        SELECT 'history-'||number,'suite-latest','History',1,'succeeded',0,'[]',2,'project-latest',
+               '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z' FROM history;
+        INSERT INTO execution_runs
+          (id,batch_id,case_definition_id,case_version,display_name,class_name,status,terminal_outcome,created_at,updated_at)
+        SELECT b.id||'-'||c.id,b.id,c.id,1,c.id,c.id,'failed','failed',
+               '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'
+        FROM run_batches b CROSS JOIN (SELECT 'case-multi' id UNION ALL SELECT 'case-stale') c
+        WHERE b.id LIKE 'history-%';
+        ALTER TABLE run_attempts RENAME TO stored_attempts;
+        CREATE VIEW run_attempts AS
+          SELECT id AS execution_run_id, 1 AS attempt_number,
+                 observe_result_code('ASSERTION_FAILED') AS result_code
+          FROM execution_runs;
+      `);
+      let inspectedResults = 0;
+      handle.client.function("observe_result_code", (value) => {
+        inspectedResults++;
+        return value;
+      });
+      const outcomes = await new SqliteCaseCatalogRepository(handle).listLatestRunOutcomes([
+        "case-multi",
+        "case-stale",
+        "case-multi",
+      ]);
+      expect(outcomes).toHaveLength(2);
+      expect(outcomes.find((row) => row.caseDefinitionId === "case-multi")).toMatchObject({
+        outcome: "timed_out",
+        resultCode: "ASSERTION_FAILED",
+        executedAt: "2026-08-12T02:00:00.000Z",
+      });
+      expect(inspectedResults).toBe(2);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("lists the latest terminal run outcome per case definition", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-db-"));
     temporaryDirectories.push(directory);

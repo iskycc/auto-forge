@@ -11,6 +11,7 @@ import {
 } from "./support/session";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { openHistoryFixtureConnection } from "./support/history-fixture-connection";
 
 test("TestNG directories remain browsable during a running task and a deferred refresh", async ({
   page,
@@ -283,9 +284,13 @@ test("TestNG directories remain browsable during a running task and a deferred r
     });
     // Deterministically keep a real published projection stale; actual worker budget
     // admission is covered by the worker-thread and both database integration tests.
+    let directoryReads = 0;
+    let directorySnapshotId = "";
     await page.route("**/api/v1/read-models/*/directory?*", async (route) => {
+      directoryReads++;
       const response = await route.fetch();
       const payload = await response.json();
+      directorySnapshotId = payload.status.id;
       await route.fulfill({
         response,
         json: { ...payload, synchronized: false, status: { ...payload.status, state: "stale" } },
@@ -308,6 +313,16 @@ test("TestNG directories remain browsable during a running task and a deferred r
     await expect(
       page.getByRole("checkbox", { name: "选择当前搜索结果中的全部用例", exact: true }),
     ).toBeDisabled();
+    await page.getByRole("link", { name: "DDT 管理", exact: true }).click();
+    await expect(page.locator("#testng-case-panel")).toBeHidden();
+    const hiddenReads = directoryReads;
+    const previousRenewals = renewals;
+    await expect
+      .poll(() => renewals, { timeout: 10000 })
+      .toBeGreaterThan(previousRenewals + claims.length);
+    expect(directoryReads).toBeLessThanOrEqual(hiddenReads + 1);
+    await page.getByRole("link", { name: "TestNG 用例", exact: true }).click();
+    await expect(folder).toHaveAttribute("data-open", "true");
     await page.getByRole("button", { name: "快速预览 Directory000Test", exact: true }).click();
     const preview = page.getByLabel("用例详情与操作", { exact: true });
     await expect(preview).toContainText("pressure.Directory000Test", { timeout: 15000 });
@@ -325,9 +340,43 @@ test("TestNG directories remain browsable during a running task and a deferred r
       }
     }
     await page.unroute("**/api/v1/read-models/*/directory?*");
-    await page.reload();
     await expect(page.locator(".case-browser-summary")).toContainText("120 个用例");
+    await expect(page.getByText("当前显示上次完整目录", { exact: false })).toHaveCount(0, {
+      timeout: 15000,
+    });
+    await expect(preview).toContainText("pressure.Directory000Test");
+    await expect(
+      page.getByRole("checkbox", { name: "选择当前搜索结果中的全部用例", exact: true }),
+    ).toBeEnabled({ timeout: 15000 });
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.screenshot({ path: testInfo.outputPath(`recovered-directory-dark-${width}.png`) });
+    }
+    const history = await openHistoryFixtureConnection({
+      directory: process.env.AUTOFORGE_E2E_DATA_DIR,
+      postgresUrl: process.env.AUTOFORGE_E2E_POSTGRES_URL,
+    });
+    try {
+      await history.execute(
+        "UPDATE read_model_snapshots SET failed=5, requested_revision=requested_revision+1, lease_token=NULL, lease_expires_at=NULL WHERE id=?",
+        [directorySnapshotId],
+      );
+    } finally {
+      await history.close();
+    }
+    await page.reload();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "后台准备目录失败，请重试。" }),
+    ).toBeVisible();
     await expect(page.getByText("当前显示上次完整目录", { exact: false })).toHaveCount(0);
+    await expect(
+      page.getByRole("checkbox", { name: "选择当前搜索结果中的全部用例", exact: true }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "重试", exact: true }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "后台准备目录失败，请重试。" }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("checkbox", { name: "选择当前搜索结果中的全部用例", exact: true }),
     ).toBeEnabled({ timeout: 15000 });
