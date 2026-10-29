@@ -38,7 +38,8 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
     return value;
   }
   async function select(id: string | null) {
-    await service.select({ databaseId: id, revision: (await service.list()).revision });
+    await registry.check(id ?? firstId);
+    await registry.select(id, (await service.list()).revision);
   }
   async function batch() {
     const id = randomUUID();
@@ -56,6 +57,11 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
     await database.pool.query(
       `INSERT INTO run_attempts(id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at) VALUES($1,$1,$2,1,'running',1,$3)`,
       [attemptId, runnerId, now],
+    );
+    // These fixtures represent batches bound to legacy databases before the daily-storage upgrade.
+    await database.pool.query(
+      "INSERT INTO run_batch_log_storage(batch_id,database_id) SELECT $1,active_database_id FROM log_database_settings WHERE id=1",
+      [id],
     );
     return { batchId: id, attemptId };
   }
@@ -95,8 +101,12 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
       { next: () => randomUUID() },
     );
     logs = new PostgresRoutedAttemptLogStore(registry, createAttemptLogStore(directory));
-    firstId = (await service.register({ name: "日志库一", databaseUrl: urls[1]! })).id;
-    secondId = (await service.register({ name: "日志库二", databaseUrl: urls[2]! })).id;
+    firstId = (
+      await registry.register(randomUUID(), { name: "日志库一", databaseUrl: urls[1]! }, now)
+    ).id;
+    secondId = (
+      await registry.register(randomUUID(), { name: "日志库二", databaseUrl: urls[2]! }, now)
+    ).id;
     runnerId = randomUUID();
     await database.pool.query(
       `INSERT INTO runners(id,credential_hash,name,disabled,draining,os,architecture,agent_version,protocol_version,labels_json,capabilities_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at)
@@ -228,12 +238,14 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
 
   it("reuses a registered identity and rejects business databases, stale switches, unavailable databases and wrong identities without changing bindings", async () => {
     await expect(
-      service.register({ name: "错误的主库", databaseUrl: urls[0]! }),
+      registry.register(randomUUID(), { name: "错误的主库", databaseUrl: urls[0]! }, now),
     ).rejects.toMatchObject({ code: "LOG_DATABASE_INVALID" });
-    expect((await service.register({ name: "重复库", databaseUrl: urls[1]! })).id).toBe(firstId);
+    expect(
+      (await registry.register(randomUUID(), { name: "重复库", databaseUrl: urls[1]! }, now)).id,
+    ).toBe(firstId);
     const revision = (await service.list()).revision;
     await select(firstId);
-    await expect(service.select({ databaseId: secondId, revision })).rejects.toMatchObject({
+    await expect(registry.select(secondId, revision)).rejects.toMatchObject({
       code: "LOG_DATABASE_CONFLICT",
     });
     const target = await batch();
@@ -286,8 +298,13 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
   it("expands past the pool cache size and reads all databases after idle pool eviction", async () => {
     const targets = [];
     for (let index = 3; index < urls.length; index++) {
-      const id = (await service.register({ name: `扩展库 ${index}`, databaseUrl: urls[index]! }))
-        .id;
+      const id = (
+        await registry.register(
+          randomUUID(),
+          { name: `扩展库 ${index}`, databaseUrl: urls[index]! },
+          now,
+        )
+      ).id;
       await select(id);
       const target = await batch();
       await logs.appendChunks(append(target, 0, `database ${index}`));
@@ -336,16 +353,24 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
     let recoveredId: string | undefined;
     const probe = registryForTest();
     try {
-      const registration = await service.register({
-        name: "登记恢复测试",
-        databaseUrl: orphanUrl.toString(),
-      });
+      const registration = await registry.register(
+        randomUUID(),
+        {
+          name: "登记恢复测试",
+          databaseUrl: orphanUrl.toString(),
+        },
+        now,
+      );
       recoveredId = registration.id;
       await database.pool.query("DELETE FROM log_databases WHERE id=$1", [registration.id]);
-      const recovered = await service.register({
-        name: "重试登记",
-        databaseUrl: orphanUrl.toString(),
-      });
+      const recovered = await registry.register(
+        randomUUID(),
+        {
+          name: "重试登记",
+          databaseUrl: orphanUrl.toString(),
+        },
+        now,
+      );
       expect(recovered.id).toBe(registration.id);
       await probe.check(recovered.id);
     } finally {

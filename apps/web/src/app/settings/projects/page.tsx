@@ -48,7 +48,7 @@ export default async function ProjectsPage({
         <div>
           <p className={cn("eyebrow", uiPatterns["eyebrow"])}>Organization</p>
           <h1>项目设置</h1>
-          <p>管理项目负责人及版本执行资源；新建项目、版本和阶段请使用顶栏下拉列表。</p>
+          <p>管理项目名称、负责人及版本执行资源；新建项目、版本和阶段请使用顶栏下拉列表。</p>
         </div>
       </header>
       <ProjectActions

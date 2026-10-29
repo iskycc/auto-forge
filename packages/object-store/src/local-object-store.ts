@@ -218,6 +218,32 @@ export class LocalObjectStore implements JarObjectStorePort {
     }
   }
 
+  async readRange(objectKey: string, offset: number, length: number): Promise<Uint8Array> {
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > 16 * 1024 * 1024
+    )
+      throw new Error("Invalid object read range.");
+    const file = await open(this.resolveObjectKey(objectKey), "r");
+    try {
+      const metadata = await file.stat();
+      if (offset + length > metadata.size) throw new Error("Object range exceeds stored size.");
+      const buffer = Buffer.alloc(length);
+      let filled = 0;
+      while (filled < length) {
+        const result = await file.read(buffer, filled, length - filled, offset + filled);
+        if (!result.bytesRead) throw new Error("Incomplete object range.");
+        filled += result.bytesRead;
+      }
+      return buffer;
+    } finally {
+      await file.close();
+    }
+  }
+
   async read(objectKey: string): Promise<Uint8Array> {
     return readFile(this.resolveObjectKey(objectKey));
   }

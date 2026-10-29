@@ -1,4 +1,8 @@
-import { logDatabaseSchema, registerLogDatabaseSchema } from "@autoforge/contracts";
+import {
+  logDatabaseSchema,
+  registerLogDatabaseSchema,
+  registerDailyLogServerSchema,
+} from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
@@ -13,7 +17,9 @@ export async function PATCH(
     requireSameOrigin(request);
     const identity = await authorizeRequest(request, "settings.manage", undefined);
     const id = logDatabaseSchema.shape.id.parse((await context.params).databaseId);
-    const input = registerLogDatabaseSchema.parse(await readJsonBody(request, 8192));
+    const input = registerDailyLogServerSchema
+      .or(registerLogDatabaseSchema)
+      .parse(await readJsonBody(request, 8192));
     const { services, logDatabases } = await requireLogDatabases();
     const saved = await logDatabases.updateConnection(id, input);
     await services.identityAccess.recordAuthorizedOperation(identity, {

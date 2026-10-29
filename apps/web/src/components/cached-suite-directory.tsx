@@ -34,7 +34,7 @@ export function CachedSuiteDirectory({
   const search = parameters.get("memberQuery") ?? "";
   const filters = new URLSearchParams({ query: search }).toString();
   const { revision } = useCaseSuiteRevision();
-  const result = useDirectoryTree(snapshot, filters, revision);
+  const result = useDirectoryTree(snapshot, filters, { minimumRevision: revision });
   const source = useMemo(
     () =>
       result.projection ? { projection: result.projection, refresh: result.refresh } : undefined,

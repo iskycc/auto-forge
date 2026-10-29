@@ -59,7 +59,7 @@ export class BackgroundWorkerPool {
   }
 
   runPlatformMaintenance(
-    operation: "notifications" | "retention" | "orphan-logs",
+    operation: "notifications" | "retention" | "log-archives" | "orphan-logs",
   ): Promise<unknown> {
     return this.nextLane().dispatch({ kind: "platform-maintenance", operation });
   }
@@ -149,7 +149,9 @@ export class WorkerPool implements WorkDispatcher {
           );
   }
 
-  async runPlatformMaintenance(operation: "notifications" | "retention"): Promise<boolean> {
+  async runPlatformMaintenance(
+    operation: "notifications" | "retention" | "log-archives",
+  ): Promise<boolean> {
     const lane = this.maintenanceLanes.reduce((least, candidate) =>
       candidate.pendingCount < least.pendingCount ? candidate : least,
     );

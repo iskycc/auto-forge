@@ -36,6 +36,16 @@ describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () =>
         (await store.list({ limit: 10, prefix: "projects/project-1/jars/" })).items,
       ).toHaveLength(1);
       await expect(store.read(written.objectKey)).resolves.toEqual(Buffer.from(content));
+      expect(Buffer.from(await store.readRange(written.objectKey, 2, 4))).toEqual(
+        Buffer.from(content).subarray(2, 6),
+      );
+      expect(Array.from(await store.readRange(written.objectKey, content.byteLength, 0))).toEqual(
+        [],
+      );
+      await expect(store.readRange(written.objectKey, -1, 1)).rejects.toThrow();
+      await expect(store.readRange(written.objectKey, content.byteLength + 1, 0)).rejects.toThrow();
+      await expect(store.readRange(written.objectKey, content.byteLength - 1, 4)).rejects.toThrow();
+
       const streamed = await store.openRead(written.objectKey);
       expect(streamed.sizeBytes).toBe(content.byteLength);
       expect(Buffer.concat(await Readable.from(streamed.content).toArray())).toEqual(

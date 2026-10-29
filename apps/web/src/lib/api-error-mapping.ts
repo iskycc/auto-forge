@@ -116,6 +116,32 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (code === "LOG_ARCHIVE_OFFLINE") return 410;
+  if (code === "LOG_ARCHIVE_UNAVAILABLE" || code === "LOG_ARCHIVE_VIEWER_INVALID") return 503;
+  if (code === "LOG_ARCHIVE_DISK_FULL") return 507;
+  if (
+    [
+      "LOG_ARCHIVE_NOT_READY",
+      "LOG_ARCHIVE_DOWNLOAD_REQUIRED",
+      "LOG_ARCHIVE_DOWNLOAD_CONFLICT",
+      "LOG_ARCHIVE_RETRY_CONFLICT",
+      "LOG_ARCHIVE_CANCEL_CONFLICT",
+      "LOG_ARCHIVE_READ_ONLY",
+      "LOG_ARCHIVE_LEASE_LOST",
+      "LOG_DAILY_SERVER_REQUIRED",
+      "LOG_DATABASE_PREFIX_IMMUTABLE",
+    ].includes(code)
+  )
+    return 409;
+  if (
+    [
+      "LOG_ARCHIVE_EMPTY",
+      "LOG_DATABASE_CREATE_PERMISSION_REQUIRED",
+      "LOG_DAILY_DATABASE_REQUIRED",
+      "LOG_CHUNK_TIME_INVALID",
+    ].includes(code)
+  )
+    return 422;
   if (
     [
       "VERSION_COPY_BUSY",
@@ -183,6 +209,7 @@ function domainErrorStatus(code: string): number {
     code === "CASE_SOURCE_SYNC_STALE" ||
     code === "CASE_SOURCE_NOT_DELETABLE" ||
     code === "RUNNER_NOT_DELETABLE" ||
+    code === "PROJECT_NOT_RENAMABLE" ||
     code === "RUNNER_UPDATE_NOT_ALLOWED"
   ) {
     return 409;

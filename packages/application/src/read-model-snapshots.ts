@@ -30,7 +30,7 @@ export interface ReadModelSnapshotRepository {
     now: string,
     expiresAt: string,
     token: string,
-    options?: { onlyUnpublished: true },
+    options?: { onlyPageBlocking: true },
   ): Promise<ReadModelLease | null>;
   renew(lease: ReadModelLease, now: string, expiresAt: string): Promise<boolean>;
   complete(
@@ -94,23 +94,29 @@ export class ReadModelSnapshotWorker {
     private readonly ids: IdGenerator,
     private readonly reportError: (error: unknown, query: ReadModelQuery) => void,
     private readonly canRefresh: () => boolean = () => true,
-    private readonly canBuildInitial: () => boolean = canRefresh,
+    private readonly canServeWaitingPage: () => boolean = canRefresh,
     private readonly isResourceContention: (error: unknown) => boolean = () => false,
   ) {}
 
   async refreshOne(): Promise<boolean> {
     const regularBudget = this.canRefresh();
-    if (!regularBudget && !this.canBuildInitial()) return false;
+    if (!regularBudget && !this.canServeWaitingPage()) return false;
     const now = this.clock.now();
     const lease = await this.repository.claim(
       now.toISOString(),
       after(now, 120_000),
       this.ids.next(),
-      regularBudget ? undefined : { onlyUnpublished: true },
+      regularBudget ? undefined : { onlyPageBlocking: true },
     );
     if (!lease) return false;
     const assertBudget = () => {
-      if (!this.canRefresh() && !(lease.generatedAt === null && this.canBuildInitial()))
+      // A published but explicitly invalidated directory also blocks selection and edited
+      // suite membership. The single page-waiting lane must finish it during batch execution.
+      const pageIsWaiting =
+        lease.generatedAt === null ||
+        ((lease.query.kind === "case_directory" || lease.query.kind === "suite_directory") &&
+          lease.requestedRevision > lease.generatedRevision);
+      if (!this.canRefresh() && !(pageIsWaiting && this.canServeWaitingPage()))
         throw new ReadModelRefreshDeferred();
     };
     let writtenParts = 0;

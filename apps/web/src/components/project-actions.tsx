@@ -10,7 +10,7 @@ import type { Project } from "@autoforge/domain";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { ActionDialog } from "./action-dialog";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
 import { UserPicker } from "./user-picker";
 import { useConfirm, useToast } from "./ui-feedback";
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -21,7 +21,8 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
   const toast = useToast();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const [actionDialog, setActionDialog] = useState<"owner" | null>(null);
+  const [actionDialog, setActionDialog] = useState<"owner" | "rename" | null>(null);
+  const [projectName, setProjectName] = useState(project?.name ?? "");
   async function request(path: string, init: RequestInit, success: string): Promise<void> {
     if (pending) return;
     setPending(true);
@@ -86,6 +87,18 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
         </span>
       </div>
       <div className={cn("button-row", uiPatterns["button-row"])}>
+        {canManage && project && !project.archived ? (
+          <Button
+            type="button"
+            onClick={() => {
+              setError("");
+              setProjectName(project.name);
+              setActionDialog("rename");
+            }}
+          >
+            修改项目名称
+          </Button>
+        ) : null}
         {project ? (
           <LinkButton className={"ui-button"} href="/settings/access?section=users&scope=project">
             管理成员
@@ -103,6 +116,56 @@ export function ProjectActions({ project, canManage }: { project?: Project; canM
           </Button>
         ) : null}
       </div>
+      {project ? (
+        <ActionDialog
+          open={actionDialog === "rename"}
+          title="修改项目名称"
+          description="默认项目也可以改名。项目标识、版本、用例、任务和历史执行关联保持不变。"
+          onClose={() => !pending && setActionDialog(null)}
+          protectUnsavedChanges
+        >
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void request(
+                `/api/v1/projects/${project.id}`,
+                jsonRequest("PATCH", { name: projectName.trim() }),
+                "项目名称已更新。",
+              );
+            }}
+          >
+            {error ? (
+              <Notice tone="error" role="alert">
+                {error}
+              </Notice>
+            ) : null}
+            <label className="grid gap-2">
+              项目名称
+              <Input
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+                maxLength={120}
+                required
+                autoFocus
+                disabled={pending}
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button type="button" disabled={pending} onClick={() => setActionDialog(null)}>
+                取消
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={pending || !projectName.trim() || projectName.trim() === project.name}
+              >
+                {pending ? "正在保存…" : "保存名称"}
+              </Button>
+            </div>
+          </form>
+        </ActionDialog>
+      ) : null}
       {project ? (
         <ActionDialog
           protectUnsavedChanges

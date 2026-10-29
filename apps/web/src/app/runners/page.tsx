@@ -372,6 +372,9 @@ export default async function RunnersPage({
                     ) : null}
                     {canManage ? (
                       <RunnerAdminActions
+                        {...(installationProfileByRunnerId.get(runner.id)
+                          ? { installationProfile: installationProfileByRunnerId.get(runner.id)! }
+                          : {})}
                         runnerId={runner.id}
                         runnerName={runner.name}
                         credentialRevoked={Boolean(runner.credentialRevokedAt)}

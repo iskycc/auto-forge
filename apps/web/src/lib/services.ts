@@ -1,3 +1,5 @@
+import { ArchivedAttemptLogStore, SqliteLogArchiveRepository } from "@autoforge/db/sqlite";
+import { LogArchiveService, type LogArchiveRepository } from "@autoforge/application";
 import {
   PublicSuiteExecutionService,
   type PublicSuiteExecutionRepository,
@@ -181,6 +183,7 @@ async function createPlatformServices() {
   let platformNodes: import("@autoforge/application").PlatformNodeRepository | undefined;
   let nodeLogs: import("@autoforge/db/postgres").NodeAttemptLogStore | undefined;
   let routedLogs: import("@autoforge/db/postgres").PostgresRoutedAttemptLogStore | undefined;
+  let logArchiveRepository: LogArchiveRepository;
   let logDatabases: import("@autoforge/application").LogDatabaseService | undefined;
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
@@ -230,6 +233,13 @@ async function createPlatformServices() {
       cache: "进程内缓存",
     };
     const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
+    logArchiveRepository = new SqliteLogArchiveRepository(database);
+    objectStore = new LocalObjectStore(config.dataDirectory);
+    const archivedLogs = new ArchivedAttemptLogStore(
+      isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
+      logArchiveRepository,
+      objectStore,
+    );
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
@@ -246,7 +256,7 @@ async function createPlatformServices() {
     const localExecutions = new SqliteExecutionControlRepository(
       database,
       attemptLogs,
-      isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
+      archivedLogs,
     );
     executions = workerBackedExecutionControlRepository(localExecutions, dispatcher);
     failureAnalysisRepository = new SqliteFailureAnalysisRepository(database);
@@ -255,13 +265,10 @@ async function createPlatformServices() {
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     publicExecutionAccessRepository = new SqlitePublicExecutionAccessRepository(database);
     publicSuiteExecutionRepository = new SqlitePublicSuiteExecutionRepository(database);
-    objectStore = new LocalObjectStore(config.dataDirectory);
+
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
-    operationsRepository = new SqlitePlatformOperationsRepository(
-      database,
-      isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
-    );
+    operationsRepository = new SqlitePlatformOperationsRepository(database, archivedLogs);
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
     versionCopyRepository = new SqliteProjectVersionCopyRepository(database);
     webhookRepository = new SqliteWebhookRepository(database);
@@ -465,6 +472,10 @@ async function createPlatformServices() {
     // 完成请求服务端 p50 从 42ms 降到 28ms，但执行阶段墙钟由客户端驱动未改善，
     // 领取/批次创建反而因车道连接池争用回退；仅补位调度经 runScheduling 交给
     // 工作线程。
+    objectStore = new MinioObjectStore(config.minio);
+    const { PostgresLogArchiveRepository } = await import("@autoforge/db/postgres");
+    logArchiveRepository = new PostgresLogArchiveRepository(database);
+    attemptLogs = new ArchivedAttemptLogStore(attemptLogs, logArchiveRepository, objectStore);
     executions = prioritizedExecutionControlRepository(
       new PostgresExecutionControlRepository(executionDatabase, attemptLogs),
       () => runtimePriority().beginForeground(),
@@ -475,7 +486,7 @@ async function createPlatformServices() {
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     publicExecutionAccessRepository = new PostgresPublicExecutionAccessRepository(database);
     publicSuiteExecutionRepository = new PostgresPublicSuiteExecutionRepository(database);
-    objectStore = new MinioObjectStore(config.minio);
+
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
     versionCopyRepository = new PostgresProjectVersionCopyRepository(database);
@@ -882,6 +893,13 @@ async function createPlatformServices() {
             });
         })
       : Promise.resolve();
+  const logArchiveLoop =
+    config.mode === "lite"
+      ? runPeriodic(scheduleAbort.signal, 5000, "logs.archive", async () => {
+          if (dispatcher && runtimePriority().backgroundAllowed())
+            await dispatcher.runPlatformMaintenance("log-archives");
+        })
+      : Promise.resolve();
   const notificationLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 30_000, "notifications.generate", async () => {
@@ -925,6 +943,7 @@ async function createPlatformServices() {
       await Promise.all([
         scheduleLoop,
         notificationLoop,
+        logArchiveLoop,
         webhookLoop,
         retentionLoop,
         roundRecoveryLoop,
@@ -987,6 +1006,7 @@ async function createPlatformServices() {
     platformNodes,
     nodeLogs,
     logDatabases,
+    logArchives: new LogArchiveService(logArchiveRepository, clock, { next: () => uuidV7() }),
     catalog,
     discovery,
     objectStore,

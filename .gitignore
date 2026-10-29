@@ -57,3 +57,11 @@ jenkins-test/
 /output/
 /docs/design/ant-design-ui/*.png
 /docs/design/ant-design-ui-audit/*.png
+
+# Generated offline log viewer UI and static resources
+/resources/log-archive-viewer/
+/apps/log-archive-viewer/cmd/viewer/assets/viewer.js
+/apps/log-archive-viewer/cmd/viewer/assets/viewer.css
+
+/apps/log-archive-viewer/cmd/viewer/assets/viewer.js.LEGAL.txt
+/apps/log-archive-viewer/cmd/viewer/assets/licenses.txt

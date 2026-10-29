@@ -1,3 +1,4 @@
+import { unreservedArchiveBatch } from "./log-archive-retention-guard";
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { NodeAttemptLogStore } from "./node-attempt-log-store";
 import type {
@@ -651,7 +652,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       const limited = await withTransaction(this.handle, async (client) => {
         await assertPostgresRetentionRevision(client, input);
         const result = await client.query<{ id: string }>(
-          "SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at < $1 ORDER BY updated_at,id LIMIT $2",
+          `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at < $1 AND ${unreservedArchiveBatch("run_batches.id")} ORDER BY updated_at,id LIMIT $2`,
           [input.cutoffAt, input.limit],
         );
         return result.rows.map((row) => row.id);
@@ -1491,7 +1492,7 @@ async function executePostgresRetention(
   if (input.category === "execution") {
     // 先 SELECT 待删批次再删除，事务提交后调用方据此移除批次日志文件。
     const candidates = await client.query<{ id: string }>(
-      `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1
+      `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1 AND ${unreservedArchiveBatch("run_batches.id")}
        AND NOT EXISTS (
          SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
          JOIN attempt_artifacts f ON f.attempt_id=a.id

@@ -1,11 +1,28 @@
 "use client";
 
-import { Alert, Button, Card, Flex, Form, Input, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Flex,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { DatabaseOutlined, PlusOutlined } from "@ant-design/icons";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { LogDatabase, LogDatabasePage, RegisterLogDatabaseInput } from "@autoforge/contracts";
+import type {
+  LogDatabase,
+  LogDatabasePage,
+  RegisterLogDatabaseInput,
+  RegisterDailyLogServerInput,
+} from "@autoforge/contracts";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui-feedback";
 import { readApiError } from "@/lib/client-api";
@@ -58,8 +75,8 @@ export function LogDatabases({
       <Alert
         type="info"
         showIcon
-        title="写入库切换实时生效"
-        description="每个批次在首次写入时固定日志库。切换影响之后首次写入的新批次；在途批次、历史日志和公开链接继续使用原库。已登记数据库需持续保留，不可清空或改作其他用途。"
+        title="按日自动建库，写入配置实时生效"
+        description="新批次首次上传时固定日志服务器；按每条日志的北京时间日期自动创建独立数据库，跨日执行自动分库并合并读取。切换服务器仅影响新批次。旧版单库保留历史读取。"
       />
       <Flex justify="space-between" align="center" gap="middle" wrap>
         <Typography.Text type="secondary">
@@ -67,7 +84,7 @@ export function LogDatabases({
         </Typography.Text>
         {canManage ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setAdding(true)}>
-            添加日志数据库
+            添加日志服务器
           </Button>
         ) : null}
       </Flex>
@@ -112,6 +129,7 @@ export function LogDatabases({
             <Space wrap>
               <DatabaseOutlined />
               <span>{database.name}</span>
+              <Tag>{database.storageMode === "daily" ? "每日独立数据库" : "旧版单库"}</Tag>
               {database.active ? <Tag color="processing">当前写入</Tag> : <Tag>保留历史读取</Tag>}
             </Space>
           }
@@ -145,7 +163,7 @@ export function LogDatabases({
                 >
                   检查连接
                 </Button>
-                {!database.active ? (
+                {!database.active && database.storageMode === "daily" ? (
                   <Button
                     disabled={Boolean(pending)}
                     loading={pending === `select:${database.id}`}
@@ -205,9 +223,10 @@ function RegisterLogDatabase({
   onSaved(): void;
   initial?: LogDatabase;
 }) {
+  const legacy = initial && initial.storageMode !== "daily";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  async function submit(input: RegisterLogDatabaseInput) {
+  async function submit(input: RegisterLogDatabaseInput | RegisterDailyLogServerInput) {
     setPending(true);
     setError("");
     try {
@@ -230,18 +249,18 @@ function RegisterLogDatabase({
   return (
     <Dialog
       open
-      title={initial ? "修改日志库连接" : "添加日志数据库"}
+      title={initial ? "修改日志库连接" : "添加日志服务器"}
       onClose={onClose}
       closeDisabled={pending}
     >
       <div className="w-[600px] max-w-full p-6">
         <Typography.Title level={3}>
-          {initial ? "修改日志库连接" : "添加日志数据库"}
+          {initial ? "修改日志库连接" : "添加日志服务器"}
         </Typography.Title>
         <Typography.Paragraph type="secondary">
           {initial
-            ? "新连接必须指向原日志库，服务器会校验库标识；可用于修改访问地址或轮换凭据。请重新填写完整连接串，原连接不会回显。"
-            : "请先在独立 PostgreSQL 服务创建空数据库及专用账号。登记时会执行版本化日志表迁移，并写入日志库身份。连接串加密保存，不会回显。"}
+            ? "新连接必须保留已有日志库，平台会验证历史库身份。密码不回显，请重新填写；每日库前缀不能修改。"
+            : "填写独立 PostgreSQL 服务的管理员账号（例如 postgres 或 root），需有 CREATEDB 权限。平台自动创建每日数据库，密码加密保存；不需要提前手工建库。"}
         </Typography.Paragraph>
         {error ? <Alert type="error" showIcon title={error} className="!mb-4" /> : null}
         <Form
@@ -249,7 +268,15 @@ function RegisterLogDatabase({
           onFinish={submit}
           disabled={pending}
           requiredMark={false}
-          initialValues={initial ? { name: initial.name } : {}}
+          initialValues={{
+            port: 5432,
+            maintenanceDatabase: "postgres",
+            databasePrefix: "autoforge_logs",
+            sslMode: "disable",
+            username: "postgres",
+            ...initial?.server,
+            name: initial?.name,
+          }}
         >
           <Form.Item
             label="日志库名称"
@@ -258,14 +285,77 @@ function RegisterLogDatabase({
           >
             <Input maxLength={120} placeholder="例如：日志库 2026-10" />
           </Form.Item>
-          <Form.Item
-            label="PostgreSQL 连接地址"
-            name="databaseUrl"
-            rules={[{ required: true, message: "请输入 PostgreSQL 连接地址。" }]}
-            extra="例如 postgres://log_user:密码@10.20.0.13:5433/autoforge_logs；账号需要该库的建表及读写权限。"
-          >
-            <Input.Password autoComplete="new-password" maxLength={4096} />
-          </Form.Item>
+          {legacy ? (
+            <Form.Item
+              label="PostgreSQL 连接地址"
+              name="databaseUrl"
+              rules={[{ required: true, message: "请输入 PostgreSQL 连接地址。" }]}
+              extra="例如 postgres://log_user:密码@10.20.0.13:5433/autoforge_logs；账号需要该库的建表及读写权限。"
+            >
+              <Input.Password autoComplete="new-password" maxLength={4096} />
+            </Form.Item>
+          ) : (
+            <>
+              <Flex gap="middle">
+                <Form.Item
+                  label="PostgreSQL 主机 / IP"
+                  name="host"
+                  className="flex-1"
+                  rules={[{ required: true, message: "请输入日志服务器主机。" }]}
+                >
+                  <Input placeholder="10.20.0.13" />
+                </Form.Item>
+                <Form.Item label="端口" name="port" rules={[{ required: true }]}>
+                  <InputNumber min={1} max={65535} />
+                </Form.Item>
+              </Flex>
+              <Flex gap="middle">
+                <Form.Item
+                  label="管理员用户名"
+                  name="username"
+                  className="flex-1"
+                  rules={[{ required: true }]}
+                >
+                  <Input autoComplete="off" />
+                </Form.Item>
+                <Form.Item
+                  label="管理员密码"
+                  name="password"
+                  className="flex-1"
+                  rules={[{ required: true, message: "请填写管理员密码。" }]}
+                >
+                  <Input.Password autoComplete="new-password" />
+                </Form.Item>
+              </Flex>
+              <Flex gap="middle">
+                <Form.Item
+                  label="维护数据库"
+                  name="maintenanceDatabase"
+                  className="flex-1"
+                  rules={[{ required: true }]}
+                >
+                  <Input />
+                </Form.Item>
+                <Form.Item label="SSL" name="sslMode" className="flex-1">
+                  <Select
+                    options={[
+                      { value: "disable", label: "关闭" },
+                      { value: "require", label: "要求加密" },
+                      { value: "verify-full", label: "验证证书及主机" },
+                    ]}
+                  />
+                </Form.Item>
+              </Flex>
+              <Form.Item
+                label="每日库名前缀"
+                name="databasePrefix"
+                extra="实际库名：前缀_服务器标识_YYYYMMDD，按北京时间划分。"
+                rules={[{ required: true }]}
+              >
+                <Input disabled={Boolean(initial)} />
+              </Form.Item>
+            </>
+          )}
           <Flex justify="flex-end" gap="small">
             <Button onClick={onClose} disabled={pending}>
               取消

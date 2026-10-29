@@ -12,6 +12,7 @@ export default defineConfig([
   },
   globalIgnores([
     "**/.local/**",
+    "apps/log-archive-viewer/cmd/viewer/assets/viewer.js",
     "**/.next/**",
     "**/coverage/**",
     "**/dist/**",

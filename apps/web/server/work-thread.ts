@@ -1,8 +1,15 @@
+import { LogArchiveWorker } from "@autoforge/db/log-archive-worker";
+import {
+  ArchivedAttemptLogStore,
+  SqliteLogArchiveRepository,
+  type AsyncAttemptLogStore,
+} from "@autoforge/db/sqlite";
+import { PostgresLogArchiveRepository } from "@autoforge/db/postgres";
 import { publicSuiteExecutionContextSchema, executionActorSchema } from "@autoforge/contracts";
 import { AesGcmSecretCipher } from "../src/lib/secret-cipher-core";
 import { runtimeDiagnosticContext } from "@autoforge/contracts/runtime-diagnostics";
 import { createHash, randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   CaseSourceService,
@@ -398,6 +405,23 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
         await nodeLogs?.cleanupOrphans();
         return true;
       }
+      if (task.operation === "log-archives") {
+        const objects = schedulingCollaborators().objectStore;
+        return new LogArchiveWorker({
+          ids: { next: () => uuidV7() },
+          repository: archiveRepository(),
+          logs: configuration.mode === "full" ? fullLogStore() : logStore(),
+          objects,
+          dataDirectory: configuration.dataDirectory,
+          viewerResourcesDirectory: resolve(
+            configuration.migrationsFolder,
+            "../../../..",
+            "resources/log-archive-viewer",
+          ),
+          clock,
+          backgroundAllowed,
+        }).run(signal);
+      }
       const operations = platformOperations();
       if (task.operation === "notifications") await operations.generateNotifications(100);
       else await operations.runRetentionCycle(100);
@@ -531,8 +555,8 @@ function backgroundAllowed(): boolean {
 function platformOperations(): PlatformOperationsService {
   const repository =
     configuration.mode === "lite"
-      ? new SqlitePlatformOperationsRepository(sqliteHandle(), logStore())
-      : new PostgresPlatformOperationsRepository(postgresHandle(), fullLogStore());
+      ? new SqlitePlatformOperationsRepository(sqliteHandle(), archiveLogStore())
+      : new PostgresPlatformOperationsRepository(postgresHandle(), archiveLogStore());
   return new PlatformOperationsService(
     repository,
     clock,
@@ -568,7 +592,7 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
           repository,
           archive: new VersionCopyArchive(repository, objectStore, configuration.dataDirectory),
           objects: objectStore,
-          logs: configuration.mode === "lite" ? logStore() : fullLogStore(),
+          logs: archiveLogStore(),
           cipher: new AesGcmSecretCipher(platformConfigurationStore.read().secrets.masterKey),
           clock,
           ids,
@@ -714,8 +738,8 @@ function executionRepository():
   if (!executionControl) {
     executionControl =
       configuration.mode === "full"
-        ? new PostgresExecutionControlRepository(postgresHandle(), fullLogStore())
-        : new SqliteExecutionControlRepository(sqliteHandle(), logStore());
+        ? new PostgresExecutionControlRepository(postgresHandle(), archiveLogStore())
+        : new SqliteExecutionControlRepository(sqliteHandle(), logStore(), archiveLogStore());
   }
   return executionControl;
 }
@@ -824,4 +848,19 @@ async function initializeClock(): Promise<void> {
             `${JSON.stringify({ timestamp: new Date().toISOString(), level: "error", message: "Work thread clock synchronization failed", error: error instanceof Error ? error.message : "Unknown clock error" })}\n`,
           );
         });
+}
+
+let archivedLogPort: AsyncAttemptLogStore | undefined;
+function archiveRepository() {
+  return configuration.mode === "lite"
+    ? new SqliteLogArchiveRepository(sqliteHandle())
+    : new PostgresLogArchiveRepository(postgresHandle());
+}
+function archiveLogStore(): AsyncAttemptLogStore {
+  archivedLogPort ??= new ArchivedAttemptLogStore(
+    configuration.mode === "full" ? fullLogStore() : logStore(),
+    archiveRepository(),
+    schedulingCollaborators().objectStore,
+  );
+  return archivedLogPort;
 }

@@ -24,6 +24,53 @@ for (const dialect of ["sqlite", "postgres"] as const) {
     // Each isolated fixture applies the full migration history before checking snapshot behavior.
     { timeout: 30_000 },
     () => {
+      it("admits invalidated case and suite directories during execution pressure but leaves periodic statistics deferred", async () => {
+        const harness = await database(dialect);
+        try {
+          const service = new ReadModelSnapshotService(harness.repository, {
+            now: () => new Date(now),
+          });
+          const queries: ReadModelQuery[] = [
+            {
+              kind: "case_directory",
+              projectId,
+              projectVersionId: randomUUID(),
+              testStageId: randomUUID(),
+              tree: true,
+            },
+            { kind: "suite_directory", projectId, suiteId: randomUUID(), tree: true },
+            { kind: "dashboard", projectId, projectVersionId: randomUUID(), timeZone: "UTC" },
+          ];
+          for (const query of queries) {
+            const snapshot = await service.read(query);
+            const lease = (await harness.repository.claim(now, later, randomUUID()))!;
+            expect(lease.id).toBe(snapshot.id);
+            await harness.repository.complete(lease, { marker: query.kind }, now, later);
+          }
+          await service.invalidate(projectId);
+          const published: string[] = [];
+          const worker = new ReadModelSnapshotWorker(
+            harness.repository,
+            async (query) => {
+              published.push(query.kind);
+              return { marker: query.kind };
+            },
+            { now: () => new Date(now) },
+            { next: randomUUID },
+            () => {},
+            () => false,
+            () => true,
+          );
+          expect(await worker.refreshOne()).toBe(true);
+          expect(await worker.refreshOne()).toBe(true);
+          expect(await worker.refreshOne()).toBe(false);
+          expect(published.sort()).toEqual(["case_directory", "suite_directory"]);
+          expect((await service.read(queries[0]!)).synchronized).toBe(true);
+          expect((await service.read(queries[2]!)).synchronized).toBe(false);
+        } finally {
+          await harness.close();
+        }
+      });
       it("retains the last published snapshot through repeated resource deferrals and still retries", async () => {
         const harness = await database(dialect);
         const query: ReadModelQuery = {
@@ -41,7 +88,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           );
           expect(
             await harness.repository.claim(now, later, "initial-only", {
-              onlyUnpublished: true,
+              onlyPageBlocking: true,
             }),
           ).toBeNull();
           for (let retry = 0; retry < 8; retry++) {

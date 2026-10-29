@@ -46,6 +46,19 @@ describe("LocalObjectStore", () => {
       readFile(resolve(directory, "objects", results[0]?.objectKey ?? "missing")),
     ).resolves.toEqual(Buffer.from(content));
 
+    expect(Buffer.from(await store.readRange(results[0]!.objectKey, 2, 4))).toEqual(
+      Buffer.from(content).subarray(2, 6),
+    );
+    expect(Array.from(await store.readRange(results[0]!.objectKey, content.byteLength, 0))).toEqual(
+      [],
+    );
+    await expect(store.readRange(results[0]!.objectKey, -1, 1)).rejects.toThrow();
+    await expect(
+      store.readRange(results[0]!.objectKey, content.byteLength + 1, 0),
+    ).rejects.toThrow();
+    await expect(
+      store.readRange(results[0]!.objectKey, content.byteLength - 1, 4),
+    ).rejects.toThrow();
     const streamed = await store.openRead(results[0]!.objectKey);
     expect(streamed.sizeBytes).toBe(content.byteLength);
     expect(Buffer.concat(await Readable.from(streamed.content).toArray())).toEqual(

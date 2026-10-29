@@ -1,3 +1,4 @@
+import { unreservedArchiveBatch } from "./log-archive-retention-guard";
 import {
   retrySqliteWriteTransaction,
   isSqliteLockContentionError,
@@ -1497,10 +1498,10 @@ function retentionCandidateSelection(category: Exclude<RetentionCategory, "sourc
          JOIN run_attempts a ON a.id = f.attempt_id
          WHERE a.finished_at < ? AND f.status = 'uploaded' ORDER BY a.finished_at LIMIT ?`,
     log: `SELECT id FROM run_batches
-           WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ?
+           WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ? AND ${unreservedArchiveBatch("run_batches.id")}
            ORDER BY updated_at LIMIT ?`,
     execution: `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled')
-         AND updated_at < ? AND NOT EXISTS (
+         AND updated_at < ? AND ${unreservedArchiveBatch("run_batches.id")} AND NOT EXISTS (
            SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
            JOIN attempt_artifacts f ON f.attempt_id=a.id
            WHERE r.batch_id=run_batches.id AND f.status='uploaded'

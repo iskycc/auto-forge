@@ -40,7 +40,13 @@ const id = "019a25a1-0000-7000-8000-000000000001";
 const context = { params: Promise.resolve({ databaseId: id }) };
 const registration = {
   name: "日志库",
-  databaseUrl: "postgres://user:private-password@logs:5432/logs",
+  host: "logs",
+  port: 5432,
+  username: "postgres",
+  password: "private-password",
+  maintenanceDatabase: "postgres",
+  databasePrefix: "autoforge_logs",
+  sslMode: "disable",
 };
 function request(method: string, body?: unknown) {
   return new Request("http://localhost/api/v1/settings/log-databases", {

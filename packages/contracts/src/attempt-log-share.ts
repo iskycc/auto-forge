@@ -94,6 +94,8 @@ export interface SharedAttemptLogView {
   requestedBy?: { username: string; source: "local" | "ldap" } | null;
   /** adapter 执行该用例的输出流日志；公开页最多读取前 512 KiB。 */
   logText: string;
+  /** 正文已由管理员确认下载并移除平台副本；执行结果和轮次仍可读取。 */
+  logAvailability?: "offline";
   /** 日志仍有后续内容未载入时为 true，避免先全量读入内存再由页面截断。 */
   logTruncated?: boolean;
   /** 按执行时间排列，仅包含当前分享链接所授权用例的轮次与诊断重跑。 */

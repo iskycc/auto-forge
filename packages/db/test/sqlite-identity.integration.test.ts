@@ -556,6 +556,34 @@ describe("SQLite identity access", () => {
       });
       const administrator = await service.authenticateSession(bootstrap.token);
 
+      const renamedDefault = await service.renameProject(
+        administrator,
+        DEFAULT_PROJECT_ID,
+        { name: "默认项目已改名" },
+        "rename-default-request",
+      );
+      expect(renamedDefault).toMatchObject({
+        id: DEFAULT_PROJECT_ID,
+        name: "默认项目已改名",
+        slug: "default",
+        isDefault: true,
+      });
+      await expect(
+        service.renameProject(
+          { ...administrator, systemPermissions: [], projectPermissions: {} },
+          DEFAULT_PROJECT_ID,
+          { name: "越权修改" },
+        ),
+      ).rejects.toMatchObject({ code: "AUTH_FORBIDDEN" });
+      await expect(service.archiveProject(administrator, DEFAULT_PROJECT_ID)).rejects.toMatchObject(
+        { code: "DEFAULT_PROJECT_IMMUTABLE" },
+      );
+      expect(
+        handle.client
+          .prepare("SELECT action FROM audit_events WHERE request_id = ?")
+          .get("rename-default-request"),
+      ).toEqual({ action: "project.rename" });
+
       const recoveryRole = await service.createRole(administrator, {
         key: "recovery-admin",
         name: "Recovery Admin",

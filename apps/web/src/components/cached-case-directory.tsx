@@ -58,7 +58,7 @@ export function CachedCaseDirectory({
     outcome: filter.outcome,
     ...(filter.missingSuiteId ? { missingSuiteId: filter.missingSuiteId } : {}),
   }).toString();
-  const result = useDirectoryTree(snapshot, filters);
+  const result = useDirectoryTree(snapshot, filters, { allowPublishedFallback: true });
   const source = useMemo(
     () =>
       result.projection ? { projection: result.projection, refresh: result.refresh } : undefined,
@@ -107,6 +107,11 @@ export function CachedCaseDirectory({
         </LoadingStateMessage>
       ) : null}
       {progress ? <p role="status">{progress}</p> : null}
+      {result.refreshing ? (
+        <Notice tone="info" role="status">
+          当前显示上次完整目录，正在后台更新；可继续查看用例详情，更新完成后恢复批量选择。
+        </Notice>
+      ) : null}
       {currentManifest?.caseCount === 0 &&
       !filter.query &&
       filter.outcome === "all" &&
@@ -156,7 +161,7 @@ export function CachedCaseDirectory({
           initialSuiteId={parameters.get("targetSuiteId") ?? undefined}
           directoryTree={{
             filter,
-            loading: result.loading,
+            loading: result.loading || result.refreshing,
             ready: Boolean(result.projection),
             source,
             projectId,

@@ -918,6 +918,23 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     return mapProjectRow(requiredRow(result.rows[0], "PostgreSQL did not return project."));
   }
 
+  async renameProject(input: {
+    projectId: string;
+    name: string;
+    updatedAt: string;
+  }): Promise<Project> {
+    await this.ready();
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<ProjectDatabaseRow>(
+        "UPDATE projects SET name = $1, updated_at = $2 WHERE id = $3 AND archived = FALSE RETURNING *",
+        [input.name, input.updatedAt, input.projectId],
+      ),
+    );
+    if (!result.rows[0])
+      throw new DomainError("PROJECT_NOT_RENAMABLE", "项目不存在或已归档，请刷新后重试。");
+    return mapProjectRow(result.rows[0]);
+  }
+
   async archiveProject(projectId: string, archivedAt: string): Promise<Project> {
     await this.ready();
     const result = await retryPostgresWrite(() =>

@@ -48,7 +48,7 @@
 - Agent 本地受控单命令执行核心，以及默认关闭的直连 WebSocket 终端。
 - 双架构后端镜像的 GitHub Release 构建、SBOM、校验和与构建来源证明；镜像内置兼容 glibc/musl 宿主的双架构静态 Agent 资源，不再单独发布 Agent。
 
-当前实现已完成 Lite/Full 共享的身份、项目隔离、执行、分析、运维、页面可见性与离线发布候选门禁。平台数据盘提供容量分级告警，Runner spool 和单项上传使用严格配额；Full 对象存储总容量由 MinIO/S3 部署侧硬配额负责。M11 的 18 项完整 E2E 验收仍按 `tests/e2e/coverage-matrix.json` 保持 `partial`，必须补齐真实边界、失败与恢复证据后才能完成；Gate E 仍须基于新语义版本标签和不可变双架构资产执行。
+当前实现已完成 Lite/Full 共享的身份、项目隔离、执行、分析、运维、页面可见性与离线发布候选门禁。平台数据盘提供容量分级告警，Runner spool 和单项上传使用严格配额；Full 对象存储总容量由 MinIO/S3 部署侧硬配额负责。M11 的 19 项完整 E2E 验收仍按 `tests/e2e/coverage-matrix.json` 保持 `partial`，必须补齐真实边界、失败与恢复证据后才能完成；Gate E 仍须基于新语义版本标签和不可变双架构资产执行。
 
 ## 3. M0 — 架构决策与生产安全基线
 
@@ -351,3 +351,5 @@
 - [ ] **AF-E2E-016 `P1` 补齐平台设置、诊断、保留和清理 E2E。** 当前只读取默认 JAR 上限并检查几个页面/表单。覆盖配置修订冲突、修改后重启生效、JAR 上限真实边界、调度阈值、Lite 只读模式信息、Full 连接配置保护、诊断刷新/下载/脱敏、磁盘告警、各类保留影响预览、实际清理、对象补偿、失败重试/死信和审计。
 - [ ] **AF-E2E-017 `P0` 将 Full 故障测试提升为业务恢复 E2E。** 现有 Full 脚本使用真实 PostgreSQL、NATS、MinIO 和 Redis，但故障注入发生在主流程结束后，只验证 readiness 恢复。分别在导入、调度、assignment 发布、Agent 执行、日志/产物上传和完成确认期间中断依赖，验证 outbox/JetStream 至少一次、幂等、MinIO 上传恢复、Redis 可重建、两 Web/worker 副本不超卖且最终业务状态正确。
 - [ ] **AF-E2E-018 `P0` 从不可变 Release 资产完成断网与升级验收。** 当前 `test:offline` 在源码工作区执行同一模拟 Agent Playwright 场景并测试 Lite 备份恢复，不等同于从双架构 Release 资产安装。与 Gate E 合并验收：校验签名/SHA/SBOM/许可证，从离线镜像安装 Web/worker/真实 Agent/工具链，完成 LDAP 内网登录和真实执行，再从上一正式版本升级、注入迁移失败、回滚并恢复业务与对象一致性。
+
+- [ ] **AF-E2E-019 `P1` 补齐按日日志库与月度归档的生产验收。** 已有 Lite／Full 生产构建浏览器闭环、跨日日志与迁移集成、损坏归档阻止清理、租约恢复及禁网 Linux x86_64 查看器证据；继续补齐真实 Runner 并发上传期间的跨节点故障注入、Windows／Linux arm64 实机查看器和大规模日志压力验收，保持矩阵 `partial`。

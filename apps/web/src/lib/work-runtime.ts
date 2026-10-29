@@ -25,7 +25,9 @@ export interface WorkDispatcher {
     input: unknown,
   ): Promise<unknown>;
   executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<void>;
-  runPlatformMaintenance(operation: "notifications" | "retention"): Promise<boolean>;
+  runPlatformMaintenance(
+    operation: "notifications" | "retention" | "log-archives",
+  ): Promise<boolean>;
   scheduleBatch(batchId: string): Promise<unknown>;
   scheduleForRunner(
     runnerId: string,

@@ -84,7 +84,65 @@ test("probes and installs the embedded Agent through real SSH and systemd", asyn
   await verifyStoredProfileAndBatchUpdate(page, runnerId);
   await exerciseRunnerLifecycle(page, "SSH Installed Runner");
   await exerciseDeregisteredReinstall(page);
+  await exerciseAgentUninstall(page);
 });
+
+async function exerciseAgentUninstall(page: Page): Promise<void> {
+  const response = await page.request.get("/api/v1/runners?limit=100");
+  const { items } = (await response.json()) as {
+    items: Array<{ id: string; name: string; state: string }>;
+  };
+  const runner = items.find(
+    (item) => item.name === "SSH Installed Runner" && item.state === "online",
+  )!;
+  expect(runner).toBeDefined();
+  const container = requiredEnvironment("E2E_SSH_CONTAINER");
+  for (const directory of [
+    "work/uninstall-fixture",
+    "cache/uninstall-fixture",
+    "spool/uninstall-fixture",
+  ]) {
+    await execFileAsync("docker", [
+      "exec",
+      container,
+      "mkdir",
+      "-p",
+      `/var/lib/autoforge-agent/${directory}`,
+    ]);
+  }
+  await page.goto("/runners");
+  const row = page
+    .locator(".runner-list-item")
+    .filter({ hasText: "SSH Installed Runner" })
+    .filter({ hasText: "在线" });
+  await clickRunnerManagementAction(row, "卸载 Agent");
+  const dialog = page.getByRole("dialog", { name: "卸载执行机 Agent", exact: true });
+  await expect(dialog.getByRole("button", { name: "确认卸载并清理", exact: true })).toBeDisabled();
+  await dialog.getByLabel("我确认卸载并永久删除该执行机的 Agent 本地数据").check();
+  const completion = page.waitForResponse((candidate) =>
+    candidate.url().endsWith(`/api/v1/runners/${runner.id}/uninstall`),
+  );
+  await dialog.getByRole("button", { name: "确认卸载并清理", exact: true }).click();
+  expect((await completion).status()).toBe(200);
+  await expect(dialog).toHaveCount(0);
+  for (const path of [
+    "/opt/autoforge/bin/autoforge-agent",
+    "/opt/autoforge/lib/cotest-testng-adapter.jar",
+    "/etc/autoforge-agent",
+    "/etc/systemd/system/autoforge-agent.service",
+    "/var/lib/autoforge-agent",
+  ]) {
+    await execFileAsync("docker", ["exec", container, "test", "!", "-e", path]);
+  }
+  const profiles = (await (
+    await page.request.get("/api/v1/runners/installations/profiles")
+  ).json()) as { items: Array<{ runnerId?: string }> };
+  expect(profiles.items.some((profile) => profile.runnerId === runner.id)).toBe(false);
+  const remaining = (await (await page.request.get("/api/v1/runners?limit=100")).json()) as {
+    items: Array<{ id: string }>;
+  };
+  expect(remaining.items.some((item) => item.id === runner.id)).toBe(false);
+}
 
 async function probeThroughUi(page: Page): Promise<string> {
   await page.goto("/runners");

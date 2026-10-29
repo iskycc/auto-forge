@@ -413,6 +413,7 @@ export interface IdentityAccessRepository {
     createdAt: string;
   }): Promise<Project>;
   archiveProject(projectId: string, archivedAt: string): Promise<Project>;
+  renameProject(input: { projectId: string; name: string; updatedAt: string }): Promise<Project>;
   transferProjectOwner(input: {
     projectId: string;
     ownerUserId: string;
@@ -733,6 +734,7 @@ export interface JarObjectStorePort {
   }>;
   read(objectKey: string): Promise<Uint8Array>;
   openRead(objectKey: string): Promise<{ sizeBytes: number; content: AsyncIterable<Uint8Array> }>;
+  readRange?(objectKey: string, offset: number, length: number): Promise<Uint8Array>;
   ready(): Promise<void>;
   readonly storageKind: "local" | "minio";
 }
@@ -1559,6 +1561,7 @@ export type RunnerInstallationProfileRecord = {
 };
 
 export interface RunnerInstallationProfileRepository {
+  finalizeUninstall(input: { runnerId: string; purgedAt: string }): Promise<void>;
   list(limit: number): Promise<RunnerInstallationProfileRecord[]>;
   get(profileId: string): Promise<RunnerInstallationProfileRecord | null>;
   findByRunnerId(runnerId: string): Promise<RunnerInstallationProfileRecord | null>;

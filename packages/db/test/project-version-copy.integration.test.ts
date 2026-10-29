@@ -830,6 +830,7 @@ async function fixture(dialect: "sqlite" | "postgres", options: { postgresLogs?:
     createAttemptLogStore(join(directory, "attempt-logs"));
   const cipher = new AesGcmSecretCipher(Buffer.alloc(32, 3).toString("base64"));
   const logDatabaseNames: string[] = [];
+  const maintenanceName = `${databaseName}_admin`;
   const logDatabaseIds: string[] = [];
   let logRegistry: PostgresLogDatabaseRepository | undefined;
   const switchLogDatabase = async (index: number) => {
@@ -837,6 +838,13 @@ async function fixture(dialect: "sqlite" | "postgres", options: { postgresLogs?:
     await logRegistry.select(logDatabaseIds[index]!, (await logRegistry.settings()).revision);
   };
   const close = async () => {
+    if (logRegistry) {
+      const children = await postgres!.pool.query<{ physical_name: string }>(
+        "SELECT physical_name FROM log_databases WHERE parent_database_id=ANY($1::text[])",
+        [logDatabaseIds],
+      );
+      logDatabaseNames.push(...children.rows.map((row) => row.physical_name));
+    }
     await logs.close();
     await repository.close();
     sqlite?.close();
@@ -850,6 +858,8 @@ async function fixture(dialect: "sqlite" | "postgres", options: { postgresLogs?:
   };
   try {
     if (postgres && options.postgresLogs) {
+      await admin!.query(`CREATE DATABASE "${maintenanceName}"`);
+      logDatabaseNames.push(maintenanceName);
       logRegistry = new PostgresLogDatabaseRepository(
         postgres,
         cipher,
@@ -858,16 +868,21 @@ async function fixture(dialect: "sqlite" | "postgres", options: { postgresLogs?:
       );
       logs = new PostgresRoutedAttemptLogStore(logRegistry, logs);
       for (let index = 0; index < 2; index++) {
-        const name = `version_copy_logs_${randomUUID().replaceAll("-", "")}`;
-        logDatabaseNames.push(name);
-        await admin!.query(`CREATE DATABASE ${name}`);
         const logUrl = new URL(postgresUrl!);
-        logUrl.pathname = `/${name}`;
         logDatabaseIds.push(
           (
-            await logRegistry.register(
+            await logRegistry.registerDaily(
               randomUUID(),
-              { name: `日志库 ${index}`, databaseUrl: logUrl.toString() },
+              {
+                name: `日志服务器 ${index}`,
+                host: logUrl.hostname,
+                port: Number(logUrl.port || 5432),
+                username: decodeURIComponent(logUrl.username),
+                password: decodeURIComponent(logUrl.password),
+                maintenanceDatabase: maintenanceName,
+                databasePrefix: `afvc_${randomUUID().replaceAll("-", "").slice(0, 20)}`,
+                sslMode: "disable",
+              },
               now,
             )
           ).id,

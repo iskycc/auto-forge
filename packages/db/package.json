@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./sqlite": "./src/sqlite.ts",
-    "./postgres": "./src/postgres.ts"
+    "./postgres": "./src/postgres.ts",
+    "./log-archive-worker": "./src/log-archive-worker.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

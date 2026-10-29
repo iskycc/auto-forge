@@ -1,4 +1,4 @@
-import { registerLogDatabaseSchema, logDatabaseSchema } from "@autoforge/contracts";
+import { registerDailyLogServerSchema, logDatabaseSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   try {
     requireSameOrigin(request);
     const identity = await authorizeRequest(request, "settings.manage", undefined);
-    const input = registerLogDatabaseSchema.parse(await readJsonBody(request, 8192));
+    const input = registerDailyLogServerSchema.parse(await readJsonBody(request, 8192));
     const { services, logDatabases } = await requireLogDatabases();
     const saved = await logDatabases.register(input);
     await services.identityAccess.recordAuthorizedOperation(identity, {

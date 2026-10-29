@@ -3,13 +3,30 @@ import type {
   RunnerInstallationProfileRecord,
   RunnerInstallationProfileRepository,
 } from "@autoforge/application";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, isNotNull } from "drizzle-orm";
+import { DomainError } from "@autoforge/domain";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
-import { pgRunnerInstallationProfiles } from "./postgres-schema";
+import { pgRunnerInstallationProfiles, pgRunners } from "./postgres-schema";
+import { runnerPurgeValues } from "./runner-purge";
 
 export class PostgresRunnerInstallationProfileRepository implements RunnerInstallationProfileRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
+
+  async finalizeUninstall(input: { runnerId: string; purgedAt: string }): Promise<void> {
+    await this.ready();
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      const [row] = await transaction
+        .update(pgRunners)
+        .set(runnerPurgeValues(input))
+        .where(and(eq(pgRunners.id, input.runnerId), isNotNull(pgRunners.deregisteredAt)))
+        .returning({ id: pgRunners.id });
+      if (!row) throw new DomainError("RUNNER_NOT_DELETABLE", "执行机尚未注销，无法完成卸载清理。");
+      await transaction
+        .delete(pgRunnerInstallationProfiles)
+        .where(eq(pgRunnerInstallationProfiles.runnerId, input.runnerId));
+    });
+  }
 
   private async ready(): Promise<void> {
     await this.handle.ready;

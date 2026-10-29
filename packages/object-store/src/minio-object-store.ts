@@ -214,6 +214,36 @@ export class MinioObjectStore implements JarObjectStorePort {
     };
   }
 
+  async readRange(objectKey: string, offset: number, length: number): Promise<Uint8Array> {
+    validateObjectKey(objectKey);
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > 16 * 1024 * 1024
+    )
+      throw new Error("Invalid object read range.");
+    if (length === 0) {
+      const metadata = await this.client.statObject(this.bucket, objectKey);
+      if (offset > metadata.size) throw new Error("Object range exceeds stored size.");
+      return new Uint8Array();
+    }
+    const stream = await this.client.getPartialObject(this.bucket, objectKey, offset, length);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for await (const chunk of stream) {
+      bytes += chunk.length;
+      if (bytes > length) {
+        stream.destroy();
+        throw new Error("Oversized object range.");
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+    if (bytes !== length) throw new Error("Incomplete object range.");
+    return Buffer.concat(chunks);
+  }
+
   async read(objectKey: string): Promise<Uint8Array> {
     validateObjectKey(objectKey);
     const stream = await this.client.getObject(this.bucket, objectKey);

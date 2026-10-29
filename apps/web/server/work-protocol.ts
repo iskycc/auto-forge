@@ -72,7 +72,10 @@ export type WorkTask =
       input: unknown;
     }
   | { kind: "background-job"; job: unknown }
-  | { kind: "platform-maintenance"; operation: "notifications" | "retention" | "orphan-logs" }
+  | {
+      kind: "platform-maintenance";
+      operation: "notifications" | "retention" | "log-archives" | "orphan-logs";
+    }
   | { kind: "reconcile-attempts"; input: unknown }
   | { kind: "schedule-batch"; batchId: string }
   | {

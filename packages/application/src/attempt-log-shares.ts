@@ -3,7 +3,12 @@ import type {
   SharedAttemptLogView,
   SharedLogCaseDetailTarget,
 } from "@autoforge/contracts";
-import { isManualCaseExecution, runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
+import {
+  isDomainError,
+  isManualCaseExecution,
+  runAttemptOutcome,
+  type RunAttempt,
+} from "@autoforge/domain";
 
 import type {
   AttemptLogShareRepository,
@@ -183,6 +188,7 @@ export class AttemptLogShareService {
       manualExecution,
       requestedBy,
       logText: log.text,
+      ...(log.offline ? { logAvailability: "offline" as const } : {}),
       ...(log.truncated ? { logTruncated: true } : {}),
       rounds: visibleAttempts.map(
         ({ attempt: candidate, outcome: candidateOutcome, kind: candidateKind, requestedBy }) => ({
@@ -204,6 +210,17 @@ export class AttemptLogShareService {
 
   /** 复用执行控制仓储的分页读取；每条流有界读取，合并后再按 UTF-8 边界截断。 */
   private async readAttemptLogText(
+    attemptId: string,
+  ): Promise<{ text: string; truncated: boolean; offline?: boolean }> {
+    try {
+      return await this.readAvailableLogText(attemptId);
+    } catch (cause) {
+      if (isDomainError(cause) && cause.code === "LOG_ARCHIVE_OFFLINE")
+        return { text: "", truncated: false, offline: true };
+      throw cause;
+    }
+  }
+  private async readAvailableLogText(
     attemptId: string,
   ): Promise<{ text: string; truncated: boolean }> {
     const chunks: Array<{ stream: string; sequence: number; content: string; recordedAt: string }> =

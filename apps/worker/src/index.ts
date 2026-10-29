@@ -325,6 +325,9 @@ const health = {
 };
 const healthServer = await startHealthServer(config.healthPort, health);
 const loops = Promise.all([
+  runPeriodic(shutdown.signal, 5000, "logs.archive", async () => {
+    if (canRefresh()) await backgroundPool.runPlatformMaintenance("log-archives");
+  }),
   runPeriodic(shutdown.signal, 60_000, "logs.cleanupOrphans", async () => {
     if (canRefresh()) await backgroundPool.runPlatformMaintenance("orphan-logs");
   }),

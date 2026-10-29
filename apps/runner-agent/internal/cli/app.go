@@ -44,6 +44,8 @@ func Run(arguments []string, stdout, stderr io.Writer, info buildinfo.Info) int 
 		err = rotateCredential(arguments[1:], stdout, stderr)
 	case "start":
 		err = runAgent(arguments[1:], stdout, stderr, info)
+	case "uninstall":
+		err = uninstallAgent(arguments[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return exitSuccess
@@ -225,6 +227,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  run-once   Execute one local versioned spec without a shell")
 	fmt.Fprintln(writer, "  rotate-credential  Exchange the runner credential for a newly issued one [--config FILE]")
 	fmt.Fprintln(writer, "  start      Register, reconcile, claim and execute assignments [--config FILE]")
+	fmt.Fprintln(writer, "  uninstall  Remove the installed system Agent and local execution data (--inspect or --confirm)")
 }
 
 type stringListFlag []string

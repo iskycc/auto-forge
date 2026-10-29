@@ -13,7 +13,7 @@ type PressureObservation = { firstAt: number; lastAt: number; count: number };
 
 /** A shared flag lets a SQLite worker see foreground pressure without waiting on its event loop. */
 export class RuntimePriority {
-  // Slot 0 pauses ordinary background work; slot 1 also pauses the one initial-page builder.
+  // Slot 0 pauses ordinary background work; slot 1 also pauses the single page-waiting builder.
   readonly signal = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
   private readonly paused = new Int32Array(this.signal);
   private foreground = 0;

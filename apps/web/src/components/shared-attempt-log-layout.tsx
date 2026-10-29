@@ -175,7 +175,9 @@ export function SharedAttemptLogLayout({
                   ? live.connected
                     ? "实时日志"
                     : "实时连接中"
-                  : "只读日志"}
+                  : view.logAvailability === "offline"
+                    ? "已离线归档"
+                    : "只读日志"}
               </Tag>
               <ColorModeToggle />
             </div>
@@ -193,6 +195,15 @@ export function SharedAttemptLogLayout({
             },
           }}
         >
+          {view.logAvailability === "offline" ? (
+            <Alert
+              type="info"
+              showIcon
+              className="m-4 shrink-0"
+              title="日志已离线归档"
+              description="管理员已确认下载并移除平台归档副本，请使用已下载的归档包查看日志。执行结果和轮次记录仍然保留。"
+            />
+          ) : null}
           {live?.error ? (
             <Alert
               type="warning"
@@ -238,7 +249,9 @@ export function SharedAttemptLogLayout({
                       {segment.text}
                     </span>
                   ))
-                : "本次尝试暂无日志内容。"}
+                : view.logAvailability === "offline"
+                  ? "请在离线查看器中打开本次执行日志。"
+                  : "本次尝试暂无日志内容。"}
             </pre>
           </CustomScrollArea>
         </Card>

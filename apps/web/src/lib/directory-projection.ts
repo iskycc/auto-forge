@@ -12,6 +12,26 @@ export type DirectoryProjection = {
   synchronized?: boolean;
 };
 
+export type DirectoryReadPolicy = {
+  minimumRevision?: number;
+  allowPublishedFallback?: boolean;
+};
+
+export function isDirectoryProjectionUsable(
+  projection: DirectoryProjection,
+  { minimumRevision, allowPublishedFallback = false }: DirectoryReadPolicy = {},
+): boolean {
+  const revision = (projection.manifest as { revision?: number } | null)?.revision;
+  return (
+    projection.manifest?.rootOrdinal !== undefined &&
+    Boolean(projection.status.generation) &&
+    (projection.synchronized !== false ||
+      (allowPublishedFallback && minimumRevision === undefined)) &&
+    (minimumRevision === undefined ||
+      (projection.synchronized !== false && revision !== undefined && revision >= minimumRevision))
+  );
+}
+
 export async function readDirectoryProjection(
   baseId: string,
   filters: string,

@@ -6,6 +6,7 @@ import type {
   CreateUserInput,
   LdapConfigurationInput,
   LoginInput,
+  RenameProjectInput,
   TransferProjectOwnerInput,
   UpdateRoleInput,
 } from "@autoforge/contracts";
@@ -876,6 +877,31 @@ export class IdentityAccessService {
       result: "succeeded",
       requestId,
       details: { slug: project.slug },
+    });
+    return project;
+  }
+
+  async renameProject(
+    actor: AuthenticatedIdentity,
+    projectId: string,
+    input: RenameProjectInput,
+    requestId?: string,
+  ) {
+    this.authorize(actor, "project.manage", projectId);
+    const project = await this.repository.renameProject({
+      projectId,
+      name: input.name,
+      updatedAt: this.now(),
+    });
+    await this.audit({
+      actorId: actor.user.id,
+      action: "project.rename",
+      resourceType: "project",
+      resourceId: projectId,
+      projectId,
+      result: "succeeded",
+      requestId,
+      details: { name: project.name },
     });
     return project;
   }

@@ -1,6 +1,6 @@
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
-import { NodeAttemptLogStore } from "./node-attempt-log-store";
-import { PostgresRoutedAttemptLogStore } from "./postgres-routed-attempt-logs";
+import type { NodeAttemptLogStore } from "./node-attempt-log-store";
+import { hasBusinessLogWatermarks } from "./archived-attempt-log-store";
 import type {
   AttemptRecoveryReason,
   ClaimedAssignmentRecord,
@@ -672,10 +672,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     attemptId: string,
     client: PoolClient,
   ): Promise<{ stdout: number; stderr: number; agent: number }> {
-    if (
-      this.attemptLogs instanceof NodeAttemptLogStore ||
-      this.attemptLogs instanceof PostgresRoutedAttemptLogStore
-    ) {
+    if (hasBusinessLogWatermarks(this.attemptLogs)) {
       return {
         stdout: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout", client),
         stderr: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr", client),
@@ -1683,10 +1680,7 @@ async function persistCompletionMetadata(
   if (result.logWatermarks) {
     // 单机水位随本地日志保存；分布式水位与完成元数据共同写入 PostgreSQL。
     const watermarks = { batchId, attemptId, watermarks: result.logWatermarks, recordedAt };
-    if (
-      attemptLogs instanceof NodeAttemptLogStore ||
-      attemptLogs instanceof PostgresRoutedAttemptLogStore
-    ) {
+    if (hasBusinessLogWatermarks(attemptLogs)) {
       // Share completion metadata in the existing transaction; peer I/O happens only
       // during log transfer, before its acknowledgement and outside control transactions.
       await attemptLogs.recordWatermarks(watermarks, client);

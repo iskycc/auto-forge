@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-26",
+  "updatedAt": "2026-10-29",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -50,7 +50,11 @@
       "id": "AF-E2E-003",
       "status": "partial",
       "owner": "identity-rbac",
-      "evidence": ["tests/e2e/identity-rbac.spec.ts"],
+      "evidence": [
+        "tests/e2e/identity-rbac.spec.ts",
+        "tests/e2e/management-operations.spec.ts",
+        "packages/db/test/project-rename.integration.test.ts"
+      ],
       "coverage": {
         "lite": "covered",
         "full": "partial",
@@ -124,7 +128,10 @@
         "tests/e2e/ddt-management.spec.ts",
         "tests/e2e/ddt-change-review.spec.ts",
         "tests/e2e/jar-import.spec.ts",
-        "tests/e2e/real-agent.spec.ts"
+        "tests/e2e/real-agent.spec.ts",
+        "tests/e2e/testng-directory-execution.spec.ts",
+        "apps/web/server/read-model-thread.integration.test.ts",
+        "packages/db/test/read-model-snapshots.integration.test.ts"
       ],
       "coverage": {
         "lite": "partial",
@@ -227,7 +234,11 @@
         "tests/e2e/runner-install.spec.ts",
         "tests/fixtures/ssh/Dockerfile",
         ".github/workflows/ci.yml",
-        ".github/workflows/release-checks.yml"
+        ".github/workflows/release-checks.yml",
+        "tests/e2e/management-operations.spec.ts",
+        "apps/web/src/lib/runner-agent-installer-uninstall.test.ts",
+        "apps/runner-agent/internal/installation/uninstall_test.go",
+        "packages/db/test/runner-uninstall.integration.test.ts"
       ],
       "coverage": {
         "lite": "partial",
@@ -351,6 +362,31 @@
         "realAgent": "planned",
         "success": "partial",
         "failure": "planned",
+        "recovery": "partial"
+      }
+    },
+    {
+      "id": "AF-E2E-019",
+      "status": "partial",
+      "owner": "daily-log-storage-and-monthly-archives",
+      "evidence": [
+        "tests/e2e/log-archives.spec.ts",
+        "tests/e2e/log-databases.spec.ts",
+        "packages/db/test/log-archives.integration.test.ts",
+        "packages/db/test/log-archive-volumes.integration.test.ts",
+        "packages/db/test/log-archive-migration.integration.test.ts",
+        "packages/db/test/log-archive-scale.integration.test.ts",
+        "apps/web/src/lib/log-archives-api.test.ts",
+        "packages/db/test/daily-log-databases.integration.test.ts",
+        "apps/log-archive-viewer/internal/archive/archive_test.go"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "partial",
         "recovery": "partial"
       }
     }

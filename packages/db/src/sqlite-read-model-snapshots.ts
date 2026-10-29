@@ -39,16 +39,17 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
     return row ? readModelSnapshotFromRow(row) : null;
   }
 
-  async claim(now: string, expiresAt: string, token: string, options?: { onlyUnpublished: true }) {
+  async claim(now: string, expiresAt: string, token: string, options?: { onlyPageBlocking: true }) {
     const candidateSql = `SELECT id FROM read_model_snapshots
       WHERE refresh_after<=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)
-      AND failed<5 AND accessed_at>=? AND (?=0 OR generated_at IS NULL)
+      AND failed<5 AND accessed_at>=? AND (?=0 OR generated_at IS NULL OR
+        (requested_revision>generated_revision AND json_extract(query_json,'$.kind') IN ('case_directory','suite_directory')))
       ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1`;
     const parameters = [
       now,
       now,
       new Date(Date.parse(now) - 300_000).toISOString(),
-      Number(options?.onlyUnpublished ?? false),
+      Number(options?.onlyPageBlocking ?? false),
     ];
     const row = await retrySqliteLockContention(() => {
       // Idle polling must not compete with heartbeats for SQLite's single writer.

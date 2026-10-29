@@ -48,6 +48,7 @@ const actionsByCategory = {
   },
   project: {
     "project.create": "创建项目",
+    "project.rename": "修改项目名称",
     "project.archive": "归档项目",
     "project.transfer_owner": "转移项目负责人",
     "project_version.create": "创建项目版本",
@@ -105,6 +106,11 @@ const actionsByCategory = {
     "case_suite.webhooks_update": "修改任务回调绑定",
   },
   platform: {
+    "platform.log_archive_created": "创建月度日志归档",
+    "platform.log_archive_cleanup_requested": "清理已归档日志正文",
+    "platform.log_archive_copy_removal_requested": "确认下载并删除平台归档副本",
+    "platform.log_archive_retry_requested": "重试生成日志归档",
+    "platform.log_archive_cancel_requested": "取消月度日志归档",
     "settings.platform.bootstrap": "初始化平台配置",
     "settings.platform.update": "修改平台配置",
     "platform.node_updated": "修改平台节点配置",
@@ -125,6 +131,7 @@ const actionsByCategory = {
     "runner.install.complete": "安装执行机代理",
     "runner.install.rollback": "回滚执行机代理",
     "runner.update.complete": "更新执行机代理",
+    "runner.uninstall.complete": "卸载执行机代理",
     "runner.update.batch": "批量更新执行机代理",
     "runner_group.create": "创建执行机组",
     "runner_group.update": "修改执行机组",

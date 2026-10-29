@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 项目设置支持修改当前项目名称，包括系统默认项目；项目 ID、默认标记、版本和执行历史关联保持不变。执行节点的“管理操作”支持通过已核验 SSH 连接完整卸载 Agent，清除本地执行数据和已保存连接，保留平台历史执行；旧 Agent 可直接由平台内置工具清理，失败可重试。操作范围与本机命令见[项目改名与 Agent 卸载](./docs/operations/runner-uninstall.md)。
+
 - “项目设置 → JDK 与依赖 JAR 压缩包”提供“Jenkins 接入指导”，在当前页查看依赖导入快速步骤、内置依赖发布插件下载、必填／选填参数和可复制 Pipeline；示例按当前选中项目与版本填写，使用服务账号 `project.manage` 权限，具体行为见[依赖发布插件指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。
 
 - 执行节点上报 Agent 数据目录所在分区的磁盘可用量；低于 20% 时，节点页右下角集中悬浮提醒，展示节点、容量、目录及采样时间，支持跨分页定位。离线／过期数据明确标注，旧 Agent 未上报不会误报空间不足；升级 Agent 后生效。详见[节点磁盘空间提醒](./docs/architecture/runner-agent.md#节点磁盘空间提醒)。
@@ -24,7 +26,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 - 任务公开执行页展示全部环境 IP，登录后可修改本次立即／倒计时执行的环境，提交后恢复任务默认地址，不改变任务原配置；当前批次、历史批次和执行详情展示实际执行快照中的多环境地址，详见[任务公开执行](./docs/architecture/public-task-execution.md)。
 
-- Full 可选[独立 PostgreSQL 日志库](./deploy/compose/full-bind/log-postgres/README.md)，在“平台设置 → 日志数据库”登记多个库并实时选择新批次写入库；主库持久化每批次库 ID，历史和在途日志按原库读取，旧本地日志保持兼容。日志数据库与业务数据库分开部署，连接串加密保存，具体语义见 [ADR 0015](./docs/adr/0015-full-postgresql-log-databases.md)。
+- Full 可选[独立 PostgreSQL 日志服务](./deploy/compose/full-bind/log-postgres/README.md)，使用管理员账号按北京时间每日自动建库；主库持久化实际日期库位置，跨日执行合并读取，旧单库和本地日志保持兼容。Lite／Full 的“平台设置 → 日志归档”支持带磁盘预算的月度分卷、独立校验、下载内置 Go 离线查看器，并在确认后清理原日志正文；平台副本保留期间原日志地址继续读取归档。用户完整下载并确认离线查看正常后，可独立移除平台 ZIP 与索引，保留执行历史并明确显示已离线归档。详见[日志归档运维说明](./docs/operations/log-archives.md)和 [ADR 0016](./docs/adr/0016-daily-log-databases-and-monthly-archives.md)。
 
 - 活动任务执行详情提供“并发诊断”，按需显示未达并发上限的当前条件、执行中／待领取占额、项目额度、节点本任务／其他任务占用，以及 CPU、内存预留和资源指标状态。诊断复用调度准入规则，通过隔离只读进程读取，不随页面轮询；具有执行记录和节点查看权限的用户可手动刷新，匿名公开页不展示。详见[执行任务并发诊断](./docs/architecture/execution-concurrency-diagnostics.md)。
 
@@ -122,6 +124,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite 队列使用短写事务与 `SQLITE_BUSY`/`SQLITE_LOCKED` 退避，持续锁竞争解除后内嵌 worker 自动恢复。系统诊断会显示死信类型、关联对象与最后错误，管理员确认故障已修复后可重新投递；SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信、重投和关闭排空。
 - 工作概览、用例与任务成员目录、DDT 概览、质量洞察与批次对比、执行历史与轮次统计、分析任务列表及分析统计使用浏览器缓存和数据库后台快照；请求不再现场计算这些聚合。首次生成自动显示进度，后续访问保留已有内容并后台更新，提供更新时间和“刷新数据”。Lite 独立线程生成 SQLite 快照，Full 通过 PostgreSQL 租约跨节点去重；详见[缓存与后台快照](./docs/architecture/read-model-snapshots.md)。
+
+- 批跑期间 TestNG 目录可先浏览已发布内容；显式失效的用例／任务目录通过单条页面等待通道刷新，避免必须等到整批结束。刷新期间暂停批量选择，任务目录仍核对编辑后的修订号，不放宽执行与内存保护。
 - 管理员存储空间页汇总平台实际占用与内容逻辑大小，并按数据目录、对象存储和外部引用直接生成可折叠目录树，不再暴露分页控件；后台使用有界游标批次自动续读，单个目录按需展开，避免大量文件一次性渲染。目录覆盖全部常规文件、Lite/Full 每批次日志 SQLite、Lite 受管对象、Full MinIO 对象及 URL 型 JDK/依赖引用；批次日志节点显示自然数字批次编号而非内部 UUID，展开后可直接进入对应批次详情，其他文件也可查看逻辑路径、物理位置、大小和磁盘块占用。具有平台设置管理权限的管理员可单项删除，或勾选多个 JDK/依赖资源后通过悬浮操作条批量删除；上传资源同时清理对象，URL 资源只清理登记，仍在使用的资源会被逐项拒绝且不影响其他项。删除成功后目录与容量统计在本地更新，不会重新扫描或打断当前查看位置。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
 - GitHub Actions CI，以及amd64/arm64 双架构后端离线镜像和独立发布后 Gate E 检查流水线；耗时验收按独立状态分区并行执行，单个测试 Job 以五分钟内完成为目标。每个后端镜像均内置 Linux `amd64`/`arm64` Agent 与 Adapter。Release 不再构建 `toolchain-amd64/arm64`，JDK 和测试依赖由项目上传或登记内网链接。
@@ -155,6 +159,8 @@ DDT 用例、SR 分类与测试类关联、用例任务。**每一步都可以�
 
 | 方法             | 路径                                                                                                            | 说明                                                                                                   |
 | ---------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `PATCH`          | `/api/v1/projects/{projectId}`                                                                                  | 修改启用项目（含默认项目）的显示名称，不改变项目标识                                                   |
+| `POST`           | `/api/v1/runners/{runnerId}/uninstall`                                                                          | 核验 SSH 主机并卸载 Agent、清理本地执行数据及平台连接，保留历史执行                                    |
 | `POST`           | `/api/v1/case-sources/jar/inspect`                                                                              | 上传 `multipart/form-data` 的 `file`，只扫描不持久化                                                   |
 | `POST`           | `/api/v1/case-sources/jar/import`                                                                               | 扫描、内容寻址保存并事务性导入用例                                                                     |
 | `GET`            | `/api/v1/case-definitions`                                                                                      | 游标分页查询用例，可使用 `query`、`cursor`、`limit`                                                    |

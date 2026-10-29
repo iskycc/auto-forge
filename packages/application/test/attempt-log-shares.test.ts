@@ -1,5 +1,5 @@
 import type { AttemptLogShareRecord } from "@autoforge/application";
-import type { RunBatchDetails } from "@autoforge/domain";
+import { DomainError, type RunBatchDetails } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
 import { PERMANENT_LOG_ACCESS_EXPIRY, AttemptLogShareService } from "../src/attempt-log-shares";
@@ -85,6 +85,7 @@ function makeBatchDetails(attemptOutcome: "succeeded" | "failed"): RunBatchDetai
 }
 
 type FakeState = {
+  logError?: Error;
   snapshotFields?: Partial<AttemptLogSnapshot>;
   records: AttemptLogShareRecord[];
   logChunks: Array<{
@@ -243,6 +244,7 @@ function makeService(
       afterSequence: number;
       limit: number;
     }) => {
+      if (state.logError) throw state.logError;
       state.logReadCalls.push(input);
       const matching = state.logChunks.filter(
         (chunk) =>
@@ -271,6 +273,15 @@ function makeService(
 }
 
 describe("AttemptLogShareService", () => {
+  it("retains result and round history when the confirmed archive copy is offline", async () => {
+    const state = makeState();
+    state.logError = new DomainError("LOG_ARCHIVE_OFFLINE", "已离线归档");
+    const service = makeService(state);
+    const view = await service.getSharedAttemptLogForBatch("batch-1", "attempt-1");
+    expect(view).toMatchObject({ attemptId: "attempt-1", logAvailability: "offline", logText: "" });
+    expect(view!.rounds.length).toBeGreaterThan(0);
+  });
+
   it("identifies the ordinary case rather than its display name or execution run", async () => {
     const state = makeState();
     seedLegacyShare(state);

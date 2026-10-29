@@ -7,7 +7,7 @@ import type { AttemptLogStore, AttemptLogStream } from "./attempt-log-store";
 const streams = ["stdout", "stderr", "agent"] as const;
 type AppendInput = Parameters<AttemptLogStore["appendChunks"]>[0];
 
-/** One log database owns complete batches. No business table or cross-database transaction is used here. */
+/** Persists a payload shard without business tables or cross-database transactions. */
 export async function appendPostgresLogChunks(pool: Pool, input: AppendInput) {
   if (input.chunks.length > 256)
     throw new DomainError("LOG_CHUNKS_TOO_LARGE", "单次日志块数量超过限制。");
@@ -121,31 +121,39 @@ export async function listPostgresLogChunks(
   pool: Pool,
   input: Parameters<AttemptLogStore["listChunks"]>[0],
 ) {
-  return readAttemptLogPage(input, async (after, limit) => {
-    const rows = await pool.query<{
-      stream: AttemptLogStream;
-      sequence: string;
-      content: Buffer;
-      recorded_at: string;
-    }>(
-      `SELECT stream,sequence,content,recorded_at FROM log_chunks WHERE batch_id=$1 AND attempt_id=$2
+  return readAttemptLogPage(input, (after, limit) =>
+    readPostgresLogRows(pool, input, after, limit),
+  );
+}
+export async function readPostgresLogRows(
+  pool: Pick<Pool, "query">,
+  input: Parameters<AttemptLogStore["listChunks"]>[0],
+  after: number,
+  limit: number,
+) {
+  const rows = await pool.query<{
+    stream: AttemptLogStream;
+    sequence: string;
+    content: Buffer;
+    recorded_at: string;
+  }>(
+    `SELECT stream,sequence,content,recorded_at FROM log_chunks WHERE batch_id=$1 AND attempt_id=$2
        AND stream=$3 AND sequence>$4 AND ($5::text IS NULL OR recorded_at>=$5)
        AND ($6::text IS NULL OR recorded_at<=$6) ORDER BY sequence LIMIT $7`,
-      [
-        input.batchId,
-        input.attemptId,
-        input.stream,
-        after,
-        input.recordedAfter ?? null,
-        input.recordedBefore ?? null,
-        limit,
-      ],
-    );
-    return rows.rows.map((row) => ({
-      stream: row.stream,
-      sequence: Number(row.sequence),
-      content: row.content.toString("utf8"),
-      recordedAt: row.recorded_at,
-    }));
-  });
+    [
+      input.batchId,
+      input.attemptId,
+      input.stream,
+      after,
+      input.recordedAfter ?? null,
+      input.recordedBefore ?? null,
+      limit,
+    ],
+  );
+  return rows.rows.map((row) => ({
+    stream: row.stream,
+    sequence: Number(row.sequence),
+    content: row.content.toString("utf8"),
+    recordedAt: row.recorded_at,
+  }));
 }

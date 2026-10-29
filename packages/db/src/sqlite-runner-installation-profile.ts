@@ -8,12 +8,30 @@ import type {
   RunnerInstallationProfileRecord,
   RunnerInstallationProfileRepository,
 } from "@autoforge/application";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, isNotNull } from "drizzle-orm";
+import { DomainError } from "@autoforge/domain";
 
-import { runnerInstallationProfiles } from "./schema";
+import { runnerInstallationProfiles, runners } from "./schema";
+import { runnerPurgeValues } from "./runner-purge";
 
 export class SqliteRunnerInstallationProfileRepository implements RunnerInstallationProfileRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async finalizeUninstall(input: { runnerId: string; purgedAt: string }): Promise<void> {
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const row = this.handle.db
+        .update(runners)
+        .set(runnerPurgeValues(input))
+        .where(and(eq(runners.id, input.runnerId), isNotNull(runners.deregisteredAt)))
+        .returning({ id: runners.id })
+        .get();
+      if (!row) throw new DomainError("RUNNER_NOT_DELETABLE", "执行机尚未注销，无法完成卸载清理。");
+      this.handle.db
+        .delete(runnerInstallationProfiles)
+        .where(eq(runnerInstallationProfiles.runnerId, input.runnerId))
+        .run();
+    });
+  }
 
   async list(limit: number): Promise<RunnerInstallationProfileRecord[]> {
     return this.handle.db

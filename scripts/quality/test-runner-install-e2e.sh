@@ -138,4 +138,4 @@ export E2E_BASE_URL="${web_base_url}"
 export E2E_SSH_CONTAINER="${ssh_container}"
 export E2E_SSH_CA_FILE="${acceptance_directory}/runner-ca.crt"
 pnpm exec playwright test --config playwright.full.config.ts tests/e2e/runner-install.spec.ts
-printf 'Password and Keyboard-Interactive SSH probe, offline systemd installation and Runner lifecycle passed.\n'
+printf 'Password and Keyboard-Interactive SSH probe, offline systemd installation, Runner lifecycle and complete Agent uninstall passed.\n'

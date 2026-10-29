@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { insertRunnerInstallationProfileFixture } from "./support/runner-installation-profile-fixture";
 import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -24,6 +27,163 @@ import {
   selectProjectContext,
   uniqueName,
 } from "./support/session";
+
+test("default project can be renamed in place and keeps its selection after reload", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const projects = await browserJson<
+    Array<{ id: string; name: string; slug: string; isDefault: boolean }>
+  >(page, "/api/v1/projects");
+  const original = projects.body.find((project) => project.id === DEFAULT_PROJECT_ID)!;
+  const renamed = uniqueName("默认项目新的展示名称");
+  await selectProjectContext(page, DEFAULT_PROJECT_ID);
+  try {
+    await page.goto("/settings/projects");
+    await page.getByRole("button", { name: "修改项目名称", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "修改项目名称", exact: true });
+    await expect(dialog.getByRole("button", { name: "保存名称", exact: true })).toBeDisabled();
+    await dialog.getByLabel("项目名称", { exact: true }).fill(renamed);
+    const saved = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/v1/projects/${DEFAULT_PROJECT_ID}` &&
+        response.request().method() === "PATCH",
+    );
+    await dialog.getByRole("button", { name: "保存名称", exact: true }).click();
+    expect((await saved).status()).toBe(200);
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".project-administration-summary strong")).toHaveText(renamed);
+    await page.reload();
+    await expect(page.locator(".project-administration-summary strong")).toHaveText(renamed);
+    const updated = await browserJson<typeof projects.body>(page, "/api/v1/projects");
+    expect(updated.body.find((project) => project.id === DEFAULT_PROJECT_ID)).toMatchObject({
+      id: original.id,
+      slug: original.slug,
+      isDefault: true,
+      name: renamed,
+    });
+    for (const theme of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+        ]);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.reload();
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`project-renamed-${theme}-${width}.png`),
+        });
+        await page.getByRole("button", { name: "修改项目名称", exact: true }).click();
+        await expect(page.getByRole("dialog", { name: "修改项目名称", exact: true })).toBeVisible();
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`project-rename-dialog-${theme}-${width}.png`),
+        });
+        await page.getByRole("button", { name: "取消", exact: true }).click();
+      }
+    }
+  } finally {
+    const restored = await browserJson(page, `/api/v1/projects/${DEFAULT_PROJECT_ID}`, {
+      method: "PATCH",
+      body: { name: original.name },
+    });
+    expect(restored.status).toBe(200);
+  }
+});
+
+test("Agent uninstall requires consent and verified SSH while dialogs fit desktop themes", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    Boolean(process.env.AUTOFORGE_E2E_POSTGRES_URL),
+    "Saved connection display fixture uses the Lite database; Full cleanup uses shared adapter contract tests.",
+  );
+  await ensureAdministrator(page);
+  const profile = insertRunnerInstallationProfileFixture(process.env.AUTOFORGE_E2E_DATA_DIR!);
+  let runnerId: string | undefined;
+  try {
+    const registration = await page.request.post("/api/v1/runner-agents/register", {
+      headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+      data: {
+        schemaVersion: 1,
+        name: profile.name,
+        labels: [],
+        capabilities: ["executor:process"],
+        maxConcurrency: 1,
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "999.0.0",
+        protocolVersion: 1,
+        terminalEnabled: false,
+      },
+    });
+    expect(registration.status()).toBe(201);
+    runnerId = ((await registration.json()) as { runnerId: string }).runnerId;
+    let submitted: unknown;
+    await page.route(`**/api/v1/runners/${runnerId}/uninstall`, async (route) => {
+      submitted = route.request().postDataJSON();
+      await route.fulfill({
+        status: 502,
+        json: {
+          error: {
+            code: "RUNNER_INSTALLATION_FAILED",
+            message: "模拟远端清理失败，请重试。",
+            requestId: "uninstall-ui",
+          },
+        },
+      });
+    });
+    for (const theme of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL(page.url()).origin },
+        ]);
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.goto(`/runners?query=${encodeURIComponent(profile.name)}`);
+        const row = page.locator(".runner-list-item").filter({ hasText: profile.name });
+        await row.getByText("管理操作", { exact: true }).click();
+        await row.getByRole("button", { name: "卸载 Agent", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "卸载执行机 Agent", exact: true });
+        const execute = dialog.getByRole("button", { name: "确认卸载并清理", exact: true });
+        await expect(execute).toBeDisabled();
+        await expect(dialog).toContainText(profile.host);
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`agent-uninstall-stored-${theme}-${width}.png`),
+        });
+        await dialog.getByLabel("使用已保存的 SSH 连接").uncheck();
+        await expect(dialog.getByLabel("SSH / sudo 密码")).toBeVisible();
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`agent-uninstall-manual-${theme}-${width}.png`),
+        });
+        await dialog.getByLabel("使用已保存的 SSH 连接").check();
+        await dialog.getByLabel("我确认卸载并永久删除该执行机的 Agent 本地数据").check();
+        await execute.click();
+        await expect(dialog.getByRole("alert")).toContainText("模拟远端清理失败");
+        expect(submitted).toEqual({ profileId: profile.id, confirm: true });
+        await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      }
+    }
+    const node = await page.request.get("/api/v1/runners?limit=500");
+    expect(
+      ((await node.json()) as { items: Array<{ id: string; deregisteredAt?: string }> }).items.find(
+        (item) => item.id === runnerId,
+      )?.deregisteredAt,
+    ).toBeUndefined();
+  } finally {
+    await page.unrouteAll({ behavior: "wait" });
+    profile.dispose();
+    if (runnerId) {
+      await page.request.post(`/api/v1/runners/${runnerId}/deregister`);
+      await page.request.delete(`/api/v1/runners/${runnerId}`);
+    }
+  }
+});
 
 for (const view of ["task", "single"] as const)
   test(`execution record pagination keeps ${view} pages bounded and preserves filters`, async ({
@@ -447,8 +607,6 @@ test("version initialization inherits mapped cases and tasks and preserves progr
   expect(mappings.body.items[0]?.category?.name).toBe("支付");
   expect(mappings.body.items[0]?.executionClass?.caseDefinitionId).not.toBe(source.classId);
 });
-
-const DEFAULT_PROJECT_ID = "00000000-0000-7000-8000-000000000001";
 
 test("service account lifecycle immediately narrows token access and produces exportable audit", async ({
   page,

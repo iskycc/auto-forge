@@ -40,6 +40,16 @@ func TestUnknownCommandReturnsUsageError(t *testing.T) {
 	}
 }
 
+func TestUninstallRequiresExplicitConfirmationBeforeAnyHostChanges(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"uninstall"}, &stdout, &stderr, buildinfo.Info{}); code != exitFailure {
+		t.Fatalf("exitCode = %d", code)
+	}
+	if !strings.Contains(stderr.String(), "requires --confirm") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestHealthLiveDoesNotRequireConfiguration(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

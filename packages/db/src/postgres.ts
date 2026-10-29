@@ -37,3 +37,7 @@ export * from "./postgres-ddt-sr-tags";
 
 export * from "./postgres-log-databases";
 export * from "./postgres-routed-attempt-logs";
+
+export * from "./postgres-log-archives";
+
+export * from "./archived-attempt-log-store";

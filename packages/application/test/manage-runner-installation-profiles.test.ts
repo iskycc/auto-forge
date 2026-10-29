@@ -61,6 +61,11 @@ const reverseCipher: SecretCipherPort = {
 class MemoryProfileRepository implements RunnerInstallationProfileRepository {
   private readonly records = new Map<string, RunnerInstallationProfileRecord>();
 
+  async finalizeUninstall({ runnerId }: { runnerId: string; purgedAt: string }): Promise<void> {
+    for (const [id, record] of this.records)
+      if (record.runnerId === runnerId) this.records.delete(id);
+  }
+
   async list(limit: number): Promise<RunnerInstallationProfileRecord[]> {
     return [...this.records.values()].slice(0, limit);
   }

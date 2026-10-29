@@ -1,39 +1,50 @@
 import { Pool } from "pg";
-import { DomainError, isDomainError } from "@autoforge/domain";
+import { DomainError } from "@autoforge/domain";
 import type { LogDatabaseRepository, SecretCipherPort } from "@autoforge/application";
-import type { LogDatabase, RegisterLogDatabaseInput } from "@autoforge/contracts";
+import type {
+  LogDatabase,
+  RegisterLogDatabaseInput,
+  RegisterDailyLogServerInput,
+} from "@autoforge/contracts";
 import { runPostgresMigrations, type PostgresDatabaseHandle } from "./postgres-database";
 
+import { PostgresDailyLogDatabases, type LogDatabaseRecord } from "./postgres-daily-log-databases";
+import { logDatabaseError } from "./postgres-log-database-errors";
+export { logDatabaseError } from "./postgres-log-database-errors";
+
 const MAX_OPEN_DATABASES = 4;
-type PoolEntry = { pool: Pool; users: number; encryptedConnection: string };
-type DatabaseRow = {
-  id: string;
-  name: string;
-  address: string;
-  connection_encrypted: string;
-  created_at: string;
-};
+type PoolEntry = { pool: Pool; lockPool: Pool; users: number; encryptedConnection: string };
+type DatabaseRow = LogDatabaseRecord;
 
 /** Registry lives in the business database; payload pools never use its connection settings. */
 export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
   private readonly pools = new Map<string, PoolEntry>();
+  readonly daily: PostgresDailyLogDatabases;
   private allocation: Promise<void> = Promise.resolve();
   constructor(
     readonly database: PostgresDatabaseHandle,
     private readonly cipher: SecretCipherPort,
     private readonly platformId: string,
     private readonly migrationsFolder: string,
-  ) {}
+  ) {
+    this.daily = new PostgresDailyLogDatabases({
+      database,
+      cipher,
+      platformId,
+      migrationsFolder,
+      createPool: (url, max) => this.createPool(url, max),
+    });
+  }
 
   async list(cursor?: string) {
     const result = await this.database.pool.query<
       DatabaseRow & { batch_count: string; stored_bytes: string }
     >(
-      `SELECT d.id,d.name,d.address,d.created_at,COALESCE(s.batch_count,0) AS batch_count,
+      `SELECT d.*,COALESCE(s.batch_count,0) AS batch_count,
        COALESCE(s.stored_bytes,0) AS stored_bytes FROM log_databases d
        LEFT JOIN (SELECT database_id,count(*) AS batch_count,sum(stored_bytes) AS stored_bytes
          FROM run_batch_log_storage GROUP BY database_id) s ON s.database_id=d.id
-       WHERE d.id>$1 ORDER BY d.id LIMIT 51`,
+       WHERE d.storage_mode<>'day' AND d.id>$1 ORDER BY d.id LIMIT 51`,
       [cursor ?? ""],
     );
     const settings = await this.settings();
@@ -51,6 +62,33 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
       ...(result.rows.length > 50 ? { nextCursor: result.rows[49]!.id } : {}),
       ...settings,
     };
+  }
+
+  async registerDaily(
+    id: string,
+    input: RegisterDailyLogServerInput,
+    now: string,
+  ): Promise<LogDatabase> {
+    return this.view(
+      await this.daily.register(id, input, now),
+      (await this.settings()).activeDatabaseId,
+      0,
+      0,
+    );
+  }
+  async updateDailyConnection(
+    id: string,
+    input: RegisterDailyLogServerInput,
+  ): Promise<LogDatabase> {
+    return this.view(
+      await this.daily.updateConnection(id, input),
+      (await this.settings()).activeDatabaseId,
+      0,
+      0,
+    );
+  }
+  checkForWrite(id: string): Promise<void> {
+    return this.daily.check(id);
   }
 
   async register(id: string, input: RegisterLogDatabaseInput, now: string): Promise<LogDatabase> {
@@ -131,6 +169,11 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
   }
 
   async check(id: string): Promise<void> {
+    const found = await this.database.pool.query<DatabaseRow>(
+      "SELECT * FROM log_databases WHERE id=$1",
+      [id],
+    );
+    if (found.rows[0]?.storage_mode === "daily") return this.daily.check(id);
     await this.withDatabase(id, async (pool) => {
       const result = await pool.query(
         "SELECT database_id,platform_id FROM log_storage_identity WHERE id=1",
@@ -172,6 +215,47 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     }
   }
 
+  async withAttemptLock<T>(
+    databaseId: string,
+    attemptId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const entry = await this.acquirePool(databaseId);
+    let client: import("pg").PoolClient | undefined;
+    let locked = false;
+    try {
+      client = await entry.lockPool.connect();
+      const identity = await client.query(
+        "SELECT database_id,platform_id FROM log_storage_identity WHERE id=1",
+      );
+      if (
+        identity.rows[0]?.database_id !== databaseId ||
+        identity.rows[0]?.platform_id !== this.platformId
+      )
+        throw new DomainError("LOG_DATABASE_IDENTITY_CONFLICT", "日志数据库身份不匹配。");
+      const lock = await client.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked",
+        [`autoforge.log.${attemptId}`],
+      );
+      if (!lock.rows[0]?.locked)
+        throw new DomainError("PLATFORM_LOG_BUSY", "此执行的日志正在写入，请重试上传。");
+      locked = true;
+      return await operation();
+    } catch (cause) {
+      throw logDatabaseError(cause, databaseId);
+    } finally {
+      try {
+        if (locked && client)
+          await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [
+            `autoforge.log.${attemptId}`,
+          ]);
+      } finally {
+        client?.release();
+        entry.users--;
+      }
+    }
+  }
+
   private async acquirePool(id: string): Promise<PoolEntry> {
     const previous = this.allocation;
     let release!: () => void;
@@ -186,26 +270,31 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
       );
       if (!row.rows[0])
         throw new DomainError("LOG_DATABASE_NOT_FOUND", `日志数据库 ${id} 未登记。`);
+      const connection = await this.daily.resolveConnection(row.rows[0]);
       const existing = this.pools.get(id);
-      if (existing && existing.encryptedConnection === row.rows[0].connection_encrypted) {
+      if (existing && existing.encryptedConnection === connection.cacheKey) {
         existing.users++;
         return existing;
       }
       if (existing) {
+        if (existing.users)
+          throw new DomainError("PLATFORM_LOG_BUSY", "日志库凭据正在切换，请稍后重试。");
         this.pools.delete(id);
-        await existing.pool.end();
+        await Promise.all([existing.pool.end(), existing.lockPool.end()]);
       }
       if (this.pools.size >= MAX_OPEN_DATABASES) {
         const idle = [...this.pools].find(([, candidate]) => candidate.users === 0);
         if (!idle) throw new DomainError("PLATFORM_LOG_BUSY", "日志数据库连接繁忙，请稍后重试。");
         this.pools.delete(idle[0]);
-        await idle[1].pool.end();
+        await Promise.all([idle[1].pool.end(), idle[1].lockPool.end()]);
       }
-      const pool = this.createPool(
-        this.cipher.decrypt(row.rows[0].connection_encrypted, `log-database:${id}`),
-        2,
-      );
-      const entry = { pool, users: 1, encryptedConnection: row.rows[0].connection_encrypted };
+      const pool = this.createPool(connection.url, 2);
+      const entry = {
+        pool,
+        lockPool: this.createPool(connection.url, 2),
+        users: 1,
+        encryptedConnection: connection.cacheKey,
+      };
       this.pools.set(id, entry);
       return entry;
     } finally {
@@ -214,8 +303,30 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
   }
 
   async close(): Promise<void> {
-    await Promise.all([...this.pools.values()].map((entry) => entry.pool.end()));
+    await Promise.all(
+      [...this.pools.values()].flatMap((entry) => [entry.pool.end(), entry.lockPool.end()]),
+    );
     this.pools.clear();
+  }
+
+  async reclaimUnusedDays(today: string): Promise<number> {
+    const rows = await this.database.pool.query<DatabaseRow>(
+      `SELECT d.* FROM log_databases d WHERE storage_mode='day' AND storage_day<$1 AND provisioning_state='ready'
+      AND NOT EXISTS(SELECT 1 FROM attempt_log_database_locations l WHERE l.database_id=d.id)
+      AND NOT EXISTS(SELECT 1 FROM attempt_log_database_routes r WHERE r.anchor_database_id=d.id) ORDER BY storage_day,id LIMIT 4`,
+      [today],
+    );
+    let reclaimed = 0;
+    for (const row of rows.rows) {
+      const cached = this.pools.get(row.id);
+      if (cached?.users) continue;
+      if (cached) {
+        this.pools.delete(row.id);
+        await Promise.all([cached.pool.end(), cached.lockPool.end()]);
+      }
+      reclaimed += await this.daily.dropEmptyDay(row);
+    }
+    return reclaimed;
   }
 
   private async withTemporaryDatabase<T>(
@@ -252,7 +363,7 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     return pool;
   }
   private view(
-    row: Pick<DatabaseRow, "id" | "name" | "address" | "created_at">,
+    row: DatabaseRow,
     active: string | null,
     batchCount: number,
     storedBytes: number,
@@ -262,25 +373,13 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
       name: row.name,
       address: row.address,
       createdAt: row.created_at,
+      storageMode: row.storage_mode,
+      ...(row.storage_mode === "daily" ? { server: this.daily.describe(row) } : {}),
       active: row.id === active,
       batchCount,
       storedBytes,
     };
   }
-}
-
-export function logDatabaseError(cause: unknown, id: string): Error {
-  if (isDomainError(cause)) return cause;
-  return Object.assign(
-    new DomainError(
-      "PLATFORM_LOG_DATABASE_UNAVAILABLE",
-      `日志数据库 ${id} 暂不可用，请检查该库连接、身份及服务状态；日志不会自动改写到其他库。`,
-      { cause },
-    ),
-    {
-      runtimeContext: { operation: "log-database.io", database: "attempt-logs", logDatabaseId: id },
-    },
-  );
 }
 
 function logDatabaseAddress(connectionString: string): string {

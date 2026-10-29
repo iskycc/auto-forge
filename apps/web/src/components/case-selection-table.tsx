@@ -1212,6 +1212,7 @@ function DirectoryNode({
               aria-label={`查看 ${item.displayName} 详情`}
               className={cn("case-tree-activate", caseSelectionTableStyles["case-tree-activate"])}
               href={`/cases/${encodeURIComponent(item.id)}`}
+              prefetch={false}
             >
               <FileCode2 size={16} aria-hidden="true" />
               <span>

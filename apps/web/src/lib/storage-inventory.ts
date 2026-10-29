@@ -451,6 +451,10 @@ function classify(
   objectKey: string | undefined,
   asset: ProjectRuntimeAsset | undefined,
 ): { category: StorageInventoryCategory; detail?: string } {
+  if (objectKey?.startsWith("log-archives/"))
+    return { category: "execution-log", detail: "月度离线日志归档（原日志链接继续读取）" };
+  if (path.startsWith("archive-staging/"))
+    return { category: "execution-log", detail: "正在生成的月度日志归档临时文件" };
   if (asset?.kind === "jdk") return { category: "jdk", detail: "JDK 运行时压缩包" };
   if (asset?.kind === "jar-bundle") return { category: "dependency", detail: "测试依赖压缩包" };
   if (/\.sqlite(?:-(?:wal|shm|journal))?$/u.test(path)) {

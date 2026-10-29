@@ -611,6 +611,27 @@ export const updateRunnerAgentRequestSchema = z.union([
   updateRunnerAgentFromProfileInputSchema,
 ]);
 
+export const uninstallRunnerAgentRequestSchema = z.union([
+  z.object({ profileId: z.string().min(1), confirm: z.literal(true) }).strict(),
+  z
+    .object({
+      connection: runnerHostConnectionSchema,
+      expectedHostKeySha256: installRunnerAgentInputSchema.shape.expectedHostKeySha256,
+      installationMode: runnerInstallationModeSchema.default("auto"),
+      confirm: z.literal(true),
+    })
+    .strict(),
+]);
+
+export const runnerAgentUninstallResultSchema = z.object({
+  uninstalled: z.literal(true),
+  dataDirectory: z.string(),
+  dataDirectoryRetained: z.boolean(),
+});
+
+export type UninstallRunnerAgentRequest = z.infer<typeof uninstallRunnerAgentRequestSchema>;
+export type RunnerAgentUninstallResult = z.infer<typeof runnerAgentUninstallResultSchema>;
+
 export const batchUpdateRunnerAgentsInputSchema = z.object({
   runnerIds: z
     .array(z.string().min(1))

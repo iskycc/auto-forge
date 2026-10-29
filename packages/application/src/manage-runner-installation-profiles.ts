@@ -73,6 +73,10 @@ export class RunnerInstallationProfileService {
     return records.map((record) => this.summary(record, this.decrypt(record).connection));
   }
 
+  async finalizeUninstall(runnerId: string): Promise<void> {
+    await this.profiles.finalizeUninstall({ runnerId, purgedAt: this.clock.now().toISOString() });
+  }
+
   async connectionForRunner(runnerId: string): Promise<StoredRunnerInstallationConnection | null> {
     this.requireCipher();
     const profile = await this.profiles.findByRunnerId(runnerId);

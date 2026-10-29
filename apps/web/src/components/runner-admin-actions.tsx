@@ -11,10 +11,13 @@ import { useConfirm } from "@/components/ui-feedback";
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import type { RunnerInstallationProfile } from "@autoforge/contracts";
+import { RunnerUninstallDialog } from "./runner-uninstall-dialog";
 
 type RunnerAdminActionsProps = {
   runnerId: string;
   runnerName: string;
+  installationProfile?: RunnerInstallationProfile;
   credentialRevoked: boolean;
   credentialRotationRequested: boolean;
   deregistered: boolean;
@@ -28,6 +31,7 @@ export function RunnerAdminActions({
   credentialRotationRequested,
   deregistered,
   state,
+  installationProfile,
 }: RunnerAdminActionsProps) {
   const router = useRouter();
   const confirmAction = useConfirm();
@@ -131,6 +135,11 @@ export function RunnerAdminActions({
           className={cn("runner-admin-actions", runnerAdminActionsStyles["runner-admin-actions"])}
         >
           <span className={cn("muted", uiPatterns["muted"])}>已注销</span>
+          <RunnerUninstallDialog
+            runnerId={runnerId}
+            runnerName={runnerName}
+            {...(installationProfile ? { profile: installationProfile } : {})}
+          />
           <Button
             className={cn("danger-text-button", uiPatterns["danger-text-button"])}
             disabled={pending}
@@ -163,6 +172,11 @@ export function RunnerAdminActions({
       className={cn("runner-actions-menu", runnerAdminActionsStyles["runner-actions-menu"])}
     >
       <div className={cn("runner-admin-actions", runnerAdminActionsStyles["runner-admin-actions"])}>
+        <RunnerUninstallDialog
+          runnerId={runnerId}
+          runnerName={runnerName}
+          {...(installationProfile ? { profile: installationProfile } : {})}
+        />
         {state === "draining" || state === "disabled" ? (
           <Button
             className={cn("text-button", uiPatterns["text-button"])}

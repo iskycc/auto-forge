@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { DirectoryBranch, ReadModelStatus } from "@autoforge/contracts";
-import { readDirectoryProjection, type DirectoryProjection } from "@/lib/directory-projection";
+import {
+  isDirectoryProjectionUsable,
+  readDirectoryProjection,
+  type DirectoryProjection,
+  type DirectoryReadPolicy,
+} from "@/lib/directory-projection";
 import { readLazyDirectoryBranch, type DirectorySource } from "@/lib/directory-tree";
 
 const DIRECTORY_SEARCH_DELAY_MS = 300;
@@ -10,7 +15,7 @@ const DIRECTORY_SEARCH_DELAY_MS = 300;
 export function useDirectoryTree(
   snapshot: ReadModelStatus,
   filters: string,
-  minimumRevision?: number,
+  { minimumRevision, allowPublishedFallback = false }: DirectoryReadPolicy = {},
 ) {
   const [projection, setProjection] = useState<DirectoryProjection>();
   const [responseState, setResponseState] = useState<{ requestKey: string; error: string }>();
@@ -21,6 +26,7 @@ export function useDirectoryTree(
     snapshot.generation,
     filters,
     minimumRevision,
+    allowPublishedFallback,
     attempt,
   ]);
   useEffect(() => {
@@ -30,15 +36,14 @@ export function useDirectoryTree(
     async function read() {
       try {
         const next = await readDirectoryProjection(snapshot.id, filters, controller.signal);
-        const revision = (next.manifest as { revision?: number } | null)?.revision;
         if (controller.signal.aborted) return;
-        if (next.status.state === "failed") throw new Error("后台准备目录失败，请重试。");
         if (
-          next.manifest?.rootOrdinal === undefined ||
-          !next.status.generation ||
-          next.synchronized === false ||
-          (minimumRevision !== undefined && (revision === undefined || revision < minimumRevision))
+          !isDirectoryProjectionUsable(next, {
+            allowPublishedFallback,
+            ...(minimumRevision === undefined ? {} : { minimumRevision }),
+          })
         ) {
+          if (next.status.state === "failed") throw new Error("后台准备目录失败，请重试。");
           if (++polls >= 120) throw new Error("后台仍在准备目录，请稍后重试。");
           timer = setTimeout(() => void read(), 1000);
           return;
@@ -63,9 +68,23 @@ export function useDirectoryTree(
       controller.abort();
       clearTimeout(timer);
     };
-  }, [snapshot.id, snapshot.generation, filters, minimumRevision, attempt, requestKey]);
+  }, [
+    snapshot.id,
+    snapshot.generation,
+    filters,
+    minimumRevision,
+    allowPublishedFallback,
+    attempt,
+    requestKey,
+  ]);
   const loading = responseState?.requestKey !== requestKey;
-  return { projection, error: loading ? "" : responseState.error, loading, refresh };
+  return {
+    projection,
+    error: loading ? "" : responseState.error,
+    loading,
+    refreshing: projection?.synchronized === false,
+    refresh,
+  };
 }
 
 export function useDirectoryBranch(

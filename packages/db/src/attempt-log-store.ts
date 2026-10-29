@@ -101,6 +101,14 @@ export function createAttemptLogStore(
   mkdirSync(attemptLogsDirectory, { recursive: true });
   const openStores = new Map<string, BatchStoreHandle>();
 
+  // Other processes may unlink an archived batch while this lane is idle. Closing
+  // those handles promptly releases disk blocks without waiting for another read.
+  const removedFileReaper = setInterval(() => {
+    for (const batchId of openStores.keys())
+      if (!existsSync(storePath(attemptLogsDirectory, batchId))) closeStore(batchId);
+  }, 5000);
+  removedFileReaper.unref();
+
   function prepared(handle: BatchStoreHandle, sql: string): Database.Statement {
     const cached = handle.statements.get(sql);
     if (cached) return cached;
@@ -441,6 +449,7 @@ export function createAttemptLogStore(
     },
 
     close() {
+      clearInterval(removedFileReaper);
       for (const batchId of [...openStores.keys()]) closeStore(batchId);
     },
   };

@@ -5,7 +5,7 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 const matrixPath = resolve(repositoryRoot, "tests/e2e/coverage-matrix.json");
 const matrix = JSON.parse(await readFile(matrixPath, "utf8"));
 const expectedIds = Array.from(
-  { length: 18 },
+  { length: 19 },
   (_, index) => `AF-E2E-${String(index + 1).padStart(3, "0")}`,
 );
 const allowedStates = new Set(["covered", "partial", "planned", "not-applicable"]);

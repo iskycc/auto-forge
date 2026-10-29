@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { beijingLogDay } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import type { AsyncAttemptLogStore, AttemptLogStore, AttemptLogStream } from "./attempt-log-store";
 import type { NodeAttemptLogStore } from "./node-attempt-log-store";
@@ -6,22 +7,31 @@ import { NodeAttemptLogStore as NodeLogStore } from "./node-attempt-log-store";
 import { PostgresLogDatabaseRepository } from "./postgres-log-databases";
 import { appendPostgresLogChunks, listPostgresLogChunks } from "./postgres-attempt-log-payload";
 
-type Binding = { database_id: string | null; stored_bytes: string };
+import { PostgresDailyAttemptLogs } from "./postgres-daily-attempt-logs";
+
+type Binding = { database_id: string | null; stored_bytes: string; storage_mode?: string };
 type Queryable = Pick<PoolClient, "query">;
 
 /** Persist the route before payload I/O. A database switch only affects batches without a route. */
 export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
+  readonly storesWatermarksInBusinessDatabase = true;
+  private readonly daily: PostgresDailyAttemptLogs;
   constructor(
     private readonly registry: PostgresLogDatabaseRepository,
     private readonly legacy: AttemptLogStore | AsyncAttemptLogStore | NodeAttemptLogStore,
-  ) {}
+  ) {
+    this.daily = new PostgresDailyAttemptLogs(registry);
+  }
 
   async appendChunks(input: Parameters<AttemptLogStore["appendChunks"]>[0]) {
     const binding = await this.claim(input.batchId);
     if (!binding.database_id) return this.legacy.appendChunks(input);
-    const persisted = await this.registry.withDatabase(binding.database_id, (pool) =>
-      appendPostgresLogChunks(pool, input),
-    );
+    const persisted =
+      binding.storage_mode === "daily"
+        ? { watermarks: await this.daily.append(binding.database_id, input), storedBytes: 0 }
+        : await this.registry.withDatabase(binding.database_id, (pool) =>
+            appendPostgresLogChunks(pool, input),
+          );
     // Both metadata writes happen after the independent payload transaction committed. A crash
     // before this point is repaired by the same idempotent Agent upload, never acknowledged early.
     await this.registry.database.pool.query(
@@ -39,6 +49,7 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
   async listChunks(input: Parameters<AttemptLogStore["listChunks"]>[0]) {
     const binding = await this.find(input.batchId);
     if (!binding?.database_id) return this.legacy.listChunks(input);
+    if (binding.storage_mode === "daily") return this.daily.list(input);
     return this.registry.withDatabase(binding.database_id, async (pool) => {
       if (Number(binding.stored_bytes) > 0) {
         const batch = await pool.query("SELECT 1 FROM log_batches WHERE batch_id=$1", [
@@ -103,18 +114,73 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
       await this.legacy.recordWatermarks(input);
   }
 
-  async removeBatchStore(batchId: string): Promise<void> {
+  async removeBatchPayload(
+    batchId: string,
+    options?: { checkpoint(): Promise<void> },
+  ): Promise<void> {
     const binding = await this.find(batchId);
-    if (!binding?.database_id) await this.legacy.removeBatchStore(batchId);
-    else
-      await this.registry.withDatabase(binding.database_id, async (pool) => {
-        await pool.query("DELETE FROM log_batches WHERE batch_id=$1", [batchId]);
-      });
+    if (!binding?.database_id) {
+      if (this.legacy instanceof NodeLogStore) await this.legacy.removeBatchPayload(batchId);
+      else await this.legacy.removeBatchStore(batchId);
+    } else {
+      const ids =
+        binding.storage_mode === "daily"
+          ? (
+              await this.registry.database.pool.query<{ database_id: string }>(
+                "SELECT database_id FROM run_batch_log_database_sizes WHERE batch_id=$1",
+                [batchId],
+              )
+            ).rows.map((r) => r.database_id)
+          : [binding.database_id];
+      for (const id of ids)
+        await this.registry.withDatabase(id, async (pool) => {
+          for (;;) {
+            const removed = await pool.query(
+              "DELETE FROM log_chunks WHERE ctid IN (SELECT ctid FROM log_chunks WHERE batch_id=$1 LIMIT 128)",
+              [batchId],
+            );
+            if (!removed.rowCount) break;
+            await options?.checkpoint();
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+          for (;;) {
+            const removed = await pool.query(
+              "DELETE FROM log_streams WHERE ctid IN (SELECT ctid FROM log_streams WHERE batch_id=$1 LIMIT 1000)",
+              [batchId],
+            );
+            if (!removed.rowCount) break;
+            await options?.checkpoint();
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+          await pool.query("DELETE FROM log_batches WHERE batch_id=$1", [batchId]);
+        });
+      for (const table of [
+        "attempt_log_database_locations",
+        "attempt_log_database_routes",
+      ] as const) {
+        for (;;) {
+          const removed = await this.registry.database.pool.query(
+            `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE batch_id=$1 LIMIT 1000)`,
+            [batchId],
+          );
+          if (!removed.rowCount) break;
+          await options?.checkpoint();
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      }
+      await this.registry.database.pool.query(
+        "DELETE FROM run_batch_log_database_sizes WHERE batch_id=$1",
+        [batchId],
+      );
+    }
     // Keep a zero-size route while the batch exists: an old in-flight upload must not switch databases.
     await this.registry.database.pool.query(
       "UPDATE run_batch_log_storage SET stored_bytes=0 WHERE batch_id=$1",
       [batchId],
     );
+  }
+  async removeBatchStore(batchId: string): Promise<void> {
+    await this.removeBatchPayload(batchId);
     await this.registry.database.pool.query(
       "DELETE FROM attempt_log_watermarks WHERE attempt_id IN (SELECT a.id FROM run_attempts a JOIN execution_runs r ON r.id=a.execution_run_id WHERE r.batch_id=$1)",
       [batchId],
@@ -145,10 +211,15 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
     await Promise.all([this.registry.close(), this.legacy.close()]);
   }
 
+  async reclaimUnusedDatabases(now: string): Promise<number> {
+    return this.registry.reclaimUnusedDays(beijingLogDay(now));
+  }
+
   async cleanupOrphans(): Promise<void> {
     const result = await this.registry.database.pool.query<{ batch_id: string }>(
       "SELECT l.batch_id FROM run_batch_log_storage l LEFT JOIN run_batches b ON b.id=l.batch_id WHERE b.id IS NULL ORDER BY l.batch_id LIMIT 100",
     );
+    await this.reclaimUnusedDatabases(new Date().toISOString());
     for (const row of result.rows) {
       await this.removeBatchStore(row.batch_id);
       await this.registry.database.pool.query(
@@ -160,7 +231,7 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
   private async find(batchId: string): Promise<Binding | undefined> {
     return (
       await this.registry.database.pool.query<Binding>(
-        "SELECT database_id,stored_bytes FROM run_batch_log_storage WHERE batch_id=$1",
+        "SELECT s.database_id,s.stored_bytes,d.storage_mode FROM run_batch_log_storage s LEFT JOIN log_databases d ON d.id=s.database_id WHERE s.batch_id=$1",
         [batchId],
       )
     ).rows[0];
@@ -187,12 +258,23 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
         batch.rows[0]!.attempt_logs_path || owner.rowCount
           ? null
           : settings.rows[0]!.active_database_id;
+      if (databaseId) {
+        const selected = await client.query<{ storage_mode: string }>(
+          "SELECT storage_mode FROM log_databases WHERE id=$1",
+          [databaseId],
+        );
+        if (selected.rows[0]?.storage_mode !== "daily")
+          throw new DomainError(
+            "LOG_DAILY_SERVER_REQUIRED",
+            "当前写入配置为旧版单库，请在平台设置添加并选择按日分库的日志服务器。",
+          );
+      }
       await client.query(
         "INSERT INTO run_batch_log_storage(batch_id,database_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
         [batchId, databaseId],
       );
       const selected = await client.query<Binding>(
-        "SELECT database_id,stored_bytes FROM run_batch_log_storage WHERE batch_id=$1",
+        "SELECT s.database_id,s.stored_bytes,d.storage_mode FROM run_batch_log_storage s LEFT JOIN log_databases d ON d.id=s.database_id WHERE s.batch_id=$1",
         [batchId],
       );
       await client.query("COMMIT");

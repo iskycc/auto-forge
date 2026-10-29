@@ -1,3 +1,4 @@
+import { LogArchives } from "@/components/log-archives";
 import { TabContent } from "@/components/ui/tab-content";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,14 @@ import { SectionTabs } from "@/components/section-tabs";
 import { storageInventoryCategorySchema } from "@autoforge/contracts";
 
 type PlatformSection =
-  "logs" | "nodes" | "configuration" | "accounts" | "retention" | "diagnostics" | "storage";
+  | "archives"
+  | "logs"
+  | "nodes"
+  | "configuration"
+  | "accounts"
+  | "retention"
+  | "diagnostics"
+  | "storage";
 
 export default async function PlatformSettingsPage({
   searchParams,
@@ -43,6 +51,7 @@ export default async function PlatformSettingsPage({
   const activeSection: PlatformSection =
     (requestedSection === "nodes" && Boolean(services.platformNodes)) ||
     (requestedSection === "logs" && Boolean(services.logDatabases)) ||
+    requestedSection === "archives" ||
     requestedSection === "accounts" ||
     requestedSection === "retention" ||
     requestedSection === "diagnostics" ||
@@ -55,6 +64,10 @@ export default async function PlatformSettingsPage({
     activeSection === "nodes" && services.platformNodes
       ? await services.platformNodes.list(parameters.nodeCursor)
       : { items: [] };
+  const archivePage =
+    activeSection === "archives"
+      ? await services.logArchives.list(undefined, identity.user.id)
+      : undefined;
   const heading = platformSectionHeading(activeSection);
   const logPage =
     activeSection === "logs" && services.logDatabases
@@ -81,7 +94,8 @@ export default async function PlatformSettingsPage({
             : {}),
         })
       : Promise.resolve({ items: [], nextCursor: undefined }),
-    activeSection === "accounts" && hasPermission(identity, "project.read")
+    (activeSection === "accounts" || activeSection === "archives") &&
+    hasPermission(identity, "project.read")
       ? services.identityAccess.listProjects(identity)
       : Promise.resolve([]),
   ]);
@@ -107,6 +121,11 @@ export default async function PlatformSettingsPage({
       <SectionTabs
         label="平台设置模块"
         tabs={[
+          {
+            href: "/settings/platform?section=archives",
+            label: "日志归档",
+            active: activeSection === "archives",
+          },
           ...(services.logDatabases
             ? [
                 {
@@ -153,6 +172,15 @@ export default async function PlatformSettingsPage({
         ]}
       />
       <TabContent activeKey={activeSection} className="gap-5">
+        {archivePage ? (
+          <LogArchives
+            projects={projects}
+            initial={archivePage}
+            canManage={
+              hasPermission(identity, "settings.manage") && hasPermission(identity, "log.read")
+            }
+          />
+        ) : null}
         {logPage ? (
           <LogDatabases initial={logPage} canManage={hasPermission(identity, "settings.manage")} />
         ) : null}
@@ -219,6 +247,11 @@ export default async function PlatformSettingsPage({
 
 function platformSectionHeading(section: PlatformSection): { title: string; description: string } {
   switch (section) {
+    case "archives":
+      return {
+        title: "日志归档",
+        description: "按月压缩执行日志，下载离线查看并安全释放原存储空间。",
+      };
     case "logs":
       return {
         title: "日志数据库",

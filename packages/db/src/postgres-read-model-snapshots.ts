@@ -36,12 +36,13 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
     return result.rows[0] ? readModelSnapshotFromRow(result.rows[0]) : null;
   }
 
-  async claim(now: string, expiresAt: string, token: string, options?: { onlyUnpublished: true }) {
+  async claim(now: string, expiresAt: string, token: string, options?: { onlyPageBlocking: true }) {
     await this.handle.ready;
     const result = await this.handle.pool.query<ReadModelSnapshotRow>(
       `UPDATE read_model_snapshots SET lease_token=$1,lease_expires_at=$2
       WHERE id=(SELECT id FROM read_model_snapshots WHERE refresh_after<=$3 AND (lease_expires_at IS NULL OR lease_expires_at<=$3)
-      AND failed<5 AND accessed_at>=$4 AND ($5::boolean=FALSE OR generated_at IS NULL)
+      AND failed<5 AND accessed_at>=$4 AND ($5::boolean=FALSE OR generated_at IS NULL OR
+        (requested_revision>generated_revision AND query_json::jsonb->>'kind' IN ('case_directory','suite_directory')))
       ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1 FOR UPDATE SKIP LOCKED)
       RETURNING *`,
       [
@@ -49,7 +50,7 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
         expiresAt,
         now,
         new Date(Date.parse(now) - 300_000).toISOString(),
-        options?.onlyUnpublished ?? false,
+        options?.onlyPageBlocking ?? false,
       ],
     );
     return result.rows[0] ? { ...readModelSnapshotFromRow(result.rows[0]), token } : null;

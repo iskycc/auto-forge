@@ -118,6 +118,8 @@ export const transferProjectOwnerInputSchema = z.object({
   ownerUserId: z.string().min(1).max(128),
 });
 
+export const renameProjectInputSchema = createProjectInputSchema.pick({ name: true }).strict();
+
 const ldapAttributeSchema = z
   .string()
   .trim()
@@ -247,6 +249,7 @@ export type CreateUserInput = z.infer<typeof createUserInputSchema>;
 export type CreateRoleInput = z.infer<typeof createRoleInputSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleInputSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
+export type RenameProjectInput = z.infer<typeof renameProjectInputSchema>;
 export type TransferProjectOwnerInput = z.infer<typeof transferProjectOwnerInputSchema>;
 export type LdapConfigurationInput = z.infer<typeof ldapConfigurationInputSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>;

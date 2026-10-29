@@ -562,6 +562,7 @@ run_full_browser_flow() {
     governance)
       browser_specs=(
         tests/e2e/log-databases.spec.ts
+        tests/e2e/log-archives.spec.ts
         tests/e2e/identity-rbac.spec.ts
         tests/e2e/management-operations.spec.ts
         tests/e2e/security-audit.spec.ts
@@ -575,6 +576,7 @@ run_full_browser_flow() {
     all)
       browser_specs=(
         tests/e2e/log-databases.spec.ts
+        tests/e2e/log-archives.spec.ts
         tests/e2e/case-suite-lifecycle.spec.ts
         tests/e2e/execution-recovery.spec.ts
         tests/e2e/identity-rbac.spec.ts

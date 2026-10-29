@@ -964,6 +964,23 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     return mapProject(row);
   }
 
+  async renameProject(input: {
+    projectId: string;
+    name: string;
+    updatedAt: string;
+  }): Promise<Project> {
+    const row = await retrySqliteLockContention(() =>
+      this.handle.db
+        .update(projects)
+        .set({ name: input.name, updatedAt: input.updatedAt })
+        .where(and(eq(projects.id, input.projectId), eq(projects.archived, false)))
+        .returning()
+        .get(),
+    );
+    if (!row) throw new DomainError("PROJECT_NOT_RENAMABLE", "项目不存在或已归档，请刷新后重试。");
+    return mapProject(row);
+  }
+
   async archiveProject(projectId: string, archivedAt: string): Promise<Project> {
     const row = await retrySqliteLockContention(() =>
       this.handle.db

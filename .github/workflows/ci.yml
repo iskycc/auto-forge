@@ -129,7 +129,7 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: analysis
-            specs: tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-log-comparison.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts
+            specs: tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-log-comparison.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts tests/e2e/testng-directory-execution.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: ddt
@@ -146,7 +146,7 @@ jobs:
             project_maximum_concurrency: ""
             screenshots: false
           - scenario: operations
-            specs: tests/e2e/security-audit.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/runner-telemetry.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/memory-admission.spec.ts
+            specs: tests/e2e/log-archives.spec.ts tests/e2e/security-audit.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/runner-telemetry.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/memory-admission.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
           - scenario: ui-1
@@ -193,8 +193,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends fonts-wqy-microhei
           fc-cache --force
           test -n "$(fc-list :lang=zh family)"
-      - name: Set up Go for Runner update UI resources
-        if: matrix.agent_resources
+      - name: Set up Go for embedded executable resources
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.5

@@ -1,3 +1,4 @@
+import { runnerPurgeValues } from "./runner-purge";
 import type { RunnerResourceSample } from "@autoforge/domain";
 import {
   retrySqliteWriteTransaction,
@@ -331,18 +332,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
     const row = await retrySqliteLockContention(() =>
       this.handle.db
         .update(runners)
-        .set({
-          purgedAt: input.purgedAt,
-          // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
-          // 保证任何真实凭据哈希都无法再匹配该记录。
-          credentialHash: `purged:${input.runnerId}`,
-          previousCredentialHash: null,
-          previousCredentialValidUntil: null,
-          credentialRotationRequestedAt: null,
-          labelsJson: "[]",
-          capabilitiesJson: "[]",
-          updatedAt: input.purgedAt,
-        })
+        .set(runnerPurgeValues(input))
         .where(eq(runners.id, input.runnerId))
         .returning()
         .get(),

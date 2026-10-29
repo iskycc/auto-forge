@@ -1,3 +1,4 @@
+import { verifyLogViewerResources } from "./log-viewer-resources.mjs";
 import { verifyJenkinsResources } from "./verify-jenkins-resources.mjs";
 import { verifyAndRecordFrontendAssets } from "./frontend-assets.mjs";
 import { createRequire } from "node:module";
@@ -37,6 +38,7 @@ const requiredDirectories = [
   "packages/db/drizzle",
   "resources/agents",
   "resources/jenkins",
+  "resources/log-archive-viewer",
 ];
 
 const explicitlyExternalModules = [
@@ -133,6 +135,7 @@ async function packageRuntime(destination) {
   const runtimeDestination = assertSafeRuntimeDestination(destination);
   await assertBuildOutputsExist();
   await verifyJenkinsResources(resolveRepositoryPath("resources/jenkins"));
+  await verifyLogViewerResources(resolveRepositoryPath("resources/log-archive-viewer"));
 
   const runtimeFiles = new Set();
   for (const path of requiredFiles) addRuntimePath(runtimeFiles, resolveRepositoryPath(path));
@@ -208,6 +211,7 @@ async function assertBuildOutputsExist() {
     "apps/worker/dist/work-thread.js",
     "apps/worker/dist/read-model-thread.js",
     "resources/agents/manifest.json",
+    "resources/log-archive-viewer/manifest.json",
   ]) {
     const source = resolveRepositoryPath(path);
     if (!(await exists(source)))
@@ -237,11 +241,13 @@ async function assertPackagedRuntime(destination, sqlitePrebuild) {
     "apps/web/node_modules/nats",
     sqlitePrebuildPath,
     "resources/agents/manifest.json",
+    "resources/log-archive-viewer/manifest.json",
   ]) {
     if (!(await exists(join(destination, path)))) {
       throw new Error(`Packaged backend runtime is missing: ${path}`);
     }
   }
+  await verifyLogViewerResources(join(destination, "resources/log-archive-viewer"));
   await assertPackagedNextRoutes(destination);
   if (await exists(join(destination, "apps/web/.next/cache"))) {
     throw new Error("Packaged backend runtime contains the Next.js build cache.");

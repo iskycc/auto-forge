@@ -3,6 +3,10 @@ import "server-only";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { DEFAULT_RUNNER_DATA_DIRECTORY, runnerDataDirectorySchema } from "@autoforge/contracts";
+import {
+  runnerAgentUninstallResultSchema,
+  type RunnerAgentUninstallResult,
+} from "@autoforge/contracts";
 import type {
   InstallRunnerAgentInput,
   RollbackRunnerAgentInput,
@@ -205,6 +209,63 @@ export class RunnerAgentInstaller {
         agentVersion: version,
         serviceName: "autoforge-agent.service",
       };
+    } finally {
+      connected.client.end();
+    }
+  }
+
+  async uninstall(
+    input: UpgradeRunnerAgentInput,
+    runnerId: string,
+    beforeRemoval: () => Promise<void>,
+  ): Promise<RunnerAgentUninstallResult> {
+    const probe = await this.inspectHost(
+      input.connection,
+      input.expectedHostKeySha256,
+      input.installationMode,
+    );
+    const resources = await this.dependencies.resources.read(probe.architecture);
+    const directory = `/tmp/autoforge-uninstall-${randomUUID()}`;
+    const connected = await connectHost(input.connection, input.expectedHostKeySha256);
+    try {
+      const sftp = await openSftp(connected.client);
+      await makeRemoteDirectory(sftp, directory);
+      const binaryPath = `${directory}/autoforge-agent`;
+      try {
+        await writeRemoteFile(sftp, binaryPath, resources.binary, 0o700);
+        await verifyRemoteFile(sftp, binaryPath, resources.binary);
+        const command = (action: "inspect" | "confirm") =>
+          [
+            probe.privilegeMode === "sudo" ? "sudo -S -k -p ''" : "",
+            shellQuote(binaryPath),
+            "uninstall",
+            `--${action}`,
+            "--expected-runner-id",
+            shellQuote(runnerId),
+          ]
+            .filter(Boolean)
+            .join(" ");
+        const password =
+          probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined;
+        await executeRemoteCommand(
+          connected.client,
+          command("inspect"),
+          password,
+          REMOTE_COMMAND_TIMEOUT_MS,
+        );
+        // Revoke and recover assignments only after proving this is the selected
+        // host's installed identity; a failed SSH probe leaves the Runner intact.
+        await beforeRemoval();
+        const result = await executeRemoteCommand(
+          connected.client,
+          command("confirm"),
+          password,
+          INSTALL_COMMAND_TIMEOUT_MS,
+        );
+        return runnerAgentUninstallResultSchema.parse(JSON.parse(result.stdout));
+      } finally {
+        await removeRemoteFiles(sftp, [binaryPath], directory);
+      }
     } finally {
       connected.client.end();
     }

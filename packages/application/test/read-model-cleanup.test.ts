@@ -59,9 +59,43 @@ describe("directory generation cleanup", () => {
     );
     expect(await worker.refreshOne()).toBe(true);
     expect(repository.claim).toHaveBeenCalledWith(expect.any(String), expect.any(String), "lease", {
-      onlyUnpublished: true,
+      onlyPageBlocking: true,
     });
     expect(repository.complete).toHaveBeenCalledOnce();
+    expect(repository.cleanup).not.toHaveBeenCalled();
+  });
+  it("finishes an invalidated directory on the page-waiting lane while execution pressure continues", async () => {
+    const repository = {
+      claim: vi.fn(async () => ({
+        id: "directory",
+        token: "lease",
+        generatedAt: "2026-09-06T00:00:00.000Z",
+        requestedRevision: 2,
+        generatedRevision: 1,
+        query: { kind: "case_directory" },
+      })),
+      renew: vi.fn(async () => true),
+      putPart: vi.fn(),
+      complete: vi.fn(async () => true),
+      fail: vi.fn(),
+      cleanup: vi.fn(),
+    } as unknown as ReadModelSnapshotRepository;
+    const worker = new ReadModelSnapshotWorker(
+      repository,
+      async (_query, writePart) => {
+        await writePart(0, { items: [] });
+        return { caseCount: 0, partCount: 1, rootOrdinal: 1 };
+      },
+      { now: () => new Date("2026-09-07T00:00:00.000Z") },
+      { next: () => "lease" },
+      vi.fn(),
+      () => false,
+      () => true,
+    );
+    expect(await worker.refreshOne()).toBe(true);
+    expect(repository.putPart).toHaveBeenCalledOnce();
+    expect(repository.complete).toHaveBeenCalledOnce();
+    expect(repository.fail).not.toHaveBeenCalled();
     expect(repository.cleanup).not.toHaveBeenCalled();
   });
   it("defers under foreground pressure without publishing an incomplete generation or consuming failure retries", async () => {

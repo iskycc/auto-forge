@@ -33,3 +33,7 @@ export { SqliteProjectVersionCopyRepository } from "./sqlite-version-copy";
 export { VersionCopyArchive } from "./version-copy-archive";
 
 export * from "./sqlite-ddt-sr-tags";
+
+export * from "./sqlite-log-archives";
+
+export * from "./archived-attempt-log-store";

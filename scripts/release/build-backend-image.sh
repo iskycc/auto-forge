@@ -32,6 +32,8 @@ node "${repository_root}/scripts/release/verify-jenkins-resources.mjs" "${reposi
 bash "${repository_root}/scripts/release/build-agent-resources.sh" \
   "${version}" "${repository_root}/resources/agents"
 
+bash "${repository_root}/scripts/release/build-log-archive-viewer-resources.sh" "${version}" "${repository_root}/resources/log-archive-viewer"
+
 buildx_cache_arguments=()
 if [[ -n "${AUTOFORGE_BUILDX_CACHE_FROM:-}" ]]; then
   buildx_cache_arguments+=(--cache-from "${AUTOFORGE_BUILDX_CACHE_FROM}")

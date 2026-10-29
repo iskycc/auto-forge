@@ -1996,6 +1996,16 @@ export const pgLogDatabases = pgTable("log_databases", {
   name: text("name").notNull(),
   address: text("address").notNull(),
   connectionEncrypted: text("connection_encrypted").notNull(),
+  storageMode: text("storage_mode", { enum: ["legacy", "daily", "day"] })
+    .notNull()
+    .default("legacy"),
+  parentDatabaseId: text("parent_database_id"),
+  storageDay: text("storage_day"),
+  databasePrefix: text("database_prefix"),
+  physicalName: text("physical_name"),
+  provisioningState: text("provisioning_state", { enum: ["provisioning", "ready", "dropped"] })
+    .notNull()
+    .default("ready"),
   createdAt: text("created_at").notNull(),
 });
 export const pgLogDatabaseSettings = pgTable("log_database_settings", {

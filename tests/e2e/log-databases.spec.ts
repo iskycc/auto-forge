@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { createRequire } from "node:module";
 import { PlatformConfigurationStore } from "@autoforge/platform-config";
 import { createPostgresDatabase, PostgresLogDatabaseRepository } from "@autoforge/db/postgres";
 import { AesGcmSecretCipher } from "../../apps/web/src/lib/secret-cipher-core";
@@ -29,7 +30,7 @@ test("log database settings isolate Full payloads, switch live and preserve hist
   });
   await database.ready;
   const namespace = randomUUID().replaceAll("-", "");
-  const names = [`logs_e2e_${namespace}_a`, `logs_e2e_${namespace}_b`];
+  const names = [`logs_e2e_${namespace.slice(0, 12)}_a`, `logs_e2e_${namespace.slice(0, 12)}_b`];
   const ids: string[] = [];
   const batches: string[] = [];
   const runnerId = randomUUID();
@@ -120,13 +121,28 @@ test("log database settings isolate Full payloads, switch live and preserve hist
   }
   try {
     if (urls.length !== 2) throw new Error("E2E requires two isolated log database URLs.");
-    if (!externalLogUrls)
+
+    if (!externalLogUrls) {
       for (const name of names) await database.pool.query(`CREATE DATABASE "${name}"`);
+    }
     for (let index = 0; index < names.length; index++) {
-      await page.getByRole("button", { name: /添加日志数据库$/ }).click();
-      const dialog = page.getByRole("dialog", { name: "添加日志数据库", exact: true });
+      await page.getByRole("button", { name: /添加日志服务器$/ }).click();
+      const dialog = page.getByRole("dialog", { name: "添加日志服务器", exact: true });
       await dialog.getByLabel("日志库名称", { exact: true }).fill(labels[index]!);
-      await dialog.getByLabel("PostgreSQL 连接地址", { exact: true }).fill(urls[index]!);
+      const connection = new URL(urls[index]!);
+      await dialog.getByLabel("PostgreSQL 主机 / IP", { exact: true }).fill(connection.hostname);
+      await dialog.getByLabel("端口", { exact: true }).fill(String(connection.port || 5432));
+      await dialog
+        .getByLabel("维护数据库", { exact: true })
+        .fill(decodeURIComponent(connection.pathname.slice(1)));
+      await dialog
+        .getByLabel("管理员用户名", { exact: true })
+        .fill(decodeURIComponent(connection.username));
+      await dialog
+        .getByLabel("管理员密码", { exact: true })
+        .fill(decodeURIComponent(connection.password));
+      await dialog.getByLabel("每日库名前缀", { exact: true }).fill(names[index]!);
+
       const saved = page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname === "/api/v1/settings/log-databases" &&
@@ -189,35 +205,69 @@ test("log database settings isolate Full payloads, switch live and preserve hist
           path: testInfo.outputPath(`log-databases-${theme}-${width}.png`),
           fullPage: true,
         });
-        await page.getByRole("button", { name: /添加日志数据库$/ }).click();
+        await page.getByRole("button", { name: /添加日志服务器$/ }).click();
         await waitForUiTransitions(page);
         await page.screenshot({
           path: testInfo.outputPath(`log-database-dialog-${theme}-${width}.png`),
           fullPage: true,
         });
         await page
-          .getByRole("dialog", { name: "添加日志数据库", exact: true })
+          .getByRole("dialog", { name: "添加日志服务器", exact: true })
           .getByRole("button", { name: "取消", exact: true })
           .click();
       }
     }
   } finally {
-    await choose(oldSetting.activeDatabaseId);
-    for (const id of ids)
-      await registry.withDatabase(id, async (pool) => {
+    await registry.select(oldSetting.activeDatabaseId, (await registry.settings()).revision);
+    const children = await database.pool.query<{
+      id: string;
+      physical_name: string;
+      parent_database_id: string;
+    }>(
+      "SELECT id,physical_name,parent_database_id FROM log_databases WHERE parent_database_id=ANY($1::text[])",
+      [ids],
+    );
+    for (const child of children.rows)
+      await registry.withDatabase(child.id, async (pool) => {
         await pool.query("DELETE FROM log_batches WHERE batch_id=ANY($1::text[])", [batches]);
       });
     await registry.close();
     await database.pool.query("DELETE FROM run_batches WHERE id=ANY($1::text[])", [batches]);
+    for (const table of [
+      "attempt_log_database_locations",
+      "attempt_log_database_routes",
+      "run_batch_log_database_sizes",
+      "run_batch_log_storage",
+    ]) {
+      await database.pool.query(`DELETE FROM ${table} WHERE batch_id=ANY($1::text[])`, [batches]);
+    }
     await database.pool.query(
-      "DELETE FROM run_batch_log_storage WHERE database_id=ANY($1::text[])",
+      "DELETE FROM log_databases WHERE parent_database_id=ANY($1::text[])",
       [ids],
     );
     await database.pool.query("DELETE FROM log_databases WHERE id=ANY($1::text[])", [ids]);
     await database.pool.query("DELETE FROM runners WHERE id=$1", [runnerId]);
-    if (!externalLogUrls)
-      for (const name of names)
-        await database.pool.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    for (const child of children.rows) {
+      const source = new URL(urls[ids.indexOf(child.parent_database_id)]!);
+      source.pathname = "/postgres";
+      const { Pool } = createRequire(resolve("packages/db/package.json"))("pg") as {
+        Pool: new (configuration: {
+          connectionString: string;
+          max: number;
+        }) => Pick<typeof database.pool, "query" | "end">;
+      };
+      const admin = new Pool({ connectionString: source.toString(), max: 1 });
+      try {
+        if (!/^[a-z][a-z0-9_]+$/.test(child.physical_name))
+          throw new Error("Invalid fixture database name");
+        await admin.query(`DROP DATABASE IF EXISTS "${child.physical_name}" WITH (FORCE)`);
+      } finally {
+        await admin.end();
+      }
+    }
+    if (!externalLogUrls) {
+      for (const name of names) await database.pool.query(`DROP DATABASE IF EXISTS "${name}"`);
+    }
     await database.close();
   }
 });

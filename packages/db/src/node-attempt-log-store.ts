@@ -18,6 +18,7 @@ const emptyWatermarks = { stdout: -1, stderr: -1, agent: -1 };
 
 /** PostgreSQL owns location and acknowledgement metadata; only the owner writes the SQLite file. */
 export class NodeAttemptLogStore {
+  readonly storesWatermarksInBusinessDatabase = true;
   constructor(
     private readonly database: PostgresDatabaseHandle,
     readonly nodeId: string,
@@ -125,12 +126,16 @@ export class NodeAttemptLogStore {
   }
 
   async removeBatchStore(batchId: string): Promise<void> {
-    await this.route({ operation: "remove", batchId });
+    await this.removeBatchPayload(batchId);
     await this.database.pool.query(
       `DELETE FROM attempt_log_watermarks WHERE attempt_id IN (
         SELECT a.id FROM run_attempts a JOIN execution_runs r ON r.id=a.execution_run_id WHERE r.batch_id=$1)`,
       [batchId],
     );
+  }
+
+  async removeBatchPayload(batchId: string): Promise<void> {
+    await this.route({ operation: "remove", batchId });
   }
 
   async batchStoreStats(batchIds: readonly string[]): Promise<Map<string, number>> {
