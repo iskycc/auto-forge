@@ -663,7 +663,7 @@ pnpm build
 - [Full 五主机部署](./deploy/compose/full-five-hosts/README.md) 提供三个主平台、一台 Nginx、一台数据库与中间件主机各自完整的 Compose 和环境模板；Nginx 使用 IP，无需域名，五套文件一起纳入 Release 部署包。
 - [Full 本地目录绑定部署](./deploy/compose/full-bind/README.md) 提供 PostgreSQL、Redis、NATS、MinIO、平台与 Nginx 各自独立的 Compose；组件分主机启动，所有持久数据绑定宿主机绝对路径，不使用 named volume，并说明初始化、权限、旧卷迁移和备份。
 - [Full 三主机直连方案](./deploy/compose/full-bind/three-hosts/README.md) 将 Web／worker、PostgreSQL／Redis、MinIO／NATS 分别部署到三台机器，浏览器和 Runner 直连平台，无需 Nginx；包含离线镜像分配、逐机配置、初始化与验收步骤。
-- [三机快速部署](./fast-deploy/README.md) 只需填写三机 IP 和已加载镜像版本，一次生成各主机 Compose 与一致凭据；逐机脚本检查密码、创建本地数据目录并启动组件，A 通过现有首次配置 API 自动初始化 Full。提供可选独立日志库，不使用 Nginx 或 named volume。
+- [三机快速部署](./fast-deploy/README.md) 提供固定 amd64 的三份 Compose 和 `.env.example`，填写本机 IP／密码、创建本地目录即可直接 `docker compose up -d`，无需额外脚本；平台首次在 `/setup` 配置 Full，不使用 Nginx 或 named volume。PostgreSQL 密码显式传入且不允许为空。
 - 独立 [Full distributed acceptance](./.github/workflows/distributed.yml) 流水线分别验证存储/队列契约、双平台故障恢复及经 Nginx 执行的真实 Go Runner；任何失败、跳过或缺失测试报告都会阻止专用验收门通过。
 
 上述模板都直接使用 Release 中导入的 AutoForge 镜像，并设置 `pull_policy: never`。Full 的基础设施镜像也固定到精确 digest，不会在离线启动时回退到可变 tag 或自动拉取。凭据生成、镜像准备、启动、升级和卷保护步骤见 [Compose 部署说明](./deploy/compose/README.md)。

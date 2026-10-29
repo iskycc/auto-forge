@@ -1,210 +1,106 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { PlatformConfigurationStore } from "@autoforge/platform-config";
-import { initializePlatform } from "../../fast-deploy/initialize-platform.mjs";
 
 const execute = promisify(execFile);
-const generator = resolve("fast-deploy/prepare.mjs");
-const configuration = [
-  "NODE_A_IP=127.0.0.1",
-  "NODE_B_IP=127.0.0.2",
-  "NODE_C_IP=127.0.0.3",
-  "AUTOFORGE_VERSION=1.21.4",
-  "ARCH=amd64",
-].join("\n");
+const credentials = {
+  POSTGRES_PASSWORD: "FixturePostgres-OnlyForTests-2026",
+  REDIS_PASSWORD: "FixtureRedis-OnlyForTests-2026",
+  NATS_TOKEN: "FixtureNats-OnlyForTests-2026",
+  MINIO_ROOT_PASSWORD: "FixtureMinio-OnlyForTests-2026",
+};
 
-async function withDeployment(run, contents = configuration) {
-  const directory = await mkdtemp(join(tmpdir(), "autoforge-fast-deploy-"));
+async function compose(host, overrides = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "autoforge-direct-compose-"));
   try {
-    const config = join(directory, ".env");
-    const output = join(directory, "generated");
-    await writeFile(config, contents);
-    await run({ directory, config, output });
+    const source = resolve("fast-deploy", host);
+    const example = await readFile(join(source, ".env.example"), "utf8");
+    const values = { ...credentials, ...overrides };
+    const environment = join(directory, ".env");
+    const configured = example
+      .split("\n")
+      .map((line) => {
+        const key = line.split("=", 1)[0];
+        if (!Object.hasOwn(values, key)) return line;
+        return values[key] === undefined ? undefined : `${key}=${values[key]}`;
+      })
+      .filter((line) => line !== undefined)
+      .join("\n");
+    await writeFile(environment, configured, { mode: 0o600 });
+    const inherited = { ...process.env };
+    for (const key of Object.keys(values)) delete inherited[key];
+    const result = await execute(
+      "docker",
+      [
+        "compose",
+        "--project-directory",
+        source,
+        "--env-file",
+        environment,
+        "-f",
+        join(source, "docker-compose.yml"),
+        "config",
+        "--format",
+        "json",
+      ],
+      { env: inherited },
+    );
+    return JSON.parse(result.stdout);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 }
 
-test("generates matching private credentials and self-contained three-host Compose files", async () => {
-  await withDeployment(async ({ config, output }) => {
-    const result = await execute("node", [generator, config, output]);
-    const settings = JSON.parse(await readFile(join(output, "node-a/setup-values.json"), "utf8"));
-    const password = (
-      await readFile(join(output, "node-b/secrets/postgres-password"), "utf8")
-    ).trim();
-    assert(password.length >= 32);
-    assert.equal(new URL(settings.full.databaseUrl).password, password);
-    assert.equal(new URL(settings.full.databaseUrl).hostname, "127.0.0.2");
-    assert.equal(new URL(settings.full.minio.endpoint).hostname, "127.0.0.3");
-    const redisPassword = (
-      await readFile(join(output, "node-b/secrets/redis-password"), "utf8")
-    ).trim();
-    assert.equal(new URL(settings.full.redisUrl).password, redisPassword);
-    assert(
-      (await readFile(join(output, "node-c/secrets/nats.conf"), "utf8")).includes(
-        settings.full.natsToken,
-      ),
-    );
-    for (const secret of [
-      password,
-      redisPassword,
-      settings.full.natsToken,
-      settings.full.minio.secretKey,
-    ]) {
-      assert(!result.stdout.includes(secret));
+test("ships exactly three amd64 Compose configurations without prerequisite scripts", async () => {
+  const files = await readdir(resolve("fast-deploy"), { recursive: true });
+  assert(!files.some((name) => /\.(sh|mjs)$/u.test(name)));
+  for (const host of ["node-a", "node-b", "node-c"]) {
+    const specification = await compose(host);
+    assert.equal(Object.keys(specification.volumes ?? {}).length, 0);
+    for (const service of Object.values(specification.services)) {
+      assert.equal(service.platform, "linux/amd64");
+      assert.equal(service.pull_policy, "never");
+      assert(service.image.endsWith("-amd64"));
+      assert(!service.image.includes("latest"));
+      for (const volume of service.volumes ?? []) assert.equal(volume.type, "bind");
     }
-    for (const host of ["node-a", "node-b", "node-c"]) {
-      const path = join(output, host);
-      const compose = await readFile(join(path, "docker-compose.yml"), "utf8");
-      assert.match(compose, /pull_policy: never/);
-      assert.doesNotMatch(compose, /^volumes:/m);
-      assert.match(compose, /type: bind/);
-      assert.match(compose, /create_host_path: false/);
-      assert.equal((await stat(join(path, ".env"))).mode & 0o777, 0o600);
-      assert.equal((await readFile(join(path, "host-role"), "utf8")).trim(), host);
-      assert.match(await readFile(join(path, "deploy.sh"), "utf8"), /POSTGRES|postgres-password/);
-    }
-    assert.equal((await stat(join(output, "node-a/setup-values.json"))).mode & 0o777, 0o600);
-    assert.equal(
-      (await stat(join(output, "node-b/secrets/postgres-password"))).mode & 0o777,
-      0o600,
-    );
-    const postgres = await readFile(join(output, "node-b/docker-compose.yml"), "utf8");
-    assert.match(postgres, /POSTGRES_PASSWORD_FILE: \/run\/secrets\/postgres-password/);
-    assert.match(postgres, /postgres-password:[\s\S]*file: \.\/secrets\/postgres-password/);
-    assert.doesNotMatch(postgres, /POSTGRES_HOST_AUTH_METHOD/);
-    await assert.rejects(execute("node", [generator, config, output]), /already exists/);
-    assert.equal(
-      (await readFile(join(output, "node-b/secrets/postgres-password"), "utf8")).trim(),
-      password,
-    );
-  });
-});
-
-test("rejects missing addresses, duplicate settings and shell expressions before writing secrets", async () => {
-  for (const invalid of [
-    configuration.replace("NODE_B_IP=127.0.0.2", "NODE_B_IP="),
-    `${configuration}\nNODE_A_IP=127.0.0.4`,
-    configuration.replace("NODE_C_IP=127.0.0.3", "NODE_C_IP=$(touch /tmp/should-not-run)"),
-    configuration.replace("ARCH=amd64", "ARCH=unknown"),
-  ]) {
-    await withDeployment(async ({ config, output }) => {
-      await assert.rejects(execute("node", [generator, config, output]));
-      await assert.rejects(stat(output), { code: "ENOENT" });
-    }, invalid);
+    const template = await readFile(resolve("fast-deploy", host, "docker-compose.yml"), "utf8");
+    assert.doesNotMatch(template, /prepare\.sh|deploy\.sh|initialize-platform|ARCH|secrets:/u);
   }
 });
 
-test("stops before Docker starts if PostgreSQL credentials are missing or blank", async () => {
-  await withDeployment(async ({ config, output }) => {
-    await execute("node", [generator, config, output]);
-    const host = join(output, "node-b");
-    const password = join(host, "secrets/postgres-password");
-    for (const contents of ["", "\n"]) {
-      await writeFile(password, contents);
-      await assert.rejects(
-        execute("bash", [join(host, "deploy.sh"), "check"]),
-        /postgres-password.*empty/,
-      );
-    }
-    await rm(password);
-    await assert.rejects(
-      execute("bash", [join(host, "deploy.sh"), "check"]),
-      /postgres-password.*missing/,
-    );
-  });
+test("explicitly passes the required PostgreSQL password and authenticated Redis settings", async () => {
+  const { services } = await compose("node-b");
+  assert.equal(services.postgres.environment.POSTGRES_PASSWORD, credentials.POSTGRES_PASSWORD);
+  assert.equal(services.postgres.environment.POSTGRES_USER, "autoforge");
+  assert(!Object.hasOwn(services.postgres.environment, "POSTGRES_HOST_AUTH_METHOD"));
+  assert(!Object.hasOwn(services.postgres.environment, "POSTGRES_PASSWORD_FILE"));
+  assert.equal(services.redis.environment.REDIS_PASSWORD, credentials.REDIS_PASSWORD);
+  assert(services.redis.command[0].includes("--requirepass"));
+  assert(!services.redis.command[0].includes(credentials.REDIS_PASSWORD));
 });
 
-test("allows inspection and shutdown even when credential files have been lost", async () => {
-  await withDeployment(async ({ directory, config, output }) => {
-    await execute("node", [generator, config, output]);
-    const host = join(output, "node-b");
-    await rm(join(host, "secrets"), { recursive: true });
-    const binaries = join(directory, "bin");
-    await mkdir(binaries);
-    await writeFile(join(binaries, "docker"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o700 });
-    for (const action of ["status", "logs", "stop"]) {
-      const result = await execute("bash", [join(host, "deploy.sh"), action], {
-        env: { ...process.env, PATH: `${binaries}:${process.env.PATH}` },
-      });
-      const argumentsList = result.stdout.trim().split("\n");
-      assert(argumentsList.includes("compose"));
-      assert(argumentsList.includes({ status: "ps", logs: "logs", stop: "stop" }[action]));
-      assert(!argumentsList.includes("up"));
-    }
-  });
+test("rejects missing PostgreSQL and storage passwords before a container can start", async () => {
+  for (const password of ["", undefined]) {
+    await assert.rejects(compose("node-b", { POSTGRES_PASSWORD: password }), /POSTGRES_PASSWORD/u);
+    await assert.rejects(
+      compose("node-c", { MINIO_ROOT_PASSWORD: password }),
+      /MINIO_ROOT_PASSWORD/u,
+    );
+  }
 });
 
-test("initializes Full through the existing validated API without rewriting platform keys", async () => {
-  await withDeployment(async ({ directory, config, output }) => {
-    await execute("node", [generator, config, output]);
-    const store = new PlatformConfigurationStore(join(directory, "platform"));
-    const original = store.initialize();
-    const settingsFile = join(output, "node-a/setup-values.json");
-    const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-    let requests = 0;
-    const send = async (url, request) => {
-      requests++;
-      assert.equal(String(url), "http://web:3000/api/v1/auth/setup-platform");
-      assert.equal(request.headers.origin, "http://web:3000");
-      const input = JSON.parse(request.body);
-      assert.equal(input.bootstrapToken, original.secrets.adminBootstrapToken);
-      assert.equal(input.configuration.revision, original.revision);
-      assert.equal(input.configuration.mode, "full");
-      assert.deepEqual(input.configuration.full, {
-        databaseUrl: settings.full.databaseUrl,
-        redisUrl: settings.full.redisUrl,
-        natsServers: settings.full.natsServers,
-        natsToken: settings.full.natsToken,
-        minioEndpoint: settings.full.minio.endpoint,
-        minioAccessKey: settings.full.minio.accessKey,
-        minioSecretKey: settings.full.minio.secretKey,
-        minioBucket: settings.full.minio.bucket,
-        minioRegion: settings.full.minio.region,
-      });
-      assert.deepEqual(input.configuration.scheduler, original.scheduler);
-      assert.equal(input.configuration.web.publicBaseUrl, settings.publicBaseUrl);
-      return Response.json({ mode: "full" });
-    };
-    await initializePlatform(store.paths.configurationFile, settingsFile, "http://web:3000", send);
-    assert.equal(requests, 1);
-    assert.deepEqual(store.read(), original);
-    await assert.rejects(
-      initializePlatform(store.paths.configurationFile, settingsFile, "http://web:3000", async () =>
-        Response.json(
-          { error: { code: "BOOTSTRAP_DENIED", requestId: "test-request" } },
-          { status: 403 },
-        ),
-      ),
-      /HTTP 403, code BOOTSTRAP_DENIED, request test-request/,
-    );
-    store.replace({ ...original, mode: "full", full: settings.full }, original.revision);
-    assert.equal(
-      await initializePlatform(
-        store.paths.configurationFile,
-        settingsFile,
-        "http://web:3000",
-        send,
-      ),
-      "already-configured",
-    );
-    assert.equal(requests, 1);
-    await writeFile(
-      settingsFile,
-      JSON.stringify({
-        ...settings,
-        full: { ...settings.full, databaseUrl: "postgres://other.invalid/other" },
-      }),
-    );
-    await assert.rejects(
-      initializePlatform(store.paths.configurationFile, settingsFile, "http://web:3000", send),
-      /cannot migrate/,
-    );
-    assert.deepEqual(store.read().secrets, original.secrets);
-  });
+test("uses the same MinIO credentials for its server and bucket initialization", async () => {
+  const { services } = await compose("node-c");
+  for (const service of [services.minio, services["minio-init"]]) {
+    assert.equal(service.environment.MINIO_ROOT_PASSWORD, credentials.MINIO_ROOT_PASSWORD);
+    assert.equal(service.environment.MINIO_ROOT_USER, "autoforge");
+  }
+  const index = services.nats.command.indexOf("--auth");
+  assert.equal(services.nats.command[index + 1], credentials.NATS_TOKEN);
+  assert.equal(services["minio-init"].depends_on.minio.condition, "service_healthy");
 });

@@ -97,9 +97,9 @@ Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 �
 `SHA256SUMS.sig` 和 `release-signing-public-key.pem`。GitHub 的构建来源证明绑定
 `SHA256SUMS` 中记录的全部资产摘要，metadata 包内的文件由该归档摘要传递保护。
 
-部署包另提供 `fast-deploy/` 三机 Full 快速部署目录，一次生成各主机独立 Compose、匹配凭据，
-并通过既有首次配置 API 初始化平台。打包只复制明确列出的模板并填入当前版本，不收录
-`generated/`、私有 `.env`、密码文件、初始化连接清单或本地数据。源码使用说明见仓库根目录
+部署包另提供 `fast-deploy/` 三机 Full 快速部署目录，固定 amd64，直接提供三份 Compose 和
+环境模板，不要求运行生成或部署脚本；首次通过平台 `/setup` 配置 Full。打包只复制明确列出的
+模板并填入当前版本，不收录私有 `.env`、密码或本地数据。源码使用说明见仓库根目录
 `fast-deploy/README.md`，解压部署包后可直接使用同名目录。
 
 后端镜像内同时包含可校验的 CoTest Adapter JAR。该 JAR 由发布流水线固定使用 JDK 8 编译并验证

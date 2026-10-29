@@ -48,7 +48,11 @@ for component in postgres log-postgres redis nats minio platform nginx; do
 done
 
 for host in node-a node-b node-c; do
-  docker compose --env-file "fast-deploy/${host}/.env.example" \
+  POSTGRES_PASSWORD=DeploymentValidationOnly2026 \
+    REDIS_PASSWORD=DeploymentValidationOnly2026 \
+    NATS_TOKEN=DeploymentValidationOnly2026 \
+    MINIO_ROOT_PASSWORD=DeploymentValidationOnly2026 \
+    docker compose --env-file "fast-deploy/${host}/.env.example" \
     --file "fast-deploy/${host}/docker-compose.yml" config --quiet
 done
 

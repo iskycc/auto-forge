@@ -1,6 +1,7 @@
 name: autoforge-fast-storage
 
 x-runtime: &runtime
+  platform: linux/amd64
   pull_policy: never
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
@@ -14,13 +15,19 @@ x-runtime: &runtime
 services:
   nats:
     <<: *runtime
-    image: ${NATS_IMAGE:?run fast-deploy/prepare.sh first}
+    image: autoforge/offline-nats:2.14.3-alpine3.22-amd64
     ports:
       - "${SERVICE_BIND:?set this host private IP}:${NATS_PORT:-4222}:4222"
-    command: ["--config", "/run/secrets/nats.conf"]
-    secrets:
-      - source: nats-config
-        target: nats.conf
+    command:
+      [
+        "--jetstream",
+        "--store_dir",
+        "/data",
+        "--http_port",
+        "8222",
+        "--auth",
+        "${NATS_TOKEN:?fill NATS_TOKEN in .env}",
+      ]
     cap_drop: ["ALL"]
     volumes:
       - type: bind
@@ -36,14 +43,13 @@ services:
 
   minio:
     <<: *runtime
-    image: ${MINIO_IMAGE:?run fast-deploy/prepare.sh first}
+    image: autoforge/offline-minio:RELEASE.2025-04-22T22-12-26Z-amd64
     ports:
       - "${SERVICE_BIND:?set this host private IP}:${MINIO_PORT:-9000}:9000"
     command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
-      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
-    secrets: [minio-root-user, minio-root-password]
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-autoforge}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?fill MINIO_ROOT_PASSWORD in .env}
     cap_drop: ["ALL"]
     volumes:
       - type: bind
@@ -59,61 +65,20 @@ services:
       start_period: 10s
 
   minio-init:
-    image: ${MINIO_CLIENT_IMAGE:?run fast-deploy/prepare.sh first}
+    image: autoforge/offline-minio-client:RELEASE.2025-04-16T18-13-26Z-amd64
+    platform: linux/amd64
     pull_policy: never
     restart: "no"
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-autoforge}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?fill MINIO_ROOT_PASSWORD in .env}
     entrypoint: ["/bin/sh", "-eu", "-c"]
     command:
       - |
-        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$$(cat /run/secrets/minio-root-user)" "$$(cat /run/secrets/minio-root-password)"
+        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc --config-dir /tmp/.mc mb --ignore-existing --region us-east-1 autoforge/autoforge-objects
-    secrets: [minio-root-user, minio-root-password]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-
-  log-postgres:
-    <<: *runtime
-    image: ${POSTGRES_IMAGE:?run fast-deploy/prepare.sh first}
-    profiles: ["log-database"]
-    ports:
-      - "${SERVICE_BIND:?set this host private IP}:${LOG_POSTGRES_PORT:-5433}:5432"
-    environment:
-      POSTGRES_DB: autoforge_logs
-      POSTGRES_USER: autoforge_logs
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        if [ ! -s "$$POSTGRES_PASSWORD_FILE" ] || [ -z "$$(cat "$$POSTGRES_PASSWORD_FILE")" ]; then
-          printf '%s\n' 'Log PostgreSQL password file is missing or empty; restore node-c/secrets/log-postgres-password.' >&2
-          exit 64
-        fi
-        exec /usr/local/bin/docker-entrypoint.sh postgres
-    secrets:
-      - source: log-postgres-password
-        target: postgres-password
-    volumes:
-      - type: bind
-        source: ./data/log-postgres
-        target: /var/lib/postgresql/data
-        bind:
-          create_host_path: false
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autoforge_logs -d autoforge_logs"]
-      interval: 5s
-      timeout: 3s
-      retries: 24
-      start_period: 10s
-
-secrets:
-  nats-config:
-    file: ./secrets/nats.conf
-  minio-root-user:
-    file: ./secrets/minio-root-user
-  minio-root-password:
-    file: ./secrets/minio-root-password
-  log-postgres-password:
-    file: ./secrets/log-postgres-password

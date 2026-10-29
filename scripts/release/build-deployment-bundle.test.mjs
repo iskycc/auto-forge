@@ -78,11 +78,6 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
     await assertBindMountTemplates(packageDirectory, packagedFiles);
     for (const filename of [
       "README.md",
-      ".env.example",
-      "prepare.sh",
-      "prepare.mjs",
-      "deploy.sh",
-      "initialize-platform.mjs",
       ...["node-a", "node-b", "node-c"].flatMap((host) => [
         `${host}/docker-compose.yml`,
         `${host}/.env.example`,
@@ -93,15 +88,18 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
         `missing fast-deploy template: ${filename}`,
       );
     assert.match(
-      await readFile(resolve(packageDirectory, "fast-deploy/.env.example"), "utf8"),
-      /AUTOFORGE_VERSION=1\.2\.3/,
-    );
-    assert.match(
-      await readFile(resolve(packageDirectory, "fast-deploy/node-a/.env.example"), "utf8"),
-      /BACKEND_IMAGE=autoforge\/backend:1\.2\.3-amd64/,
+      await readFile(resolve(packageDirectory, "fast-deploy/node-a/docker-compose.yml"), "utf8"),
+      /image: autoforge\/backend:1\.2\.3-amd64/,
     );
     assert.ok(
       !packagedFiles.some((name) => /fast-deploy\/(generated|.*\/secrets|.*\/data)\//u.test(name)),
+    );
+    assert.ok(
+      !packagedFiles.some((name) => name.startsWith("fast-deploy/") && /\.(sh|mjs)$/u.test(name)),
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "full-bind/three-hosts/README.md"), "utf8"),
+      /\]\(\.\.\/\.\.\/fast-deploy\/README\.md\)/u,
     );
     for (const template of [
       "distributed/platform/docker-compose.yml",

@@ -1,7 +1,8 @@
 name: autoforge-fast-platform
 
 x-platform: &platform
-  image: ${BACKEND_IMAGE:?run fast-deploy/prepare.sh first}
+  image: autoforge/backend:1.21.4-amd64
+  platform: linux/amd64
   pull_policy: never
   init: true
   restart: unless-stopped
@@ -34,6 +35,9 @@ services:
   worker:
     <<: *platform
     profiles: ["worker"]
+    depends_on:
+      web:
+        condition: service_healthy
     cpus: ${WORKER_CPUS:-0}
     mem_limit: ${WORKER_MEMORY_LIMIT:-0}
     cpu_shares: 1024

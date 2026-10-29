@@ -56,7 +56,7 @@ done < <(find "${repository_root}/deploy/compose" \
     -o -name nginx.conf -o -name prepare-secrets.mjs \) -print0)
 # Copy an explicit allowlist: generated credentials and bind data are private.
 readonly -a fast_deploy_templates=(
-  README.md .env.example prepare.sh prepare.mjs deploy.sh initialize-platform.mjs
+  README.md
   node-a/docker-compose.yml node-a/.env.example
   node-b/docker-compose.yml node-b/.env.example
   node-c/docker-compose.yml node-c/.env.example
@@ -75,6 +75,8 @@ sed -i 's|../../../docs/|../docs/|g' \
   "${package_directory}/distributed/README.md" \
   "${package_directory}/full-bind/README.md" \
   "${package_directory}/full-five-hosts/README.md"
+sed -i 's|../../../../fast-deploy/|../../fast-deploy/|g' \
+  "${package_directory}/full-bind/three-hosts/README.md"
 # Five-host deployment is part of the standard signed deployment asset. Fail the
 # release build if a host template or its IP-only proxy configuration is missing.
 required_five_host_templates=(README.md nginx/nginx.conf)
@@ -105,10 +107,8 @@ cp -- "${repository_root}/scripts/release/assets/release-signing-public-key.pem"
 while IFS= read -r environment_example; do
   sed -i "s/:VERSION-/:${version}-/g" "${environment_example}"
 done < <(find "${staging_directory}/${package_name}" -name .env.example -type f -print)
-sed -i "s/^AUTOFORGE_VERSION=.*/AUTOFORGE_VERSION=${version}/" \
-  "${package_directory}/fast-deploy/.env.example"
-sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=autoforge/backend:${version}-amd64|" \
-  "${package_directory}/fast-deploy/node-a/.env.example"
+sed -i -E "s|autoforge/backend:[0-9]+\.[0-9]+\.[0-9]+-amd64|autoforge/backend:${version}-amd64|g" \
+  "${package_directory}/fast-deploy/node-a/docker-compose.yml"
 
 printf '%s\n' "${version}" >"${package_directory}/VERSION"
 

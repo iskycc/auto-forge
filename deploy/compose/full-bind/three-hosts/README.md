@@ -1,5 +1,8 @@
 # Full 三主机部署方案（直连，无 Nginx）
 
+**三台都是 amd64、希望直接改配置启动时，使用[三机快速部署](../../../../fast-deploy/README.md)。**
+该目录每台主机只有 Compose 和 `.env.example`，不需要运行配置生成或部署脚本。
+
 本方案复用上一级的独立组件 Compose，把 Full 的组件分配到三台主机。
 浏览器、Jenkins 和 Runner 直接访问平台端口；持久数据全部绑定宿主机本地目录，
 不使用 Docker named volume，也不启动 Nginx。
