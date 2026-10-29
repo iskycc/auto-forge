@@ -54,6 +54,23 @@ done < <(find "${repository_root}/deploy/compose" \
   -type d \( -name secrets -o -name config -o -name node-data \) -prune -o \
   -type f \( -name docker-compose.yml -o -name .env.example -o -name README.md \
     -o -name nginx.conf -o -name prepare-secrets.mjs \) -print0)
+# Copy an explicit allowlist: generated credentials and bind data are private.
+readonly -a fast_deploy_templates=(
+  README.md .env.example prepare.sh prepare.mjs deploy.sh initialize-platform.mjs
+  node-a/docker-compose.yml node-a/.env.example
+  node-b/docker-compose.yml node-b/.env.example
+  node-c/docker-compose.yml node-c/.env.example
+)
+for template in "${fast_deploy_templates[@]}"; do
+  source_path="${repository_root}/fast-deploy/${template}"
+  if [[ ! -s "${source_path}" ]]; then
+    printf 'Missing fast-deploy release template: %s\n' "${source_path}" >&2
+    exit 1
+  fi
+  destination_path="${package_directory}/fast-deploy/${template}"
+  mkdir -p -- "$(dirname -- "${destination_path}")"
+  cp -- "${source_path}" "${destination_path}"
+done
 sed -i 's|../../../docs/|../docs/|g' \
   "${package_directory}/distributed/README.md" \
   "${package_directory}/full-bind/README.md" \
@@ -86,8 +103,12 @@ cp -- "${repository_root}/scripts/release/assets/release-signing-public-key.pem"
   "${package_directory}/release-signing-public-key.pem"
 
 while IFS= read -r environment_example; do
-  sed -i "s/VERSION/${version}/g" "${environment_example}"
+  sed -i "s/:VERSION-/:${version}-/g" "${environment_example}"
 done < <(find "${staging_directory}/${package_name}" -name .env.example -type f -print)
+sed -i "s/^AUTOFORGE_VERSION=.*/AUTOFORGE_VERSION=${version}/" \
+  "${package_directory}/fast-deploy/.env.example"
+sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=autoforge/backend:${version}-amd64|" \
+  "${package_directory}/fast-deploy/node-a/.env.example"
 
 printf '%s\n' "${version}" >"${package_directory}/VERSION"
 

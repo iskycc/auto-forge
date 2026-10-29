@@ -4,6 +4,12 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Added
+
+- 新增根目录 `fast-deploy/` 三机 Full 快速部署：一次生成三份独立 Compose、匹配的私有凭据和本地数据目录；通过现有初始化 API 自动配置平台，支持可选独立 PostgreSQL 日志实例。部署脚本及数据库入口显式检查密码文件缺失／空值，避免 PostgreSQL 首次启动因密码未传入反复重启，不使用 `trust`。部署包仅按白名单收录模板，不包含生成凭据或业务数据。
+
 ## 1.21.4 - 2026-10-29
 
 ### Changed

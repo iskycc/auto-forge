@@ -1,0 +1,52 @@
+name: autoforge-fast-platform
+
+x-platform: &platform
+  image: ${BACKEND_IMAGE:?run fast-deploy/prepare.sh first}
+  pull_policy: never
+  init: true
+  restart: unless-stopped
+  volumes:
+    - type: bind
+      source: ./data/platform
+      target: /var/lib/autoforge
+      bind:
+        create_host_path: false
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  stop_grace_period: 45s
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  web:
+    <<: *platform
+    cpus: ${WEB_CPUS:-0}
+    mem_limit: ${WEB_MEMORY_LIMIT:-0}
+    cpu_shares: 2048
+    ports:
+      - "${SERVICE_BIND:?set this host private IP}:${HTTP_PORT:-3000}:3000"
+
+  worker:
+    <<: *platform
+    profiles: ["worker"]
+    cpus: ${WORKER_CPUS:-0}
+    mem_limit: ${WORKER_MEMORY_LIMIT:-0}
+    cpu_shares: 1024
+    command: ["node", "apps/worker/dist/worker.mjs", "--data-dir=/var/lib/autoforge"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s

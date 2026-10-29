@@ -47,6 +47,11 @@ for component in postgres log-postgres redis nats minio platform nginx; do
     config --quiet
 done
 
+for host in node-a node-b node-c; do
+  docker compose --env-file "fast-deploy/${host}/.env.example" \
+    --file "fast-deploy/${host}/docker-compose.yml" config --quiet
+done
+
 mkdir -p "${temporary_directory}/first" "${temporary_directory}/second"
 SOURCE_DATE_EPOCH=1786233600 \
   bash scripts/release/build-deployment-bundle.sh 1.2.3 "${temporary_directory}/first"

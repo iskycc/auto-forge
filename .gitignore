@@ -22,6 +22,10 @@ test-results/
 !**/.env.example
 /deploy/compose/**/secrets/
 /deploy/compose/**/config/
+/fast-deploy/generated/
+/fast-deploy/**/secrets/
+/fast-deploy/**/setup-values.json
+/fast-deploy/**/host-role
 
 # AutoForge runtime state
 data/

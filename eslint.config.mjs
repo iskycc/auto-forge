@@ -20,6 +20,7 @@ export default defineConfig([
     "**/node_modules/**",
     "**/target/**",
     "data/**",
+    "fast-deploy/generated/**",
     "jenkins-test/**",
     "playwright-report/**",
     "test-results/**",

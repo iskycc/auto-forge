@@ -1,0 +1,83 @@
+name: autoforge-fast-database
+
+x-runtime: &runtime
+  pull_policy: never
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  postgres:
+    <<: *runtime
+    image: ${POSTGRES_IMAGE:?run fast-deploy/prepare.sh first}
+    ports:
+      - "${SERVICE_BIND:?set this host private IP}:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: autoforge
+      POSTGRES_USER: autoforge
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -s "$$POSTGRES_PASSWORD_FILE" ] || [ -z "$$(cat "$$POSTGRES_PASSWORD_FILE")" ]; then
+          printf '%s\n' 'PostgreSQL password file is missing or empty; restore node-b/secrets/postgres-password.' >&2
+          exit 64
+        fi
+        exec /usr/local/bin/docker-entrypoint.sh postgres
+    secrets: [postgres-password]
+    volumes:
+      - type: bind
+        source: ./data/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoforge -d autoforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+
+  redis:
+    <<: *runtime
+    image: ${REDIS_IMAGE:?run fast-deploy/prepare.sh first}
+    ports:
+      - "${SERVICE_BIND:?set this host private IP}:${REDIS_PORT:-6379}:6379"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        cp /run/secrets/redis.conf /tmp/redis.conf
+        chown redis:redis /tmp/redis.conf
+        exec /usr/local/bin/docker-entrypoint.sh redis-server /tmp/redis.conf
+    secrets:
+      - source: redis-config
+        target: redis.conf
+      - redis-password
+    volumes:
+      - type: bind
+        source: ./data/redis
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis-password)" redis-cli ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+secrets:
+  postgres-password:
+    file: ./secrets/postgres-password
+  redis-config:
+    file: ./secrets/redis.conf
+  redis-password:
+    file: ./secrets/redis-password
