@@ -64,7 +64,7 @@ export function LogDatabases({
       setPending(undefined);
     }
   }
-  function select(databaseId: string | null) {
+  function select(databaseId: string) {
     void act(`select:${databaseId}`, "/api/v1/settings/log-databases/active", "PUT", {
       databaseId,
       revision: initial.revision,
@@ -94,33 +94,18 @@ export function LogDatabases({
         {initial.activeDatabaseId
           ? (initial.items.find((item) => item.id === initial.activeDatabaseId)?.name ??
             initial.activeDatabaseId)
-          : "节点本地日志"}
+          : "未配置 PostgreSQL 写入库（禁止写入本地日志）"}
       </Typography.Text>
-      <Card
-        size="small"
+      <Alert
+        type={initial.activeDatabaseId ? "info" : "warning"}
+        showIcon
         title={
-          <Space>
-            <DatabaseOutlined />
-            <span>节点本地日志</span>
-          </Space>
+          initial.activeDatabaseId
+            ? "本地 SQLite 历史日志仅支持读取"
+            : "请添加并设定 PostgreSQL 日志服务器后再执行用例"
         }
-        extra={!initial.activeDatabaseId ? <Tag color="processing">当前写入</Tag> : null}
-      >
-        <Flex justify="space-between" align="center" gap="middle" wrap>
-          <Typography.Text type="secondary">
-            兼容现有批次 SQLite 存储，由原日志节点提供读取。
-          </Typography.Text>
-          {canManage && initial.activeDatabaseId ? (
-            <Button
-              disabled={Boolean(pending)}
-              loading={pending === "select:null"}
-              onClick={() => select(null)}
-            >
-              切换为本地写入
-            </Button>
-          ) : null}
-        </Flex>
-      </Card>
+        description="Full 模式禁止新增或追加本地 SQLite 日志。已有本地日志仍可查看和归档；旧本地批次需结束后重新执行，不会自动改写日志位置。"
+      />
       {initial.items.map((database) => (
         <Card
           key={database.id}

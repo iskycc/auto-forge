@@ -23,6 +23,7 @@ import type {
 } from "./work-protocol.ts";
 
 type PendingRequest = {
+  parsingFileName?: string;
   deadline?: ReturnType<typeof setTimeout>;
   bytes: number;
   finishForeground(): void;
@@ -128,7 +129,7 @@ export class WorkerPool implements WorkDispatcher {
             ...(configuration.full ? { full: { ...configuration.full, databasePoolMax: 1 } } : {}),
           },
           shutdownGraceMs,
-          resourcePlan.workerHeapMb,
+          resourcePlan.maintenanceWorkerHeapMb,
         ),
     );
     this.controlLanes =
@@ -510,6 +511,9 @@ class WorkerLane {
       const abort = () => worker.postMessage({ id, cancel: true });
       signal?.addEventListener("abort", abort, { once: true });
       this.pending.set(id, {
+        ...(task.kind === "parse-file"
+          ? { parsingFileName: stringProperty(task.input, "fileName").slice(0, 512) || "上传文件" }
+          : {}),
         ...(diagnostic
           ? { deadline: setTimeout(() => this.expireDiagnosticRead(worker), 5_000) }
           : {}),
@@ -608,11 +612,23 @@ class WorkerLane {
       runtimePriority().report(
         this.configuration.prioritySignal ? "background_refresh" : "execution_control",
       );
+    const memoryLimitReached =
+      error instanceof Error && "code" in error && error.code === "ERR_WORKER_OUT_OF_MEMORY";
     for (const request of this.pending.values()) {
       clearTimeout(request.deadline);
       request.finishForeground();
       request.detachAbort();
-      request.reject(error);
+      request.reject(
+        memoryLimitReached && request.parsingFileName
+          ? Object.assign(
+              new Error(
+                `文件“${request.parsingFileName}”解析内存不足，请拆分表格或增加平台进程可用内存后重试。`,
+                { cause: error },
+              ),
+              { name: "DomainError", code: "FILE_PARSE_MEMORY_LIMIT" },
+            )
+          : error,
+      );
     }
     this.pending.clear();
     this.pendingBytes = 0;

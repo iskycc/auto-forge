@@ -16,6 +16,7 @@ readonly -a deployment_documentation=(
   "docs/adr/0012-full-distributed-node-local-logs.md"
   "docs/adr/0013-platform-time-authority.md"
   "docs/adr/0015-full-postgresql-log-databases.md"
+  "docs/adr/0017-full-postgresql-log-writes-only.md"
   "docs/architecture/batch-scheduling-pause.md"
   "docs/architecture/ddt-management.md"
   "docs/architecture/read-model-snapshots.md"
@@ -79,7 +80,8 @@ sed -i 's|../../../docs/|../docs/|g' \
   "${package_directory}/full-bind/README.md" \
   "${package_directory}/full-five-hosts/README.md"
 sed -i 's|../../../../fast-deploy/|../../fast-deploy/|g' \
-  "${package_directory}/full-bind/three-hosts/README.md"
+  "${package_directory}/full-bind/three-hosts/README.md" \
+  "${package_directory}/full-bind/log-postgres/README.md"
 # Five-host deployment is part of the standard signed deployment asset. Fail the
 # release build if a host template or its IP-only proxy configuration is missing.
 required_five_host_templates=(README.md nginx/nginx.conf)

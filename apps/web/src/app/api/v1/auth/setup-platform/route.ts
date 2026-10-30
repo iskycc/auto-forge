@@ -1,5 +1,6 @@
 import { initializePlatformConfigurationInputSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
+import { DomainError } from "@autoforge/domain";
 
 import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { clientAddress, requestId, requireSameOrigin } from "@/lib/auth";
@@ -30,10 +31,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       currentRequestId,
     );
     const current = services.configurationStore.read();
-    const saved = services.configurationStore.replace(
-      mergePlatformConfiguration(current, input.configuration),
-      input.configuration.revision,
-    );
+    const next = mergePlatformConfiguration(current, input.configuration);
+    if (next.mode === "full" && !next.full?.logServer)
+      throw new DomainError(
+        "LOG_DAILY_SERVER_REQUIRED",
+        "Full 初始化必须配置独立 PostgreSQL 日志服务器，不支持本地 SQLite 日志写入。",
+      );
+    const saved = services.configurationStore.replace(next, input.configuration.revision);
     await services.identityAccess.recordBootstrapConfiguration(
       { mode: saved.mode, revision: saved.revision },
       currentRequestId,

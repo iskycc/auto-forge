@@ -71,6 +71,34 @@ function pool() {
 }
 
 describe("work thread recovery", () => {
+  it("reports the failed spreadsheet and recreates an import worker after a heap failure", async () => {
+    const executor = diagnosticPool("full");
+    try {
+      const failed = expect(
+        executor.parseFile("parse-ddt", { fileName: "大表.xlsx" }),
+      ).rejects.toMatchObject({
+        code: "FILE_PARSE_MEMORY_LIMIT",
+        message: expect.stringContaining("大表.xlsx"),
+        cause: expect.objectContaining({ code: "ERR_WORKER_OUT_OF_MEMORY" }),
+      });
+      const worker = workers[0]!;
+      worker.emit(
+        "error",
+        Object.assign(new Error("JS heap out of memory"), {
+          code: "ERR_WORKER_OUT_OF_MEMORY",
+        }),
+      );
+      worker.emit("exit", 1);
+      await failed;
+      const retry = executor.parseFile("parse-ddt", { fileName: "small.csv" });
+      const replacement = workers[1]!;
+      expect(replacement).not.toBe(worker);
+      replacement.emit("message", { id: replacement.requests[0]!.id, ok: true, value: [] });
+      await expect(retry).resolves.toEqual([]);
+    } finally {
+      await executor.close();
+    }
+  });
   it.each(["lite", "full"] as const)(
     "keeps bounded %s recycle clearing away from lease renewal",
     async (mode) => {

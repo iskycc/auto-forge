@@ -18,11 +18,11 @@
 
 | 主机 | Docker tar 文件                                                                                                                                                                                                |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `autoforge-backend-1.21.7-amd64.docker.tar`                                                                                                                                                                    |
+| A    | `autoforge-backend-1.21.8-amd64.docker.tar`                                                                                                                                                                    |
 | B    | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar`                                                                                                       |
 | C    | `autoforge-infra-minio-RELEASE.2025-04-22T22-12-26Z-amd64.docker.tar`、`autoforge-infra-minio-client-RELEASE.2025-04-16T18-13-26Z-amd64.docker.tar`、`autoforge-infra-nats-2.14.3-alpine3.22-amd64.docker.tar` |
 
-主平台来自[正式 v1.21.7](https://github.com/iskycc/auto-forge/releases/tag/v1.21.7)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
+主平台来自[正式 v1.21.8](https://github.com/iskycc/auto-forge/releases/tag/v1.21.8)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
 
 ## B：数据库与缓存
 
@@ -78,7 +78,7 @@ cat data/platform/config/initial-admin-token
 | 页面配置                  | 填入内容                                                                                                                                                         |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PostgreSQL 主库           | IP `10.20.0.12`、端口 `5432`、数据库 `autoforge`、用户名 `autoforge`、密码填 B 的 `POSTGRES_PASSWORD`                                                            |
-| PostgreSQL 日志库         | 独立部署后，按 [`log-postgres` 说明](./log-postgres/README.md#平台填写)填写；暂未部署时将“日志存储”切为“本地日志存储”                                            |
+| PostgreSQL 日志库         | 独立部署后，按 [`log-postgres` 说明](./log-postgres/README.md#平台填写)填写；Full 必须先部署并填写此服务                                                         |
 | Redis 缓存                | IP `10.20.0.12`、端口 `6379`、逻辑库 `0`、用户名留空、密码填 B 的 `REDIS_PASSWORD`                                                                               |
 | NATS 消息队列             | IP `10.20.0.13`、端口 `4222`、Token 填 C 的 `NATS_TOKEN`                                                                                                         |
 | MinIO 对象存储            | IP `10.20.0.13`、API 端口 `9000`、Access Key 填 C 的 `MINIO_ROOT_USER`、Secret Key 填 C 的 `MINIO_ROOT_PASSWORD`、Bucket `autoforge-objects`、Region `us-east-1` |
@@ -109,4 +109,4 @@ docker compose stop
 
 `.env` 包含基础设施密码，应私有保存；不要提交 Git，也不要把包含密码的 `docker compose config` 输出发到公共渠道。数据库已经初始化后，修改 `.env` 不会重置数据库里的密码；不能通过删除数据目录修复密码问题。已有脚本版生成的部署继续保留其凭据和数据，不直接用新的空模板覆盖。
 
-需要独立 PostgreSQL 日志库时，直接复制 [`log-postgres/`](./log-postgres/README.md) 到 C 或日志主机，仍是改 `.env`、建数据目录后 `docker compose up -d`，无需运行脚本。平台 Web／worker 到日志主机的默认 `5433` 端口也需放通；基础三机启动不依赖它。升级时同步切换 A 的 Web／worker 镜像，先备份业务库、所有日志库、MinIO 和平台完整数据目录。
+需要独立 PostgreSQL 日志库时，直接复制 [`log-postgres/`](./log-postgres/README.md) 到 C 或日志主机，仍是改 `.env`、建数据目录后 `docker compose up -d`，无需运行脚本。平台 Web／worker 到日志主机的默认 `5433` 端口也需放通；已有 Full 未配置时仍可启动并登录，但必须选择 PostgreSQL 日志服务器后才能执行用例。升级时同步切换 A 的 Web／worker 镜像，先备份业务库、所有日志库、MinIO 和平台完整数据目录。

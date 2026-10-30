@@ -16,7 +16,7 @@ import type { NodeLogTransport } from "./platform-node-transport";
 type Queryable = Pick<PoolClient, "query">;
 const emptyWatermarks = { stdout: -1, stderr: -1, agent: -1 };
 
-/** PostgreSQL owns location and acknowledgement metadata; only the owner writes the SQLite file. */
+/** Legacy node-local routing. Full composition supplies a read-only local store for history. */
 export class NodeAttemptLogStore {
   readonly storesWatermarksInBusinessDatabase = true;
   constructor(

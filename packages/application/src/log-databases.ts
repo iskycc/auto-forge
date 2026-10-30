@@ -10,6 +10,7 @@ import {
   selectLogDatabaseSchema,
 } from "@autoforge/contracts";
 import type { Clock, IdGenerator } from "./ports";
+import { DomainError } from "@autoforge/domain";
 
 export interface LogDatabaseRepository {
   list(cursor?: string): Promise<LogDatabasePage>;
@@ -41,6 +42,11 @@ export class LogDatabaseService {
   }
   async select(input: { databaseId: string | null; revision: number }) {
     const selected = selectLogDatabaseSchema.parse(input);
+    if (!selected.databaseId)
+      throw new DomainError(
+        "FULL_LOCAL_LOG_WRITE_DISABLED",
+        "Full 模式必须选择 PostgreSQL 日志服务器，不能切换为本地 SQLite 写入。",
+      );
     if (selected.databaseId) await this.repository.checkForWrite(selected.databaseId);
     await this.repository.select(selected.databaseId, selected.revision);
   }

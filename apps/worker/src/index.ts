@@ -21,10 +21,12 @@ import {
 } from "@autoforge/application";
 import {
   createAttemptLogStore,
+  readOnlyLegacyAttemptLogs,
   createPostgresDatabase,
   createPostgresClock,
   NodeAttemptLogStore,
   PostgresLogDatabaseRepository,
+  PostgresLogWriteAdmission,
   PostgresRoutedAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseSuiteRepository,
@@ -126,8 +128,11 @@ const batches = new RunBatchSchedulingService(
   config.caseExecutionTimeoutSeconds * 1_000,
   config.artifactCollectionEnabled,
   config.readSchedulingConfiguration,
+  new PostgresLogWriteAdmission(database),
 );
-const localAttemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
+const localAttemptLogs = readOnlyLegacyAttemptLogs(
+  createAttemptLogStore(join(config.dataDirectory, "attempt-logs")),
+);
 const nodeLogs =
   config.distributed && config.nodeId
     ? new NodeAttemptLogStore(

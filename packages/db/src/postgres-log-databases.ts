@@ -10,6 +10,7 @@ import { runPostgresMigrations, type PostgresDatabaseHandle } from "./postgres-d
 
 import { PostgresDailyLogDatabases, type LogDatabaseRecord } from "./postgres-daily-log-databases";
 import { logDatabaseError } from "./postgres-log-database-errors";
+import { fullLocalLogWriteDisabled } from "./full-log-write-policy";
 export { logDatabaseError } from "./postgres-log-database-errors";
 
 const MAX_OPEN_DATABASES = 4;
@@ -148,6 +149,7 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
   }
 
   async select(databaseId: string | null, revision: number): Promise<void> {
+    if (!databaseId) throw fullLocalLogWriteDisabled();
     const result = await this.database.pool.query(
       "UPDATE log_database_settings SET active_database_id=$1,revision=revision+1 WHERE id=1 AND revision=$2",
       [databaseId, revision],

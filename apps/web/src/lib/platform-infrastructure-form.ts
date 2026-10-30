@@ -90,10 +90,11 @@ export function infrastructureTargetFromForm(
 export function fullConfigurationFromSetup(
   form: FormData,
   configured: boolean,
+  usage: "initialization" | "settings" = "initialization",
 ): NonNullable<UpdatePlatformConfigurationInput["full"]> {
   const result: NonNullable<UpdatePlatformConfigurationInput["full"]> = {};
   for (const component of ["postgres", "redis", "nats", "minio", "logs"] as const) {
-    if (component === "logs" && text(form, "logs.enabled") !== "true") continue;
+    if (component === "logs" && usage === "settings") continue;
     if (configured && component !== "logs" && !text(form, `${component}.host`).trim()) {
       // A completely untouched card preserves existing secrets. Partial credentials must not vanish.
       if (

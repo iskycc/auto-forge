@@ -324,6 +324,9 @@ function parseCaseSheet(
     raw: false,
     blankrows: false,
   });
+  // The value matrix is now authoritative for this sheet. Do not retain its
+  // cell objects, rich text and formatting while validating and mapping rows.
+  delete workbook.Sheets[sheetName];
 
   if (matrix.length < 2) {
     throw new Error(`${sheetName} Sheet 中没有可导入的用例数据`);
@@ -463,12 +466,14 @@ export function readSpreadsheetWorkbook(
             raw: options.preserveCsvText ?? false,
             type: "string",
             cellDates: true,
+            cellHTML: false,
             dense: true,
             ...(options.maximumRows ? { sheetRows: options.maximumRows } : {}),
           })
         : XLSX.read(buffer, {
             type: "buffer",
             cellDates: true,
+            cellHTML: false,
             dense: true,
             ...(options.maximumRows ? { sheetRows: options.maximumRows } : {}),
           });

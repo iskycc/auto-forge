@@ -1,4 +1,5 @@
 import { ArchivedAttemptLogStore, SqliteLogArchiveRepository } from "@autoforge/db/sqlite";
+import { readOnlyLegacyAttemptLogs } from "@autoforge/db/sqlite";
 import { LogArchiveService, type LogArchiveRepository } from "@autoforge/application";
 import {
   PublicSuiteExecutionService,
@@ -216,6 +217,7 @@ async function createPlatformServices() {
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let infrastructure: RuntimeInfrastructure | undefined;
   let databaseReady: () => Promise<void>;
+  let logWriteAdmission: import("@autoforge/application").ExecutionLogWriteAdmission | undefined;
   let diagnosticProviders: Record<"database" | "objectStore" | "queue" | "cache", string>;
   if (config.mode === "lite") {
     const database = createSqliteDatabase({
@@ -285,6 +287,7 @@ async function createPlatformServices() {
         PostgresPlatformNodeRepository,
         NodeAttemptLogStore,
         PostgresLogDatabaseRepository,
+        PostgresLogWriteAdmission,
         PostgresRoutedAttemptLogStore,
         createNodeLogTransport,
         PostgresAttemptLogShareRepository,
@@ -327,14 +330,15 @@ async function createPlatformServices() {
     await mkdir(join(config.dataDirectory, "attempt-logs"), { recursive: true });
     let attemptLogs:
       | import("@autoforge/db/sqlite").AsyncAttemptLogStore
-      | import("@autoforge/db/postgres").NodeAttemptLogStore = isolatedAttemptLogs(
-      join(config.dataDirectory, "attempt-logs"),
+      | import("@autoforge/db/postgres").NodeAttemptLogStore = readOnlyLegacyAttemptLogs(
+      isolatedAttemptLogs(join(config.dataDirectory, "attempt-logs")),
     );
     const database = createPostgresDatabase({
       connectionString: config.databaseUrl,
       migrationsFolder: config.migrationsFolder,
       poolMax: config.databasePoolMax,
     });
+    logWriteAdmission = new PostgresLogWriteAdmission(database);
     databaseReady = async () => {
       await database.pool.query("SELECT 1");
     };
@@ -647,6 +651,7 @@ async function createPlatformServices() {
       config.caseExecutionTimeoutSeconds * 1_000,
       () => configurationStore.read().limits.artifactCollectionEnabled,
       () => configurationStore.readScheduler(),
+      logWriteAdmission,
     ),
     config.mode === "lite" ? dispatcher : undefined,
     dispatcher,

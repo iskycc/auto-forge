@@ -33,7 +33,10 @@ describe("Full initialization form", () => {
     ).toThrow("PostgreSQL 主库 · IP / 主机名");
   });
   it("keeps saved Full credentials when every component card is untouched", () => {
-    expect(fullConfigurationFromSetup(form({ "logs.enabled": "false" }), true)).toEqual({});
+    expect(fullConfigurationFromSetup(form({}), true, "settings")).toEqual({});
+  });
+  it("requires a separate PostgreSQL log server during initialization", () => {
+    expect(() => fullConfigurationFromSetup(form({}), true)).toThrow("PostgreSQL 日志库");
   });
   it("does not silently discard partially filled cards", () => {
     expect(() =>

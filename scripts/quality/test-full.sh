@@ -413,6 +413,7 @@ initialize_platform_configuration() {
         shutdownGraceMs: 30000,
       },
       full: {
+        logServer: { name: "Full 测试日志服务器", host: "127.0.0.1", port: 55439, username: "autoforge", password: "autoforge", maintenanceDatabase: "postgres", databasePrefix: "autoforge_test_logs", sslMode: "disable" },
         databaseUrl: "postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge",
         natsServers: ["nats://127.0.0.1:54229"],
         redisUrl: "redis://127.0.0.1:56389",

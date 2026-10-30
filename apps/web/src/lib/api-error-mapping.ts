@@ -129,6 +129,7 @@ function domainErrorStatus(code: string): number {
       "LOG_ARCHIVE_READ_ONLY",
       "LOG_ARCHIVE_LEASE_LOST",
       "LOG_DAILY_SERVER_REQUIRED",
+      "FULL_LOCAL_LOG_WRITE_DISABLED",
       "LOG_DATABASE_PREFIX_IMMUTABLE",
     ].includes(code)
   )
@@ -165,6 +166,7 @@ function domainErrorStatus(code: string): number {
       "PLATFORM_LOG_UNAVAILABLE",
       "PLATFORM_LOG_DATABASE_UNAVAILABLE",
       "PLATFORM_BUSY",
+      "FILE_PARSE_MEMORY_LIMIT",
     ].includes(code)
   )
     return 503;

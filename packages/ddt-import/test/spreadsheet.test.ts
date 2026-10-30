@@ -7,9 +7,38 @@ import {
   DdtDuplicateColumnsError,
   parseDdtUpload,
   parseSpreadsheet,
+  readSpreadsheetWorkbook,
 } from "../src";
 
 describe("DDT spreadsheet compatibility", () => {
+  it.each(["xlsx", "xls", "xlsb", "ods"] as const)(
+    "preserves formatted cell values without retaining HTML in %s",
+    (bookType) => {
+      const workbook = XLSX.utils.book_new();
+      const sheet = XLSX.utils.aoa_to_sheet(
+        [
+          ["CaseID", "srNum", "数量", "开关", "时间", "文本", "计算值"],
+          ["中文-ID", "SR-1", 12.5, true, new Date("2026-10-30T08:30:00.000Z"), " <tag>&中文 ", 42],
+        ],
+        { cellDates: true },
+      );
+      sheet.C2!.z = "0000.00";
+      sheet.E2!.z = "yyyy-mm-dd hh:mm:ss";
+      sheet.G2!.f = "40+2";
+      XLSX.utils.book_append_sheet(workbook, sheet, "data");
+      const content = XLSX.write(workbook, { type: "buffer", bookType }) as Buffer;
+      const reference = XLSX.utils.sheet_to_json<string[]>(
+        XLSX.read(content, { type: "buffer", cellDates: true, dense: true }).Sheets.data!,
+        { header: 1, defval: "", raw: false, blankrows: false },
+      );
+      expect(parseSpreadsheet(content, `cells.${bookType}`).rows).toEqual([
+        Object.fromEntries(reference[0]!.map((name, index) => [name, reference[1]![index]])),
+      ]);
+      const lean = readSpreadsheetWorkbook(content, `cells.${bookType}`).Sheets.data!;
+      expect((lean["!data"] as XLSX.CellObject[][])[1]![5]).toMatchObject({ v: " <tag>&中文 " });
+      expect((lean["!data"] as XLSX.CellObject[][])[1]![5]!.h).toBeUndefined();
+    },
+  );
   it("exports differently cased fields from separate imports in one column without losing values", () => {
     const first = parseSpreadsheet(
       Buffer.from("CaseID,srNum,CaseName,Owner\nCASE-1,CORE,First,Alice\n"),

@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Input, Select } from "@/components/ui";
 
 import { memoryAdmissionModeSchema, type MemoryAdmissionMode } from "@autoforge/contracts";
 import { memoryAdmissionLabels, memoryAdmissionDescriptions } from "@/lib/memory-admission";
@@ -20,6 +20,8 @@ import { useConcurrentModificationFeedback } from "@/components/concurrent-modif
 import { readApiError } from "@/lib/client-api";
 
 import { useUnsavedForm } from "./use-unsaved-form";
+import { PlatformInfrastructureFields } from "./platform-infrastructure-fields";
+import { fullConfigurationFromSetup } from "@/lib/platform-infrastructure-form";
 
 const COMMON_TIME_ZONES = [
   "Asia/Shanghai",
@@ -50,6 +52,7 @@ export function PlatformSettings({
     initial.scheduler.memoryAdmissionMode ?? "reserved",
   );
   const [pending, setPending] = useState(false);
+  const [checkingCount, setCheckingCount] = useState(0);
   const [error, setError] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -63,7 +66,7 @@ export function PlatformSettings({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canManage) return;
+    if (!canManage || pending || checkingCount > 0) return;
     setPending(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -110,7 +113,9 @@ export function PlatformSettings({
             metricsEnabled: form.get("workerMetricsEnabled") === "on",
             shutdownGraceMs: numberValue(form, "workerShutdownGraceMs"),
           },
-          ...(initial.mode === "full" ? { full: fullConfiguration(form) } : {}),
+          ...(initial.mode === "full"
+            ? { full: fullConfigurationFromSetup(form, initial.fullConfigured, "settings") }
+            : {}),
         }),
       });
       const apiError = await readApiError(response, "平台配置保存失败。");
@@ -321,49 +326,15 @@ export function PlatformSettings({
                 和对象存储连接由部署文件管理。凭据不回显；运行状态请查看系统诊断。
               </p>
             ) : (
-              <div className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}>
-                <SecretInput
-                  label="PostgreSQL URL"
-                  name="databaseUrl"
-                  configured={initial.fullConfigured}
-                />
-                <label>
-                  NATS 地址（逗号或换行分隔）
-                  <Textarea name="natsServers" placeholder="nats://nats:4222" />
-                </label>
-                <SecretInput
-                  label="NATS Token（可选）"
-                  name="natsToken"
-                  configured={initial.fullConfigured}
-                />
-                <SecretInput
-                  label="Redis URL"
-                  name="redisUrl"
-                  configured={initial.fullConfigured}
-                />
-                <label>
-                  MinIO 地址
-                  <Input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
-                </label>
-                <SecretInput
-                  label="MinIO Access Key"
-                  name="minioAccessKey"
-                  configured={initial.fullConfigured}
-                />
-                <SecretInput
-                  label="MinIO Secret Key"
-                  name="minioSecretKey"
-                  configured={initial.fullConfigured}
-                />
-                <label>
-                  MinIO Bucket
-                  <Input name="minioBucket" placeholder="autoforge-objects" />
-                </label>
-                <label>
-                  MinIO Region
-                  <Input name="minioRegion" placeholder="us-east-1" />
-                </label>
-              </div>
+              <PlatformInfrastructureFields
+                configured={initial.fullConfigured}
+                usage="settings"
+                disabled={!canManage || pending}
+                checking={checkingCount > 0}
+                onCheckingChange={(checking) =>
+                  setCheckingCount((count) => count + (checking ? 1 : -1))
+                }
+              />
             )}
           </Card>
         ) : null}
@@ -547,7 +518,7 @@ export function PlatformSettings({
           <span role="status">{draft.dirty ? "有未保存的修改" : "配置已保存"}</span>
           <Button
             className={cn("primary-button", uiPatterns["primary-button"])}
-            disabled={pending}
+            disabled={checkingCount > 0 || pending}
             type="submit"
           >
             <Save size={16} aria-hidden="true" /> {pending ? "正在保存…" : "保存平台配置"}
@@ -582,52 +553,6 @@ function NumberInput({
       {description ? <small>{description}</small> : null}
     </label>
   );
-}
-
-function SecretInput({
-  label,
-  name,
-  configured,
-}: {
-  label: string;
-  name: string;
-  configured: boolean;
-}) {
-  return (
-    <label>
-      {label}
-      <Input
-        autoComplete="off"
-        name={name}
-        placeholder={configured ? "留空以保留现有值" : "首次配置必填"}
-        type="password"
-      />
-    </label>
-  );
-}
-
-function fullConfiguration(form: FormData): Record<string, string | string[]> {
-  const fields = [
-    "natsToken",
-    "databaseUrl",
-    "redisUrl",
-    "minioEndpoint",
-    "minioAccessKey",
-    "minioSecretKey",
-    "minioBucket",
-    "minioRegion",
-  ] as const;
-  const values: Record<string, string | string[]> = {};
-  for (const field of fields) {
-    const value = stringValue(form, field);
-    if (value) values[field] = value;
-  }
-  const natsServers = stringValue(form, "natsServers")
-    .split(/[\n,]/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (natsServers.length > 0) values.natsServers = natsServers;
-  return values;
 }
 
 function stringValue(form: FormData, name: string): string {

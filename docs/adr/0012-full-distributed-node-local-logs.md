@@ -1,5 +1,7 @@
 # ADR 0012：Full 分布式部署与节点本地日志
 
+本地写入决策已由 [ADR 0017](./0017-full-postgresql-log-writes-only.md) 取代：Full 仅保留历史本地日志读取，新增执行日志写 PostgreSQL。
+
 - 状态：已接受，首版实现
 - 日期：2026-09-05
 

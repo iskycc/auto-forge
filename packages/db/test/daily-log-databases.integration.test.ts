@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Pool } from "pg";
@@ -11,6 +11,7 @@ import { createPostgresDatabase, type PostgresDatabaseHandle } from "../src/post
 import { PostgresLogDatabaseRepository } from "../src/postgres-log-databases";
 import { PostgresRoutedAttemptLogStore } from "../src/postgres-routed-attempt-logs";
 import { createAttemptLogStore } from "../src/attempt-log-store";
+import { PostgresLogWriteAdmission } from "../src/full-log-write-policy";
 const url = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const beforeMidnight = "2026-10-27T15:59:59.000Z",
   afterMidnight = "2026-10-27T16:00:00.000Z";
@@ -115,11 +116,53 @@ describe.skipIf(!url)("daily PostgreSQL logs", () => {
     );
     expect(await registry.settings()).toEqual(current);
     expect((await service.list()).items).toHaveLength(1);
-    await service.select({ databaseId: null, revision: current.revision });
+    await expect(
+      service.select({ databaseId: null, revision: current.revision }),
+    ).rejects.toMatchObject({ code: "FULL_LOCAL_LOG_WRITE_DISABLED" });
+    await service.select({ databaseId: serverId, revision: current.revision });
     await registry.initializeDaily(server, randomUUID(), afterMidnight);
     const deselected = await registry.settings();
-    expect(deselected.activeDatabaseId).toBeNull();
+    expect(deselected.activeDatabaseId).toBe(serverId);
     await service.select({ databaseId: serverId, revision: deselected.revision });
+  });
+  it("rejects missing Full write configuration without creating SQLite files or claiming a route", async () => {
+    const admission = new PostgresLogWriteAdmission(db);
+    await admission.requireWriteTarget();
+    const subject = await target();
+    const before = await readdir(directory);
+    await db.pool.query("UPDATE log_database_settings SET active_database_id=NULL WHERE id=1");
+    try {
+      await expect(admission.requireWriteTarget()).rejects.toMatchObject({
+        code: "LOG_DAILY_SERVER_REQUIRED",
+      });
+      await expect(
+        logs.appendChunks({
+          ...subject,
+          receivedAt: beforeMidnight,
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 0,
+              content: "must not be stored",
+              recordedAt: beforeMidnight,
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "FULL_LOCAL_LOG_WRITE_DISABLED" });
+      expect(await readdir(directory)).toEqual(before);
+      expect(
+        (
+          await db.pool.query("SELECT 1 FROM run_batch_log_storage WHERE batch_id=$1", [
+            subject.batchId,
+          ])
+        ).rowCount,
+      ).toBe(0);
+    } finally {
+      await db.pool.query("UPDATE log_database_settings SET active_database_id=$1 WHERE id=1", [
+        serverId,
+      ]);
+    }
+    await admission.requireWriteTarget();
   });
   it("creates separate Beijing daily databases, joins cross-midnight streams and deduplicates retries without early acknowledgement", async () => {
     const subject = await target();

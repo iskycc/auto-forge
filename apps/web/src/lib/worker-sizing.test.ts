@@ -41,7 +41,7 @@ describe("work thread lane sizing", () => {
       expect(medium[uploadRole]).toBeGreaterThanOrEqual(small[uploadRole]);
       expect(large[uploadRole]).toBeGreaterThan(medium[uploadRole]);
       expect(large.snapshotLanes).toBeGreaterThan(1);
-      expect(large.workerHeapMb).toBeGreaterThan(256);
+      expect(large.maintenanceWorkerHeapMb).toBeGreaterThan(512);
       expect(large.schedulingLanes).toBeLessThanOrEqual(10);
       const count =
         2 +
@@ -52,7 +52,29 @@ describe("work thread lane sizing", () => {
         large.logWriteLanes +
         large.snapshotLanes +
         large.maintenanceLanes;
-      expect(count * large.workerHeapMb).toBeLessThanOrEqual(32 * 1024 * 0.4);
+      expect(
+        (count - large.maintenanceLanes) * large.workerHeapMb +
+          large.maintenanceLanes * large.maintenanceWorkerHeapMb,
+      ).toBeLessThanOrEqual(32 * 1024 * 0.4);
+    },
+  );
+  it.each(["lite", "full"] as const)(
+    "reserves a larger import heap inside the shared budget in %s on a 4 GiB host",
+    (mode) => {
+      const plan = webResourcePlan({ cpuCapacity: 4, memoryCapacityBytes: 4 * 1024 ** 3 }, mode);
+      const ordinaryLanes =
+        2 +
+        plan.schedulingLanes +
+        plan.controlLanes +
+        plan.uploadLanes +
+        plan.logReadLanes +
+        plan.logWriteLanes +
+        plan.snapshotLanes;
+      expect(plan.maintenanceWorkerHeapMb).toBeGreaterThanOrEqual(512);
+      expect(plan.workerHeapMb).toBeGreaterThanOrEqual(128);
+      expect(
+        ordinaryLanes * plan.workerHeapMb + plan.maintenanceLanes * plan.maintenanceWorkerHeapMb,
+      ).toBeLessThanOrEqual(4 * 1024 * 0.4);
     },
   );
   it("keeps one CPU for the Web thread and uses multiple bounded lanes on a 16U host", () => {

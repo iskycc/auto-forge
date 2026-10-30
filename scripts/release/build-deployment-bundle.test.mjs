@@ -108,6 +108,10 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       await readFile(resolve(packageDirectory, "full-bind/three-hosts/README.md"), "utf8"),
       /\]\(\.\.\/\.\.\/fast-deploy\/README\.md\)/u,
     );
+    assert.match(
+      await readFile(resolve(packageDirectory, "full-bind/log-postgres/README.md"), "utf8"),
+      /\]\(\.\.\/\.\.\/fast-deploy\/log-postgres\/README\.md\)/u,
+    );
     for (const template of [
       "distributed/platform/docker-compose.yml",
       "distributed/infrastructure/docker-compose.yml",

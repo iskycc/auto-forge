@@ -212,28 +212,31 @@ describe.skipIf(!connectionString)("independent PostgreSQL log database routing"
     expect((await logs.batchStoreStats([target.batchId])).get(target.batchId)).toBe(10);
   });
 
-  it("retains old local logs when PostgreSQL writing is enabled and keeps local in-flight batches local", async () => {
-    await select(null);
+  it("keeps historical local logs readable but rejects every further local write", async () => {
     const target = await batch();
-    await logs.appendChunks(append(target, 0, "legacy"));
+    const local = createAttemptLogStore(directory);
+    try {
+      await local.appendChunks(append(target, 0, "legacy"));
+    } finally {
+      local.close();
+    }
     await database.pool.query("UPDATE run_batches SET attempt_logs_path=$2 WHERE id=$1", [
       target.batchId,
       logs.relativeStorePath(target.batchId),
     ]);
-    await select(secondId);
-    await logs.appendChunks(append(target, 1, "local continuation"));
+    await database.pool.query(
+      "UPDATE run_batch_log_storage SET database_id=NULL WHERE batch_id=$1",
+      [target.batchId],
+    );
+    await expect(registry.select(null, (await registry.settings()).revision)).rejects.toMatchObject(
+      { code: "FULL_LOCAL_LOG_WRITE_DISABLED" },
+    );
+    await expect(logs.appendChunks(append(target, 1, "must not be stored"))).rejects.toMatchObject({
+      code: "FULL_LOCAL_LOG_WRITE_DISABLED",
+    });
     expect((await logs.listChunks(read(target))).items.map((item) => item.content)).toEqual([
       "legacy",
-      "local continuation",
     ]);
-    expect(
-      (
-        await database.pool.query(
-          "SELECT database_id FROM run_batch_log_storage WHERE batch_id=$1",
-          [target.batchId],
-        )
-      ).rows[0].database_id,
-    ).toBeNull();
   });
 
   it("reuses a registered identity and rejects business databases, stale switches, unavailable databases and wrong identities without changing bindings", async () => {

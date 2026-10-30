@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Alert, Card, Tag, Typography } from "antd";
+import Link from "next/link";
 import { Database, HardDrive, Network, Server, Zap } from "lucide-react";
 import {
   platformInfrastructureCheckResultSchema,
@@ -87,20 +88,24 @@ const definitions: Record<
 
 export function PlatformInfrastructureFields({
   configured,
-  checking,
   onCheckingChange,
+  usage = "initialization",
+  disabled = false,
 }: {
+  usage?: "initialization" | "settings";
+  disabled?: boolean;
   configured: boolean;
   checking: boolean;
   onCheckingChange: (pending: boolean) => void;
 }) {
-  const [logsEnabled, setLogsEnabled] = useState(!configured);
   return (
     <div className="grid min-w-0 gap-4 border-t border-border pt-4">
       <div className="grid gap-1">
-        <Typography.Title level={5} className="!m-0">
-          Full 基础设施
-        </Typography.Title>
+        {usage === "initialization" ? (
+          <Typography.Title level={5} className="!m-0">
+            Full 基础设施
+          </Typography.Title>
+        ) : null}
         <Typography.Text type="secondary">
           直接填写连接信息；检查从平台所在主机发起，尚未保存的配置也可检查。
         </Typography.Text>
@@ -111,52 +116,58 @@ export function PlatformInfrastructureFields({
         ) : null}
       </div>
       <InfrastructureCard
+        usage={usage}
+        disabled={disabled}
         component="postgres"
         configured={configured}
         onCheckingChange={onCheckingChange}
       />
-      <div className="grid gap-3">
-        <label>
-          <span>日志存储</span>
-          <Select
-            name="logs.enabled"
-            disabled={checking}
-            value={String(logsEnabled)}
-            onChange={(event) => setLogsEnabled(event.target.value === "true")}
-          >
-            <option value="true">独立 PostgreSQL 日志服务（推荐）</option>
-            <option value="false">{configured ? "保留现有日志存储配置" : "本地日志存储"}</option>
-          </Select>
-        </label>
-        {logsEnabled ? (
-          <InfrastructureCard
-            component="logs"
-            configured={false}
-            onCheckingChange={onCheckingChange}
-          />
-        ) : (
-          <Alert
-            type="info"
-            title={
-              configured
-                ? "现有日志库配置保持不变。"
-                : "日志暂存平台数据目录，可在平台设置 → 日志数据库中接入独立日志服务器。"
-            }
-            showIcon
-          />
-        )}
-      </div>
+      {usage === "initialization" ? (
+        <InfrastructureCard
+          component="logs"
+          configured={false}
+          usage={usage}
+          disabled={disabled}
+          onCheckingChange={onCheckingChange}
+        />
+      ) : (
+        <Card
+          size="small"
+          title={
+            <span className="inline-flex items-center gap-2">
+              <HardDrive size={17} />
+              PostgreSQL 日志库
+            </span>
+          }
+        >
+          <div className="grid gap-2">
+            <Typography.Text>
+              Full 执行日志必须写入独立 PostgreSQL 日志服务器，不支持本地 SQLite 写入。
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              日志服务器的连接、检查与写入库切换在同一入口管理，修改实时生效，历史日志保持原路由。
+            </Typography.Text>
+            <Link href="/settings/platform?section=logs">管理日志数据库</Link>
+          </div>
+        </Card>
+      )}
       <InfrastructureCard
+        usage={usage}
+        disabled={disabled}
         component="redis"
         configured={configured}
         onCheckingChange={onCheckingChange}
       />
       <InfrastructureCard
+        usage={usage}
+        disabled={disabled}
         component="nats"
         configured={configured}
         onCheckingChange={onCheckingChange}
       />
       <InfrastructureCard
+        usage={usage}
+        disabled={disabled}
         component="minio"
         configured={configured}
         onCheckingChange={onCheckingChange}
@@ -169,7 +180,11 @@ function InfrastructureCard({
   component,
   configured,
   onCheckingChange,
+  usage,
+  disabled,
 }: {
+  usage: "initialization" | "settings";
+  disabled: boolean;
   component: PlatformInfrastructureComponent;
   configured: boolean;
   onCheckingChange: (pending: boolean) => void;
@@ -187,17 +202,23 @@ function InfrastructureCard({
     let checkStarted = false;
     try {
       const bootstrapToken = String(form.get("bootstrapToken") ?? "");
-      if (bootstrapToken.length < 32) throw new Error("请先填写页面上方的平台配置引导令牌。");
+      if (usage === "initialization" && bootstrapToken.length < 32)
+        throw new Error("请先填写页面上方的平台配置引导令牌。");
       const target = infrastructureTargetFromForm(form, component);
       setPending(true);
       onCheckingChange(true);
       checkStarted = true;
-      const response = await fetch("/api/v1/auth/setup-platform/check", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bootstrapToken, target }),
-        signal: AbortSignal.timeout(15000),
-      });
+      const response = await fetch(
+        usage === "initialization"
+          ? "/api/v1/auth/setup-platform/check"
+          : "/api/v1/settings/platform/check",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(usage === "initialization" ? { bootstrapToken, target } : target),
+          signal: AbortSignal.timeout(15000),
+        },
+      );
       const apiError = await readApiError(response, "连接检查失败。");
       if (apiError) throw apiError;
       setResult(platformInfrastructureCheckResultSchema.parse(await response.json()));
@@ -235,8 +256,8 @@ function InfrastructureCard({
       >
         <Typography.Text type="secondary">{definition.description}</Typography.Text>
         <fieldset
-          disabled={pending}
-          className="m-0 grid min-w-0 grid-cols-2 gap-3 border-0 p-0 max-[1121px]:grid-cols-1"
+          disabled={pending || disabled}
+          className="m-0 grid min-w-0 grid-cols-2 gap-3 border-0 p-0 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 [&_label]:text-xs [&_label]:font-medium max-[1121px]:grid-cols-1"
         >
           {definition.fields.map((field) => (
             <label key={field.key}>
@@ -270,13 +291,17 @@ function InfrastructureCard({
               {component === "postgres" || component === "logs" ? "SSL 模式" : "加密连接"}
             </span>
             {component === "postgres" || component === "logs" ? (
-              <Select name={`${component}.sslMode`} defaultValue="disable" disabled={pending}>
+              <Select
+                name={`${component}.sslMode`}
+                defaultValue="disable"
+                disabled={pending || disabled}
+              >
                 <option value="disable">不启用 SSL</option>
                 <option value="require">SSL 加密（不验证证书）</option>
                 <option value="verify-full">SSL 加密并验证证书</option>
               </Select>
             ) : (
-              <Select name={`${component}.tls`} defaultValue="false" disabled={pending}>
+              <Select name={`${component}.tls`} defaultValue="false" disabled={pending || disabled}>
                 <option value="false">不启用 TLS</option>
                 <option value="true">启用 TLS</option>
               </Select>
@@ -287,7 +312,7 @@ function InfrastructureCard({
           <Button
             type="button"
             variant="neutral"
-            disabled={pending}
+            disabled={pending || disabled}
             onClick={(event) => void check(event.currentTarget)}
             aria-label={`检查${infrastructureLabels[component]}连接`}
           >

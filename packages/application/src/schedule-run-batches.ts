@@ -177,6 +177,7 @@ export class RunBatchSchedulingService {
     private readonly caseExecutionTimeoutMs = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS * 1_000,
     private readonly artifactCollectionEnabled: () => boolean = () => true,
     private readonly readSchedulingConfiguration?: () => LiveSchedulingConfiguration,
+    private readonly logWriteAdmission?: import("./ports").ExecutionLogWriteAdmission,
   ) {}
 
   private currentSchedulingConfiguration() {
@@ -204,6 +205,7 @@ export class RunBatchSchedulingService {
     requestedBy?: RunBatch["requestedBy"],
     publicExecution?: PublicSuiteExecutionContext,
   ): Promise<RunBatch> {
+    await this.logWriteAdmission?.requireWriteTarget();
     const context = publicExecution
       ? publicSuiteExecutionContextSchema.parse(publicExecution)
       : undefined;
@@ -596,6 +598,7 @@ export class RunBatchSchedulingService {
       requestedBy?: RunBatch["requestedBy"];
     } = {},
   ): Promise<RunBatch> {
+    await this.logWriteAdmission?.requireWriteTarget();
     const { ddtCase, executionScope, ddtDebug, requestedBy } = context;
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
@@ -1042,6 +1045,7 @@ export class RunBatchSchedulingService {
     }>;
     adapterEnvironmentAddresses?: string[];
   }): Promise<RunBatch> {
+    await this.logWriteAdmission?.requireWriteTarget();
     const createdAt = this.clock.now().toISOString();
     const batchId = this.ids.next();
     const runs = input.selectedRuns.map(({ run }) => ({ ...run, id: this.ids.next() }));

@@ -2200,6 +2200,10 @@ export type SingleCaseExecutionEntry = {
     | null;
 };
 
+export interface ExecutionLogWriteAdmission {
+  requireWriteTarget(): Promise<void>;
+}
+
 export interface RunBatchRepository {
   readConcurrencySnapshot(
     batchId: string,

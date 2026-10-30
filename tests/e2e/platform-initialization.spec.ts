@@ -163,11 +163,8 @@ test("initialization guides Full connections, isolates logs and rejects oversize
         animations: "disabled",
       });
     }
-    // Switching log storage removes only its own controls; other component values survive.
-    await page.locator('select[name="logs.enabled"]').selectOption("false", { force: true });
-    await expect(page.locator('[data-component="logs"]')).toHaveCount(0);
-    await expect(page.locator('input[name="postgres.host"]')).toHaveValue(fields["postgres.host"]!);
-    await page.locator('select[name="logs.enabled"]').selectOption("true", { force: true });
+    await expect(page.locator('select[name="logs.enabled"]')).toHaveCount(0);
+    await expect(page.getByText("本地日志存储", { exact: true })).toHaveCount(0);
     for (const mode of ["light", "dark"]) {
       await context.addCookies([{ name: "autoforge-color-mode", value: mode, url: origin }]);
       for (const width of [1024, 1536]) {
@@ -266,6 +263,78 @@ test("initialization guides Full connections, isolates logs and rejects oversize
       expect(
         registry.items.find((item) => item.id === registry.activeDatabaseId)?.storageMode,
       ).toBe("daily");
+      const originalFull = store.read().full!;
+      await page.goto(`${origin}/settings/platform?section=configuration`);
+      await expect(
+        page.locator(
+          'textarea[name="natsServers"], input[name="databaseUrl"], input[name="redisUrl"]',
+        ),
+      ).toHaveCount(0);
+      for (const component of ["postgres", "redis", "nats", "minio"]) {
+        const card = page.locator(`[data-component="${component}"]`);
+        for (const [name, value] of Object.entries(fields).filter(([name]) =>
+          name.startsWith(component + "."),
+        ))
+          await card.locator(`input[name="${name}"]`).fill(value);
+        await card.getByRole("button", { name: /^检查/ }).click();
+        await expect(card.getByRole("alert")).toContainText("连接成功");
+      }
+      for (const mode of ["light", "dark"]) {
+        await context.addCookies([{ name: "autoforge-color-mode", value: mode, url: origin }]);
+        for (const width of [1024, 1536]) {
+          await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          await page.reload();
+          await expectUiIntegrity(page);
+          await page.locator("#platform-infrastructure").screenshot({
+            path: testInfo.outputPath(`full-settings-${mode}-${width}.png`),
+            animations: "disabled",
+          });
+          await page.locator('[data-component="postgres"]').screenshot({
+            path: testInfo.outputPath(`full-settings-postgres-${mode}-${width}.png`),
+            animations: "disabled",
+          });
+          await expect(page.locator('input[name="redis.password"]')).toHaveValue("");
+        }
+      }
+      const redis = page.locator('[data-component="redis"]');
+      for (const [name, value] of Object.entries(fields).filter(([name]) =>
+        name.startsWith("redis."),
+      ))
+        await redis.locator(`input[name="${name}"]`).fill(name === "redis.database" ? "1" : value);
+      const savedSettings = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/settings/platform") &&
+          response.request().method() === "PATCH",
+      );
+      await page.getByRole("button", { name: /保存平台配置/ }).click();
+      const settingsResponse = await savedSettings;
+      expect(settingsResponse.status()).toBe(200);
+      expect(JSON.stringify(await settingsResponse.json())).not.toContain(fields["redis.password"]);
+      expect(store.read().full?.databaseUrl).toBe(originalFull.databaseUrl);
+      expect(store.read().full?.minio).toEqual(originalFull.minio);
+      expect(store.read().full?.logServer).toEqual(originalFull.logServer);
+      expect(new URL(store.read().full!.redisUrl).pathname).toBe("/1");
+      await page.goto(`${origin}/settings/platform?section=logs`);
+      await expect(page.getByRole("button", { name: "切换为本地写入" })).toHaveCount(0);
+      const forbiddenLocal = await context.request.put(
+        `${origin}/api/v1/settings/log-databases/active`,
+        { headers: { origin }, data: { databaseId: null, revision: 1 } },
+      );
+      expect(forbiddenLocal.status()).toBe(409);
+      expect((await forbiddenLocal.json()).error.code).toBe("FULL_LOCAL_LOG_WRITE_DISABLED");
+      for (const mode of ["light", "dark"]) {
+        await context.addCookies([{ name: "autoforge-color-mode", value: mode, url: origin }]);
+        for (const width of [1024, 1536]) {
+          await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+          await page.reload();
+          await expectUiIntegrity(page);
+          await page.screenshot({
+            path: testInfo.outputPath(`full-log-policy-${mode}-${width}.png`),
+            fullPage: true,
+            animations: "disabled",
+          });
+        }
+      }
       // A consumed bootstrap token must never remain a general-purpose connection probe.
       const rejected = await context.request.post(`${origin}/api/v1/auth/setup-platform/check`, {
         headers: { origin },
@@ -275,6 +344,25 @@ test("initialization guides Full connections, isolates logs and rejects oversize
         },
       });
       expect(rejected.status()).toBe(403);
+      // Simulate an older Full installation that has not selected a PostgreSQL log target.
+      await fullDatabase!.setLogWriteTarget(null);
+      try {
+        await context.addCookies([{ name: "autoforge-color-mode", value: "light", url: origin }]);
+        await page.setViewportSize({ width: 1024, height: 768 });
+        await page.goto(`${origin}/settings/platform?section=logs`);
+        await expect(
+          page.getByRole("alert").filter({ hasText: "请添加并设定 PostgreSQL 日志服务器" }),
+        ).toBeVisible();
+        await expect(page.getByText("未配置 PostgreSQL 写入库", { exact: false })).toBeVisible();
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath("full-log-unconfigured-1024.png"),
+          fullPage: true,
+          animations: "disabled",
+        });
+      } finally {
+        await fullDatabase!.setLogWriteTarget(registry.activeDatabaseId);
+      }
     }
     expect(errors).toEqual([]);
     await testInfo.attach("paste-timings", {
@@ -380,6 +468,20 @@ async function createInitializationDatabase() {
   url.pathname = `/${name}`;
   return {
     url: url.toString(),
+    setLogWriteTarget: async (databaseId: string | null) => {
+      const business = new Pool({
+        connectionString: url.toString(),
+        max: 1,
+        connectionTimeoutMillis: 3000,
+      });
+      try {
+        await business.query("UPDATE log_database_settings SET active_database_id=$1 WHERE id=1", [
+          databaseId,
+        ]);
+      } finally {
+        await business.end();
+      }
+    },
     remove: async () => {
       try {
         await admin.query(`DROP DATABASE "${name}" WITH (FORCE)`);

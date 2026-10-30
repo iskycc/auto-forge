@@ -54,6 +54,10 @@ test("log database settings isolate Full payloads, switch live and preserve hist
   const oldSetting = (await (await page.request.get("/api/v1/settings/log-databases")).json()) as {
     activeDatabaseId: string | null;
   };
+  if (!oldSetting.activeDatabaseId)
+    throw new Error(
+      "Full acceptance requires an active PostgreSQL log server before execution scenarios.",
+    );
   async function choose(id: string | null) {
     const settings = (await (await page.request.get("/api/v1/settings/log-databases")).json()) as {
       revision: number;

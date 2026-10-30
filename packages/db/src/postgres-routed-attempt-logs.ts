@@ -8,6 +8,7 @@ import { PostgresLogDatabaseRepository } from "./postgres-log-databases";
 import { appendPostgresLogChunks, listPostgresLogChunks } from "./postgres-attempt-log-payload";
 
 import { PostgresDailyAttemptLogs } from "./postgres-daily-attempt-logs";
+import { fullLocalLogWriteDisabled } from "./full-log-write-policy";
 
 type Binding = { database_id: string | null; stored_bytes: string; storage_mode?: string };
 type Queryable = Pick<PoolClient, "query">;
@@ -25,7 +26,7 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
 
   async appendChunks(input: Parameters<AttemptLogStore["appendChunks"]>[0]) {
     const binding = await this.claim(input.batchId);
-    if (!binding.database_id) return this.legacy.appendChunks(input);
+    if (!binding.database_id) throw fullLocalLogWriteDisabled();
     const persisted =
       binding.storage_mode === "daily"
         ? { watermarks: await this.daily.append(binding.database_id, input), storedBytes: 0 }
@@ -110,8 +111,6 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
         input.recordedAt,
       ],
     );
-    if (!client && !(await this.find(input.batchId))?.database_id)
-      await this.legacy.recordWatermarks(input);
   }
 
   async removeBatchPayload(
@@ -258,6 +257,7 @@ export class PostgresRoutedAttemptLogStore implements AsyncAttemptLogStore {
         batch.rows[0]!.attempt_logs_path || owner.rowCount
           ? null
           : settings.rows[0]!.active_database_id;
+      if (!databaseId) throw fullLocalLogWriteDisabled();
       if (databaseId) {
         const selected = await client.query<{ storage_mode: string }>(
           "SELECT storage_mode FROM log_databases WHERE id=$1",

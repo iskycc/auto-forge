@@ -1,4 +1,5 @@
 export * from "./attempt-log-store";
+export { readOnlyLegacyAttemptLogs, PostgresLogWriteAdmission } from "./full-log-write-policy";
 export * from "./postgres-database";
 export * from "./postgres-platform-nodes";
 export * from "./node-attempt-log-store";

@@ -53,6 +53,7 @@ describe("API error mapping", () => {
     "PLATFORM_LOG_TIMEOUT",
     "PLATFORM_LOG_UNAVAILABLE",
     "PLATFORM_BUSY",
+    "FILE_PARSE_MEMORY_LIMIT",
   ])("makes %s retryable", (code) => {
     expect(mapApiError(new DomainError(code, "请稍后重试。"), "overload")).toMatchObject({
       status: 503,

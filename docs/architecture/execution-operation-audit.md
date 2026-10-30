@@ -622,3 +622,13 @@ Full 引导页按主库、日志库、Redis、NATS、MinIO 分区录入主机、
 87 项定向检查、真实五组件 HTTP 检查及生产 Full 初始化 Playwright 闭环通过；实际查看 1024×768／1536×960 深浅色带数据截图，无新增溢出或变形。格式、许可证、受影响类型／ESLint、Web／worker 构建及 19 行 E2E 矩阵通过。验证命令、结果与未覆盖边界保存在 `/var/tmp/autoforge-setup-paste-20261030/verification.md`，填写指南随部署包交付。
 
 按维护者要求，v1.21.7 采用最快发布路径：推送前临时暂停其他工作流，仅从本次提交的不可变 tag 触发 Release；保留原生 amd64／arm64 构建、内置资源检查、Jenkins 插件、部署包、SBOM、签名和完整资产发布，结束后恢复原有工作流状态。未运行的标准流水线不记为通过。发布结果与签名／清单核对证据保存于 `/var/tmp/autoforge-release-1.21.7/`。
+
+## 2026-10-30：Full 日志写入策略、DDT 预检内存与 v1.21.8 快速发布
+
+Full 新执行在创建前要求按日 PostgreSQL 日志写入目标，组合根中的历史本地适配器仅允许读取和归档，日志路由禁止新增或追加 SQLite。无目标时允许启动并补齐配置，但拒绝创建执行；升级前必须排空旧本地在途批次。基础设置复用引导页分区字段与连接检查，检查要求登录、同源和 `settings.manage` 权限。独立日志库快速部署文件及运维说明随部署包提供。
+
+DDT 预检在 4 CPU／4 GiB 资源规划下以 8100 行、48 列富文本工作簿复现工作线程内存上限错误。维护线程改用加权堆预算，仍纳入原有工作线程总预算，解析不保留无用 HTML，取值完成后释放 Sheet；不截断行或字段。Full／Lite 的真实线程和预检编排逐项比对全部单元格，异常提示包含文件名并支持线程退出后重建。
+
+Full 策略和设置的 156 项定向检查、生产 Full Playwright 及 1024×768／1536×960 浅深色截图审查通过，证据见 `/var/tmp/autoforge-full-log-policy-20261030/verification.md`。DDT 的 109 项回归覆盖真实 SQLite／PostgreSQL、重复列、用户旅程、格式取值、冷／热启动重跑及租约续期，类型、Lint、格式和服务端／线程构建通过，证据见 `/var/tmp/autoforge-ddt-import-memory-20261030/verification.md`。本次没有新增 SQL 迁移、依赖或 Runner 协议变化。
+
+按维护者要求仅运行 Release；推送前临时暂停其他 workflow，原生 amd64／arm64 镜像、内置资源、Jenkins 插件、部署包、SBOM、清单及签名检查继续保留，完成后恢复原状态。未运行的标准远端验收不记为通过，发布监控和最终资产核对保存于 `/var/tmp/autoforge-release-1.21.8/`。

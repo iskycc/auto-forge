@@ -1,7 +1,7 @@
 import { LogIoPool } from "../../../apps/web/server/log-io-pool";
 import { isolatedAttemptLogs } from "../../../apps/web/src/lib/isolated-attempt-logs";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, rename, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, rename, writeFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createAttemptLogStore } from "../src/attempt-log-store";
 import { createPostgresDatabase } from "../src/postgres-database";
 import { NodeAttemptLogStore } from "../src/node-attempt-log-store";
+import { readOnlyLegacyAttemptLogs } from "../src/full-log-write-policy";
 import { PostgresPlatformNodeRepository } from "../src/postgres-platform-nodes";
 import type { NodeLogTransport } from "../src/platform-node-transport";
 
@@ -29,6 +30,54 @@ describe.skipIf(!connectionString)("node-owned logs across isolated Full nodes",
       await handle.close();
     }
   }, 30_000);
+
+  it("keeps both nodes' historical reads while rejecting local and peer writes in read-only compatibility mode", async () => {
+    const fixture = await createFixture("read-only");
+    const { nodes, directories, batchId, attemptIds } = fixture;
+    const upload = {
+      batchId,
+      attemptId: attemptIds[0],
+      receivedAt: now,
+      chunks: [
+        { stream: "stdout" as const, sequence: 0, content: "historical log", recordedAt: now },
+      ],
+    };
+    try {
+      for (const node of nodes)
+        await expect(node.appendChunks(upload)).rejects.toMatchObject({
+          code: "FULL_LOCAL_LOG_WRITE_DISABLED",
+        });
+      for (const directory of directories) expect(await readdir(directory)).toEqual([]);
+      const historical = createAttemptLogStore(directories[0]);
+      try {
+        await historical.appendChunks(upload);
+      } finally {
+        historical.close();
+      }
+      await nodes[0].initialize(directories[0]);
+      for (const node of nodes) {
+        expect(
+          (
+            await node.listChunks({
+              batchId,
+              attemptId: attemptIds[0],
+              stream: "stdout",
+              afterSequence: -1,
+              limit: 10,
+            })
+          ).items.map((chunk) => chunk.content),
+        ).toEqual(["historical log"]);
+        await expect(
+          node.appendChunks({
+            ...upload,
+            chunks: [{ ...upload.chunks[0]!, sequence: 1, content: "must not be stored" }],
+          }),
+        ).rejects.toMatchObject({ code: "FULL_LOCAL_LOG_WRITE_DISABLED" });
+      }
+    } finally {
+      await fixture.dispose();
+    }
+  }, 15000);
 
   it("checks a saved peer address without creating or reading batch log files", async () => {
     const fixture = await createFixture();
@@ -262,7 +311,7 @@ describe.skipIf(!connectionString)("node-owned logs across isolated Full nodes",
   });
 });
 
-async function createFixture() {
+async function createFixture(access: "legacy" | "read-only" = "legacy") {
   const handle = createPostgresDatabase({
     connectionString: connectionString!,
     migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
@@ -332,10 +381,11 @@ async function createFixture() {
   );
   for (const [index, id] of nodeIds.entries()) {
     const directory = directories[index]!;
+    const local = isolatedAttemptLogs(directory, logPools[index]);
     const node = new NodeAttemptLogStore(
       handle,
       id,
-      isolatedAttemptLogs(directory, logPools[index]),
+      access === "read-only" ? readOnlyLegacyAttemptLogs(local) : local,
       transport,
       directory,
       { now: () => new Date(now) },

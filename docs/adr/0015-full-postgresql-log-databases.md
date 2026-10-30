@@ -1,6 +1,7 @@
 # ADR 0015：Full 独立 PostgreSQL 日志库与固定批次路由
 
 - 状态：已接受，已实现
+- 本地写入兼容已由 [ADR 0017](./0017-full-postgresql-log-writes-only.md) 收紧为仅历史读取；Full 新日志必须写 PostgreSQL。
 - 日期：2026-10-27
 - 补充 ADR 0012；原本地日志与节点路由继续用于历史批次及本地写入模式。
 

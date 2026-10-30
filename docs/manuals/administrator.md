@@ -7,6 +7,8 @@ AutoForge 只接受 `--data-dir` 启动参数。首次启动会创建权限为 `
 访问 `/setup` 选择 Lite 或填写 Full 内部基础设施地址，保存后重启，再用一次性令牌创建首位
 系统管理员。Lite 只使用 SQLite、本地对象目录、SQLite 队列和进程内工作器；Full 使用
 PostgreSQL、JetStream、MinIO 与 Redis，但领域/API/UI 语义相同。
+
+Full 执行日志必须配置独立、按日分库的 PostgreSQL 日志服务器；引导页不提供本地日志选项。已有部署可登录“平台设置 → 日志数据库”登记并设为写入库，未配置时拒绝创建新执行。历史 SQLite 日志仍可查看和归档，不能继续追加，升级前应排空旧本地批次。平台配置中的 Full 基础设施使用与引导页一致的主机、端口和认证分区，并提供需要管理权限的连接检查；日志服务器从该分区的直达入口统一管理。
 Full 模式可在 `config/platform.json` 的 `full.databasePoolMax`（默认 10，范围 1–100）
 调整 Web 主请求池、Web 调度线程池的总预算以及每个独立 worker 的连接池上限；高并发完成
 上报场景可按负载上调。容量规划按每个 Web 副本最多两份该预算、每个 worker 一份该预算计算，

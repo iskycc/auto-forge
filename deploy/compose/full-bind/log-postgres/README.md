@@ -1,8 +1,10 @@
 # Full 独立 PostgreSQL 日志库
 
-本组件是可选的独立日志 PostgreSQL 实例，使用 `autoforge_logs` 数据库与专用账号。
+本组件提供独立日志 PostgreSQL 实例与专用管理员账号，平台按日期自动创建日志数据库。
 业务 PostgreSQL 仍按 `postgres/` 模板部署，两个实例各自持久化、使用不同凭据。
 主库只记录日志库位置、确认水位及配置；日志正文写入此实例。
+
+Full 禁止新增和追加本地 SQLite 日志，执行前必须登记并选择按日 PostgreSQL 日志服务器。已有本地日志仅保留读取和归档。需要更直接的 amd64 部署时可使用 [fast-deploy 日志库](../../../../fast-deploy/log-postgres/README.md)。
 
 此功能从 AutoForge **v1.20.23** 起提供，平台 Web 与 worker 均需使用该版或更新的同一版本。
 

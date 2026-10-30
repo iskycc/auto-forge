@@ -67,6 +67,7 @@ import {
   SqliteReadModelSnapshotRepository,
   SqlitePlatformOperationsRepository,
   createAttemptLogStore,
+  readOnlyLegacyAttemptLogs,
   isolatedThreadLogCompression,
   SqliteCaseCatalogRepository,
   SqliteIdentityAccessRepository,
@@ -91,6 +92,7 @@ import {
   createPostgresClock,
   NodeAttemptLogStore,
   PostgresLogDatabaseRepository,
+  PostgresLogWriteAdmission,
   PostgresRoutedAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseCatalogRepository,
@@ -706,6 +708,7 @@ function schedulingService(): RunBatchSchedulingService {
       configuration.caseExecutionTimeoutSeconds * 1_000,
       () => platformConfigurationStore.read().limits.artifactCollectionEnabled,
       () => platformConfigurationStore.readScheduler(),
+      configuration.mode === "full" ? new PostgresLogWriteAdmission(postgresHandle()) : undefined,
     );
   }
   return scheduler;
@@ -808,10 +811,13 @@ function fullLogStore(): AttemptLogStore | PostgresRoutedAttemptLogStore {
 }
 
 function logStore(): AttemptLogStore {
-  attemptLogs ??= createAttemptLogStore(
-    configuration.attemptLogsDirectory,
-    isolatedThreadLogCompression,
-  );
+  if (!attemptLogs) {
+    const local = createAttemptLogStore(
+      configuration.attemptLogsDirectory,
+      isolatedThreadLogCompression,
+    );
+    attemptLogs = configuration.mode === "full" ? readOnlyLegacyAttemptLogs(local) : local;
+  }
   return attemptLogs;
 }
 

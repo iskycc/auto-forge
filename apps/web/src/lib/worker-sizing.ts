@@ -1,3 +1,8 @@
+const MINIMUM_WORKER_HEAP_MB = 128;
+const MAXIMUM_WORKER_HEAP_MB = 4096;
+const WORKER_MEMORY_SHARE = 0.4;
+const MAINTENANCE_HEAP_WEIGHT = 4;
+
 export type WebResourcePlan = {
   cpuCapacity: number;
   memoryCapacityBytes: number;
@@ -9,6 +14,7 @@ export type WebResourcePlan = {
   snapshotLanes: number;
   maintenanceLanes: number;
   workerHeapMb: number;
+  maintenanceWorkerHeapMb: number;
   foregroundCapacity: number;
 };
 
@@ -28,7 +34,8 @@ export function webResourcePlan(
     logWriteLanes: mode === "full" ? 1 : 0,
     snapshotLanes: 1,
     maintenanceLanes: 1,
-    workerHeapMb: 128,
+    workerHeapMb: MINIMUM_WORKER_HEAP_MB,
+    maintenanceWorkerHeapMb: MINIMUM_WORKER_HEAP_MB,
     foregroundCapacity: 2,
   };
   const roles =
@@ -56,7 +63,7 @@ export function webResourcePlan(
     minimumThreads,
     Math.min(
       minimumThreads + Math.max(0, Math.floor(resources.cpuCapacity) - 1) * 2,
-      Math.floor((memoryMb * 0.4) / 192),
+      Math.floor((memoryMb * WORKER_MEMORY_SHARE) / 192),
     ),
   );
   let totalThreads = minimumThreads;
@@ -67,8 +74,30 @@ export function webResourcePlan(
     plan[role]++;
     totalThreads++;
   }
-  // Leave 60% for Web, native buffers, SQLite page cache, other processes and the OS.
-  plan.workerHeapMb = Math.max(128, Math.min(4096, Math.floor((memoryMb * 0.4) / totalThreads)));
+  // Spreadsheet inflation, cell objects and parsed rows coexist during an import.
+  // Weight maintenance heaps instead of raising every thread's limit; the same
+  // 40% process budget still leaves room for Web, native buffers and the OS.
+  const ordinaryLanes = totalThreads - plan.maintenanceLanes;
+  const heapBudgetMb = Math.floor(memoryMb * WORKER_MEMORY_SHARE);
+  const maintenanceWeight = Math.max(
+    1,
+    Math.min(
+      MAINTENANCE_HEAP_WEIGHT,
+      (heapBudgetMb - ordinaryLanes * MINIMUM_WORKER_HEAP_MB) /
+        (plan.maintenanceLanes * MINIMUM_WORKER_HEAP_MB),
+    ),
+  );
+  plan.workerHeapMb = Math.max(
+    MINIMUM_WORKER_HEAP_MB,
+    Math.min(
+      MAXIMUM_WORKER_HEAP_MB,
+      Math.floor(heapBudgetMb / (ordinaryLanes + plan.maintenanceLanes * maintenanceWeight)),
+    ),
+  );
+  plan.maintenanceWorkerHeapMb = Math.min(
+    MAXIMUM_WORKER_HEAP_MB,
+    Math.floor(plan.workerHeapMb * maintenanceWeight),
+  );
   plan.foregroundCapacity = Math.max(
     2,
     (plan.schedulingLanes + plan.controlLanes + plan.uploadLanes + plan.logWriteLanes) * 2,
@@ -94,7 +123,7 @@ export function backgroundResourcePlan(
   const memoryMb = Math.floor(resources.memoryCapacityBytes / 1024 ** 2);
   const budget = Math.max(
     2,
-    Math.min(Math.floor(resources.cpuCapacity), Math.floor((memoryMb * 0.4) / 256)),
+    Math.min(Math.floor(resources.cpuCapacity), Math.floor((memoryMb * WORKER_MEMORY_SHARE) / 256)),
   );
   const snapshotLanes = Math.max(1, Math.floor(budget / 4));
   const maintenanceLanes = Math.max(
@@ -105,8 +134,11 @@ export function backgroundResourcePlan(
     snapshotLanes,
     maintenanceLanes,
     workerHeapMb: Math.max(
-      128,
-      Math.min(4096, Math.floor((memoryMb * 0.4) / (snapshotLanes + maintenanceLanes))),
+      MINIMUM_WORKER_HEAP_MB,
+      Math.min(
+        MAXIMUM_WORKER_HEAP_MB,
+        Math.floor((memoryMb * WORKER_MEMORY_SHARE) / (snapshotLanes + maintenanceLanes)),
+      ),
     ),
   };
 }
