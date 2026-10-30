@@ -76,6 +76,21 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
       0,
     );
   }
+
+  /** Seed an untouched registry once. Restarts must preserve later operator switches. */
+  async initializeDaily(
+    input: RegisterDailyLogServerInput,
+    id: string,
+    now: string,
+  ): Promise<void> {
+    const current = await this.settings();
+    if (current.revision !== 1 || current.activeDatabaseId !== null) return;
+    const registered = await this.registerDaily(id, input, now);
+    await this.database.pool.query(
+      "UPDATE log_database_settings SET active_database_id=$1,revision=revision+1 WHERE id=1 AND revision=1 AND active_database_id IS NULL",
+      [registered.id],
+    );
+  }
   async updateDailyConnection(
     id: string,
     input: RegisterDailyLogServerInput,

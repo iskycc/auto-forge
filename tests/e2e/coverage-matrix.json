@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-29",
+  "updatedAt": "2026-10-30",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -52,6 +52,7 @@
       "owner": "identity-rbac",
       "evidence": [
         "tests/e2e/identity-rbac.spec.ts",
+        "tests/e2e/platform-initialization.spec.ts",
         "tests/e2e/management-operations.spec.ts",
         "packages/db/test/project-rename.integration.test.ts"
       ],

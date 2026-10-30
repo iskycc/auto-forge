@@ -1,6 +1,10 @@
 import { Pool } from "pg";
 import { DomainError } from "@autoforge/domain";
-import { dailyLogDatabaseName, type RegisterDailyLogServerInput } from "@autoforge/contracts";
+import {
+  dailyLogDatabaseName,
+  infrastructureConnectionUrl,
+  type RegisterDailyLogServerInput,
+} from "@autoforge/contracts";
 import type { SecretCipherPort } from "@autoforge/application";
 import { runPostgresMigrations, type PostgresDatabaseHandle } from "./postgres-database";
 import { logDatabaseError } from "./postgres-log-database-errors";
@@ -403,13 +407,5 @@ export class PostgresDailyLogDatabases {
 }
 
 export function dailyServerConnectionUrl(input: RegisterDailyLogServerInput): string {
-  const url = new URL("postgresql://localhost");
-  url.hostname =
-    input.host.includes(":") && !input.host.startsWith("[") ? `[${input.host}]` : input.host;
-  url.port = String(input.port);
-  url.username = input.username;
-  url.password = input.password;
-  url.pathname = `/${input.maintenanceDatabase}`;
-  url.searchParams.set("sslmode", input.sslMode);
-  return url.toString();
+  return infrastructureConnectionUrl({ component: "logs", connection: input });
 }

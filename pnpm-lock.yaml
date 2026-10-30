@@ -392,6 +392,9 @@ importers:
 
   packages/platform-config:
     dependencies:
+      "@autoforge/contracts":
+        specifier: workspace:*
+        version: link:../contracts
       zod:
         specifier: 4.6.6
         version: 4.6.6

@@ -66,6 +66,10 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       /备份与恢复/,
     );
     assert.match(
+      await readFile(resolve(packageDirectory, "docs/manuals/platform-initialization.md"), "utf8"),
+      /日志库与主库分别填写/,
+    );
+    assert.match(
       await readFile(resolve(packageDirectory, "docs/architecture/ddt-management.md"), "utf8"),
       /DDT/,
     );

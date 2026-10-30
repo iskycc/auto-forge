@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,15 @@ import {
 } from "../src/platform-configuration";
 
 describe("platform configuration store", () => {
+  it("loads with native Node.js type stripping without a bundler or TypeScript loader", () => {
+    const moduleUrl = new URL("../src/platform-configuration.ts", import.meta.url).href;
+    const script = `import { PLATFORM_CONFIGURATION_SCHEMA_VERSION } from ${JSON.stringify(moduleUrl)}; process.stdout.write(String(PLATFORM_CONFIGURATION_SCHEMA_VERSION));`;
+    expect(
+      execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
+        encoding: "utf8",
+      }),
+    ).toBe("1");
+  });
   it("refreshes scheduler snapshots across stores without reparsing an unchanged file", () => {
     const directory = mkdtempSync(join(tmpdir(), "live-scheduler-"));
     const writer = new PlatformConfigurationStore(directory);

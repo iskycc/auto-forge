@@ -59,9 +59,20 @@ describe("platform configuration mapping", () => {
   it("preserves secrets when an administrator leaves credential fields blank", () => {
     const current = configuration({
       full: {
+        logServer: {
+          name: "独立日志",
+          host: "logs.internal",
+          port: 5433,
+          username: "postgres",
+          password: "private-log-password",
+          maintenanceDatabase: "postgres",
+          databasePrefix: "autoforge_logs",
+          sslMode: "disable",
+        },
         databaseUrl: "postgresql://autoforge:secret@postgres/autoforge",
         databasePoolMax: 10,
         natsServers: ["nats://nats:4222"],
+        natsToken: "previous-auth-token-20261030",
         redisUrl: "redis://redis:6379",
         minio: {
           endpoint: "http://minio:9000",
@@ -82,6 +93,19 @@ describe("platform configuration mapping", () => {
     });
 
     expect(merged.full).toEqual(current.full);
+    const cleared = mergePlatformConfiguration(current, {
+      revision: current.revision,
+      mode: "full",
+      web: current.web,
+      limits: current.limits,
+      scheduler: current.scheduler,
+      worker: current.worker,
+      full: { natsToken: null },
+    });
+    expect(cleared.full?.natsToken).toBeUndefined();
+    expect(
+      JSON.stringify(platformConfigurationView(merged, "/data/config/platform.json")),
+    ).not.toContain("private-log-password");
   });
 
   it("preserves the configured time zone for older v1 clients that omit it", () => {

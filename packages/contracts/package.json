@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./runtime-diagnostics": "./src/runtime-diagnostics.ts",
-    "./memory-admission": "./src/memory-admission.ts"
+    "./memory-admission": "./src/memory-admission.ts",
+    "./log-databases": "./src/log-databases.ts",
+    "./platform-infrastructure": "./src/platform-infrastructure.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

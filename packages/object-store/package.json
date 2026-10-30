@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./local": "./src/local.ts",
     "./minio": "./src/minio.ts",
+    "./minio-connection-check": "./src/minio-connection-check.ts",
     "./runtime-archive-cache": "./src/runtime-archive-cache.ts"
   },
   "scripts": {

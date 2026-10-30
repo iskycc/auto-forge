@@ -23,6 +23,7 @@ readonly -a deployment_documentation=(
   "docs/architecture/runtime-resource-priority.md"
   "docs/legal/runner-toolchain-notices.md"
   "docs/manuals/administrator.md"
+  "docs/manuals/platform-initialization.md"
   "docs/manuals/api-runner-protocol.md"
   "docs/manuals/runner-operations.md"
   "docs/manuals/user.md"

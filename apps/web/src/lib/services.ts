@@ -399,6 +399,8 @@ async function createPlatformServices() {
         join(config.migrationsFolder, "../log-postgresql"),
       );
       routedLogs = new PostgresRoutedAttemptLogStore(logRegistry, attemptLogs);
+      if (config.logServer)
+        await logRegistry.initializeDaily(config.logServer, uuidV7(), clock.now().toISOString());
       attemptLogs = routedLogs;
       const { LogDatabaseService } = await import("@autoforge/application");
       logDatabases = new LogDatabaseService(logRegistry, clock, { next: () => uuidV7() });
@@ -993,6 +995,8 @@ async function createPlatformServices() {
       ),
   });
   return {
+    infrastructureCheck: (await import("../../server/platform-infrastructure-check"))
+      .checkPlatformInfrastructure,
     runtimeArchiveCache: new RuntimeArchiveCache({
       dataDirectory: config.dataDirectory,
       now: () => clock.now().getTime(),

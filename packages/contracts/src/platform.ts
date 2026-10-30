@@ -3,8 +3,11 @@ import { z } from "zod";
 import { memoryAdmissionModeSchema } from "./memory-admission";
 
 import { DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM } from "./ddt";
+import { registerDailyLogServerSchema } from "./log-databases";
 
 export const DEFAULT_PLATFORM_TIME_ZONE = "Asia/Shanghai";
+export const PLATFORM_URL_MAXIMUM_LENGTH = 2_048;
+export const PLATFORM_DATABASE_URL_MAXIMUM_LENGTH = 4_096;
 
 function isSupportedTimeZone(value: string): boolean {
   try {
@@ -35,7 +38,7 @@ const schedulerConfigurationSchema = z.object({
 
 const platformHttpBaseUrlSchema = z
   .url()
-  .max(2_048)
+  .max(PLATFORM_URL_MAXIMUM_LENGTH)
   .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
     message: "访问地址必须使用 HTTP 或 HTTPS。",
   });
@@ -87,16 +90,17 @@ export const updatePlatformConfigurationInputSchema = z.object({
   }),
   full: z
     .object({
-      databaseUrl: z.string().trim().min(1).max(4_096).optional(),
+      databaseUrl: z.string().trim().min(1).max(PLATFORM_DATABASE_URL_MAXIMUM_LENGTH).optional(),
       natsServers: z.array(z.string().trim().min(1).max(1_024)).min(1).max(8).optional(),
-      natsToken: z.string().min(16).max(4096).optional(),
-      redisUrl: z.url().max(2_048).optional(),
-      minioEndpoint: z.url().max(2_048).optional(),
+      natsToken: z.string().min(16).max(4096).nullable().optional(),
+      redisUrl: z.url().max(PLATFORM_URL_MAXIMUM_LENGTH).optional(),
+      minioEndpoint: z.url().max(PLATFORM_URL_MAXIMUM_LENGTH).optional(),
       minioAccessKey: z.string().min(1).max(1_024).optional(),
       minioSecretKey: z.string().min(1).max(4_096).optional(),
       minioBucket: z.string().min(3).max(63).optional(),
       minioRegion: z.string().min(1).max(128).optional(),
       databasePoolMax: z.number().int().min(1).max(100).optional(),
+      logServer: registerDailyLogServerSchema.optional(),
     })
     .optional(),
 });

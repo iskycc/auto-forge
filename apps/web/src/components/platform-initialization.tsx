@@ -7,12 +7,16 @@ import { cn } from "@/lib/utils";
 
 import {
   initializePlatformConfigurationInputSchema,
+  PLATFORM_URL_MAXIMUM_LENGTH,
   type PlatformConfigurationView,
 } from "@autoforge/contracts";
 import { Boxes, Database, RotateCw, Server } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
+import { PlatformInitializationInput } from "./platform-initialization-input";
+import { PlatformInfrastructureFields } from "./platform-infrastructure-fields";
+import { fullConfigurationFromSetup } from "@/lib/platform-infrastructure-form";
 import { platformInitializationValidationMessage } from "@/lib/platform-initialization-validation";
 import { readApiError } from "@/lib/client-api";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
@@ -21,11 +25,13 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [mode, setMode] = useState(initial.mode);
   const [pending, setPending] = useState(false);
+  const [checkingCount, setCheckingCount] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending || checkingCount > 0) return;
     setPending(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -45,7 +51,9 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
           limits: initial.limits,
           scheduler: initial.scheduler,
           worker: initial.worker,
-          ...(mode === "full" ? { full: fullConfiguration(form) } : {}),
+          ...(mode === "full"
+            ? { full: fullConfigurationFromSetup(form, initial.fullConfigured) }
+            : {}),
         },
       });
       if (!parsed.success) {
@@ -156,7 +164,11 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
             <div className={cn("setup-mode-grid", platformInitializationStyles["setup-mode-grid"])}>
               <Button
                 aria-pressed={mode === "lite"}
-                className={"setup-mode-option"}
+                disabled={pending || checkingCount > 0}
+                className={cn(
+                  "setup-mode-option",
+                  platformInitializationStyles["setup-mode-option"],
+                )}
                 onClick={() => setMode("lite")}
                 type="button"
                 variant="ghost"
@@ -169,7 +181,11 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
               </Button>
               <Button
                 aria-pressed={mode === "full"}
-                className={"setup-mode-option"}
+                disabled={pending || checkingCount > 0}
+                className={cn(
+                  "setup-mode-option",
+                  platformInitializationStyles["setup-mode-option"],
+                )}
                 onClick={() => setMode("full")}
                 type="button"
                 variant="ghost"
@@ -197,29 +213,44 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
             </label>
             <label>
               <span>外部访问地址</span>
-              <Input
+              <PlatformInitializationInput
                 defaultValue={initial.web.publicBaseUrl ?? ""}
                 name="publicBaseUrl"
+                maxLength={PLATFORM_URL_MAXIMUM_LENGTH}
                 placeholder="https://autoforge.example.com"
-                type="url"
+                type="text"
+                inputMode="url"
               />
               <small>用于分享、导出和 Jenkins 链接；面向用户访问时建议使用 HTTPS。</small>
             </label>
             <label>
               <span>内部访问地址（Runner）</span>
-              <Input
+              <PlatformInitializationInput
                 defaultValue={initial.web.runnerBaseUrl ?? ""}
                 name="runnerBaseUrl"
+                maxLength={PLATFORM_URL_MAXIMUM_LENGTH}
                 placeholder="http://10.20.30.10:3000"
-                type="url"
+                type="text"
+                inputMode="url"
               />
               <small>Agent 安装使用此地址；留空时回退到外部访问地址。</small>
             </label>
           </div>
           {mode === "full" ? (
-            <FullInfrastructureFields configured={initial.fullConfigured} />
+            <PlatformInfrastructureFields
+              configured={initial.fullConfigured}
+              checking={checkingCount > 0}
+              onCheckingChange={(checking) =>
+                setCheckingCount((count) => count + (checking ? 1 : -1))
+              }
+            />
           ) : null}
-          <Button disabled={pending} size="large" type="submit" variant="secondary">
+          <Button
+            disabled={pending || checkingCount > 0}
+            size="large"
+            type="submit"
+            variant="secondary"
+          >
             {pending ? "正在保存…" : "保存平台配置"}
           </Button>
           {error ? (
@@ -235,103 +266,6 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
       )}
     </section>
   );
-}
-
-function FullInfrastructureFields({ configured }: { configured: boolean }) {
-  const placeholder = configured ? "已配置；留空保留" : "首次启用必填";
-  const required = !configured;
-  return (
-    <div className={cn("setup-full-fields", platformInitializationStyles["setup-full-fields"])}>
-      <label>
-        PostgreSQL URL
-        <Input
-          autoComplete="off"
-          name="databaseUrl"
-          placeholder={placeholder}
-          required={required}
-          type="password"
-        />
-      </label>
-      <label>
-        NATS 地址（逗号分隔）
-        <Input name="natsServers" placeholder="nats://nats:4222" required={required} />
-      </label>
-      <label>
-        NATS Token（可选）
-        <Input name="natsToken" type="password" autoComplete="off" />
-      </label>
-      <label>
-        Redis URL
-        <Input
-          autoComplete="off"
-          name="redisUrl"
-          placeholder={placeholder}
-          required={required}
-          type="password"
-        />
-      </label>
-      <label>
-        MinIO 地址
-        <Input
-          name="minioEndpoint"
-          placeholder="http://minio:9000"
-          required={required}
-          type="url"
-        />
-      </label>
-      <label>
-        MinIO Access Key
-        <Input
-          autoComplete="off"
-          name="minioAccessKey"
-          placeholder={placeholder}
-          required={required}
-          type="password"
-        />
-      </label>
-      <label>
-        MinIO Secret Key
-        <Input
-          autoComplete="off"
-          name="minioSecretKey"
-          placeholder={placeholder}
-          required={required}
-          type="password"
-        />
-      </label>
-      <label>
-        MinIO Bucket
-        <Input name="minioBucket" placeholder="autoforge-objects" required={required} />
-      </label>
-      <label>
-        MinIO Region
-        <Input name="minioRegion" placeholder="us-east-1" required={required} />
-      </label>
-    </div>
-  );
-}
-
-function fullConfiguration(form: FormData): Record<string, string | string[]> {
-  const result: Record<string, string | string[]> = {};
-  for (const name of [
-    "natsToken",
-    "databaseUrl",
-    "redisUrl",
-    "minioEndpoint",
-    "minioAccessKey",
-    "minioSecretKey",
-    "minioBucket",
-    "minioRegion",
-  ]) {
-    const value = stringValue(form, name);
-    if (value) result[name] = value;
-  }
-  const natsServers = stringValue(form, "natsServers")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (natsServers.length > 0) result.natsServers = natsServers;
-  return result;
 }
 
 function stringValue(form: FormData, name: string): string {
@@ -352,8 +286,6 @@ const platformInitializationStyles = {
     "grid gap-3.5 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-xs [&_label]:font-semibold [&_label_small]:text-muted-foreground [&_label_small]:text-xs [&_label_small]:font-medium [&_label_small]:leading-[1.45] [&_>_.ui-button]:w-fit",
   "setup-form-error":
     "m-0 border border-solid border-border rounded-lg py-[11px] px-[13px] bg-destructive/10 text-destructive text-xs leading-[1.5]",
-  "setup-full-fields":
-    "grid gap-3.5 grid-cols-2 border-t border-solid border-border pt-4 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-[7px] [&_label]:text-foreground [&_label]:text-xs [&_label]:font-semibold max-[1121px]:grid-cols-[1fr]",
   "setup-heading-icon": "grid w-10 h-10 place-items-center rounded-lg",
   "setup-heading-icon-blue": "bg-info/10 text-info",
   "setup-kicker":
@@ -361,6 +293,8 @@ const platformInitializationStyles = {
   "setup-mode-fieldset":
     "min-w-0 m-0 border-0 p-0 [&_legend]:mb-2 [&_legend]:text-muted-foreground [&_legend]:text-xs [&_legend]:font-semibold",
   "setup-mode-grid": "grid grid-cols-2 gap-2.5",
+  "setup-mode-option":
+    "!h-auto !min-h-20 !min-w-0 !items-start !justify-start !whitespace-normal !border !border-solid !border-border !p-3 aria-pressed:!border-info aria-pressed:!bg-info/10 [&_svg]:mt-0.5 [&_>span]:min-w-0 [&_>span]:text-left [&_strong]:block [&_small]:mt-1 [&_small]:block [&_small]:text-xs [&_small]:font-normal [&_small]:text-muted-foreground",
   "setup-optional-badge":
     "rounded-full py-[5px] px-2 text-xs font-semibold bg-muted text-muted-foreground",
   "setup-restart-message": "flex items-start gap-[9px] leading-[1.6]",

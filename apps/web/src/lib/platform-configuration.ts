@@ -1,4 +1,7 @@
-import type { UpdatePlatformConfigurationInput } from "@autoforge/contracts";
+import {
+  logMaintenanceUsesBusinessDatabase,
+  type UpdatePlatformConfigurationInput,
+} from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import {
   isPlatformConfigurationConflictError,
@@ -143,7 +146,8 @@ function mergedFullConfiguration(
 ): NonNullable<PersistedPlatformConfiguration["full"]> {
   const databaseUrl = input?.databaseUrl ?? current?.databaseUrl;
   const natsServers = input?.natsServers ?? current?.natsServers;
-  const natsToken = input?.natsToken ?? current?.natsToken;
+  const natsToken =
+    input?.natsToken === null ? undefined : (input?.natsToken ?? current?.natsToken);
   const redisUrl = input?.redisUrl ?? current?.redisUrl;
   const endpoint = input?.minioEndpoint ?? current?.minio.endpoint;
   const accessKey = input?.minioAccessKey ?? current?.minio.accessKey;
@@ -151,6 +155,7 @@ function mergedFullConfiguration(
   const bucket = input?.minioBucket ?? current?.minio.bucket;
   const region = input?.minioRegion ?? current?.minio.region;
   const databasePoolMax = input?.databasePoolMax ?? current?.databasePoolMax ?? 10;
+  const logServer = input?.logServer ?? current?.logServer;
   if (
     !databaseUrl ||
     !natsServers ||
@@ -170,9 +175,16 @@ function mergedFullConfiguration(
   for (const server of natsServers) validatedProtocol(server, ["nats:", "tls:"], "NATS");
   validatedProtocol(redisUrl, ["redis:", "rediss:"], "Redis");
   validatedProtocol(endpoint, ["http:", "https:"], "MinIO");
+  if (logServer && logMaintenanceUsesBusinessDatabase(databaseUrl, logServer)) {
+    throw new DomainError(
+      "PLATFORM_CONFIGURATION_INVALID",
+      "日志维护库不能与主平台业务库使用相同地址和库名，请填写独立日志服务的维护库。",
+    );
+  }
   return {
     databaseUrl,
     databasePoolMax,
+    ...(logServer ? { logServer } : {}),
     natsServers: [...natsServers],
     ...(natsToken ? { natsToken } : {}),
     redisUrl,

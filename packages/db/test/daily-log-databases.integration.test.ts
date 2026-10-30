@@ -60,8 +60,11 @@ describe.skipIf(!url)("daily PostgreSQL logs", () => {
       { now: () => new Date(beforeMidnight) },
       { next: randomUUID },
     );
-    serverId = (await service.register(server)).id;
-    await service.select({ databaseId: serverId, revision: 1 });
+    await Promise.all([
+      registry.initializeDaily(server, randomUUID(), beforeMidnight),
+      registry.initializeDaily(server, randomUUID(), beforeMidnight),
+    ]);
+    serverId = (await registry.settings()).activeDatabaseId!;
     logs = new PostgresRoutedAttemptLogStore(registry, createAttemptLogStore(directory));
     runnerId = randomUUID();
     await db.pool.query(
@@ -101,6 +104,23 @@ describe.skipIf(!url)("daily PostgreSQL logs", () => {
     );
     return { batchId, attemptId };
   }
+  it("initializes a daily server once and preserves later manual switches on restart", async () => {
+    expect(serverId).toBeTruthy();
+    const current = await registry.settings();
+    expect(current.revision).toBe(2);
+    await registry.initializeDaily(
+      { ...server, password: "invalid-never-used" },
+      randomUUID(),
+      afterMidnight,
+    );
+    expect(await registry.settings()).toEqual(current);
+    expect((await service.list()).items).toHaveLength(1);
+    await service.select({ databaseId: null, revision: current.revision });
+    await registry.initializeDaily(server, randomUUID(), afterMidnight);
+    const deselected = await registry.settings();
+    expect(deselected.activeDatabaseId).toBeNull();
+    await service.select({ databaseId: serverId, revision: deselected.revision });
+  });
   it("creates separate Beijing daily databases, joins cross-midnight streams and deduplicates retries without early acknowledgement", async () => {
     const subject = await target();
     const append = (sequence: number, recordedAt: string, content = `中文\0日志${sequence}`) =>

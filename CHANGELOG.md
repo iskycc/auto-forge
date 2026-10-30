@@ -4,6 +4,28 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.21.7 - 2026-10-30
+
+### Added
+
+- Full 引导页按 PostgreSQL 主库、日志库、Redis、NATS 和 MinIO 分区填写主机、端口与认证信息，自动处理连接串编码；支持各组件独立检查连接、认证及所需能力，显示有界、脱敏的结果。
+- 引导页支持独立 PostgreSQL 日志服务器，首次 Full 启动自动登记为按日分库的写入目标，后续重启保留平台内人工切换结果。
+
+### Fixed
+
+- 初始化页的访问地址及 Full 各输入按字段长度限制拦截超限粘贴，在浏览器写入及排版前保留原值并提示，避免大段剪贴板文本造成长时间无响应；普通粘贴和选区替换保持有效。
+
+### Compatibility
+
+- 配置 schema v1 兼容新增可选 `full.logServer`，旧连接 URL 与无独立日志服务器的部署保持兼容，无数据库迁移或新增外部生产依赖。平台配置包复用现有契约包校验日志服务器字段。
+- 普通短地址粘贴卡顿在本地尚未复现，不将超长剪贴板的复现结论推广为所有浏览器情形。
+
+### Validation
+
+- 87 项定向单元与真实 PostgreSQL／Redis／NATS／MinIO 集成检查通过，覆盖独立日志库并发初始化、按日写入读取、后续人工切换保留、错误凭据、缺失 Bucket、无响应连接的超时及输入边界；无新 SQL 迁移。
+- 生产 Playwright 完整验证五组件检查、错误提示、保存保护、Full 重启、管理员创建、按日日志注册和已消费引导令牌拒绝；真实剪贴板覆盖 Ctrl+V、Shift+Insert、长度边界与百万字符粘贴。实际查看 1024×768、1536×960 浅深色截图，无新增溢出或变形。
+- 受影响包及 Web server／worker 类型、ESLint、格式／许可证、19 行 E2E 矩阵、Web／worker 生产构建通过；最终产物的五项真实 HTTP 连接检查成功。本地服务为独立测试容器，未运行完整集群故障注入、TLS 服务、Runner 或离线发布闭环。
+
 ## 1.21.6 - 2026-10-30
 
 ### Added

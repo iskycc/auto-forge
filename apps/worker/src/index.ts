@@ -140,15 +140,15 @@ const nodeLogs =
       )
     : undefined;
 if (nodeLogs) await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
-const attemptLogs = new PostgresRoutedAttemptLogStore(
-  new PostgresLogDatabaseRepository(
-    database,
-    new AesGcmSecretCipher(config.masterKey),
-    createHash("sha256").update(config.masterKey).digest("hex"),
-    join(config.migrationsFolder, "../log-postgresql"),
-  ),
-  nodeLogs ?? localAttemptLogs,
+const logRegistry = new PostgresLogDatabaseRepository(
+  database,
+  new AesGcmSecretCipher(config.masterKey),
+  createHash("sha256").update(config.masterKey).digest("hex"),
+  join(config.migrationsFolder, "../log-postgresql"),
 );
+if (config.logServer)
+  await logRegistry.initializeDaily(config.logServer, ids.next(), clock.now().toISOString());
+const attemptLogs = new PostgresRoutedAttemptLogStore(logRegistry, nodeLogs ?? localAttemptLogs);
 const platformOperationsRepository = new PostgresPlatformOperationsRepository(
   database,
   attemptLogs,

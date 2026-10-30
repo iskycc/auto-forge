@@ -59,6 +59,7 @@ export type AppConfig = CommonConfig &
         nodeId?: string;
         databaseUrl: string;
         databasePoolMax: number;
+        logServer?: import("@autoforge/contracts/log-databases").RegisterDailyLogServerInput;
         natsServers: string[];
         natsToken?: string;
         redisUrl: string;
@@ -126,6 +127,7 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
     ...(persisted.nodeId ? { nodeId: persisted.nodeId } : {}),
     databaseUrl: persisted.full.databaseUrl,
     databasePoolMax: persisted.full.databasePoolMax,
+    ...(persisted.full.logServer ? { logServer: persisted.full.logServer } : {}),
     natsServers: [...persisted.full.natsServers],
     ...(persisted.full.natsToken ? { natsToken: persisted.full.natsToken } : {}),
     redisUrl: validatedRedisUrl(persisted.full.redisUrl),

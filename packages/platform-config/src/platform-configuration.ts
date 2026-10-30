@@ -14,6 +14,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { z } from "zod";
+import { registerDailyLogServerSchema } from "@autoforge/contracts/log-databases";
 
 export const PLATFORM_CONFIGURATION_SCHEMA_VERSION = 1 as const;
 export const PLATFORM_CONFIGURATION_FILE = "platform.json";
@@ -52,6 +53,8 @@ const schedulerSchema = z.object({
 });
 
 const fullInfrastructureSchema = z.object({
+  // Bootstrap seed only; after first activation the database registry remains authoritative.
+  logServer: registerDailyLogServerSchema.optional(),
   databaseUrl: z.string().min(1).max(4_096),
   // PostgreSQL 连接池上限；旧配置文件缺失时沿用历史硬编码的 10。
   databasePoolMax: z.number().int().min(1).max(100).default(10),

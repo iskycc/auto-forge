@@ -28,6 +28,7 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
     nodeId: configuration.nodeId,
     masterKey: configuration.secrets.masterKey,
     databasePoolMax: configuration.full.databasePoolMax,
+    logServer: configuration.full.logServer,
     dataDirectory: runtime.paths.dataDirectory,
     natsServers: [...configuration.full.natsServers],
     ...(configuration.full.natsToken ? { natsToken: configuration.full.natsToken } : {}),
