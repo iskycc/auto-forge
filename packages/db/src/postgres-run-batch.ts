@@ -1240,7 +1240,7 @@ export class PostgresRunBatchRepository
     await this.ready();
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT id FROM run_batches
-       WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
+       WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL AND pause_requested_at IS NULL
          AND scheduled_for <= $1
          AND ${schedulableBatchCapacitySql("postgres", "run_batches")}
          AND EXISTS (
@@ -1264,7 +1264,7 @@ export class PostgresRunBatchRepository
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
        WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
-         AND b.cancel_requested_at IS NULL AND b.scheduled_for <= $2
+         AND b.cancel_requested_at IS NULL AND b.pause_requested_at IS NULL AND b.scheduled_for <= $2
          AND ${schedulableBatchCapacitySql("postgres", "b")}
          AND EXISTS (
            SELECT 1 FROM execution_runs run
@@ -1331,20 +1331,21 @@ export class PostgresRunBatchRepository
   ): Promise<SchedulingSnapshot | null> {
     const batch = await this.getSummary(batchId);
     if (!batch) return null;
-    const queuedRows = batch.terminationRequestedAt
-      ? []
-      : await this.handle.db
-          .select()
-          .from(pgExecutionRuns)
-          .where(
-            and(
-              eq(pgExecutionRuns.batchId, batchId),
-              eq(pgExecutionRuns.status, "queued"),
-              eq(pgExecutionRuns.heldRound, 0),
-            ),
-          )
-          .orderBy(executionDispatchOrderExpression(pgExecutionRuns), pgExecutionRuns.id)
-          .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)));
+    const queuedRows =
+      batch.terminationRequestedAt || batch.pauseRequestedAt
+        ? []
+        : await this.handle.db
+            .select()
+            .from(pgExecutionRuns)
+            .where(
+              and(
+                eq(pgExecutionRuns.batchId, batchId),
+                eq(pgExecutionRuns.status, "queued"),
+                eq(pgExecutionRuns.heldRound, 0),
+              ),
+            )
+            .orderBy(executionDispatchOrderExpression(pgExecutionRuns), pgExecutionRuns.id)
+            .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)));
     const queuedRunIds = queuedRows.map((run) => run.id);
     const attemptRows = [];
     for (const ids of batchesOf(queuedRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
@@ -1589,6 +1590,7 @@ export class PostgresRunBatchRepository
       `SELECT EXISTS(
          SELECT 1 FROM execution_runs
          WHERE batch_id = $1 AND status = 'queued' AND held_round = 0
+           AND EXISTS (SELECT 1 FROM run_batches b WHERE b.id=execution_runs.batch_id AND b.pause_requested_at IS NULL AND b.cancel_requested_at IS NULL)
        ) AS value`,
       [batchId],
     );
@@ -1606,6 +1608,7 @@ export class PostgresRunBatchRepository
           policyJson: pgRunBatches.policyJson,
           adapterRuntimeJson: pgRunBatches.adapterRuntimeJson,
           terminationRequestedAt: pgRunBatches.cancelRequestedAt,
+          pauseRequestedAt: pgRunBatches.pauseRequestedAt,
           environmentJson: pgRunBatches.environmentJson,
           secretBindingsJson: pgRunBatches.secretBindingsJson,
           priority: pgRunBatches.priority,
@@ -1617,7 +1620,8 @@ export class PostgresRunBatchRepository
         .where(eq(pgRunBatches.id, input.batchId))
         .for("update");
       if (!lockedBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-      if (lockedBatch.terminationRequestedAt) return { reserved: 0, acceptedAttemptIds: [] };
+      if (lockedBatch.terminationRequestedAt || lockedBatch.pauseRequestedAt)
+        return { reserved: 0, acceptedAttemptIds: [] };
       await transaction
         .select({ id: pgProjects.id })
         .from(pgProjects)
@@ -1787,7 +1791,9 @@ export class PostgresRunBatchRepository
             AND run.batch_id = ${input.batchId}
             AND run.status = 'queued'
             AND run.held_round = 0
-            AND (run.queue_deadline_at IS NULL OR run.queue_deadline_at > ${input.scheduledAt})
+            AND (run.queue_deadline_at IS NULL OR run.queue_deadline_at > ${input.scheduledAt}
+              OR EXISTS (SELECT 1 FROM run_batches b WHERE b.id=run.batch_id
+                AND b.queue_resumed_at::timestamptz+b.queue_timeout_ms * interval '1 millisecond' > ${input.scheduledAt}::timestamptz))
           RETURNING run.id, run.attempt_count, run.execution_round,
                     run.case_definition_id, run.case_version,
                     run.execution_case_definition_id, run.class_name, run.parameters_json,
@@ -2188,6 +2194,7 @@ export class PostgresRunBatchRepository
       ...(policy ? { policy } : {}),
       totalRuns: row.totalRuns,
       ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
+      ...(row.pauseRequestedAt ? { pauseRequestedAt: row.pauseRequestedAt } : {}),
       version: row.version,
       scheduledFor: row.scheduledFor,
       createdAt: row.createdAt,

@@ -79,6 +79,7 @@ export const publicSuiteBatchSchema = z.object({
   requestedBy: z.string().nullable(),
   publisher: z.string().nullable(),
   terminatedBy: z.string().nullable(),
+  pauseRequestedAt: z.string().nullable().optional(),
   terminationRequestedAt: z.string().nullable(),
   scheduledFor: z.string(),
   createdAt: z.string(),

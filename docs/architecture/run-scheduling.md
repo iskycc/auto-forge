@@ -141,6 +141,10 @@ claim 都排除该批次。持有有效 lease 的 attempt 不设置取消指令�
 保留真实成功/失败结果，但禁止再次重跑。最后一个在途 attempt 完成或被恢复扫描裁决后，批次进入
 `cancelled`。旧 `/cancel` 路由保留同语义兼容，不再逐条强制把 completed assignment 转为 cancelled。
 
+## 暂停与继续调度
+
+活动批次可以持久化暂停新增派发，已生成的 assignment 继续执行并收尾；未执行用例及重试在继续后恢复。暂停期间不计算排队超时，恢复时至少给予一个完整排队窗口；领取、租约、执行及上传时限继续有效。标准和公开页面入口、授权、迁移与回退限制见[暂停与继续调度](./batch-scheduling-pause.md)。
+
 ## 超时与恢复
 
 任务可配置 `queueTimeoutMs`、`claimTimeoutMs` 和 `uploadTimeoutMs`，入口分别限制在 7 天、1 小时和 1 小时以内。任务不再保存 `executionTimeoutMs`；批次创建统一读取平台配置的 `caseExecutionTimeoutSeconds`，避免同一概念出现两份冲突配置。所有 deadline 由控制面 UTC 时钟计算并持久化，恢复扫描不依赖 Web/worker 进程内定时器：

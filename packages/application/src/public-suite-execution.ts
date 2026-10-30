@@ -36,7 +36,10 @@ export class PublicSuiteExecutionService {
     private readonly projects: Pick<IdentityAccessRepository, "listProjects">,
     private readonly structures: Pick<ProjectStructureRepository, "list">,
     private readonly runs: Pick<RunBatchSchedulingService, "create" | "getSummary">,
-    private readonly control: Pick<ExecutionControlService, "terminateBatch">,
+    private readonly control: Pick<
+      ExecutionControlService,
+      "terminateBatch" | "changeBatchScheduling"
+    >,
     private readonly publicAccess: Pick<PublicExecutionAccessService, "publishBatch">,
     private readonly clock: Clock,
   ) {}
@@ -121,6 +124,20 @@ export class PublicSuiteExecutionService {
         );
     const progressPath = await this.publicAccess.publishBatch(batch.id, actor.id);
     return publicSuiteExecutionResultSchema.parse({ batchId: batch.id, progressPath });
+  }
+
+  async changeScheduling(
+    suiteId: string,
+    publisherId: string,
+    batchId: string,
+    actor: ExecutionActor,
+    action: "pause" | "resume",
+  ) {
+    await this.requirePublisher(suiteId, publisherId);
+    const batch = await this.links.batch(suiteId, batchId);
+    if (!batch?.publicExecution)
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "该批次不属于此任务的公开执行记录。");
+    return this.control.changeBatchScheduling(actor.id, batchId, action);
   }
 
   async terminate(

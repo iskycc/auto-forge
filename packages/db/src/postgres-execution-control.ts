@@ -20,6 +20,7 @@ import {
 } from "@autoforge/contracts";
 import {
   aggregateBatchStatus,
+  shouldChangeBatchScheduling,
   DomainError,
   isTerminalAttemptStatus,
   isTerminalBatchStatus,
@@ -915,9 +916,11 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
          JOIN run_batches b ON b.id = r.batch_id
          WHERE r.status = 'queued' AND r.held_round = 0 AND r.queue_deadline_at IS NOT NULL
            AND r.queue_deadline_at::timestamptz <= $1::timestamptz
+           AND b.pause_requested_at IS NULL
+           AND (b.queue_resumed_at IS NULL OR b.queue_resumed_at::timestamptz + b.queue_timeout_ms * interval '1 millisecond' <= $1::timestamptz)
            AND b.status IN ('queued','dispatching','scheduled','running')
          ORDER BY r.queue_deadline_at::timestamptz, r.id
-         LIMIT $2 FOR UPDATE OF r SKIP LOCKED`,
+         LIMIT $2 FOR UPDATE OF b,r SKIP LOCKED`,
         [input.now, input.limit],
       );
       let recovered = 0;
@@ -931,7 +934,8 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
              AND queue_deadline_at::timestamptz <= $1::timestamptz
              AND EXISTS (
                SELECT 1 FROM run_batches b
-               WHERE b.id = execution_runs.batch_id
+               WHERE b.id = execution_runs.batch_id AND b.pause_requested_at IS NULL
+                 AND (b.queue_resumed_at IS NULL OR b.queue_resumed_at::timestamptz + b.queue_timeout_ms * interval '1 millisecond' <= $1::timestamptz)
                  AND b.status IN ('queued','dispatching','scheduled','running')
              )`,
           [input.now, run.id],
@@ -1024,6 +1028,54 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         }
       }
       return recoveredAttempts;
+    });
+  }
+
+  async changeBatchScheduling(
+    input: Parameters<ExecutionControlRepository["changeBatchScheduling"]>[0],
+  ): Promise<boolean> {
+    await this.handle.ready;
+    return this.transaction(async (client) => {
+      const result = await client.query<{
+        status: RunBatchStatus;
+        terminationRequestedAt: string | null;
+        pauseRequestedAt: string | null;
+      }>(
+        'SELECT status,cancel_requested_at AS "terminationRequestedAt",pause_requested_at AS "pauseRequestedAt" FROM run_batches WHERE id=$1 FOR UPDATE',
+        [input.batchId],
+      );
+      const batch = result.rows[0];
+      if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      if (!shouldChangeBatchScheduling(batch, input.action)) return false;
+      await client.query(
+        `UPDATE run_batches SET pause_requested_at=$1, queue_resumed_at=CASE WHEN $2='resume' THEN $3 ELSE queue_resumed_at END,
+         updated_at=$3, version=version+1 WHERE id=$4`,
+        [
+          input.action === "pause" ? input.requestedAt : null,
+          input.action,
+          input.requestedAt,
+          input.batchId,
+        ],
+      );
+      if (input.action === "resume")
+        await updateBatchStatus(
+          client,
+          input.batchId,
+          input.requestedAt,
+          `${input.eventId}:state`,
+          "batch.scheduling_resumed",
+        );
+      await client.query(
+        `INSERT INTO run_batch_status_events(id,batch_id,from_status,to_status,batch_version,reason,recorded_at)
+         SELECT $1,id,status,status,version,$2,$3 FROM run_batches WHERE id=$4`,
+        [
+          input.eventId,
+          `batch.scheduling_${input.action === "pause" ? "paused" : "resumed"}`,
+          input.requestedAt,
+          input.batchId,
+        ],
+      );
+      return true;
     });
   }
 
@@ -2174,15 +2226,16 @@ async function updateBatchStatus(
     retry_mode: "immediate" | "round";
     queue_timeout_ms: number;
     cancel_requested_at: string | null;
+    pause_requested_at: string | null;
   }>(
-    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
+    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at, pause_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
     [batchId],
   );
   const batchState = lockedBatch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   if (isTerminalBatchStatus(batchState.status)) return batchState.status;
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-  if (!batchState.cancel_requested_at) {
+  if (!batchState.cancel_requested_at && !batchState.pause_requested_at) {
     await advanceRoundIfIdle(
       client,
       batchId,

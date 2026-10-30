@@ -172,6 +172,7 @@ export function prioritizedExecutionControlRepository(
     "declareArtifacts",
     "recoverExpired",
     "terminateBatch",
+    "changeBatchScheduling",
     "cancelRun",
   ]);
   return new Proxy(repository, {
@@ -262,6 +263,11 @@ export function workerBackedExecutionControlRepository(
           return (input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0]) =>
             dispatcher.appendAttemptLogChunks(input) as ReturnType<
               ExecutionControlRepository["appendLogChunks"]
+            >;
+        case "changeBatchScheduling":
+          return (input: Parameters<ExecutionControlRepository["changeBatchScheduling"]>[0]) =>
+            dispatcher.changeBatchScheduling(input) as ReturnType<
+              ExecutionControlRepository["changeBatchScheduling"]
             >;
         case "terminateBatch":
           return (input: Parameters<ExecutionControlRepository["terminateBatch"]>[0]) =>

@@ -376,6 +376,15 @@ export class WorkerPool implements WorkDispatcher {
     });
   }
 
+  async changeBatchScheduling(input: unknown): Promise<boolean> {
+    const batchId = stringProperty(input, "batchId");
+    return (await this.keyedControlLane(`batch:${batchId}`).dispatch({
+      kind: "change-batch-scheduling",
+      batchId,
+      input,
+    })) as boolean;
+  }
+
   async terminateBatch(input: unknown): Promise<number> {
     const batchId = stringProperty(input, "batchId");
     return (await this.keyedControlLane(`batch:${batchId}`).dispatch({

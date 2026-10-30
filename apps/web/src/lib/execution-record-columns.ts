@@ -24,6 +24,7 @@ export type ExecutionRecordRow = {
   updatedAt: string;
   observedAt: string;
   terminationRequestedAt?: string;
+  pauseRequestedAt?: string;
 };
 
 export type ExecutionRecordColumnKey =
@@ -221,7 +222,10 @@ export function executionRecordIsActive(status: RunBatch["status"]): boolean {
 export function executionRecordStatusLabel(
   value:
     | RunBatch["status"]
-    | Pick<ExecutionRecordRow, "status" | "terminationRequestedAt" | "scheduledFor" | "observedAt">,
+    | Pick<
+        ExecutionRecordRow,
+        "status" | "terminationRequestedAt" | "pauseRequestedAt" | "scheduledFor" | "observedAt"
+      >,
 ): string {
   if (
     typeof value !== "string" &&
@@ -230,6 +234,8 @@ export function executionRecordStatusLabel(
   ) {
     return "终止中";
   }
+  if (typeof value !== "string" && value.pauseRequestedAt && executionRecordIsActive(value.status))
+    return value.status === "queued" ? "已暂停" : "暂停中";
   if (
     typeof value !== "string" &&
     value.status === "queued" &&

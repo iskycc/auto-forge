@@ -1,6 +1,9 @@
+import { LogPane } from "./log-pane";
+import { usePage } from "./use-page";
+import { useReducedMotion } from "../components/ui/use-reduced-motion";
 import { useUrlFilter } from "./url-filter";
 import { SemanticStatusTag } from "../components/ui/semantic-status-tag";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Alert,
@@ -9,7 +12,6 @@ import {
   Card,
   ConfigProvider,
   Drawer,
-  Empty,
   Flex,
   Input,
   Space,
@@ -27,7 +29,6 @@ import { platformThemes } from "../lib/ant-design-theme";
 import "antd/dist/reset.css";
 import "antd/dist/antd.css";
 
-type Chunk = { sequence: number; content: string; recordedAt: string };
 type Page<T> = { items: T[]; hasMore: boolean; nextCursor?: string };
 const statusLabels: Record<string, string> = {
   succeeded: "通过",
@@ -53,52 +54,55 @@ function result(status: string) {
   );
 }
 
-async function request<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(path, { signal });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({ message: "离线归档读取失败" }))) as {
-      message: string;
-    };
-    throw new Error(body.message);
-  }
-  return response.json() as Promise<T>;
-}
-function usePage<T>(path: string | null) {
-  const [state, setState] = useState<{ path: string; data?: T; error?: string }>({ path: "" });
-  useEffect(() => {
-    if (path === null) return;
-    const abort = new AbortController();
-    void request<T>(path, abort.signal).then(
-      (data) => {
-        if (!abort.signal.aborted) setState({ path, data });
-      },
-      (cause) => {
-        if (!abort.signal.aborted)
-          setState({ path, error: cause instanceof Error ? cause.message : "读取失败" });
-      },
-    );
-    return () => abort.abort();
-  }, [path]);
-  return {
-    ...state,
-    loading: path !== null && state.path !== path,
-    error: state.path === path ? state.error : undefined,
-  };
+function batchResult(status: string) {
+  return (
+    <SemanticStatusTag
+      tone={status === "failed" ? "danger" : status === "succeeded" ? "success" : "neutral"}
+    >
+      {status === "succeeded" ? "执行完成" : status === "failed" ? "执行异常" : "已终止"}
+    </SemanticStatusTag>
+  );
 }
 
 function Viewer() {
   const [mode, setMode] = useState<"light" | "dark">(() =>
-    localStorage.getItem("autoforge-archive-theme") === "dark" ? "dark" : "light",
+    (() => {
+      try {
+        return localStorage.getItem("autoforge-archive-theme") === "dark" ? "dark" : "light";
+      } catch {
+        return "light";
+      }
+    })(),
+  );
+  const reducedMotion = useReducedMotion();
+  const viewerTheme = useMemo(
+    () =>
+      reducedMotion
+        ? {
+            ...platformThemes[mode],
+            token: {
+              ...platformThemes[mode].token,
+              motionDurationFast: "0.01ms",
+              motionDurationMid: "0.01ms",
+              motionDurationSlow: "0.01ms",
+            },
+          }
+        : platformThemes[mode],
+    [mode, reducedMotion],
   );
   return (
-    <ConfigProvider locale={zhCN} theme={platformThemes[mode]}>
+    <ConfigProvider locale={zhCN} theme={viewerTheme} button={{ autoInsertSpace: false }}>
       <App>
         <ArchiveContent
           mode={mode}
           toggle={() =>
             setMode((current) => {
               const next = current === "light" ? "dark" : "light";
-              localStorage.setItem("autoforge-archive-theme", next);
+              try {
+                localStorage.setItem("autoforge-archive-theme", next);
+              } catch {
+                return next;
+              }
               return next;
             })
           }
@@ -161,8 +165,15 @@ function ArchiveContent({ mode, toggle }: { mode: "light" | "dark"; toggle(): vo
             description="同月其他分卷请分别解压并打开查看器；每个执行批次完整保存在对应的一卷中。"
           />
         ) : null}
-        {manifest.error ? <Alert type="error" showIcon title={manifest.error} /> : null}
-        <Flex gap="middle">
+        {manifest.error ? (
+          <Alert
+            type="error"
+            showIcon
+            title={manifest.error}
+            action={<Button onClick={manifest.retry}>重试读取</Button>}
+          />
+        ) : null}
+        <Flex gap="middle" wrap>
           {[
             ["执行批次", manifest.data?.batchCount],
             ["执行尝试", manifest.data?.attemptCount],
@@ -172,7 +183,7 @@ function ArchiveContent({ mode, toggle }: { mode: "light" | "dark"; toggle(): vo
               manifest.data ? `${(manifest.data.rawBytes / 1024 / 1024).toFixed(1)} MiB` : "—",
             ],
           ].map(([label, value]) => (
-            <Card key={label} size="small" style={{ flex: 1 }}>
+            <Card key={label} size="small" style={{ flex: "1 1 200px", minWidth: 0 }}>
               <Statistic title={label} value={value ?? "—"} />
             </Card>
           ))}
@@ -186,7 +197,7 @@ function ArchiveContent({ mode, toggle }: { mode: "light" | "dark"; toggle(): vo
               <Typography.Title level={4} ellipsis style={{ margin: 0, minWidth: 0, flex: 1 }}>
                 #{batch.sequenceNumber} {batch.suiteName}
               </Typography.Title>
-              {result(batch.status)}
+              {batchResult(batch.status)}
             </Flex>
             <AttemptList key={`${batch.id}:${caseQuery}`} batch={batch} />
           </>
@@ -194,7 +205,11 @@ function ArchiveContent({ mode, toggle }: { mode: "light" | "dark"; toggle(): vo
           <Card>
             <Spin spinning={detail.loading}>
               {detail.error ? (
-                <Alert type="error" title={detail.error} />
+                <Alert
+                  type="error"
+                  title={detail.error}
+                  action={<Button onClick={detail.retry}>重试读取</Button>}
+                />
               ) : !detail.loading ? (
                 <Alert type="warning" title="该执行批次不在此归档中。" />
               ) : null}
@@ -262,10 +277,16 @@ function BatchList({ onSelect }: { onSelect(batch: LogArchiveBatch): void }) {
         />
       }
     >
-      {page.error ? <Alert type="error" title={page.error} /> : null}
+      {page.error ? (
+        <Alert
+          type="error"
+          title={page.error}
+          action={<Button onClick={page.retry}>重试读取</Button>}
+        />
+      ) : null}
       <Table<LogArchiveBatch>
         size="middle"
-        scroll={{ y: "50vh" }}
+        scroll={{ x: 800 }}
         rowKey="id"
         pagination={false}
         loading={page.loading}
@@ -284,11 +305,12 @@ function BatchList({ onSelect }: { onSelect(batch: LogArchiveBatch): void }) {
                 style={{
                   padding: 0,
                   maxWidth: "100%",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
+                  minWidth: 0,
                 }}
               >
-                #{item.sequenceNumber} {value}
+                <Typography.Text ellipsis style={{ color: "inherit", minWidth: 0 }}>
+                  #{item.sequenceNumber} {value}
+                </Typography.Text>
               </Button>
             ),
           },
@@ -299,7 +321,7 @@ function BatchList({ onSelect }: { onSelect(batch: LogArchiveBatch): void }) {
             render: (_, item) => `${item.projectName} / ${item.projectVersionName || "—"}`,
           },
           { title: "测试阶段", dataIndex: "testStageName", width: "12%", ellipsis: true },
-          { title: "结果", dataIndex: "status", width: "12%", render: result },
+          { title: "状态", dataIndex: "status", width: "12%", render: batchResult },
           {
             title: "结束时间",
             dataIndex: "finishedAt",
@@ -343,10 +365,16 @@ function AttemptList({ batch }: { batch: LogArchiveBatch }) {
         />
       }
     >
-      {page.error ? <Alert type="error" title={page.error} /> : null}
+      {page.error ? (
+        <Alert
+          type="error"
+          title={page.error}
+          action={<Button onClick={page.retry}>重试读取</Button>}
+        />
+      ) : null}
       <Table<LogArchiveAttempt>
         size="middle"
-        scroll={{ y: "50vh" }}
+        scroll={{ x: 800 }}
         locale={{
           emptyText: page.data?.hasMore
             ? "当前检索窗口暂无匹配，可继续下一页搜索剩余用例。"
@@ -409,6 +437,7 @@ function AttemptList({ batch }: { batch: LogArchiveBatch }) {
         lastId={page.data?.nextCursor ?? page.data?.items.at(-1)?.id}
       />
       <Drawer
+        className="archive-log-drawer"
         title={
           selected ? (
             <Typography.Text
@@ -425,99 +454,17 @@ function AttemptList({ batch }: { batch: LogArchiveBatch }) {
         onClose={() => setSelected(undefined)}
         size="large"
         styles={{
+          wrapper: { width: "min(1120px,92vw)" },
           body: { padding: token.padding },
           close: { width: token.controlHeightSM, height: token.controlHeightSM },
         }}
         destroyOnHidden
       >
-        {selected ? <LogPane batchId={batch.id} attempt={selected} /> : null}
+        {selected ? (
+          <LogPane key={`${batch.id}:${selected.id}`} batchId={batch.id} attempt={selected} />
+        ) : null}
       </Drawer>
     </Card>
-  );
-}
-function LogPane({ batchId, attempt }: { batchId: string; attempt: LogArchiveAttempt }) {
-  const { token } = theme.useToken();
-  const { message } = App.useApp();
-  const [stream, setStream] = useState("stdout");
-  const [cursors, setCursors] = useState([-1]);
-  const page = usePage<Page<Chunk>>(
-    `/api/logs?batchId=${batchId}&attemptId=${attempt.id}&stream=${stream}&afterSequence=${cursors.at(-1)!}`,
-  );
-  const text = (page.data?.items ?? []).map((chunk) => chunk.content).join("");
-  return (
-    <Flex vertical gap="middle">
-      <Flex justify="space-between" align="center" wrap gap="small">
-        <Space>
-          {["stdout", "stderr", "agent"].map((value) => (
-            <Button
-              key={value}
-              type={stream === value ? "primary" : "default"}
-              onClick={() => {
-                setStream(value);
-                setCursors([-1]);
-              }}
-            >
-              {value === "agent" ? "Agent 诊断" : value}
-            </Button>
-          ))}
-        </Space>
-        <Button
-          disabled={!text}
-          onClick={() =>
-            void navigator.clipboard.writeText(text).then(
-              () => message.success("当前页日志已复制"),
-              () => message.error("浏览器禁止复制，请手动选择日志。"),
-            )
-          }
-        >
-          复制当前页
-        </Button>
-      </Flex>
-      {page.error ? <Alert type="error" title={page.error} /> : null}
-      <Spin spinning={page.loading}>
-        <div
-          style={{
-            background: token.colorFillAlter,
-            border: `1px solid ${token.colorBorderSecondary}`,
-            borderRadius: token.borderRadius,
-            padding: token.padding,
-            minHeight: 420,
-            maxHeight: "65vh",
-            overflow: "auto",
-          }}
-        >
-          {text ? (
-            <pre
-              style={{
-                margin: 0,
-                fontSize: 13,
-                fontFamily: "ui-monospace, monospace",
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {text}
-            </pre>
-          ) : (
-            <Empty description="此日志流暂无内容" />
-          )}
-        </div>
-      </Spin>
-      <Flex justify="space-between" align="center">
-        <Typography.Text type="secondary">第 {cursors.length} 页 · 单页最多 1 MiB</Typography.Text>
-        <Space>
-          <Button disabled={cursors.length === 1} onClick={() => setCursors(cursors.slice(0, -1))}>
-            上一页
-          </Button>
-          <Button
-            disabled={!page.data?.hasMore}
-            onClick={() => setCursors([...cursors, page.data!.items.at(-1)!.sequence])}
-          >
-            下一页
-          </Button>
-        </Space>
-      </Flex>
-    </Flex>
   );
 }
 createRoot(document.getElementById("root")!).render(<Viewer />);

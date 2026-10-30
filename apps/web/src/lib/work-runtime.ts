@@ -42,6 +42,7 @@ export interface WorkDispatcher {
   declareArtifacts(input: unknown): Promise<unknown>;
   recoverExpired(input: unknown): Promise<unknown>;
   resolveAttemptSchedulingContexts(attemptIds: readonly string[]): Promise<unknown>;
+  changeBatchScheduling(input: unknown): Promise<boolean>;
   terminateBatch(input: unknown): Promise<number>;
   close(): Promise<void>;
 }

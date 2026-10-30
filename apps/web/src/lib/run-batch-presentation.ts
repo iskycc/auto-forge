@@ -27,9 +27,11 @@ export function runBatchStatusLabel(status: RunBatch["status"]): string {
 }
 
 export function runBatchCompletionLabel<
-  Batch extends Pick<RunBatchDetails, "status" | "terminationRequestedAt">,
+  Batch extends Pick<RunBatchDetails, "status" | "terminationRequestedAt" | "pauseRequestedAt">,
 >(batch: Batch): string {
   if (batch.terminationRequestedAt && isActiveRunBatch(batch.status)) return "终止中";
+  if (batch.pauseRequestedAt && isActiveRunBatch(batch.status))
+    return batch.status === "queued" ? "已暂停" : "暂停中";
   // status 是控制面按完整执行集合聚合的权威生命周期。详情中的 attempts 可能经过分页，
   // 不能用不完整的展示数据再次推导，否则正常结束但存在断言失败的批次会被误报为异常。
   return runBatchStatusLabel(batch.status);

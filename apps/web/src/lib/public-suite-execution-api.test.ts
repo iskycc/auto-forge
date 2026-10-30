@@ -10,6 +10,7 @@ const f = vi.hoisted(() => ({
   summary: vi.fn(),
   start: vi.fn(),
   terminate: vi.fn(),
+  changeScheduling: vi.fn(),
   read: vi.fn(),
   publish: vi.fn(),
   revoke: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/services", () => ({
     publicSuiteExecutions: {
       start: f.start,
       terminate: f.terminate,
+      changeScheduling: f.changeScheduling,
       read: f.read,
       publish: f.publish,
       revoke: f.revoke,
@@ -45,6 +47,7 @@ vi.mock("@/lib/services", () => ({
 
 import { POST as start } from "../app/api/v1/public/case-suites/[suiteId]/executions/route";
 import { POST as terminate } from "../app/api/v1/public/case-suites/[suiteId]/executions/[batchId]/terminate/route";
+import { POST as changeScheduling } from "../app/api/v1/public/case-suites/[suiteId]/executions/[batchId]/scheduling/route";
 import { GET as read } from "../app/api/v1/public/case-suites/[suiteId]/route";
 import {
   GET as readLink,
@@ -185,5 +188,25 @@ describe("public task execution HTTP boundary", () => {
     f.linkPath.mockResolvedValue(null);
     expect(await (await readLink(request("GET"), context)).json()).toEqual({ url: null });
     expect(f.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe("public task scheduling", () => {
+  it.each(["pause", "resume"])(
+    "uses the grant and authenticated visitor for %s",
+    async (action) => {
+      f.changeScheduling.mockResolvedValue(true);
+      const response = await changeScheduling(request("POST", { action }), context);
+      expect(response.status).toBe(200);
+      expect(f.changeScheduling).toHaveBeenCalledWith("suite", "owner", "batch", actor, action);
+      expect(f.scope).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects API tokens from a browser-only public grant", async () => {
+    f.authenticate.mockResolvedValue({ ...identity, sessionId: "api-token:test" });
+    expect((await changeScheduling(request("POST", { action: "pause" }), context)).status).toBe(
+      401,
+    );
+    expect(f.changeScheduling).not.toHaveBeenCalled();
   });
 });

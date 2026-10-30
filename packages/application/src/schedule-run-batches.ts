@@ -1138,7 +1138,10 @@ export class RunBatchSchedulingService {
     if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     // 队列/outbox 的 availableAt 是第一道门；此处是权威防线，避免恢复、Runner
     // 生命周期或直接 API 调度绕过延时。
-    if (Date.parse(snapshot.batch.scheduledFor) > now.getTime()) {
+    if (
+      snapshot.batch.pauseRequestedAt ||
+      Date.parse(snapshot.batch.scheduledFor) > now.getTime()
+    ) {
       return { batch: snapshot.batch, reserved: 0 };
     }
     if (snapshot.queuedRuns.length > 0) {

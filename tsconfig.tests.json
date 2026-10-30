@@ -7,8 +7,10 @@
   "include": [
     "playwright.config.ts",
     "playwright.full.config.ts",
+    "playwright.archive-viewer.config.ts",
     "vitest.performance.config.ts",
     "tests/e2e/**/*.ts",
+    "tests/archive-viewer/**/*.ts",
     "tests/performance/**/*.ts"
   ]
 }

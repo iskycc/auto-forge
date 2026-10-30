@@ -1,4 +1,5 @@
 "use client";
+import { BatchSchedulingButton } from "./batch-scheduling-button";
 import { LoadingIcon } from "@/components/ui/loading-icon";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -491,6 +492,14 @@ export function ExecutionRecordsTable({
                     !executionRecordIsActive(row.status) &&
                     row.failedRuns > 0 ? (
                       <StartFailureAnalysisButton scope={row.analysisScope} />
+                    ) : null}
+                    {canTerminate && executionRecordIsActive(row.status) ? (
+                      <BatchSchedulingButton
+                        batch={row}
+                        compact
+                        onChanged={() => router.refresh()}
+                        disabled={terminatingBatchId === row.id}
+                      />
                     ) : null}
                     {canTerminate && executionRecordIsActive(row.status) ? (
                       <Button

@@ -681,9 +681,114 @@ test("completion immediately refills free runner slots without waiting for the w
 
   // 同一套 5 个用例再次执行：领取 2 个后从执行记录列表终止。未领取的 3 个必须
   // 立即停止调度，2 个在途 attempt 保持 continue 并自然完成，最后展示“已终止”。
+  async function refreshPauseRunnerCapacity() {
+    const heartbeat = await page.request.post(
+      `/api/v1/runner-agents/${identity.runnerId}/heartbeat`,
+      {
+        headers: runnerHeaders(identity),
+        data: {
+          schemaVersion: 1,
+          busySlots: 0,
+          labels: ["linux", "java", "testng"],
+          capabilities: [
+            "executor:testng-v1",
+            "isolation:cgroup-v2",
+            "java:21.0.8",
+            "testng:7.11.0",
+          ],
+          maxConcurrency: 2,
+          agentVersion: "0.2.0",
+          terminalEnabled: false,
+          resourceSnapshot: {
+            cpuUtilizationPercent: 10,
+            memoryUtilizationPercent: 20,
+            loadAverage1m: 0.1,
+            logicalCpuCount: 4,
+            observedAt: new Date().toISOString(),
+          },
+        },
+      },
+    );
+    expect(heartbeat.status()).toBe(200);
+  }
+  await refreshPauseRunnerCapacity();
   const terminatingBatch = await createTaskRun(page, suiteId!);
-  const inFlight = await claimOnce(page, identity, 2);
+  await expect
+    .poll(
+      async () => {
+        const summary = await browserJson<{ assignedRuns: number }>(
+          page,
+          `/api/v1/run-batches/${terminatingBatch.id}`,
+        );
+        return summary.body.assignedRuns;
+      },
+      { timeout: 15000 },
+    )
+    .toBe(2);
+  // The initial assignments already exist. Pause before claim: those assignments
+  // must still be claimable and drain normally, while future dispatch is fenced.
+  const schedulingPath = `/api/v1/run-batches/${terminatingBatch.id}/scheduling`;
+  expect(
+    (await browserJson(page, schedulingPath, { method: "POST", body: { action: "pause" } })).status,
+  ).toBe(200);
+  let inFlight = await claimOnce(page, identity, 2);
   expect(inFlight).toHaveLength(2);
+  await page.goto(`/run-batches/${terminatingBatch.id}`);
+  await expect(page.getByRole("button", { name: "继续调度", exact: true })).toBeVisible();
+  await expect(page.getByText("任务正在暂停", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`pause-draining-${width}.png`),
+      fullPage: true,
+    });
+  }
+  await completeAttempt(page, identity, inFlight[0]!, "pause-drain-1");
+  await expectNoAssignment(page, identity);
+  await completeAttempt(page, identity, inFlight[1]!, "pause-drain-2");
+  await expectNoAssignment(page, identity);
+  await expect(page.getByText("任务已暂停", { exact: true })).toBeVisible({ timeout: 15000 });
+  await page.reload();
+  await expect(page.getByText("任务已暂停", { exact: true })).toBeVisible();
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    for (const theme of ["light", "dark"] as const) {
+      const switcher = page.getByRole("button", {
+        name: theme === "light" ? "切换到浅色模式" : "切换到深色模式",
+        exact: true,
+      });
+      if (await switcher.isVisible()) await switcher.click();
+      await page.screenshot({
+        path: testInfo.outputPath(`paused-details-${theme}-${width}.png`),
+        fullPage: true,
+      });
+    }
+  }
+  await page.goto("/execution-records");
+  const pausedRow = page.locator("tbody tr", {
+    has: page.locator(`a[href="/run-batches/${terminatingBatch.id}"]`),
+  });
+  await expect(pausedRow).toContainText("已暂停");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`paused-list-${width}.png`),
+      fullPage: true,
+    });
+  }
+  await refreshPauseRunnerCapacity();
+  await pausedRow.getByRole("button", { name: "继续调度", exact: true }).click();
+  await expect(pausedRow.getByRole("button", { name: "暂停任务", exact: true })).toBeVisible();
+  const completedBeforeResume = new Set(
+    inFlight.map((item) => item.assignment.executionSpec.executionRunId),
+  );
+  inFlight = await claimOnce(page, identity, 2);
+  expect(inFlight).toHaveLength(2);
+  for (const claim of inFlight)
+    expect(completedBeforeResume.has(claim.assignment.executionSpec.executionRunId)).toBe(false);
   await page.goto("/execution-records");
   const terminatingRow = page.locator("tbody tr", {
     has: page.locator(`a[href="/run-batches/${terminatingBatch.id}"]`),
@@ -715,8 +820,8 @@ test("completion immediately refills free runner slots without waiting for the w
     })
     .toMatchObject({
       status: "cancelled",
-      succeededRuns: 2,
-      cancelledRuns: 3,
+      succeededRuns: 4,
+      cancelledRuns: 1,
       terminationRequestedAt: expect.any(String),
     });
   await page.reload();

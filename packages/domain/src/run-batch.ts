@@ -138,6 +138,8 @@ export type RunBatch = {
   // 终止请求一经保存，调度器不得再创建或下发新 assignment；已有在途用例自然完成。
   // 在所有 run 进入终态前，批次仍保留其运行状态，由展示层显示“终止中”。
   terminationRequestedAt?: string;
+  /** Persisted dispatch gate; assigned attempts continue and waiting runs remain resumable. */
+  pauseRequestedAt?: string;
   version: number;
   // 权威计划开始时间。立即执行时等于 createdAt；延时执行时由服务端时钟计算。
   scheduledFor: string;

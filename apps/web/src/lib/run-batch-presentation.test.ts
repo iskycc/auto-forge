@@ -18,6 +18,19 @@ import {
 } from "./run-batch-presentation";
 
 describe("run batch presentation", () => {
+  it("distinguishes draining and paused without hiding terminal or terminating states", () => {
+    const paused = { pauseRequestedAt: "2026-10-30T00:00:00.000Z" };
+    expect(runBatchCompletionLabel({ status: "running", ...paused })).toBe("暂停中");
+    expect(runBatchCompletionLabel({ status: "queued", ...paused })).toBe("已暂停");
+    expect(runBatchCompletionLabel({ status: "succeeded", ...paused })).toBe("执行完成");
+    expect(
+      runBatchCompletionLabel({
+        status: "running",
+        ...paused,
+        terminationRequestedAt: "2026-10-30T00:00:01.000Z",
+      }),
+    ).toBe("终止中");
+  });
   it("distinguishes active and terminal states", () => {
     expect(isActiveRunBatch("scheduled")).toBe(true);
     expect(isActiveRunBatch("running")).toBe(true);

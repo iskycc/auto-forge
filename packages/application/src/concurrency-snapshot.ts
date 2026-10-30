@@ -5,7 +5,13 @@ import type { RunBatchMetadata } from "./ports";
 export type ConcurrencySnapshot = {
   batch: Pick<
     RunBatchMetadata,
-    "id" | "projectId" | "status" | "scheduledFor" | "terminationRequestedAt" | "policy"
+    | "id"
+    | "projectId"
+    | "status"
+    | "scheduledFor"
+    | "terminationRequestedAt"
+    | "pauseRequestedAt"
+    | "policy"
   >;
   targetConcurrency: number | null;
   runningRuns: number;

@@ -39,7 +39,10 @@ function fixture() {
     create: vi.fn().mockResolvedValue({ id: "batch" }),
     getSummary: vi.fn().mockResolvedValue({ id: "batch" }),
   };
-  const control = { terminateBatch: vi.fn().mockResolvedValue(2) };
+  const control = {
+    changeBatchScheduling: vi.fn().mockResolvedValue(true),
+    terminateBatch: vi.fn().mockResolvedValue(2),
+  };
   const publicAccess = { publishBatch: vi.fn().mockResolvedValue("/Execution?BatchId=batch") };
   const service = new PublicSuiteExecutionService(
     links,
@@ -66,6 +69,16 @@ describe("public task execution", () => {
     expect(f.links.publish).toHaveBeenCalledWith("suite", "maintainer", now);
     await f.service.revoke("suite", "maintainer");
     expect(f.links.revoke).toHaveBeenCalledWith("suite", "maintainer", now);
+  });
+  it("uses the published grant to pause and resume only batches created through that grant", async () => {
+    f.links.batch.mockResolvedValue({ publicExecution: true });
+    await f.service.changeScheduling("suite", "maintainer", "batch", actor, "pause");
+    expect(f.control.changeBatchScheduling).toHaveBeenCalledWith(actor.id, "batch", "pause");
+    f.links.batch.mockResolvedValue({ publicExecution: false });
+    await expect(
+      f.service.changeScheduling("suite", "maintainer", "private-batch", actor, "resume"),
+    ).rejects.toMatchObject({ code: "RUN_BATCH_NOT_FOUND" });
+    expect(f.control.changeBatchScheduling).toHaveBeenCalledTimes(1);
   });
   it("rejects publication for a disabled task", async () => {
     f.getSummary.mockResolvedValue({ ...suite, enabled: false });

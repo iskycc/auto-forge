@@ -544,6 +544,18 @@ export class ExecutionControlService {
     return projectId;
   }
 
+  async changeBatchScheduling(actorId: string, batchId: string, action: "pause" | "resume") {
+    const changed = await this.executions.changeBatchScheduling({
+      batchId,
+      action,
+      actorId,
+      eventId: this.ids.next(),
+      requestedAt: this.clock.now().toISOString(),
+    });
+    if (action === "resume") await this.scheduling.schedule(batchId);
+    return changed;
+  }
+
   async terminateBatch(
     actorId: string,
     batchId: string,

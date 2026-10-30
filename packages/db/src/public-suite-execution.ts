@@ -13,7 +13,7 @@ import type { PostgresDatabaseHandle } from "./postgres-database";
 import { retryPostgresWrite } from "./postgres-transaction";
 
 const BATCH_COLUMNS =
-  "id,sequence_number,status,total_runs,current_round,requested_by_username,public_execution_json,terminated_by_json,cancel_requested_at,scheduled_for,created_at";
+  "id,sequence_number,status,total_runs,current_round,requested_by_username,public_execution_json,terminated_by_json,cancel_requested_at,pause_requested_at,scheduled_for,created_at";
 
 type Query = (
   statement: string,
@@ -97,6 +97,7 @@ function publicBatch(row: Record<string, unknown>) {
     requestedBy: row.requested_by_username ?? null,
     publisher: context?.publisher.username ?? null,
     terminatedBy: terminatedBy?.username ?? null,
+    pauseRequestedAt: row.pause_requested_at ?? null,
     terminationRequestedAt: row.cancel_requested_at ?? null,
     scheduledFor: row.scheduled_for,
     createdAt: row.created_at,

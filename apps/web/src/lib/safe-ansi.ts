@@ -4,6 +4,7 @@ export type AnsiSegment = {
 };
 
 type StyleState = { bold: boolean; foreground?: string };
+export type AnsiParserState = StyleState & { pending?: string };
 
 const ANSI_COLORS: Record<number, string> = {
   30: "black",
@@ -28,8 +29,21 @@ const MAXIMUM_CONTROL_SEQUENCE_LENGTH = 64;
 const MAXIMUM_SEGMENTS = 10_000;
 
 export function parseSafeAnsi(input: string): AnsiSegment[] {
+  return parseSafeAnsiStream(input).segments;
+}
+
+/** Page boundaries are transport boundaries, not terminal resets. State stays bounded. */
+export function parseSafeAnsiStream(
+  content: string,
+  previous?: AnsiParserState,
+): { segments: AnsiSegment[]; state: AnsiParserState } {
+  const input = ((previous?.pending ?? "") + content).replace(/\u009b/g, "\u001b[");
   const segments: AnsiSegment[] = [];
-  const style: StyleState = { bold: false };
+  const style: StyleState = {
+    bold: previous?.bold ?? false,
+    ...(previous?.foreground ? { foreground: previous.foreground } : {}),
+  };
+  let pending: string | undefined;
   let text = "";
   const flush = () => {
     if (!text) return;
@@ -47,12 +61,36 @@ export function parseSafeAnsi(input: string): AnsiSegment[] {
   for (let index = 0; index < input.length; index += 1) {
     const code = input.charCodeAt(index);
     if (code === 0x1b) {
+      if (index === input.length - 1) {
+        pending = "\u001b";
+        break;
+      }
       const operatingSystemCommandEnd = readOscEnd(input, index);
       if (operatingSystemCommandEnd !== undefined) {
+        if (
+          operatingSystemCommandEnd === input.length - 1 &&
+          input.length - index < 2048 &&
+          input.charCodeAt(operatingSystemCommandEnd) !== 0x07 &&
+          !(
+            input[operatingSystemCommandEnd] === "\\" &&
+            input.charCodeAt(operatingSystemCommandEnd - 1) === 0x1b
+          )
+        ) {
+          pending = input.slice(index);
+          break;
+        }
         index = operatingSystemCommandEnd;
         continue;
       }
       const sequence = readControlSequence(input, index);
+      if (
+        !sequence &&
+        input[index + 1] === "[" &&
+        input.length - index < MAXIMUM_CONTROL_SEQUENCE_LENGTH
+      ) {
+        pending = input.slice(index);
+        break;
+      }
       if (sequence) {
         flush();
         if (sequence.final === "m") applySgr(style, sequence.parameters);
@@ -65,7 +103,7 @@ export function parseSafeAnsi(input: string): AnsiSegment[] {
     text += input[index];
   }
   flush();
-  return segments;
+  return { segments, state: { ...style, ...(pending ? { pending } : {}) } };
 }
 
 function readOscEnd(input: string, escapeIndex: number): number | undefined {
@@ -99,7 +137,15 @@ function readControlSequence(
 
 function applySgr(style: StyleState, parameters: string): void {
   const codes = parameters === "" ? [0] : parameters.split(";").map(Number);
-  for (const code of codes) {
+  for (let index = 0; index < codes.length; index++) {
+    const code = codes[index]!;
+    // Extended colors are unsupported rather than arbitrary CSS. Their RGB/index
+    // payload must never be interpreted as bold/reset/basic-color instructions.
+    if (code === 38 || code === 48 || code === 58) {
+      if (codes[index + 1] === 2) index += 4;
+      else if (codes[index + 1] === 5) index += 2;
+      continue;
+    }
     if (!Number.isInteger(code)) continue;
     if (code === 0) {
       style.bold = false;

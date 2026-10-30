@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join, sep } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import type { LogArchiveJob } from "@autoforge/contracts";
 import { LocalObjectStore } from "../../packages/object-store/src/local-object-store";
@@ -205,6 +206,99 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     .toBe("ready");
   await page.getByRole("button", { name: "刷新状态", exact: true }).click();
   await expect(archiveRow.getByText("已校验，待清理", { exact: true })).toBeVisible();
+  await expect(archiveRow.getByRole("button", { name: "删除平台副本", exact: true })).toBeVisible();
+  await expect(
+    archiveRow.getByRole("button", { name: "删除平台副本", exact: true }),
+  ).toBeDisabled();
+  await expect(archiveRow).toContainText("请先完成“清理原日志”");
+  await expect
+    .poll(
+      async () => {
+        const result = await browserJson<{ items: LogArchiveJob[] }>(
+          page,
+          "/api/v1/settings/log-archives",
+        );
+        return result.body.items.filter(
+          (item) => item.groupId === job.groupId && item.status === "ready",
+        ).length;
+      },
+      { timeout: 120000 },
+    )
+    .toBe(2);
+  await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+  const groupJobs = (
+    await browserJson<{ items: LogArchiveJob[] }>(page, "/api/v1/settings/log-archives")
+  ).body.items.filter((item) => item.groupId === job.groupId);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  for (const item of groupJobs)
+    await page.locator(`tr[data-row-key="${item.id}"]`).getByRole("checkbox").check();
+  const copied = new Map<string, string>();
+  for (const label of ["复制 wget 命令", "复制 curl 命令", "复制下载直链"]) {
+    await page.getByRole("button", { name: "复制下载方式", exact: true }).hover();
+    const generated = page.waitForResponse(
+      (candidate) =>
+        new URL(candidate.url()).pathname === "/api/v1/settings/log-archives/download-links" &&
+        candidate.request().method() === "POST",
+    );
+    await page.getByRole("menuitem", { name: label, exact: true }).click();
+    expect((await generated).status()).toBe(200);
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toContain(
+        label.includes("wget")
+          ? "wget --tries"
+          : label.includes("curl")
+            ? "curl --fail"
+            : "?ticket=",
+      );
+    const text = await page.evaluate(() => navigator.clipboard.readText());
+    expect(text.split("\n")).toHaveLength(2);
+    copied.set(label, text);
+  }
+  const beforeDownloads = (
+    await browserJson<{ items: LogArchiveJob[] }>(page, "/api/v1/settings/log-archives")
+  ).body.items.filter((item) => item.groupId === job.groupId);
+  expect(beforeDownloads.every((item) => !item.downloadedAt)).toBe(true);
+  for (const label of ["复制 wget 命令", "复制 curl 命令"]) {
+    const downloadDirectory = testInfo.outputPath(
+      label.includes("wget") ? "wget-downloads" : "curl-downloads",
+    );
+    await mkdir(downloadDirectory, { recursive: true });
+    await promisify(execFile)("sh", ["-eu", "-c", copied.get(label)!], {
+      cwd: downloadDirectory,
+      timeout: 60000,
+      maxBuffer: 65536,
+    });
+    for (const item of groupJobs) {
+      const content = await readFile(join(downloadDirectory, item.filename!));
+      expect(content.byteLength).toBe(item.archiveBytes);
+      expect(createHash("sha256").update(content).digest("hex")).toBe(item.sha256);
+    }
+  }
+  const unauthenticated = await browser.newContext();
+  try {
+    for (const url of copied.get("复制下载直链")!.split("\n")) {
+      const response = await unauthenticated.request.get(url);
+      expect(response.status()).toBe(200);
+      const body = await response.body();
+      expect(createHash("sha256").update(body).digest("hex")).toBe(
+        response.headers()["x-content-sha256"],
+      );
+      await response.dispose();
+    }
+  } finally {
+    await unauthenticated.close();
+  }
+  const afterDownloads = (
+    await browserJson<{ items: LogArchiveJob[] }>(page, "/api/v1/settings/log-archives")
+  ).body.items.filter((item) => item.groupId === job.groupId);
+  expect(afterDownloads.every((item) => item.downloadedAt)).toBe(true);
+  // Captures below include the selected rows and batch-copy toolbar.
+  // Downloading has not yet enabled deletion: the source cleanup gate is separate.
+  await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+  await expect(
+    archiveRow.getByRole("button", { name: "删除平台副本", exact: true }),
+  ).toBeDisabled();
   for (const mode of ["light", "dark"]) {
     await page
       .context()
@@ -212,11 +306,13 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page.reload();
+      for (const item of groupJobs)
+        await page.locator(`tr[data-row-key="${item.id}"]`).getByRole("checkbox").check();
       await waitForUiTransitions(page);
       await expectUiIntegrity(page);
       await page.screenshot({
         path: testInfo.outputPath(`monthly-archive-${mode}-${width}.png`),
-        fullPage: true,
+        fullPage: false,
       });
     }
   }
@@ -435,5 +531,17 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
         fullPage: true,
       });
     }
+  }
+  const retainedUrl = copied
+    .get("复制下载直链")!
+    .split("\n")
+    .find((url) => url.includes(remaining.id))!;
+  const logout = await browserJson(page, "/api/v1/auth/logout", { method: "POST" });
+  expect([200, 204]).toContain(logout.status);
+  const expired = await browser.newContext();
+  try {
+    expect((await expired.request.get(retainedUrl)).status()).toBe(401);
+  } finally {
+    await expired.close();
   }
 });

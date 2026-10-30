@@ -90,6 +90,7 @@ export type WorkTask =
   | { kind: "declare-artifacts"; attemptId: string; input: unknown }
   | { kind: "recover-expired"; input: unknown }
   | { kind: "resolve-attempt-contexts"; attemptIds: string[] }
+  | { kind: "change-batch-scheduling"; batchId: string; input: unknown }
   | { kind: "terminate-batch"; batchId: string; input: unknown }
   | { kind: "append-attempt-log-chunks"; attemptId: string; input: unknown };
 

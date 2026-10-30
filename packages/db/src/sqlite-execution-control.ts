@@ -17,6 +17,7 @@ import {
 } from "@autoforge/contracts";
 import {
   aggregateBatchStatus,
+  shouldChangeBatchScheduling,
   DomainError,
   isTerminalAttemptStatus,
   isTerminalBatchStatus,
@@ -859,10 +860,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
            JOIN run_batches b ON b.id = r.batch_id
            WHERE r.status = 'queued' AND r.held_round = 0 AND r.queue_deadline_at IS NOT NULL
              AND r.queue_deadline_at <= ?
+             AND b.pause_requested_at IS NULL
+             AND (b.queue_resumed_at IS NULL OR julianday(b.queue_resumed_at) + b.queue_timeout_ms/86400000.0 <= julianday(?))
              AND b.status IN ('queued','dispatching','scheduled','running')
            ORDER BY r.queue_deadline_at, r.id LIMIT ?`,
         )
-        .all(input.now, input.limit) as Array<{ id: string; batch_id: string }>;
+        .all(input.now, input.now, input.limit) as Array<{ id: string; batch_id: string }>;
       let recovered = 0;
       for (const run of queued) {
         const eventId = input.eventIds[recovered];
@@ -874,11 +877,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
              WHERE id = ? AND status = 'queued' AND held_round = 0 AND queue_deadline_at <= ?
                AND EXISTS (
                  SELECT 1 FROM run_batches b
-                 WHERE b.id = execution_runs.batch_id
+                 WHERE b.id = execution_runs.batch_id AND b.pause_requested_at IS NULL
+                   AND (b.queue_resumed_at IS NULL OR julianday(b.queue_resumed_at) + b.queue_timeout_ms/86400000.0 <= julianday(?))
                    AND b.status IN ('queued','dispatching','scheduled','running')
                )`,
           )
-          .run(input.now, run.id, input.now);
+          .run(input.now, run.id, input.now, input.now);
         if (update.changes !== 1) continue;
         this.updateBatchStatus(run.batch_id, input.now, eventId, "run.queue_timed_out");
         recovered += 1;
@@ -974,6 +978,59 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         }
       }
       return recoveredAttempts;
+    });
+  }
+
+  async changeBatchScheduling(
+    input: Parameters<ExecutionControlRepository["changeBatchScheduling"]>[0],
+  ): Promise<boolean> {
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const batch = this.handle.client
+        .prepare(
+          "SELECT status, cancel_requested_at AS terminationRequestedAt, pause_requested_at AS pauseRequestedAt FROM run_batches WHERE id=?",
+        )
+        .get(input.batchId) as
+        | {
+            status: RunBatchStatus;
+            terminationRequestedAt: string | null;
+            pauseRequestedAt: string | null;
+          }
+        | undefined;
+      if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      if (!shouldChangeBatchScheduling(batch, input.action)) return false;
+      this.handle.client
+        .prepare(
+          `UPDATE run_batches SET pause_requested_at=?, queue_resumed_at=CASE WHEN ?='resume' THEN ? ELSE queue_resumed_at END,
+         updated_at=?, version=version+1 WHERE id=?`,
+        )
+        .run(
+          input.action === "pause" ? input.requestedAt : null,
+          input.action,
+          input.requestedAt,
+          input.requestedAt,
+          input.batchId,
+        );
+      // One batch-row update fences every future assignment, even from an older scheduling plan.
+      // Queue deadlines are given a fresh budget on resume without rewriting all waiting runs.
+      if (input.action === "resume")
+        this.updateBatchStatus(
+          input.batchId,
+          input.requestedAt,
+          `${input.eventId}:state`,
+          "batch.scheduling_resumed",
+        );
+      this.handle.client
+        .prepare(
+          `INSERT INTO run_batch_status_events(id,batch_id,from_status,to_status,batch_version,reason,recorded_at)
+         SELECT ?,id,status,status,version,?,? FROM run_batches WHERE id=?`,
+        )
+        .run(
+          input.eventId,
+          `batch.scheduling_${input.action === "pause" ? "paused" : "resumed"}`,
+          input.requestedAt,
+          input.batchId,
+        );
+      return true;
     });
   }
 
@@ -1777,7 +1834,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   ): RunBatchStatus {
     const batch = this.handle.client
       .prepare(
-        "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = ?",
+        "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at, pause_requested_at FROM run_batches WHERE id = ?",
       )
       .get(batchId) as
       | {
@@ -1786,11 +1843,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           retry_mode: "immediate" | "round";
           queue_timeout_ms: number;
           cancel_requested_at: string | null;
+          pause_requested_at: string | null;
         }
       | undefined;
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-    if (!batch.cancel_requested_at) {
+    if (!batch.cancel_requested_at && !batch.pause_requested_at) {
       this.advanceRoundIfIdle(batchId, batch.retry_mode, batch.queue_timeout_ms, updatedAt);
     }
     const status = this.aggregateStoredBatchStatus(batchId, batch.cancel_requested_at !== null);

@@ -16,6 +16,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
+- 活动执行任务支持“暂停任务／继续调度”：停止新增派发，已下发用例自然完成，剩余用例及重试保留；暂停跨重启持久化，恢复不重跑已完成结果。入口位于执行记录、执行详情与任务公开执行页，详见[暂停与继续调度](./docs/architecture/batch-scheduling-pause.md)。
+
 - 批量用例下发使用持久化随机排队键，普通、DDT 和混合任务的整个等待范围均参与随机；每次成功预留同时刷新后续重跑的排序键。Lite／Full 使用索引与有界窗口，保留 Runner 均衡、并发/资源保护、轮次屏障和页面自然排序。升级迁移见[调度说明](./docs/architecture/run-scheduling.md#用例随机执行顺序)。
 - DDT 全量、当前范围和勾选导出共享按实际非空字段写入的流程，保留全部表头和值，避免跨 SR 字段合并后补全海量空单元格。范围与格式说明见[DDT 导出](./docs/architecture/ddt-management.md#范围导出的空单元格膨胀保护)。
 
@@ -29,7 +31,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 - 任务公开执行页展示全部环境 IP，登录后可修改本次立即／倒计时执行的环境，提交后恢复任务默认地址，不改变任务原配置；当前批次、历史批次和执行详情展示实际执行快照中的多环境地址，详见[任务公开执行](./docs/architecture/public-task-execution.md)。
 
-- Full 可选[独立 PostgreSQL 日志服务](./deploy/compose/full-bind/log-postgres/README.md)，使用管理员账号按北京时间每日自动建库；主库持久化实际日期库位置，跨日执行合并读取，旧单库和本地日志保持兼容。Lite／Full 的“平台设置 → 日志归档”支持带磁盘预算的月度分卷、独立校验、下载内置 Go 离线查看器，并在确认后清理原日志正文；平台副本保留期间原日志地址继续读取归档。用户完整下载并确认离线查看正常后，可独立移除平台 ZIP 与索引，保留执行历史并明确显示已离线归档。详见[日志归档运维说明](./docs/operations/log-archives.md)和 [ADR 0016](./docs/adr/0016-daily-log-databases-and-monthly-archives.md)。
+- Full 可选[独立 PostgreSQL 日志服务](./deploy/compose/full-bind/log-postgres/README.md)，使用管理员账号按北京时间每日自动建库；主库持久化实际日期库位置，跨日执行合并读取，旧单库和本地日志保持兼容。Lite／Full 的“平台设置 → 日志归档”支持带磁盘预算的月度分卷、独立校验、下载内置 Go 离线查看器，并在确认后清理原日志正文；平台副本保留期间原日志地址继续读取归档。离线查看器编译嵌入主平台 Ant Design 主题与组件资源，复用安全 ANSI 颜色、等级高亮和协议内容过滤，支持日志查找、换行及有界分页。用户完整下载并确认离线查看正常后，可独立移除平台 ZIP 与索引，保留执行历史并明确显示已离线归档。详见[日志归档运维说明](./docs/operations/log-archives.md)和 [ADR 0016](./docs/adr/0016-daily-log-databases-and-monthly-archives.md)。
 
 - 活动任务执行详情提供“并发诊断”，按需显示未达并发上限的当前条件、执行中／待领取占额、项目额度、节点本任务／其他任务占用，以及 CPU、内存预留和资源指标状态。诊断复用调度准入规则，通过隔离只读进程读取，不随页面轮询；具有执行记录和节点查看权限的用户可手动刷新，匿名公开页不展示。详见[执行任务并发诊断](./docs/architecture/execution-concurrency-diagnostics.md)。
 

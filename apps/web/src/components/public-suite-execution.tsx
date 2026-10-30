@@ -1,4 +1,5 @@
 "use client";
+import { BatchSchedulingButton } from "./batch-scheduling-button";
 
 import { Alert, Card, Descriptions, Empty, Form, InputNumber, Select, Statistic, Tag } from "antd";
 import { Clock3, ExternalLink, Play, RefreshCw, Square, UserRound } from "lucide-react";
@@ -304,6 +305,8 @@ export function PublicSuiteExecution({
                 <ExecutionRow
                   key={batch.id}
                   batch={batch}
+                  schedulingEndpoint={`${endpoint}/executions/${encodeURIComponent(batch.id)}/scheduling?${query}`}
+                  onSchedulingChanged={refresh}
                   canStop={authenticated && !pending && !refreshError}
                   onStop={() => {
                     setError("");
@@ -377,10 +380,14 @@ function ExecutionRow({
   batch,
   canStop = false,
   onStop,
+  schedulingEndpoint,
+  onSchedulingChanged,
 }: {
   batch: PublicSuiteBatch;
   canStop?: boolean;
   onStop?: () => void;
+  schedulingEndpoint?: string;
+  onSchedulingChanged?: () => Promise<void>;
 }) {
   const active = ["queued", "dispatching", "scheduled", "running"].includes(batch.status);
   const now = usePlatformNow(active);
@@ -388,17 +395,21 @@ function ExecutionRow({
   const label =
     batch.terminationRequestedAt && active
       ? "正在终止"
-      : seconds > 0 && active
-        ? "倒计时"
-        : {
-            queued: "排队中",
-            dispatching: "调度中",
-            scheduled: "待领取",
-            running: "执行中",
-            succeeded: "执行完成",
-            failed: "执行异常",
-            cancelled: "已终止",
-          }[batch.status];
+      : batch.pauseRequestedAt && active
+        ? batch.status === "queued"
+          ? "已暂停"
+          : "暂停中"
+        : seconds > 0 && active
+          ? "倒计时"
+          : {
+              queued: "排队中",
+              dispatching: "调度中",
+              scheduled: "待领取",
+              running: "执行中",
+              succeeded: "执行完成",
+              failed: "执行异常",
+              cancelled: "已终止",
+            }[batch.status];
   return (
     <article
       className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-muted p-4"
@@ -413,7 +424,7 @@ function ExecutionRow({
           <span className="text-sm text-muted-foreground">
             {batch.totalRuns} 个用例 · 第 {batch.currentRound} 轮
           </span>
-          {seconds > 0 && active ? (
+          {seconds > 0 && active && !batch.pauseRequestedAt ? (
             <span className="flex items-center gap-1 text-sm text-primary">
               <Clock3 size={14} />
               {seconds} 秒后启动
@@ -433,7 +444,7 @@ function ExecutionRow({
           </div>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-3">
         {batch.progressPath ? (
           <a
             href={batch.progressPath}
@@ -447,6 +458,20 @@ function ExecutionRow({
         ) : (
           <span className="text-xs text-muted-foreground">平台发起的执行</span>
         )}
+        {active && batch.publicExecution && onSchedulingChanged ? (
+          <BatchSchedulingButton
+            batch={{
+              id: batch.id,
+              ...(batch.pauseRequestedAt ? { pauseRequestedAt: batch.pauseRequestedAt } : {}),
+              ...(batch.terminationRequestedAt
+                ? { terminationRequestedAt: batch.terminationRequestedAt }
+                : {}),
+            }}
+            {...(schedulingEndpoint ? { endpoint: schedulingEndpoint } : {})}
+            onChanged={onSchedulingChanged}
+            disabled={!canStop}
+          />
+        ) : null}
         {active && batch.publicExecution ? (
           <Button
             type="button"

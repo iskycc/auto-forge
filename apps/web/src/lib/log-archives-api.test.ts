@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { DomainError } from "@autoforge/domain";
+vi.mock("server-only", () => ({}));
 const access = vi.hoisted(() => ({
   authorize: vi.fn(),
   sameOrigin: vi.fn(),

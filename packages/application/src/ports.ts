@@ -587,6 +587,13 @@ export interface ExecutionControlRepository {
     eventIds: string[];
     limit: number;
   }): Promise<RecoveredAttemptExpiration[]>;
+  changeBatchScheduling(input: {
+    batchId: string;
+    action: "pause" | "resume";
+    actorId: string;
+    eventId: string;
+    requestedAt: string;
+  }): Promise<boolean>;
   terminateBatch(input: {
     batchId: string;
     actorId: string;

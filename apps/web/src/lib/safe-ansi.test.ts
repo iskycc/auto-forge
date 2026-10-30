@@ -17,3 +17,8 @@ describe("safe ANSI rendering", () => {
     expect(rendered.map((segment) => segment.text).join("")).toContain("label");
   });
 });
+
+it("does not treat extended-color channel values as independent SGR commands", () => {
+  const rendered = parseSafeAnsi("\u001b[38;2;31;1;0mRGB\u001b[0m");
+  expect(rendered).toEqual([{ text: "RGB", classes: [] }]);
+});

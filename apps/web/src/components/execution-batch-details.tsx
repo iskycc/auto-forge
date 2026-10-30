@@ -1,4 +1,5 @@
 "use client";
+import { BatchSchedulingButton } from "./batch-scheduling-button";
 import { ExecutionActors } from "./execution-actors";
 import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
 import { Notice } from "@/components/ui/notice";
@@ -338,20 +339,26 @@ export function ExecutionBatchDetails({
                 ? activeBatch
                   ? "任务正在终止"
                   : "任务已终止"
-                : activeBatch
-                  ? "批次仍在执行"
-                  : "批次已进入终态"}
+                : batch.pauseRequestedAt && activeBatch
+                  ? batch.status === "queued"
+                    ? "任务已暂停"
+                    : "任务正在暂停"
+                  : activeBatch
+                    ? "批次仍在执行"
+                    : "批次已进入终态"}
             </strong>
             <span>
               {batch.terminationRequestedAt
                 ? activeBatch
                   ? "后续调度已停止，等待正在执行的用例自然完成。"
                   : "本批次的执行与收尾已结束，执行记录和结果已保留。"
-                : batch.status === "failed"
-                  ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
-                  : retrySuiteId
-                    ? "再次执行会读取任务当前版本的完整配置并创建新批次。"
-                    : "本批次的执行记录与配置快照已保留，可继续查看结果和日志。"}
+                : batch.pauseRequestedAt && activeBatch
+                  ? "新的调度已暂停，已下发的用例继续完成；点击继续调度执行剩余用例及重试。"
+                  : batch.status === "failed"
+                    ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
+                    : retrySuiteId
+                      ? "再次执行会读取任务当前版本的完整配置并创建新批次。"
+                      : "本批次的执行记录与配置快照已保留，可继续查看结果和日志。"}
             </span>
           </div>
           <div className={cn("button-row", uiPatterns["button-row"])}>
@@ -377,6 +384,13 @@ export function ExecutionBatchDetails({
             ) : null}
             {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
               <StartFailureAnalysisButton scope={analysisScope} />
+            ) : null}
+            {canCancelRuns && activeBatch ? (
+              <BatchSchedulingButton
+                batch={batch}
+                onChanged={refreshBatch}
+                disabled={actionPending !== undefined}
+              />
             ) : null}
             {canCancelRuns && activeBatch ? (
               <Button

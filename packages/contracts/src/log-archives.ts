@@ -13,6 +13,33 @@ export const createLogArchiveSchema = z
   })
   .strict();
 export const cleanupLogArchiveSchema = z.object({ confirm: z.literal(true) }).strict();
+export const LOG_ARCHIVE_DOWNLOAD_SELECTION_LIMIT = 50;
+export const createLogArchiveDownloadLinksSchema = z
+  .object({
+    archiveIds: z
+      .array(z.string().uuid())
+      .min(1)
+      .max(LOG_ARCHIVE_DOWNLOAD_SELECTION_LIMIT)
+      .refine((ids) => new Set(ids).size === ids.length, "归档不能重复选择。"),
+  })
+  .strict();
+export const logArchiveDownloadLinksSchema = z.object({
+  expiresAt: z.string().datetime(),
+  items: z
+    .array(
+      z.object({
+        archiveId: z.string().uuid(),
+        filename: z.string().min(1).max(512),
+        url: z.string().url().max(8192),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        sizeBytes: z.number().int().nonnegative(),
+      }),
+    )
+    .min(1)
+    .max(LOG_ARCHIVE_DOWNLOAD_SELECTION_LIMIT),
+});
+export type LogArchiveDownloadLinks = z.infer<typeof logArchiveDownloadLinksSchema>;
+export type LogArchiveDownloadLink = LogArchiveDownloadLinks["items"][number];
 export const removeLogArchiveCopySchema = z
   .object({
     downloadedAndVerified: z.literal(true),

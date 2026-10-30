@@ -238,6 +238,7 @@ function RecentExecution({ batch }: { batch: CaseSuiteRecentExecution }) {
           >
             {runBatchCompletionLabel({
               status: batch.status,
+              ...(batch.pauseRequestedAt ? { pauseRequestedAt: batch.pauseRequestedAt } : {}),
               ...(batch.terminationRequestedAt
                 ? { terminationRequestedAt: batch.terminationRequestedAt }
                 : {}),

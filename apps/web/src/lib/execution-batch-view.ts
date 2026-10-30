@@ -19,6 +19,7 @@ export type ExecutionBatchView = Pick<
   | "failedRuns"
   | "timedOutRuns"
   | "terminationRequestedAt"
+  | "pauseRequestedAt"
   | "publicExecution"
   | "terminatedBy"
   | "scheduledFor"
@@ -48,6 +49,7 @@ export function toExecutionBatchView(
   return {
     ...(overview.statistics ? { statistics: overview.statistics } : {}),
     ...(batch.environmentAddresses ? { environmentAddresses: batch.environmentAddresses } : {}),
+    ...(batch.pauseRequestedAt ? { pauseRequestedAt: batch.pauseRequestedAt } : {}),
     id: batch.id,
     status: batch.status,
     ...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {}),

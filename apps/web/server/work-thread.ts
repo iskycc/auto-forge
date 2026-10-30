@@ -461,6 +461,19 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
       );
     case "resolve-attempt-contexts":
       return executionRepository().resolveAttemptSchedulingContexts(task.attemptIds);
+    case "change-batch-scheduling":
+      return executionRepository().changeBatchScheduling(
+        z
+          .object({
+            batchId: z.string().min(1).max(160),
+            action: z.enum(["pause", "resume"]),
+            actorId: z.string().min(1).max(160),
+            eventId: z.string().min(1).max(160),
+            requestedAt: z.iso.datetime(),
+          })
+          .strict()
+          .parse(task.input),
+      );
     case "terminate-batch":
       return executionRepository().terminateBatch(
         z

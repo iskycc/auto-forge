@@ -38,3 +38,5 @@ export * from "./memory-admission";
 export * from "./log-databases";
 export * from "./log-calendar";
 export * from "./log-archives";
+
+export { batchSchedulingControlSchema } from "./batch-scheduling-control";

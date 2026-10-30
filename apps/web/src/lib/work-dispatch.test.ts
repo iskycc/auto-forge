@@ -45,6 +45,24 @@ describe("scheduling coalescing", () => {
 });
 
 describe("execution control work dispatch", () => {
+  it("runs scheduling pause mutations in the control worker rather than the HTTP process", async () => {
+    const localChange = vi.fn();
+    const workerChange = vi.fn().mockResolvedValue(true);
+    const repository = workerBackedExecutionControlRepository(
+      { changeBatchScheduling: localChange } as unknown as ExecutionControlRepository,
+      { changeBatchScheduling: workerChange } as unknown as WorkDispatcher,
+    );
+    const input = {
+      batchId: "batch",
+      actorId: "actor",
+      action: "pause" as const,
+      eventId: "event",
+      requestedAt: "2026-10-30T00:00:00.000Z",
+    };
+    await expect(repository.changeBatchScheduling(input)).resolves.toBe(true);
+    expect(workerChange).toHaveBeenCalledWith(input);
+    expect(localChange).not.toHaveBeenCalled();
+  });
   it("dispatches individual cancellation to control without using a read process", async () => {
     const cancelRun = vi.fn();
     const cancelExecutionRun = vi.fn().mockResolvedValue(true);

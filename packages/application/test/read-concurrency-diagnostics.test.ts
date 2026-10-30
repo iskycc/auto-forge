@@ -86,7 +86,8 @@ describe("on-demand concurrency diagnosis", () => {
   });
   it.each([
     ["batch_terminal", { status: "succeeded" }],
-    ["termination_requested", { terminationRequestedAt: now }],
+    ["termination_requested", { terminationRequestedAt: now, pauseRequestedAt: now }],
+    ["scheduling_paused", { pauseRequestedAt: now }],
     ["scheduled_start", { scheduledFor: "2026-10-25T09:00:00.000Z" }],
   ] satisfies Array<[string, Partial<ConcurrencySnapshot["batch"]>]>)(
     "explains %s before resource constraints",

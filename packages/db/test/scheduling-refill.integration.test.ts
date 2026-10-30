@@ -348,6 +348,256 @@ async function insertCaseHistoryRun(
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it.each([
+    { outcome: "succeeded" as const, recovery: false },
+    { outcome: "failed" as const, recovery: false },
+    { outcome: "failed" as const, recovery: true },
+  ])(
+    "drains $outcome attempts and holds the next round (Jenkins=$recovery) until resume",
+    async ({ outcome, recovery }) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+        harness.completion;
+      const now = "2026-08-10T00:00:01.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_limit=1,retry_mode='round' WHERE id=?",
+          [batchId],
+        );
+        if (recovery)
+          await harness.rawQuery(
+            "INSERT INTO run_batch_round_recoveries(batch_id,rule_id,after_round,next_round,jenkins_job_url,api_key_ciphertext,wait_minutes,status,available_at,created_at,updated_at) VALUES (?,'pause-recovery',1,2,'https://jenkins.internal/job/reset/','fixture',0,'idle',?,?,?)",
+            [batchId, now, now, now],
+          );
+        await harness.executions.changeBatchScheduling({
+          batchId,
+          action: "pause",
+          actorId: "operator",
+          eventId: randomUUID(),
+          requestedAt: now,
+        });
+        for (const [attemptId, leaseTokenHash] of [
+          [attempt1Id, lease1TokenHash],
+          [attempt2Id, lease2TokenHash],
+        ]) {
+          await harness.executions.completeAttempt({
+            runnerId: harness.runnerId,
+            attemptId: attemptId!,
+            leaseTokenHash: leaseTokenHash!,
+            completionId: randomUUID(),
+            resultDigest: randomUUID(),
+            eventId: randomUUID(),
+            acceptedAt: now,
+            result: {
+              status: outcome,
+              resultCode: outcome === "succeeded" ? "TESTNG_SUCCEEDED" : "TESTNG_ASSERTIONS_FAILED",
+              summary: "finish while paused",
+              durationMs: 100,
+              artifacts: [],
+            },
+          });
+        }
+        const paused = await harness.batches.get(batchId);
+        expect(paused?.status).toBe(outcome === "succeeded" ? "succeeded" : "queued");
+        expect(paused?.currentRound).toBe(1);
+        if (recovery) expect(paused?.roundRecoveries[0]?.status).toBe("idle");
+        if (outcome === "failed") {
+          await harness.executions.changeBatchScheduling({
+            batchId,
+            action: "resume",
+            actorId: "operator",
+            eventId: randomUUID(),
+            requestedAt: now,
+          });
+          const resumed = await harness.batches.get(batchId);
+          if (recovery) expect(resumed?.roundRecoveries[0]?.status).toBe("pending");
+          else expect(resumed?.currentRound).toBe(2);
+        }
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+  it.each(["testng", "ddt"] as const)(
+    "resumes %s dispatch after its original queue deadline",
+    async (kind) => {
+      const harness = await createHarness();
+      try {
+        const batchId = harness.batchQueuedId;
+        const runId = await insertQueuedRun(harness, batchId);
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          batchId,
+          harness.runnerId,
+        ]);
+        await harness.rawQuery(
+          "UPDATE execution_runs SET queue_deadline_at='2026-08-10T00:00:01.000Z' WHERE id=?",
+          [runId],
+        );
+        await harness.executions.changeBatchScheduling({
+          batchId,
+          action: "pause",
+          actorId: "operator",
+          eventId: randomUUID(),
+          requestedAt: "2026-08-10T00:00:00.500Z",
+        });
+        await harness.executions.changeBatchScheduling({
+          batchId,
+          action: "resume",
+          actorId: "operator",
+          eventId: randomUUID(),
+          requestedAt: "2026-08-11T00:00:00.000Z",
+        });
+        await refillAndClaimWaitingTask(harness, runId, kind, "2026-08-11T00:00:00.500Z");
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+  it("pauses new dispatch, drains active attempts and resumes queued retries without pause-time queue expiry", async () => {
+    const harness = await createHarness();
+    const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+      harness.completion;
+    try {
+      await harness.rawQuery(
+        "UPDATE run_batches SET retry_limit=1, retry_mode='round', queue_timeout_ms=1000 WHERE id=?",
+        [batchId],
+      );
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+        batchId,
+        harness.runnerId,
+      ]);
+      const waiting = await insertQueuedRun(harness, batchId);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET queue_deadline_at='2026-08-10T00:00:01.000Z' WHERE id=?",
+        [waiting],
+      );
+      const change = (action: "pause" | "resume", at: string) =>
+        harness.executions.changeBatchScheduling({
+          batchId,
+          action,
+          actorId: "operator",
+          eventId: randomUUID(),
+          requestedAt: at,
+        });
+      await expect(change("pause", "2026-08-10T00:00:00.500Z")).resolves.toBe(true);
+      await expect(change("pause", "2026-08-10T00:00:00.600Z")).resolves.toBe(false);
+      await expect(harness.batches.getSummary(batchId)).resolves.toMatchObject({
+        pauseRequestedAt: "2026-08-10T00:00:00.500Z",
+        runningRuns: 2,
+      });
+      expect(
+        await harness.batches.listSchedulableBatchIds(20, "2026-08-10T00:00:00.700Z"),
+      ).not.toContain(batchId);
+      expect(
+        await harness.batches.listSchedulableBatchIdsForRunner(
+          harness.runnerId,
+          20,
+          "2026-08-10T00:00:00.700Z",
+        ),
+      ).not.toContain(batchId);
+      await expect(
+        harness.batches.getSchedulingSnapshot(batchId, "2026-08-09T00:00:00.000Z"),
+      ).resolves.toMatchObject({ queuedRuns: [] });
+      // An already computed scheduling plan must also be fenced by the reservation transaction.
+      await expect(
+        harness.batches.reserveAssignments({
+          batchId,
+          decisions: [
+            {
+              executionRunId: waiting,
+              runnerId: harness.runnerId,
+              score: 1,
+              attemptId: randomUUID(),
+              assignmentId: randomUUID(),
+            },
+          ],
+          thresholds: {
+            maximumCpuUtilizationPercent: 90,
+            maximumMemoryUtilizationPercent: 90,
+            maximumLoadPerCpu: 2,
+          },
+          offlineBefore: "2026-08-09T00:00:00.000Z",
+          metricsFreshAfter: "2026-08-09T00:00:00.000Z",
+          scheduledAt: "2026-08-10T00:00:00.700Z",
+        }),
+      ).resolves.toMatchObject({ reserved: 0 });
+      for (const [attemptId, tokenHash] of [
+        [attempt1Id, lease1TokenHash],
+        [attempt2Id, lease2TokenHash],
+      ]) {
+        await expect(
+          harness.executions.completeAttempt({
+            runnerId: harness.runnerId,
+            attemptId: attemptId!,
+            leaseTokenHash: tokenHash!,
+            completionId: randomUUID(),
+            resultDigest: randomUUID(),
+            eventId: randomUUID(),
+            acceptedAt: "2026-08-10T00:00:00.800Z",
+            result: {
+              status: "failed",
+              resultCode: "TESTNG_ASSERTIONS_FAILED",
+              summary: "retry after pause",
+              durationMs: 100,
+              artifacts: [],
+            },
+          }),
+        ).resolves.toMatchObject({ retryScheduled: true, batchClosed: false });
+      }
+      await harness.executions.recoverExpired({
+        now: "2026-08-11T00:00:00.000Z",
+        eventIds: Array.from({ length: 10 }, () => randomUUID()),
+        limit: 10,
+      });
+      await expect(harness.batches.getSummary(batchId)).resolves.toMatchObject({
+        status: "queued",
+        queuedRuns: 3,
+        runningRuns: 0,
+        pauseRequestedAt: "2026-08-10T00:00:00.500Z",
+      });
+      await expect(change("resume", "2026-08-11T00:00:01.000Z")).resolves.toBe(true);
+      await expect(change("resume", "2026-08-11T00:00:01.100Z")).resolves.toBe(false);
+      await harness.executions.recoverExpired({
+        now: "2026-08-11T00:00:01.500Z",
+        eventIds: Array.from({ length: 10 }, () => randomUUID()),
+        limit: 10,
+      });
+      await expect(harness.batches.getSummary(batchId)).resolves.toMatchObject({ queuedRuns: 3 });
+      expect((await harness.batches.getSummary(batchId))?.pauseRequestedAt).toBeUndefined();
+      expect(
+        await harness.batches.listSchedulableBatchIds(20, "2026-08-11T00:00:01.500Z"),
+      ).toContain(batchId);
+      await harness.executions.recoverExpired({
+        now: "2026-08-11T00:00:02.500Z",
+        eventIds: Array.from({ length: 10 }, () => randomUUID()),
+        limit: 10,
+      });
+      await expect(harness.batches.getSummary(batchId)).resolves.toMatchObject({
+        timedOutRuns: 1,
+        currentRound: 2,
+        queuedRuns: 2,
+      });
+      await change("pause", "2026-08-11T00:00:02.600Z");
+      await harness.executions.terminateBatch({
+        batchId,
+        actorId: "operator",
+        reason: "stop paused batch",
+        eventId: randomUUID(),
+        requestedAt: "2026-08-11T00:00:02.700Z",
+      });
+      await expect(harness.batches.getSummary(batchId)).resolves.toMatchObject({
+        status: "cancelled",
+      });
+      await expect(change("resume", "2026-08-11T00:00:03.000Z")).rejects.toMatchObject({
+        code: "RUN_BATCH_NOT_ACTIVE",
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
   it("selects a bounded random-key window across the whole ordinary and DDT batch", async () => {
     const harness = await createHarness();
     const batchId = randomUUID();

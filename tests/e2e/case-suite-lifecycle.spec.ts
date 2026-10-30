@@ -363,6 +363,16 @@ test("public task links execute with login only, share live status, record actor
     await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toBeEnabled({
       timeout: 15000,
     });
+    await visitor.getByRole("button", { name: "暂停任务", exact: true }).click();
+    await expect(visitor.getByRole("button", { name: "继续调度", exact: true })).toBeVisible();
+    await expect(observer.getByText("暂停中", { exact: true })).toBeVisible({ timeout: 15000 });
+    for (const width of [1024, 1536]) {
+      await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(visitor);
+      await captureUi(visitor, `public-task-pausing-${width}`);
+    }
+    await visitor.getByRole("button", { name: "继续调度", exact: true }).click();
+    await expect(visitor.getByRole("button", { name: "暂停任务", exact: true })).toBeVisible();
     await visitor.getByRole("button", { name: "终止执行", exact: true }).click();
     const confirm = visitor.getByRole("dialog", { name: "终止任务执行" });
     await expect(confirm).toContainText("已领取的用例");

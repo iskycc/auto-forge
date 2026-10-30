@@ -153,6 +153,7 @@ function domainErrorStatus(code: string): number {
     ].includes(code)
   )
     return 409;
+  if (code === "RUN_BATCH_NOT_ACTIVE") return 409;
   if (code === "PUBLIC_SUITE_EXECUTION_ACTIVE") return 409;
   if (code === "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID") return 422;
   if (code === "EXPORT_DATA_INVALID") return 422;

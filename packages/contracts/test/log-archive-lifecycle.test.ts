@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { createLogArchiveSchema, removeLogArchiveCopySchema } from "../src/log-archives";
+import {
+  createLogArchiveSchema,
+  removeLogArchiveCopySchema,
+  createLogArchiveDownloadLinksSchema,
+} from "../src/log-archives";
 
 describe("archive volume and download confirmation input", () => {
+  it("bounds selected download links and rejects empty, duplicate and invalid IDs", () => {
+    const id = "019a25a1-0000-7000-8000-000000000001";
+    expect(createLogArchiveDownloadLinksSchema.parse({ archiveIds: [id] }).archiveIds).toEqual([
+      id,
+    ]);
+    for (const archiveIds of [
+      [],
+      [id, id],
+      ["invalid"],
+      Array.from(
+        { length: 51 },
+        (_, i) => `019a25a1-0000-7000-8000-${String(i).padStart(12, "0")}`,
+      ),
+    ])
+      expect(createLogArchiveDownloadLinksSchema.safeParse({ archiveIds }).success).toBe(false);
+  });
   it("uses bounded volumes and disk reserves without changing old create requests", () => {
     expect(createLogArchiveSchema.parse({ month: "2026-10" })).toMatchObject({
       month: "2026-10",

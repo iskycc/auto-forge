@@ -67,8 +67,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if _, err = fs.Stat(assets, "viewer.js"); err != nil {
-		return errors.New("offline viewer UI was not built into this executable")
+	if err = validateViewerAssets(assets); err != nil {
+		return err
 	}
 	host, _, err := net.SplitHostPort(*address)
 	if err != nil || host != "127.0.0.1" {
@@ -116,4 +116,18 @@ func launchBrowser(url string) error {
 		return err
 	}
 	return command.Wait()
+}
+
+// A partial UI bundle must fail explicitly rather than launch an unstyled page.
+func validateViewerAssets(assets fs.FS) error {
+	for _, name := range []string{"index.html", "viewer.js", "viewer.css", "licenses.txt"} {
+		metadata, err := fs.Stat(assets, name)
+		if err != nil {
+			return fmt.Errorf("offline viewer asset %s was not embedded: %w", name, err)
+		}
+		if metadata.IsDir() || metadata.Size() == 0 {
+			return fmt.Errorf("offline viewer asset %s is empty", name)
+		}
+	}
+	return nil
 }

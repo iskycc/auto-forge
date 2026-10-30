@@ -110,6 +110,7 @@ export default async function ExecutionRecordsPage({
     createdAt: batch.createdAt,
     updatedAt: batch.updatedAt,
     observedAt,
+    ...(batch.pauseRequestedAt ? { pauseRequestedAt: batch.pauseRequestedAt } : {}),
     ...(batch.terminationRequestedAt
       ? { terminationRequestedAt: batch.terminationRequestedAt }
       : {}),

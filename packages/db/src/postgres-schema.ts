@@ -821,6 +821,8 @@ export const pgRunBatches = pgTable(
     policyJson: text("policy_json"),
     adapterRuntimeJson: text("adapter_runtime_json"),
     cancelRequestedAt: text("cancel_requested_at"),
+    pauseRequestedAt: text("pause_requested_at"),
+    queueResumedAt: text("queue_resumed_at"),
     version: integer("version").notNull().default(1),
     scheduledFor: text("scheduled_for").notNull().default("1970-01-01T00:00:00.000Z"),
     createdAt: text("created_at").notNull(),

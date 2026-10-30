@@ -155,6 +155,11 @@ function summarizeReasons(
   const reason = (code: string, message: string): Reason[] => [{ code, message }];
   if (["succeeded", "failed", "cancelled"].includes(snapshot.batch.status))
     return reason("batch_terminal", "任务已结束，不再补充并发。");
+  if (snapshot.batch.pauseRequestedAt && !snapshot.batch.terminationRequestedAt)
+    return reason(
+      "scheduling_paused",
+      "任务已暂停新的调度，已下发的用例完成后可继续调度剩余用例。",
+    );
   if (snapshot.batch.terminationRequestedAt)
     return reason("termination_requested", "任务正在终止，已停止分配新的用例。");
   if (Date.parse(snapshot.batch.scheduledFor) > now.getTime())

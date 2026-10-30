@@ -104,6 +104,7 @@ export class CaseSuiteActivityService {
         currentRound: batch.currentRound,
         retryLimit: batch.retryLimit,
         ...(batch.requestedBy ? { requestedBy: batch.requestedBy.username } : {}),
+        ...(batch.pauseRequestedAt ? { pauseRequestedAt: batch.pauseRequestedAt } : {}),
         ...(batch.terminationRequestedAt
           ? { terminationRequestedAt: batch.terminationRequestedAt }
           : {}),

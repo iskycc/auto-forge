@@ -1,0 +1,64 @@
+.archive-log-output {
+  min-width: 0;
+  min-height: 280px;
+  max-height: 54vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--log-background);
+  color: var(--log-foreground);
+}
+.archive-log-output pre {
+  margin: 0;
+  font-family:
+    ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  tab-size: 4;
+  white-space: pre;
+}
+.archive-log-output pre[data-wrap="true"] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.archive-log-output .ansi-bold {
+  font-weight: 600;
+}
+.archive-log-output :is(.ansi-black, .ansi-white, .ansi-bright-white) {
+  color: var(--foreground);
+}
+.archive-log-output :is(.ansi-red, .ansi-bright-red) {
+  color: var(--destructive);
+}
+.archive-log-output :is(.ansi-green, .ansi-bright-green) {
+  color: var(--success);
+}
+.archive-log-output :is(.ansi-yellow, .ansi-bright-yellow) {
+  color: var(--warning);
+}
+.archive-log-output :is(.ansi-blue, .ansi-bright-blue) {
+  color: var(--info);
+}
+.archive-log-output :is(.ansi-magenta, .ansi-bright-magenta) {
+  color: var(--ansi-magenta);
+}
+.archive-log-output :is(.ansi-cyan, .ansi-bright-cyan) {
+  color: var(--ansi-cyan);
+}
+.archive-log-output :is(.ansi-bright-black, .log-level-trace, .log-level-debug) {
+  color: var(--muted-foreground);
+}
+.archive-log-output .log-level-info {
+  color: var(--info);
+}
+.archive-log-output .log-level-warn {
+  color: var(--warning);
+  font-weight: 600;
+}
+.archive-log-output :is(.log-level-error, .log-level-fatal) {
+  color: var(--destructive);
+  font-weight: 600;
+}
+.archive-log-output mark {
+  color: var(--foreground);
+  background: var(--accent);
+}

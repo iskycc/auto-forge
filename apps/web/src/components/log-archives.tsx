@@ -1,7 +1,7 @@
 "use client";
 import { CopyableText } from "@/components/ui/copyable-text";
 import { SemanticStatusTag } from "@/components/ui/semantic-status-tag";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Key } from "react";
 import {
   Alert,
   Button,
@@ -30,6 +30,11 @@ import {
 import type { Dayjs } from "dayjs";
 import type { LogArchiveJob, LogArchiveOptions } from "@autoforge/contracts";
 import { readApiError } from "@/lib/client-api";
+import {
+  archiveDownloadAvailable,
+  archiveCopyRemovalBlocker,
+} from "@/lib/log-archive-download-commands";
+import { ArchiveDownloadCopy } from "./archive-download-copy";
 type ArchiveFormOptions = LogArchiveOptions & { projectId?: string };
 
 const labels: Record<LogArchiveJob["status"], string> = {
@@ -70,7 +75,11 @@ export function LogArchives({
     minimumFreeMiB: 1024,
     minimumFreePercent: 10,
   });
-  const [watchDownload, setWatchDownload] = useState<{ id: string; until: number }>();
+  const [watchDownload, setWatchDownload] = useState<{ ids: string[]; until: number }>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedDownloads = page.items.filter(
+    (job) => selectedIds.includes(job.id) && archiveDownloadAvailable(job),
+  );
   async function refresh(cursor = cursors.at(-1)!) {
     const response = await fetch(
       `/api/v1/settings/log-archives${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
@@ -90,11 +99,12 @@ export function LogArchives({
       !(
         watchDownload &&
         watchDownload.until > Date.now() &&
-        !page.items.find((job) => job.id === watchDownload.id)?.downloadedAt
+        watchDownload.ids.some((id) => !page.items.find((job) => job.id === id)?.downloadedAt)
       )
     )
       return;
     const timer = setInterval(() => {
+      if (document.hidden) return;
       void refresh().catch((cause) =>
         setError(cause instanceof Error ? cause.message : "归档状态读取失败。"),
       );
@@ -128,6 +138,8 @@ export function LogArchives({
     try {
       await refresh(next.at(-1)!);
       setCursors(next);
+      setSelectedIds([]);
+      setWatchDownload(undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "翻页失败。");
     }
@@ -202,11 +214,46 @@ export function LogArchives({
       </Card>
       {error ? <Alert type="error" showIcon title={error} /> : null}
       <Card title="归档记录" size="small" style={{ minWidth: 0, maxWidth: "100%" }}>
+        {canManage ? (
+          <Flex vertical gap="small" style={{ marginBottom: token.marginMD }}>
+            <Flex align="center" justify="space-between" gap="small" wrap>
+              <Typography.Text>
+                已选 {selectedDownloads.length} 卷 · 可勾选本页已校验且保留副本的归档
+              </Typography.Text>
+              <ArchiveDownloadCopy
+                archiveIds={selectedDownloads.map((job) => job.id)}
+                onCopied={() =>
+                  setWatchDownload({
+                    ids: selectedDownloads.map((job) => job.id),
+                    until: Date.now() + 600000,
+                  })
+                }
+              />
+            </Flex>
+            <Typography.Text type="secondary">
+              命令适用于 Linux／macOS Shell，逐卷下载到当前目录。临时直链最长 24
+              小时有效，退出生成链接的登录会话或失去权限后失效，请妥善保管。
+            </Typography.Text>
+          </Flex>
+        ) : null}
         <Table<LogArchiveJob>
           rowKey="id"
           pagination={false}
           dataSource={page.items}
           tableLayout="fixed"
+          {...(canManage
+            ? {
+                rowSelection: {
+                  selectedRowKeys: selectedDownloads.map((job) => job.id),
+                  onChange: (keys: Key[]) => setSelectedIds(keys.map(String)),
+                  getCheckboxProps: (job: LogArchiveJob) => ({
+                    disabled: !archiveDownloadAvailable(job),
+                    "aria-label": `选择归档 ${job.filename ?? job.id}`,
+                  }),
+                  columnWidth: 40,
+                },
+              }
+            : {})}
           columns={[
             {
               title: "月份 / 归档",
@@ -261,6 +308,12 @@ export function LogArchives({
                   >
                     {copyStatusLabel(job) ?? labels[job.status]}
                   </SemanticStatusTag>
+                  {job.sha256 &&
+                  ["retained", "delete_failed"].includes(job.copyState ?? "retained") ? (
+                    <Typography.Text type="secondary">
+                      {job.downloadedAt ? "本账号已完整下载" : "本账号尚未完整下载"}
+                    </Typography.Text>
+                  ) : null}
                   {job.totalBatches ? (
                     <>
                       <Typography.Text type="secondary">
@@ -326,12 +379,14 @@ export function LogArchives({
               width: "24%",
               render: (_, job) => (
                 <Space wrap>
-                  {job.sha256 && canManage && (!job.copyState || job.copyState === "retained") ? (
+                  {canManage && archiveDownloadAvailable(job) ? (
                     <Button
                       aria-label="下载归档"
                       icon={<DownloadOutlined />}
                       href={`/api/v1/settings/log-archives/${job.id}/download`}
-                      onClick={() => setWatchDownload({ id: job.id, until: Date.now() + 600000 })}
+                      onClick={() =>
+                        setWatchDownload({ ids: [job.id], until: Date.now() + 600000 })
+                      }
                     >
                       下载归档
                     </Button>
@@ -343,13 +398,12 @@ export function LogArchives({
                     </Button>
                   ) : null}
                   {canManage &&
-                  job.status === "completed" &&
+                  job.sha256 &&
                   ["retained", "delete_failed"].includes(job.copyState ?? "retained") ? (
                     <Tooltip
                       title={
-                        !job.downloadedAt && job.copyState !== "delete_failed"
-                          ? "请先使用当前账号完整下载本卷，再确认离线查看正常。"
-                          : "确认下载后，单独删除平台保存的归档 ZIP 与索引。"
+                        archiveCopyRemovalBlocker(job) ??
+                        "确认下载后，单独删除平台保存的归档 ZIP 与索引。"
                       }
                     >
                       <span>
@@ -359,10 +413,7 @@ export function LogArchives({
                             job.copyState === "delete_failed" ? "重试删除副本" : "删除平台副本"
                           }
                           icon={<DeleteOutlined />}
-                          disabled={
-                            Boolean(pending) ||
-                            (!job.downloadedAt && job.copyState !== "delete_failed")
-                          }
+                          disabled={Boolean(pending) || Boolean(archiveCopyRemovalBlocker(job))}
                           onClick={() => {
                             setRemoval(job);
                             setDownloadVerified(false);
@@ -372,6 +423,14 @@ export function LogArchives({
                         </Button>
                       </span>
                     </Tooltip>
+                  ) : null}
+                  {canManage &&
+                  job.sha256 &&
+                  ["retained", "delete_failed"].includes(job.copyState ?? "retained") &&
+                  archiveCopyRemovalBlocker(job) ? (
+                    <Typography.Text type="secondary" style={{ fontSize: token.fontSizeSM }}>
+                      {archiveCopyRemovalBlocker(job)}
+                    </Typography.Text>
                   ) : null}
                   {canManage && job.status === "failed" && !job.sha256 && !job.cancelRequested ? (
                     <Button

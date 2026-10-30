@@ -85,6 +85,7 @@ export function concurrencySnapshot(
       projectId: metadata.projectId,
       status: metadata.status,
       scheduledFor: metadata.scheduledFor,
+      ...(metadata.pauseRequestedAt ? { pauseRequestedAt: metadata.pauseRequestedAt } : {}),
       ...(metadata.terminationRequestedAt
         ? { terminationRequestedAt: metadata.terminationRequestedAt }
         : {}),

@@ -16,6 +16,7 @@ readonly -a deployment_documentation=(
   "docs/adr/0012-full-distributed-node-local-logs.md"
   "docs/adr/0013-platform-time-authority.md"
   "docs/adr/0015-full-postgresql-log-databases.md"
+  "docs/architecture/batch-scheduling-pause.md"
   "docs/architecture/ddt-management.md"
   "docs/architecture/read-model-snapshots.md"
   "docs/architecture/runtime-input-cache.md"

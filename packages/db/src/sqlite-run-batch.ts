@@ -1235,7 +1235,7 @@ export class SqliteRunBatchRepository
       this.handle.client
         .prepare(
           `SELECT id FROM run_batches
-           WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
+           WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL AND pause_requested_at IS NULL
              AND scheduled_for <= ?
              AND ${schedulableBatchCapacitySql("sqlite", "run_batches")}
              AND EXISTS (
@@ -1260,7 +1260,7 @@ export class SqliteRunBatchRepository
         .prepare(
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
            WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
-             AND b.cancel_requested_at IS NULL AND b.scheduled_for <= ?
+             AND b.cancel_requested_at IS NULL AND b.pause_requested_at IS NULL AND b.scheduled_for <= ?
              AND ${schedulableBatchCapacitySql("sqlite", "b")}
              AND EXISTS (
                SELECT 1 FROM execution_runs run
@@ -1320,21 +1320,22 @@ export class SqliteRunBatchRepository
   ): Promise<SchedulingSnapshot | null> {
     const batch = await this.getSummary(batchId);
     if (!batch) return null;
-    const queuedRows = batch.terminationRequestedAt
-      ? []
-      : this.handle.db
-          .select()
-          .from(executionRuns)
-          .where(
-            and(
-              eq(executionRuns.batchId, batchId),
-              eq(executionRuns.status, "queued"),
-              eq(executionRuns.heldRound, 0),
-            ),
-          )
-          .orderBy(executionDispatchOrderExpression(executionRuns), executionRuns.id)
-          .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)))
-          .all();
+    const queuedRows =
+      batch.terminationRequestedAt || batch.pauseRequestedAt
+        ? []
+        : this.handle.db
+            .select()
+            .from(executionRuns)
+            .where(
+              and(
+                eq(executionRuns.batchId, batchId),
+                eq(executionRuns.status, "queued"),
+                eq(executionRuns.heldRound, 0),
+              ),
+            )
+            .orderBy(executionDispatchOrderExpression(executionRuns), executionRuns.id)
+            .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)))
+            .all();
     const queuedRunIds = queuedRows.map((run) => run.id);
     const attemptRows = batchesOf(queuedRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
       this.handle.db
@@ -1529,6 +1530,7 @@ export class SqliteRunBatchRepository
         `SELECT EXISTS(
            SELECT 1 FROM execution_runs
            WHERE batch_id = ? AND status = 'queued' AND held_round = 0
+           AND EXISTS (SELECT 1 FROM run_batches b WHERE b.id=execution_runs.batch_id AND b.pause_requested_at IS NULL AND b.cancel_requested_at IS NULL)
          ) AS value`,
       )
       .get(batchId) as { value: number } | undefined;
@@ -1545,6 +1547,7 @@ export class SqliteRunBatchRepository
           policyJson: runBatches.policyJson,
           adapterRuntimeJson: runBatches.adapterRuntimeJson,
           terminationRequestedAt: runBatches.cancelRequestedAt,
+          pauseRequestedAt: runBatches.pauseRequestedAt,
           environmentJson: runBatches.environmentJson,
           secretBindingsJson: runBatches.secretBindingsJson,
           priority: runBatches.priority,
@@ -1556,7 +1559,8 @@ export class SqliteRunBatchRepository
         .where(eq(runBatches.id, input.batchId))
         .get();
       if (!batchScope) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-      if (batchScope.terminationRequestedAt) return { reserved: 0, acceptedAttemptIds: [] };
+      if (batchScope.terminationRequestedAt || batchScope.pauseRequestedAt)
+        return { reserved: 0, acceptedAttemptIds: [] };
       let remainingProjectSlots = Math.max(
         0,
         (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
@@ -1688,7 +1692,9 @@ export class SqliteRunBatchRepository
                AND execution_runs.status = 'queued'
                AND execution_runs.held_round = 0
                AND (execution_runs.queue_deadline_at IS NULL
-                    OR execution_runs.queue_deadline_at > ?)
+                    OR execution_runs.queue_deadline_at > ?
+                    OR EXISTS (SELECT 1 FROM run_batches b WHERE b.id=execution_runs.batch_id
+                      AND julianday(b.queue_resumed_at)+b.queue_timeout_ms/86400000.0 > julianday(?)))
              RETURNING id, attempt_count, execution_round`,
           )
           .all(
@@ -1701,6 +1707,7 @@ export class SqliteRunBatchRepository
               createExecutionDispatchOrderKey(),
             ]),
             input.batchId,
+            input.scheduledAt,
             input.scheduledAt,
           ) as Array<{ id: string; attempt_count: number; execution_round: number }>;
         const scheduledRunById = new Map(updatedRows.map((row) => [row.id, row]));
@@ -2001,6 +2008,7 @@ export class SqliteRunBatchRepository
       ...(policy ? { policy } : {}),
       totalRuns: row.totalRuns,
       ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
+      ...(row.pauseRequestedAt ? { pauseRequestedAt: row.pauseRequestedAt } : {}),
       version: row.version,
       scheduledFor: row.scheduledFor,
       createdAt: row.createdAt,

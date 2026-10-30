@@ -24,3 +24,5 @@ export * from "./authorization-denied";
 export * from "./ddt-value-search";
 
 export * from "./ddt-sr-tags";
+
+export { shouldChangeBatchScheduling } from "./batch-scheduling-control";
