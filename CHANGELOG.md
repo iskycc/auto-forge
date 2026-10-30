@@ -4,6 +4,12 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Added
+
+- `fast-deploy/log-postgres/` 提供独立 amd64 日志 PostgreSQL 的 Compose、环境模板和接入说明，复用现有离线镜像，密码非空校验，数据绑定本地目录，无需生成脚本；部署包一并包含此目录。三机说明同步新版分区引导页，并说明尚未接入日志库时选择本地日志存储。
+
 ## 1.21.7 - 2026-10-30
 
 ### Added

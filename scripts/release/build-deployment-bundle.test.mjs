@@ -82,6 +82,9 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
     await assertBindMountTemplates(packageDirectory, packagedFiles);
     for (const filename of [
       "README.md",
+      "log-postgres/README.md",
+      "log-postgres/docker-compose.yml",
+      "log-postgres/.env.example",
       ...["node-a", "node-b", "node-c"].flatMap((host) => [
         `${host}/docker-compose.yml`,
         `${host}/.env.example`,

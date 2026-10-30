@@ -62,6 +62,7 @@ readonly -a fast_deploy_templates=(
   node-a/docker-compose.yml node-a/.env.example
   node-b/docker-compose.yml node-b/.env.example
   node-c/docker-compose.yml node-c/.env.example
+  log-postgres/docker-compose.yml log-postgres/.env.example log-postgres/README.md
 )
 for template in "${fast_deploy_templates[@]}"; do
   source_path="${repository_root}/fast-deploy/${template}"

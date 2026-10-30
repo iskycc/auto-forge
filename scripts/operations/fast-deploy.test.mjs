@@ -9,6 +9,7 @@ import test from "node:test";
 const execute = promisify(execFile);
 const credentials = {
   POSTGRES_PASSWORD: "FixturePostgres-OnlyForTests-2026",
+  LOG_POSTGRES_PASSWORD: "FixtureLogPostgres-OnlyForTests-2026",
   REDIS_PASSWORD: "FixtureRedis-OnlyForTests-2026",
   NATS_TOKEN: "FixtureNats-OnlyForTests-2026",
   MINIO_ROOT_PASSWORD: "FixtureMinio-OnlyForTests-2026",
@@ -55,10 +56,10 @@ async function compose(host, overrides = {}) {
   }
 }
 
-test("ships exactly three amd64 Compose configurations without prerequisite scripts", async () => {
+test("ships three host configurations and an independent amd64 log database without prerequisite scripts", async () => {
   const files = await readdir(resolve("fast-deploy"), { recursive: true });
   assert(!files.some((name) => /\.(sh|mjs)$/u.test(name)));
-  for (const host of ["node-a", "node-b", "node-c"]) {
+  for (const host of ["node-a", "node-b", "node-c", "log-postgres"]) {
     const specification = await compose(host);
     assert.equal(Object.keys(specification.volumes ?? {}).length, 0);
     for (const service of Object.values(specification.services)) {
@@ -88,10 +89,36 @@ test("rejects missing PostgreSQL and storage passwords before a container can st
   for (const password of ["", undefined]) {
     await assert.rejects(compose("node-b", { POSTGRES_PASSWORD: password }), /POSTGRES_PASSWORD/u);
     await assert.rejects(
+      compose("log-postgres", { LOG_POSTGRES_PASSWORD: password }),
+      /LOG_POSTGRES_PASSWORD/u,
+    );
+    await assert.rejects(
       compose("node-c", { MINIO_ROOT_PASSWORD: password }),
       /MINIO_ROOT_PASSWORD/u,
     );
   }
+});
+
+test("isolates the daily log database from business data and supports a separate host or port", async () => {
+  const logs = await compose("log-postgres");
+  const business = await compose("node-b");
+  assert.notEqual(logs.name, business.name);
+  assert.deepEqual(Object.keys(logs.services), ["postgres"]);
+  const { postgres } = logs.services;
+  assert.equal(postgres.environment.POSTGRES_PASSWORD, credentials.LOG_POSTGRES_PASSWORD);
+  assert.equal(postgres.environment.POSTGRES_USER, "autoforge_logs");
+  assert.equal(postgres.environment.POSTGRES_DB, "postgres");
+  assert(!Object.hasOwn(postgres.environment, "POSTGRES_HOST_AUTH_METHOD"));
+  assert(!Object.hasOwn(postgres.environment, "POSTGRES_PASSWORD_FILE"));
+  assert.equal(postgres.ports[0].published, "5433");
+  assert.equal(postgres.volumes[0].source, resolve("fast-deploy/log-postgres/data/postgres"));
+  assert.equal(postgres.volumes[0].bind.create_host_path, false);
+  const custom = await compose("log-postgres", {
+    SERVICE_BIND: "127.0.0.1",
+    LOG_POSTGRES_PORT: "15433",
+  });
+  assert.equal(custom.services.postgres.ports[0].host_ip, "127.0.0.1");
+  assert.equal(custom.services.postgres.ports[0].published, "15433");
 });
 
 test("uses the same MinIO credentials for its server and bucket initialization", async () => {

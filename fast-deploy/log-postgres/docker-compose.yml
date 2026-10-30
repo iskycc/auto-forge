@@ -1,0 +1,33 @@
+name: autoforge-fast-log-postgres
+
+services:
+  postgres:
+    image: autoforge/offline-postgres:15-alpine-amd64
+    platform: linux/amd64
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "${SERVICE_BIND:?set this host private IP}:${LOG_POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: autoforge_logs
+      POSTGRES_PASSWORD: ${LOG_POSTGRES_PASSWORD:?fill LOG_POSTGRES_PASSWORD in .env before starting the log database}
+    volumes:
+      - type: bind
+        source: ./data/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U autoforge_logs -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s

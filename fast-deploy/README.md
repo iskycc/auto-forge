@@ -8,6 +8,8 @@
 | B：`10.20.0.12` | `node-b/` | PostgreSQL、Redis |
 | C：`10.20.0.13` | `node-c/` | MinIO、NATS       |
 
+独立日志库另提供 [`log-postgres/`](./log-postgres/README.md)，复制到 C 或专用日志主机即可单独启动；默认端口 `5433`，无需脚本或额外镜像类型。
+
 示例 IP 替换成实际内网 IP；Runner 使用已有独立执行机。不使用 Nginx，也不使用 Docker named volume。持久数据就在各自目录的 `data/` 下，可以把整个目录放到实际数据盘。
 
 ## 镜像先导入对应主机
@@ -35,7 +37,7 @@ chmod 600 .env
 docker compose up -d
 ```
 
-`.env` 只需修改 `SERVICE_BIND` 为 B 的 IP，填写 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`。密码必须非空，建议各用不同的至少 32 位字母、数字与连字符组合，方便随后填入连接 URL。
+`.env` 只需修改 `SERVICE_BIND` 为 B 的 IP，填写 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`。密码必须非空，建议各用不同的至少 32 位密码；平台引导页使用独立密码字段，不需要手工拼接连接 URL。
 
 **PostgreSQL 的密码已由 `environment.POSTGRES_PASSWORD` 显式传入容器。** 未填写时 Compose 会立即指出缺失字段，不会等到数据库反复重启，也不会使用 `trust` 绕过认证。
 
@@ -73,18 +75,16 @@ cat data/platform/config/initial-admin-token
 
 首次打开 `http://10.20.0.11:3000/setup`，使用刚读取的令牌，在“运行模式初始化”选择 **Full**，填写：
 
-| 页面配置                      | 填入内容                                                                |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| PostgreSQL URL                | `postgres://autoforge:<B的POSTGRES_PASSWORD>@10.20.0.12:5432/autoforge` |
-| Redis URL                     | `redis://:<B的REDIS_PASSWORD>@10.20.0.12:6379`                          |
-| NATS servers                  | `nats://10.20.0.13:4222`                                                |
-| NATS token                    | C 的 `NATS_TOKEN`                                                       |
-| MinIO endpoint                | `http://10.20.0.13:9000`                                                |
-| MinIO access key / secret key | C 的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`                          |
-| MinIO bucket / region         | `autoforge-objects` / `us-east-1`                                       |
-| 平台外部地址、Runner 地址     | 均为 `http://10.20.0.11:3000`                                           |
+| 页面配置                  | 填入内容                                                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL 主库           | IP `10.20.0.12`、端口 `5432`、数据库 `autoforge`、用户名 `autoforge`、密码填 B 的 `POSTGRES_PASSWORD`                                                            |
+| PostgreSQL 日志库         | 独立部署后，按 [`log-postgres` 说明](./log-postgres/README.md#平台填写)填写；暂未部署时将“日志存储”切为“本地日志存储”                                            |
+| Redis 缓存                | IP `10.20.0.12`、端口 `6379`、逻辑库 `0`、用户名留空、密码填 B 的 `REDIS_PASSWORD`                                                                               |
+| NATS 消息队列             | IP `10.20.0.13`、端口 `4222`、Token 填 C 的 `NATS_TOKEN`                                                                                                         |
+| MinIO 对象存储            | IP `10.20.0.13`、API 端口 `9000`、Access Key 填 C 的 `MINIO_ROOT_USER`、Secret Key 填 C 的 `MINIO_ROOT_PASSWORD`、Bucket `autoforge-objects`、Region `us-east-1` |
+| 平台外部地址、Runner 地址 | 均为 `http://10.20.0.11:3000`                                                                                                                                    |
 
-保留 Web 监听 `0.0.0.0:3000`、worker 健康端口 `3001`。填写实际 IP；连接 URL 中的特殊密码字符需要 URL 编码。
+v1.21.7 起各组件分区填 IP、端口与凭据，密码按原文填写，无需 URL 编码。此部署未配置 TLS，各组件保留不启用 SSL／TLS；逐区点击“检查连接”确认配置。保留 Web 监听 `0.0.0.0:3000`、worker 健康端口 `3001`。
 
 保存后在 A 执行：
 
@@ -109,4 +109,4 @@ docker compose stop
 
 `.env` 包含基础设施密码，应私有保存；不要提交 Git，也不要把包含密码的 `docker compose config` 输出发到公共渠道。数据库已经初始化后，修改 `.env` 不会重置数据库里的密码；不能通过删除数据目录修复密码问题。已有脚本版生成的部署继续保留其凭据和数据，不直接用新的空模板覆盖。
 
-需要独立 PostgreSQL 日志库时，可在 C 另加仓库中的 `deploy/compose/full-bind/log-postgres/` 组件，在平台“日志数据库”登记；基础三机启动不依赖它。升级时同步切换 A 的 Web／worker 镜像，先备份业务库、MinIO 和平台完整数据目录。
+需要独立 PostgreSQL 日志库时，直接复制 [`log-postgres/`](./log-postgres/README.md) 到 C 或日志主机，仍是改 `.env`、建数据目录后 `docker compose up -d`，无需运行脚本。平台 Web／worker 到日志主机的默认 `5433` 端口也需放通；基础三机启动不依赖它。升级时同步切换 A 的 Web／worker 镜像，先备份业务库、所有日志库、MinIO 和平台完整数据目录。
