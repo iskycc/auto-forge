@@ -12,6 +12,7 @@
   "dependencies": {
     "@autoforge/contracts": "workspace:*",
     "@autoforge/domain": "workspace:*",
+    "saxes": "5.0.1",
     "xlsx": "file:../../vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {

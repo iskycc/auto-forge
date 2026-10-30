@@ -1,4 +1,5 @@
-import { crc32, inflateRaw } from "node:zlib";
+import { Readable } from "node:stream";
+import { crc32, createInflateRaw, inflateRaw } from "node:zlib";
 import { isSupportedSpreadsheetFile } from "./spreadsheet";
 
 export interface ExtractedSpreadsheet {
@@ -53,6 +54,7 @@ const UNICODE_PATH_EXTRA_FIELD = 0x7075;
 const UTF8_NAME_FLAG = 0x0800;
 const ENCRYPTED_FLAG = 0x0001;
 const MAX_ENTRY_NAME_CODE_POINTS = 1024;
+const ZIP_READ_CHUNK_BYTES = 64 * 1024;
 const CP437_EXTENDED =
   "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
 
@@ -524,7 +526,76 @@ export function isZipFile(fileName: string) {
   return fileName.toLocaleLowerCase("en-US").endsWith(".zip");
 }
 
+/** Central-directory validation precedes inflation; XML parts are never buffered in full. */
+export function openSpreadsheetZip(
+  archive: Uint8Array,
+  limits: { maximumEntries: number; maximumExpandedBytes: number },
+) {
+  const directory = readDirectoryEntries(archive, limits.maximumEntries);
+  const entries = new Map<string, ZipDirectoryEntry>();
+  let declaredBytes = 0;
+  for (const entry of directory.entries) {
+    if (entry.name.endsWith("/")) continue;
+    const path = entryPathParts(entry.name);
+    if (!path) throw invalidZip("XLSX 中包含无效的内部文件路径");
+    if (entries.has(path.normalized)) throw invalidZip("XLSX 中包含重名内部文件");
+    declaredBytes += entry.originalSize;
+    if (declaredBytes > limits.maximumExpandedBytes)
+      throw invalidZip("XLSX 解压后的总大小超过允许上限");
+    entries.set(path.normalized, entry);
+  }
+  return {
+    has: (path: string) => entries.has(path.normalize("NFC")),
+    async *readChunks(path: string): AsyncGenerator<Buffer> {
+      const entry = entries.get(path.normalize("NFC"));
+      if (!entry) throw invalidZip(`XLSX 缺少内部文件 ${path}`);
+      if (entry.flags & ENCRYPTED_FLAG) throw invalidZip("不支持加密的 XLSX 文件");
+      if (entry.compression !== 0 && entry.compression !== 8)
+        throw invalidZip("XLSX 使用了不支持的压缩算法");
+      const { compressed } = readLocalHeader(archive, entry, directory.directoryOffset);
+      const source = Readable.from(
+        (function* () {
+          for (let offset = 0; offset < compressed.byteLength; offset += ZIP_READ_CHUNK_BYTES)
+            yield compressed.subarray(offset, offset + ZIP_READ_CHUNK_BYTES);
+        })(),
+      );
+      const output =
+        entry.compression === 8
+          ? source.pipe(createInflateRaw({ chunkSize: ZIP_READ_CHUNK_BYTES }))
+          : source;
+      let actualBytes = 0;
+      let checksum = 0;
+      try {
+        for await (const chunk of output) {
+          const bytes = chunk as Buffer;
+          actualBytes += bytes.byteLength;
+          if (actualBytes > entry.originalSize || actualBytes > limits.maximumExpandedBytes)
+            throw invalidZip(`XLSX 内部文件 ${path} 解压大小超过允许上限`);
+          checksum = crc32(bytes, checksum);
+          yield bytes;
+        }
+        if (actualBytes !== entry.originalSize || checksum !== entry.checksum)
+          throw invalidZip(`XLSX 内部文件 ${path} 大小或校验和不一致`);
+      } finally {
+        output.destroy();
+        source.destroy();
+      }
+    },
+  };
+}
+
+export type SpreadsheetZip = ReturnType<typeof openSpreadsheetZip>;
+
 export async function extractSpreadsheetsFromZip(archive: Buffer, options: ExtractZipOptions) {
+  const extracted: ExtractedSpreadsheet[] = [];
+  for await (const file of iterateSpreadsheetsFromZip(archive, options)) extracted.push(file);
+  return extracted;
+}
+
+export async function* iterateSpreadsheetsFromZip(
+  archive: Buffer,
+  options: ExtractZipOptions,
+): AsyncGenerator<ExtractedSpreadsheet> {
   let directory: ReturnType<typeof readDirectoryEntries>;
   try {
     directory = readDirectoryEntries(archive, options.maxEntries);
@@ -570,7 +641,6 @@ export async function extractSpreadsheetsFromZip(archive: Buffer, options: Extra
     throw new ZipImportError("ZIP 根目录或一层子目录中未找到支持的表格，未执行导入");
   }
 
-  const extracted: ExtractedSpreadsheet[] = [];
   const archiveName = displayArchiveName(options.archiveName);
   let actualBytes = 0;
   for (const item of selected) {
@@ -584,11 +654,10 @@ export async function extractSpreadsheetsFromZip(archive: Buffer, options: Extra
     if (actualBytes > options.maxTotalBytes) {
       throw new ZipImportError("ZIP 解压后的表格总大小超过允许上限");
     }
-    extracted.push({
+    yield {
       fileName: `${archiveName} / ${item.path.normalized}`,
       archiveEntryName: item.path.normalized,
       buffer: output,
-    });
+    };
   }
-  return extracted;
 }

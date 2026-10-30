@@ -6,7 +6,8 @@ import {
 } from "@autoforge/contracts";
 import type { DdtColumnResolution, DdtImportColumnConflict } from "@autoforge/contracts";
 
-import { extractSpreadsheetsFromZip, isZipFile } from "./archive";
+import { iterateSpreadsheetsFromZip, isZipFile } from "./archive";
+import { parseXlsxSpreadsheet } from "./xlsx-spreadsheet";
 import {
   assertResolvableColumnConflictLimit,
   DdtDuplicateColumnsError,
@@ -45,14 +46,14 @@ export async function parseDdtUpload(
 ) {
   if (!isZipFile(upload.fileName)) {
     return [
-      parseSpreadsheetOutcome(
+      await parseSpreadsheetOutcome(
         Buffer.from(upload.content),
         upload.fileName,
         (upload.columnResolutions ?? []).filter((resolution) => !resolution.archiveEntryName),
       ),
     ];
   }
-  const extracted = await extractSpreadsheetsFromZip(Buffer.from(upload.content), {
+  const extracted = iterateSpreadsheetsFromZip(Buffer.from(upload.content), {
     archiveName: upload.fileName,
     maxFiles: limits.maximumZipSpreadsheets,
     maxFileBytes: DDT_IMPORT_FILE_BYTES,
@@ -60,9 +61,9 @@ export async function parseDdtUpload(
     maxEntries: DDT_IMPORT_ARCHIVE_ENTRY_LIMIT,
   });
   const parsedFiles: ParsedDdtUploadFile[] = [];
-  for (const file of extracted) {
+  for await (const file of extracted) {
     parsedFiles.push(
-      parseSpreadsheetOutcome(
+      await parseSpreadsheetOutcome(
         file.buffer,
         file.fileName,
         (upload.columnResolutions ?? []).filter(
@@ -79,14 +80,16 @@ export async function parseDdtUpload(
   return parsedFiles;
 }
 
-function parseSpreadsheetOutcome(
+async function parseSpreadsheetOutcome(
   content: Buffer,
   fileName: string,
   columnResolutions: readonly DdtColumnResolution[],
   archiveEntryName?: string,
-): ParsedDdtUploadFile {
+): Promise<ParsedDdtUploadFile> {
   try {
-    const parsed = parseSpreadsheet(content, fileName, columnResolutions);
+    const parsed = fileName.toLocaleLowerCase("en-US").endsWith(".xlsx")
+      ? await parseXlsxSpreadsheet(content, fileName, columnResolutions)
+      : parseSpreadsheet(content, fileName, columnResolutions);
     return {
       fileName: parsed.fileName,
       ...(archiveEntryName ? { archiveEntryName } : {}),

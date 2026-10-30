@@ -1554,6 +1554,8 @@ test("DDT import refreshes an already opened case and shows its persisted change
       async () =>
         (await browserJson<{ status: string }>(page, ddtPath(hierarchy, `imports/${job.id}`))).body
           .status,
+      // Background protection may defer claiming for five seconds plus queue polling.
+      { timeout: 30_000 },
     )
     .toBe("succeeded");
   const persisted = await browserJson<{ items: Array<{ changeType: string }> }>(

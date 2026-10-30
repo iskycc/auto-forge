@@ -336,6 +336,9 @@ importers:
       "@autoforge/domain":
         specifier: workspace:*
         version: link:../domain
+      saxes:
+        specifier: 5.0.1
+        version: 5.0.1
       xlsx:
         specifier: file:../../vendor/xlsx-0.20.3.tgz
         version: file:vendor/xlsx-0.20.3.tgz

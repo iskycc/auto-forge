@@ -10,16 +10,25 @@ import {
   LARGE_DDT_ROW_COUNT,
   largeDdtSpreadsheet,
   largeDdtValue,
+  ddtSpreadsheetWithLargeNotesSheet,
 } from "../../../packages/ddt-import/test/large-spreadsheet-fixture";
 import { webResourcePlan } from "../src/lib/worker-sizing";
 import { WorkerPool } from "./worker-pool";
 
 describe("DDT import memory isolation", () => {
-  it.each(["full", "lite"] as const)(
-    "preflights an 8100-row rich-text workbook in %s without dropping any field",
-    async (mode) => {
-      const content = largeDdtSpreadsheet();
-      expect(content.byteLength).toBeLessThan(4 * 1024 ** 2);
+  it.each([
+    { mode: "full", fieldCount: LARGE_DDT_FIELD_COUNT, richText: true, notes: false },
+    { mode: "lite", fieldCount: LARGE_DDT_FIELD_COUNT, richText: true, notes: false },
+    { mode: "full", fieldCount: 256, richText: false, notes: false },
+    { mode: "lite", fieldCount: 256, richText: false, notes: false },
+    { mode: "full", fieldCount: LARGE_DDT_FIELD_COUNT, richText: true, notes: true },
+  ] as const)(
+    "preflights an 8100-row $fieldCount-column workbook in $mode (notes=$notes) without dropping any field",
+    async ({ mode, fieldCount, richText, notes }) => {
+      const content = notes
+        ? ddtSpreadsheetWithLargeNotesSheet()
+        : largeDdtSpreadsheet({ fieldCount, richText });
+      expect(content.byteLength).toBeLessThan(8 * 1024 ** 2);
       const pool = new WorkerPool(
         {
           mode,
@@ -39,7 +48,10 @@ describe("DDT import memory isolation", () => {
         },
         1,
         5_000,
-        webResourcePlan({ cpuCapacity: 4, memoryCapacityBytes: 4 * 1024 ** 3 }, mode),
+        {
+          ...webResourcePlan({ cpuCapacity: 4, memoryCapacityBytes: 4 * 1024 ** 3 }, mode),
+          ...(notes ? { maintenanceWorkerHeapMb: 256 } : {}),
+        },
       );
       try {
         let parsedFiles: ParsedDdtFile[] = [];
@@ -94,6 +106,7 @@ describe("DDT import memory isolation", () => {
             },
           ],
         );
+        expect(preview.files[0]!.errorSummary).toBeUndefined();
         expect(preview).toMatchObject({
           validFiles: 1,
           failedFiles: 0,
@@ -109,8 +122,8 @@ describe("DDT import memory isolation", () => {
         expect(parsedFiles[0]!.errorSummary).toBeUndefined();
         expect(parsedFiles[0]!.rows).toHaveLength(LARGE_DDT_ROW_COUNT);
         for (const [rowIndex, row] of parsedFiles[0]!.rows.entries()) {
-          expect(Object.keys(row)).toHaveLength(LARGE_DDT_FIELD_COUNT);
-          for (let columnIndex = 0; columnIndex < LARGE_DDT_FIELD_COUNT; columnIndex++) {
+          expect(Object.keys(row)).toHaveLength(fieldCount);
+          for (let columnIndex = 0; columnIndex < fieldCount; columnIndex++) {
             const name =
               columnIndex === 0 ? "CaseID" : columnIndex === 1 ? "srNum" : `参数${columnIndex}`;
             expect(row[name]).toBe(largeDdtValue(rowIndex, columnIndex));

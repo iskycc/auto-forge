@@ -311,23 +311,11 @@ function columnNameWithSuffix(baseName: string, suffix: number): string {
 }
 
 function parseCaseSheet(
-  workbook: XLSX.WorkBook,
+  matrix: unknown[][],
   sheetName: string,
   fileName: string,
   columnResolutions: readonly DdtColumnResolution[],
 ): ParsedSheet {
-  const sheet = workbook.Sheets[sheetName];
-  if (!sheet) throw new Error(`找不到 ${sheetName} Sheet`);
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    defval: "",
-    raw: false,
-    blankrows: false,
-  });
-  // The value matrix is now authoritative for this sheet. Do not retain its
-  // cell objects, rich text and formatting while validating and mapping rows.
-  delete workbook.Sheets[sheetName];
-
   if (matrix.length < 2) {
     throw new Error(`${sheetName} Sheet 中没有可导入的用例数据`);
   }
@@ -427,6 +415,9 @@ function parseCaseSheet(
     row.CaseID = caseId;
     row.srNum = srNum;
     rows.push(row);
+    // Whole-sheet column comparisons are complete. Release each consumed
+    // array before creating the next case rather than keeping two row models.
+    matrix[index] = [];
   }
 
   if (!rows.length) {
@@ -490,13 +481,43 @@ export function parseSpreadsheet(
   columnResolutions: readonly DdtColumnResolution[] = [],
 ): ParsedSpreadsheet {
   const startedAt = Date.now();
-  const extension = extensionOf(fileName);
   const workbook = readSpreadsheetWorkbook(buffer, fileName);
-  const dataSheetName =
-    workbook.SheetNames.find((name) => name.trim().toLocaleLowerCase("en-US") === "data") ??
-    (extension === "csv" ? workbook.SheetNames[0] : undefined);
+  return parseSpreadsheetSheets({
+    fileName,
+    sizeBytes: buffer.byteLength,
+    sheetNames: workbook.SheetNames,
+    columnResolutions,
+    startedAt,
+    readMatrix: (sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) throw new Error(`找不到 ${sheetName} Sheet`);
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+        blankrows: false,
+      });
+      delete workbook.Sheets[sheetName];
+      return matrix;
+    },
+  });
+}
 
-  const stepSheetNames = workbook.SheetNames.flatMap((name) => {
+export function parseSpreadsheetSheets(input: {
+  fileName: string;
+  sizeBytes: number;
+  sheetNames: string[];
+  columnResolutions: readonly DdtColumnResolution[];
+  startedAt: number;
+  readMatrix(sheetName: string): unknown[][];
+}): ParsedSpreadsheet {
+  const { fileName, sheetNames, columnResolutions } = input;
+  const extension = extensionOf(fileName);
+  const dataSheetName =
+    sheetNames.find((name) => name.trim().toLocaleLowerCase("en-US") === "data") ??
+    (extension === "csv" ? sheetNames[0] : undefined);
+
+  const stepSheetNames = sheetNames.flatMap((name) => {
     const normalized = normalizeStepName(name);
     return normalized ? [{ original: name, normalized }] : [];
   });
@@ -527,7 +548,7 @@ export function parseSpreadsheet(
   const columnConflicts: DdtImportColumnConflict[] = [];
   const parseSelectedSheet = (sheetName: string): ParsedSheet | undefined => {
     try {
-      return parseCaseSheet(workbook, sheetName, fileName, columnResolutions);
+      return parseCaseSheet(input.readMatrix(sheetName), sheetName, fileName, columnResolutions);
     } catch (error) {
       if (!(error instanceof DdtDuplicateColumnsError)) throw error;
       columnConflicts.push(...error.conflicts);
@@ -634,10 +655,10 @@ export function parseSpreadsheet(
 
   return {
     fileName,
-    sizeBytes: buffer.byteLength,
+    sizeBytes: input.sizeBytes,
     columns,
     rows,
-    startedAt,
+    startedAt: input.startedAt,
   };
 }
 

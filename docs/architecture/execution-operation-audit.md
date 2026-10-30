@@ -632,3 +632,11 @@ DDT 预检在 4 CPU／4 GiB 资源规划下以 8100 行、48 列富文本工作�
 Full 策略和设置的 156 项定向检查、生产 Full Playwright 及 1024×768／1536×960 浅深色截图审查通过，证据见 `/var/tmp/autoforge-full-log-policy-20261030/verification.md`。DDT 的 109 项回归覆盖真实 SQLite／PostgreSQL、重复列、用户旅程、格式取值、冷／热启动重跑及租约续期，类型、Lint、格式和服务端／线程构建通过，证据见 `/var/tmp/autoforge-ddt-import-memory-20261030/verification.md`。本次没有新增 SQL 迁移、依赖或 Runner 协议变化。
 
 按维护者要求仅运行 Release；推送前临时暂停其他 workflow，原生 amd64／arm64 镜像、内置资源、Jenkins 插件、部署包、SBOM、清单及签名检查继续保留，完成后恢复原状态。未运行的标准远端验收不记为通过，发布监控和最终资产核对保存于 `/var/tmp/autoforge-release-1.21.8/`。
+
+## 2026-10-30：DDT XLSX 流式读取与 v1.21.9 快速发布
+
+v1.21.8 的堆预算调整仍遗漏了整本工作簿加载造成的内存峰值。8100 行、48 列有效用例加说明 Sheet 的合成 XLSX 只有约 2.56 MiB，内部解压约 341 MiB，旧维护线程可复现原中文内存错误。预检与后台导入改为逐段解压、仅读取有效 Sheet 及其共享字符串，释放 XML 文本切片和已转换行，忽略空白样式与虚大维度，保持原有重复列、格式取值和用户旅程语义。解析目录、解压大小、CRC、XML 与路径校验失败时整个文件失败，不保留部分有效行。
+
+114 项定向回归、最终 56 项解析补测、Full／Lite 五组 8100×48／256 大表和最终 256 MiB 堆复验通过；真实 SQLite／PostgreSQL 与两项生产 Lite Playwright 覆盖导入、编辑、导出、回收恢复及覆盖历史刷新。已实际查看 1024×768／1536×960 浅深色截图。类型、Lint、格式／许可证和 Web／worker 生产构建通过，具体命令、先前失败记录及验证边界见 `/var/tmp/autoforge-ddt-streaming-20261030/verification.md`。Full 需同步升级 Web 与独立 worker，无新 SQL 迁移、Runner 协议或运维配置；saxes 5.0.1 为已交付生产依赖的显式锁定。
+
+按维护者要求，v1.21.9 仅运行 Release，保留原生双架构镜像、内置资源、Jenkins 插件、部署包、SBOM、清单和签名校验；其他 workflow 在推送前临时暂停，结束后恢复原状态，不将未运行的远端标准验收记为通过。发布监控与最终核对证据位于 `/var/tmp/autoforge-release-1.21.9/`。
