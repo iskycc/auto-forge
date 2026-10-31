@@ -269,9 +269,18 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     await expect(deadLetterPanel).toHaveCount(0);
   }
 
-  await page.getByRole("link", { name: "存储空间" }).click();
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "文件管理", exact: true })
+    .click();
+  await page.getByRole("link", { name: "存储空间", exact: true }).click();
   await expect(page.getByRole("heading", { name: "存储空间" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "空间概览" })).toBeVisible();
+  // Direct fixture writes do not invalidate a snapshot prepared by an earlier scenario.
+  await page.getByRole("button", { name: "重新扫描", exact: true }).click();
+  await expect(page.locator(".storage-inventory")).toHaveAttribute("aria-busy", "false", {
+    timeout: 30_000,
+  });
   await expect(page.locator(".storage-summary-grid")).toContainText("平台实际占用");
   const storageTree = page.locator(".storage-inventory-tree");
   await expect(storageTree).toBeVisible();
@@ -415,6 +424,10 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     }
   }
 
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "平台设置", exact: true })
+    .click();
   await page.getByRole("link", { name: "数据保留" }).click();
   const logRetention = page.locator(".retention-policy-grid form").filter({ hasText: "日志" });
   await logRetention.getByRole("button", { name: "影响预览" }).click();

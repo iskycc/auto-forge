@@ -161,10 +161,20 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
   await page.getByRole("button", { name: /归档选项$/ }).click();
   const optionsDialog = page.getByRole("dialog", { name: "归档选项", exact: true });
   await optionsDialog.getByLabel("项目范围", { exact: true }).click();
-  await page
+  const projectOption = page
     .locator(".ant-select-dropdown:visible .ant-select-item-option-content")
-    .filter({ hasText: projectName })
-    .click();
+    .filter({ hasText: projectName });
+  // Only one option window exists in the DOM; prior scenarios may add many projects.
+  await expect(async () => {
+    if (await projectOption.isVisible()) return;
+    await page
+      .locator(".ant-select-dropdown:visible .ant-select-dropdown-list-holder")
+      .evaluate((list) => {
+        list.scrollTop += list.clientHeight;
+      });
+    await expect(projectOption).toBeVisible({ timeout: 100 });
+  }).toPass({ timeout: 5_000, intervals: [100] });
+  await projectOption.click();
   await optionsDialog.getByRole("spinbutton", { name: /分卷目标（MiB）$/ }).fill("1");
   await optionsDialog.getByRole("spinbutton", { name: /最小磁盘安全余量（MiB）$/ }).fill("256");
   await optionsDialog.getByRole("spinbutton", { name: /磁盘安全余量比例（%）$/ }).fill("1");

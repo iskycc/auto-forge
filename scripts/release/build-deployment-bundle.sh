@@ -31,6 +31,7 @@ readonly -a deployment_documentation=(
   "docs/operations/backup-recovery.md"
   "docs/operations/capacity-incidents.md"
   "docs/operations/direct-terminal.md"
+  "docs/operations/ddt-transfer-verification.md"
   "docs/operations/performance-baseline.md"
   "docs/operations/releases.md"
   "docs/operations/runner-agent-install.md"
@@ -101,6 +102,8 @@ for documentation_path in "${deployment_documentation[@]}"; do
   mkdir -p -- "$(dirname -- "${destination_path}")"
   cp -- "${repository_root}/${documentation_path}" "${destination_path}"
 done
+sed -i 's|scripts/operations/verify_ddt_transfer.py|operations/verify_ddt_transfer.py|g' \
+  "${package_directory}/docs/operations/ddt-transfer-verification.md"
 cp -- "${repository_root}/LICENSE" "${repository_root}/NOTICE" \
   "${repository_root}/THIRD_PARTY_LICENSES.json" "${repository_root}/CHANGELOG.md" \
   "${package_directory}/"

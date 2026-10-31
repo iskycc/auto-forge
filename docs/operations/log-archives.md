@@ -19,7 +19,7 @@ autoforge_logs_6fa01b2c_20261029
 
 ## 月度归档入口
 
-Lite 和 Full 都提供 **平台设置 → 日志归档**。生成和下载需要全平台的 `settings.manage` 与 `log.read` 权限；清理、取消需要 `settings.manage`，操作记录进入安全审计。
+Lite 和 Full 都提供 **文件管理 → 日志归档**（`/objects?section=archives`）。旧 `/settings/platform?section=archives` 自动跳转，后台 API 地址和权限保持不变。生成和下载需要全平台的 `settings.manage` 与 `log.read` 权限；清理、取消需要 `settings.manage`，操作记录进入安全审计。
 
 1. 选择执行结束月份，可在“归档选项”选择项目范围、分卷目标和磁盘安全余量，再点击“生成并校验归档包”。月份按北京时间划分，批次终态的 `updated_at` 作为结束时间；只收录已结束且没有有效上传租约的批次。
 2. 后台逐页读取每个用例的全部轮次和尝试，生成压缩日志及分页索引，再由独立 Go 程序验证文件摘要、日志顺序、数量和源内容摘要。通过后才提供下载。

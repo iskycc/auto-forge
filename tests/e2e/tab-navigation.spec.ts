@@ -395,9 +395,7 @@ test("settings tabs retain the current page while loading and support browser hi
       );
       await expect.poll(() => position(tabs)).toEqual(initialPosition);
       const remainingTabs =
-        section.label === "平台设置模块"
-          ? ["平台配置", "系统诊断", "存储空间"]
-          : ["目录配置", "登录会话"];
+        section.label === "平台设置模块" ? ["平台配置", "系统诊断"] : ["目录配置", "登录会话"];
       for (const label of remainingTabs) {
         await tabs.getByRole("link", { name: label, exact: true }).click();
         await expect(tabs.getByRole("link", { name: label, exact: true })).toHaveAttribute(

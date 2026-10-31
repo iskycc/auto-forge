@@ -195,7 +195,14 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "存储空间",
     "数据库、日志、JDK 和依赖占用",
     "storage disk jdk dependency",
-    "/settings/platform?section=storage",
+    "/objects?section=storage",
+    "settings.read",
+  ),
+  routeItem(
+    "日志归档",
+    "按月压缩日志、下载离线查看并清理归档副本",
+    "archive log backup 日志 压缩 归档",
+    "/objects?section=archives",
     "settings.read",
   ),
   routeItem(

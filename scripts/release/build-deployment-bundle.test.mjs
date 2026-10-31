@@ -62,6 +62,17 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       /migrate\.js/,
     );
     assert.match(
+      await readFile(resolve(packageDirectory, "operations/verify_ddt_transfer.py"), "utf8"),
+      /class ApiReader/,
+    );
+    const transferGuide = await readFile(
+      resolve(packageDirectory, "docs/operations/ddt-transfer-verification.md"),
+      "utf8",
+    );
+    assert.match(transferGuide, /\.\.\/\.\.\/operations\/verify_ddt_transfer\.py/);
+    assert.match(transferGuide, /python3 -B operations\/verify_ddt_transfer\.py/);
+    assert.doesNotMatch(transferGuide, /scripts\/operations\/verify_ddt_transfer\.py/);
+    assert.match(
       await readFile(resolve(packageDirectory, "docs/manuals/administrator.md"), "utf8"),
       /备份与恢复/,
     );

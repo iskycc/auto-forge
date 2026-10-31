@@ -39,6 +39,7 @@ import { removeRuntimeAssetsFromInventory } from "@/components/storage-inventory
 import { StorageInventoryTree } from "@/components/storage-inventory-tree";
 import { buildStorageInventoryTree } from "@/components/storage-inventory-tree-model";
 import { ApiClientError, readApiError, readApiErrorMessage } from "@/lib/client-api";
+import { fileStorageLocation } from "@/lib/file-storage-location";
 
 const INVENTORY_READ_BATCH_SIZE = 500;
 const RUNTIME_ASSET_DELETE_BATCH_SIZE = 100;
@@ -171,11 +172,8 @@ export function StorageInventory({
     event.preventDefault();
     setLoading(true);
     setError("");
-    const parameters = new URLSearchParams({ section: "storage" });
     const query = draftQuery.trim();
-    if (draftCategory) parameters.set("category", draftCategory);
-    if (query) parameters.set("query", query);
-    router.replace(`/settings/platform?${parameters}`);
+    router.replace(fileStorageLocation("storage", { category: draftCategory, query }));
   }
 
   function refreshInventory(): void {

@@ -1704,7 +1704,7 @@ test("administration entries are exposed as four-character first-level navigatio
   await ensureAdministrator(page);
   const navigation = page.getByRole("navigation", { name: "主导航" });
 
-  for (const label of ["组织管理", "回调通知", "执行机组", "安全审计", "平台设置", "文件来源"]) {
+  for (const label of ["组织管理", "回调通知", "执行机组", "安全审计", "平台设置", "文件管理"]) {
     await expect(navigation.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
   await expect(navigation.getByRole("button")).toHaveCount(0);

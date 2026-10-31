@@ -108,10 +108,13 @@ const administrationNavigation: NavigationItem[] = [
     activePrefixes: ["/settings/platform"],
   },
   {
-    label: "文件来源",
+    label: "文件管理",
     href: "/objects",
     icon: FolderOpen,
-    permission: "case_source.read",
+    anyPermissions: ["case_source.read", "settings.read"],
+    preferredPermissions: ["case_source.read"],
+    fallbackHref: "/objects?section=storage",
+    activePrefixes: ["/objects", "/case-sources"],
   },
 ];
 

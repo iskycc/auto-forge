@@ -1,7 +1,7 @@
 name: autoforge-fast-platform
 
 x-platform: &platform
-  image: autoforge/backend:1.21.11-amd64
+  image: autoforge/backend:1.21.12-amd64
   platform: linux/amd64
   pull_policy: never
   init: true
