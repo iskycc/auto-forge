@@ -1,4 +1,4 @@
-import { parsedSrTagImportSchema } from "@autoforge/contracts";
+import { parsedSrTagImportSchema, ddtImportRowShapeSchema } from "@autoforge/contracts";
 import type { DdtSpreadsheetPort, JarDiscoveryPort } from "@autoforge/application";
 import type { WorkDispatcher } from "./work-runtime";
 
@@ -25,10 +25,16 @@ export function isolatedDdtSpreadsheets(
 ): DdtSpreadsheetPort {
   if (!dispatcher?.parseFile) return local;
   return {
-    parseUpload: (input, limits) =>
-      dispatcher.parseFile!("parse-ddt", { ...input, parseLimits: limits }) as ReturnType<
-        DdtSpreadsheetPort["parseUpload"]
-      >,
+    parseUpload: async (input, limits) => {
+      const files = (await dispatcher.parseFile!("parse-ddt", {
+        ...input,
+        parseLimits: limits,
+        compactRows: true,
+      })) as Awaited<ReturnType<DdtSpreadsheetPort["parseUpload"]>>;
+      return files.map((file) =>
+        file.rowShape ? { ...file, rowShape: ddtImportRowShapeSchema.parse(file.rowShape) } : file,
+      );
+    },
   };
 }
 

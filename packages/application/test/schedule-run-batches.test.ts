@@ -16,6 +16,78 @@ import type {
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 
+describe("task creation commit boundary", () => {
+  it("returns the persisted batch without running a fallible scheduling pass after commit", async () => {
+    const accepted = { id: "accepted-batch", status: "queued", totalRuns: 1 };
+    const batches = {
+      create: vi.fn().mockResolvedValue(accepted),
+      hasSchedulableRuns: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" })),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runnersFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => randomUUID() },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+    );
+
+    await expect(
+      service.create({ suiteId: "suite-1" }, undefined, undefined, {
+        actorId: "launcher-id",
+        actorName: "Operator",
+        requestId: "create-request",
+      }),
+    ).resolves.toBe(accepted);
+    expect(batches.hasSchedulableRuns).not.toHaveBeenCalled();
+    expect(batches.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatchJob: expect.objectContaining({ kind: "dispatch-run", payload: expect.any(Object) }),
+        creationAudit: expect.objectContaining({
+          actorId: "launcher-id",
+          requestId: "create-request",
+          action: "run_batch.create",
+          result: "succeeded",
+          details: expect.objectContaining({
+            actorName: "Operator",
+            totalRuns: 1,
+            delaySeconds: 0,
+            scheduledFor: timestamp,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("preserves a creation failure rather than acknowledging an uncommitted batch", async () => {
+    const failure = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    const batches = { create: vi.fn().mockRejectedValue(failure) } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runnersFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => randomUUID() },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+    );
+    await expect(service.create({ suiteId: "suite-1" })).rejects.toBe(failure);
+  });
+});
+
 describe("live scheduling configuration", () => {
   it("applies new policies between passes and keeps one policy throughout an atomic reservation", async () => {
     const thresholds = {

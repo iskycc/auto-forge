@@ -453,6 +453,11 @@ for (const mode of ["sqlite", "postgres"] as const) {
       }
       const context = await fixture(mode, directory);
       try {
+        // This fixture isolates the 2026-10-06 history DDL while using today's
+        // adapters for seeding. Supply unrelated later task metadata separately.
+        await context.execute(
+          "ALTER TABLE case_suites ADD COLUMN is_rerun BOOLEAN NOT NULL DEFAULT FALSE",
+        );
         const { service } = await seed(context);
         const versions = await context.rows("SELECT * FROM case_suite_versions ORDER BY id");
         const batches = await context.rows("SELECT * FROM run_batches ORDER BY id");
@@ -762,14 +767,17 @@ for (const mode of ["sqlite", "postgres"] as const) {
           "Original Rerun-2026100603",
         ]);
         expect(
-          copies.every((suite) => suite.caseCount === 4 && suite.policy.concurrency === 17),
+          copies.every(
+            (suite) =>
+              suite.isRerun === true && suite.caseCount === 4 && suite.policy.concurrency === 17,
+          ),
         ).toBe(true);
         expect(await service.suggestFinalFailureName("batch-1")).toEqual({
           name: "Original Rerun-2026100604",
         });
         expect(
-          (await service.createFromFinalFailures("batch-1", { name: " 自定义名称 " })).name,
-        ).toBe("自定义名称");
+          await service.createFromFinalFailures("batch-1", { name: " 自定义名称 " }),
+        ).toMatchObject({ name: "自定义名称", isRerun: true });
       } finally {
         await context.close();
       }

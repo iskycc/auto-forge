@@ -150,6 +150,21 @@ describe("execution control work dispatch", () => {
     },
   );
 
+  it("preserves the atomic creation audit through the scheduling worker", async () => {
+    const createBatch = vi.fn().mockResolvedValue({ id: "worker-batch" });
+    const local = { create: vi.fn() } as unknown as RunBatchSchedulingService;
+    const dispatcher = { createBatch } as unknown as WorkDispatcher;
+    const audit = { actorId: "launcher", actorName: "Operator", requestId: "request" };
+    await workerBackedBatchCreation(local, dispatcher).create(
+      { suiteId: "suite" },
+      undefined,
+      undefined,
+      audit,
+    );
+    expect(createBatch).toHaveBeenCalledWith({ input: { suiteId: "suite" }, creationAudit: audit });
+    expect(local.create).not.toHaveBeenCalled();
+  });
+
   it("preserves the public grant and both actors when creating a batch in the scheduling worker", async () => {
     const createBatch = vi.fn().mockResolvedValue({ id: "worker-public-batch" });
     const local = { create: vi.fn() } as unknown as RunBatchSchedulingService;

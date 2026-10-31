@@ -445,6 +445,7 @@ export const caseSuites = sqliteTable(
   "case_suites",
   {
     id: text("id").primaryKey(),
+    isRerun: integer("is_rerun", { mode: "boolean" }).notNull().default(false),
     projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
     name: text("name").notNull(),
     description: text("description"),
@@ -460,7 +461,16 @@ export const caseSuites = sqliteTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (table) => [index("case_suites_updated_at_idx").on(table.updatedAt)],
+  (table) => [
+    index("case_suites_updated_at_idx").on(table.updatedAt),
+    index("case_suites_project_status_idx").on(
+      table.projectId,
+      table.status,
+      table.updatedAt,
+      table.id,
+    ),
+    index("case_suites_rerun_idx").on(table.projectId, table.isRerun, table.status, table.id),
+  ],
 );
 
 export const caseSuitePins = sqliteTable(
@@ -2203,7 +2213,18 @@ export const ddtSrTagAssignments = sqliteTable(
   ],
 );
 
+export const runBatchHistorySnapshots = sqliteTable("run_batch_history_snapshots", {
+  batchId: text("batch_id")
+    .primaryKey()
+    .references(() => runBatches.id, { onDelete: "cascade" }),
+  batchVersion: integer("batch_version").notNull(),
+  snapshotVersion: integer("snapshot_version").notNull(),
+  countersJson: text("counters_json").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const schema = {
+  runBatchHistorySnapshots,
   logDatabases,
   logDatabaseSettings,
   runBatchLogStorage,

@@ -8,6 +8,9 @@ import {
   serializeBatchPolicy,
 } from "./run-batch-environment-addresses";
 import { publicRequestKey } from "./public-suite-execution";
+import { auditEventRow } from "./audit-event-row";
+import { HISTORY_SNAPSHOT_VERSION, historySnapshotWrite } from "./run-batch-history-snapshot";
+import { runBatchCountersSchema } from "@autoforge/contracts";
 import { runBatchActors } from "./run-batch-actors";
 import { executionRecordKindCondition } from "./execution-record-kind";
 import {
@@ -129,6 +132,7 @@ import {
 import { insertSchedulingEventDrafts } from "./scheduling-event-insert";
 import {
   pgExecutionRuns,
+  pgAuditEvents,
   pgRunAttempts,
   pgRunBatchRunners,
   pgRunBatchRetryConcurrencyStates,
@@ -269,8 +273,7 @@ export class PostgresRunBatchRepository
           record.policy?.projectVersionId,
         );
     if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
-    let createdRow: typeof pgRunBatches.$inferSelect | undefined;
-    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       if (record.expectedSuiteRevision !== undefined) {
         // Hold the task until the snapshot commits, so deletion and start have a defined order.
         const [suite] = await transaction
@@ -357,7 +360,7 @@ export class PostgresRunBatchRepository
           updatedAt: record.createdAt,
         })
         .returning();
-      createdRow = insertedRows[0];
+      const createdRow = insertedRows[0];
       if (record.publicExecution)
         await transaction.execute(
           sql`INSERT INTO public_batch_access(batch_id,created_by,created_at) VALUES (${record.id},${record.publicExecution.initiator.id},${record.createdAt}) ON CONFLICT DO NOTHING`,
@@ -446,18 +449,20 @@ export class PostgresRunBatchRepository
              ${scheduledFor})
         `);
       }
+      if (record.creationAudit) {
+        await transaction.insert(pgAuditEvents).values(auditEventRow(record.creationAudit));
+        await transaction.execute(
+          sql`UPDATE read_model_snapshots SET requested_revision=requested_revision+1,failed=0,refresh_after=${record.createdAt} WHERE project_id=${record.projectId ?? DEFAULT_PROJECT_ID}`,
+        );
+      }
+      if (!createdRow) throw new Error(`Run batch ${record.id} was not returned after creation.`);
+      return this.mapBatchRow(
+        createdRow,
+        [...record.runnerIds].sort(),
+        new Map([["queued", record.runs.length]]),
+        undefined,
+      );
     });
-    if (!createdRow) {
-      throw new Error(`Run batch ${record.id} was not returned after creation.`);
-    }
-    // 创建即摘要：全部运行处于排队态，计数与选定执行机直接来自创建输入，
-    // 与创建后重新读取的行完全一致，省去列表映射的两次往返。
-    return this.mapBatchRow(
-      createdRow,
-      [...record.runnerIds].sort(),
-      new Map([["queued", record.runs.length]]),
-      undefined,
-    );
   }
 
   async listDisplayIdentities(batchIds: readonly string[]) {
@@ -473,6 +478,40 @@ export class PostgresRunBatchRepository
       ),
     );
     return pages.flat().filter((batch) => batch.sequenceNumber > 0);
+  }
+
+  async readHistorySnapshots(batches: Parameters<RunBatchRepository["readHistorySnapshots"]>[0]) {
+    await this.ready();
+    if (!batches.length) return [];
+    const result: Array<{ id: string } & import("@autoforge/application").RunBatchCounters> = [];
+    for (const page of batchesOf(batches, 200)) {
+      const rows = await this.handle.db.execute<{ id: string; counters: string }>(sql`
+        SELECT snapshot.batch_id AS id,snapshot.counters_json AS counters
+        FROM run_batch_history_snapshots snapshot JOIN run_batches batch ON batch.id=snapshot.batch_id
+        WHERE snapshot.snapshot_version=${HISTORY_SNAPSHOT_VERSION} AND snapshot.batch_version=batch.version
+          AND batch.status IN ('succeeded','failed','cancelled')
+          AND (${sql.join(
+            page.map(
+              (batch) =>
+                sql`(batch.id=${batch.id} AND batch.project_id=${batch.projectId} AND batch.version=${batch.version})`,
+            ),
+            sql` OR `,
+          )})
+      `);
+      result.push(
+        ...rows.rows.map((row) => ({
+          id: row.id,
+          ...runBatchCountersSchema.parse(JSON.parse(row.counters)),
+        })),
+      );
+    }
+    return result;
+  }
+
+  async saveHistorySnapshot(batch: RunBatch) {
+    await this.ready();
+    const query = historySnapshotWrite(batch);
+    if (query) await retryPostgresWrite(() => this.handle.db.execute(query));
   }
 
   async list(

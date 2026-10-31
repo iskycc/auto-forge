@@ -74,7 +74,10 @@ export function createReadModelBuilder(dependencies: {
         const counters = [];
         for (const reference of query.batches) {
           const batch = await dependencies.batches.getSummary(reference.id, [reference.projectId]);
-          if (batch) counters.push(batch);
+          if (batch) {
+            await dependencies.batches.saveHistorySnapshot(batch);
+            counters.push(batch);
+          }
         }
         return batchCountersSnapshotSchema.parse(counters);
       }

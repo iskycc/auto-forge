@@ -521,7 +521,7 @@ test("public task links execute with login only, share live status, record actor
 
 test("task list and detail execution shortcuts submit the selected task through preflight", async ({
   page,
-}) => {
+}, testInfo) => {
   await ensureAdministrator(page);
   const suffix = uniqueName("task-execution-shortcut");
   const project = await createProject(page, suffix);
@@ -582,8 +582,23 @@ test("task list and detail execution shortcuts submit the selected task through 
     const created = await createdResponse;
     expect(created.status()).toBe(201);
     expect(created.request().postDataJSON()).toEqual({ suiteId: suite.id, delaySeconds: 0 });
-    const batch = (await created.json()) as { id: string };
+    const batch = (await created.json()) as { id: string; status: string };
+    expect(batch.status).toBe("queued");
     await expect(page).toHaveURL(new RegExp(`/run-batches/${batch.id}$`));
+    // A durable worker must dispatch after acknowledgement, without another submit
+    // or a connected Runner heartbeat triggering scheduling.
+    await expect
+      .poll(
+        async () => {
+          const overview = await browserJson<{ status: string }>(
+            page,
+            `/api/v1/run-batches/${batch.id}/overview`,
+          );
+          return overview.body.status;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe("scheduled");
     const summary = await browserJson(page, `/api/v1/run-batches/${batch.id}?view=summary`);
     expect(summary.body).toMatchObject({
       suiteId: suite.id,
@@ -592,6 +607,20 @@ test("task list and detail execution shortcuts submit the selected task through 
       selectedRunnerIds: [runner.id],
       policy: { projectVersionId: project.versionId, concurrency: 1 },
     });
+    const executions = await browserJson<{ items: Array<{ id: string }> }>(
+      page,
+      `/api/v1/run-batches?suiteId=${encodeURIComponent(suite.id)}`,
+    );
+    expect(executions.body.items.map(({ id }) => id)).toEqual([batch.id]);
+    if (suite.id === listSuite!.id) {
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: 960 });
+        await page.screenshot({
+          path: testInfo.outputPath(`accepted-task-${width}.png`),
+          fullPage: true,
+        });
+      }
+    }
     expect(
       (
         await browserJson(page, `/api/v1/run-batches/${batch.id}/terminate`, {

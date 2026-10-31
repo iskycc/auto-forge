@@ -117,12 +117,15 @@ export function workerBackedBatchCreation(
           }) as ReturnType<RunBatchSchedulingService["createVersionCaseExecution"]>;
       if (property === "create" && create)
         return (
-          ...[input, requestedBy, publicExecution]: Parameters<RunBatchSchedulingService["create"]>
+          ...[input, requestedBy, publicExecution, creationAudit]: Parameters<
+            RunBatchSchedulingService["create"]
+          >
         ) =>
           create({
             input,
             ...(requestedBy ? { requestedBy } : {}),
             ...(publicExecution ? { publicExecution } : {}),
+            ...(creationAudit ? { creationAudit } : {}),
           }) as ReturnType<RunBatchSchedulingService["create"]>;
       if (property === "createSingleDdtCase" && createSingleDdtCase)
         return (

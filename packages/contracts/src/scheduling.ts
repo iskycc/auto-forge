@@ -63,6 +63,17 @@ export const createRunBatchInputSchema = z
 
 export type CreateRunBatchInput = z.input<typeof createRunBatchInputSchema>;
 
+/** Trusted authentication context, supplied by the HTTP boundary rather than the request body. */
+export const runBatchCreationAuditSchema = z
+  .object({
+    actorId: z.string().min(1).max(128),
+    actorName: z.string().min(1).max(512),
+    requestId: z.string().min(1).max(128),
+  })
+  .strict();
+
+export type RunBatchCreationAudit = z.infer<typeof runBatchCreationAuditSchema>;
+
 export const rerunFinalFailuresInputSchema = z
   .object({
     concurrency: z.number().int().min(1).max(10_000),

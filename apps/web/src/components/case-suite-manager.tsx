@@ -11,8 +11,13 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { ActionDialog } from "@/components/action-dialog";
+import { LinkButton } from "@/components/ui/link-button";
 
-import { apiErrorSchema, type CaseSuiteActivitySummary } from "@autoforge/contracts";
+import {
+  apiErrorSchema,
+  archiveRerunSuitesResultSchema,
+  type CaseSuiteActivitySummary,
+} from "@autoforge/contracts";
 import { orderCaseSuitesByPins, type CaseSuite } from "@autoforge/domain";
 import { Copy, Layers3, Plus, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -36,6 +41,7 @@ export function CaseSuiteManager({
   projectId: initialProjectId,
   selectedProjectVersionId,
   selectedProjectVersionName,
+  status = "active",
 }: {
   adapterNameDefaults: AdapterNameDefaults;
   canManage: boolean;
@@ -47,6 +53,7 @@ export function CaseSuiteManager({
   projectId?: string | undefined;
   selectedProjectVersionId?: string | undefined;
   selectedProjectVersionName?: string | undefined;
+  status?: "active" | "archived";
 }) {
   const router = useRouter();
   const [createdSuites, setCreatedSuites] = useState<CaseSuite[]>([]);
@@ -91,6 +98,43 @@ export function CaseSuiteManager({
   const [exportingSuiteId, setExportingSuiteId] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const projectId = initialProjectId ?? "";
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveNotice, setArchiveNotice] = useState("");
+  const [archiveError, setArchiveError] = useState("");
+
+  async function archiveReruns(): Promise<void> {
+    if (!selectedProjectVersionId || archiving) return;
+    setArchiving(true);
+    setArchiveError("");
+    let archived = 0;
+    try {
+      let hasMore = true;
+      while (hasMore) {
+        const response = await fetch("/api/v1/case-suites/archive-reruns", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId, projectVersionId: selectedProjectVersionId }),
+        });
+        if (!response.ok) throw await caseSuiteRequestError(response, "归档 Rerun 任务失败。");
+        const result = archiveRerunSuitesResultSchema.parse(await response.json());
+        if (result.hasMore && result.archivedIds.length === 0)
+          throw new Error("归档未取得进展，请稍后重试剩余任务。");
+        archived += result.archivedIds.length;
+        setDeletedSuiteIds((current) => new Set([...current, ...result.archivedIds]));
+        hasMore = result.hasMore;
+        setArchiveNotice(
+          `已归档 ${archived} 个 Rerun 任务${result.skippedActive ? `，${result.skippedActive} 个有执行中或待执行批次的任务已跳过` : ""}。`,
+        );
+      }
+      setArchiveOpen(false);
+      router.refresh();
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : "归档失败，请重试剩余任务。");
+    } finally {
+      setArchiving(false);
+    }
+  }
 
   function setSuitePinned(suiteId: string, pinned: boolean): void {
     if (pinning) return;
@@ -205,11 +249,27 @@ export function CaseSuiteManager({
     <div className={cn("suite-manager", caseSuiteManagerStyles["suite-manager"])}>
       <div className={cn("suite-manager-toolbar", caseSuiteManagerStyles["suite-manager-toolbar"])}>
         <span>
-          当前版本「{selectedProjectVersionName ?? "尚未配置"}」共 {suites.length} 个任务
+          当前版本「{selectedProjectVersionName ?? "尚未配置"}」·{" "}
+          {status === "archived" ? "已归档" : "活动"}任务 {suites.length} 个
         </span>
         <div
           className={cn("suite-manager-actions", caseSuiteManagerStyles["suite-manager-actions"])}
         >
+          <LinkButton href={status === "active" ? "/case-suites?status=archived" : "/case-suites"}>
+            {status === "active" ? "已归档任务" : "活动任务"}
+          </LinkButton>
+          {canManage && status === "active" && selectedProjectVersionId ? (
+            <Button
+              type="button"
+              disabled={archiving}
+              onClick={() => {
+                setArchiveOpen(true);
+                setArchiveError("");
+              }}
+            >
+              一键归档 Rerun
+            </Button>
+          ) : null}
           <Button
             disabled={refreshing}
             onClick={() => startRefresh(() => router.refresh())}
@@ -225,6 +285,35 @@ export function CaseSuiteManager({
           ) : null}
         </div>
       </div>
+      {archiveNotice ? <Notice tone="info">{archiveNotice}</Notice> : null}
+      <ActionDialog
+        title="归档 Rerun 任务"
+        open={archiveOpen}
+        closeDisabled={archiving}
+        onClose={() => !archiving && setArchiveOpen(false)}
+        description="归档当前项目版本中由未通过用例创建的 Rerun 任务。执行中、排队中和倒计时任务会跳过；保留任务配置、用例及全部执行历史，可在已归档任务中恢复。"
+        footer={
+          <>
+            <Button type="button" disabled={archiving} onClick={() => setArchiveOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              loading={archiving}
+              onClick={() => void archiveReruns()}
+            >
+              确认归档
+            </Button>
+          </>
+        }
+      >
+        {archiveError ? (
+          <Notice tone="error">{archiveError}</Notice>
+        ) : (
+          <p>仅影响当前版本，普通任务保持原状态。关联的定时执行会停用。</p>
+        )}
+      </ActionDialog>
       {canReadExecutions ? (
         <p
           className={cn(
@@ -542,7 +631,8 @@ const caseSuiteManagerStyles = {
   "suite-list": "grid grid-cols-1 items-start gap-4 min-[1440px]:grid-cols-2",
   "suite-list-feedback": "col-span-full",
   "suite-manager": "grid gap-3.5",
-  "suite-manager-actions": "flex items-center gap-2",
-  "suite-manager-toolbar": "flex items-center justify-between gap-3 text-muted-foreground text-sm",
+  "suite-manager-actions": "flex flex-wrap items-center justify-end gap-2",
+  "suite-manager-toolbar":
+    "flex flex-wrap items-center justify-between gap-3 text-muted-foreground text-sm",
   "suite-statistics-explanation": "m-0 text-muted-foreground text-xs leading-[1.6]",
 } as const;

@@ -137,8 +137,12 @@ export type DdtImportedRow = {
   id: string;
   caseId: string;
   srNum: string;
-  data: DdtCaseData;
-};
+} & ({ data: DdtCaseData } | { readData(): DdtCaseData });
+
+/** A pure, repeatable row decoder lets repositories materialize one case per write. */
+export function readDdtImportedRow(row: DdtImportedRow): DdtCaseData {
+  return "data" in row ? row.data : row.readData();
+}
 
 export type DdtImportFileResult = {
   insertedCount: number;

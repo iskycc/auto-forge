@@ -582,7 +582,10 @@ async function createPlatformServices() {
   const ddtImports = new DdtImportService(
     ddtRepository,
     objectStore,
-    isolatedDdtSpreadsheets({ parseUpload: parseDdtUpload }, dispatcher),
+    isolatedDdtSpreadsheets(
+      { parseUpload: (upload, limits) => parseDdtUpload(upload, limits, { compactRows: true }) },
+      dispatcher,
+    ),
     clock,
     ids,
     readModels,

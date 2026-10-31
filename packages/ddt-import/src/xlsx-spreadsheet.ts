@@ -17,6 +17,7 @@ export async function parseXlsxSpreadsheet(
   content: Uint8Array,
   fileName: string,
   columnResolutions: readonly DdtColumnResolution[],
+  options: { compactRows?: boolean } = {},
 ) {
   const startedAt = Date.now();
   const archive = openSpreadsheetZip(content, {
@@ -98,11 +99,12 @@ export async function parseXlsxSpreadsheet(
     sheetNames: sheets.map((sheet) => sheet.name),
     columnResolutions,
     startedAt,
+    compactRows: options.compactRows ?? false,
     readMatrix(sheetName) {
       const matrix = matrices.get(sheetName);
       if (!matrix) throw new Error(`找不到 ${sheetName} Sheet`);
       matrices.delete(sheetName);
-      return normalizeXlsxMatrix(matrix);
+      return normalizeXlsxMatrix(matrix, options);
     },
   });
 }

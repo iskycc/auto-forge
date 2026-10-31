@@ -515,6 +515,7 @@ export const pgCaseSuites = pgTable(
   "case_suites",
   {
     id: text("id").primaryKey(),
+    isRerun: boolean("is_rerun").notNull().default(false),
     projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
     name: text("name").notNull(),
     description: text("description"),
@@ -530,7 +531,16 @@ export const pgCaseSuites = pgTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (table) => [index("case_suites_updated_at_idx").on(table.updatedAt)],
+  (table) => [
+    index("case_suites_updated_at_idx").on(table.updatedAt),
+    index("case_suites_project_status_idx").on(
+      table.projectId,
+      table.status,
+      table.updatedAt,
+      table.id,
+    ),
+    index("case_suites_rerun_idx").on(table.projectId, table.isRerun, table.status, table.id),
+  ],
 );
 
 export const pgCaseSuitePins = pgTable(
@@ -2226,7 +2236,18 @@ export const pgDdtSrTagAssignments = pgTable(
   ],
 );
 
+export const pgRunBatchHistorySnapshots = pgTable("run_batch_history_snapshots", {
+  batchId: text("batch_id")
+    .primaryKey()
+    .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+  batchVersion: integer("batch_version").notNull(),
+  snapshotVersion: integer("snapshot_version").notNull(),
+  countersJson: text("counters_json").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const postgresSchema = {
+  runBatchHistorySnapshots: pgRunBatchHistorySnapshots,
   logDatabases: pgLogDatabases,
   logDatabaseSettings: pgLogDatabaseSettings,
   runBatchLogStorage: pgRunBatchLogStorage,

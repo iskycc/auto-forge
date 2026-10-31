@@ -1324,6 +1324,14 @@ export type CaseSuiteMemberPageQuery = {
 };
 
 export interface CaseSuiteRepository {
+  archiveReruns(input: {
+    projectId: string;
+    projectVersionId: string;
+    actorId: string;
+    auditId: string;
+    requestId: string;
+    archivedAt: string;
+  }): Promise<{ archivedIds: string[]; hasMore: boolean; skippedActive: number }>;
   listRoundRecoveryCredentialSources(
     input: RoundRecoveryCredentialSourceQuery,
   ): Promise<RoundRecoveryCredentialSource[]>;
@@ -1348,7 +1356,7 @@ export interface CaseSuiteRepository {
     limit: number,
     projectIds?: readonly string[],
     projectVersionId?: string,
-    page?: { afterId?: string },
+    page?: { afterId?: string; status?: "active" | "archived" },
     pinnedByUserId?: string,
   ): Promise<CaseSuite[]>;
   listPinnedSuiteIds(userId: string, suiteIds: readonly string[]): Promise<string[]>;
@@ -1698,6 +1706,8 @@ export interface CachePort {
 
 export type CreateRunBatchRecord = {
   id: string;
+  /** Persisted atomically with the batch and its dispatch message. */
+  creationAudit?: AuditEvent;
   projectId?: string;
   environmentId?: string;
   environmentVersionId?: string;
@@ -2205,6 +2215,10 @@ export interface ExecutionLogWriteAdmission {
 }
 
 export interface RunBatchRepository {
+  readHistorySnapshots(
+    batches: readonly Pick<RunBatchMetadata, "id" | "projectId" | "version">[],
+  ): Promise<Array<{ id: string } & RunBatchCounters>>;
+  saveHistorySnapshot(batch: RunBatch): Promise<void>;
   readConcurrencySnapshot(
     batchId: string,
     offlineBefore: string,

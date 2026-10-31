@@ -1,4 +1,5 @@
 "use client";
+import { appendDdtUploadFiles, ddtUploadFileKey } from "@/lib/ddt-upload-selection";
 import { DdtRequirementCategoryFilter } from "./ddt-requirement-category-filter";
 import {
   collectFilteredDdtCaseIds,
@@ -1838,7 +1839,7 @@ export function DdtImportDialog({
       );
       return;
     }
-    setFiles(selectedFiles);
+    setFiles((current) => appendDdtUploadFiles(current, selectedFiles));
     setJob(undefined);
     setShowColumnConflicts(false);
     setColumnResolutions([]);
@@ -2026,7 +2027,7 @@ export function DdtImportDialog({
                     <Upload size={28} aria-hidden="true" className="text-primary" />
                     <strong>选择或拖入表格、ZIP 压缩包</strong>
                     <span className="text-xs text-muted-foreground">
-                      支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录
+                      可分多次追加文件；支持 XLSX、XLS、XLSB、CSV、ODS、ZIP
                     </span>
                   </div>
                 </AntUpload.Dragger>
@@ -2040,8 +2041,8 @@ export function DdtImportDialog({
                 >
                   {files.map((file) => (
                     <div
-                      key={`${file.name}-${file.size}`}
-                      className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg bg-muted px-3 py-2"
+                      key={ddtUploadFileKey(file)}
+                      className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg bg-muted px-3 py-2"
                     >
                       <FileSpreadsheet
                         size={16}
@@ -2052,6 +2053,21 @@ export function DdtImportDialog({
                       <small className="whitespace-nowrap text-muted-foreground">
                         {formatBytes(file.size)}
                       </small>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={busy}
+                        aria-label={`移除文件 ${file.name}`}
+                        onClick={() =>
+                          setFiles((current) =>
+                            current.filter(
+                              (entry) => ddtUploadFileKey(entry) !== ddtUploadFileKey(file),
+                            ),
+                          )
+                        }
+                      >
+                        移除
+                      </Button>
                     </div>
                   ))}
                 </div>

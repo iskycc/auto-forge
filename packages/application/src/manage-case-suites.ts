@@ -91,13 +91,31 @@ export class CaseSuiteService {
     limit = 200,
     projectIds?: readonly string[],
     projectVersionId?: string,
+    status: "active" | "archived" = "active",
   ) {
-    const items = await this.suites.list(limit, projectIds, projectVersionId, undefined, userId);
+    const items = await this.suites.list(limit, projectIds, projectVersionId, { status }, userId);
     const pinnedSuiteIds = await this.suites.listPinnedSuiteIds(
       userId,
       items.map((suite) => suite.id),
     );
     return { items: orderCaseSuitesByPins(items, new Set(pinnedSuiteIds)), pinnedSuiteIds };
+  }
+
+  async archiveReruns(
+    projectId: string,
+    projectVersionId: string,
+    actorId: string,
+    requestId: string,
+  ) {
+    await this.resolveActiveProjectVersion(projectId, projectVersionId);
+    return this.suites.archiveReruns({
+      projectId,
+      projectVersionId,
+      actorId,
+      requestId,
+      auditId: this.ids.next(),
+      archivedAt: this.clock.now().toISOString(),
+    });
   }
 
   async setPinned(

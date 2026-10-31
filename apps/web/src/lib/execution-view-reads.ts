@@ -10,6 +10,7 @@ export const EXECUTION_VIEW_READ_METHODS = [
   "listAttemptsForExecutionRun",
   "listCaseLogRerunBatches",
   "listMetadataPage",
+  "readHistorySnapshots",
   "readSingleCaseExecutionEntries",
   "listCasePage",
   "readCasePageEntries",
@@ -21,6 +22,22 @@ const identifier = z.string().min(1).max(160);
 const projectScope = z.array(identifier).max(10_000).optional();
 const batchArgs = z.tuple([identifier, projectScope]);
 const readSchema = z.discriminatedUnion("method", [
+  z
+    .object({
+      method: z.literal("readHistorySnapshots"),
+      args: z.tuple([
+        z
+          .array(
+            z.object({
+              id: identifier,
+              projectId: identifier,
+              version: z.number().int().positive(),
+            }),
+          )
+          .max(200),
+      ]),
+    })
+    .strict(),
   z
     .object({
       method: z.literal("readConcurrencySnapshot"),

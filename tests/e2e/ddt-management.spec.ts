@@ -2106,6 +2106,48 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   expect(isolatedRead.status()).toBe(404);
 });
 
+test("DDT import retains consecutive drops, removes a selected file and submits the combined selection", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const scope = await createHierarchy(page);
+  await selectProjectContext(page, scope.projectId, scope.versionId, scope.stageId);
+  await page.goto("/cases?tab=ddt&ddtView=cases");
+  await page.getByRole("button", { name: "导入表格", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+  const dropzone = dialog.locator(".ant-upload-drag .ant-upload-btn");
+  const upload = (name: string) => ({
+    name: `${name}.csv`,
+    mimeType: "text/csv",
+    buffer: Buffer.from(`CaseID,srNum\n${name},SR\n`),
+  });
+  await dispatchFileDrag(dropzone, "drop", upload("FIRST"));
+  await expect(
+    dialog.getByRole("button", { name: "移除文件 FIRST.csv", exact: true }),
+  ).toBeVisible();
+  await dispatchFileDrag(dropzone, "drop", upload("SECOND"));
+  await expect(dialog.getByRole("button", { name: /移除文件 / })).toHaveCount(2);
+  await dialog.locator('input[type="file"]').setInputFiles([upload("THIRD"), upload("FOURTH")]);
+  await expect(dialog.getByRole("button", { name: /移除文件 / })).toHaveCount(4);
+  await dialog.getByRole("button", { name: "移除文件 THIRD.csv", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: /移除文件 / })).toHaveCount(3);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: testInfo.outputPath(`incremental-import-${width}.png`) });
+  }
+  const response = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/imports/preview"),
+  );
+  await dialog.getByRole("button", { name: "开始预检", exact: true }).click();
+  const preview = await response;
+  expect(preview.status()).toBe(201);
+  expect(await preview.json()).toMatchObject({ totalFiles: 3, totalRows: 3, validFiles: 3 });
+  await dialog.getByRole("button", { name: "重新选择", exact: true }).click();
+});
+
 async function dispatchFileDrag(
   dropzone: Locator,
   eventType: "dragenter" | "dragover" | "drop",
@@ -4275,6 +4317,50 @@ test("DDT full and current-range exports preserve heterogeneous SR schemas witho
       });
     }
     expect(remainingIds.size).toBe(0);
+    if (name === "导出全部用例") {
+      const target = await createHierarchy(page);
+      const reimport = await page.request.post(ddtPath(target, "imports/preview"), {
+        headers,
+        multipart: {
+          files: {
+            name: "full-export.xlsx",
+            mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            buffer: bytes,
+          },
+        },
+      });
+      expect(reimport.status()).toBe(201);
+      const reimportJob = (await reimport.json()) as {
+        id: string;
+        totalRows: number;
+        validFiles: number;
+      };
+      expect(reimportJob).toMatchObject({ totalRows: fileCount * 2, validFiles: 1 });
+      expect(
+        (
+          await page.request.post(ddtPath(target, `imports/${reimportJob.id}/confirm`), {
+            headers,
+            data: { conflictStrategy: "overwrite" },
+          })
+        ).status(),
+      ).toBe(200);
+      await expect
+        .poll(
+          async () =>
+            (
+              (await (
+                await page.request.get(ddtPath(target, `imports/${reimportJob.id}`))
+              ).json()) as { status: string }
+            ).status,
+          { timeout: 60_000 },
+        )
+        .toBe("succeeded");
+      const roundTrip = await page.request.get(ddtPath(target, "export"));
+      expect(roundTrip.status()).toBe(200);
+      expect(parseSpreadsheet(await roundTrip.body(), "roundtrip.xlsx").rows).toEqual(
+        exported.rows,
+      );
+    }
     await expect(page.getByRole("button", { name: "导出全部用例", exact: true })).toBeEnabled();
   }
   for (const theme of ["light", "dark"]) {

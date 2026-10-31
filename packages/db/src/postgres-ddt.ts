@@ -1,4 +1,5 @@
 import { ddtCaseListPageSql } from "./ddt-case-list-page";
+import { readDdtImportedRow } from "@autoforge/application";
 import { DDT_RECYCLE_PURGE_PAGE_SIZE } from "@autoforge/contracts";
 import {
   ddtRecycleGroupPage,
@@ -1544,6 +1545,7 @@ export class PostgresDdtRepository implements DdtRepository {
               : left.index - right.index,
         );
       for (const { row, index, normalizedCaseId } of orderedRows) {
+        const caseData = readDdtImportedRow(row);
         const inserted = await client.query(
           `INSERT INTO ddt_cases
              (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
@@ -1559,8 +1561,8 @@ export class PostgresDdtRepository implements DdtRepository {
             normalizedCaseId,
             row.srNum,
             normalize(row.srNum),
-            isDdtJourney(row.data) ? "journey" : "standard",
-            JSON.stringify(row.data),
+            isDdtJourney(caseData) ? "journey" : "standard",
+            JSON.stringify(caseData),
             input.fileId,
             input.sourceName,
             input.actorId ?? null,
@@ -1584,7 +1586,7 @@ export class PostgresDdtRepository implements DdtRepository {
               "用例在导入期间被删除，请重新预览后导入。",
             );
           const before = parseCaseData(existing.data_json);
-          if (JSON.stringify(before) === JSON.stringify(row.data)) {
+          if (JSON.stringify(before) === JSON.stringify(caseData)) {
             result.unchangedCount += 1;
             outcome = "unchanged";
           } else if (input.conflictStrategy === "skip") {
@@ -1601,8 +1603,8 @@ export class PostgresDdtRepository implements DdtRepository {
                 row.caseId,
                 row.srNum,
                 normalize(row.srNum),
-                isDdtJourney(row.data) ? "journey" : "standard",
-                JSON.stringify(row.data),
+                isDdtJourney(caseData) ? "journey" : "standard",
+                JSON.stringify(caseData),
                 input.fileId,
                 input.sourceName,
                 input.actorId ?? null,
@@ -1622,8 +1624,8 @@ export class PostgresDdtRepository implements DdtRepository {
                 input.actorId ?? null,
                 input.sourceName,
                 JSON.stringify(before),
-                JSON.stringify(row.data),
-                JSON.stringify(diffDdtCaseData(before, row.data)),
+                JSON.stringify(caseData),
+                JSON.stringify(diffDdtCaseData(before, caseData)),
                 input.importedAt,
               ],
             );

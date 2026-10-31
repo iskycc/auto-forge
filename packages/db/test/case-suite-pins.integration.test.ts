@@ -193,6 +193,10 @@ for (const dialect of ["sqlite", "postgresql"] as const) {
         await writeFile(resolve(directory, name), await readFile(resolve(folder, name)));
       const f = await fixture(dialect, directory);
       try {
+        // Keep the pin migration isolated while current adapters seed task rows.
+        await f.execute(
+          "ALTER TABLE case_suites ADD COLUMN is_rerun BOOLEAN NOT NULL DEFAULT FALSE",
+        );
         await seed(f);
         const before = await f.rows("SELECT * FROM case_suites");
         const statements = (await readFile(resolve(folder, migration), "utf8"))

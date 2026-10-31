@@ -4,7 +4,11 @@ import {
   DDT_IMPORT_TOTAL_BYTES,
   DDT_IMPORT_ZIP_SPREADSHEET_LIMIT,
 } from "@autoforge/contracts";
-import type { DdtColumnResolution, DdtImportColumnConflict } from "@autoforge/contracts";
+import type {
+  DdtColumnResolution,
+  DdtImportColumnConflict,
+  DdtImportRowShape,
+} from "@autoforge/contracts";
 
 import { iterateSpreadsheetsFromZip, isZipFile } from "./archive";
 import { parseXlsxSpreadsheet } from "./xlsx-spreadsheet";
@@ -34,6 +38,7 @@ export type ParsedDdtUploadFile = {
   rows: ReturnType<typeof parseSpreadsheet>["rows"];
   errorSummary?: string;
   columnConflicts?: DdtImportColumnConflict[];
+  rowShape?: DdtImportRowShape;
 };
 
 const DEFAULT_PARSE_LIMITS: DdtImportParseLimits = {
@@ -43,6 +48,7 @@ const DEFAULT_PARSE_LIMITS: DdtImportParseLimits = {
 export async function parseDdtUpload(
   upload: DdtImportUpload,
   limits: DdtImportParseLimits = DEFAULT_PARSE_LIMITS,
+  options: { compactRows?: boolean } = {},
 ) {
   if (!isZipFile(upload.fileName)) {
     return [
@@ -50,6 +56,8 @@ export async function parseDdtUpload(
         Buffer.from(upload.content),
         upload.fileName,
         (upload.columnResolutions ?? []).filter((resolution) => !resolution.archiveEntryName),
+        undefined,
+        options,
       ),
     ];
   }
@@ -70,6 +78,7 @@ export async function parseDdtUpload(
           (resolution) => resolution.archiveEntryName === file.archiveEntryName,
         ),
         file.archiveEntryName,
+        options,
       ),
     );
   }
@@ -85,15 +94,17 @@ async function parseSpreadsheetOutcome(
   fileName: string,
   columnResolutions: readonly DdtColumnResolution[],
   archiveEntryName?: string,
+  options: { compactRows?: boolean } = {},
 ): Promise<ParsedDdtUploadFile> {
   try {
     const parsed = fileName.toLocaleLowerCase("en-US").endsWith(".xlsx")
-      ? await parseXlsxSpreadsheet(content, fileName, columnResolutions)
+      ? await parseXlsxSpreadsheet(content, fileName, columnResolutions, options)
       : parseSpreadsheet(content, fileName, columnResolutions);
     return {
       fileName: parsed.fileName,
       ...(archiveEntryName ? { archiveEntryName } : {}),
       rows: parsed.rows,
+      ...(parsed.rowShape ? { rowShape: parsed.rowShape } : {}),
     };
   } catch (error) {
     const columnConflicts =

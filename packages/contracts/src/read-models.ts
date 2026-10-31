@@ -49,7 +49,7 @@ export const readModelQuerySchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("batch_counters"),
-    snapshotVersion: z.literal(2).optional(),
+    snapshotVersion: z.union([z.literal(2), z.literal(3)]).optional(),
     projectId: identifier,
     batches: z
       .array(

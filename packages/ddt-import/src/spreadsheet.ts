@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import * as XLSX from "xlsx";
 import {
   DDT_IMPORT_COLUMN_RESOLUTION_LIMIT,
+  ddtImportRowShapeSchema,
   type DdtColumnResolution,
   type DdtImportColumnConflict,
+  type DdtImportRowShape,
 } from "@autoforge/contracts";
 import {
   createDdtJourney as createJourneyCase,
@@ -33,6 +35,7 @@ export interface ParsedSpreadsheet {
   columns: string[];
   rows: CaseData[];
   startedAt: number;
+  rowShape?: DdtImportRowShape;
 }
 
 export class DdtDuplicateColumnsError extends Error {
@@ -315,6 +318,7 @@ function parseCaseSheet(
   sheetName: string,
   fileName: string,
   columnResolutions: readonly DdtColumnResolution[],
+  options: { compactRows?: boolean } = {},
 ): ParsedSheet {
   if (matrix.length < 2) {
     throw new Error(`${sheetName} Sheet 中没有可导入的用例数据`);
@@ -410,6 +414,7 @@ function parseCaseSheet(
     const row: CaseStepData = {};
     columns.forEach((column, columnIndex) => {
       if (column === undefined) return;
+      if (options.compactRows && sourceRow[columnIndex] === undefined) return;
       row[column] = normalizeCell(sourceRow[columnIndex]);
     });
     row.CaseID = caseId;
@@ -510,6 +515,7 @@ export function parseSpreadsheetSheets(input: {
   columnResolutions: readonly DdtColumnResolution[];
   startedAt: number;
   readMatrix(sheetName: string): unknown[][];
+  compactRows?: boolean;
 }): ParsedSpreadsheet {
   const { fileName, sheetNames, columnResolutions } = input;
   const extension = extensionOf(fileName);
@@ -548,7 +554,9 @@ export function parseSpreadsheetSheets(input: {
   const columnConflicts: DdtImportColumnConflict[] = [];
   const parseSelectedSheet = (sheetName: string): ParsedSheet | undefined => {
     try {
-      return parseCaseSheet(input.readMatrix(sheetName), sheetName, fileName, columnResolutions);
+      return parseCaseSheet(input.readMatrix(sheetName), sheetName, fileName, columnResolutions, {
+        compactRows: input.compactRows ?? false,
+      });
     } catch (error) {
       if (!(error instanceof DdtDuplicateColumnsError)) throw error;
       columnConflicts.push(...error.conflicts);
@@ -659,6 +667,20 @@ export function parseSpreadsheetSheets(input: {
     columns,
     rows,
     startedAt: input.startedAt,
+    ...(input.compactRows
+      ? {
+          rowShape: ddtImportRowShapeSchema.parse({
+            schemaVersion: 1 as const,
+            standard: parsedDataSheet?.columns ?? [],
+            steps: Object.fromEntries(
+              parsedSteps.map(({ normalized, sheet }) => [
+                normalized,
+                sheet.columns.filter((column) => column !== EXPORTED_STEP_PRESENT_COLUMN),
+              ]),
+            ),
+          }),
+        }
+      : {}),
   };
 }
 

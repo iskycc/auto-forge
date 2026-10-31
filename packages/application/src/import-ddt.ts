@@ -12,6 +12,7 @@ import {
   type DdtImportColumnConflict,
   type DdtImportColumnResolution,
   type JobEnvelope,
+  type DdtImportRowShape,
 } from "@autoforge/contracts";
 import {
   DomainError,
@@ -25,7 +26,8 @@ import {
 
 import type { DdtImportJob, DdtImportPreviewFile, DdtUploadReference } from "./ddt-types";
 import type { DdtDebugRepository } from "./ddt-debug";
-import type { DdtImportFileResult } from "./ddt-types";
+import { readDdtImportedRow, type DdtImportFileResult, type DdtImportedRow } from "./ddt-types";
+import { createDdtImportRowReader } from "./ddt-import-row";
 import type { Clock, DdtRepository, IdGenerator, JarObjectStorePort } from "./ports";
 
 export type DdtUpload = {
@@ -41,6 +43,7 @@ export type ParsedDdtFile = {
   rows: DdtCaseData[];
   errorSummary?: string;
   columnConflicts?: DdtImportColumnConflict[];
+  rowShape?: DdtImportRowShape;
 };
 
 export type DdtSpreadsheetLimits = {
@@ -435,25 +438,16 @@ export class DdtImportService {
         continue;
       }
       try {
-        const rows = parsed.rows.map((row) => {
-          const normalized = normalizeDdtCaseData(row);
-          const template = templates.get(
-            String(ddtCaseCell(normalized, "srNum")).toLocaleLowerCase("en-US"),
-          );
-          const validated = validateDdtCaseAgainstTemplate(normalized, template);
-          if (validated.errors.length > 0) {
-            throw new DomainError(
-              "DDT_TEMPLATE_VALIDATION_FAILED",
-              `${String(ddtCaseCell(normalized, "CaseID"))}：${validated.errors
-                .map((issue) => issue.message)
-                .join("；")}`,
-            );
-          }
+        // Validate the entire file before writing. Keep only identities here;
+        // the repository decodes one row at a time without doing I/O in its transaction.
+        const readRow = this.validatedRowReader(parsed, templates);
+        const rows: DdtImportedRow[] = parsed.rows.map((row) => {
+          const validated = readRow(row);
           return {
             id: this.ids.next(),
-            caseId: String(ddtCaseCell(validated.data, "CaseID")),
-            srNum: String(ddtCaseCell(validated.data, "srNum")),
-            data: validated.data,
+            caseId: String(ddtCaseCell(validated, "CaseID")),
+            srNum: String(ddtCaseCell(validated, "srNum")),
+            readData: () => readRow(row),
           };
         });
         await this.repository.updateImportFile({
@@ -572,7 +566,7 @@ export class DdtImportService {
         scope: { ...job, ownerUserId: job.debugOwnerId },
         id: row.id,
         caseId: row.caseId,
-        data: row.data,
+        data: readDdtImportedRow(row),
         sourceName: input.sourceName,
         now: input.importedAt,
         strategy: input.conflictStrategy,
@@ -584,6 +578,26 @@ export class DdtImportService {
     return result;
   }
 
+  private validatedRowReader(
+    parsed: ParsedDdtFile,
+    templates: ReadonlyMap<string, DdtCaseTemplate>,
+  ): (row: DdtCaseData) => DdtCaseData {
+    const readRow = createDdtImportRowReader(parsed.rowShape);
+    return (row) => {
+      const normalized = normalizeDdtCaseData(readRow(row));
+      const template = templates.get(
+        String(ddtCaseCell(normalized, "srNum")).toLocaleLowerCase("en-US"),
+      );
+      const validation = validateDdtCaseAgainstTemplate(normalized, template);
+      if (validation.errors.length)
+        throw new DomainError(
+          "DDT_TEMPLATE_VALIDATION_FAILED",
+          `${String(ddtCaseCell(normalized, "CaseID"))}：${validation.errors.map((issue) => issue.message).join("；")}`,
+        );
+      return validation.data;
+    };
+  }
+
   private async previewParsedFile(
     scope: DdtScope & { debugOwnerId?: string },
     uploadId: string,
@@ -593,51 +607,45 @@ export class DdtImportService {
   ): Promise<DdtImportPreviewFile> {
     const id = this.ids.next();
     try {
-      const rows = parsed.rows.map((row) => {
-        const normalized = normalizeDdtCaseData(row);
-        const template = templates.get(
-          String(ddtCaseCell(normalized, "srNum")).toLocaleLowerCase("en-US"),
-        );
-        const validation = validateDdtCaseAgainstTemplate(normalized, template);
-        if (validation.errors.length > 0) {
-          throw new DomainError(
-            "DDT_TEMPLATE_VALIDATION_FAILED",
-            validation.errors.map((issue) => issue.message).join("；"),
-          );
-        }
-        return validation.data;
-      });
-      const normalizedIds = rows.map((row) =>
-        String(ddtCaseCell(row, "CaseID")).toLocaleLowerCase("en-US"),
-      );
-      const duplicate = normalizedIds.find((caseId) => seenCaseIds.has(caseId));
-      if (duplicate) {
-        throw new DomainError(
-          "DDT_IMPORT_DUPLICATE_CASE_ID",
-          `CaseID“${String(ddtCaseCell(rows[normalizedIds.indexOf(duplicate)]!, "CaseID"))}”在多个表格中重复。`,
-        );
-      }
-      const existing = await this.findCaseData(
-        scope,
-        rows.map((row) => String(ddtCaseCell(row, "CaseID"))),
-      );
+      const readRow = this.validatedRowReader(parsed, templates);
       let updatedCount = 0;
       let unchangedCount = 0;
-      for (const row of rows) {
-        const caseId = String(ddtCaseCell(row, "CaseID")).toLocaleLowerCase("en-US");
-        const current = existing.get(caseId);
-        if (!current) continue;
-        if (JSON.stringify(current) === JSON.stringify(row)) unchangedCount += 1;
-        else updatedCount += 1;
+      let existingCount = 0;
+      const fileCaseIds = new Set<string>();
+      // A full export can have thousands of merged SR fields. Materialize only
+      // this window, never a second full copy of every rectangular row.
+      const pageSize = 64;
+      for (let offset = 0; offset < parsed.rows.length; offset += pageSize) {
+        const rows = parsed.rows.slice(offset, offset + pageSize).map(readRow);
+        const caseIds = rows.map((row) => String(ddtCaseCell(row, "CaseID")));
+        for (const caseId of caseIds) {
+          const normalizedId = caseId.toLocaleLowerCase("en-US");
+          if (seenCaseIds.has(normalizedId) || fileCaseIds.has(normalizedId))
+            throw new DomainError(
+              "DDT_IMPORT_DUPLICATE_CASE_ID",
+              `CaseID“${caseId}”在多个表格中重复。`,
+            );
+          fileCaseIds.add(normalizedId);
+        }
+        const existing = await this.findCaseData(scope, caseIds);
+        existingCount += existing.size;
+        for (const row of rows) {
+          const current = existing.get(
+            String(ddtCaseCell(row, "CaseID")).toLocaleLowerCase("en-US"),
+          );
+          if (!current) continue;
+          if (JSON.stringify(current) === JSON.stringify(row)) unchangedCount += 1;
+          else updatedCount += 1;
+        }
       }
-      normalizedIds.forEach((caseId) => seenCaseIds.add(caseId));
+      fileCaseIds.forEach((caseId) => seenCaseIds.add(caseId));
       return {
         id,
         uploadId,
         fileName: parsed.fileName,
         ...(parsed.archiveEntryName ? { archiveEntryName: parsed.archiveEntryName } : {}),
-        rowCount: rows.length,
-        insertedCount: rows.length - existing.size,
+        rowCount: parsed.rows.length,
+        insertedCount: parsed.rows.length - existingCount,
         updatedCount,
         unchangedCount,
       };

@@ -17,7 +17,12 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function CaseSuitesPage() {
+export default async function CaseSuitesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const status = (await searchParams).status === "archived" ? "archived" : "active";
   const { identity } = await requirePageProjectScope("case_suite.read");
   const services = await getPlatformServices();
   const projects = await services.identities
@@ -38,6 +43,7 @@ export default async function CaseSuitesPage() {
         200,
         effectiveProjectIds,
         hierarchy.projectVersionId,
+        status,
       )
     : { items: [], pinnedSuiteIds: [] };
   const selectedVersion = structure.versions.find(
@@ -70,7 +76,7 @@ export default async function CaseSuitesPage() {
       </section>
       {activityProjection ? <ReadModelStatusBar snapshots={[activityProjection.status]} /> : null}
       <CaseSuiteManager
-        key={`${activeProjectId}:${hierarchy.projectVersionId ?? ""}:${hierarchy.testStageId ?? ""}`}
+        key={`${activeProjectId}:${hierarchy.projectVersionId ?? ""}:${hierarchy.testStageId ?? ""}:${status}`}
         adapterNameDefaults={caseSuiteAdapterDefaults(
           projects.find((project) => project.id === activeProjectId)?.name ?? "",
           selectedVersion,
@@ -81,6 +87,7 @@ export default async function CaseSuitesPage() {
         canExecute={hasPermission(identity, "run.create", activeProjectId)}
         {...(activitySummary ? { activitySummary } : {})}
         initialSuites={suites}
+        status={status}
         initialPinnedSuiteIds={pinnedSuiteIds}
         projectId={activeProjectId}
         {...(hierarchy.projectVersionId

@@ -57,12 +57,19 @@ import {
   type SqliteDatabaseHandle,
 } from "./database";
 import {
+  rerunArchiveCandidates,
+  busyRerunCount,
+  RERUN_ARCHIVE_PAGE_SIZE,
+} from "./rerun-suite-archive";
+import { auditEventRow } from "./audit-event-row";
+import {
   batchesOf,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
   RELATIONAL_WRITE_BATCH_SIZE,
 } from "./database-batches";
 import {
   caseDefinitions,
+  auditEvents,
   caseSuiteDdtItems,
   caseSuiteItems,
   caseSuiteRoundRecoveryCredentials,
@@ -123,6 +130,7 @@ function toMethod(row: typeof testMethods.$inferSelect): TestMethod {
 function toSuite(row: typeof caseSuites.$inferSelect, caseCount: number): CaseSuite {
   return {
     id: row.id,
+    isRerun: row.isRerun,
     projectId: row.projectId,
     name: row.name,
     ...(row.description ? { description: row.description } : {}),
@@ -141,6 +149,67 @@ function toSuite(row: typeof caseSuites.$inferSelect, caseCount: number): CaseSu
 
 export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async archiveReruns(input: Parameters<CaseSuiteRepository["archiveReruns"]>[0]) {
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const version = sql`json_extract(suite.policy_json, '$.projectVersionId')=${input.projectVersionId}`;
+      const candidates = this.handle.db.all<{ id: string }>(
+        rerunArchiveCandidates(input.projectId, version, false),
+      );
+      const archivedIds = candidates.slice(0, RERUN_ARCHIVE_PAGE_SIZE).map(({ id }) => id);
+      if (archivedIds.length) {
+        this.handle.db
+          .update(caseSuites)
+          .set({
+            status: "archived",
+            revision: sql`${caseSuites.revision}+1`,
+            updatedBy: input.actorId,
+            updatedAt: input.archivedAt,
+          })
+          .where(inArray(caseSuites.id, archivedIds))
+          .run();
+        this.handle.db
+          .update(caseSuiteSchedules)
+          .set({
+            enabled: false,
+            updatedAt: input.archivedAt,
+            revision: sql`${caseSuiteSchedules.revision}+1`,
+          })
+          .where(inArray(caseSuiteSchedules.suiteId, archivedIds))
+          .run();
+        this.handle.db
+          .insert(auditEvents)
+          .values(
+            auditEventRow({
+              id: input.auditId,
+              actorType: "user",
+              actorId: input.actorId,
+              action: "case_suite.update",
+              resourceType: "case_suite",
+              projectId: input.projectId,
+              result: "succeeded",
+              requestId: input.requestId,
+              recordedAt: input.archivedAt,
+              details: {
+                operation: "archive_reruns",
+                count: archivedIds.length,
+                projectVersionId: input.projectVersionId,
+              },
+            }),
+          )
+          .run();
+        this.handle.client
+          .prepare(
+            "UPDATE read_model_snapshots SET requested_revision=requested_revision+1,failed=0,refresh_after=? WHERE project_id=?",
+          )
+          .run(input.archivedAt, input.projectId);
+      }
+      const skippedActive = Number(
+        this.handle.db.get<{ count: number }>(busyRerunCount(input.projectId, version))!.count,
+      );
+      return { archivedIds, hasMore: candidates.length > RERUN_ARCHIVE_PAGE_SIZE, skippedActive };
+    });
+  }
 
   async listRoundRecoveryCredentialSources(
     input: RoundRecoveryCredentialSourceQuery,
@@ -268,7 +337,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     limit: number,
     projectIds?: readonly string[],
     projectVersionId?: string,
-    page?: { afterId?: string },
+    page?: { afterId?: string; status?: "active" | "archived" },
     pinnedByUserId?: string,
   ): Promise<CaseSuite[]> {
     if (projectIds?.length === 0) return [];
@@ -278,6 +347,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .where(
         and(
           ...(page?.afterId ? [gt(caseSuites.id, page.afterId)] : []),
+          ...(page?.status ? [eq(caseSuites.status, page.status)] : []),
           ...(projectIds ? [inArray(caseSuites.projectId, [...projectIds])] : []),
           ...(projectVersionId
             ? [
@@ -287,10 +357,10 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         ),
       )
       .orderBy(
-        ...(!page && pinnedByUserId
+        ...((!page || page.status) && pinnedByUserId
           ? [desc(caseSuitePinPriority(pinnedByUserId, caseSuites.id))]
           : []),
-        page ? asc(caseSuites.id) : desc(caseSuites.updatedAt),
+        page && !page.status ? asc(caseSuites.id) : desc(caseSuites.updatedAt),
         asc(caseSuites.id),
       )
       .limit(limit)
@@ -902,6 +972,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
           name: input.failureCopyName
             ? this.availableFailureCopyName(input.failureCopyName)
             : input.name,
+          isRerun: Boolean(input.failureBatchId),
           description: input.description ?? null,
           version: 1,
           status: "active",

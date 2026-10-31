@@ -50,7 +50,13 @@ describe("personal task pinning", () => {
       items: [suite("two", "任务 2"), suite("ten", "任务 10"), suite("new", "任务 1")],
       pinnedSuiteIds: ["ten", "two"],
     });
-    expect(repository.list).toHaveBeenCalledWith(200, ["project"], "version", undefined, "user-a");
+    expect(repository.list).toHaveBeenCalledWith(
+      200,
+      ["project"],
+      "version",
+      { status: "active" },
+      "user-a",
+    );
     expect(repository.listPinnedSuiteIds).toHaveBeenCalledWith("user-a", ["ten", "two", "new"]);
   });
 

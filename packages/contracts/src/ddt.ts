@@ -30,6 +30,16 @@ export const ddtCaseDataSchema = z.record(
   z.union([ddtCellValueSchema, ddtJourneyStepsSchema]),
 );
 
+/** Internal import transport: omitted cells still have the sheet's empty-string value. */
+export const ddtImportRowShapeSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    standard: z.array(z.string().min(1).max(256)),
+    steps: z.record(z.string().regex(/^step[1-9]\d*$/), z.array(z.string().min(1).max(256))),
+  })
+  .strict();
+export type DdtImportRowShape = z.infer<typeof ddtImportRowShapeSchema>;
+
 export const ddtScopeSchema = z.object({
   projectId: z.string().min(1).max(128),
   projectVersionId: z.string().min(1).max(128),

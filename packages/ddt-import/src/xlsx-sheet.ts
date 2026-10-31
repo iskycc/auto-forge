@@ -108,7 +108,10 @@ export async function readXlsxSheet(
     .map(([, values]) => values);
 }
 
-export function normalizeXlsxMatrix(matrix: unknown[][]): unknown[][] {
+export function normalizeXlsxMatrix(
+  matrix: unknown[][],
+  options: { compactRows?: boolean } = {},
+): unknown[][] {
   // Styled empty cells and inflated dimension metadata do not create DDT fields.
   let minimumColumn = Number.POSITIVE_INFINITY;
   let maximumColumn = -1;
@@ -125,11 +128,18 @@ export function normalizeXlsxMatrix(matrix: unknown[][]): unknown[][] {
   });
   if (maximumColumn < 0) return [];
   const width = maximumColumn - minimumColumn + 1;
-  return nonemptyRows.map((values) =>
-    minimumColumn === 0 && values.length === width && Object.keys(values).length === width
+  return nonemptyRows.map((values, rowIndex) => {
+    if (options.compactRows && rowIndex > 0) {
+      if (minimumColumn === 0) return values;
+      const shifted: unknown[] = [];
+      for (const key of Object.keys(values))
+        shifted[Number(key) - minimumColumn] = values[Number(key)];
+      return shifted;
+    }
+    return minimumColumn === 0 && values.length === width && Object.keys(values).length === width
       ? values
-      : Array.from({ length: width }, (_, column) => values[column + minimumColumn] ?? ""),
-  );
+      : Array.from({ length: width }, (_, column) => values[column + minimumColumn] ?? "");
+  });
 }
 
 function formattedValue(cell: SourceCell, formats: XlsxCellFormats): string | number | undefined {

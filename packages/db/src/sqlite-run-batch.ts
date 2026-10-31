@@ -8,6 +8,9 @@ import {
   serializeBatchPolicy,
 } from "./run-batch-environment-addresses";
 import { publicRequestKey } from "./public-suite-execution";
+import { auditEventRow } from "./audit-event-row";
+import { HISTORY_SNAPSHOT_VERSION, historySnapshotWrite } from "./run-batch-history-snapshot";
+import { runBatchCountersSchema } from "@autoforge/contracts";
 import { runBatchActors } from "./run-batch-actors";
 import { executionRecordKindCondition } from "./execution-record-kind";
 import {
@@ -138,6 +141,7 @@ import {
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   assignments,
+  auditEvents,
   caseSources,
   caseDefinitions,
   caseVersions,
@@ -261,7 +265,7 @@ export class SqliteRunBatchRepository
           record.policy?.projectVersionId,
         );
     if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
-    await retrySqliteLockContention(() =>
+    return retrySqliteLockContention(() =>
       runSqliteWriteTransaction(this.handle, () => {
         if (record.expectedSuiteRevision !== undefined) {
           const suite = this.handle.db
@@ -308,7 +312,7 @@ export class SqliteRunBatchRepository
             .prepare("SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next FROM run_batches")
             .get() as { next: number }
         ).next;
-        this.handle.db
+        const createdRow = this.handle.db
           .insert(runBatches)
           .values({
             id: record.id,
@@ -354,7 +358,9 @@ export class SqliteRunBatchRepository
             createdAt: record.createdAt,
             updatedAt: record.createdAt,
           })
-          .run();
+          .returning()
+          .get();
+        if (!createdRow) throw new Error(`Run batch ${record.id} was not returned after creation.`);
         if (record.publicExecution)
           this.handle.client
             .prepare(
@@ -465,9 +471,24 @@ export class SqliteRunBatchRepository
               record.dispatchJob.createdAt,
             );
         }
+        if (record.creationAudit) {
+          this.handle.db.insert(auditEvents).values(auditEventRow(record.creationAudit)).run();
+          this.handle.client
+            .prepare(
+              "UPDATE read_model_snapshots SET requested_revision=requested_revision+1,failed=0,refresh_after=? WHERE project_id=?",
+            )
+            .run(record.createdAt, record.projectId ?? DEFAULT_PROJECT_ID);
+        }
+        // Build the acknowledgement before commit. No later read or scheduling write may
+        // turn an accepted, durably queued execution into an apparent creation failure.
+        return this.mapBatchRow(
+          createdRow,
+          [...record.runnerIds].sort(),
+          new Map([["queued", record.runs.length]]),
+          undefined,
+        );
       }),
     );
-    return this.requiredBatchSummary(record.id);
   }
 
   async listDisplayIdentities(batchIds: readonly string[]) {
@@ -481,6 +502,34 @@ export class SqliteRunBatchRepository
         .all()
         .filter((batch) => batch.sequenceNumber > 0),
     );
+  }
+
+  async readHistorySnapshots(batches: Parameters<RunBatchRepository["readHistorySnapshots"]>[0]) {
+    if (!batches.length) return [];
+    return batchesOf(batches, 200).flatMap((page) =>
+      this.handle.db
+        .all<{ id: string; counters: string }>(
+          sql`
+      SELECT snapshot.batch_id AS id,snapshot.counters_json AS counters
+      FROM run_batch_history_snapshots snapshot JOIN run_batches batch ON batch.id=snapshot.batch_id
+      WHERE snapshot.snapshot_version=${HISTORY_SNAPSHOT_VERSION} AND snapshot.batch_version=batch.version
+        AND batch.status IN ('succeeded','failed','cancelled')
+        AND (${sql.join(
+          page.map(
+            (batch) =>
+              sql`(batch.id=${batch.id} AND batch.project_id=${batch.projectId} AND batch.version=${batch.version})`,
+          ),
+          sql` OR `,
+        )})
+    `,
+        )
+        .map((row) => ({ id: row.id, ...runBatchCountersSchema.parse(JSON.parse(row.counters)) })),
+    );
+  }
+
+  async saveHistorySnapshot(batch: RunBatch) {
+    const query = historySnapshotWrite(batch);
+    if (query) await retrySqliteLockContention(() => this.handle.db.run(query));
   }
 
   async list(
@@ -1893,12 +1942,6 @@ export class SqliteRunBatchRepository
           : { nextAfterId: cursor.id }
         : {}),
     };
-  }
-
-  private async requiredBatchSummary(batchId: string): Promise<RunBatch> {
-    const batch = await this.getSummary(batchId);
-    if (!batch) throw new Error(`Run batch ${batchId} does not exist after creation.`);
-    return batch;
   }
 
   private async mapBatch(row: typeof runBatches.$inferSelect): Promise<RunBatch> {

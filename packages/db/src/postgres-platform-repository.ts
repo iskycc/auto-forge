@@ -1,5 +1,12 @@
 import { runnerPurgeValues } from "./runner-purge";
 import {
+  rerunArchiveCandidates,
+  busyRerunCount,
+  RERUN_ARCHIVE_PAGE_SIZE,
+} from "./rerun-suite-archive";
+import { auditEventRow } from "./audit-event-row";
+import { pgAuditEvents } from "./postgres-schema";
+import {
   failureSuiteMemberQuery,
   failureCopyValidationQuery,
   assertFailureCopyValidation,
@@ -333,6 +340,7 @@ function latestRunBatchesOf<T>(items: readonly T[], size: number): T[][] {
 function toSuite(row: typeof pgCaseSuites.$inferSelect, caseCount: number): CaseSuite {
   return {
     id: row.id,
+    isRerun: row.isRerun,
     projectId: row.projectId,
     name: row.name,
     ...(row.description ? { description: row.description } : {}),
@@ -2004,6 +2012,78 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
+  async archiveReruns(input: Parameters<CaseSuiteRepository["archiveReruns"]>[0]) {
+    await this.ready();
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      const version = sql`suite.policy_json::jsonb->>'projectVersionId'=${input.projectVersionId}`;
+      const candidates = (
+        await transaction.execute<{ id: string }>(
+          rerunArchiveCandidates(input.projectId, version, true),
+        )
+      ).rows;
+      // A batch may have committed after the candidate statement's MVCC snapshot.
+      // Recheck after locking the suites; new starts now wait for these locks.
+      const eligible = candidates.length
+        ? (
+            await transaction.execute<{ id: string }>(sql`
+        SELECT suite.id FROM case_suites suite WHERE suite.id IN (${sql.join(
+          candidates.map(({ id }) => sql`${id}`),
+          sql`,`,
+        )})
+        AND NOT EXISTS(SELECT 1 FROM run_batches batch WHERE batch.suite_id=suite.id
+          AND batch.status IN ('queued','dispatching','scheduled','running')) ORDER BY suite.id
+      `)
+          ).rows
+        : [];
+      const archivedIds = eligible.slice(0, RERUN_ARCHIVE_PAGE_SIZE).map(({ id }) => id);
+      if (archivedIds.length) {
+        await transaction
+          .update(pgCaseSuites)
+          .set({
+            status: "archived",
+            revision: sql`${pgCaseSuites.revision}+1`,
+            updatedBy: input.actorId,
+            updatedAt: input.archivedAt,
+          })
+          .where(inArray(pgCaseSuites.id, archivedIds));
+        await transaction
+          .update(pgCaseSuiteSchedules)
+          .set({
+            enabled: false,
+            updatedAt: input.archivedAt,
+            revision: sql`${pgCaseSuiteSchedules.revision}+1`,
+          })
+          .where(inArray(pgCaseSuiteSchedules.suiteId, archivedIds));
+        await transaction.insert(pgAuditEvents).values(
+          auditEventRow({
+            id: input.auditId,
+            actorType: "user",
+            actorId: input.actorId,
+            action: "case_suite.update",
+            resourceType: "case_suite",
+            projectId: input.projectId,
+            result: "succeeded",
+            requestId: input.requestId,
+            recordedAt: input.archivedAt,
+            details: {
+              operation: "archive_reruns",
+              count: archivedIds.length,
+              projectVersionId: input.projectVersionId,
+            },
+          }),
+        );
+        await transaction.execute(
+          sql`UPDATE read_model_snapshots SET requested_revision=requested_revision+1,failed=0,refresh_after=${input.archivedAt} WHERE project_id=${input.projectId}`,
+        );
+      }
+      const skippedActive = Number(
+        (await transaction.execute<{ count: number }>(busyRerunCount(input.projectId, version)))
+          .rows[0]!.count,
+      );
+      return { archivedIds, hasMore: eligible.length > RERUN_ARCHIVE_PAGE_SIZE, skippedActive };
+    });
+  }
+
   async listRoundRecoveryCredentialSources(
     input: RoundRecoveryCredentialSourceQuery,
   ): Promise<RoundRecoveryCredentialSource[]> {
@@ -2148,7 +2228,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     limit: number,
     projectIds?: readonly string[],
     projectVersionId?: string,
-    page?: { afterId?: string },
+    page?: { afterId?: string; status?: "active" | "archived" },
     pinnedByUserId?: string,
   ): Promise<CaseSuite[]> {
     await this.ready();
@@ -2159,6 +2239,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       .where(
         and(
           ...(page?.afterId ? [gt(pgCaseSuites.id, page.afterId)] : []),
+          ...(page?.status ? [eq(pgCaseSuites.status, page.status)] : []),
           ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
           ...(projectVersionId
             ? [
@@ -2168,10 +2249,10 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         ),
       )
       .orderBy(
-        ...(!page && pinnedByUserId
+        ...((!page || page.status) && pinnedByUserId
           ? [desc(caseSuitePinPriority(pinnedByUserId, pgCaseSuites.id))]
           : []),
-        page ? asc(pgCaseSuites.id) : desc(pgCaseSuites.updatedAt),
+        page && !page.status ? asc(pgCaseSuites.id) : desc(pgCaseSuites.updatedAt),
         asc(pgCaseSuites.id),
       )
       .limit(limit);
@@ -2855,6 +2936,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         id: input.id,
         projectId: input.projectId ?? DEFAULT_PROJECT_ID,
         name,
+        isRerun: Boolean(input.failureBatchId),
         description: input.description ?? null,
         version: 1,
         status: "active",

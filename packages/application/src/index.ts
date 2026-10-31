@@ -64,6 +64,7 @@ export * from "./project-version-copy-requests";
 export * from "./ddt-sr-tags";
 
 export * from "./import-ddt-sr-tags";
+export * from "./ddt-import-row";
 export * from "./public-suite-execution";
 
 export * from "./log-databases";

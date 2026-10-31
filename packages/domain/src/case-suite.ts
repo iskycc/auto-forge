@@ -16,6 +16,7 @@ export function assertCaseSuiteRevision(
 
 export type CaseSuite = {
   id: string;
+  isRerun?: boolean;
   projectId: string;
   name: string;
   description?: string;

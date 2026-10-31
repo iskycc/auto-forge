@@ -54,6 +54,26 @@ async function parse(content: Uint8Array) {
 
 describe("streaming XLSX imports", () => {
   it.each([false, true])(
+    "keeps every column and formatted value in compact imports (shared strings=%s)",
+    async (sharedStrings) => {
+      const content = spreadsheet(sharedStrings);
+      const expected = parseSpreadsheet(content, "cases.xlsx");
+      const files = await parseDdtUpload(
+        { fileName: "cases.xlsx", mediaType: "application/octet-stream", content },
+        undefined,
+        { compactRows: true },
+      );
+      const actual = files[0]!;
+      expect(actual.errorSummary).toBeUndefined();
+      expect(actual.rowShape?.standard).toEqual(expected.columns);
+      expect(actual.rows).toHaveLength(expected.rows.length);
+      for (const [index, row] of expected.rows.entries()) {
+        for (const column of expected.columns)
+          expect(actual.rows[index]![column] ?? "").toBe(row[column]);
+      }
+    },
+  );
+  it.each([false, true])(
     "matches formatted values with shared strings=%s",
     async (sharedStrings) => {
       const content = spreadsheet(sharedStrings);

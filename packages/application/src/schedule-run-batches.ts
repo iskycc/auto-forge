@@ -14,6 +14,8 @@ import {
   type RerunCaseFromAttemptInput,
   type CaseLogRerunConfiguration,
   type CreateRunBatchInput,
+  runBatchCreationAuditSchema,
+  type RunBatchCreationAudit,
   type CreateSingleCaseRunInput,
   type RerunFinalFailuresInput,
   type RunBatchPreflightBlocker,
@@ -70,6 +72,7 @@ import type { DdtDebugAccess, DdtDebugRepository } from "./ddt-debug";
 import { resolveVersionExecutionClass } from "./resolve-version-execution-class";
 import { automaticExecutionRunnerIds } from "./automatic-execution-runners";
 import { CoalescedOperation } from "./coalesced-operation";
+import { securityAuditDetails } from "./security-audit";
 import { setImmediate as yieldToExecutionControl } from "node:timers/promises";
 
 const OFFLINE_AFTER_SECONDS = 45;
@@ -204,8 +207,10 @@ export class RunBatchSchedulingService {
     input: CreateRunBatchInput,
     requestedBy?: RunBatch["requestedBy"],
     publicExecution?: PublicSuiteExecutionContext,
+    creationAudit?: RunBatchCreationAudit,
   ): Promise<RunBatch> {
     await this.logWriteAdmission?.requireWriteTarget();
+    const audit = creationAudit ? runBatchCreationAuditSchema.parse(creationAudit) : undefined;
     const context = publicExecution
       ? publicSuiteExecutionContextSchema.parse(publicExecution)
       : undefined;
@@ -275,7 +280,33 @@ export class RunBatchSchedulingService {
       payload: { batchId },
     };
     try {
-      await this.batches.create({
+      return await this.batches.create({
+        ...(audit
+          ? {
+              creationAudit: {
+                id: this.ids.next(),
+                actorType: "user" as const,
+                actorId: audit.actorId,
+                action: "run_batch.create",
+                resourceType: "run_batch",
+                resourceId: batchId,
+                projectId,
+                result: "succeeded" as const,
+                requestId: audit.requestId,
+                recordedAt: createdAt,
+                details: securityAuditDetails(
+                  "run_batch.create",
+                  {
+                    totalRuns: enabledCases.length + enabledDdtCases.length,
+                    retryLimit: suitePolicy.retryLimit,
+                    delaySeconds: validated.delaySeconds,
+                    scheduledFor,
+                  },
+                  audit.actorName,
+                ),
+              },
+            }
+          : {}),
         ...(context
           ? {
               // The environment override belongs to the runtime snapshot, not the actor record.
@@ -359,7 +390,6 @@ export class RunBatchSchedulingService {
         return this.getSummary(cause.details);
       throw cause;
     }
-    return this.schedule(batchId);
   }
 
   async createSingleCase(

@@ -379,6 +379,18 @@ export const caseSuiteExecutionPolicySchema = z
     }
   });
 
+export const archiveRerunSuitesInputSchema = z
+  .object({
+    projectId: z.string().min(1).max(128),
+    projectVersionId: z.string().min(1).max(128),
+  })
+  .strict();
+export const archiveRerunSuitesResultSchema = z.object({
+  archivedIds: z.array(z.string().min(1).max(128)).max(100),
+  hasMore: z.boolean(),
+  skippedActive: z.number().int().nonnegative(),
+});
+
 export const updateCaseSuiteInputSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(500).optional(),

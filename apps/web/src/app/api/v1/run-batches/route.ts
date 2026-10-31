@@ -66,23 +66,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 授权只需任务的归属项目；完整任务快照由 create 内部读取一次，避免重复加载全量用例成员。
     const suite = await services.caseSuites.getSummary(input.suiteId, projectScope);
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
-    const batch = await services.runBatches.create(input, {
-      username: identity.user.username,
-      source: identity.user.source,
-    });
-    await services.identityAccess.recordAuthorizedOperation(identity, {
-      action: "run_batch.create",
-      resourceType: "run_batch",
-      resourceId: batch.id,
-      projectId: batch.projectId,
-      requestId: currentRequestId,
-      details: {
-        totalRuns: batch.totalRuns,
-        retryLimit: batch.retryLimit,
-        delaySeconds: input.delaySeconds,
-        scheduledFor: batch.scheduledFor,
+    const batch = await services.runBatches.create(
+      input,
+      { username: identity.user.username, source: identity.user.source },
+      undefined,
+      {
+        actorId: identity.user.id,
+        actorName: `${identity.user.displayName} · ${identity.user.username}`,
+        requestId: currentRequestId,
       },
-    });
+    );
     return NextResponse.json(batch, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);

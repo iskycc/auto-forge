@@ -119,7 +119,11 @@ describe.each(entries)("$name execution initiator", (entry) => {
           scope.projectId,
         ]);
       }
-      expect(entry.create.mock.calls[0]?.at(-1)).toEqual({ username: "actual-launcher", source });
+      const initiator =
+        entry.name === "task"
+          ? entry.create.mock.calls[0]?.[1]
+          : entry.create.mock.calls[0]?.at(-1);
+      expect(initiator).toEqual({ username: "actual-launcher", source });
     },
   );
 

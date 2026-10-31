@@ -29,6 +29,7 @@ import {
 import {
   jobEnvelopeSchema,
   createRunBatchInputSchema,
+  runBatchCreationAuditSchema,
   createSingleCaseRunInputSchema,
   createVersionCaseExecutionSchema,
   rerunCaseFromAttemptInputSchema,
@@ -308,15 +309,16 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
       );
     }
     case "create-batch": {
-      const { input, requestedBy, publicExecution } = z
+      const { input, requestedBy, publicExecution, creationAudit } = z
         .object({
           publicExecution: publicSuiteExecutionContextSchema.optional(),
           input: createRunBatchInputSchema,
           requestedBy: runInitiatorSchema.optional(),
+          creationAudit: runBatchCreationAuditSchema.optional(),
         })
         .strict()
         .parse(task.input);
-      return schedulingService().create(input, requestedBy, publicExecution);
+      return schedulingService().create(input, requestedBy, publicExecution, creationAudit);
     }
     case "create-single-ddt-case": {
       const { scope, caseId, input, requestedBy } = z
@@ -525,6 +527,7 @@ async function parseFile(task: Extract<WorkTask, { kind: "parse-file" }>): Promi
         fileName: z.string(),
         mediaType: z.string(),
         content: z.instanceof(Uint8Array),
+        compactRows: z.boolean().optional(),
         columnResolutions: ddtImportColumnResolutionSchema
           .omit({ uploadIndex: true })
           .array()
@@ -544,6 +547,7 @@ async function parseFile(task: Extract<WorkTask, { kind: "parse-file" }>): Promi
         ...(input.columnResolutions ? { columnResolutions: input.columnResolutions } : {}),
       },
       input.parseLimits,
+      { compactRows: input.compactRows ?? false },
     );
   }
   const { TestNgJarDiscovery } = await import("@autoforge/testng-discovery");
@@ -650,7 +654,7 @@ async function executeBackgroundJob(input: unknown, signal: AbortSignal): Promis
       return new DdtImportService(
         repository,
         objectStore,
-        { parseUpload: parseDdtUpload },
+        { parseUpload: (upload, limits) => parseDdtUpload(upload, limits, { compactRows: true }) },
         clock,
         ids,
         snapshots,
