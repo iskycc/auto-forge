@@ -1,4 +1,6 @@
 import type {
+  DdtScopeClearPage,
+  DdtScopeClearPreview,
   DdtRecycleGroupsInput,
   DdtRecycleGroupPage,
   DdtRecycleCasesInput,
@@ -1208,6 +1210,11 @@ export interface DdtRepository {
     actorId?: string;
     deletedAt: string;
   }): Promise<number>;
+  readScopeClearCounts(
+    scope: DdtScope,
+    clearedBefore: string,
+  ): Promise<Omit<DdtScopeClearPreview, "clearedBefore">>;
+  clearScopePage(input: import("./clear-ddt-scope").DdtScopeClearWrite): Promise<DdtScopeClearPage>;
   listDeletedGroups(input: DdtRecycleGroupsInput): Promise<DdtRecycleGroupPage>;
   listDeletedCases(input: DdtRecycleCasesInput): Promise<{
     items: DdtDeletedCase[];
@@ -1406,6 +1413,7 @@ export interface CaseSuiteRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuite>;
+  unlinkDdtScopePage(input: import("./clear-ddt-scope").DdtScopeClearWrite): Promise<number>;
 }
 
 export type CaseSuiteExportMemberType = "standard" | "ddt";

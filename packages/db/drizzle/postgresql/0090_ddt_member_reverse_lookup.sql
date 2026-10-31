@@ -1,0 +1,1 @@
+CREATE INDEX case_suite_ddt_items_case_idx ON case_suite_ddt_items(ddt_case_id);

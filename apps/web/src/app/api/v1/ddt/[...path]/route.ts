@@ -27,6 +27,9 @@ import {
   ddtRecycleCasesInputSchema,
   ddtRecyclePurgeInputSchema,
   ddtRecyclePurgePageSchema,
+  ddtScopeClearInputSchema,
+  ddtScopeClearPreviewSchema,
+  ddtScopeClearPageSchema,
 } from "@autoforge/contracts";
 import type { AuthenticatedIdentity, DdtScope, Permission } from "@autoforge/domain";
 import { loadDdtCaseDetail } from "@/lib/load-ddt-case-detail";
@@ -41,7 +44,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { apiErrorResponse, readDdtUploads, readJsonBody } from "@/lib/api-response";
-import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import {
+  authenticateRequest,
+  authorizedProjectScope,
+  requestId,
+  requireSameOrigin,
+} from "@/lib/auth";
 import { authorizeDdtScope, ddtScopeQuery } from "@/lib/ddt-api";
 import { workDispatcher } from "@/lib/work-runtime";
 
@@ -60,6 +68,20 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const url = new URL(request.url);
     const { scope, services, labels } = await authorizeDdtScope(identity, "case.read", url);
     const path = await pathSegments(context);
+
+    if (matches(path, "clear")) {
+      authorizedProjectScope(identity, "case.manage", scope.projectId);
+      authorizedProjectScope(identity, "case_suite.manage", scope.projectId);
+      const dispatcher = workDispatcher();
+      if (!dispatcher?.clearDdtScope)
+        throw new DomainError("PLATFORM_BUSY", "清空用例服务暂时不可用，请稍后重试。");
+      return NextResponse.json(
+        ddtScopeClearPreviewSchema.parse(
+          await dispatcher.clearDdtScope({ operation: "preview", scope }, request.signal),
+        ),
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
 
     if (matches(path, "value-search")) {
       const keywords = url.searchParams.getAll("keyword");
@@ -641,6 +663,28 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
     context,
     "case.manage",
     async ({ identity, scope, services, path, currentRequestId }) => {
+      if (matches(path, "clear")) {
+        authorizedProjectScope(identity, "case_suite.manage", scope.projectId);
+        const input = ddtScopeClearInputSchema.parse(await readJsonBody(request, 4096));
+        const dispatcher = workDispatcher();
+        if (!dispatcher?.clearDdtScope)
+          throw new DomainError("PLATFORM_BUSY", "清空用例服务暂时不可用，请稍后重试。");
+        const userId = ddtActorId(identity);
+        return NextResponse.json(
+          ddtScopeClearPageSchema.parse(
+            await dispatcher.clearDdtScope(
+              {
+                operation: "clear",
+                scope,
+                input,
+                requestId: currentRequestId,
+                actor: { ...(userId ? { userId } : {}), principalId: identity.user.id },
+              },
+              request.signal,
+            ),
+          ),
+        );
+      }
       if (path[0] === "cases" && path[1] && path.length === 2) {
         const deletedCount = await services.ddtCases.trash(scope, [path[1]], ddtActorId(identity));
         await audit(identity, services, scope, currentRequestId, "ddt_case.trash", {

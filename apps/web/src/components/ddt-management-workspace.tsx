@@ -7,6 +7,7 @@ import {
 } from "@/lib/ddt-filtered-case-selection";
 import { DdtImportFileResults } from "./ddt-import-file-results";
 import { DdtRecycleBrowser } from "./ddt-recycle-browser";
+import { DdtScopeClearDialog } from "./ddt-scope-clear-dialog";
 import type { DdtRecycleGroupPage } from "@autoforge/contracts";
 import { ddtImportStatusLabel as statusLabel } from "@/lib/ddt-import-status";
 import { ddtImportJobSummaryPageSchema, type DdtImportJobSummary } from "@autoforge/contracts";
@@ -301,6 +302,7 @@ export function DdtManagementWorkspace({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [showClear, setShowClear] = useState(false);
   const [showInheritance, setShowInheritance] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
@@ -942,6 +944,18 @@ export function DdtManagementWorkspace({
               <Upload size={16} /> 导入表格
             </Button>
           ) : null}
+          {canManage && canManageSuites && tab === "cases" ? (
+            <Button
+              type="button"
+              variant="danger"
+              disabled={savingCase}
+              onClick={async () => {
+                if (await leaveEditor()) setShowClear(true);
+              }}
+            >
+              清空 DDT 用例
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -1457,6 +1471,22 @@ export function DdtManagementWorkspace({
             setSelected((current) => new Set([...current, ...caseIds]));
             toast.success(`已勾选 ${caseIds.length} 条匹配的 DDT 用例，原有选择已保留。`);
             return true;
+          }}
+        />
+      ) : null}
+      {showClear ? (
+        <DdtScopeClearDialog
+          scope={scope}
+          scopeLabel={`${scopeLabels.project} / ${scopeLabels.version} / ${scopeLabels.stage}`}
+          onClose={() => setShowClear(false)}
+          onChanged={async () => {
+            detailRequest.current?.abort();
+            clearBrowserSnapshots();
+            setActiveCaseId("");
+            setDetail(undefined);
+            setHistory([]);
+            setSelected(new Set());
+            await load();
           }}
         />
       ) : null}

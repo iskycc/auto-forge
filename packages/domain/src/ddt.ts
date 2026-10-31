@@ -7,6 +7,32 @@ export type DdtCaseKind = "standard" | "journey";
 
 export const DDT_JOURNEY_FIELD = "用户旅程";
 
+export function isEmptyDdtCell(value: DdtCaseData[string] | undefined): boolean {
+  return value === undefined || value === null || (typeof value === "string" && !value.trim());
+}
+
+/** Spreadsheet blanks are absent parameters; explicit zero and false remain meaningful. */
+export function omitEmptyDdtFields(input: DdtCaseData): DdtCaseData {
+  const fields: Array<[string, DdtCaseData[string]]> = [];
+  for (const [field, value] of Object.entries(input)) {
+    if (isEmptyDdtCell(value)) continue;
+    if (field !== DDT_JOURNEY_FIELD || typeof value !== "object" || value === null) {
+      fields.push([field, value]);
+      continue;
+    }
+    fields.push([
+      field,
+      Object.fromEntries(
+        Object.entries(value).map(([step, cells]) => [
+          step,
+          Object.fromEntries(Object.entries(cells).filter(([, cell]) => !isEmptyDdtCell(cell))),
+        ]),
+      ),
+    ]);
+  }
+  return Object.fromEntries(fields);
+}
+
 export type DdtScope = {
   projectId: string;
   projectVersionId: string;

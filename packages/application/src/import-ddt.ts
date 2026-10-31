@@ -17,7 +17,7 @@ import {
 import {
   DomainError,
   ddtCaseCell,
-  normalizeDdtCaseData,
+  omitEmptyDdtFields,
   validateDdtCaseAgainstTemplate,
   type DdtCaseData,
   type DdtCaseTemplate,
@@ -27,7 +27,7 @@ import {
 import type { DdtImportJob, DdtImportPreviewFile, DdtUploadReference } from "./ddt-types";
 import type { DdtDebugRepository } from "./ddt-debug";
 import { readDdtImportedRow, type DdtImportFileResult, type DdtImportedRow } from "./ddt-types";
-import { createDdtImportRowReader } from "./ddt-import-row";
+import { normalizeImportedDdtCaseData } from "./ddt-import-row";
 import type { Clock, DdtRepository, IdGenerator, JarObjectStorePort } from "./ports";
 
 export type DdtUpload = {
@@ -440,7 +440,7 @@ export class DdtImportService {
       try {
         // Validate the entire file before writing. Keep only identities here;
         // the repository decodes one row at a time without doing I/O in its transaction.
-        const readRow = this.validatedRowReader(parsed, templates);
+        const readRow = this.validatedRowReader(templates);
         const rows: DdtImportedRow[] = parsed.rows.map((row) => {
           const validated = readRow(row);
           return {
@@ -579,12 +579,10 @@ export class DdtImportService {
   }
 
   private validatedRowReader(
-    parsed: ParsedDdtFile,
     templates: ReadonlyMap<string, DdtCaseTemplate>,
   ): (row: DdtCaseData) => DdtCaseData {
-    const readRow = createDdtImportRowReader(parsed.rowShape);
     return (row) => {
-      const normalized = normalizeDdtCaseData(readRow(row));
+      const normalized = normalizeImportedDdtCaseData(row);
       const template = templates.get(
         String(ddtCaseCell(normalized, "srNum")).toLocaleLowerCase("en-US"),
       );
@@ -594,7 +592,7 @@ export class DdtImportService {
           "DDT_TEMPLATE_VALIDATION_FAILED",
           `${String(ddtCaseCell(normalized, "CaseID"))}：${validation.errors.map((issue) => issue.message).join("；")}`,
         );
-      return validation.data;
+      return omitEmptyDdtFields(validation.data);
     };
   }
 
@@ -607,13 +605,12 @@ export class DdtImportService {
   ): Promise<DdtImportPreviewFile> {
     const id = this.ids.next();
     try {
-      const readRow = this.validatedRowReader(parsed, templates);
+      const readRow = this.validatedRowReader(templates);
       let updatedCount = 0;
       let unchangedCount = 0;
       let existingCount = 0;
       const fileCaseIds = new Set<string>();
-      // A full export can have thousands of merged SR fields. Materialize only
-      // this window, never a second full copy of every rectangular row.
+      // Compare bounded windows without expanding merged headers into blank parameters.
       const pageSize = 64;
       for (let offset = 0; offset < parsed.rows.length; offset += pageSize) {
         const rows = parsed.rows.slice(offset, offset + pageSize).map(readRow);

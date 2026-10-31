@@ -11,12 +11,12 @@ import { uiPatterns } from "@/components/ui/patterns";
 import { useEffect, useState } from "react";
 import { ddtCaseDataSchema } from "@autoforge/contracts";
 import { ddtJourneySteps, ddtStepNames, type DdtCaseData, type DdtScope } from "@autoforge/domain";
+import { DdtCellValuePreview } from "./ddt-cell-value-preview";
 import { ActionDialog } from "./action-dialog";
 import { Button, Select } from "./ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 
 const FIELDS_PER_WINDOW = 50;
-const VALUE_PREVIEW_CHARACTERS = 8_192;
 
 export function DdtCaseDataDialog({
   caseId,
@@ -136,7 +136,7 @@ function CaseDataFields({ fields }: { fields: DdtCaseData }) {
           <div key={field}>
             <dt>{field}</dt>
             <dd>
-              <CaseDataValue value={value} />
+              <DdtCellValuePreview value={value} />
             </dd>
           </div>
         ))}
@@ -144,29 +144,6 @@ function CaseDataFields({ fields }: { fields: DdtCaseData }) {
       {entries.length > visibleCount ? (
         <Button onClick={() => setVisibleCount((count) => count + FIELDS_PER_WINDOW)}>
           显示更多字段（已显示 {visibleCount} / {entries.length}）
-        </Button>
-      ) : null}
-    </>
-  );
-}
-
-function CaseDataValue({ value }: { value: DdtCaseData[string] }) {
-  const [visibleLength, setVisibleLength] = useState(VALUE_PREVIEW_CHARACTERS);
-  const text =
-    value === null
-      ? "空值"
-      : typeof value === "object"
-        ? JSON.stringify(value, null, 2)
-        : String(value);
-  return (
-    <>
-      <pre tabIndex={0}>{text === "" ? "空字符串" : text.slice(0, visibleLength)}</pre>
-      {text.length > visibleLength ? (
-        <Button
-          size="compact"
-          onClick={() => setVisibleLength((length) => length + VALUE_PREVIEW_CHARACTERS)}
-        >
-          显示更多内容（已显示 {visibleLength} / {text.length} 字符）
         </Button>
       ) : null}
     </>

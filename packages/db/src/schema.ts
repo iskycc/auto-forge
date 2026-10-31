@@ -1917,6 +1917,7 @@ export const caseSuiteDdtItems = sqliteTable(
   (table) => [
     uniqueIndex("case_suite_ddt_items_suite_case_uq").on(table.suiteId, table.ddtCaseId),
     index("case_suite_ddt_items_suite_idx").on(table.suiteId),
+    index("case_suite_ddt_items_case_idx").on(table.ddtCaseId),
     index("case_suite_ddt_items_member_page_idx").on(table.suiteId, table.id),
   ],
 );

@@ -21,6 +21,7 @@ import {
   PlatformOperationsService,
   DdtImportService,
   DdtCaseService,
+  DdtScopeClearService,
   ImportTestNgJarService,
   ReadModelSnapshotService,
   searchDdtValues,
@@ -35,6 +36,7 @@ import {
   rerunCaseFromAttemptInputSchema,
   ddtScopeSchema,
   ddtRecyclePurgeInputSchema,
+  ddtScopeClearInputSchema,
   ddtValueSearchInputSchema,
   inheritDdtCasesInputSchema,
   inheritTestNgCasesInputSchema,
@@ -219,6 +221,55 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
   await clockInitialization;
   clock.now();
   switch (task.kind) {
+    case "clear-ddt-scope": {
+      if (!backgroundAllowed())
+        throw new DomainError(
+          "PLATFORM_BUSY",
+          "平台正在处理高优先级工作，请稍后继续清空 DDT 用例。",
+        );
+      const request = z
+        .discriminatedUnion("operation", [
+          z.object({ operation: z.literal("preview"), scope: ddtScopeSchema }).strict(),
+          z
+            .object({
+              operation: z.literal("clear"),
+              scope: ddtScopeSchema,
+              input: ddtScopeClearInputSchema,
+              actor: z
+                .object({
+                  userId: z.string().min(1).max(128).optional(),
+                  principalId: z.string().min(1).max(128),
+                })
+                .strict(),
+              requestId: z.string().min(1).max(128),
+            })
+            .strict(),
+        ])
+        .parse(task.input);
+      const repository =
+        configuration.mode === "lite"
+          ? new SqliteDdtRepository(sqliteHandle())
+          : new PostgresDdtRepository(postgresHandle());
+      const service = new DdtScopeClearService(
+        repository,
+        configuration.mode === "lite"
+          ? new SqliteCaseSuiteRepository(sqliteHandle())
+          : new PostgresCaseSuiteRepository(postgresHandle()),
+        clock,
+        { next: () => uuidV7() },
+      );
+      return request.operation === "preview"
+        ? service.preview(request.scope)
+        : service.clearPage(
+            request.scope,
+            request.input,
+            {
+              principalId: request.actor.principalId,
+              ...(request.actor.userId ? { userId: request.actor.userId } : {}),
+            },
+            request.requestId,
+          );
+    }
     case "purge-ddt-recycle-page": {
       if (!backgroundAllowed())
         throw new DomainError("PLATFORM_BUSY", "平台正在处理高优先级工作，请稍后重试清空回收站。");

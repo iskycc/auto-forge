@@ -1,6 +1,7 @@
 "use client";
 import { DdtCaseNavigationWindow } from "./ddt-case-navigation-window";
-import { Splitter } from "antd";
+import { Splitter, Checkbox, Pagination } from "antd";
+import { DdtCellValuePreview } from "./ddt-cell-value-preview";
 import { EmptyState } from "@/components/ui/empty-state";
 
 import { LoadingStateMessage } from "@/components/ui/loading-state-message";
@@ -18,6 +19,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 import {
   ddtJourneySteps,
   ddtStepNames,
+  isEmptyDdtCell,
   updateDdtCaseField,
   type DdtCase,
   type DdtCaseData,
@@ -348,6 +350,33 @@ export function DdtCaseDetail({
   const stepNames = ddtStepNames(item.data);
   const resolvedStep = steps && steps[activeStep] ? activeStep : (stepNames[0] ?? "");
   const fields = Object.entries(steps?.[resolvedStep] ?? item.data);
+  const [fieldWindow, setFieldWindow] = useState({
+    step: "",
+    query: "",
+    page: 1,
+    showEmpty: false,
+  });
+  const fieldView =
+    fieldWindow.step === resolvedStep
+      ? fieldWindow
+      : { step: resolvedStep, query: "", page: 1, showEmpty: false };
+  const fieldPageSize = 48;
+  const blankFields = fields.filter(([, value]) => isEmptyDdtCell(value)).length;
+  const filteredFields = fields.filter(
+    ([field, value]) =>
+      (fieldView.showEmpty || !isEmptyDdtCell(value)) &&
+      field.toLocaleLowerCase("en-US").includes(fieldView.query.trim().toLocaleLowerCase("en-US")),
+  );
+  const fieldPage = Math.min(
+    fieldView.page,
+    Math.max(1, Math.ceil(filteredFields.length / fieldPageSize)),
+  );
+  const visibleFields = filteredFields.slice(
+    (fieldPage - 1) * fieldPageSize,
+    fieldPage * fieldPageSize,
+  );
+  const updateFieldWindow = (patch: Partial<typeof fieldWindow>) =>
+    setFieldWindow({ ...fieldView, ...patch, step: resolvedStep });
   const fieldsRef = useContentTransition(resolvedStep);
   const finishEditing = () => {
     setEditor(undefined);
@@ -549,8 +578,33 @@ export function DdtCaseDetail({
                   : "逐项查看用例数据，支持复制字段内容。"}
             </p>
           </div>
-          <small>{canManage ? "可编辑" : "只读查看"}</small>
+          <small>
+            {filteredFields.length} 个字段 · {canManage ? "可编辑" : "只读查看"}
+          </small>
         </header>
+        {!(editor && !editor.field) && (fields.length > fieldPageSize || blankFields > 0) ? (
+          <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+            <Input
+              aria-label="搜索用例字段"
+              placeholder="搜索字段名"
+              value={fieldView.query}
+              disabled={Boolean(editor) || saving}
+              className="min-w-0 flex-1"
+              onChange={(event) => updateFieldWindow({ query: event.target.value, page: 1 })}
+            />
+            {blankFields ? (
+              <Checkbox
+                checked={fieldView.showEmpty}
+                disabled={Boolean(editor) || saving}
+                onChange={(event) =>
+                  updateFieldWindow({ showEmpty: event.target.checked, page: 1 })
+                }
+              >
+                显示空字段（{blankFields}）
+              </Checkbox>
+            ) : null}
+          </div>
+        ) : null}
         {editor && !editor.field ? (
           <label className={cn("ddt-json-editor", ddtCaseBrowserStyles["ddt-json-editor"])}>
             <span>用例数据 JSON</span>
@@ -566,7 +620,12 @@ export function DdtCaseDetail({
             ref={fieldsRef}
             className={cn("ddt-field-cards", ddtCaseBrowserStyles["ddt-field-cards"])}
           >
-            {fields.map(([field, value]) => (
+            {!filteredFields.length ? (
+              <EmptyState className="col-span-full">
+                没有可显示的字段，请调整搜索条件或勾选显示空字段。
+              </EmptyState>
+            ) : null}
+            {visibleFields.map(([field, value]) => (
               <article
                 className={cn("ddt-field-card", ddtCaseBrowserStyles["ddt-field-card"])}
                 key={field}
@@ -629,18 +688,34 @@ export function DdtCaseDetail({
                     </label>
                   </div>
                 ) : (
-                  <pre>
-                    {typeof value === "object" && value !== null
-                      ? JSON.stringify(value, null, 2)
-                      : value === null
-                        ? "空值"
-                        : String(value)}
-                  </pre>
+                  <DdtCellValuePreview value={value} />
                 )}
               </article>
             ))}
           </div>
         )}
+        {!(editor && !editor.field) && filteredFields.length > fieldPageSize ? (
+          <div
+            className="mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
+            aria-label="用例字段分页"
+          >
+            <span>
+              {(fieldPage - 1) * fieldPageSize + 1}–
+              {Math.min(fieldPage * fieldPageSize, filteredFields.length)} / {filteredFields.length}{" "}
+              个字段
+            </span>
+            <Pagination
+              simple
+              size="small"
+              current={fieldPage}
+              pageSize={fieldPageSize}
+              total={filteredFields.length}
+              showSizeChanger={false}
+              disabled={Boolean(editor) || saving}
+              onChange={(page) => updateFieldWindow({ page })}
+            />
+          </div>
+        ) : null}
         {error ? (
           <Notice
             tone="error"

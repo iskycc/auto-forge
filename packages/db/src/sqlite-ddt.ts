@@ -1,5 +1,16 @@
 import { ddtCaseListPageSql } from "./ddt-case-list-page";
 import { readDdtImportedRow } from "@autoforge/application";
+import { auditEvents } from "./schema";
+import {
+  ddtScopeClearCounts,
+  mapDdtScopeClearCounts,
+  ddtClearCandidates,
+  ddtClearDelete,
+  ddtClearAudit,
+  ddtClearInvalidate,
+  emptyDdtScopeClearPage,
+  type DdtScopeClearCountRow,
+} from "./ddt-scope-clear";
 import { DDT_RECYCLE_PURGE_PAGE_SIZE } from "@autoforge/contracts";
 import {
   ddtRecycleGroupPage,
@@ -72,6 +83,48 @@ const executionClassColumns = `${ddtExecutionClassIdSql} AS executionCaseDefinit
 
 export class SqliteDdtRepository implements DdtRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async readScopeClearCounts(scope: DdtScope, clearedBefore: string) {
+    return mapDdtScopeClearCounts(
+      this.handle.db.get<DdtScopeClearCountRow>(ddtScopeClearCounts(scope, clearedBefore))!,
+    );
+  }
+
+  async clearScopePage(input: Parameters<DdtRepository["clearScopePage"]>[0]) {
+    return retrySqliteWriteTransaction(this.handle, () => {
+      for (const phase of ["history", "cases", "recycle"] as const) {
+        const rows = this.handle.db.all<{ id: string }>(ddtClearCandidates(input, phase, "sqlite"));
+        if (!rows.length) continue;
+        this.handle.db.run(
+          ddtClearDelete(
+            phase,
+            rows.map((row) => row.id),
+          ),
+        );
+        this.handle.db
+          .insert(auditEvents)
+          .values(ddtClearAudit(input, phase, rows.length))
+          .run();
+        this.handle.db.run(ddtClearInvalidate(input));
+        return {
+          ...emptyDdtScopeClearPage,
+          phase,
+          deletedHistory: phase === "history" ? rows.length : 0,
+          deletedCases: phase === "cases" ? rows.length : 0,
+          deletedRecycled: phase === "recycle" ? rows.length : 0,
+          hasMore: true,
+        };
+      }
+      const counts = mapDdtScopeClearCounts(
+        this.handle.db.get<DdtScopeClearCountRow>(
+          ddtScopeClearCounts(input.scope, input.clearedBefore),
+        )!,
+      );
+      if (counts.activeCases || counts.recycledCases)
+        throw new DomainError("PLATFORM_BUSY", "剩余 DDT 用例正在被其他操作使用，请稍后重试清空。");
+      return { ...emptyDdtScopeClearPage, phase: "done" as const, hasMore: false };
+    });
+  }
 
   async inheritCasesPage(input: Parameters<DdtRepository["inheritCasesPage"]>[0]) {
     return retrySqliteLockContention(() =>

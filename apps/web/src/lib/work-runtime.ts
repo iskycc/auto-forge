@@ -8,6 +8,7 @@ export interface WorkDispatcher {
   readRunnerResourceSamples?(input: unknown): Promise<unknown>;
   readDdtCases?(input: unknown): Promise<unknown>;
   purgeDdtRecyclePage?(input: unknown, signal: AbortSignal): Promise<unknown>;
+  clearDdtScope?(input: unknown, signal: AbortSignal): Promise<unknown>;
   readExecutionView?(input: unknown): Promise<unknown>;
   cancelExecutionRun?(input: unknown): Promise<unknown>;
   createBatch?(input: unknown): Promise<unknown>;

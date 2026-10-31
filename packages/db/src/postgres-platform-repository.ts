@@ -7,6 +7,12 @@ import {
 import { auditEventRow } from "./audit-event-row";
 import { pgAuditEvents } from "./postgres-schema";
 import {
+  ddtClearSuiteCandidate,
+  ddtClearSuiteMembers,
+  ddtClearAudit,
+  ddtClearInvalidate,
+} from "./ddt-scope-clear";
+import {
   failureSuiteMemberQuery,
   failureCopyValidationQuery,
   assertFailureCopyValidation,
@@ -2011,6 +2017,30 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
 export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
+
+  async unlinkDdtScopePage(input: Parameters<CaseSuiteRepository["unlinkDdtScopePage"]>[0]) {
+    await this.ready();
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      const suite = (
+        await transaction.execute<{ id: string }>(ddtClearSuiteCandidate(input, "postgres"))
+      ).rows[0];
+      if (!suite) return 0;
+      const result = await transaction.execute(ddtClearSuiteMembers(input, suite.id));
+      const removed = result.rowCount ?? 0;
+      if (!removed) return 0;
+      await touchPostgresSuite(transaction, suite.id, input.actorId, input.updatedAt);
+      await this.insertVersionSnapshot(
+        transaction,
+        suite.id,
+        input.versionId,
+        "suite.ddt-cases.clear-scope",
+        input,
+      );
+      await transaction.insert(pgAuditEvents).values(ddtClearAudit(input, "tasks", removed));
+      await transaction.execute(ddtClearInvalidate(input));
+      return removed;
+    });
+  }
 
   async archiveReruns(input: Parameters<CaseSuiteRepository["archiveReruns"]>[0]) {
     await this.ready();

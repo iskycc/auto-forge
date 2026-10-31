@@ -63,6 +63,12 @@ import {
 } from "./rerun-suite-archive";
 import { auditEventRow } from "./audit-event-row";
 import {
+  ddtClearSuiteCandidate,
+  ddtClearSuiteMembers,
+  ddtClearAudit,
+  ddtClearInvalidate,
+} from "./ddt-scope-clear";
+import {
   batchesOf,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
   RELATIONAL_WRITE_BATCH_SIZE,
@@ -149,6 +155,23 @@ function toSuite(row: typeof caseSuites.$inferSelect, caseCount: number): CaseSu
 
 export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async unlinkDdtScopePage(input: Parameters<CaseSuiteRepository["unlinkDdtScopePage"]>[0]) {
+    return retrySqliteWriteTransaction(this.handle, () => {
+      const suite = this.handle.db.get<{ id: string }>(ddtClearSuiteCandidate(input, "sqlite"));
+      if (!suite) return 0;
+      const removed = this.handle.db.run(ddtClearSuiteMembers(input, suite.id)).changes;
+      if (!removed) return 0;
+      this.touchSuite(suite.id, input.actorId, input.updatedAt);
+      this.insertVersionSnapshot(suite.id, input.versionId, "suite.ddt-cases.clear-scope", input);
+      this.handle.db
+        .insert(auditEvents)
+        .values(ddtClearAudit(input, "tasks", removed))
+        .run();
+      this.handle.db.run(ddtClearInvalidate(input));
+      return removed;
+    });
+  }
 
   async archiveReruns(input: Parameters<CaseSuiteRepository["archiveReruns"]>[0]) {
     return retrySqliteWriteTransaction(this.handle, () => {

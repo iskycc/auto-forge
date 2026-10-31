@@ -1,5 +1,31 @@
 import { z } from "zod";
 
+export const ddtScopeClearInputSchema = z
+  .object({
+    clearedBefore: z.iso.datetime(),
+    confirmation: z.literal("清空DDT用例"),
+  })
+  .strict();
+
+export const ddtScopeClearPreviewSchema = z.object({
+  clearedBefore: z.iso.datetime(),
+  activeCases: z.number().int().nonnegative(),
+  recycledCases: z.number().int().nonnegative(),
+  suiteMembers: z.number().int().nonnegative(),
+  affectedSuites: z.number().int().nonnegative(),
+});
+
+export const ddtScopeClearPageSchema = z.object({
+  phase: z.enum(["tasks", "history", "cases", "recycle", "done"]),
+  removedMembers: z.number().int().nonnegative(),
+  deletedHistory: z.number().int().nonnegative(),
+  deletedCases: z.number().int().nonnegative(),
+  deletedRecycled: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
+export type DdtScopeClearPreview = z.infer<typeof ddtScopeClearPreviewSchema>;
+export type DdtScopeClearPage = z.infer<typeof ddtScopeClearPageSchema>;
+
 export const DDT_IMPORT_FILE_LIMIT = 200;
 export const DDT_IMPORT_ZIP_SPREADSHEET_LIMIT = 200;
 export const DDT_IMPORT_CONFIGURABLE_LIMIT_MAXIMUM = 10_000;
@@ -30,7 +56,7 @@ export const ddtCaseDataSchema = z.record(
   z.union([ddtCellValueSchema, ddtJourneyStepsSchema]),
 );
 
-/** Internal import transport: omitted cells still have the sheet's empty-string value. */
+/** Internal header metadata only; absent cells must never become stored case parameters. */
 export const ddtImportRowShapeSchema = z
   .object({
     schemaVersion: z.literal(1),

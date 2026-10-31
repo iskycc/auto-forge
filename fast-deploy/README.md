@@ -18,11 +18,11 @@
 
 | 主机 | Docker tar 文件                                                                                                                                                                                                |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `autoforge-backend-1.21.10-amd64.docker.tar`                                                                                                                                                                   |
+| A    | `autoforge-backend-1.21.11-amd64.docker.tar`                                                                                                                                                                   |
 | B    | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar`                                                                                                       |
 | C    | `autoforge-infra-minio-RELEASE.2025-04-22T22-12-26Z-amd64.docker.tar`、`autoforge-infra-minio-client-RELEASE.2025-04-16T18-13-26Z-amd64.docker.tar`、`autoforge-infra-nats-2.14.3-alpine3.22-amd64.docker.tar` |
 
-主平台来自[正式 v1.21.10](https://github.com/iskycc/auto-forge/releases/tag/v1.21.10)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
+主平台来自[正式 v1.21.11](https://github.com/iskycc/auto-forge/releases/tag/v1.21.11)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
 
 ## B：数据库与缓存
 

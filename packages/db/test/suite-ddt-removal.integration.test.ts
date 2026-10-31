@@ -2,8 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import { CaseSuiteService, type CaseCatalogRepository } from "@autoforge/application";
+import { describe, expect, it, vi } from "vitest";
+import {
+  CaseSuiteService,
+  DdtScopeClearService,
+  type CaseCatalogRepository,
+} from "@autoforge/application";
 import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
 import { createSqliteDatabase } from "../src/database";
 import { createPostgresDatabase } from "../src/postgres-database";
@@ -19,6 +23,121 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} task removal by CaseID`,
     () => {
+      it("clears 8100+ scoped cases in bounded pages, unlinks tasks once, preserves snapshots and uses the case index", async () => {
+        const f = await fixture(dialect);
+        try {
+          for (let index = 0; index < 8100; index++) {
+            const caseId = `extra-${index}`;
+            await f.execute(
+              "INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at) VALUES (?,?,?,?,?,?, 'SR','sr','standard',?,?,?)",
+              [
+                randomUUID(),
+                f.scope.projectId,
+                f.scope.projectVersionId,
+                f.scope.testStageId,
+                caseId,
+                caseId,
+                JSON.stringify({ CaseID: caseId, srNum: "SR", value: index }),
+                now,
+                now,
+              ],
+            );
+          }
+          // Refresh synthetic bulk-load statistics before asserting the optimizer's index choice.
+          await f.execute("ANALYZE ddt_cases");
+          const queryPlan = await f.explainCase("extra-7999");
+          expect(queryPlan).toContain("ddt_cases_scope_case_id_uq");
+          await f.ddt.trashCases({
+            scope: f.scope,
+            caseIds: ["NOT-MEMBER"],
+            recycleIds: [randomUUID()],
+            deletedAt: now,
+          });
+          await f.execute(
+            "INSERT INTO ddt_case_history(id,ddt_case_id,case_id,change_type,source_name,before_json,after_json,changes_json,created_at) VALUES (?,?,?,'edit','fixture','{}','{}','[]',?)",
+            [randomUUID(), f.removedCaseId, "移除-CASE", now],
+          );
+          const future = "2026-10-31T00:00:00.000Z";
+          await f.execute(
+            "INSERT INTO ddt_cases(id,project_id,project_version_id,test_stage_id,case_id,case_id_normalized,sr_num,sr_num_normalized,case_kind,data_json,created_at,updated_at) VALUES (?,?,?,?, 'LATER','later','SR','sr','standard','{}',?,?)",
+            [
+              randomUUID(),
+              f.scope.projectId,
+              f.scope.projectVersionId,
+              f.scope.testStageId,
+              future,
+              future,
+            ],
+          );
+          const beforeRuns = await f.read("SELECT * FROM execution_runs WHERE batch_id=?", [
+            f.batchId,
+          ]);
+          const beforeVersions = await f.read(
+            "SELECT id,snapshot_json FROM case_suite_versions WHERE suite_id=? ORDER BY id",
+            [f.suiteId],
+          );
+          const before = (await f.suites.getSummary(f.suiteId))!;
+          const clear = new DdtScopeClearService(
+            f.ddt,
+            f.suites,
+            { now: () => new Date(now) },
+            { next: randomUUID },
+          );
+          const preview = await clear.preview(f.scope);
+          expect(preview).toMatchObject({
+            activeCases: 8102,
+            recycledCases: 1,
+            suiteMembers: 3,
+            affectedSuites: 2,
+          });
+          const totals = { members: 0, cases: 0, history: 0, recycled: 0 };
+          let pages = 0;
+          for (;;) {
+            const page = await clear.clearPage(
+              f.scope,
+              { clearedBefore: preview.clearedBefore, confirmation: "清空DDT用例" },
+              { principalId: "clear-test" },
+              "clear-request",
+            );
+            totals.members += page.removedMembers;
+            totals.cases += page.deletedCases;
+            totals.history += page.deletedHistory;
+            totals.recycled += page.deletedRecycled;
+            expect(page.deletedCases).toBeLessThanOrEqual(100);
+            expect(page.deletedHistory).toBeLessThanOrEqual(100);
+            if (!page.hasMore) break;
+            expect(++pages).toBeLessThan(100);
+          }
+          expect(totals).toEqual({ members: 3, cases: 8102, history: 1, recycled: 1 });
+          expect((await f.suites.get(f.suiteId))?.ddtItems.map((item) => item.ddtCase.id)).toEqual([
+            f.otherStageCaseId,
+          ]);
+          expect((await f.suites.getSummary(f.suiteId))?.version).toBe(before.version + 1);
+          expect(await f.suites.getSummary(f.otherSuiteId)).toMatchObject({ caseCount: 0 });
+          expect(await f.ddt.getCase(f.scope, "LATER")).not.toBeNull();
+          expect(await f.ddt.getCase(f.scope, "移除-CASE")).toBeNull();
+          expect(
+            await f.read("SELECT * FROM execution_runs WHERE batch_id=?", [f.batchId]),
+          ).toEqual(beforeRuns);
+          const versionsAfter = await f.read(
+            "SELECT id,snapshot_json FROM case_suite_versions WHERE suite_id=? ORDER BY id",
+            [f.suiteId],
+          );
+          expect(
+            versionsAfter.filter((row) => beforeVersions.some((old) => old.id === row.id)),
+          ).toEqual(beforeVersions);
+          expect(
+            await clear.clearPage(
+              f.scope,
+              { clearedBefore: preview.clearedBefore, confirmation: "清空DDT用例" },
+              { principalId: "clear-test" },
+              "clear-request",
+            ),
+          ).toMatchObject({ phase: "done", hasMore: false, deletedCases: 0 });
+        } finally {
+          await f.close();
+        }
+      }, 120_000);
       it("removes only scoped task members, preserves case assets and execution snapshots, and retries idempotently", async () => {
         const f = await fixture(dialect);
         try {
@@ -230,6 +349,25 @@ async function fixture(dialect: "sqlite" | "postgres") {
     otherSuiteId,
     batchId,
     read,
+    execute,
+    explainCase: async (caseId: string) => {
+      const spy = sqlite ? vi.spyOn(sqlite.client, "prepare") : vi.spyOn(postgres!.pool, "query");
+      let statement: string;
+      try {
+        await ddt.getCase(scope, caseId);
+        statement = String(spy.mock.calls[0]![0]);
+      } finally {
+        spy.mockRestore();
+      }
+      return JSON.stringify(
+        await read(`${sqlite ? "EXPLAIN QUERY PLAN" : "EXPLAIN (FORMAT JSON)"} ${statement}`, [
+          scope.projectId,
+          scope.projectVersionId,
+          scope.testStageId,
+          caseId.toLowerCase(),
+        ]),
+      );
+    },
     removedCaseId,
     keepCaseId,
     otherStageCaseId,
@@ -237,6 +375,13 @@ async function fixture(dialect: "sqlite" | "postgres") {
       if (postgres) {
         await execute("DELETE FROM run_batches WHERE id=?", [batchId]);
         await execute("DELETE FROM case_suites WHERE id IN (?,?)", [suiteId, otherSuiteId]);
+        await execute("DELETE FROM case_suite_versions WHERE suite_id IN (?,?)", [
+          suiteId,
+          otherSuiteId,
+        ]);
+        await execute("DELETE FROM audit_events WHERE details_json LIKE ?", [
+          `%${scope.projectVersionId}%`,
+        ]);
         await execute("DELETE FROM project_versions WHERE id=?", [scope.projectVersionId]);
       }
       sqlite?.close();

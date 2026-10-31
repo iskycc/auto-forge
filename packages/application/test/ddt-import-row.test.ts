@@ -1,25 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { DdtImportRowShape } from "@autoforge/contracts";
-import { materializeDdtImportRow } from "../src/ddt-import-row";
+import { normalizeImportedDdtCaseData } from "../src/ddt-import-row";
 
-const shape: DdtImportRowShape = {
-  schemaVersion: 1,
-  standard: [
-    "CaseID",
-    "srNum",
-    "本SR字段",
-    "其他SR字段",
-    "全空列",
-    "nullable",
-    "zero",
-    "false",
-    "spaces",
-  ],
-  steps: { step1: ["CaseID", "srNum", "action", "可选"], step2: ["CaseID", "srNum", "结果"] },
-};
-
-describe("compact import row restoration", () => {
-  it("restores all missing sheet cells without replacing null, false, zero or significant spaces", () => {
+describe("sparse DDT import rows", () => {
+  it("preserves literal parameter names without assigning object prototypes", () => {
+    const input = JSON.parse(
+      '{"CaseID":"literal","srNum":"SR","__proto__":"原值","constructor":"构造参数"}',
+    );
+    const result = normalizeImportedDdtCaseData(input);
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+    expect(result["__proto__"]).toBe("原值");
+    expect(result.constructor).toBe("构造参数");
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+  });
+  it("ignores merged blank columns and empty cells while preserving zero, false and nonblank text", () => {
     const row = Object.freeze({
       CaseID: "中文-1",
       srNum: "SR",
@@ -28,34 +21,34 @@ describe("compact import row restoration", () => {
       zero: 0,
       false: false,
       spaces: "  ",
+      padded: " value ",
+      empty: "",
     });
-    expect(materializeDdtImportRow(row, shape)).toEqual({
+    expect(normalizeImportedDdtCaseData(row)).toEqual({
       CaseID: "中文-1",
       srNum: "SR",
       本SR字段: "原值",
-      其他SR字段: "",
-      全空列: "",
-      nullable: null,
       zero: 0,
       false: false,
-      spaces: "  ",
+      padded: " value ",
     });
     expect(row).not.toHaveProperty("其他SR字段");
   });
-  it("restores only present journey steps and preserves missing steps", () => {
+  it("keeps present journey steps sparse and preserves missing steps", () => {
     const row = {
       CaseID: "旅程",
       srNum: "SR",
-      用户旅程: { step1: { CaseID: "旅程", srNum: "SR", action: "执行" } },
+      用户旅程: { step1: { CaseID: "旅程", srNum: "SR", action: "执行", empty: "", nil: null } },
     };
-    expect(materializeDdtImportRow(row, shape)).toEqual({
+    expect(normalizeImportedDdtCaseData(row)).toEqual({
       CaseID: "旅程",
       srNum: "SR",
-      用户旅程: { step1: { CaseID: "旅程", srNum: "SR", action: "执行", 可选: "" } },
+      用户旅程: { step1: { CaseID: "旅程", srNum: "SR", action: "执行" } },
     });
   });
-  it("preserves legacy parser rows when there is no compact schema", () => {
+  it("also removes blank cells from legacy spreadsheet parsers without mutating the source", () => {
     const row = { CaseID: "legacy", srNum: "SR", empty: "" };
-    expect(materializeDdtImportRow(row)).toBe(row);
+    expect(normalizeImportedDdtCaseData(row)).toEqual({ CaseID: "legacy", srNum: "SR" });
+    expect(row).toHaveProperty("empty", "");
   });
 });

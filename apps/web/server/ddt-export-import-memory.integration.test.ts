@@ -133,11 +133,11 @@ async function verifyImportPipeline(files: ParsedDdtFile[], content: Buffer) {
       for (const [index, row] of rows.entries()) {
         expect("readData" in row).toBe(true);
         const cells = readDdtImportedRow(row);
-        if (Object.keys(cells).length !== source.rowShape!.standard.length)
-          throw new Error(`Lost columns in ${row.caseId}`);
+        if (Object.keys(cells).length !== 4)
+          throw new Error(`Blank columns expanded in ${row.caseId}`);
         const original = source.rows[index]!;
-        for (const column of source.rowShape!.standard) {
-          if (cells[column] !== (original[column] ?? ""))
+        for (const column of Object.keys(original)) {
+          if (cells[column] !== original[column])
             throw new Error(`Changed ${row.caseId}/${column}`);
         }
         caseIds.push({ caseId: row.caseId, outcome: "inserted" });

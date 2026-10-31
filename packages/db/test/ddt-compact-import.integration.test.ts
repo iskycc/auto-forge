@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import {
   DdtImportService,
-  materializeDdtImportRow,
   type DdtRepository,
   type JarObjectStorePort,
   type ParsedDdtFile,
@@ -94,7 +93,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
       });
     });
 
-    it("keeps every empty field, journey step, value and overwrite history through the real import repository", async () => {
+    it("stores sparse fields and keeps journey steps, valid values and overwrite history", async () => {
       await withRepository(dialect, async ({ repository, scope }) => {
         const columns = Array.from({ length: 1024 }, (_, index) => `跨SR字段-${index}`);
         let parsed: ParsedDdtFile = {
@@ -162,10 +161,18 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           return repository.getImportJob(preview.id);
         }
         expect(await importFile()).toMatchObject({ status: "succeeded", insertedCount: 2 });
-        for (const row of parsed.rows) {
-          const saved = await repository.getCase(scope, String(row.CaseID));
-          expect(saved?.data).toEqual(materializeDdtImportRow(row, parsed.rowShape));
-        }
+        expect((await repository.getCase(scope, "中文普通"))?.data).toEqual({
+          CaseID: "中文普通",
+          srNum: "SR",
+          value: "原值",
+          flag: false,
+          zero: 0,
+        });
+        expect((await repository.getCase(scope, "中文旅程"))?.data).toEqual({
+          CaseID: "中文旅程",
+          srNum: "SR",
+          用户旅程: { step1: { CaseID: "中文旅程", srNum: "SR", action: "执行" } },
+        });
         parsed = { ...parsed, rows: [{ ...parsed.rows[0]!, value: "更新后" }, parsed.rows[1]!] };
         expect(await importFile()).toMatchObject({
           status: "succeeded",
@@ -175,7 +182,25 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         const history = await repository.listHistory({ ...scope, caseId: "中文普通", limit: 10 });
         expect(history.items.length).toBeGreaterThanOrEqual(1);
         const saved = await repository.getCase(scope, "中文普通");
-        expect(saved?.data).toEqual(materializeDdtImportRow(parsed.rows[0]!, parsed.rowShape));
+        expect(saved?.data).toEqual({
+          CaseID: "中文普通",
+          srNum: "SR",
+          value: "更新后",
+          flag: false,
+          zero: 0,
+        });
+        parsed = { ...parsed, rows: [{ ...parsed.rows[0]!, value: "" }, parsed.rows[1]!] };
+        expect(await importFile()).toMatchObject({
+          status: "succeeded",
+          updatedCount: 1,
+          unchangedCount: 1,
+        });
+        expect((await repository.getCase(scope, "中文普通"))?.data).toEqual({
+          CaseID: "中文普通",
+          srNum: "SR",
+          flag: false,
+          zero: 0,
+        });
       });
     });
   });

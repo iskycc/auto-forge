@@ -1,4 +1,16 @@
 import { ddtCaseListPageSql } from "./ddt-case-list-page";
+import { runPostgresDrizzleTransaction } from "./postgres-transaction";
+import { pgAuditEvents } from "./postgres-schema";
+import {
+  ddtScopeClearCounts,
+  mapDdtScopeClearCounts,
+  ddtClearCandidates,
+  ddtClearDelete,
+  ddtClearAudit,
+  ddtClearInvalidate,
+  emptyDdtScopeClearPage,
+  type DdtScopeClearCountRow,
+} from "./ddt-scope-clear";
 import { readDdtImportedRow } from "@autoforge/application";
 import { DDT_RECYCLE_PURGE_PAGE_SIZE } from "@autoforge/contracts";
 import {
@@ -67,6 +79,52 @@ type PgExecutor = {
 
 export class PostgresDdtRepository implements DdtRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
+
+  async readScopeClearCounts(scope: DdtScope, clearedBefore: string) {
+    await this.ready();
+    const result = await this.handle.db.execute<DdtScopeClearCountRow>(
+      ddtScopeClearCounts(scope, clearedBefore),
+    );
+    return mapDdtScopeClearCounts(result.rows[0]!);
+  }
+
+  async clearScopePage(input: Parameters<DdtRepository["clearScopePage"]>[0]) {
+    await this.ready();
+    return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      for (const phase of ["history", "cases", "recycle"] as const) {
+        const rows = (
+          await transaction.execute<{ id: string }>(ddtClearCandidates(input, phase, "postgres"))
+        ).rows;
+        if (!rows.length) continue;
+        await transaction.execute(
+          ddtClearDelete(
+            phase,
+            rows.map((row) => row.id),
+          ),
+        );
+        await transaction.insert(pgAuditEvents).values(ddtClearAudit(input, phase, rows.length));
+        await transaction.execute(ddtClearInvalidate(input));
+        return {
+          ...emptyDdtScopeClearPage,
+          phase,
+          deletedHistory: phase === "history" ? rows.length : 0,
+          deletedCases: phase === "cases" ? rows.length : 0,
+          deletedRecycled: phase === "recycle" ? rows.length : 0,
+          hasMore: true,
+        };
+      }
+      const counts = mapDdtScopeClearCounts(
+        (
+          await transaction.execute<DdtScopeClearCountRow>(
+            ddtScopeClearCounts(input.scope, input.clearedBefore),
+          )
+        ).rows[0]!,
+      );
+      if (counts.activeCases || counts.recycledCases)
+        throw new DomainError("PLATFORM_BUSY", "剩余 DDT 用例正在被其他操作使用，请稍后重试清空。");
+      return { ...emptyDdtScopeClearPage, phase: "done" as const, hasMore: false };
+    });
+  }
 
   private async ready(): Promise<void> {
     await this.handle.ready;
