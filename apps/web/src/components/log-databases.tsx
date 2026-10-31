@@ -24,6 +24,7 @@ import type {
   RegisterDailyLogServerInput,
 } from "@autoforge/contracts";
 import { Dialog } from "@/components/ui/dialog";
+import { LogDatabaseCapacity } from "./log-database-capacity";
 import { useToast } from "@/components/ui-feedback";
 import { readApiError } from "@/lib/client-api";
 
@@ -129,6 +130,11 @@ export function LogDatabases({
               <Typography.Paragraph type="secondary" className="!mb-0 !mt-1">
                 库标识：{database.id}
               </Typography.Paragraph>
+              <LogDatabaseCapacity
+                key={`${database.id}:${database.address}`}
+                databaseId={database.id}
+                active={database.active}
+              />
             </div>
             {canManage ? (
               <Space wrap>

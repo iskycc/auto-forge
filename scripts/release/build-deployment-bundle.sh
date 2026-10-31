@@ -19,6 +19,8 @@ readonly -a deployment_documentation=(
   "docs/adr/0017-full-postgresql-log-writes-only.md"
   "docs/architecture/batch-scheduling-pause.md"
   "docs/architecture/ddt-management.md"
+  "docs/architecture/ddt-association-transfer.md"
+  "docs/architecture/full-three-host-runtime-audit.md"
   "docs/architecture/read-model-snapshots.md"
   "docs/architecture/runtime-input-cache.md"
   "docs/architecture/runtime-resource-priority.md"
@@ -80,7 +82,9 @@ sed -i 's|../../../docs/|../docs/|g' \
   "${package_directory}/distributed/README.md" \
   "${package_directory}/full-bind/README.md" \
   "${package_directory}/full-five-hosts/README.md"
-sed -i 's|../../../../fast-deploy/|../../fast-deploy/|g' \
+sed -i \
+  -e 's|../../../../fast-deploy/|../../fast-deploy/|g' \
+  -e 's|../../../../docs/|../../docs/|g' \
   "${package_directory}/full-bind/three-hosts/README.md" \
   "${package_directory}/full-bind/log-postgres/README.md"
 # Five-host deployment is part of the standard signed deployment asset. Fail the

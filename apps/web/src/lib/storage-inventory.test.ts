@@ -41,6 +41,8 @@ describe("storage inventory", () => {
     };
     const inventory = new StorageInventoryService(options);
     inventories.push(inventory);
+    expect(inventory.peekSummary()).toBeUndefined();
+    expect(listing).not.toHaveBeenCalled();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -63,7 +65,10 @@ describe("storage inventory", () => {
       const published = await inventory.list({ limit: 1 });
       expect(published).toMatchObject({ snapshotState: "ready", summary: { fileCount: 2 } });
       expect(published.nextCursor).toBeTruthy();
+      expect(inventory.peekSummary()).toMatchObject({ objectFileCount: 1, objectLogicalBytes: 4 });
       const scans = listing.mock.calls.length;
+      for (let index = 0; index < 20; index++) inventory.peekSummary();
+      expect(listing).toHaveBeenCalledTimes(scans);
       for (let index = 0; index < 20; index++)
         expect((await inventory.list({ limit: 1 })).generation).toBe(published.generation);
       expect(listing).toHaveBeenCalledTimes(scans);

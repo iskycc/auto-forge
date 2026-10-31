@@ -18,11 +18,11 @@
 
 | 主机 | Docker tar 文件                                                                                                                                                                                                |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `autoforge-backend-1.21.12-amd64.docker.tar`                                                                                                                                                                   |
+| A    | `autoforge-backend-1.21.13-amd64.docker.tar`                                                                                                                                                                   |
 | B    | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar`                                                                                                       |
 | C    | `autoforge-infra-minio-RELEASE.2025-04-22T22-12-26Z-amd64.docker.tar`、`autoforge-infra-minio-client-RELEASE.2025-04-16T18-13-26Z-amd64.docker.tar`、`autoforge-infra-nats-2.14.3-alpine3.22-amd64.docker.tar` |
 
-主平台来自[正式 v1.21.12](https://github.com/iskycc/auto-forge/releases/tag/v1.21.12)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
+主平台来自[正式 v1.21.13](https://github.com/iskycc/auto-forge/releases/tag/v1.21.13)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
 
 ## B：数据库与缓存
 
@@ -110,3 +110,7 @@ docker compose stop
 `.env` 包含基础设施密码，应私有保存；不要提交 Git，也不要把包含密码的 `docker compose config` 输出发到公共渠道。数据库已经初始化后，修改 `.env` 不会重置数据库里的密码；不能通过删除数据目录修复密码问题。已有脚本版生成的部署继续保留其凭据和数据，不直接用新的空模板覆盖。
 
 需要独立 PostgreSQL 日志库时，直接复制 [`log-postgres/`](./log-postgres/README.md) 到 C 或日志主机，仍是改 `.env`、建数据目录后 `docker compose up -d`，无需运行脚本。平台 Web／worker 到日志主机的默认 `5433` 端口也需放通；已有 Full 未配置时仍可启动并登录，但必须选择 PostgreSQL 日志服务器后才能执行用例。升级时同步切换 A 的 Web／worker 镜像，先备份业务库、所有日志库、MinIO 和平台完整数据目录。
+
+## PostgreSQL 数据卷容量采样
+
+新版 fast-deploy/node-b、fast-deploy/log-postgres 与 full-bind/log-postgres 模板的 PostgreSQL 健康检查内置 `df -Pk "$PGDATA"` 采样，无需另外运行脚本。平台设置的“日志数据库 → 查看容量”和主库诊断可显示该数据卷实际剩余空间；旧部署需更新对应健康检查并重建容器，保留原 bind 数据目录。缺失、权限不足或超过两分钟的采样不会显示成当前有效空间。外置 tablespace／WAL 文件系统需单独监控，详见[Full 三主机运行链路与容量诊断](../docs/architecture/full-three-host-runtime-audit.md)。

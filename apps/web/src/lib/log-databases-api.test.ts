@@ -10,6 +10,7 @@ const access = vi.hoisted(() => ({
   update: vi.fn(),
   list: vi.fn(),
   audit: vi.fn(),
+  capacity: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({
   authorizeRequest: access.authorize,
@@ -24,6 +25,7 @@ vi.mock("@/lib/log-databases", () => ({
       check: access.check,
       updateConnection: access.update,
       list: access.list,
+      storageCapacity: access.capacity,
     },
     services: {
       identityAccess: { recordAuthorizedOperation: access.audit },
@@ -35,6 +37,8 @@ import { GET, POST } from "../app/api/v1/settings/log-databases/route";
 import { PUT } from "../app/api/v1/settings/log-databases/active/route";
 import { PATCH } from "../app/api/v1/settings/log-databases/[databaseId]/route";
 import { POST as check } from "../app/api/v1/settings/log-databases/[databaseId]/check/route";
+
+import { GET as capacity } from "../app/api/v1/settings/log-databases/[databaseId]/capacity/route";
 
 const id = "019a25a1-0000-7000-8000-000000000001";
 const context = { params: Promise.resolve({ databaseId: id }) };
@@ -104,4 +108,28 @@ describe("log database HTTP authorization and secret handling", () => {
     expect((await PUT(request("PUT", { databaseId: id, revision: 1 }))).status).toBe(403);
     expect(access.select).not.toHaveBeenCalled();
   });
+});
+
+it("protects capacity reads with settings.read and validates database IDs before probing", async () => {
+  access.capacity.mockResolvedValue({
+    status: "not_configured",
+    detail: "sampling is not configured",
+  });
+  const response = await capacity(new Request("http://localhost/capacity?refresh=1"), context);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(access.authorize).toHaveBeenLastCalledWith(
+    expect.any(Request),
+    "settings.read",
+    undefined,
+  );
+  expect(access.capacity).toHaveBeenCalledWith(id, true);
+  access.capacity.mockClear();
+  expect(
+    (await capacity(request("GET"), { params: Promise.resolve({ databaseId: "invalid" }) })).status,
+  ).toBe(400);
+  expect(access.capacity).not.toHaveBeenCalled();
+  access.authorize.mockRejectedValueOnce(new DomainError("AUTH_FORBIDDEN", "无权限"));
+  expect((await capacity(request("GET"), context)).status).toBe(403);
+  expect(access.capacity).not.toHaveBeenCalled();
 });

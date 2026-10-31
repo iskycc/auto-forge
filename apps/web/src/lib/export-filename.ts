@@ -62,6 +62,16 @@ export function srTagExportFilename(
   );
 }
 
+export function ddtAssociationExportFilename(
+  input: ExportTime & { versionName: string; stageName: string; template: boolean },
+): string {
+  return workbookFilename(
+    `${input.versionName}-${input.stageName}`,
+    input.template ? ["SR关联配置导入模板"] : ["SR测试类关联", "全部配置"],
+    input,
+  );
+}
+
 /** Keep the business identity bounded while preserving the report, scope, batch number and time. */
 function workbookFilename(
   businessName: string,

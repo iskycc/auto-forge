@@ -94,6 +94,11 @@ export class StorageInventoryService {
     };
   }
 
+  /** Diagnostics can inspect the last completed snapshot without starting filesystem/S3 scans. */
+  peekSummary(): StorageInventorySummary | undefined {
+    return this.index.summary();
+  }
+
   private scheduleRefresh(): void {
     if (this.refreshInFlight || this.closed) return;
     this.refreshInFlight = yieldToRequests()
@@ -176,6 +181,8 @@ export class StorageInventoryService {
       { fileCount: number; logicalBytes: number; allocatedBytes: number }
     >();
     let fileCount = 0;
+    let objectFileCount = 0;
+    let objectLogicalBytes = 0;
     let logicalBytes = 0;
     let allocatedBytes = 0;
     let externalReferenceCount = 0;
@@ -188,6 +195,15 @@ export class StorageInventoryService {
       pending.push(item);
       if (pending.length === INVENTORY_BATCH_SIZE) await flush();
       fileCount += 1;
+      if (
+        item.location === "object-store" ||
+        (this.options.objectStore.storageKind === "local" &&
+          item.location === "data-directory" &&
+          item.logicalPath.startsWith("objects/"))
+      ) {
+        objectFileCount++;
+        objectLogicalBytes = addBytes(objectLogicalBytes, item.sizeBytes);
+      }
       logicalBytes = addBytes(logicalBytes, item.sizeBytes);
       allocatedBytes = addBytes(allocatedBytes, item.allocatedBytes);
       if (item.location === "external-reference") {
@@ -213,6 +229,8 @@ export class StorageInventoryService {
         objectStore: this.options.objectStore.storageKind,
         objectStoreRoot: this.options.objectStoreRoot,
         fileCount,
+        objectFileCount,
+        objectLogicalBytes,
         logicalBytes,
         allocatedBytes,
         externalReferenceCount,

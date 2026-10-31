@@ -22,6 +22,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 - DDT 导入支持分次追加文件、去重和逐个移除。用例任务默认查询活动任务，提供当前版本的一键归档 Rerun 和独立归档视图；执行历史复用按终态批次版本保存的数据库统计快照。归档保留用例、配置及执行记录，活动执行会跳过。升级与缓存边界见[任务归档和历史快照](./docs/architecture/task-archives-and-history.md)。
 
+- SR 测试类关联支持 Excel 多 Sheet 导入导出：候选测试类、分类执行类、SR 分类关联与历史直接关联完整迁移，预览定位问题并显示导入进度；按名称合并，未列配置保留，区别于独立 SR 标签。详见[SR 关联配置导入导出](./docs/architecture/ddt-association-transfer.md)。
+- 平台诊断的 PostgreSQL、Redis、NATS、MinIO 状态卡可按需打开使用详情；日志数据库显示实际 PGDATA 数据卷余量，新版独立日志库／fast-deploy PostgreSQL 模板内置采样。HTTP 成功请求只计指标，4xx／5xx 输出警告／错误。三主机链路、采样部署方式及边界见[Full 三主机运行审查](./docs/architecture/full-three-host-runtime-audit.md)。
 - DDT 表格导入按实际有效字段保存，忽略空字符串、仅空白字符和 null，不把其他 SR 的空列补到每个用例中；`0`、`false`、非空文本及实际旅程步骤保留。详情默认隐藏已有空字段，提供字段搜索、48 条分页和长值分段查看。当前项目／版本／测试阶段支持核对数量后永久清空 DDT、修改历史和回收站，同时从任务移除成员并保存新版本，保留任务、普通用例和执行记录。详见[DDT 稀疏导入与清空](./docs/architecture/ddt-management.md#稀疏字段与已有数据清空)。
 
 - 任务列表发起批跑时，执行快照、用例清单、审计和调度消息一起提交；成功后立即确认排队，Lite 持久队列／Full outbox 接续派发。调度暂遇数据库锁时保留已接受批次，不再误报创建失败诱导重复执行，详见[批跑提交与调度](./docs/architecture/run-scheduling.md#提交确认与后续调度)。

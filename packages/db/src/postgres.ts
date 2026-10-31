@@ -37,6 +37,8 @@ export { VersionCopyArchive } from "./version-copy-archive";
 export * from "./postgres-ddt-sr-tags";
 
 export * from "./postgres-log-databases";
+export * from "./postgres-storage-capacity";
+export * from "./postgres-infrastructure-usage";
 export * from "./postgres-routed-attempt-logs";
 
 export * from "./postgres-log-archives";

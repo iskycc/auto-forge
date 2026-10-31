@@ -244,6 +244,12 @@ export class PostgresDailyLogDatabases {
     return childId;
   }
 
+  async resolveCapacityConnection(row: LogDatabaseRecord): Promise<string> {
+    // Server metadata uses the maintenance database; it must never provision a daily payload.
+    if (row.storage_mode === "daily") return this.decrypt(row);
+    return (await this.resolveConnection(row)).url;
+  }
+
   async resolveConnection(row: LogDatabaseRecord): Promise<{ url: string; cacheKey: string }> {
     if (row.storage_mode === "daily")
       throw new DomainError(

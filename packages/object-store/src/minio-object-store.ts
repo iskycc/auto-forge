@@ -259,6 +259,36 @@ export class MinioObjectStore implements JarObjectStorePort {
       throw new Error(`MinIO bucket ${this.bucket} does not exist.`);
     }
   }
+
+  async readUsage(): Promise<import("@autoforge/contracts").InfrastructureUsageSample> {
+    await this.ready();
+    const region = await this.client.getBucketRegionAsync(this.bucket);
+    let versioning = "未提供";
+    const notes = [
+      "对象数量与占用由平台存储清单快照另行提供；打开此面板不会遍历整个 bucket。MinIO 保存 JAR、运行依赖、产物和归档，执行状态仍在主数据库中。",
+    ];
+    try {
+      const configuration = await this.client.getBucketVersioning(this.bucket);
+      versioning =
+        configuration.Status === "Enabled"
+          ? "已启用"
+          : configuration.Status === "Suspended"
+            ? "已暂停"
+            : "未启用";
+    } catch {
+      notes.push(
+        "当前账号或存储服务未提供 bucket 版本控制信息，其他指标仍可查看。未自动修改存储权限。",
+      );
+    }
+    return {
+      metrics: [
+        { key: "bucket", label: "平台 Bucket", value: this.bucket, unit: "text" },
+        { key: "region", label: "存储区域", value: region, unit: "text" },
+        { key: "versioning", label: "Bucket 版本控制", value: versioning, unit: "text" },
+      ],
+      notes,
+    };
+  }
 }
 
 function artifactObjectKey(

@@ -1,4 +1,8 @@
-import { redisReconnectDelay } from "../src/lib/resilient-connections.ts";
+import {
+  awaitRedisReply,
+  redisReconnectDelay,
+  redisRuntimeCommandOptions,
+} from "../src/lib/resilient-connections.ts";
 import type { LogChunk, LogStreamGateway } from "./log-stream-gateway.ts";
 
 const CHANNEL = "autoforge:logs:v1:live";
@@ -60,9 +64,8 @@ export class LogStreamRelay {
     const { createClient } = await import("redis");
     const publisher = createClient({
       url: input.redisUrl,
-      disableOfflineQueue: true,
+      ...redisRuntimeCommandOptions,
       commandsQueueMaxLength: 64,
-      commandOptions: { timeout: 3000 },
       socket: { connectTimeout: 5000, reconnectStrategy: redisReconnectDelay },
     });
     const subscriber = publisher.duplicate();
@@ -100,15 +103,16 @@ export class LogStreamRelay {
       return;
     }
     const key = CACHE_PREFIX + attemptId;
-    const operation = this.publisher
-      .eval(CACHE_AND_PUBLISH, {
+    const operation = awaitRedisReply(
+      this.publisher.eval(CACHE_AND_PUBLISH, {
         keys: [key, key + ":bytes", CACHE_PREFIX + "active"],
         arguments: [
           JSON.stringify({ schemaVersion: 1, attemptId, chunks: sanitized }),
           String(Date.now()),
           CHANNEL,
         ],
-      })
+      }),
+    )
       .catch((error: unknown) => {
         this.logger("warn", "Live log cache write failed; persisted logs remain available", {
           error: error instanceof Error ? error.message : "Unknown error",
@@ -121,7 +125,7 @@ export class LogStreamRelay {
 
   async recent(attemptId: string): Promise<LogChunk[]> {
     if (!this.publisher?.isReady) return [];
-    const frames = await this.publisher.lRange(CACHE_PREFIX + attemptId, 0, 31);
+    const frames = await awaitRedisReply(this.publisher.lRange(CACHE_PREFIX + attemptId, 0, 31));
     const chunks: LogChunk[] = [];
     for (const frame of frames) {
       const message: unknown = JSON.parse(frame);

@@ -22,6 +22,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Code2, Link2, Search, Settings2, RefreshCw } from "lucide-react";
+import { DdtAssociationFileTransfer } from "./ddt-association-file-transfer";
 import { DdtRequirementCategoriesDialog } from "./ddt-requirement-categories-dialog";
 import { ActionDialog } from "./action-dialog";
 import { Button, Input } from "./ui";
@@ -232,6 +233,11 @@ export function DdtSrAssociations({ scope, canManage }: { scope: DdtScope; canMa
         配置顺序：① 加入候选测试类 → ② 新建需求分类并绑定执行类 → ③ 给 SR 设置分类。 SR
         下全部用例继承该类，后续导入也会自动继承。
       </p>
+      <DdtAssociationFileTransfer
+        url={endpoint("association-config")}
+        canManage={canManage}
+        onImported={reload}
+      />
       {!canManage ? (
         <Notice tone="info" className={cn("inline-notice", uiPatterns["inline-notice"])}>
           当前账号只可查看；配置需要用例管理权限。

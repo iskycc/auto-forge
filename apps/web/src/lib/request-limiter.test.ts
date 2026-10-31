@@ -19,6 +19,14 @@ describe("MemoryRequestLimiter", () => {
 });
 
 describe("RedisRequestLimiter", () => {
+  it("fails closed with an actionable Redis error instead of bypassing shared limits", async () => {
+    const cause = new Error("Redis connection is unavailable");
+    const limiter = new RedisRequestLimiter(vi.fn().mockRejectedValue(cause));
+    await expect(limiter.allow("runner", 2, 5000)).rejects.toMatchObject({
+      code: "PLATFORM_CACHE_UNAVAILABLE",
+      cause,
+    });
+  });
   it("uses a namespaced key and rejects counts over the limit", async () => {
     const evaluate = vi.fn().mockResolvedValue(3);
     const limiter = new RedisRequestLimiter(evaluate);

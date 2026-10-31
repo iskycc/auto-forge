@@ -58,3 +58,7 @@ docker compose ps
 增加另一套日志服务时复制本目录到另一数据目录，修改端口和密码，并始终使用不同 Compose 项目名，例如 `docker compose -p autoforge-log-02 up -d`；查看、停止等后续命令使用同一项目名。不要让两个实例共享 `data/postgres/`。
 
 已有数据库的密码不会因修改 `.env` 而改变。修改账号密码时先在数据库中完成轮换，再在平台原日志服务器卡片更新连接；不要删除数据目录来重置密码。备份需覆盖业务库、所有日志日期库、平台配置与主密钥、MinIO 以及旧本地日志；原始日志数据目录冷备前先停止本 PostgreSQL 容器。
+
+## PostgreSQL 数据卷容量采样
+
+新版 fast-deploy/node-b、fast-deploy/log-postgres 与 full-bind/log-postgres 模板的 PostgreSQL 健康检查内置 `df -Pk "$PGDATA"` 采样，无需另外运行脚本。平台设置的“日志数据库 → 查看容量”和主库诊断可显示该数据卷实际剩余空间；旧部署需更新对应健康检查并重建容器，保留原 bind 数据目录。缺失、权限不足或超过两分钟的采样不会显示成当前有效空间。外置 tablespace／WAL 文件系统需单独监控，详见[Full 三主机运行链路与容量诊断](../../docs/architecture/full-three-host-runtime-audit.md)。

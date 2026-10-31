@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -130,4 +130,50 @@ test("uses the same MinIO credentials for its server and bucket initialization",
   const index = services.nats.command.indexOf("--auth");
   assert.equal(services.nats.command[index + 1], credentials.NATS_TOKEN);
   assert.equal(services["minio-init"].depends_on.minio.condition, "service_healthy");
+});
+
+test("PostgreSQL healthcheck atomically reports its own data filesystem and keeps readiness independent from sampling", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autoforge-pg-sample-"));
+  try {
+    const bin = join(directory, "bin");
+    await mkdir(bin);
+    const ready = join(bin, "pg_isready");
+    await writeFile(ready, "#!/bin/sh\nexit 0\n");
+    await chmod(ready, 0o755);
+    const data = join(directory, "database with spaces");
+    await mkdir(data);
+    const logCommand = (
+      await compose("log-postgres")
+    ).services.postgres.healthcheck.test[1].replaceAll("$$", "$");
+    const mainCommand = (await compose("node-b")).services.postgres.healthcheck.test[1].replaceAll(
+      "$$",
+      "$",
+    );
+    assert.equal(logCommand, mainCommand);
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      PGDATA: data,
+      POSTGRES_USER: "fixture",
+      POSTGRES_DB: "postgres",
+    };
+    await execute("sh", ["-c", logCommand], { env });
+    const samplePath = join(data, "autoforge-storage-capacity.json");
+    const sample = JSON.parse(await readFile(samplePath, "utf8"));
+    assert.equal(sample.schemaVersion, 1);
+    assert(sample.capacityBytes > 0);
+    assert(sample.availableBytes >= 0 && sample.availableBytes <= sample.capacityBytes);
+    assert(Number.isFinite(Date.parse(sample.sampledAt)));
+    const df = join(bin, "df");
+    await writeFile(df, "#!/bin/sh\nexit 1\n");
+    await chmod(df, 0o755);
+    const failure = await execute("sh", ["-c", logCommand], { env });
+    assert.match(failure.stderr, /Warning/u);
+    assert.deepEqual(JSON.parse(await readFile(samplePath, "utf8")), sample);
+    assert(!(await readdir(data)).some((name) => name.endsWith(".tmp")));
+    await writeFile(ready, "#!/bin/sh\nexit 1\n");
+    await assert.rejects(execute("sh", ["-c", logCommand], { env }));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

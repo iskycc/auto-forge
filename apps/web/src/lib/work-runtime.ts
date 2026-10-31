@@ -22,7 +22,8 @@ export interface WorkDispatcher {
   inheritDdtCases?(input: unknown, signal: AbortSignal): Promise<unknown>;
   triggerDueSchedules?(): Promise<number>;
   parseFile?(
-    operation: "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags",
+    operation:
+      "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags" | "parse-ddt-associations",
     input: unknown,
   ): Promise<unknown>;
   executeBackgroundJob(job: unknown, signal: AbortSignal): Promise<void>;

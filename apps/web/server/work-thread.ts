@@ -564,6 +564,13 @@ async function execute(task: WorkTask, signal: AbortSignal): Promise<unknown> {
 }
 
 async function parseFile(task: Extract<WorkTask, { kind: "parse-file" }>): Promise<unknown> {
+  if (task.operation === "parse-ddt-associations") {
+    const { parseDdtAssociationSpreadsheet } = await import("@autoforge/ddt-import");
+    const input = z
+      .object({ fileName: z.string().max(512), content: z.instanceof(Uint8Array) })
+      .parse(task.input);
+    return parseDdtAssociationSpreadsheet(input.content, input.fileName);
+  }
   if (task.operation === "parse-sr-tags") {
     const { parseSrTagSpreadsheet } = await import("@autoforge/ddt-import");
     const input = z

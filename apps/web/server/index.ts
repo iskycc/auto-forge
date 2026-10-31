@@ -1,4 +1,5 @@
 import { redactRequestPath } from "./redact-request-path.js";
+import { observeHttpRequest } from "./http-request-observer.ts";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { webResourcePlan } from "../src/lib/worker-sizing.ts";
@@ -186,6 +187,7 @@ const server = createServer((request, response) => {
   const currentRequestId = requestId(request.headers["x-request-id"]);
   request.headers["x-request-id"] = currentRequestId;
   response.setHeader("X-Request-Id", currentRequestId);
+  observeHttpRequest(request, response, currentRequestId, recordHttpRequest, log);
   const admission = logReadAdmission.acquire(request.method, request.url);
   if (!admission.admitted) {
     runtimePriority().report("log_io");
@@ -210,22 +212,9 @@ const server = createServer((request, response) => {
   }
   response.once("finish", admission.release);
   response.once("close", admission.release);
-  const startedAt = performance.now();
   if (platformConfiguration.mode === "full" && platformConfiguration.nodeId) {
     response.setHeader("X-Autoforge-Node", platformConfiguration.nodeId);
   }
-  response.once("finish", () => {
-    const path = request.url ? new URL(request.url, "http://localhost").pathname : "/";
-    const durationMs = Math.round(performance.now() - startedAt);
-    recordHttpRequest(request.method ?? "OTHER", path, response.statusCode, durationMs);
-    log("info", "HTTP request completed", {
-      requestId: currentRequestId,
-      method: request.method ?? "OTHER",
-      path,
-      statusCode: response.statusCode,
-      durationMs,
-    });
-  });
   const fastPathRoute = matchRunnerFastPath(request.method, request.url);
   if (fastPathRoute) {
     // 执行机协议高频写路径绕过 Next.js 路由，直接复用同一份应用服务；

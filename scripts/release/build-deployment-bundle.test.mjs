@@ -65,6 +65,16 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       await readFile(resolve(packageDirectory, "operations/verify_ddt_transfer.py"), "utf8"),
       /class ApiReader/,
     );
+    for (const filename of [
+      "full-bind/three-hosts/README.md",
+      "full-bind/log-postgres/README.md",
+    ]) {
+      assert.match(
+        await readFile(resolve(packageDirectory, filename), "utf8"),
+        /\]\(\.\.\/\.\.\/docs\/architecture\/full-three-host-runtime-audit\.md\)/u,
+        `broken packaged capacity guide: ${filename}`,
+      );
+    }
     const transferGuide = await readFile(
       resolve(packageDirectory, "docs/operations/ddt-transfer-verification.md"),
       "utf8",
@@ -133,6 +143,8 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       "docs/architecture/runtime-resource-priority.md",
       "docs/architecture/runtime-input-cache.md",
       "docs/architecture/read-model-snapshots.md",
+      "docs/architecture/ddt-association-transfer.md",
+      "docs/architecture/full-three-host-runtime-audit.md",
     ])
       assert.ok(
         packagedFiles.includes(template),

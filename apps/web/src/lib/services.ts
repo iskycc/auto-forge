@@ -16,11 +16,16 @@ import {
 import { prioritizedExecutionControlRepository } from "./work-dispatch";
 import { runtimePriority } from "./runtime-priority";
 import { SystemDiagnosticReader } from "./system-diagnostics";
+import { InfrastructureUsageReader } from "./infrastructure-usage";
+import type { InfrastructureUsageSample } from "@autoforge/contracts";
 import { readDiagnosticRuntime } from "./diagnostic-runtime";
 import { mkdir } from "node:fs/promises";
 import { isolatedAttemptLogs } from "./isolated-attempt-logs";
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { publicPlatformStatisticsSchema } from "@autoforge/contracts";
+import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
+import {
+  publicPlatformStatisticsSchema,
+  parsedDdtAssociationImportSchema,
+} from "@autoforge/contracts";
 import {
   readBatchPage,
   readExecutionOverview,
@@ -42,6 +47,7 @@ import {
   CaseSuiteActivityService,
   ConcurrencyDiagnosticsService,
   DdtCaseService,
+  DdtAssociationTransferService,
   DdtSrTagService,
   DdtSrTagImportService,
   type DdtSrTagRepository,
@@ -150,7 +156,12 @@ import { createStorageInventoryReader } from "./storage-inventory-reader";
 import { StorageInventoryService } from "./storage-inventory";
 import { runnerControlPlaneUrl } from "./platform-configuration";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
-import { natsReconnectOptions, redisReconnectDelay } from "./resilient-connections";
+import {
+  awaitRedisReply,
+  natsReconnectOptions,
+  redisReconnectDelay,
+  redisRuntimeCommandOptions,
+} from "./resilient-connections";
 import { RunnerAgentInstaller } from "./runner-agent-installer";
 import { RunnerAgentResourceStore } from "./runner-agent-resources";
 import {
@@ -219,6 +230,10 @@ async function createPlatformServices() {
   let databaseReady: () => Promise<void>;
   let logWriteAdmission: import("@autoforge/application").ExecutionLogWriteAdmission | undefined;
   let diagnosticProviders: Record<"database" | "objectStore" | "queue" | "cache", string>;
+  let databaseUsage: () => Promise<InfrastructureUsageSample>;
+  let cacheUsage: () => Promise<InfrastructureUsageSample>;
+  let queueUsage: () => Promise<InfrastructureUsageSample>;
+  let objectStoreUsage: () => Promise<InfrastructureUsageSample>;
   if (config.mode === "lite") {
     const database = createSqliteDatabase({
       databasePath: config.databasePath,
@@ -227,6 +242,30 @@ async function createPlatformServices() {
     });
     databaseReady = async () => {
       database.client.prepare("SELECT 1").get();
+    };
+    databaseUsage = async () => {
+      const pages = database.client.pragma("page_count", { simple: true }) as number;
+      const pageSize = database.client.pragma("page_size", { simple: true }) as number;
+      const freePages = database.client.pragma("freelist_count", { simple: true }) as number;
+      return {
+        metrics: [
+          { key: "pages", label: "数据库页数", value: pages, unit: "count" },
+          { key: "bytes", label: "数据库文件逻辑占用", value: pages * pageSize, unit: "bytes" },
+          {
+            key: "reusable",
+            label: "数据库内可复用页",
+            value: freePages * pageSize,
+            unit: "bytes",
+          },
+          {
+            key: "journal",
+            label: "日志模式",
+            value: String(database.client.pragma("journal_mode", { simple: true })),
+            unit: "text",
+          },
+        ],
+        notes: ["Lite 使用本地 SQLite；可复用页属于数据库内部空间，不是宿主机磁盘可用容量。"],
+      };
     };
     diagnosticProviders = {
       database: "SQLite · WAL",
@@ -269,7 +308,27 @@ async function createPlatformServices() {
     publicSuiteExecutionRepository = new SqlitePublicSuiteExecutionRepository(database);
 
     jobQueue = new SqliteJobQueue(database);
-    cache = new MemoryCache();
+    const memoryCache = new MemoryCache();
+    cache = memoryCache;
+    cacheUsage = () => memoryCache.readUsage();
+    queueUsage = async () => {
+      const depth = await jobQueue.depth();
+      return {
+        metrics: [
+          { key: "available", label: "待领取消息", value: depth.available, unit: "count" },
+          { key: "leased", label: "已领取消息", value: depth.leased, unit: "count" },
+          { key: "dead", label: "死信消息", value: depth.deadLetter, unit: "count" },
+        ],
+        notes: ["Lite 使用 SQLite 持久队列，消息与租约持久化，不需要 NATS。"],
+      };
+    };
+    objectStoreUsage = async () => {
+      await objectStore.ready();
+      return {
+        metrics: [],
+        notes: ["Lite 对象存放在平台数据卷，由本地文件系统持久化，不需要 MinIO。"],
+      };
+    };
     operationsRepository = new SqlitePlatformOperationsRepository(database, archivedLogs);
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
     versionCopyRepository = new SqliteProjectVersionCopyRepository(database);
@@ -284,6 +343,7 @@ async function createPlatformServices() {
       {
         createPostgresDatabase,
         createPostgresClock,
+        readPostgresInfrastructureUsage,
         PostgresPlatformNodeRepository,
         NodeAttemptLogStore,
         PostgresLogDatabaseRepository,
@@ -342,6 +402,7 @@ async function createPlatformServices() {
     databaseReady = async () => {
       await database.pool.query("SELECT 1");
     };
+    databaseUsage = () => readPostgresInfrastructureUsage(database.pool, new Date());
     diagnosticProviders = {
       database: "PostgreSQL",
       objectStore: "MinIO / S3",
@@ -418,9 +479,12 @@ async function createPlatformServices() {
         await nats.close();
         throw error;
       });
-      jobQueue = await JetStreamJobQueue.create(nats.jetstream(), jetStreamManager);
+      const fullQueue = await JetStreamJobQueue.create(nats.jetstream(), jetStreamManager);
+      jobQueue = fullQueue;
+      queueUsage = () => fullQueue.readUsage();
       const redis = createClient({
         url: config.redisUrl,
+        ...redisRuntimeCommandOptions,
         socket: {
           connectTimeout: 5_000,
           reconnectStrategy: redisReconnectDelay,
@@ -433,18 +497,28 @@ async function createPlatformServices() {
         await Promise.allSettled([nats.close(), redis.close()]);
         throw error;
       });
-      cache = new RedisCache(redis);
+      const fullCache = new RedisCache(
+        {
+          get: (key) => awaitRedisReply(redis.get(key)),
+          set: (key, value, options) => awaitRedisReply(redis.set(key, value, options)),
+          del: (key) => awaitRedisReply(redis.del(key)),
+          info: () => awaitRedisReply(redis.info()),
+        },
+        Number(new URL(config.redisUrl).pathname.slice(1)) || 0,
+      );
+      cache = fullCache;
+      cacheUsage = () => fullCache.readUsage();
       closeDatabase = async () => {
         await versionCopyRepository.close();
         await attemptLogs.close();
         await Promise.all([database.close(), executionDatabase.close()]);
       };
       runnerRequestLimiter = new RedisRequestLimiter((script, options) =>
-        redis.eval(script, options),
+        awaitRedisReply(redis.eval(script, options)),
       );
       infrastructure = {
         ready: async () => {
-          await Promise.all([jobQueue.ready(), redis.ping()]);
+          await Promise.all([jobQueue.ready(), awaitRedisReply(redis.ping())]);
         },
         close: async () => {
           await Promise.allSettled([
@@ -478,7 +552,9 @@ async function createPlatformServices() {
     // 完成请求服务端 p50 从 42ms 降到 28ms，但执行阶段墙钟由客户端驱动未改善，
     // 领取/批次创建反而因车道连接池争用回退；仅补位调度经 runScheduling 交给
     // 工作线程。
-    objectStore = new MinioObjectStore(config.minio);
+    const minioStore = new MinioObjectStore(config.minio);
+    objectStore = minioStore;
+    objectStoreUsage = () => minioStore.readUsage();
     const { PostgresLogArchiveRepository } = await import("@autoforge/db/postgres");
     logArchiveRepository = new PostgresLogArchiveRepository(database);
     attemptLogs = new ArchivedAttemptLogStore(attemptLogs, logArchiveRepository, objectStore);
@@ -1002,6 +1078,46 @@ async function createPlatformServices() {
         runtimePriority().backgroundAllowed(),
       ),
   });
+  const infrastructureUsage = new InfrastructureUsageReader({
+    database: { provider: diagnosticProviders.database, read: databaseUsage },
+    cache: { provider: diagnosticProviders.cache, read: cacheUsage },
+    queue: { provider: diagnosticProviders.queue, read: queueUsage },
+    objectStore: {
+      provider: diagnosticProviders.objectStore,
+      read: async () => {
+        const sample = await objectStoreUsage();
+        const summary = storageInventory.peekSummary();
+        return {
+          ...sample,
+          metrics: [
+            ...sample.metrics,
+            {
+              key: "objects",
+              label: "对象数量（清单快照）",
+              value: summary?.objectFileCount ?? null,
+              unit: "count",
+            },
+            {
+              key: "object_bytes",
+              label: "对象占用（清单快照）",
+              value: summary?.objectLogicalBytes ?? null,
+              unit: "bytes",
+            },
+            {
+              key: "inventory_time",
+              label: "存储清单采样时间",
+              value: summary?.generatedAt ?? "尚未生成",
+              unit: "text",
+            },
+          ],
+          notes: [
+            ...sample.notes,
+            "清单数据使用已有快照，可能滞后。需要更新对象数量时，请前往文件管理 → 存储空间重新扫描；该面板不会触发全量扫描。",
+          ],
+        };
+      },
+    },
+  });
   return {
     infrastructureCheck: (await import("../../server/platform-infrastructure-check"))
       .checkPlatformInfrastructure,
@@ -1011,6 +1127,7 @@ async function createPlatformServices() {
       fetch,
     }),
     diagnostics,
+    infrastructureUsage,
     databaseReady,
     clock,
     config,
@@ -1030,6 +1147,20 @@ async function createPlatformServices() {
     roundRecoveryConfigurationInspector,
     caseDefinitions,
     ddtCases,
+    ddtAssociations: new DdtAssociationTransferService(
+      ddtRepository,
+      {
+        parse: async (content, fileName) => {
+          if (!dispatcher?.parseFile)
+            throw new DomainError("PLATFORM_BUSY", "配置表格解析服务尚未就绪，请稍后重试。");
+          return parsedDdtAssociationImportSchema.parse(
+            await dispatcher.parseFile("parse-ddt-associations", { content, fileName }),
+          );
+        },
+      },
+      clock,
+      ids,
+    ),
     ddtSrTags: new DdtSrTagService(srTagRepository, clock, ids),
     ddtSrTagImports: new DdtSrTagImportService(
       srTagRepository,

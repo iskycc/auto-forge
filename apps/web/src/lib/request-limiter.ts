@@ -1,3 +1,5 @@
+import { DomainError } from "@autoforge/domain";
+
 const REDIS_RATE_LIMIT_SCRIPT = `
 local count = redis.call("INCR", KEYS[1])
 if count == 1 then
@@ -46,10 +48,19 @@ export class RedisRequestLimiter implements RequestLimiter {
   constructor(private readonly evaluate: RedisEvaluate) {}
 
   async allow(key: string, limit: number, windowMs: number): Promise<boolean> {
-    const result = await this.evaluate(REDIS_RATE_LIMIT_SCRIPT, {
-      keys: [`autoforge:rate:v1:${key}`],
-      arguments: [String(windowMs)],
-    });
+    let result: unknown;
+    try {
+      result = await this.evaluate(REDIS_RATE_LIMIT_SCRIPT, {
+        keys: [`autoforge:rate:v1:${key}`],
+        arguments: [String(windowMs)],
+      });
+    } catch (cause) {
+      throw new DomainError(
+        "PLATFORM_CACHE_UNAVAILABLE",
+        "共享请求限流服务暂不可用，请检查 Redis；未绕过分布式限流，请稍后重试。",
+        { cause },
+      );
+    }
     const count = Number(result);
     if (!Number.isSafeInteger(count))
       throw new Error("Redis returned an invalid rate-limit count.");

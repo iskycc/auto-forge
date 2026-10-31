@@ -546,6 +546,7 @@ export function openSpreadsheetZip(
   }
   return {
     has: (path: string) => entries.has(path.normalize("NFC")),
+    paths: () => entries.keys(),
     async *readChunks(path: string): AsyncGenerator<Buffer> {
       const entry = entries.get(path.normalize("NFC"));
       if (!entry) throw invalidZip(`XLSX 缺少内部文件 ${path}`);

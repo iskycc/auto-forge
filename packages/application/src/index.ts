@@ -69,5 +69,7 @@ export * from "./clear-ddt-scope";
 export * from "./public-suite-execution";
 
 export * from "./log-databases";
+export * from "./infrastructure-usage";
+export * from "./ddt-association-transfer";
 
 export * from "./log-archives";

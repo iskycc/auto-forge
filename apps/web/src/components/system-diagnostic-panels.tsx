@@ -1,3 +1,9 @@
+"use client";
+
+import { Button } from "antd";
+import { useState } from "react";
+import type { InfrastructureDependency } from "@autoforge/contracts";
+import { InfrastructureUsageDialog } from "./infrastructure-usage-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Notice } from "@/components/ui/notice";
 import { Progress } from "@/components/ui/progress";
@@ -22,27 +28,32 @@ import type { ReactNode } from "react";
 import styles from "./system-diagnostics.styles";
 
 export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDiagnostic }) {
+  const [selected, setSelected] = useState<InfrastructureDependency>();
   const dependencies = [
     {
       label: "数据库",
+      dependency: "database" as const,
       value: report.database,
       icon: Database,
       advice: "检查数据库地址、凭据、磁盘空间以及数据库服务状态。",
     },
     {
       label: "对象存储",
+      dependency: "objectStore" as const,
       value: report.objectStore,
       icon: HardDrive,
       advice: "检查对象目录权限；Full 部署还需确认 MinIO bucket 已创建且凭据有访问权限。",
     },
     {
       label: "任务队列",
+      dependency: "queue" as const,
       value: report.queue,
       icon: Layers3,
       advice: "检查队列存储与 NATS JetStream 服务状态；修复后手动刷新诊断。",
     },
     {
       label: "缓存",
+      dependency: "cache" as const,
       value: report.cache,
       icon: MemoryStick,
       advice: "检查缓存服务地址、认证和可用内存；缓存恢复后可从持久数据重建。",
@@ -132,11 +143,18 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
         </Card>
       ) : null}
       <section aria-label="基础依赖健康" className={`diagnostic-grid ${styles.dependencies}`}>
-        {dependencies.map(({ label, value, icon: Icon, advice }) => (
+        {dependencies.map(({ label, dependency, value, icon: Icon, advice }) => (
           <Card
             as="article"
-            className={cn(uiPatterns["content-card"], `content-card ${styles.dependency}`)}
+            className={cn(
+              uiPatterns["content-card"],
+              `content-card cursor-pointer hover:border-primary/40 ${styles.dependency}`,
+            )}
             key={label}
+            onClick={(event) => {
+              if (!(event.target as HTMLElement).closest("button, a, [role='button']"))
+                setSelected(dependency);
+            }}
           >
             <div className={styles.panelHeading}>
               <Icon size={18} />
@@ -153,9 +171,24 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
               </Disclosure>
             ) : null}
             <small>{value.durationMs === undefined ? "" : `检查耗时 ${value.durationMs} ms`}</small>
+            <Button
+              type="link"
+              className="!h-auto !self-start !p-0"
+              onClick={() => setSelected(dependency)}
+              aria-label={`查看${label}使用详情`}
+            >
+              使用详情
+            </Button>
           </Card>
         ))}
       </section>
+      {selected ? (
+        <InfrastructureUsageDialog
+          dependency={selected}
+          label={dependencies.find((entry) => entry.dependency === selected)!.label}
+          onClose={() => setSelected(undefined)}
+        />
+      ) : null}
       <div className={styles.panels}>
         <NodeBuildPanel report={report} />
         <ResourceCapacityPanel report={report} />

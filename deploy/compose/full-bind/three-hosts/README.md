@@ -292,3 +292,7 @@ Redis、NATS 不能代替业务备份；单机 Full 备份脚本不适合直接�
 并叠加临时离线包的实际覆盖文件；检查了主机 IP、发布端口、bind 路径及禁止自动拉取设置。
 文档 Shell 语法、相对链接和部署包构建测试通过，新文档已确认会被打入部署归档。
 本次未启动服务；三台物理主机的互访、真实 Runner 闭环和生产容量仍须在目标环境按以上步骤验收。
+
+## PostgreSQL 数据卷容量采样
+
+新版 fast-deploy/node-b、fast-deploy/log-postgres 与 full-bind/log-postgres 模板的 PostgreSQL 健康检查内置 `df -Pk "$PGDATA"` 采样，无需另外运行脚本。平台设置的“日志数据库 → 查看容量”和主库诊断可显示该数据卷实际剩余空间；旧部署需更新对应健康检查并重建容器，保留原 bind 数据目录。缺失、权限不足或超过两分钟的采样不会显示成当前有效空间。外置 tablespace／WAL 文件系统需单独监控，详见[Full 三主机运行链路与容量诊断](../../../../docs/architecture/full-three-host-runtime-audit.md)。

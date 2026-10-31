@@ -40,6 +40,8 @@ describeWithNats("JetStream integration", () => {
         leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(),
         limit: 1,
       };
+      const usage = await queue.readUsage();
+      expect(usage.metrics).toContainEqual(expect.objectContaining({ key: "messages", value: 1 }));
       expect(await queue.claim({ ...request, workClass: "execution" })).toEqual([]);
       const [moved] = await queue.claim({ ...request, workClass: "background" });
       expect(moved?.job.messageId).toBe(job.messageId);

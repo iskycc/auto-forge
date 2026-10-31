@@ -1,5 +1,8 @@
 import type { DdtRepository } from "@autoforge/application";
 import type { DdtScope } from "@autoforge/domain";
+import { DdtAssociationTransferService } from "@autoforge/application";
+import type { ParsedDdtAssociationImport } from "@autoforge/contracts";
+import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
 type ExecutionSourceState = {
@@ -391,4 +394,80 @@ export async function expectDdtSrExecutionContract(
   await expect(repository.getCase(scope, caseIds[0])).resolves.not.toHaveProperty("executionClass");
 
   await repository.setSrExecutionClass({ ...assignment, expectedRevision: 6 });
+  await expectPortableAssociationTransfer(repository, scope);
+}
+
+async function expectPortableAssociationTransfer(repository: DdtRepository, scope: DdtScope) {
+  const signal = new AbortController().signal;
+  const range = await repository.listExecutionClassRange(scope, { query: "", limit: 100 });
+  const candidate = range.items.find((item) => item.enabled && !item.archived)!;
+  const mapping = (await repository.listSrExecutionMappings(scope, { query: "ORDER", limit: 1 }))
+    .items[0]!;
+  const parsed: ParsedDdtAssociationImport = {
+    rows: [
+      { section: "range", className: candidate.className, sheetName: "候选测试类", rowNumber: 2 },
+      {
+        section: "categories",
+        categoryName: "Portable Category",
+        className: candidate.className,
+        sheetName: "分类执行类",
+        rowNumber: 2,
+      },
+      {
+        section: "srCategories",
+        srNum: mapping.srNum,
+        categoryName: "Portable Category",
+        sheetName: "SR需求分类",
+        rowNumber: 2,
+      },
+    ],
+    rowCount: 3,
+    issueCount: 0,
+    issues: [],
+  };
+  const service = new DdtAssociationTransferService(
+    repository,
+    { parse: async () => parsed },
+    { now: () => new Date("2026-10-31T00:00:00Z") },
+    { next: randomUUID },
+  );
+  const upload = { fileName: "portable.xlsx", content: new Uint8Array() };
+  const first = await service.read(scope, upload, signal);
+  expect(first.preview.issueCount).toBe(0);
+  expect(
+    await service.apply(scope, first, first.preview.fingerprint, signal, () => {}),
+  ).toMatchObject({ changed: 2, unchanged: 1 });
+  const again = await service.read(scope, upload, signal);
+  expect(
+    await service.apply(scope, again, again.preview.fingerprint, signal, () => {}),
+  ).toMatchObject({ changed: 0, unchanged: 3 });
+  const exported = [];
+  for await (const page of service.exportPages(scope, "srCategories", signal))
+    exported.push(...page.rows);
+  expect(exported).toContainEqual(
+    expect.objectContaining({ values: [mapping.srNum, "Portable Category", ""] }),
+  );
+  parsed.rows = [
+    {
+      section: "srClasses",
+      srNum: mapping.srNum,
+      className: "",
+      sheetName: "SR直接关联",
+      rowNumber: 2,
+    },
+  ];
+  parsed.rowCount = 1;
+  const clear = await service.read(scope, upload, signal);
+  await service.apply(scope, clear, clear.preview.fingerprint, signal, () => {});
+  const cleared = (
+    await repository.listSrExecutionMappings(scope, { query: mapping.srNum, limit: 1 })
+  ).items[0]!;
+  expect(cleared).not.toHaveProperty("executionClass");
+  await repository.setSrExecutionClass({
+    scope,
+    srNum: mapping.srNum,
+    executionCaseDefinitionId: mapping.executionClass!.caseDefinitionId,
+    expectedRevision: cleared.revision,
+    updatedAt: "2026-10-31T00:00:00Z",
+  });
 }

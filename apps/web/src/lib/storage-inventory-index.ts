@@ -39,6 +39,14 @@ export class StorageInventoryIndex {
       failed: row.failed !== 0,
     };
   }
+  summary(): StorageInventorySummary | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT g.summary FROM inventory_generations_v1 g JOIN inventory_state_v2 s ON s.generation=g.id WHERE s.id=1 AND g.summary IS NOT NULL",
+      )
+      .get() as { summary: string } | undefined;
+    return row ? storageInventorySummarySchema.parse(JSON.parse(row.summary)) : undefined;
+  }
   invalidate() {
     this.database
       .prepare(

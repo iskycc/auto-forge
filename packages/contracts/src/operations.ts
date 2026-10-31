@@ -496,6 +496,8 @@ export const deleteStorageRuntimeAssetsResultSchema = z.object({
 });
 
 export const storageInventorySummarySchema = z.object({
+  objectFileCount: z.number().int().nonnegative().optional(),
+  objectLogicalBytes: z.number().int().nonnegative().optional(),
   generatedAt: z.string().datetime(),
   dataDirectory: z.string().min(1).max(8_192),
   objectStore: z.enum(["local", "minio"]),

@@ -29,6 +29,13 @@ describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () =>
     const sha256 = createHash("sha256").update(content).digest("hex");
     try {
       await expect(store.ready()).resolves.toBeUndefined();
+      const usage = await store.readUsage();
+      expect(usage.metrics).toContainEqual(
+        expect.objectContaining({ key: "bucket", value: bucket }),
+      );
+      expect(usage.metrics).toContainEqual(
+        expect.objectContaining({ key: "versioning", value: "未启用" }),
+      );
       const written = await store.putJar("project-1", sha256, content);
       expect(written.created).toBe(true);
       await expect(store.exists(written.objectKey)).resolves.toBe(true);

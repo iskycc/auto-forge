@@ -213,6 +213,25 @@ describe.skipIf(!url)("daily PostgreSQL logs", () => {
       service.updateConnection(serverId, { ...server, databasePrefix: "different" }),
     ).rejects.toMatchObject({ code: "LOG_DATABASE_PREFIX_IMMUTABLE" });
   });
+  it("reads server capacity without provisioning payloads or weakening the payload routing guard", async () => {
+    const before = await db.pool.query(
+      "SELECT count(*)::int AS count FROM log_databases WHERE parent_database_id=$1",
+      [serverId],
+    );
+    const capacity = await registry.storageCapacity(serverId, new Date());
+    const after = await db.pool.query(
+      "SELECT count(*)::int AS count FROM log_databases WHERE parent_database_id=$1",
+      [serverId],
+    );
+    expect(after.rows).toEqual(before.rows);
+    expect(capacity.status).toMatch(/available|stale|not_configured|permission_denied/);
+    const row = (await db.pool.query("SELECT * FROM log_databases WHERE id=$1", [serverId]))
+      .rows[0]!;
+    // A server can expose host capacity, but must still be rejected as a log payload database.
+    await expect(registry.daily.resolveConnection(row)).rejects.toMatchObject({
+      code: "LOG_DAILY_DATABASE_REQUIRED",
+    });
+  });
   it("does not create an unbounded set of databases for invalid dates", async () => {
     await expect(registry.daily.ensureDay(serverId, "2026-02-30")).rejects.toThrow();
   });

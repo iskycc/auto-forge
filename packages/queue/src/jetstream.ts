@@ -318,6 +318,70 @@ export class JetStreamJobQueue implements JobQueuePort {
     ]);
   }
 
+  async readUsage(): Promise<import("@autoforge/contracts").InfrastructureUsageSample> {
+    const [stream, execution, background] = await Promise.all([
+      this.manager.streams.info(this.settings.streamName),
+      this.manager.consumers.info(this.settings.streamName, this.settings.durableName),
+      this.manager.consumers.info(
+        this.settings.streamName,
+        backgroundSettings(this.settings).durableName,
+      ),
+    ]);
+    return {
+      metrics: [
+        { key: "stream", label: "平台持久流", value: this.settings.streamName, unit: "text" },
+        { key: "bytes", label: "持久消息占用", value: stream.state.bytes, unit: "bytes" },
+        { key: "messages", label: "持久消息数量", value: stream.state.messages, unit: "count" },
+        {
+          key: "consumers",
+          label: "消费者数量",
+          value: stream.state.consumer_count,
+          unit: "count",
+        },
+        {
+          key: "execution_pending",
+          label: "执行消息待消费",
+          value: execution.num_pending,
+          unit: "count",
+        },
+        {
+          key: "execution_ack",
+          label: "执行消息待确认",
+          value: execution.num_ack_pending,
+          unit: "count",
+        },
+        {
+          key: "background_pending",
+          label: "后台消息待消费",
+          value: background.num_pending,
+          unit: "count",
+        },
+        {
+          key: "background_ack",
+          label: "后台消息待确认",
+          value: background.num_ack_pending,
+          unit: "count",
+        },
+        {
+          key: "redelivered",
+          label: "消费者当前重投递",
+          value: execution.num_redelivered + background.num_redelivered,
+          unit: "count",
+        },
+        {
+          key: "ack_wait",
+          label: "确认等待期限",
+          value: this.settings.acknowledgementWaitMs,
+          unit: "milliseconds",
+        },
+      ],
+      notes: [
+        "只读取平台自身持久流和两个持久消费者的统计，不领取、确认或重新投递消息。待确认为内部工作消息，不等于执行机上正在执行的用例数量。",
+        "业务事务通过 PostgreSQL outbox 发布；Runner 通过控制面领取 assignment，不直接消费 NATS。",
+      ],
+    };
+  }
+
   async close(): Promise<void> {
     this.active.clear();
   }

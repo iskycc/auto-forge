@@ -221,7 +221,8 @@ export class WorkerPool implements WorkDispatcher {
   }
 
   parseFile(
-    operation: "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags",
+    operation:
+      "inspect-jar" | "read-jar-source" | "parse-ddt" | "parse-sr-tags" | "parse-ddt-associations",
     input: unknown,
   ): Promise<unknown> {
     const lane = this.maintenanceLanes.reduce((least, candidate) =>

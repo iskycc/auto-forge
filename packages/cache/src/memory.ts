@@ -1,9 +1,18 @@
-import type { CachePort } from "@autoforge/application";
+import type { CachePort, InfrastructureUsageSample } from "@autoforge/application";
 
 type Entry = { value: string; expiresAt: number };
 
 export class MemoryCache implements CachePort {
   private readonly entries = new Map<string, Entry>();
+
+  async readUsage(): Promise<InfrastructureUsageSample> {
+    return {
+      metrics: [
+        { key: "entries", label: "当前进程缓存条目", value: this.entries.size, unit: "count" },
+      ],
+      notes: ["Lite 使用可重建的进程内缓存；条目包含尚未被惰性清理的过期项，不需要 Redis。"],
+    };
+  }
 
   async get(namespace: string, tenantId: string, schemaVersion: number, key: string) {
     const cacheKey = namespacedKey(namespace, tenantId, schemaVersion, key);

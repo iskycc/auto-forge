@@ -275,3 +275,49 @@ test("log database settings isolate Full payloads, switch live and preserve hist
     await database.close();
   }
 });
+
+test("log server capacity reports its own data volume with explicit sampling state and desktop layouts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const directory =
+    process.env.AUTOFORGE_E2E_PLATFORM_CONFIG_DIR ?? process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("E2E platform directory is required.");
+  test.skip(
+    new PlatformConfigurationStore(directory).read().mode === "lite",
+    "PostgreSQL capacity is a Full log-server feature.",
+  );
+  const settings = (await (await page.request.get("/api/v1/settings/log-databases")).json()) as {
+    activeDatabaseId: string;
+    items: Array<{ id: string; active: boolean }>;
+  };
+  expect(settings.activeDatabaseId).toBeTruthy();
+  const response = await page.request.get(
+    `/api/v1/settings/log-databases/${settings.activeDatabaseId}/capacity?refresh=1`,
+  );
+  expect(response.status()).toBe(200);
+  const capacity = (await response.json()) as {
+    status: string;
+    capacityBytes?: number;
+    availableBytes?: number;
+  };
+  if (process.env.AUTOFORGE_TEST_POSTGRES_CAPACITY === "1") {
+    expect(capacity.status).toBe("available");
+    expect(capacity.capacityBytes).toBeGreaterThan(capacity.availableBytes!);
+  }
+  await page.goto("/settings/platform?section=logs");
+  await page.getByRole("button", { name: "查看容量", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "日志库磁盘容量", exact: true });
+  if (capacity.status === "available") await expect(dialog).toContainText("当前可用空间");
+  else await expect(dialog).toContainText(/磁盘余量暂不可用|磁盘采样已过期/);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expectPageFitsViewport(page);
+    await page.screenshot({
+      path: test.info().outputPath(`log-database-capacity-${width}.png`),
+      fullPage: false,
+    });
+  }
+  await dialog.getByRole("button", { name: "关闭日志库磁盘容量", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});

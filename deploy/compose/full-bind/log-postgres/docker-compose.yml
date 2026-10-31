@@ -20,7 +20,23 @@ services:
         bind:
           create_host_path: false
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autoforge_logs -d autoforge_logs"]
+      test:
+        - CMD-SHELL
+        - |
+          pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" || exit 1
+          sample_file="$${PGDATA:-/var/lib/postgresql/data}/autoforge-storage-capacity.json"
+          if df -Pk "$${PGDATA:-/var/lib/postgresql/data}" | awk -v sampled_at="$$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+            NR == 2 && $$2 > 0 && $$4 >= 0 {
+              printf "{\"schemaVersion\":1,\"capacityBytes\":%.0f,\"availableBytes\":%.0f,\"sampledAt\":\"%s\"}\n", $$2 * 1024, $$4 * 1024, sampled_at;
+              valid = 1;
+            }
+            END { if (!valid) exit 1; }
+          ' > "$$sample_file.tmp" && chmod 0644 "$$sample_file.tmp" && mv -f "$$sample_file.tmp" "$$sample_file"; then
+            :
+          else
+            rm -f "$$sample_file.tmp"
+            printf 'Warning: PostgreSQL data-volume capacity sample could not be updated.\n' >&2
+          fi
       interval: 5s
       timeout: 3s
       retries: 20

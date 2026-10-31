@@ -134,7 +134,10 @@
         "tests/e2e/real-agent.spec.ts",
         "tests/e2e/testng-directory-execution.spec.ts",
         "apps/web/server/read-model-thread.integration.test.ts",
-        "packages/db/test/read-model-snapshots.integration.test.ts"
+        "packages/db/test/read-model-snapshots.integration.test.ts",
+        "packages/application/src/ddt-association-transfer.test.ts",
+        "apps/web/src/lib/ddt-association-export.test.ts",
+        "docs/architecture/ddt-association-transfer.md"
       ],
       "coverage": {
         "lite": "partial",
@@ -317,7 +320,10 @@
         "tests/e2e/platform-operations.spec.ts",
         "tests/e2e/log-databases.spec.ts",
         ".github/workflows/ci.yml",
-        "tests/e2e/memory-admission.spec.ts"
+        "tests/e2e/memory-admission.spec.ts",
+        "apps/web/src/lib/infrastructure-usage.test.ts",
+        "packages/db/src/postgres-storage-capacity.test.ts",
+        "docs/architecture/full-three-host-runtime-audit.md"
       ],
       "coverage": {
         "lite": "partial",

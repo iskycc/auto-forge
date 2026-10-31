@@ -11,6 +11,7 @@ import { runPostgresMigrations, type PostgresDatabaseHandle } from "./postgres-d
 import { PostgresDailyLogDatabases, type LogDatabaseRecord } from "./postgres-daily-log-databases";
 import { logDatabaseError } from "./postgres-log-database-errors";
 import { fullLocalLogWriteDisabled } from "./full-log-write-policy";
+import { readPostgresStorageCapacity } from "./postgres-storage-capacity";
 export { logDatabaseError } from "./postgres-log-database-errors";
 
 const MAX_OPEN_DATABASES = 4;
@@ -105,6 +106,19 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
   }
   checkForWrite(id: string): Promise<void> {
     return this.daily.check(id);
+  }
+
+  async storageCapacity(id: string, now: Date) {
+    const result = await this.database.pool.query<DatabaseRow>(
+      "SELECT * FROM log_databases WHERE id=$1",
+      [id],
+    );
+    const row = result.rows[0];
+    if (!row) throw new DomainError("LOG_DATABASE_NOT_FOUND", "日志服务器未登记。");
+    const connectionUrl = await this.daily.resolveCapacityConnection(row);
+    return this.withTemporaryDatabase(connectionUrl, id, (pool) =>
+      readPostgresStorageCapacity(pool, now),
+    );
   }
 
   async register(id: string, input: RegisterLogDatabaseInput, now: string): Promise<LogDatabase> {

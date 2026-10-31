@@ -5,6 +5,7 @@ import {
   DDT_IMPORT_FILE_BYTES,
   DDT_IMPORT_FILE_LIMIT,
   SR_TAG_IMPORT_MAXIMUM_BYTES,
+  DDT_ASSOCIATION_IMPORT_MAXIMUM_BYTES,
   DDT_IMPORT_TOTAL_BYTES,
 } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
@@ -77,6 +78,17 @@ export function readSrTagUpload(request: Request): Promise<JarUpload> {
     emptyCode: "SR_TAG_FILE_EMPTY",
     emptyMessage: "SR 标签表格为空。",
     tooLarge: () => new DomainError("SR_TAG_FILE_TOO_LARGE", "SR 标签表格不能超过 16 MiB。"),
+  });
+}
+
+export function readDdtAssociationUpload(request: Request): Promise<JarUpload> {
+  return readBoundedUpload(request, DDT_ASSOCIATION_IMPORT_MAXIMUM_BYTES, {
+    missingCode: "DDT_ASSOCIATION_FILE_REQUIRED",
+    missingMessage: "请选择 SR 测试类关联配置 XLSX 文件。",
+    emptyCode: "DDT_ASSOCIATION_FILE_EMPTY",
+    emptyMessage: "SR 关联配置表格为空。",
+    tooLarge: () =>
+      new DomainError("DDT_ASSOCIATION_FILE_TOO_LARGE", "SR 关联配置表格不能超过 16 MiB。"),
   });
 }
 

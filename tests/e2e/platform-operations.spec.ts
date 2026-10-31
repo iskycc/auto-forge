@@ -13,7 +13,7 @@ import {
   expectUiIntegrity,
   waitForUiTransitions,
 } from "./support/ui-guard";
-import { systemDiagnosticSchema } from "@autoforge/contracts";
+import { infrastructureUsageSchema, systemDiagnosticSchema } from "@autoforge/contracts";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
 const SQLITE_FIXTURE_BATCH_ID = "00000000-0000-7000-8000-000000918273";
@@ -1090,3 +1090,61 @@ function inventoryPageFixture(input: {
     },
   };
 }
+
+test("middleware usage opens lazily with real counters, bounded failure handling and desktop layouts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto("/settings/platform?section=diagnostics");
+  const report = page.getByRole("region", { name: "平台诊断报告", exact: true });
+  await expect(report).toHaveAttribute("aria-busy", "false");
+  for (const [dependency, label] of [
+    ["database", "数据库"],
+    ["objectStore", "对象存储"],
+    ["queue", "任务队列"],
+    ["cache", "缓存"],
+  ] as const) {
+    const response = await page.request.get(
+      `/api/v1/settings/diagnostics/usage?dependency=${dependency}`,
+    );
+    expect(response.status()).toBe(200);
+    expect(response.headers()["cache-control"]).toBe("private, no-store");
+    const usage = infrastructureUsageSchema.parse(await response.json());
+    expect(usage.status).not.toBe("unavailable");
+    expect(usage.metrics.length).toBeGreaterThan(0);
+    await page.getByRole("button", { name: `查看${label}使用详情`, exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: `${label}使用详情`, exact: true });
+    await expect(dialog.getByText(usage.metrics[0]!.label, { exact: true })).toBeVisible();
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+      await expectPageFitsViewport(page);
+      await waitForUiTransitions(page);
+      await captureDiagnosticUi(page, `middleware-${dependency}-${width}`, false);
+    }
+    await dialog.getByRole("button", { name: `关闭${label}使用详情`, exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "查看缓存使用详情", exact: true }).click();
+  const darkDialog = page.getByRole("dialog", { name: "缓存使用详情", exact: true });
+  await expect(darkDialog.locator(".ant-descriptions")).toBeVisible();
+  await waitForUiTransitions(page);
+  await captureDiagnosticUi(page, "middleware-cache-dark-1536", false);
+  await darkDialog.getByRole("button", { name: "关闭缓存使用详情", exact: true }).click();
+  await expect(darkDialog).toHaveCount(0);
+  await page.route("**/api/v1/settings/diagnostics/usage?**", (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        error: { code: "PLATFORM_BUSY", message: "测试：指标暂不可用", requestId: "usage-e2e" },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "查看缓存使用详情", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "缓存使用详情", exact: true });
+  await expect(dialog).toContainText("测试：指标暂不可用");
+  await page.unroute("**/api/v1/settings/diagnostics/usage?**");
+  await dialog.getByRole("button", { name: /刷新指标/u }).click();
+  await expect(dialog).not.toContainText("测试：指标暂不可用");
+  await expect(dialog.locator(".ant-descriptions")).toBeVisible();
+});

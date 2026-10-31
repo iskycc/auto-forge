@@ -157,7 +157,8 @@ function domainErrorStatus(code: string): number {
   if (code === "RUN_BATCH_NOT_ACTIVE") return 409;
   if (code === "PUBLIC_SUITE_EXECUTION_ACTIVE") return 409;
   if (code === "CASE_SUITE_EXECUTION_SNAPSHOT_INVALID") return 422;
-  if (code === "EXPORT_DATA_INVALID") return 422;
+  if (code === "EXPORT_DATA_INVALID" || code === "DDT_ASSOCIATION_IMPORT_INVALID") return 422;
+  if (code === "DDT_ASSOCIATION_IMPORT_INTERRUPTED") return 409;
   if (code === "STORAGE_INVENTORY_SNAPSHOT_EXPIRED") return 409;
   if (
     [
@@ -165,6 +166,7 @@ function domainErrorStatus(code: string): number {
       "PLATFORM_LOG_TIMEOUT",
       "PLATFORM_LOG_UNAVAILABLE",
       "PLATFORM_LOG_DATABASE_UNAVAILABLE",
+      "PLATFORM_CACHE_UNAVAILABLE",
       "PLATFORM_BUSY",
       "FILE_PARSE_MEMORY_LIMIT",
     ].includes(code)

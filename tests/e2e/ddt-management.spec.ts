@@ -1,3 +1,5 @@
+import { buildAssociationWorkbookFixture } from "../../packages/ddt-import/test/association-fixture";
+import { parseDdtAssociationSpreadsheet } from "../../packages/ddt-import/src";
 import { buildSrTagSpreadsheetFixture } from "../../packages/ddt-import/test/sr-tag-fixture";
 import { randomUUID } from "node:crypto";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
@@ -6338,4 +6340,108 @@ test("SR tag spreadsheets validate headers and duplicate pairs, import classific
     await expectUiIntegrity(page);
     await captureDdtUi(page, `sr-tag-import-valid-dark-${width}`);
   }
+});
+
+test("SR association Excel transfers every configuration with preview and stable desktop layouts", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  const className = "com.autoforge.PortableWalletCase";
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await importExecutionClass(page, hierarchy, className);
+  await importDdtApiFixture(page, hierarchy, "portable-1", 1, [
+    { CaseID: "portable-1", srNum: "钱包-SR", marker: 1 },
+    { CaseID: "portable-2", srNum: "0007", marker: 2 },
+    { CaseID: "portable-3", srNum: "未分类-SR", marker: 3 },
+  ]);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases/ddt-associations?srAssociation=all");
+  await expect(page.locator(".ddt-sr-row[data-sr]")).toHaveCount(3);
+  await page.getByRole("button", { name: "导入配置", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入 SR 关联配置", exact: true });
+  const sheet = (name: string, bytes: Buffer) =>
+    dialog.locator('input[type="file"]').setInputFiles({
+      name,
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: bytes,
+    });
+  await sheet(
+    "invalid.xlsx",
+    buildAssociationWorkbookFixture({
+      SR直接关联: [
+        ["SR", "测试类路径", "异常说明"],
+        ["钱包-SR", "com.NotImported", ""],
+      ],
+    }),
+  );
+  await dialog.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(dialog).toContainText("目标阶段没有可执行的测试类");
+  await expect(dialog.getByRole("button", { name: "确认导入", exact: true })).toBeDisabled();
+  const bytes = buildAssociationWorkbookFixture({
+    候选测试类: [
+      ["测试类路径", "异常说明"],
+      [className, ""],
+    ],
+    分类执行类: [
+      ["需求分类", "测试类路径", "异常说明"],
+      ["钱包分类", className, ""],
+    ],
+    SR需求分类: [
+      ["SR", "需求分类", "异常说明"],
+      ["钱包-SR", "钱包分类", ""],
+      ["未分类-SR", "", ""],
+    ],
+    SR直接关联: [
+      ["SR", "测试类路径", "异常说明"],
+      ["0007", className, ""],
+    ],
+  });
+  await sheet("associations.xlsx", bytes);
+  await dialog.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(dialog).toContainText("共 5 行，0 项问题");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-association-import-${width}`);
+  }
+  await dialog.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "导入完成" })).toContainText("变更 4 项");
+  await expect(page.locator('.ddt-sr-row[data-sr="钱包-SR"]')).toContainText("钱包分类");
+  await expect(page.locator('.ddt-sr-row[data-sr="0007"]')).toContainText("历史直接关联");
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出配置", exact: true }).click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toContain("SR测试类关联");
+  const exported = await parseDdtAssociationSpreadsheet(
+    await readFile((await download.path())!),
+    download.suggestedFilename(),
+  );
+  expect(exported.issueCount).toBe(0);
+  expect(exported.rows).toHaveLength(5);
+  expect(exported.rows).toContainEqual(
+    expect.objectContaining({ section: "srClasses", srNum: "0007", className }),
+  );
+  expect(exported.rows).toContainEqual(
+    expect.objectContaining({ section: "categories", categoryName: "钱包分类", className }),
+  );
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `sr-association-workbench-${width}`);
+  }
+  await page.getByRole("button", { name: "导入配置", exact: true }).click();
+  await sheet("associations.xlsx", bytes);
+  await dialog.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(dialog).toContainText("共 5 行，0 项问题");
+  await dialog.getByRole("button", { name: "确认导入", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "导入完成" })).toContainText("变更 0 项");
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "导入配置", exact: true }).click();
+  await sheet("associations.xlsx", bytes);
+  await dialog.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(dialog).toContainText("共 5 行，0 项问题");
+  await captureDdtUi(page, "sr-association-import-dark-1536");
 });

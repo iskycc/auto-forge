@@ -49,6 +49,7 @@ describe("API error mapping", () => {
     });
   });
   it.each([
+    "PLATFORM_CACHE_UNAVAILABLE",
     "PLATFORM_LOG_BUSY",
     "PLATFORM_LOG_TIMEOUT",
     "PLATFORM_LOG_UNAVAILABLE",
