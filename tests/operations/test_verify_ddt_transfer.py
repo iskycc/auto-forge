@@ -352,18 +352,18 @@ class HttpVerificationTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def run_verification(self, fixture, cases, *extra):
+    def run_verification(self, fixture, cases, **settings):
         path = self.directory / "cases.xlsx"
         headers = list(dict.fromkeys(field for row in cases for field in row))
         workbook(path, {"data": [headers] + [[row.get(field) for field in headers] for row in cases]})
         report = self.directory / "report"
-        args = ["--file", str(path), "--source-url", fixture.url("source"),
-                "--target-url", fixture.url("target"), "--output-dir", str(report),
-                "--requests-per-second", "100", "--retries", "0", *extra]
-        with patch.dict("os.environ", {
-            "AUTOFORGE_SOURCE_API_KEY": "test-read-only", "AUTOFORGE_TARGET_API_KEY": "test-read-only",
-        }), contextlib.redirect_stdout(io.StringIO()):
-            code = verifier.main(args)
+        config = verifier.VerificationConfig(
+            files=(str(path),), source_url=fixture.url("source"), target_url=fixture.url("target"),
+            output_dir=str(report), requests_per_second=100, retries=0,
+            source_api_key="test-read-only", target_api_key="test-read-only", **settings,
+        )
+        with patch.object(verifier, "CONFIG", config), contextlib.redirect_stdout(io.StringIO()):
+            code = verifier.main()
         summary = json.loads((report / "summary.json").read_text())
         with (report / "differences.csv").open(encoding="utf-8-sig", newline="") as stream:
             differences = list(csv.DictReader(stream))
@@ -428,7 +428,7 @@ class HttpVerificationTests(unittest.TestCase):
         cases = [{"CaseID": "A", "srNum": "SR"}]
         with FakePlatforms({"A": cases[0]}) as fixture:
             fixture.cases["target"].pop("A")
-            code, summary, _ = self.run_verification(fixture, cases, "--file-scope-only")
+            code, summary, _ = self.run_verification(fixture, cases, file_scope_only=True)
         self.assertEqual(code, 1)
         self.assertTrue(summary["complete"])
         self.assertFalse(summary["inventoryVerified"])
@@ -447,7 +447,7 @@ class HttpVerificationTests(unittest.TestCase):
         cases = [{"CaseID": "A", "srNum": "SR", "empty": None, "zero": 0, "false": False}]
         with FakePlatforms({"A": cases[0]}) as fixture:
             fixture.cases["target"]["A"].pop("empty")
-            code, summary, differences = self.run_verification(fixture, cases, "--ignore-empty")
+            code, summary, differences = self.run_verification(fixture, cases, ignore_empty=True)
         self.assertEqual(code, 0)
         self.assertEqual(summary["result"], "effective_data_match")
         self.assertEqual(summary["ignoredEmptyDifferences"], 2)
@@ -456,15 +456,78 @@ class HttpVerificationTests(unittest.TestCase):
 
     def test_complete_inventory_requires_explicit_api_key_without_falling_back_to_anonymous(self):
         with FakePlatforms({}) as fixture:
-            with patch.dict("os.environ", {}, clear=True), contextlib.redirect_stderr(io.StringIO()):
-                code = verifier.main([
-                    "--file", str(self.directory / "not-read.xlsx"),
-                    "--source-url", fixture.url("source"), "--target-url", fixture.url("target"),
-                    "--output-dir", str(self.directory / "report"),
-                ])
+            config = verifier.VerificationConfig(
+                files=(str(self.directory / "not-read.xlsx"),),
+                source_url=fixture.url("source"), target_url=fixture.url("target"),
+                output_dir=str(self.directory / "report"),
+            )
+            with patch.dict("os.environ", {
+                "AUTOFORGE_SOURCE_API_KEY": "test-read-only",
+                "AUTOFORGE_TARGET_API_KEY": "test-read-only",
+            }, clear=True), contextlib.redirect_stderr(io.StringIO()):
+                code = verifier.main(config)
             self.assertEqual(fixture.requests, [])
-        self.assertEqual(code, 3)
+        self.assertEqual(code, 2)
         self.assertFalse((self.directory / "report").exists())
+
+
+class ScriptConfigurationTests(unittest.TestCase):
+    def test_run_without_arguments_reads_script_configuration_and_relative_paths(self):
+        cases = {"中文-01": {"CaseID": "中文-01", "srNum": "Wallet", "value": 0}}
+        with tempfile.TemporaryDirectory() as directory, FakePlatforms(cases) as fixture:
+            root = Path(directory)
+            workbook(root / "cases.xlsx", {"data": [
+                ["CaseID", "srNum", "value"], ["中文-01", "Wallet", 0],
+            ]})
+            config = verifier.VerificationConfig(
+                files=("cases.xlsx",), source_url=fixture.url("source"),
+                target_url=fixture.url("target"), source_api_key="test-read-only",
+                target_api_key="test-read-only", output_dir="report",
+                requests_per_second=100, retries=0,
+            )
+            with (patch.object(verifier, "CONFIG", config),
+                  patch.object(verifier, "__file__", str(root / "verify_ddt_transfer.py")),
+                  patch.object(sys, "argv", ["verify_ddt_transfer.py"]),
+                  contextlib.redirect_stdout(io.StringIO())):
+                code = verifier.main()
+            self.assertEqual(code, 0)
+            summary = json.loads((root / "report/summary.json").read_text())
+            self.assertEqual(summary["result"], "exact_match")
+            self.assertEqual(summary["checkedCases"], 1)
+
+    def test_blank_configuration_fails_before_any_api_request(self):
+        config = verifier.VerificationConfig(files=("",), source_url="", target_url="")
+        with patch.object(verifier, "CONFIG", config), patch.object(verifier.ApiReader, "get") as get:
+            with contextlib.redirect_stderr(io.StringIO()) as errors:
+                code = verifier.main()
+            get.assert_not_called()
+        self.assertEqual(code, 2)
+        self.assertIn("CONFIG.files", errors.getvalue())
+
+    def test_configuration_repr_does_not_expose_api_keys(self):
+        config = verifier.VerificationConfig(
+            files=("cases.xlsx",), source_url="source", target_url="target",
+            source_api_key="source-secret", target_api_key="target-secret",
+        )
+        self.assertNotIn("source-secret", repr(config))
+        self.assertNotIn("target-secret", repr(config))
+
+    def test_invalid_optional_settings_stop_before_api_requests(self):
+        for settings in (
+            {"requests_per_second": float("nan")}, {"timeout": 0}, {"retries": 6},
+            {"max_uncompressed_mib": 0}, {"ignore_empty": "False"},
+            {"csv_encoding": "not-a-real-encoding"},
+        ):
+            with self.subTest(settings=settings):
+                config = verifier.VerificationConfig(
+                    files=("cases.xlsx",), source_url="http://source", target_url="http://target",
+                    source_api_key="source-key", target_api_key="target-key", **settings,
+                )
+                with patch.object(verifier.ApiReader, "get") as get:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        code = verifier.main(config)
+                    get.assert_not_called()
+                self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":

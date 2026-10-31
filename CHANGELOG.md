@@ -6,6 +6,10 @@ and known limitations.
 
 ## Unreleased
 
+### Changed
+
+- DDT 三方校验工具改为直接编辑脚本顶部 CONFIG：集中填写表格、两端 API 地址、API Key 与所有选项后，可直接在 IDE 运行／调试，不再读取业务命令行参数或 API Key 环境变量；相对路径统一以脚本目录为准，未填必填配置时在请求前指出对应字段。
+
 ## 1.21.12 - 2026-10-31
 
 ### Added

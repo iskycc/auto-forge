@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { buildExportWorkbook } from "@autoforge/ddt-import";
 import type { DdtCaseData } from "@autoforge/domain";
@@ -105,31 +105,35 @@ describe("standalone Python verifier compatibility with production DDT exports",
         const address = server.address();
         if (!address || typeof address === "string") throw new Error("Missing fixture port");
         const prefix = `http://127.0.0.1:${address.port}/api/v1/public/ddt/projects`;
-        await execute(
-          "python3",
-          [
-            "-B",
-            resolve("scripts/operations/verify_ddt_transfer.py"),
-            "--file",
-            spreadsheet,
-            "--source-url",
-            `${prefix}/source/versions/version/stages/stage`,
-            "--target-url",
-            `${prefix}/target/versions/version/stages/stage`,
-            "--source-token-env",
-            "AUTOFORGE_VERIFIER_TEST_TOKEN",
-            "--target-token-env",
-            "AUTOFORGE_VERIFIER_TEST_TOKEN",
-            "--requests-per-second",
-            "100",
-            "--output-dir",
-            join(directory, "report"),
-          ],
-          {
-            env: { ...process.env, AUTOFORGE_VERIFIER_TEST_TOKEN: "read-only-fixture" },
-            timeout: 15_000,
-          },
+        const scriptTemplate = await readFile(
+          resolve("scripts/operations/verify_ddt_transfer.py"),
+          "utf8",
         );
+        const configuration = `# BEGIN USER CONFIGURATION
+CONFIG = VerificationConfig(
+    files=(${JSON.stringify(basename(spreadsheet))},),
+    source_url=${JSON.stringify(`${prefix}/source/versions/version/stages/stage`)},
+    target_url=${JSON.stringify(`${prefix}/target/versions/version/stages/stage`)},
+    source_api_key="read-only-fixture",
+    target_api_key="read-only-fixture",
+    requests_per_second=100,
+    output_dir="report",
+)
+# END USER CONFIGURATION`;
+        expect(scriptTemplate).toMatch(
+          /# BEGIN USER CONFIGURATION[\s\S]*?# END USER CONFIGURATION/,
+        );
+        const script = join(directory, "configured-verifier.py");
+        await writeFile(
+          script,
+          scriptTemplate.replace(
+            /# BEGIN USER CONFIGURATION[\s\S]*?# END USER CONFIGURATION/,
+            () => configuration,
+          ),
+        );
+        await execute("python3", ["-B", script], {
+          timeout: 15_000,
+        });
         expect(
           JSON.parse(await readFile(join(directory, "report/summary.json"), "utf8")),
         ).toMatchObject({

@@ -18,7 +18,7 @@ test-results/
 *.test
 __pycache__/
 *.py[cod]
-/ddt-verification-*/
+ddt-verification-*/
 
 # Local configuration and secrets. Versioned examples stay tracked.
 .env*

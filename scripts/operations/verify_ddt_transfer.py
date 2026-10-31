@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import codecs
 import csv
 import hashlib
@@ -21,7 +20,7 @@ import uuid
 import zipfile
 from collections import OrderedDict
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import zip_longest
 from pathlib import Path
@@ -29,6 +28,57 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 from xml.etree import ElementTree
+
+
+@dataclass(frozen=True)
+class VerificationConfig:
+    files: tuple[str, ...]
+    source_url: str
+    target_url: str
+    source_api_key: str = field(default="", repr=False)
+    target_api_key: str = field(default="", repr=False)
+    output_dir: str = ""
+    file_scope_only: bool = False
+    ignore_empty: bool = False
+    include_values: bool = False
+    requests_per_second: float = 5
+    timeout: float = 15
+    retries: int = 2
+    source_ca_file: str = ""
+    target_ca_file: str = ""
+    csv_encoding: str = "utf-8-sig"
+    max_uncompressed_mib: int = 2048
+
+
+# BEGIN USER CONFIGURATION
+# 只修改下面的 CONFIG，然后直接点击 IDE 的运行／调试，无需命令行参数或环境变量。
+# 相对路径以本脚本所在目录为准；Windows 路径请保留 r 前缀，例如 r"D:\DDT\用例.xlsx"。
+CONFIG = VerificationConfig(
+    # 必填：一个或多个平台导出的 XLSX／CSV 文件，多个文件逐行追加。
+    files=(
+        r"",
+    ),
+    # 必填：复制两端“DDT 管理 → 开放 API”的完整范围／单用例地址。
+    source_url="",
+    target_url="",
+    # 全量校验必填：两端具有当前项目 case.read 权限的只读 API Key。
+    source_api_key="",
+    target_api_key="",
+
+    # 选填：留空则在脚本旁自动创建唯一报告目录；填写时必须是尚不存在的新目录。
+    output_dir="",
+    file_scope_only=False,  # True 仅匿名验证表格内用例，不能证明平台全量一致。
+    ignore_empty=False,  # True 将缺失／null／空串／纯空白互等，仍记录被忽略差异。
+    include_values=False,  # True 在差异报告中增加完整字段值，可能包含用例敏感信息。
+    requests_per_second=5,  # 两端合计请求上限，始终串行；范围 (0, 100]。
+    timeout=15,  # 每次请求超时，单位秒；范围 (0, 300]。
+    retries=2,  # 只读请求有限重试，范围 0–5。
+    source_ca_file="",  # HTTPS 私有 CA 文件路径，留空使用系统信任链。
+    target_ca_file="",
+    csv_encoding="utf-8-sig",
+    max_uncompressed_mib=2048,  # XLSX 解压总预算，范围 1–16384 MiB。
+)
+# END USER CONFIGURATION
 
 
 STEP_PRESENT = "__DDT_INSIGHT_STEP_PRESENT__"
@@ -49,6 +99,10 @@ class VerificationError(Exception):
 
 class CaseNotFound(VerificationError):
     """A confirmed absent case differs from an unsuccessful API read."""
+
+
+class ConfigurationError(VerificationError):
+    """Editable script settings must be complete before starting any API requests."""
 
 
 def utc_now() -> str:
@@ -682,49 +736,61 @@ def reconcile(index: CaseIndex, readers: dict, report: Report, file_scope_only: 
         )
 
 
-def arguments(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--file", action="append", required=True, type=Path, help="平台导出的 XLSX/CSV，可重复指定；拒绝重复 CaseID")
-    parser.add_argument("--source-url", required=True, help="导出平台 DDT 开放 API 的完整范围或单用例 URL")
-    parser.add_argument("--target-url", required=True, help="导入平台 DDT 开放 API 的完整范围或单用例 URL")
-    parser.add_argument("--source-token-env", default="AUTOFORGE_SOURCE_API_KEY")
-    parser.add_argument("--target-token-env", default="AUTOFORGE_TARGET_API_KEY")
-    parser.add_argument("--source-ca-file")
-    parser.add_argument("--target-ca-file")
-    parser.add_argument("--file-scope-only", action="store_true", help="不用 API Key，仅检查表格中的用例；不认证平台全量一致")
-    parser.add_argument("--ignore-empty", action="store_true", help="显式允许缺失/null/空串/仅空白字符互等；仍输出被忽略差异")
-    parser.add_argument("--include-values", action="store_true", help="在私有差异报告中写入完整值；报告可能含用例敏感信息")
-    parser.add_argument("--output-dir", type=Path, default=Path("ddt-verification-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:6]))
-    parser.add_argument("--requests-per-second", type=float, default=5, help="两平台合计请求上限，默认 5；始终串行")
-    parser.add_argument("--timeout", type=float, default=15)
-    parser.add_argument("--retries", type=int, default=2, help="只读请求有限重试次数（0–5）")
-    parser.add_argument("--csv-encoding", default="utf-8-sig")
-    parser.add_argument("--max-uncompressed-mib", type=int, default=2048)
-    options = parser.parse_args(argv)
-    if not math.isfinite(options.requests_per_second) or not 0 < options.requests_per_second <= 100:
-        parser.error("请求频率应为 0–100 之间的有限正数。")
-    if not math.isfinite(options.timeout) or not 0 < options.timeout <= 300 or not 0 <= options.retries <= 5:
-        parser.error("超时应在 0–300 秒之间，重试应在 0–5 之间。")
-    if not 1 <= options.max_uncompressed_mib <= 16384:
-        parser.error("解压预算应在 1–16384 MiB 之间。")
+def script_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else Path(__file__).resolve().parent / path
+
+
+def validate_configuration(options: VerificationConfig):
+    if (not isinstance(options.files, (tuple, list)) or not options.files
+            or any(not isinstance(path, str) or not path.strip() for path in options.files)):
+        raise ConfigurationError("请在脚本顶部 CONFIG.files 填写一个或多个表格文件路径。")
+    for name in ("source_url", "target_url"):
+        value = getattr(options, name)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigurationError(f"请在脚本顶部 CONFIG.{name} 填写完整 DDT 开放 API 地址。")
+    for name in ("file_scope_only", "ignore_empty", "include_values"):
+        if type(getattr(options, name)) is not bool:
+            raise ConfigurationError(f"CONFIG.{name} 必须填写 True 或 False，不能使用字符串。")
+    for name in ("source_api_key", "target_api_key"):
+        value = getattr(options, name)
+        if not isinstance(value, str) or any(character in value for character in "\r\n"):
+            raise ConfigurationError(f"CONFIG.{name} 必须是单行字符串。")
+        if not options.file_scope_only and not value.strip():
+            raise ConfigurationError(f"全量验证需要在 CONFIG.{name} 填写 case.read API Key。")
+    for name, maximum in (("requests_per_second", 100), ("timeout", 300)):
+        value = getattr(options, name)
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= maximum:
+            raise ConfigurationError(f"CONFIG.{name} 应为 0–{maximum} 之间的有限正数。")
+    if type(options.retries) is not int or not 0 <= options.retries <= 5:
+        raise ConfigurationError("CONFIG.retries 应为 0–5 的整数。")
+    if type(options.max_uncompressed_mib) is not int or not 1 <= options.max_uncompressed_mib <= 16384:
+        raise ConfigurationError("CONFIG.max_uncompressed_mib 应为 1–16384 的整数。")
+    for name in ("output_dir", "source_ca_file", "target_ca_file", "csv_encoding"):
+        if not isinstance(getattr(options, name), str):
+            raise ConfigurationError(f"CONFIG.{name} 必须是字符串，未填写时使用空字符串。")
     try:
         codecs.lookup(options.csv_encoding)
-    except LookupError:
-        parser.error("CSV 字符编码名称无效。")
-    return options
+    except LookupError as error:
+        raise ConfigurationError("CONFIG.csv_encoding 的编码名称无效。") from error
 
 
-def main(argv=None):
-    options = arguments(argv)
+def main(configuration: VerificationConfig | None = None):
+    options = CONFIG if configuration is None else configuration
     report = None
     exit_code = 3
     try:
-        endpoints = {origin: Endpoint.parse(getattr(options, origin + "_url"),
-                     os.environ.get(getattr(options, origin + "_token_env"), ""),
-                     getattr(options, origin + "_ca_file")) for origin in ("source", "target")}
-        if not options.file_scope_only and not all(endpoint.token for endpoint in endpoints.values()):
-            raise VerificationError("全量验证需要两端 case.read API Key 环境变量；仅验证表格范围请显式使用 --file-scope-only。")
-        report = Report(options.output_dir, options.include_values, options.ignore_empty)
+        validate_configuration(options)
+        files = tuple(script_path(path) for path in options.files)
+        endpoints = {
+            origin: Endpoint.parse(
+                getattr(options, origin + "_url").strip(),
+                getattr(options, origin + "_api_key").strip(),
+                str(script_path(ca_file)) if (ca_file := getattr(options, origin + "_ca_file")) else None,
+            ) for origin in ("source", "target")
+        }
+        report_name = "ddt-verification-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:6]
+        report = Report(script_path(options.output_dir or report_name), options.include_values, options.ignore_empty)
         report.summary["endpoints"] = {origin: endpoint.prefix for origin, endpoint in endpoints.items()}
         report.summary["files"] = []
         pacer = RequestPacer(options.requests_per_second)
@@ -732,7 +798,7 @@ def main(argv=None):
         with tempfile.TemporaryDirectory(prefix="autoforge-ddt-verification-") as directory:
             with closing(sqlite3.connect(Path(directory) / "index.sqlite")) as connection:
                 index = CaseIndex(connection)
-                for book, path in enumerate(options.file):
+                for book, path in enumerate(files):
                     digest = file_fingerprint(path)
                     report.summary["files"].append({"name": path.name, "sha256": digest})
                     read_spreadsheet(index, path, book, options.csv_encoding, options.max_uncompressed_mib * 1024 * 1024)
@@ -741,12 +807,15 @@ def main(argv=None):
                 connection.commit()
                 print(f"表格包含 {index.count('table')} 条用例；串行读取，合计上限 {options.requests_per_second:g} 请求/秒。", flush=True)
                 reconcile(index, readers, report, options.file_scope_only)
-                for path, record in zip(options.file, report.summary["files"]):
+                for path, record in zip(files, report.summary["files"]):
                     if file_fingerprint(path) != record["sha256"]:
                         report.summary["complete"] = False
                         report.summary["result"] = "incomplete"
                         raise VerificationError(f"表格在验证期间被修改：{path.name}")
         exit_code = 3 if not report.summary["complete"] else 1 if report.summary["differences"] else 0
+    except ConfigurationError as error:
+        print(str(error), file=sys.stderr)
+        exit_code = 2
     except KeyboardInterrupt:
         if report:
             report.summary["complete"] = False
@@ -783,4 +852,7 @@ def file_fingerprint(path: Path) -> str:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) != 1:
+        print("请直接修改脚本顶部的 CONFIG，再运行本文件；不需要传入命令行参数。", file=sys.stderr)
+        sys.exit(2)
     sys.exit(main())
