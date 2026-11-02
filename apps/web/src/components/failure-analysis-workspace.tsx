@@ -1,6 +1,6 @@
 "use client";
 import { EvidenceImagePreview } from "./ui/evidence-image-preview";
-import { Image } from "antd";
+import { Flex, Image } from "antd";
 import { LoadingStateMessage } from "@/components/ui/loading-state-message";
 
 import { Badge } from "@/components/ui/badge";
@@ -1243,60 +1243,72 @@ function ReleaseClaimDialog({
       title={`取消认领 ${claim.caseName}`}
       onClose={onClose}
       className={cn(
-        "runner-update-dialog failure-analysis-release-dialog",
-        failureAnalysisWorkspaceStyles["runner-update-dialog"],
+        "failure-analysis-release-dialog",
         failureAnalysisWorkspaceStyles["failure-analysis-release-dialog"],
       )}
       backdropClassName="runner-update-overlay failure-analysis-confirm-overlay"
     >
-      <header>
-        <span
+      <div className="grid min-h-0 min-w-0 gap-4 overflow-y-auto p-6 [overflow-wrap:anywhere]">
+        <header className="flex min-w-0 items-start gap-3">
+          <span
+            className={cn(
+              "failure-analysis-release-icon",
+              failureAnalysisWorkspaceStyles["failure-analysis-release-icon"],
+            )}
+            aria-hidden="true"
+          >
+            <UserMinus size={21} />
+          </span>
+          <div className="grid min-w-0 gap-1.5">
+            <strong className="text-lg text-foreground">确认取消认领？</strong>
+            <p className="m-0 leading-relaxed text-muted-foreground">
+              “{claim.caseName}”将重新回到待认领列表，其他分析人员可以立即认领该用例。
+            </p>
+          </div>
+        </header>
+        <label
           className={cn(
-            "failure-analysis-release-icon",
-            failureAnalysisWorkspaceStyles["failure-analysis-release-icon"],
+            "failure-analysis-field min-w-0",
+            failureAnalysisWorkspaceStyles["failure-analysis-field"],
           )}
-          aria-hidden="true"
         >
-          <UserMinus size={21} />
-        </span>
-        <div>
-          <strong>确认取消认领？</strong>
-          <p>“{claim.caseName}”将重新回到待认领列表，其他分析人员可以立即认领该用例。</p>
-        </div>
-      </header>
-      <label
-        className={cn(
-          "failure-analysis-field",
-          failureAnalysisWorkspaceStyles["failure-analysis-field"],
-        )}
+          <span>
+            取消原因 <strong>*</strong>
+          </span>
+          <Textarea
+            autoFocus
+            maxLength={1_000}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="请说明误领、任务调整或交接原因"
+            rows={4}
+            value={reason}
+          />
+          <small className="justify-self-end font-medium text-muted-foreground">
+            {reason.length}/1000
+          </small>
+        </label>
+        <p
+          className={cn(
+            "failure-analysis-release-note",
+            failureAnalysisWorkspaceStyles["failure-analysis-release-note"],
+          )}
+        >
+          取消原因会永久记录；当前未提交的分析内容不会带给下一位认领人。
+        </p>
+        {error ? (
+          <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
+            {error}
+          </Notice>
+        ) : null}
+      </div>
+      <Flex
+        component="footer"
+        align="center"
+        justify="end"
+        wrap
+        gap="small"
+        className="dialog-actions shrink-0 border-t border-border bg-muted/30 px-6 py-4"
       >
-        <span>
-          取消原因 <strong>*</strong>
-        </span>
-        <Textarea
-          autoFocus
-          maxLength={1_000}
-          onChange={(event) => setReason(event.target.value)}
-          placeholder="请说明误领、任务调整或交接原因"
-          rows={4}
-          value={reason}
-        />
-        <small>{reason.length}/1000</small>
-      </label>
-      <p
-        className={cn(
-          "failure-analysis-release-note",
-          failureAnalysisWorkspaceStyles["failure-analysis-release-note"],
-        )}
-      >
-        取消原因会永久记录；当前未提交的分析内容不会带给下一位认领人。
-      </p>
-      {error ? (
-        <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
-          {error}
-        </Notice>
-      ) : null}
-      <div className={"dialog-actions"}>
         <Button disabled={submitting} onClick={onClose} type="button" variant="secondary">
           返回
         </Button>
@@ -1313,7 +1325,7 @@ function ReleaseClaimDialog({
           {submitting ? <LoadingIcon size={16} /> : <UserMinus aria-hidden="true" size={16} />}
           确认取消认领
         </Button>
-      </div>
+      </Flex>
     </Dialog>
   );
 }
@@ -3010,7 +3022,7 @@ const failureAnalysisWorkspaceStyles = {
   "failure-analysis-recent-success":
     "inline-flex min-h-6 [flex:0_0_auto] items-center gap-1 border border-solid border-border rounded-full py-0.5 px-[7px] bg-card text-success text-xs font-semibold whitespace-nowrap",
   "failure-analysis-release-dialog":
-    "grid w-[min(540px,_calc(100vw_-_48px))] gap-4 p-5.5 [&_>_header]:flex [&_>_header]:items-start [&_>_header]:gap-3 [&_>_header_>_div]:grid [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-1.5 [&_>_header_strong]:text-foreground [&_>_header_strong]:text-lg [&_>_header_p]:m-0 [&_>_header_p]:text-muted-foreground [&_>_header_p]:leading-[1.55] [&_.failure-analysis-field_>_small]:justify-self-end [&_.failure-analysis-field_>_small]:text-muted-foreground [&_.failure-analysis-field_>_small]:font-medium [&_.dialog-actions]:flex [&_.dialog-actions]:justify-end [&_.dialog-actions]:gap-2",
+    "w-[min(540px,_calc(100vw_-_48px))] rounded-xl border border-border shadow-lg",
   "failure-analysis-release-icon":
     "inline-flex [flex:0_0_auto] rounded-full p-[9px] bg-destructive/10 text-destructive",
   "failure-analysis-release-note":

@@ -607,6 +607,123 @@ test("analysis cards keep full double-digit dates on one line at desktop widths"
   }
 });
 
+for (const caseName of [
+  { scenario: "short case names", suffix: "钱包余额检查" },
+  {
+    scenario: "long case names",
+    suffix: `${"com.autoforge.wallet.integration.".repeat(10)}中文用例`,
+  },
+]) {
+  test(`release claim dialog keeps actions inside the panel with ${caseName.scenario}`, async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await ensureAdministrator(page);
+    const suffix = uniqueName("release-claim-layout");
+    const version = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+      { method: "POST", body: { name: suffix } },
+    );
+    expect(version.status).toBe(201);
+    await selectProjectContext(page, DEFAULT_PROJECT_ID, version.body.id);
+    const fixture = insertFailureAnalysisFixture(
+      requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"),
+      version.body.id,
+      suffix,
+      { caseNameSuffix: caseName.suffix },
+    );
+    const scope = {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: version.body.id,
+      batchId: fixture.batchId,
+    };
+    expect(
+      (await browserJson(page, "/api/v1/failure-analysis/batches", { method: "POST", body: scope }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await browserJson(page, "/api/v1/failure-analysis/claims", {
+          method: "POST",
+          body: { ...scope, executionRunIds: [`run-failed-0-${suffix}`] },
+        })
+      ).status,
+    ).toBe(201);
+    await page.goto(`/case-analysis/${fixture.batchId}?view=workbench`);
+    const card = analysisCard(page, fixture.failedNames[0]);
+    await card.getByRole("button", { name: "取消认领", exact: true }).click();
+    let dialog = page.getByRole("alertdialog", { name: `取消认领 ${fixture.failedNames[0]}` });
+    await expect(dialog.getByRole("button", { name: "确认取消认领" })).toBeDisabled();
+    const reason = "误领，交由负责该环境的同事继续分析。";
+    await dialog.getByLabel("取消原因 *").fill("   ");
+    await expect(dialog.getByRole("button", { name: "确认取消认领" })).toBeDisabled();
+    await dialog.getByLabel("取消原因 *").fill(reason);
+
+    for (const appearance of ["light", "dark"] as const) {
+      if (appearance === "dark") {
+        await dialog.getByRole("button", { name: "返回", exact: true }).click();
+        await expect(dialog).toBeHidden();
+        await expect(card).toBeVisible();
+        await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+        await card.getByRole("button", { name: "取消认领", exact: true }).click();
+        dialog = page.getByRole("alertdialog", { name: `取消认领 ${fixture.failedNames[0]}` });
+        await dialog.getByLabel("取消原因 *").fill(reason);
+      }
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 960 },
+        { width: 1024, height: 600 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await expectDialogFitsViewport(page, dialog);
+        await page.screenshot({
+          path: testInfo.outputPath(
+            `release-claim-${appearance}-${viewport.width}x${viewport.height}.png`,
+          ),
+          animations: "disabled",
+        });
+        await expectReleaseClaimControlsFit(page, dialog);
+        await expect(dialog.getByLabel("取消原因 *")).toHaveValue(reason);
+      }
+    }
+    await page.setViewportSize({ width: 1024, height: 768 });
+    const failureMessage = "用例的认领状态已变化，请刷新后重试。";
+    await page.route(
+      "**/api/v1/failure-analysis/claims/*/release",
+      (route) =>
+        route.fulfill({
+          status: 409,
+          json: {
+            error: { code: "ANALYSIS_CONFLICT", message: failureMessage },
+            requestId: "release-layout",
+          },
+        }),
+      { times: 1 },
+    );
+    const rejected = page.waitForResponse((response) => response.url().endsWith("/release"));
+    await dialog.getByRole("button", { name: "确认取消认领" }).click();
+    expect((await rejected).status()).toBe(409);
+    await expect(dialog).toContainText(failureMessage);
+    await expect(dialog.getByLabel("取消原因 *")).toHaveValue(reason);
+    await expect(dialog.getByRole("button", { name: "确认取消认领" })).toBeEnabled();
+    await expectReleaseClaimControlsFit(page, dialog);
+    await page.screenshot({
+      path: testInfo.outputPath("release-claim-server-error-1024.png"),
+      animations: "disabled",
+    });
+    const released = page.waitForResponse(
+      (response) => response.url().endsWith("/release") && response.request().method() === "POST",
+    );
+    await dialog.getByRole("button", { name: "确认取消认领" }).click();
+    expect((await released).status()).toBe(200);
+    await expect(dialog).toBeHidden();
+    await expect(card).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "我的分析 0" })).toBeVisible();
+  });
+}
+
 test("terminal task failures support durable single and batch analysis with evidence", async ({
   page,
 }) => {
@@ -1687,6 +1804,42 @@ async function captureUi(
   if (!screenshotDirectory) return;
   await mkdir(screenshotDirectory, { recursive: true });
   await page.screenshot({ path: resolve(screenshotDirectory, `${name}.png`), fullPage });
+}
+
+async function expectReleaseClaimControlsFit(
+  page: import("@playwright/test").Page,
+  dialog: import("@playwright/test").Locator,
+): Promise<void> {
+  await expectDialogFitsViewport(page, dialog);
+  const layout = await dialog.locator(".failure-analysis-release-dialog").evaluate((panel) => {
+    const bounds = panel.getBoundingClientRect();
+    return {
+      overflow: panel.scrollWidth - panel.clientWidth,
+      buttons: Array.from(panel.querySelectorAll("button")).map((button) => {
+        const control = button.getBoundingClientRect();
+        return {
+          label: button.textContent,
+          inside:
+            control.left >= bounds.left &&
+            control.right <= bounds.right &&
+            control.top >= bounds.top &&
+            control.bottom <= bounds.bottom,
+          height: control.height,
+          width: control.width,
+        };
+      }),
+    };
+  });
+  expect(layout.overflow, "confirmation panel must not overflow horizontally").toBeLessThanOrEqual(
+    1,
+  );
+  expect(layout.buttons).toHaveLength(2);
+  for (const button of layout.buttons) {
+    expect(button.inside, `${button.label} stays inside the dialog`).toBe(true);
+    expect(button.height).toBeGreaterThanOrEqual(32);
+    expect(button.width).toBeGreaterThanOrEqual(40);
+  }
+  await expectUiIntegrity(page);
 }
 
 async function expectDialogFitsViewport(

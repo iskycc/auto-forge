@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.21.16 - 2026-11-02
+
+### Fixed
+
+- 用例分析“取消认领”弹框移除不匹配的网格行布局，长用例名在正文内换行；正文按需滚动，底部操作栏保持可见，避免按钮溢出或被裁切。取消原因必填、返回、服务端失败保留输入及成功释放流程保持原有行为。
+
+### Compatibility
+
+- Lite／Full 复用同一弹框，无新增数据库迁移、配置、生产依赖或离线资产；认领权限、释放事务与 Runner 协议保持不变。
+
+### Verification
+
+- 新增回归先在旧生产构建复现 1902px 内部横向溢出，修复后两项 Playwright 场景通过，覆盖普通／长用例名、空白原因、返回、服务端拒绝后保留输入及真实释放成功。
+- Web 生产构建、17 项 UI 规范测试、相关格式／Lint／类型检查通过；实际查看 1024×768、1536×960 与 1024×600 浅色／深色截图，底部按钮完整可见，无横向溢出或裁切。
+- 按用户要求采用最快发布路径，仅运行 Release；跳过标准 CI、源码发布检查、Full 分布式与发布后完整验收，保留原生双架构构建、镜像启动、内置资源、SBOM、签名及完整资产校验。
+
 ## 1.21.15 - 2026-11-02
 
 ### Added
