@@ -13,16 +13,19 @@ import { readApiError } from "@/lib/client-api";
 import { formatDiskBytes } from "@/lib/runner-disk";
 import { formatArtifactBytes } from "@/lib/run-batch-presentation";
 import { ActionDialog } from "./action-dialog";
+import { StorageMonitoringSettings } from "./storage-monitoring-settings";
 import { PostgresCapacityPanel } from "./postgres-capacity-panel";
 
 export function InfrastructureUsageDialog({
   dependency,
   label,
   onClose,
+  canManage = false,
 }: {
   dependency: InfrastructureDependency;
   label: string;
   onClose(): void;
+  canManage?: boolean;
 }) {
   const [usage, setUsage] = useState<InfrastructureUsage>();
   const [loading, setLoading] = useState(true);
@@ -113,6 +116,14 @@ export function InfrastructureUsageDialog({
               ),
             }))}
           />
+        ) : null}
+        {canManage && usage?.storageMonitoringTarget ? (
+          <Flex justify="end">
+            <StorageMonitoringSettings
+              target={usage.storageMonitoringTarget}
+              onSaved={() => refresh(true)}
+            />
+          </Flex>
         ) : null}
         {usage?.storage ? <PostgresCapacityPanel capacity={usage.storage} /> : null}
         {usage?.notes.map((note, index) => (

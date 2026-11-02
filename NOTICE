@@ -11,3 +11,8 @@ the concrete binaries included in that release.
 
 Frontend component license texts are included in docs/licenses/. Ant Design,
 its icon set and CSS-in-JS runtime, and Day.js are distributed under the MIT license.
+
+Optional deployment templates reference Prometheus Node Exporter v1.12.1,
+Copyright The Prometheus Authors, licensed under the Apache License 2.0.
+Upstream source: https://github.com/prometheus/node_exporter
+The external monitoring image is not embedded in the AutoForge backend image.

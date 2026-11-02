@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, chmod } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -32,7 +32,7 @@ async function compose(host, overrides = {}) {
       .filter((line) => line !== undefined)
       .join("\n");
     await writeFile(environment, configured, { mode: 0o600 });
-    const inherited = { ...process.env };
+    const inherited = { ...process.env, COMPOSE_PROFILES: "monitoring" };
     for (const key of Object.keys(values)) delete inherited[key];
     const result = await execute(
       "docker",
@@ -103,7 +103,7 @@ test("isolates the daily log database from business data and supports a separate
   const logs = await compose("log-postgres");
   const business = await compose("node-b");
   assert.notEqual(logs.name, business.name);
-  assert.deepEqual(Object.keys(logs.services), ["postgres"]);
+  assert.deepEqual(Object.keys(logs.services).sort(), ["node-exporter", "postgres"]);
   const { postgres } = logs.services;
   assert.equal(postgres.environment.POSTGRES_PASSWORD, credentials.LOG_POSTGRES_PASSWORD);
   assert.equal(postgres.environment.POSTGRES_USER, "autoforge_logs");
@@ -132,48 +132,26 @@ test("uses the same MinIO credentials for its server and bucket initialization",
   assert.equal(services["minio-init"].depends_on.minio.condition, "service_healthy");
 });
 
-test("PostgreSQL healthcheck atomically reports its own data filesystem and keeps readiness independent from sampling", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "autoforge-pg-sample-"));
-  try {
-    const bin = join(directory, "bin");
-    await mkdir(bin);
-    const ready = join(bin, "pg_isready");
-    await writeFile(ready, "#!/bin/sh\nexit 0\n");
-    await chmod(ready, 0o755);
-    const data = join(directory, "database with spaces");
-    await mkdir(data);
-    const logCommand = (
-      await compose("log-postgres")
-    ).services.postgres.healthcheck.test[1].replaceAll("$$", "$");
-    const mainCommand = (await compose("node-b")).services.postgres.healthcheck.test[1].replaceAll(
-      "$$",
-      "$",
+test("uses a read-only standard exporter without filesystem scripts in PostgreSQL healthchecks", async () => {
+  for (const host of ["node-b", "log-postgres"]) {
+    const { services } = await compose(host);
+    const postgres = services.postgres,
+      exporter = services["node-exporter"];
+    assert.equal(postgres.healthcheck.test[0], "CMD");
+    assert.equal(postgres.healthcheck.test[1], "pg_isready");
+    assert(!JSON.stringify(postgres).includes("autoforge-storage-capacity"));
+    assert.deepEqual(exporter.profiles, ["monitoring"]);
+    assert.equal(exporter.read_only, true);
+    assert.deepEqual(exporter.cap_drop, ["ALL"]);
+    assert.equal(exporter.volumes[0].source, postgres.volumes[0].source);
+    assert.equal(exporter.volumes[0].read_only, true);
+    assert.equal(exporter.volumes[0].target, "/pgdata");
+    assert(!exporter.pid && !exporter.privileged);
+    assert(
+      exporter.command
+        .map((argument) => argument.replaceAll("$$", "$"))
+        .includes("--collector.filesystem.mount-points-include=^/pgdata$"),
     );
-    assert.equal(logCommand, mainCommand);
-    const env = {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH}`,
-      PGDATA: data,
-      POSTGRES_USER: "fixture",
-      POSTGRES_DB: "postgres",
-    };
-    await execute("sh", ["-c", logCommand], { env });
-    const samplePath = join(data, "autoforge-storage-capacity.json");
-    const sample = JSON.parse(await readFile(samplePath, "utf8"));
-    assert.equal(sample.schemaVersion, 1);
-    assert(sample.capacityBytes > 0);
-    assert(sample.availableBytes >= 0 && sample.availableBytes <= sample.capacityBytes);
-    assert(Number.isFinite(Date.parse(sample.sampledAt)));
-    const df = join(bin, "df");
-    await writeFile(df, "#!/bin/sh\nexit 1\n");
-    await chmod(df, 0o755);
-    const failure = await execute("sh", ["-c", logCommand], { env });
-    assert.match(failure.stderr, /Warning/u);
-    assert.deepEqual(JSON.parse(await readFile(samplePath, "utf8")), sample);
-    assert(!(await readdir(data)).some((name) => name.endsWith(".tmp")));
-    await writeFile(ready, "#!/bin/sh\nexit 1\n");
-    await assert.rejects(execute("sh", ["-c", logCommand], { env }));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+    assert(exporter.command.includes("--collector.disable-defaults"));
   }
 });

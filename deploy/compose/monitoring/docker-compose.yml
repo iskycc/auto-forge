@@ -1,0 +1,29 @@
+name: autoforge-postgres-monitoring
+
+services:
+  node-exporter:
+    image: autoforge/offline-node-exporter:1.12.1-${AUTOFORGE_ARCH:-amd64}
+    platform: linux/${AUTOFORGE_ARCH:-amd64}
+    pull_policy: never
+    restart: unless-stopped
+    read_only: true
+    cpus: "0.25"
+    mem_limit: 96m
+    pids_limit: 64
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set this host private IP}:${AUTOFORGE_NODE_EXPORTER_PORT:-19100}:9100"
+    command:
+      - --collector.disable-defaults
+      - --collector.filesystem
+      - --collector.filesystem.mount-points-include=^/pgdata$$
+      - --web.disable-exporter-metrics
+      - --web.max-requests=4
+    volumes:
+      - type: bind
+        source: ${AUTOFORGE_POSTGRES_DATA_DIR:?set an absolute PostgreSQL data directory}
+        target: /pgdata
+        read_only: true
+        bind:
+          create_host_path: false

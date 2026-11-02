@@ -1,3 +1,4 @@
+import { StorageMonitoringService } from "@autoforge/application";
 import { httpTrafficSnapshot } from "./runtime-metrics";
 import { ArchivedAttemptLogStore, SqliteLogArchiveRepository } from "@autoforge/db/sqlite";
 import { readOnlyLegacyAttemptLogs } from "@autoforge/db/sqlite";
@@ -197,6 +198,7 @@ async function createPlatformServices() {
   let nodeLogs: import("@autoforge/db/postgres").NodeAttemptLogStore | undefined;
   let routedLogs: import("@autoforge/db/postgres").PostgresRoutedAttemptLogStore | undefined;
   let logArchiveRepository: LogArchiveRepository;
+  let storageMonitoring: StorageMonitoringService | undefined;
   let logDatabases: import("@autoforge/application").LogDatabaseService | undefined;
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
@@ -348,6 +350,8 @@ async function createPlatformServices() {
         PostgresPlatformNodeRepository,
         NodeAttemptLogStore,
         PostgresLogDatabaseRepository,
+        PostgresStorageMonitoringRepository,
+        readPostgresStorageCapacity,
         PostgresLogWriteAdmission,
         PostgresRoutedAttemptLogStore,
         createNodeLogTransport,
@@ -457,14 +461,24 @@ async function createPlatformServices() {
         await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
         attemptLogs = nodeLogs;
       }
+      storageMonitoring = new StorageMonitoringService(
+        new PostgresStorageMonitoringRepository(database),
+        { read: readPostgresStorageCapacity },
+        clock,
+      );
+      const monitoring = storageMonitoring;
       const logRegistry = new PostgresLogDatabaseRepository(
         database,
         new AesGcmSecretCipher(config.masterKey),
         createHash("sha256").update(config.masterKey).digest("hex"),
         join(config.migrationsFolder, "../log-postgresql"),
+        (id, now) => monitoring.capacity({ kind: "logs", databaseId: id }, now),
       );
       databaseUsage = async () => {
-        const sample = await readPostgresInfrastructureUsage(database.pool, new Date());
+        const now = clock.now();
+        const sample = await readPostgresInfrastructureUsage(database.pool, now, () =>
+          monitoring.capacity({ kind: "primary" }, now),
+        );
         const logs = logRegistry.connectionPoolSnapshot();
         return {
           ...sample,
@@ -1172,6 +1186,7 @@ async function createPlatformServices() {
     }),
     diagnostics,
     infrastructureUsage,
+    storageMonitoring,
     databaseReady,
     clock,
     config,

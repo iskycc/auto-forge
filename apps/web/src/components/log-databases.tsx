@@ -131,6 +131,7 @@ export function LogDatabases({
                 库标识：{database.id}
               </Typography.Paragraph>
               <LogDatabaseCapacity
+                canManage={canManage}
                 key={`${database.id}:${database.address}`}
                 databaseId={database.id}
                 active={database.active}

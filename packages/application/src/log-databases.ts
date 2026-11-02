@@ -88,6 +88,10 @@ export class LogDatabaseService {
     this.capacityRequests.set(key, request);
     return request;
   }
+  invalidateCapacity() {
+    this.capacityEpoch++;
+    this.capacities.clear();
+  }
   async updateConnection(
     id: string,
     input: RegisterLogDatabaseInput | RegisterDailyLogServerInput,
@@ -95,8 +99,7 @@ export class LogDatabaseService {
     const result = await ("databaseUrl" in input
       ? this.repository.updateConnection(id, registerLogDatabaseSchema.parse(input))
       : this.repository.updateDailyConnection(id, registerDailyLogServerSchema.parse(input)));
-    this.capacityEpoch++;
-    this.capacities.clear();
+    this.invalidateCapacity();
     return result;
   }
 }

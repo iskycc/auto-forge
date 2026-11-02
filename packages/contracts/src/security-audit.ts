@@ -43,6 +43,7 @@ const actionsByCategory = {
     "ldap.configure": "修改目录认证配置",
     "service_account.create": "创建服务账号",
     "service_account.update": "修改服务账号",
+    "storage_monitoring.update": "配置数据卷磁盘监控",
     "service_account.delete": "删除服务账号",
     "api_token.delete": "删除 API 令牌记录",
     "api_token.issue": "签发接口访问令牌",

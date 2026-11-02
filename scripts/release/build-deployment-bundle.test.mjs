@@ -71,7 +71,7 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
     ]) {
       assert.match(
         await readFile(resolve(packageDirectory, filename), "utf8"),
-        /\]\(\.\.\/\.\.\/docs\/architecture\/full-three-host-runtime-audit\.md\)/u,
+        /\]\(\.\.\/\.\.\/docs\/operations\/postgres-monitoring\.md\)/u,
         `broken packaged capacity guide: ${filename}`,
       );
     }

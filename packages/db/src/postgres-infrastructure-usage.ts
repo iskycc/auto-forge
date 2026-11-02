@@ -1,26 +1,29 @@
 import type { Pool } from "pg";
 import type { InfrastructureUsageSample } from "@autoforge/application";
+import type { PostgresStorageCapacity } from "@autoforge/contracts";
 import { readPostgresStorageCapacity } from "./postgres-storage-capacity";
 
 export async function readPostgresInfrastructureUsage(
   pool: Pool,
   now: Date,
+  storageCapacity?: () => Promise<PostgresStorageCapacity>,
 ): Promise<InfrastructureUsageSample> {
-  const result = await pool.query<{
-    database_name: string;
-    version: string;
-    database_bytes: string;
-    max_connections: number;
-    connections: number;
-    active_connections: number;
-    idle_connections: number;
-    commits: string;
-    rollbacks: string;
-    blocks_read: string;
-    blocks_hit: string;
-    returned_rows: string;
-    deadlocks: string;
-  }>(`SELECT current_database() AS database_name,current_setting('server_version') AS version,
+  const [result, capacity] = await Promise.all([
+    pool.query<{
+      database_name: string;
+      version: string;
+      database_bytes: string;
+      max_connections: number;
+      connections: number;
+      active_connections: number;
+      idle_connections: number;
+      commits: string;
+      rollbacks: string;
+      blocks_read: string;
+      blocks_hit: string;
+      returned_rows: string;
+      deadlocks: string;
+    }>(`SELECT current_database() AS database_name,current_setting('server_version') AS version,
     pg_database_size(current_database())::text AS database_bytes,
     current_setting('max_connections')::int AS max_connections,
     (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS connections,
@@ -28,7 +31,9 @@ export async function readPostgresInfrastructureUsage(
     (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database() AND state='idle') AS idle_connections,
     xact_commit::text AS commits,xact_rollback::text AS rollbacks,blks_read::text AS blocks_read,
     blks_hit::text AS blocks_hit,tup_returned::text AS returned_rows,deadlocks::text AS deadlocks
-    FROM pg_stat_database WHERE datname=current_database()`);
+    FROM pg_stat_database WHERE datname=current_database()`),
+    storageCapacity ? storageCapacity() : readPostgresStorageCapacity(null, now),
+  ]);
   const row = result.rows[0];
   if (!row) throw new Error("Database statistics are unavailable.");
   const hit = Number(row.blocks_hit),
@@ -66,7 +71,8 @@ export async function readPostgresInfrastructureUsage(
       { key: "returned", label: "累计读取行数", value: Number(row.returned_rows), unit: "count" },
       { key: "deadlocks", label: "累计数据库死锁", value: Number(row.deadlocks), unit: "count" },
     ],
-    storage: await readPostgresStorageCapacity(pool, now),
+    storage: capacity,
+    storageMonitoringTarget: { kind: "primary" },
     notes: [
       "数据库统计来自 PostgreSQL 原生统计视图，累计计数自最近统计重置开始。连接池数字仅属于当前 Web 主池，不等于所有 worker 的连接总数。",
       "主库保存业务事实、执行状态、快照和 outbox；日志正文使用独立日志服务器。仅查询统计信息，不读取业务正文或执行语句。",

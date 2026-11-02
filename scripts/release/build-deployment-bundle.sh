@@ -17,6 +17,7 @@ readonly -a deployment_documentation=(
   "docs/adr/0013-platform-time-authority.md"
   "docs/adr/0015-full-postgresql-log-databases.md"
   "docs/adr/0017-full-postgresql-log-writes-only.md"
+  "docs/adr/0018-postgres-volume-monitoring.md"
   "docs/architecture/batch-scheduling-pause.md"
   "docs/architecture/ddt-management.md"
   "docs/architecture/ddt-association-transfer.md"
@@ -37,6 +38,7 @@ readonly -a deployment_documentation=(
   "docs/operations/ddt-transfer-verification.md"
   "docs/operations/log-archives.md"
   "docs/operations/system-information.md"
+  "docs/operations/postgres-monitoring.md"
   "docs/operations/performance-baseline.md"
   "docs/operations/releases.md"
   "docs/operations/runner-agent-install.md"
@@ -84,7 +86,8 @@ done
 sed -i 's|../../../docs/|../docs/|g' \
   "${package_directory}/distributed/README.md" \
   "${package_directory}/full-bind/README.md" \
-  "${package_directory}/full-five-hosts/README.md"
+  "${package_directory}/full-five-hosts/README.md" \
+  "${package_directory}/monitoring/README.md"
 sed -i \
   -e 's|../../../../fast-deploy/|../../fast-deploy/|g' \
   -e 's|../../../../docs/|../../docs/|g' \
@@ -111,6 +114,9 @@ for documentation_path in "${deployment_documentation[@]}"; do
 done
 sed -i 's|scripts/operations/verify_ddt_transfer.py|operations/verify_ddt_transfer.py|g' \
   "${package_directory}/docs/operations/ddt-transfer-verification.md"
+sed -i 's|../../deploy/compose/monitoring/README.md|../../monitoring/README.md|g' \
+  "${package_directory}/docs/operations/postgres-monitoring.md" \
+  "${package_directory}/docs/architecture/full-three-host-runtime-audit.md"
 cp -- "${repository_root}/LICENSE" "${repository_root}/NOTICE" \
   "${repository_root}/THIRD_PARTY_LICENSES.json" "${repository_root}/CHANGELOG.md" \
   "${package_directory}/"

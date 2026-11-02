@@ -44,3 +44,5 @@ export * from "./postgres-routed-attempt-logs";
 export * from "./postgres-log-archives";
 
 export * from "./archived-attempt-log-store";
+
+export * from "./postgres-storage-monitoring";

@@ -34,17 +34,13 @@
 
 PostgreSQL 原生 `pg_database_size`、`pg_tablespace_size` 提供已占用大小，**不能计算宿主机文件系统剩余空间**。参见 [PostgreSQL 15 管理函数](https://www.postgresql.org/docs/15/functions-admin.html)与[磁盘使用说明](https://www.postgresql.org/docs/15/diskusage.html)。
 
-`fast-deploy/node-b`、`fast-deploy/log-postgres` 和 `deploy/compose/full-bind/log-postgres` 的 PostgreSQL 健康检查会在容器内使用 `df -Pk "$PGDATA"`，原子更新 `$PGDATA/autoforge-storage-capacity.json`，没有新增容器或必运行脚本。bind 目录挂载在哪个文件系统，采样就报告哪个文件系统。已有部署需更新 Compose 并重建该 PostgreSQL 容器，数据目录保持原 bind 配置。
+使用标准 **Prometheus Node Exporter**，平台直接读取 `/metrics?collect[]=filesystem`，不额外依赖 Prometheus 或 Grafana。`fast-deploy/node-b`、`fast-deploy/log-postgres` 与 `full-bind/log-postgres` 的 `monitoring` profile 提供固定版本采集容器，只读挂载与 PostgreSQL 相同的数据目录为 `/pgdata`，只启用 filesystem collector，不使用 host PID、特权容器或整个宿主机根目录挂载。其他部署可使用独立 [monitoring Compose](../../deploy/compose/monitoring/README.md)。
 
-平台只执行固定路径、4096 字节上限的 `pg_read_file` 读取，校验版本、容量与时间；缺失、权限不足、内容损坏和超过两分钟都明确显示，未自动安装扩展、运行数据库 Shell 或授予权限。无法更改健康检查的数据库可由运维按同一 JSON 格式原子写入采样，数据库角色需具备该文件的读取权限；不要为了显示容量向普通业务账号授予整个文件系统权限。
+PostgreSQL 健康检查只运行 `pg_isready`。平台不再写入、读取采样 JSON，也不调用 `pg_read_file`，无需向数据库账号授予文件系统读取权限。主库在“系统信息 → 数据库使用详情”、日志服务器在“日志管理 → 日志配置 → 查看容量”分别配置监控地址和挂载点，并可先检查连接；配置存入 Full 主库共享，保存后生效。Lite 继续使用本地空间信息，不要求部署采集组件。
 
-```json
-{"schemaVersion":1,"capacityBytes":107374182400,"availableBytes":64424509440,"sampledAt":"2026-10-31T08:00:00Z"}
-```
+每次只读取指定挂载点的 `node_filesystem_size_bytes` 与 `node_filesystem_avail_bytes`，核对 device/fstype、采集成功及设备错误；不匹配或多个结果时明确不可用，不推算、不取其他文件系统。3 秒总期限、1 MiB 响应上限、拒绝重定向，每 Web 最多 4 个检查，复用原有 15 秒容量／中间件快照。失败不影响执行、日志写入和数据库健康状态。监控 IP 与端口只允许可信内网访问。
 
-入口：**平台设置 → 日志数据库 → 查看容量**。当前写入服务器自动读取一次，其他服务器点击时读取；15 秒缓存、同服务器请求合并，最多四个服务器同时检查。低于 20% 提示注意。数据库连接仍使用已有服务端凭据，返回值不包含用户名密码或 URL。
-
-显示的是 **PGDATA 文件系统**，不是整台宿主机所有挂载点的空间汇总。独立 tablespace 或另挂的 WAL 文件系统需另行监控；容器 PGDATA 没有正确 bind 到数据盘时，此处会如实显示容器层对应的文件系统。日志库日级分库和归档删除不会自动收缩所有 PostgreSQL 文件；需要结合 VACUUM、WAL 保留、备份、归档状态判断磁盘释放。
+该容量是数据目录所在文件系统的余量，不是整机挂载点汇总。独立 tablespace／WAL 需要另行监控。升级需先更新主库迁移并启动 Node Exporter，再分别保存监控目标；旧健康检查内的采样命令应移除，旧 JSON 文件不再使用。安装、离线镜像、权限与回滚详见 [PostgreSQL 数据卷监控](../operations/postgres-monitoring.md)。
 
 ## 三主机资源利用与后续调优
 

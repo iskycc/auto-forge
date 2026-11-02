@@ -19,7 +19,15 @@ describe.skipIf(!url)("native PostgreSQL usage", () => {
       );
       expect(usage.storage?.status).toMatch(/available|not_configured|permission_denied|stale/);
       if (process.env.AUTOFORGE_TEST_POSTGRES_CAPACITY === "1") {
-        const sample = await readPostgresStorageCapacity(pool, new Date());
+        const sample = await readPostgresStorageCapacity(
+          {
+            host: "127.0.0.1",
+            port: Number(process.env.AUTOFORGE_TEST_NODE_EXPORTER_PORT ?? 19110),
+            tls: false,
+            mountpoint: "/pgdata",
+          },
+          new Date(),
+        );
         expect(sample.status).toBe("available");
         expect(sample.capacityBytes).toBeGreaterThan(sample.availableBytes!);
         expect(sample.availableBytes).toBeGreaterThan(0);

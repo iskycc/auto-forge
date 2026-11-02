@@ -6,6 +6,7 @@ import type {
   LogDatabase,
   RegisterLogDatabaseInput,
   RegisterDailyLogServerInput,
+  PostgresStorageCapacity,
 } from "@autoforge/contracts";
 import { runPostgresMigrations, type PostgresDatabaseHandle } from "./postgres-database";
 
@@ -32,6 +33,7 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     private readonly cipher: SecretCipherPort,
     private readonly platformId: string,
     private readonly migrationsFolder: string,
+    private readonly capacityProbe?: (id: string, now: Date) => Promise<PostgresStorageCapacity>,
   ) {
     this.daily = new PostgresDailyLogDatabases({
       database,
@@ -120,10 +122,9 @@ export class PostgresLogDatabaseRepository implements LogDatabaseRepository {
     );
     const row = result.rows[0];
     if (!row) throw new DomainError("LOG_DATABASE_NOT_FOUND", "日志服务器未登记。");
-    const connectionUrl = await this.daily.resolveCapacityConnection(row);
-    return this.withAdministrationDatabase(connectionUrl, id, (pool) =>
-      readPostgresStorageCapacity(pool, now),
-    );
+    return this.capacityProbe
+      ? this.capacityProbe(id, now)
+      : readPostgresStorageCapacity(null, now);
   }
 
   async register(id: string, input: RegisterLogDatabaseInput, now: string): Promise<LogDatabase> {

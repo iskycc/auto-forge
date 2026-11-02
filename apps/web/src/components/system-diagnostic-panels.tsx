@@ -28,7 +28,13 @@ import {
 import type { ReactNode } from "react";
 import styles from "./system-diagnostics.styles";
 
-export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDiagnostic }) {
+export function DiagnosticPanels({
+  diagnostic: report,
+  canManage = false,
+}: {
+  diagnostic: SystemDiagnostic;
+  canManage?: boolean;
+}) {
   const [selected, setSelected] = useState<InfrastructureDependency>();
   const dependencies = [
     {
@@ -186,6 +192,7 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
       </section>
       {selected ? (
         <InfrastructureUsageDialog
+          canManage={canManage}
           dependency={selected}
           label={dependencies.find((entry) => entry.dependency === selected)!.label}
           onClose={() => setSelected(undefined)}

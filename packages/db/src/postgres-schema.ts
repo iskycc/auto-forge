@@ -2030,6 +2030,12 @@ export const pgLogDatabases = pgTable("log_databases", {
     .default("ready"),
   createdAt: text("created_at").notNull(),
 });
+export const pgStorageMonitoringSettings = pgTable("storage_monitoring_settings", {
+  targetId: text("target_id").primaryKey(),
+  sourceJson: text("source_json"),
+  revision: integer("revision").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
 export const pgLogDatabaseSettings = pgTable("log_database_settings", {
   id: integer("id").primaryKey(),
   activeDatabaseId: text("active_database_id").references(() => pgLogDatabases.id),
@@ -2250,6 +2256,7 @@ export const pgRunBatchHistorySnapshots = pgTable("run_batch_history_snapshots",
 export const postgresSchema = {
   runBatchHistorySnapshots: pgRunBatchHistorySnapshots,
   logDatabases: pgLogDatabases,
+  storageMonitoring: pgStorageMonitoringSettings,
   logDatabaseSettings: pgLogDatabaseSettings,
   runBatchLogStorage: pgRunBatchLogStorage,
   ddtSrTags: pgDdtSrTags,

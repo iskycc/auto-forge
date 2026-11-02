@@ -6,6 +6,20 @@ and known limitations.
 
 ## Unreleased
 
+### Changed
+
+- PostgreSQL 数据卷余量改用固定版本 Node Exporter；Compose 健康检查恢复为 `pg_isready`，移除 `df/awk` 采样和 `pg_read_file` 读取，主库与各日志服务器可分别配置、检查监控连接。
+- 监控容器只读挂载与数据库相同的数据目录，仅启用 filesystem collector；无需 Prometheus／Grafana、宿主机根目录或特权容器。指标请求限制为 3 秒、1 MiB 和每 Web 最多 4 个并发，监控失败不影响执行。
+
+### Compatibility
+
+- Full 新增主库迁移 `0091_storage_monitoring.sql` 保存共享监控配置；原采样 JSON 不再读取。旧部署启动 Node Exporter 后在页面配置监控目标；Lite 不要求新组件，不修改 Runner 协议。
+
+### Verification
+
+- 81 项相关单元／PostgreSQL 集成测试、7 项 Compose／部署包检查和 Lite／Full 两项 Playwright 场景通过；实际启动只读 Node Exporter，并核对与 PostgreSQL 相同数据卷的容量。
+- Web／worker 生产构建、格式、相关 Lint、类型与许可证检查通过。已查看 1024px、1536px 配置及容量弹窗截图，无新增溢出或布局变形；未做实际三主机压测与 arm64 运行验收。
+
 ## 1.21.14 - 2026-11-02
 
 ### Added

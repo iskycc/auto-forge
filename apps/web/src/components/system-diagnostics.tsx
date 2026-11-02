@@ -157,7 +157,7 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
       ) : null}
       {diagnostic ? (
         <>
-          <DiagnosticPanels diagnostic={diagnostic} />
+          <DiagnosticPanels diagnostic={diagnostic} canManage={canManage} />
           <DiagnosticDeadLetters
             diagnostic={diagnostic}
             canManage={canManage}

@@ -61,4 +61,4 @@ docker compose ps
 
 ## PostgreSQL 数据卷容量采样
 
-新版 fast-deploy/node-b、fast-deploy/log-postgres 与 full-bind/log-postgres 模板的 PostgreSQL 健康检查内置 `df -Pk "$PGDATA"` 采样，无需另外运行脚本。平台设置的“日志数据库 → 查看容量”和主库诊断可显示该数据卷实际剩余空间；旧部署需更新对应健康检查并重建容器，保留原 bind 数据目录。缺失、权限不足或超过两分钟的采样不会显示成当前有效空间。外置 tablespace／WAL 文件系统需单独监控，详见[Full 三主机运行链路与容量诊断](../../docs/architecture/full-three-host-runtime-audit.md)。
+容量监控改为独立 Node Exporter，PostgreSQL 健康检查只保留 `pg_isready`。导入固定版本监控镜像后执行 `docker compose --profile monitoring up -d`，再在平台“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../../docs/operations/postgres-monitoring.md)。

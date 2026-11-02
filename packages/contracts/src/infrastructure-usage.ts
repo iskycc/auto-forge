@@ -1,5 +1,41 @@
 import { z } from "zod";
 
+export const storageMonitoringTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("primary") }).strict(),
+  z.object({ kind: z.literal("logs"), databaseId: z.string().uuid() }).strict(),
+]);
+export type StorageMonitoringTarget = z.infer<typeof storageMonitoringTargetSchema>;
+export const nodeExporterSourceSchema = z
+  .object({
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .regex(/^[a-zA-Z0-9_.:\[\]-]+$/, "请输入 IP 或主机名，不包含协议、凭据或路径。"),
+    port: z.number().int().min(1).max(65535).default(9100),
+    tls: z.boolean().default(false),
+    mountpoint: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1024)
+      .refine(
+        (path) =>
+          path.startsWith("/") && !path.split("/").includes("..") && !/[\x00-\x1f\x7f]/.test(path),
+        "请输入数据卷的绝对挂载点。",
+      ),
+  })
+  .strict();
+export type NodeExporterSource = z.infer<typeof nodeExporterSourceSchema>;
+export const storageMonitoringConfigurationSchema = z.object({
+  target: storageMonitoringTargetSchema,
+  source: nodeExporterSourceSchema.nullable(),
+  revision: z.number().int().positive(),
+});
+export type StorageMonitoringConfiguration = z.infer<typeof storageMonitoringConfigurationSchema>;
+export const updateStorageMonitoringSchema = storageMonitoringConfigurationSchema.strict();
+
 export const infrastructureDependencySchema = z.enum(["database", "objectStore", "queue", "cache"]);
 export type InfrastructureDependency = z.infer<typeof infrastructureDependencySchema>;
 
@@ -52,8 +88,10 @@ export const infrastructureUsageSchema = z.object({
   metrics: z.array(infrastructureMetricSchema).max(40),
   notes: z.array(z.string().max(1000)).max(20),
   storage: postgresStorageCapacitySchema.optional(),
+  storageMonitoringTarget: storageMonitoringTargetSchema.optional(),
 });
 export type InfrastructureUsage = z.infer<typeof infrastructureUsageSchema>;
 export type InfrastructureUsageSample = Pick<InfrastructureUsage, "metrics" | "notes"> & {
   storage?: PostgresStorageCapacity;
+  storageMonitoringTarget?: StorageMonitoringTarget;
 };

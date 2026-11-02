@@ -6,14 +6,17 @@ import { postgresStorageCapacitySchema, type PostgresStorageCapacity } from "@au
 import { readApiError } from "@/lib/client-api";
 import { formatDiskBytes } from "@/lib/runner-disk";
 import { ActionDialog } from "./action-dialog";
+import { StorageMonitoringSettings } from "./storage-monitoring-settings";
 import { PostgresCapacityPanel } from "./postgres-capacity-panel";
 
 export function LogDatabaseCapacity({
   databaseId,
   active,
+  canManage = false,
 }: {
   databaseId: string;
   active: boolean;
+  canManage?: boolean;
 }) {
   const [capacity, setCapacity] = useState<PostgresStorageCapacity>();
   const [open, setOpen] = useState(false);
@@ -75,7 +78,7 @@ export function LogDatabaseCapacity({
       <ActionDialog
         open={open}
         title="日志库磁盘容量"
-        description="读取 PostgreSQL 宿主机数据卷的磁盘采样；数据库大小和可用磁盘空间分别计算。"
+        description="通过 Node Exporter 读取数据库数据卷余量；数据库大小与文件系统容量分别计算。"
         onClose={() => {
           pending.current?.abort();
           setLoading(false);
@@ -84,7 +87,13 @@ export function LogDatabaseCapacity({
         className="w-[min(760px,calc(100vw-3rem))]"
       >
         <div className="flex min-w-0 flex-col gap-4">
-          <Flex justify="end">
+          <Flex justify={canManage ? "space-between" : "end"} align="center" wrap gap="small">
+            {canManage ? (
+              <StorageMonitoringSettings
+                target={{ kind: "logs", databaseId }}
+                onSaved={() => refresh(true)}
+              />
+            ) : null}
             <Button loading={loading} onClick={() => void refresh(true)}>
               刷新容量
             </Button>
@@ -93,8 +102,8 @@ export function LogDatabaseCapacity({
           {!capacity && loading ? <Skeleton active /> : null}
           {capacity ? <PostgresCapacityPanel capacity={capacity} /> : null}
           <Typography.Paragraph type="secondary" className="!mb-0">
-            新部署模板会在 PostgreSQL 容器内对 PGDATA
-            所在文件系统采样；已有独立部署需更新采样健康检查。未采集时明确显示不可用，不使用主平台主机的空间代替。
+            启动 Node Exporter
+            后配置其地址和数据卷挂载点；平台按需读取，不需要数据库文件权限或健康检查采样脚本。
           </Typography.Paragraph>
         </div>
       </ActionDialog>
