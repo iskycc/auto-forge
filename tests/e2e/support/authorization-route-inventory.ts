@@ -12,6 +12,8 @@ const anonymousEndpoints = new Set([
   "GET /auth/setup-status",
   "POST /auth/bootstrap",
   "POST /auth/login",
+  "POST /auth/register",
+  "GET /auth/register",
   "POST /auth/setup-platform",
   "GET /public/ddt/projects/[projectId]/versions/[projectVersionId]/stages/[testStageId]/case",
   "GET /public/ddt/projects/[projectId]/versions/[projectVersionId]/stages/[testStageId]/cases/[caseId]",

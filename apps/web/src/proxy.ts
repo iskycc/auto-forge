@@ -1,6 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = new Set(["/", "/login", "/setup", "/CaseLog", "/Execution", "/RunTask"]);
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/login",
+  "/register",
+  "/setup",
+  "/CaseLog",
+  "/Execution",
+  "/RunTask",
+]);
 // Public pages enforce their own publication grant or legacy-token boundary.
 // The proxy only allows anonymous requests to reach these exact business paths.
 const PUBLIC_PREFIXES = ["/share/", "/progress/"];

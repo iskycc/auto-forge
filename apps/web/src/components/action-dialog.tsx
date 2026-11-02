@@ -13,6 +13,7 @@ import { uiPatterns } from "./ui/patterns";
 export function ActionDialog({
   children,
   className,
+  bodyClassName,
   description,
   open,
   title,
@@ -27,6 +28,7 @@ export function ActionDialog({
 }: {
   children: ReactNode;
   className?: string;
+  bodyClassName?: string;
   description?: string;
   open: boolean;
   title: string;
@@ -116,7 +118,12 @@ export function ActionDialog({
             <X size={18} />
           </Button>
         </header>
-        <div className="action-dialog-body min-h-0 min-w-0 overflow-y-auto px-6 py-5 [overflow-wrap:anywhere]">
+        <div
+          className={cn(
+            "action-dialog-body min-h-0 min-w-0 overflow-y-auto px-6 py-5 [overflow-wrap:anywhere]",
+            bodyClassName,
+          )}
+        >
           {confirmDiscard ? (
             <DialogDiscardPrompt
               onContinue={() => setConfirmDiscard(false)}

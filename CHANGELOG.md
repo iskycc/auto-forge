@@ -4,12 +4,21 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.21.15 - 2026-11-02
+
+### Added
+
+- 本地账号自助注册页 `/register` 与登录框入口：注册后直接登录，无需再次修改密码，自动获得默认项目“执行操作员”权限；从公开页面进入后返回原页面，保留站内查询与锚点。
+- LDAP 开启时自动关闭注册入口、页面表单及创建 API，关闭 LDAP 后恢复。Lite／Full 在同一事务内保存账号、授权、会话和审计；补充重名、限流及目录切换竞争保护，不新增注册相关数据库迁移。
 
 ### Changed
 
 - PostgreSQL 数据卷余量改用固定版本 Node Exporter；Compose 健康检查恢复为 `pg_isready`，移除 `df/awk` 采样和 `pg_read_file` 读取，主库与各日志服务器可分别配置、检查监控连接。
 - 监控容器只读挂载与数据库相同的数据目录，仅启用 filesystem collector；无需 Prometheus／Grafana、宿主机根目录或特权容器。指标请求限制为 3 秒、1 MiB 和每 Web 最多 4 个并发，监控失败不影响执行。
+
+### Fixed
+
+- 顶栏配置搜索弹窗在大屏下只由结果列表滚动，搜索框保持可见，避免结果区域与弹窗正文同时出现滚动条；保留搜索跳转、键盘操作和关闭后焦点恢复。
 
 ### Compatibility
 
@@ -17,8 +26,11 @@ and known limitations.
 
 ### Verification
 
+- 自助注册通过 63 项定向测试及 Lite／Full 各 3 项 Playwright 场景，覆盖即时登录、默认项目执行操作员授权、公开任务返回、重名提示和 LDAP 关闭／恢复注册；已查看 1024px、1536px 浅色／深色注册页、登录入口及关闭提示布局。
 - 81 项相关单元／PostgreSQL 集成测试、7 项 Compose／部署包检查和 Lite／Full 两项 Playwright 场景通过；实际启动只读 Node Exporter，并核对与 PostgreSQL 相同数据卷的容量。
 - Web／worker 生产构建、格式、相关 Lint、类型与许可证检查通过。已查看 1024px、1536px 配置及容量弹窗截图，无新增溢出或布局变形；未做实际三主机压测与 arm64 运行验收。
+- 配置搜索先在 2560×1440 复现双滚动条，再通过 17 项 UI 规范测试及两项 Playwright 回归；实际查看 1024px、1536px、2560px 的浅色／深色截图，搜索框保持可见，页面宽度、滚动位置与关闭后焦点恢复正常。
+- 按用户要求采用最快发布路径，仅运行 Release；跳过标准 CI、源码发布检查、Full 分布式与发布后完整验收，保留原生双架构构建、镜像启动、内置资源、SBOM、签名及完整资产校验。
 
 ## 1.21.14 - 2026-11-02
 

@@ -26,6 +26,7 @@ const actionsByCategory = {
   },
   user: {
     "auth.bootstrap": "初始化管理员账号",
+    "auth.register": "自助注册本地账号",
     "user.create": "创建用户",
     "user.disable": "停用用户",
     "user.enable": "启用用户",

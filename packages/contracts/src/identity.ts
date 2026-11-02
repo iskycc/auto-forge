@@ -55,6 +55,22 @@ export const createUserInputSchema = z.object({
   forcePasswordChange: z.boolean({ error: "首次登录修改密码选项必须为布尔值。" }).default(true),
 });
 
+export const registerUserInputSchema = createUserInputSchema
+  .omit({ forcePasswordChange: true })
+  .extend({ confirmPassword: z.string({ error: "请再次输入密码。" }).max(128) })
+  .strict()
+  .refine((input) => input.password === input.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "两次输入的密码不一致。",
+  });
+export type RegisterUserInput = z.infer<typeof registerUserInputSchema>;
+
+export const registrationAvailabilitySchema = z.object({
+  enabled: z.boolean(),
+  reason: z.enum(["available", "setup_required", "ldap_enabled"]),
+});
+export type RegistrationAvailability = z.infer<typeof registrationAvailabilitySchema>;
+
 export const updateUserStatusInputSchema = z.object({
   status: z.enum(["active", "disabled"]),
 });

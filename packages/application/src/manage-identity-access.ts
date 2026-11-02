@@ -1,4 +1,4 @@
-import { assignRoleSelectionInputSchema } from "@autoforge/contracts";
+import { assignRoleSelectionInputSchema, registerUserInputSchema } from "@autoforge/contracts";
 import type {
   BootstrapAdminInput,
   CreateProjectInput,
@@ -7,6 +7,7 @@ import type {
   LdapConfigurationInput,
   LoginInput,
   RenameProjectInput,
+  RegistrationAvailability,
   TransferProjectOwnerInput,
   UpdateRoleInput,
 } from "@autoforge/contracts";
@@ -52,6 +53,7 @@ const SYSTEM_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000001";
 const PROJECT_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000002";
 const TEST_MANAGER_ROLE_ID = "00000000-0000-7000-8100-000000000003";
 const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
+const EXECUTION_OPERATOR_ROLE_ID = "00000000-0000-7000-8100-000000000004";
 const LDAP_PROVIDER_ID = "ldap:default";
 const MAXIMUM_FAILED_LOGINS = 5;
 const LOGIN_LOCK_MINUTES = 15;
@@ -177,6 +179,74 @@ export class IdentityAccessService {
       details: { source: "local" },
     });
     return this.createSession(user.id);
+  }
+
+  async registrationAvailability(): Promise<RegistrationAvailability> {
+    if (await this.setupRequired()) return { enabled: false, reason: "setup_required" };
+    if ((await this.repository.getLdapConfiguration())?.enabled)
+      return { enabled: false, reason: "ldap_enabled" };
+    return { enabled: true, reason: "available" };
+  }
+
+  async register(input: unknown, requestId?: string): Promise<SessionResult> {
+    const registration = registerUserInputSchema.parse(input);
+    const availability = await this.registrationAvailability();
+    if (!availability.enabled)
+      throw new DomainError(
+        "AUTH_REGISTRATION_UNAVAILABLE",
+        availability.reason === "ldap_enabled"
+          ? "平台已启用 LDAP，自助注册已关闭。请使用企业目录账号或已有本地账号登录。"
+          : "请先由管理员完成平台初始化。",
+      );
+
+    const passwordHash = await this.passwords.hash(registration.password);
+    const createdAt = this.clock.now();
+    const recordedAt = createdAt.toISOString();
+    const userId = this.ids.next();
+    const token = this.tokens.issue();
+    const expiresAt = new Date(
+      createdAt.getTime() + this.sessionTtlHours * 60 * 60 * 1_000,
+    ).toISOString();
+    await this.repository.completeLocalRegistration({
+      user: {
+        id: userId,
+        username: registration.username,
+        normalizedUsername: normalizeUsername(registration.username),
+        displayName: registration.displayName,
+        ...(registration.email ? { email: registration.email } : {}),
+        passwordHash,
+        forcePasswordChange: false,
+        createdAt: recordedAt,
+      },
+      defaultRole: {
+        projectId: DEFAULT_PROJECT_ID,
+        roleId: EXECUTION_OPERATOR_ROLE_ID,
+        recordedAt,
+      },
+      session: {
+        id: this.ids.next(),
+        tokenHash: this.tokens.hash(token),
+        createdAt: recordedAt,
+        expiresAt,
+      },
+      audit: {
+        id: this.ids.next(),
+        actorType: "user",
+        actorId: userId,
+        action: "auth.register",
+        resourceType: "user",
+        resourceId: userId,
+        result: "succeeded",
+        ...(requestId ? { requestId } : {}),
+        details: securityAuditDetails(
+          "auth.register",
+          { source: "local", projectId: DEFAULT_PROJECT_ID, roleId: EXECUTION_OPERATOR_ROLE_ID },
+          `${registration.displayName} · ${registration.username}`,
+        ),
+        recordedAt,
+      },
+    });
+    return { token, expiresAt, userId };
   }
 
   async login(input: LoginInput, requestId?: string): Promise<SessionResult> {

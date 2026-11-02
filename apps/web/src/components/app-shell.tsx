@@ -264,6 +264,7 @@ export function AppShell({
   // 不展示侧边栏与顶栏。
   if (
     pathname === "/login" ||
+    pathname === "/register" ||
     pathname === "/setup" ||
     pathname.startsWith("/share/") ||
     pathname === "/CaseLog" ||

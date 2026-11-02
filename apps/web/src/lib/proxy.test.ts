@@ -13,6 +13,8 @@ describe("anonymous page routing", () => {
     expect(isPublicPath("/CaseLog")).toBe(true);
     expect(isPublicPath("/Execution")).toBe(true);
     expect(isPublicPath("/RunTask")).toBe(true);
+    expect(isPublicPath("/register")).toBe(true);
+    expect(isPublicPath("/register/private")).toBe(false);
     expect(isPublicPath("/RunTask/private")).toBe(false);
     expect(isPublicPath("/Execution/private")).toBe(false);
     expect(isPublicPath("/CaseLogs")).toBe(false);

@@ -51,6 +51,8 @@
       "status": "partial",
       "owner": "identity-rbac",
       "evidence": [
+        "tests/e2e/self-registration.spec.ts",
+        "packages/db/test/self-registration.integration.test.ts",
         "tests/e2e/identity-rbac.spec.ts",
         "tests/e2e/platform-initialization.spec.ts",
         "tests/e2e/management-operations.spec.ts",

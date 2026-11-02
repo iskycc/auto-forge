@@ -5,6 +5,8 @@ const FIELD_LABELS: Record<string, string> = {
   username: "用户名",
   displayName: "显示名称",
   password: "密码",
+  confirmPassword: "确认密码",
+  email: "邮箱",
 };
 
 export function authEntryValidationMessage(details: unknown): string | undefined {

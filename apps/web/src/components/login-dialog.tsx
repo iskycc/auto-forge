@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ActionDialog } from "./action-dialog";
 import { AuthEntryForm } from "./auth-entry-form";
+import { RegistrationEntry } from "./registration-entry";
 
 export function LoginDialog({
   open,
@@ -31,6 +32,7 @@ export function LoginDialog({
         onAuthenticated={onAuthenticated}
         notice={passwordChanged ? "密码已修改，请使用新密码重新登录。" : undefined}
       />
+      {open ? <RegistrationEntry disabled={pending} /> : null}
     </ActionDialog>
   );
 }

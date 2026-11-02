@@ -202,7 +202,7 @@ function domainErrorStatus(code: string): number {
   }
   if (code === "AUTH_REQUIRED" || code === "AUTHENTICATION_FAILED") return 401;
   if (code === "AUTH_FORBIDDEN" || code === "CSRF_REJECTED") return 403;
-  if (code === "AUTH_BOOTSTRAP_REJECTED") return 403;
+  if (code === "AUTH_BOOTSTRAP_REJECTED" || code === "AUTH_REGISTRATION_UNAVAILABLE") return 403;
   if (
     code.endsWith("_CONFLICT") ||
     code === "RUNNER_HOST_KEY_MISMATCH" ||

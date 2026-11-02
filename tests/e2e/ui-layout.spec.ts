@@ -4065,6 +4065,88 @@ test("task pass-rate bars keep their full track at zero, partial and complete va
   }
 });
 
+test("configuration search keeps one scrollable result list across desktop sizes", async ({
+  playwright,
+  baseURL,
+}, testInfo) => {
+  const browser = await playwright.chromium.launch({
+    ignoreDefaultArgs: ["--hide-scrollbars"],
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
+  try {
+    const page = await browser.newPage({ baseURL: baseURL!, reducedMotion: "reduce" });
+    await ensureAdministrator(page);
+    for (const appearance of ["light", "dark"]) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
+        ]);
+      for (const viewport of [
+        { width: 2560, height: 1440 },
+        { width: 1024, height: 768 },
+        { width: 1536, height: 1024 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await page.goto("/settings/platform?section=configuration");
+        const trigger = page.getByRole("button", { name: "搜索配置", exact: true });
+        await trigger.click();
+        const dialog = page.getByRole("dialog", { name: "配置搜索", exact: true });
+        await expect(dialog).toBeVisible();
+        await waitForUiTransitions(page);
+        const results = dialog.locator(".configuration-search-results");
+        await expect(results.getByRole("link")).toHaveCount(24);
+        const scrollbars = await dialog.evaluate((element) => {
+          const containers = [element, ...Array.from(element.querySelectorAll<HTMLElement>("*"))];
+          for (let parent = element.parentElement; parent; parent = parent.parentElement)
+            containers.push(parent);
+          return containers.flatMap((container) => {
+            const style = getComputedStyle(container);
+            const vertical =
+              /^(auto|scroll)$/.test(style.overflowY) &&
+              container.scrollHeight > container.clientHeight + 1;
+            const horizontal =
+              /^(auto|scroll)$/.test(style.overflowX) &&
+              container.scrollWidth > container.clientWidth + 1;
+            return vertical || horizontal
+              ? [{ className: container.className, vertical, horizontal }]
+              : [];
+          });
+        });
+        expect(scrollbars, `${appearance} ${viewport.width}: only results should scroll`).toEqual([
+          {
+            className: await results.getAttribute("class"),
+            vertical: true,
+            horizontal: false,
+          },
+        ]);
+        const input = dialog.getByRole("searchbox", { name: "搜索配置项" });
+        const before = await input.boundingBox();
+        await results.getByRole("link").last().focus();
+        await expect
+          .poll(() => results.evaluate((element) => element.scrollTop))
+          .toBeGreaterThan(0);
+        expect(await input.boundingBox()).toEqual(before);
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`configuration-search-${appearance}-${viewport.width}.png`),
+          animations: "disabled",
+        });
+        await input.fill("内部访问地址");
+        const match = dialog.getByRole("link", { name: /内部访问地址/ });
+        await expect(match).toBeVisible();
+        await match.click();
+        await expect(dialog).toHaveCount(0);
+        await expect(page).toHaveURL(/focus=runnerBaseUrl/);
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
 test("opening settings preserves page width, layout and scroll position", async ({
   playwright,
   baseURL,

@@ -2,6 +2,7 @@ import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transacti
 import type {
   AuditListPage,
   CompleteLdapLoginRecord,
+  CompleteLocalRegistrationRecord,
   CreateLdapUserRecord,
   CreateLocalUserRecord,
   IdentityAccessRepository,
@@ -30,6 +31,8 @@ import {
 import type { PoolClient, QueryResultRow } from "pg";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
+
+const REGISTRATION_POLICY_LOCK = "autoforge:registration-policy";
 
 type UserDatabaseRow = QueryResultRow & {
   id: string;
@@ -231,6 +234,42 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       });
       await this.insertAudit(client, { ...input.audit, actorId: upserted.user.id });
       return authenticatedUser;
+    });
+  }
+
+  async completeLocalRegistration(input: CompleteLocalRegistrationRecord): Promise<User> {
+    await this.ready();
+    return this.transaction(async (client) => {
+      // Shared readers allow concurrent registrations; LDAP changes acquire the exclusive lock.
+      await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))", [
+        REGISTRATION_POLICY_LOCK,
+      ]);
+      if (!(await client.query("SELECT 1 FROM users LIMIT 1")).rowCount)
+        throw new DomainError("AUTH_REGISTRATION_UNAVAILABLE", "请先由管理员完成平台初始化。");
+      if (
+        (
+          await client.query<{ enabled: boolean }>(
+            "SELECT enabled FROM ldap_configurations WHERE id='default'",
+          )
+        ).rows[0]?.enabled
+      )
+        throw new DomainError("AUTH_REGISTRATION_UNAVAILABLE", "平台已启用 LDAP，自助注册已关闭。");
+      await insertLocalUser(client, { ...input.user, forcePasswordChange: false });
+      await client.query(
+        "INSERT INTO project_role_bindings(user_id,project_id,role_id,source,assigned_at,assigned_by) VALUES($1,$2,$3,'manual',$4,NULL)",
+        [
+          input.user.id,
+          input.defaultRole.projectId,
+          input.defaultRole.roleId,
+          input.defaultRole.recordedAt,
+        ],
+      );
+      const user = await this.createSessionAfterLoginInTransaction(client, {
+        ...input.session,
+        userId: input.user.id,
+      });
+      await this.insertAudit(client, input.audit);
+      return user;
     });
   }
 
@@ -641,11 +680,6 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async createLocalUser(record: CreateLocalUserRecord): Promise<User> {
     await this.ready();
-    const collision = await this.handle.pool.query(
-      "SELECT id FROM users WHERE normalized_username = $1 LIMIT 1",
-      [record.normalizedUsername],
-    );
-    if (collision.rowCount) throw new DomainError("USER_CONFLICT", "用户名已存在。");
     return mapUserRow(await this.transaction((client) => insertLocalUser(client, record)));
   }
 
@@ -1044,8 +1078,11 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   ): Promise<StoredLdapConfiguration> {
     await this.ready();
     const transportMode = ldapTransportMode(input.url);
-    const result = await retryPostgresWrite(() =>
-      this.handle.pool.query<LdapDatabaseRow>(
+    const result = await this.transaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        REGISTRATION_POLICY_LOCK,
+      ]);
+      return client.query<LdapDatabaseRow>(
         `INSERT INTO ldap_configurations (
          id, enabled, urls_json, tls_mode, ca_pem, verify_tls_certificate,
          connect_timeout_ms, operation_timeout_ms,
@@ -1109,8 +1146,8 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
           input.updatedAt,
           input.updatedBy,
         ],
-      ),
-    );
+      );
+    });
     return mapLdapRow(requiredRow(result.rows[0], "PostgreSQL did not return LDAP config."));
   }
 
@@ -1306,7 +1343,7 @@ async function insertLocalUser(
        password_hash, password_updated_at, force_password_change, failed_login_attempts,
        locked_until, last_login_at, created_at, updated_at, version
      ) VALUES ($1, $2, $3, $4, $5, 'local', 'active', $6, $7, $8, 0, NULL, NULL, $7, $7, 1)
-     RETURNING *`,
+     ON CONFLICT (normalized_username) DO NOTHING RETURNING *`,
     [
       record.id,
       record.username,
@@ -1318,7 +1355,8 @@ async function insertLocalUser(
       record.forcePasswordChange,
     ],
   );
-  return requiredRow(result.rows[0], "PostgreSQL did not return local user.");
+  if (!result.rows[0]) throw new DomainError("USER_CONFLICT", "用户名已存在。");
+  return result.rows[0];
 }
 
 async function lockRecoveryAdministrators(client: PoolClient): Promise<number> {

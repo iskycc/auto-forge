@@ -7,6 +7,7 @@ import {
 import type {
   AuditListPage,
   CompleteLdapLoginRecord,
+  CompleteLocalRegistrationRecord,
   CreateLdapUserRecord,
   CreateLocalUserRecord,
   IdentityAccessRepository,
@@ -215,6 +216,39 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         return authenticatedUser;
       }),
     );
+  }
+
+  async completeLocalRegistration(input: CompleteLocalRegistrationRecord): Promise<User> {
+    return retrySqliteWriteTransaction(this.handle, () => {
+      if (!this.handle.db.select({ id: users.id }).from(users).limit(1).get())
+        throw new DomainError("AUTH_REGISTRATION_UNAVAILABLE", "请先由管理员完成平台初始化。");
+      if (
+        this.handle.db
+          .select({ enabled: ldapConfigurations.enabled })
+          .from(ldapConfigurations)
+          .where(eq(ldapConfigurations.id, "default"))
+          .get()?.enabled
+      )
+        throw new DomainError("AUTH_REGISTRATION_UNAVAILABLE", "平台已启用 LDAP，自助注册已关闭。");
+      this.insertLocalUser({ ...input.user, forcePasswordChange: false });
+      this.handle.db
+        .insert(projectRoleBindings)
+        .values({
+          userId: input.user.id,
+          projectId: input.defaultRole.projectId,
+          roleId: input.defaultRole.roleId,
+          source: "manual",
+          assignedBy: null,
+          assignedAt: input.defaultRole.recordedAt,
+        })
+        .run();
+      const user = this.createSessionAfterLoginInTransaction({
+        ...input.session,
+        userId: input.user.id,
+      });
+      this.insertAudit(input.audit);
+      return user;
+    });
   }
 
   private upsertLdapUserInTransaction(input: CreateLdapUserRecord): {
@@ -643,15 +677,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async createLocalUser(record: CreateLocalUserRecord): Promise<User> {
-    return retrySqliteWriteTransaction(this.handle, () => {
-      const existing = this.handle.db
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.normalizedUsername, record.normalizedUsername))
-        .get();
-      if (existing) throw new DomainError("USER_CONFLICT", "用户名已存在。");
-      return mapUser(this.insertLocalUser(record));
-    });
+    return retrySqliteWriteTransaction(this.handle, () => mapUser(this.insertLocalUser(record)));
   }
 
   async updateUserStatus(userId: string, status: UserStatus, updatedAt: string): Promise<User> {
@@ -1231,7 +1257,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   private insertLocalUser(record: CreateLocalUserRecord) {
-    return this.handle.db
+    const user = this.handle.db
       .insert(users)
       .values({
         id: record.id,
@@ -1251,8 +1277,11 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         updatedAt: record.createdAt,
         version: 1,
       })
+      .onConflictDoNothing({ target: users.normalizedUsername })
       .returning()
       .get();
+    if (!user) throw new DomainError("USER_CONFLICT", "用户名已存在。");
+    return user;
   }
 
   private countRecoveryAdministrators(): number {

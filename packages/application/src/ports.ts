@@ -312,6 +312,13 @@ export type CompleteLdapLoginRecord = {
   audit: AuditEvent;
 };
 
+export type CompleteLocalRegistrationRecord = {
+  user: CreateLocalUserRecord;
+  defaultRole: { projectId: string; roleId: string; recordedAt: string };
+  session: Omit<CreateSessionRecord, "userId">;
+  audit: AuditEvent;
+};
+
 export type IdentityListPage = { items: User[]; nextCursor?: string };
 export type AuditListPage = { items: AuditEvent[]; nextCursor?: string };
 
@@ -331,6 +338,7 @@ export interface IdentityAccessRepository {
   findExternalIdentity(providerId: string, subject: string): Promise<ExternalIdentity | null>;
   upsertLdapUser(input: CreateLdapUserRecord): Promise<User>;
   completeLdapLogin(input: CompleteLdapLoginRecord): Promise<User>;
+  completeLocalRegistration(input: CompleteLocalRegistrationRecord): Promise<User>;
   recordLoginFailure(
     userId: string,
     failedAttempts: number,
