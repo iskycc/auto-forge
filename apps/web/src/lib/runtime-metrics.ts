@@ -2,6 +2,17 @@ type HttpMetric = { count: number; durationMs: number };
 
 const globalMetrics = globalThis as typeof globalThis & {
   __autoforgeHttpMetrics?: Map<string, HttpMetric>;
+  __autoforgeTrafficTotals?: {
+    requests: number;
+    clientErrors: number;
+    serverErrors: number;
+    durationMs: number;
+  };
+  __autoforgeRuntimeSample?: {
+    sampledAt: string;
+    cpuUtilizationPercent: number;
+    eventLoopDelayMs: number;
+  };
 };
 
 function metrics(): Map<string, HttpMetric> {
@@ -15,6 +26,16 @@ export function recordHttpRequest(
   statusCode: number,
   durationMs: number,
 ): void {
+  const totals = (globalMetrics.__autoforgeTrafficTotals ??= {
+    requests: 0,
+    clientErrors: 0,
+    serverErrors: 0,
+    durationMs: 0,
+  });
+  totals.requests++;
+  totals.durationMs += Math.max(0, Math.round(durationMs));
+  if (statusCode >= 400 && statusCode < 500) totals.clientErrors++;
+  if (statusCode >= 500) totals.serverErrors++;
   const route = metricRoute(path);
   const statusClass = `${Math.floor(statusCode / 100)}xx`;
   const key = `${safeMethod(method)}|${route}|${statusClass}`;
@@ -60,4 +81,28 @@ function metricRoute(path: string): string {
     if (path === prefix || path.startsWith(`${prefix}/`)) return `${prefix}/:operation`;
   }
   return "/api/v1/other";
+}
+
+export function recordRuntimeSample(cpuUtilization: number, eventLoopDelayMs: number): void {
+  globalMetrics.__autoforgeRuntimeSample = {
+    sampledAt: new Date().toISOString(),
+    cpuUtilizationPercent: Number.isFinite(cpuUtilization)
+      ? Math.max(0, Math.min(100, cpuUtilization * 100))
+      : 0,
+    eventLoopDelayMs: Number.isFinite(eventLoopDelayMs) ? Math.max(0, eventLoopDelayMs) : 0,
+  };
+}
+export function httpTrafficSnapshot() {
+  const totals = globalMetrics.__autoforgeTrafficTotals;
+  return {
+    requests: totals?.requests ?? 0,
+    clientErrors: totals?.clientErrors ?? 0,
+    serverErrors: totals?.serverErrors ?? 0,
+    meanDurationMs: totals?.requests
+      ? Math.round((totals.durationMs / totals.requests) * 100) / 100
+      : 0,
+    ...(globalMetrics.__autoforgeRuntimeSample
+      ? { sample: { ...globalMetrics.__autoforgeRuntimeSample } }
+      : {}),
+  };
 }

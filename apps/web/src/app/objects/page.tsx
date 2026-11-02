@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { hasPermission, hasPermissionInAnyScope } from "@autoforge/domain";
 import { storageInventoryCategorySchema } from "@autoforge/contracts";
 import { FileSourcesPanel, type FileSourceFilters } from "@/components/file-sources-panel";
-import { LogArchives } from "@/components/log-archives";
 import { StorageInventory } from "@/components/storage-inventory";
 import { SectionTabs } from "@/components/section-tabs";
 import { TabContent } from "@/components/ui/tab-content";
@@ -26,12 +25,10 @@ const sections = {
     title: "存储空间",
     description: "查看全平台文件、数据库与对象存储的空间占用。",
   },
-  archives: {
-    label: "日志归档",
-    title: "日志归档",
-    description: "按月压缩执行日志，下载离线查看并安全释放原存储空间。",
-  },
-} satisfies Record<FileStorageSection, { label: string; title: string; description: string }>;
+} satisfies Record<
+  Exclude<FileStorageSection, "archives">,
+  { label: string; title: string; description: string }
+>;
 
 export default async function FileStoragePage({
   searchParams,
@@ -40,12 +37,11 @@ export default async function FileStoragePage({
 }) {
   const identity = await requirePageAnyPermission(["case_source.read", "settings.read"]);
   const parameters = await searchParams;
+  if (parameters.section === "archives") redirect(fileStorageLocation("archives"));
   const canReadSources = hasPermissionInAnyScope(identity, "case_source.read");
   const canReadStorage = hasPermission(identity, "settings.read");
-  const activeSection: FileStorageSection =
-    parameters.section === "storage" ||
-    parameters.section === "archives" ||
-    parameters.section === "sources"
+  const activeSection: Exclude<FileStorageSection, "archives"> =
+    parameters.section === "storage" || parameters.section === "sources"
       ? parameters.section
       : canReadSources
         ? "sources"
@@ -53,14 +49,6 @@ export default async function FileStoragePage({
   if (activeSection === "sources" ? !canReadSources : !canReadStorage) redirect("/forbidden");
   const services = await getPlatformServices();
   const heading = sections[activeSection];
-  const archivePage =
-    activeSection === "archives"
-      ? await services.logArchives.list(undefined, identity.user.id)
-      : undefined;
-  const projects =
-    activeSection === "archives" && hasPermission(identity, "project.read")
-      ? await services.identityAccess.listProjects(identity)
-      : [];
   const category = storageInventoryCategorySchema.safeParse(parameters.category).data;
 
   return (
@@ -83,7 +71,7 @@ export default async function FileStoragePage({
       </header>
       <SectionTabs
         label="文件管理模块"
-        tabs={(Object.keys(sections) as FileStorageSection[])
+        tabs={(Object.keys(sections) as Array<Exclude<FileStorageSection, "archives">>)
           .filter((section) => (section === "sources" ? canReadSources : canReadStorage))
           .map((section) => ({
             href: fileStorageLocation(section),
@@ -100,15 +88,6 @@ export default async function FileStoragePage({
             initialQuery={parameters.query?.slice(0, 240) ?? ""}
             key={`${category ?? "all"}:${parameters.query ?? ""}`}
             timeZone={services.configurationStore.read().web.timeZone}
-          />
-        ) : null}
-        {archivePage ? (
-          <LogArchives
-            projects={projects}
-            initial={archivePage}
-            canManage={
-              hasPermission(identity, "settings.manage") && hasPermission(identity, "log.read")
-            }
           />
         ) : null}
       </TabContent>

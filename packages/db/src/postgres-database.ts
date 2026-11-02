@@ -31,9 +31,12 @@ export function createPostgresDatabase(options: {
     // 事务排队等待连接时拖慢同进程的只读探针。
     max: poolMax,
     connectionTimeoutMillis: 5_000,
-    // 预热连接在突发到来前保持可用：空闲 2 分钟内不回收，覆盖执行批次
+    // 预热连接在突发到来前保持可用：保留少量常驻连接，其余空闲 10 分钟回收，覆盖执行批次
     // “导入-创建-领取-完成”各阶段之间的短暂间歇。
-    idleTimeoutMillis: 120_000,
+    idleTimeoutMillis: 600_000,
+    min: Math.min(2, poolMax),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     // A stalled writer must not occupy all request connections indefinitely.
     statement_timeout: options.statementTimeoutMs ?? 30_000,
     lock_timeout: options.lockTimeoutMs ?? 1_000,
@@ -45,10 +48,31 @@ export function createPostgresDatabase(options: {
     connectionString: options.connectionString,
     max: 1,
     connectionTimeoutMillis: 2_000,
-    idleTimeoutMillis: 120_000,
+    idleTimeoutMillis: 600_000,
+    min: 1,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     statement_timeout: 2_000,
     application_name: "autoforge-clock",
   });
+  for (const [name, connectionPool] of [
+    ["primary", pool],
+    ["clock", clockPool],
+  ] as const) {
+    // pg discards the failed idle client; observing the event lets the next request reconnect.
+    connectionPool.on("error", (error: Error & { code?: string }) => {
+      console.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "warn",
+          requestId: "postgres-idle-connection",
+          message: "PostgreSQL idle connection closed; a replacement will be opened on demand",
+          pool: name,
+          code: error.code ?? "CONNECTION_CLOSED",
+        }),
+      );
+    });
+  }
   return {
     pool,
     clockPool,

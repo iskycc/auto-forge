@@ -30,3 +30,28 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
     return apiErrorResponse(error, currentRequestId);
   }
 }
+
+export async function DELETE(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authenticateRequest(request);
+    const { accountId } = await context.params;
+    const services = await getPlatformServices();
+    const deleted = await services.platformOperations.deleteServiceAccount(
+      identity,
+      accountId,
+      await readJsonBody(request, 1024),
+    );
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "service_account.delete",
+      resourceType: "service_account",
+      resourceId: accountId,
+      requestId: currentRequestId,
+      details: { name: deleted.name },
+    });
+    return NextResponse.json(deleted);
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
+  }
+}

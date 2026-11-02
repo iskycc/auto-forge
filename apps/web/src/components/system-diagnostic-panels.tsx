@@ -1,4 +1,5 @@
 "use client";
+import { SystemRuntimeInformation } from "./system-runtime-information";
 
 import { Button } from "antd";
 import { useState } from "react";
@@ -118,6 +119,7 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
           </div>
         </div>
       </Card>
+      <SystemRuntimeInformation report={report} />
       {report.recentErrors.length > 0 ? (
         <Card
           as="section"
@@ -173,7 +175,7 @@ export function DiagnosticPanels({ diagnostic: report }: { diagnostic: SystemDia
             <small>{value.durationMs === undefined ? "" : `检查耗时 ${value.durationMs} ms`}</small>
             <Button
               type="link"
-              className="!h-auto !self-start !p-0"
+              className="!h-auto !min-h-8 !self-start !p-0"
               onClick={() => setSelected(dependency)}
               aria-label={`查看${label}使用详情`}
             >

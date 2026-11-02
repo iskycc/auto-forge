@@ -1,3 +1,4 @@
+import { httpTrafficSnapshot } from "./runtime-metrics";
 import { ArchivedAttemptLogStore, SqliteLogArchiveRepository } from "@autoforge/db/sqlite";
 import { readOnlyLegacyAttemptLogs } from "@autoforge/db/sqlite";
 import { LogArchiveService, type LogArchiveRepository } from "@autoforge/application";
@@ -402,7 +403,6 @@ async function createPlatformServices() {
     databaseReady = async () => {
       await database.pool.query("SELECT 1");
     };
-    databaseUsage = () => readPostgresInfrastructureUsage(database.pool, new Date());
     diagnosticProviders = {
       database: "PostgreSQL",
       objectStore: "MinIO / S3",
@@ -463,6 +463,36 @@ async function createPlatformServices() {
         createHash("sha256").update(config.masterKey).digest("hex"),
         join(config.migrationsFolder, "../log-postgresql"),
       );
+      databaseUsage = async () => {
+        const sample = await readPostgresInfrastructureUsage(database.pool, new Date());
+        const logs = logRegistry.connectionPoolSnapshot();
+        return {
+          ...sample,
+          metrics: [
+            ...sample.metrics,
+            {
+              key: "pool_max",
+              label: "当前 Web 主池上限",
+              value: config.databasePoolMax,
+              unit: "count",
+            },
+            { key: "log_pools", label: "当前进程日志池数", value: logs.pools, unit: "count" },
+            {
+              key: "log_connections",
+              label: "日志池连接数",
+              value: logs.connections,
+              unit: "count",
+            },
+            { key: "log_idle", label: "日志池空闲连接", value: logs.idle, unit: "count" },
+            { key: "log_waiting", label: "日志池等待请求", value: logs.waiting, unit: "count" },
+          ],
+          notes: [
+            ...sample.notes,
+            "主池保留常驻连接并启用 TCP keepalive；日志管理与日期库分别使用有界长连接池，空闲连接十分钟后可回收。日志池统计仅属于当前 Web 进程。",
+          ],
+        };
+      };
+
       routedLogs = new PostgresRoutedAttemptLogStore(logRegistry, attemptLogs);
       if (config.logServer)
         await logRegistry.initializeDaily(config.logServer, uuidV7(), clock.now().toISOString());
@@ -1059,6 +1089,20 @@ async function createPlatformServices() {
     clock,
     dataDirectory: config.dataDirectory,
     configurationRevision: () => configurationStore.read().revision,
+    information: () => {
+      const current = configurationStore.read();
+      return {
+        traffic: httpTrafficSnapshot(),
+        execution: {
+          workerConcurrency: current.worker.concurrency,
+          caseTimeoutSeconds: current.limits.caseExecutionTimeoutSeconds,
+          projectMaximumConcurrency: current.scheduler.projectMaximumConcurrency,
+          memoryAdmissionMode: current.scheduler.memoryAdmissionMode,
+          maximumCpuPercent: current.scheduler.maximumCpuUtilizationPercent,
+          maximumMemoryPercent: current.scheduler.maximumMemoryUtilizationPercent,
+        },
+      };
+    },
     dependencies: {
       database: { provider: diagnosticProviders.database, check: databaseReady },
       objectStore: { provider: diagnosticProviders.objectStore, check: () => objectStore.ready() },

@@ -180,6 +180,43 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return mapServiceAccount(await this.requiredServiceAccountRow(input.accountId));
   }
 
+  async deleteServiceAccount(input: { accountId: string; expectedRevision: number }) {
+    await this.ready();
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<{ id: string; name: string }>(
+        "DELETE FROM service_accounts WHERE id=$1 AND revision=$2 RETURNING id,name",
+        [input.accountId, input.expectedRevision],
+      ),
+    );
+    if (!result.rows[0]) {
+      await this.requiredServiceAccountRow(input.accountId);
+      versionConflict();
+    }
+    return result.rows[0]!;
+  }
+
+  async deleteApiToken(input: { tokenId: string; now: string }) {
+    await this.ready();
+    const result = await retryPostgresWrite(() =>
+      this.handle.pool.query<{ id: string; service_account_id: string; name: string }>(
+        "DELETE FROM api_tokens WHERE id=$1 AND (revoked_at IS NOT NULL OR expires_at<=$2) RETURNING id,service_account_id,name",
+        [input.tokenId, input.now],
+      ),
+    );
+    const row = result.rows[0];
+    if (!row) {
+      const existing = await this.handle.pool.query("SELECT 1 FROM api_tokens WHERE id=$1", [
+        input.tokenId,
+      ]);
+      if (!existing.rowCount) throw new DomainError("API_TOKEN_NOT_FOUND", "API 令牌不存在。");
+      throw new DomainError(
+        "API_TOKEN_DELETE_CONFLICT",
+        "请先撤销仍有效的 API 令牌，再删除其记录。",
+      );
+    }
+    return { id: row.id, serviceAccountId: row.service_account_id, name: row.name };
+  }
+
   async listApiTokens(accountId: string): Promise<ApiToken[]> {
     await this.ready();
     const result = await this.handle.pool.query<ApiTokenRow>(

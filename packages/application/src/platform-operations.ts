@@ -6,6 +6,9 @@ import {
   analyticsFilterSchema,
   createAnalyticsExportInputSchema,
   createServiceAccountInputSchema,
+  deleteServiceAccountInputSchema,
+  serviceAccountSchema,
+  apiTokenSchema,
   executeRetentionInputSchema,
   issueApiTokenInputSchema,
   updateRetentionPolicyInputSchema,
@@ -134,6 +137,23 @@ export class PlatformOperationsService {
         ? {}
         : { projectPermissions: validatedProjectPermissions(parsed.projectPermissions) }),
       updatedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  deleteServiceAccount(actor: AuthenticatedIdentity, accountId: string, input: unknown) {
+    requirePermission(actor, "api_token.manage");
+    const { expectedRevision } = deleteServiceAccountInputSchema.parse(input);
+    return this.repository.deleteServiceAccount({
+      accountId: serviceAccountSchema.shape.id.parse(accountId),
+      expectedRevision,
+    });
+  }
+
+  deleteApiToken(actor: AuthenticatedIdentity, tokenId: string) {
+    requirePermission(actor, "api_token.manage");
+    return this.repository.deleteApiToken({
+      tokenId: apiTokenSchema.shape.id.parse(tokenId),
+      now: this.clock.now().toISOString(),
     });
   }
 

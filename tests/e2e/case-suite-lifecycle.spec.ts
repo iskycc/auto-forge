@@ -266,7 +266,7 @@ test("public task links execute with login only, share live status, record actor
         })
       ).status,
     ).toBe(409);
-    await expect(observer.getByText("任务正在执行或等待启动", { exact: true })).toBeVisible({
+    await expect(observer.getByText(/任务正在执行或等待启动/)).toBeVisible({
       timeout: 15000,
     });
     await expect(observer.getByRole("button", { name: "终止执行", exact: true })).toBeDisabled();

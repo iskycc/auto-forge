@@ -652,3 +652,43 @@ function emptyAnalyticsSummary() {
     flakyCases: [],
   };
 }
+
+describe("credential deletion authorization", () => {
+  function deletionFixture() {
+    const repository = {
+      deleteServiceAccount: vi.fn(async () => ({ id: "account", name: "CI" })),
+      deleteApiToken: vi.fn(async () => ({ id: "token", name: "CI", serviceAccountId: "account" })),
+    };
+    const service = new PlatformOperationsService(
+      repository as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "secret", hash: (value) => value },
+    );
+    return { repository, service };
+  }
+  it("requires system permission before deleting credentials", () => {
+    const { service, repository } = deletionFixture();
+    expect(() =>
+      service.deleteServiceAccount(projectIdentity, "account", { expectedRevision: 1 }),
+    ).toThrow();
+    expect(() => service.deleteApiToken(projectIdentity, "token")).toThrow();
+    expect(repository.deleteServiceAccount).not.toHaveBeenCalled();
+    expect(repository.deleteApiToken).not.toHaveBeenCalled();
+  });
+  it("validates account revisions and uses the authoritative clock for expiry", async () => {
+    const { service, repository } = deletionFixture();
+    const actor = { ...projectIdentity, systemPermissions: ["api_token.manage" as const] };
+    expect(() => service.deleteServiceAccount(actor, "account", { expectedRevision: 0 })).toThrow();
+    await service.deleteServiceAccount(actor, "account", { expectedRevision: 3 });
+    expect(repository.deleteServiceAccount).toHaveBeenCalledExactlyOnceWith({
+      accountId: "account",
+      expectedRevision: 3,
+    });
+    await service.deleteApiToken(actor, "token");
+    expect(repository.deleteApiToken).toHaveBeenCalledExactlyOnceWith({
+      tokenId: "token",
+      now: timestamp,
+    });
+  });
+});

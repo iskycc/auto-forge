@@ -7,19 +7,16 @@ import { uiPatterns } from "@/components/ui/patterns";
 import Link from "next/link";
 import { CursorPagination } from "@/components/cursor-pagination";
 import { PlatformNodes } from "@/components/platform-nodes";
-import { LogDatabases } from "@/components/log-databases";
 import { hasPermission } from "@autoforge/domain";
 
 import { PlatformSettings } from "@/components/platform-settings";
 import { OperationsSettings } from "@/components/operations-settings";
-import { SystemDiagnostics } from "@/components/system-diagnostics";
 import { requirePagePermission } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
 import { SectionTabs } from "@/components/section-tabs";
 
-type PlatformSection =
-  "logs" | "nodes" | "configuration" | "accounts" | "retention" | "diagnostics";
+type PlatformSection = "nodes" | "configuration" | "accounts" | "retention";
 
 export default async function PlatformSettingsPage({
   searchParams,
@@ -37,6 +34,12 @@ export default async function PlatformSettingsPage({
 }) {
   const identity = await requirePagePermission("settings.read", undefined);
   const parameters = await searchParams;
+  if (parameters.section === "diagnostics") redirect("/system-info");
+  if (parameters.section === "logs")
+    redirect(
+      `/logs?${new URLSearchParams({ section: "databases", ...(parameters.logCursor ? { logCursor: parameters.logCursor } : {}) })}`,
+    );
+
   if (parameters.section === "storage" || parameters.section === "archives") {
     redirect(
       fileStorageLocation(parameters.section, {
@@ -50,10 +53,8 @@ export default async function PlatformSettingsPage({
   const requestedSection = parameters.section;
   const activeSection: PlatformSection =
     (requestedSection === "nodes" && Boolean(services.platformNodes)) ||
-    (requestedSection === "logs" && Boolean(services.logDatabases)) ||
     requestedSection === "accounts" ||
-    requestedSection === "retention" ||
-    requestedSection === "diagnostics"
+    requestedSection === "retention"
       ? requestedSection
       : requestedSection === "automation"
         ? "accounts"
@@ -63,10 +64,6 @@ export default async function PlatformSettingsPage({
       ? await services.platformNodes.list(parameters.nodeCursor)
       : { items: [] };
   const heading = platformSectionHeading(activeSection);
-  const logPage =
-    activeSection === "logs" && services.logDatabases
-      ? await services.logDatabases.list(parameters.logCursor?.slice(0, 128))
-      : undefined;
   const platformView = platformConfigurationView(
     configuration,
     services.configurationStore.paths.configurationFile,
@@ -113,15 +110,6 @@ export default async function PlatformSettingsPage({
       <SectionTabs
         label="平台设置模块"
         tabs={[
-          ...(services.logDatabases
-            ? [
-                {
-                  href: "/settings/platform?section=logs",
-                  label: "日志数据库",
-                  active: activeSection === "logs",
-                },
-              ]
-            : []),
           ...(services.platformNodes
             ? [
                 {
@@ -146,17 +134,9 @@ export default async function PlatformSettingsPage({
             label: "数据保留",
             active: activeSection === "retention",
           },
-          {
-            href: "/settings/platform?section=diagnostics",
-            label: "系统诊断",
-            active: activeSection === "diagnostics",
-          },
         ]}
       />
       <TabContent activeKey={activeSection} className="gap-5">
-        {logPage ? (
-          <LogDatabases initial={logPage} canManage={hasPermission(identity, "settings.manage")} />
-        ) : null}
         {activeSection === "nodes" ? (
           <>
             <PlatformNodes
@@ -201,9 +181,6 @@ export default async function PlatformSettingsPage({
             ) : null}
           </>
         ) : null}
-        {activeSection === "diagnostics" ? (
-          <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
-        ) : null}
       </TabContent>
     </section>
   );
@@ -211,11 +188,6 @@ export default async function PlatformSettingsPage({
 
 function platformSectionHeading(section: PlatformSection): { title: string; description: string } {
   switch (section) {
-    case "logs":
-      return {
-        title: "日志数据库",
-        description: "管理独立 PostgreSQL 日志库、扩展存储并切换新批次的写入位置。",
-      };
     case "nodes":
       return {
         title: "平台节点",
@@ -230,7 +202,5 @@ function platformSectionHeading(section: PlatformSection): { title: string; desc
       return { title: "服务账号", description: "管理服务账号、项目权限和 API 令牌。" };
     case "retention":
       return { title: "数据保留", description: "管理保留期限、影响预览与不可恢复的数据清理。" };
-    case "diagnostics":
-      return { title: "系统诊断", description: "检查平台配置、存储和运行时健康状态。" };
   }
 }

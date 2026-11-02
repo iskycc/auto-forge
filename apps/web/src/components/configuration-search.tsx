@@ -185,10 +185,10 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "settings.read",
   ),
   routeItem(
-    "系统诊断",
+    "系统信息",
     "运行配置、存储和依赖健康状态",
     "diagnostics health",
-    "/settings/platform?section=diagnostics",
+    "/system-info",
     "settings.read",
   ),
   routeItem(
@@ -199,10 +199,17 @@ const CONFIGURATION_SEARCH_ITEMS: readonly ConfigurationSearchItem[] = [
     "settings.read",
   ),
   routeItem(
+    "日志配置",
+    "日志数据库、按日分库、连接和容量",
+    "logs postgres 日志库",
+    "/logs?section=databases",
+    "settings.read",
+  ),
+  routeItem(
     "日志归档",
     "按月压缩日志、下载离线查看并清理归档副本",
     "archive log backup 日志 压缩 归档",
-    "/objects?section=archives",
+    "/logs?section=archives",
     "settings.read",
   ),
   routeItem(

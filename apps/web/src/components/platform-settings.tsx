@@ -323,7 +323,7 @@ export function PlatformSettings({
             {initial.configurationManaged ? (
               <p className={cn("settings-note", uiPatterns["settings-note"])}>
                 PostgreSQL、NATS、Redis
-                和对象存储连接由部署文件管理。凭据不回显；运行状态请查看系统诊断。
+                和对象存储连接由部署文件管理。凭据不回显；运行状态请查看系统信息。
               </p>
             ) : (
               <PlatformInfrastructureFields

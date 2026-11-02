@@ -75,6 +75,13 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
         `broken packaged capacity guide: ${filename}`,
       );
     }
+    for (const filename of [
+      "docs/operations/system-information.md",
+      "docs/operations/log-archives.md",
+      "docs/architecture/public-task-execution.md",
+    ]) {
+      assert((await readFile(resolve(packageDirectory, filename), "utf8")).length > 100);
+    }
     const transferGuide = await readFile(
       resolve(packageDirectory, "docs/operations/ddt-transfer-verification.md"),
       "utf8",

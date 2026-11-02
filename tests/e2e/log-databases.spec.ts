@@ -270,7 +270,9 @@ test("log database settings isolate Full payloads, switch live and preserve hist
       }
     }
     if (!externalLogUrls) {
-      for (const name of names) await database.pool.query(`DROP DATABASE IF EXISTS "${name}"`);
+      // These random fixture databases can still have idle connections in the live Web pool.
+      for (const name of names)
+        await database.pool.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
     }
     await database.close();
   }

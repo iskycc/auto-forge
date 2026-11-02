@@ -158,3 +158,25 @@ describe("system diagnostic snapshots", () => {
     expect(JSON.stringify(report)).not.toContain("private");
   });
 });
+
+it("samples additional counters and configuration only once for concurrent and cached readers", async () => {
+  const { sources } = fixture();
+  const information = vi.fn(() => ({
+    traffic: { requests: 12, clientErrors: 1, serverErrors: 0, meanDurationMs: 2 },
+    execution: {
+      workerConcurrency: 2,
+      caseTimeoutSeconds: 60,
+      projectMaximumConcurrency: 128,
+      memoryAdmissionMode: "threshold" as const,
+      maximumCpuPercent: 90,
+      maximumMemoryPercent: 95,
+    },
+  }));
+  const reader = new SystemDiagnosticReader({ ...sources, information });
+  const [first, second] = await Promise.all([reader.read(), reader.read()]);
+  expect(first).toBe(second);
+  expect(first.information?.traffic.requests).toBe(12);
+  expect(first.information?.execution.memoryAdmissionMode).toBe("threshold");
+  await reader.read();
+  expect(information).toHaveBeenCalledOnce();
+});

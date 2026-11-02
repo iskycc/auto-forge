@@ -1,7 +1,19 @@
 "use client";
 import { BatchSchedulingButton } from "./batch-scheduling-button";
 
-import { Alert, Card, Descriptions, Empty, Form, InputNumber, Select, Statistic, Tag } from "antd";
+import {
+  Alert,
+  Card,
+  Descriptions,
+  Empty,
+  Form,
+  InputNumber,
+  Select,
+  Statistic,
+  Tag,
+  Typography,
+  Collapse,
+} from "antd";
 import { Clock3, ExternalLink, Play, RefreshCw, Square, UserRound } from "lucide-react";
 import { useRef, useState } from "react";
 import type { PublicSuiteBatch, PublicSuiteView } from "@autoforge/contracts";
@@ -122,65 +134,157 @@ export function PublicSuiteExecution({
             <ColorModeToggle />
           </div>
         </header>
-        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)_340px] items-start gap-6 min-[1440px]:grid-cols-[minmax(0,1fr)_380px]">
-          <div className="grid min-w-0 gap-6">
-            <div className="min-w-0">
-              <Tag color="blue" className="max-w-full !whitespace-normal [overflow-wrap:anywhere]">
-                {view.projectName} · {view.versionName}
-              </Tag>
-              <h1 className="mb-3 mt-4 text-3xl font-semibold leading-snug [overflow-wrap:anywhere]">
+        <Card className="min-w-0" aria-label="任务摘要">
+          <div className="flex min-w-0 items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Tag
+                  color="blue"
+                  className="max-w-full !whitespace-normal [overflow-wrap:anywhere]"
+                >
+                  {view.projectName} · {view.versionName}
+                </Tag>
+                <Tag
+                  color={
+                    !view.executable ? "warning" : view.active.length ? "processing" : "success"
+                  }
+                >
+                  {!view.executable ? "暂不可执行" : view.active.length ? "执行中" : "可以执行"}
+                </Tag>
+              </div>
+              <h1 className="m-0 text-2xl font-semibold leading-snug [overflow-wrap:anywhere]">
                 {view.name}
               </h1>
-              <p className="m-0 whitespace-pre-wrap leading-7 text-muted-foreground [overflow-wrap:anywhere]">
+              <Typography.Paragraph
+                className="!mb-0 !mt-3 whitespace-pre-wrap !text-muted-foreground [overflow-wrap:anywhere]"
+                ellipsis={{ rows: 3, expandable: true, symbol: "展开说明" }}
+              >
                 {view.description || "本任务未填写说明。"}
-              </p>
+              </Typography.Paragraph>
             </div>
-            <Card title="任务概览">
-              <div className="mb-6 grid grid-cols-3 gap-4">
-                <Statistic title="用例总数" value={view.caseCount} />
-                <Statistic title="并发上限" value={view.concurrency} />
-                <Statistic title="重跑上限" value={view.retryLimit} suffix="次" />
-              </div>
-              <Descriptions
-                column={1}
-                size="small"
-                items={[
-                  { key: "publisher", label: "链接分享人", children: view.publisher.username },
-                  {
-                    key: "source",
-                    label: "执行配置",
-                    children: "使用任务最新保存的配置，并在拉起时固化快照",
-                  },
-                  {
-                    key: "id",
-                    label: "任务 ID",
-                    children: (
-                      <CopyableText
-                        text={view.suiteId}
-                        className="font-mono text-xs [overflow-wrap:anywhere]"
-                      />
-                    ),
-                  },
-                ]}
-              />
-              <PublicSuiteEnvironment
-                addresses={
-                  view.adapterEnabled ? (environmentOverride ?? view.environmentAddresses) : []
-                }
-                enabled={view.adapterEnabled}
-                disabled={
-                  !authenticated ||
-                  pending ||
-                  view.active.length > 0 ||
-                  !!refreshError ||
-                  unconfirmedRequest
-                }
-                overridden={view.adapterEnabled && !!environmentOverride}
-                onChange={setEnvironmentOverride}
-              />
+            <div className="grid max-w-[180px] shrink-0 gap-2 text-right text-sm">
+              <span className="text-muted-foreground">链接分享人</span>
+              <span className="break-all font-medium">{view.publisher.username}</span>
+            </div>
+          </div>
+          <div className="mt-6 grid grid-cols-4 gap-6 border-t border-border pt-5">
+            <Statistic title="用例总数" value={view.caseCount} />
+            <Statistic title="并发上限" value={view.concurrency} />
+            <Statistic title="重跑上限" value={view.retryLimit} suffix="次" />
+            <Statistic title="当前执行批次" value={view.active.length} suffix="个" />
+          </div>
+        </Card>
+        {error || refreshError ? (
+          <Alert
+            type="error"
+            showIcon
+            title={error || refreshError}
+            action={
+              <Button type="button" variant="ghost" onClick={() => void refresh()}>
+                重试刷新
+              </Button>
+            }
+          />
+        ) : null}
+        <section
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6 min-[1440px]:grid-cols-[minmax(0,1fr)_360px]"
+          aria-label="任务执行与控制"
+        >
+          <div className="grid min-w-0 gap-6">
+            <Card
+              title="当前执行"
+              extra={
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                  每 5 秒自动刷新
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="刷新任务状态"
+                    onClick={() => void refresh()}
+                  >
+                    <RefreshCw size={15} />
+                  </Button>
+                </span>
+              }
+            >
+              {view.active.length ? (
+                <div className="@container grid gap-3">
+                  {view.active.map((batch) => (
+                    <ExecutionRow
+                      key={batch.id}
+                      batch={batch}
+                      schedulingEndpoint={`${endpoint}/executions/${encodeURIComponent(batch.id)}/scheduling?${query}`}
+                      onSchedulingChanged={refresh}
+                      canStop={authenticated && !pending && !refreshError}
+                      onStop={() => {
+                        setError("");
+                        setStop(batch);
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Empty
+                  className="!my-4"
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="当前没有执行中的批次"
+                />
+              )}
             </Card>
+            <Card
+              title="最近公开执行"
+              extra={<span className="text-xs text-muted-foreground">保留展示最近 5 次</span>}
+            >
+              {view.recent.length ? (
+                <div className="@container grid gap-3">
+                  {view.recent.map((batch) => (
+                    <ExecutionRow key={batch.id} batch={batch} />
+                  ))}
+                </div>
+              ) : (
+                <Empty
+                  className="!my-4"
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="尚无公开执行记录"
+                />
+              )}
+            </Card>
+            <Collapse
+              size="small"
+              items={[
+                {
+                  key: "configuration",
+                  label: "任务配置说明",
+                  children: (
+                    <Descriptions
+                      column={1}
+                      size="small"
+                      items={[
+                        {
+                          key: "source",
+                          label: "执行配置",
+                          children: "使用任务最新保存的配置，并在拉起时固化快照",
+                        },
+                        {
+                          key: "id",
+                          label: "任务 ID",
+                          children: (
+                            <CopyableText
+                              text={view.suiteId}
+                              className="font-mono text-xs [overflow-wrap:anywhere]"
+                            />
+                          ),
+                        },
+                      ]}
+                    />
+                  ),
+                },
+              ]}
+            />
           </div>
           <Card
+            className="self-start"
             title={
               <span className="flex items-center gap-2">
                 <Play size={17} />
@@ -189,16 +293,11 @@ export function PublicSuiteExecution({
             }
           >
             <div className="grid gap-4">
-              <Alert
-                type={view.active.length ? "warning" : "info"}
-                showIcon
-                title={view.active.length ? "任务正在执行或等待启动" : "任务就绪"}
-                description={
-                  view.active.length
-                    ? "所有访问者看到相同状态，请在当前批次结束后再执行。"
-                    : "登录后即可执行，无需额外项目权限。"
-                }
-              />
+              <p className="m-0 text-sm leading-6 text-muted-foreground">
+                {view.active.length
+                  ? "任务正在执行或等待启动，当前批次结束后可再次拉起。"
+                  : "登录后即可执行，无需额外项目权限。"}
+              </p>
               {!view.executable ? <Alert type="warning" title={view.unavailableReason} /> : null}
               <Form layout="vertical">
                 <Form.Item label="启动方式" className="!mb-3">
@@ -253,6 +352,21 @@ export function PublicSuiteExecution({
               ) : (
                 <SessionLoginButton label="登录后执行任务" />
               )}
+              <PublicSuiteEnvironment
+                addresses={
+                  view.adapterEnabled ? (environmentOverride ?? view.environmentAddresses) : []
+                }
+                enabled={view.adapterEnabled}
+                disabled={
+                  !authenticated ||
+                  pending ||
+                  view.active.length > 0 ||
+                  !!refreshError ||
+                  unconfirmedRequest
+                }
+                overridden={view.adapterEnabled && !!environmentOverride}
+                onChange={setEnvironmentOverride}
+              />
               <p className="m-0 text-xs leading-6 text-muted-foreground">
                 执行记录会保存链接分享人和实际拉起人。终止操作也会记录操作人。
               </p>
@@ -270,69 +384,6 @@ export function PublicSuiteExecution({
             </div>
           </Card>
         </section>
-        {error || refreshError ? (
-          <Alert
-            type="error"
-            showIcon
-            title={error || refreshError}
-            action={
-              <Button type="button" variant="ghost" onClick={() => void refresh()}>
-                重试刷新
-              </Button>
-            }
-          />
-        ) : null}
-        <Card
-          title="当前执行"
-          extra={
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              每 5 秒自动刷新
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="刷新任务状态"
-                onClick={() => void refresh()}
-              >
-                <RefreshCw size={15} />
-              </Button>
-            </span>
-          }
-        >
-          {view.active.length ? (
-            <div className="grid gap-3">
-              {view.active.map((batch) => (
-                <ExecutionRow
-                  key={batch.id}
-                  batch={batch}
-                  schedulingEndpoint={`${endpoint}/executions/${encodeURIComponent(batch.id)}/scheduling?${query}`}
-                  onSchedulingChanged={refresh}
-                  canStop={authenticated && !pending && !refreshError}
-                  onStop={() => {
-                    setError("");
-                    setStop(batch);
-                  }}
-                />
-              ))}
-            </div>
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有执行中的批次" />
-          )}
-        </Card>
-        <Card
-          title="最近公开执行"
-          extra={<span className="text-xs text-muted-foreground">保留展示最近 5 次</span>}
-        >
-          {view.recent.length ? (
-            <div className="grid gap-3">
-              {view.recent.map((batch) => (
-                <ExecutionRow key={batch.id} batch={batch} />
-              ))}
-            </div>
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无公开执行记录" />
-          )}
-        </Card>
         <JenkinsTaskGuide suiteId={view.suiteId} baseUrl={baseUrl} />
         <footer className="text-center text-xs leading-6 text-muted-foreground">
           AutoForge · 任务配置由平台维护 · 请仅向可信人员提供此执行入口
@@ -412,7 +463,7 @@ function ExecutionRow({
             }[batch.status];
   return (
     <article
-      className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-muted p-4"
+      className="flex min-w-0 flex-col items-stretch gap-4 rounded-lg border border-border bg-muted p-4 @3xl:flex-row @3xl:items-center @3xl:justify-between"
       aria-label={`执行批次 ${batch.sequenceNumber}`}
     >
       <div className="grid min-w-0 flex-1 gap-2">
@@ -444,7 +495,7 @@ function ExecutionRow({
           </div>
         ) : null}
       </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
         {batch.progressPath ? (
           <a
             href={batch.progressPath}

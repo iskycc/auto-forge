@@ -17,7 +17,7 @@ import next from "next";
 import { platformClockNow } from "../src/lib/platform-clock-runtime.ts";
 import { loadAppConfig } from "../src/lib/config.ts";
 import { registerWorkDispatcher, unregisterWorkDispatcher } from "../src/lib/work-runtime.ts";
-import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
+import { recordHttpRequest, recordRuntimeSample } from "../src/lib/runtime-metrics.ts";
 import { TerminalGateway, type TerminalAuditEvent } from "./terminal-gateway.ts";
 import { rejectH2cUpgrade } from "./http-upgrade.ts";
 import { LogStreamGateway } from "./log-stream-gateway.ts";
@@ -111,6 +111,7 @@ const priorityMonitor = setInterval(() => {
   );
   previousCpu = cpu;
   previousSampleAt = now;
+  recordRuntimeSample(cpuUtilization, eventLoopDelay.max / 1_000_000);
   runtimePriority().observeEventLoopDelay(eventLoopDelay.max / 1_000_000);
   eventLoopDelay.reset();
 }, 250);

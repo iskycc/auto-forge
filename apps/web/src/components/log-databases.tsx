@@ -174,9 +174,7 @@ export function LogDatabases({
         </Typography.Text>
       ) : null}
       {initial.nextCursor ? (
-        <Link
-          href={`/settings/platform?section=logs&logCursor=${encodeURIComponent(initial.nextCursor)}`}
-        >
+        <Link href={`/logs?section=databases&logCursor=${encodeURIComponent(initial.nextCursor)}`}>
           下一页日志数据库
         </Link>
       ) : null}

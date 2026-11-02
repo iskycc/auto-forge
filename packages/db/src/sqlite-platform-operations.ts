@@ -202,6 +202,34 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     return mapServiceAccount(this.requiredServiceAccountRow(input.accountId));
   }
 
+  async deleteServiceAccount(input: { accountId: string; expectedRevision: number }) {
+    return retrySqliteLockContention(() =>
+      this.handle.client.transaction(() => {
+        const current = this.requiredServiceAccountRow(input.accountId);
+        if (current.revision !== input.expectedRevision) versionConflict();
+        this.handle.client
+          .prepare("DELETE FROM service_accounts WHERE id=? AND revision=?")
+          .run(input.accountId, input.expectedRevision);
+        return { id: current.id, name: current.name };
+      })(),
+    );
+  }
+
+  async deleteApiToken(input: { tokenId: string; now: string }) {
+    return retrySqliteLockContention(() =>
+      this.handle.client.transaction(() => {
+        const current = this.requiredApiTokenRow(input.tokenId);
+        if (!current.revoked_at && current.expires_at > input.now)
+          throw new DomainError(
+            "API_TOKEN_DELETE_CONFLICT",
+            "请先撤销仍有效的 API 令牌，再删除其记录。",
+          );
+        this.handle.client.prepare("DELETE FROM api_tokens WHERE id=?").run(input.tokenId);
+        return { id: current.id, serviceAccountId: current.service_account_id, name: current.name };
+      })(),
+    );
+  }
+
   async listApiTokens(accountId: string): Promise<ApiToken[]> {
     const rows = this.handle.client
       .prepare("SELECT * FROM api_tokens WHERE service_account_id = ? ORDER BY created_at DESC, id")

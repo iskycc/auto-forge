@@ -2521,6 +2521,14 @@ export interface PlatformOperationsRepository {
     projectPermissions?: Record<string, Permission[]>;
     updatedAt: string;
   }): Promise<ServiceAccount>;
+  deleteServiceAccount(input: {
+    accountId: string;
+    expectedRevision: number;
+  }): Promise<{ id: string; name: string }>;
+  deleteApiToken(input: {
+    tokenId: string;
+    now: string;
+  }): Promise<{ id: string; serviceAccountId: string; name: string }>;
   listApiTokens(accountId: string): Promise<ApiToken[]>;
   createApiToken(record: ApiToken & { tokenHash: string }): Promise<ApiToken>;
   revokeApiToken(input: { tokenId: string; revokedAt: string }): Promise<ApiToken>;

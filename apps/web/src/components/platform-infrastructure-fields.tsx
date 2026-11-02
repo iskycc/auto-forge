@@ -147,7 +147,7 @@ export function PlatformInfrastructureFields({
             <Typography.Text type="secondary">
               日志服务器的连接、检查与写入库切换在同一入口管理，修改实时生效，历史日志保持原路由。
             </Typography.Text>
-            <Link href="/settings/platform?section=logs">管理日志数据库</Link>
+            <Link href="/logs?section=databases">管理日志数据库</Link>
           </div>
         </Card>
       )}

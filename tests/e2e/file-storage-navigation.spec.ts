@@ -12,7 +12,7 @@ import {
   seedInitializationSource,
 } from "./support/version-initialization";
 
-test("file storage navigation groups sources, storage and archives without losing legacy filters", async ({
+test("file storage navigation groups sources and storage, with separate log management without losing legacy filters", async ({
   page,
 }, testInfo) => {
   await ensureAdministrator(page);
@@ -31,7 +31,6 @@ test("file storage navigation groups sources, storage and archives without losin
   for (const section of [
     { label: "文件来源", key: "sources" },
     { label: "存储空间", key: "storage" },
-    { label: "日志归档", key: "archives" },
   ]) {
     await tabs.getByRole("link", { name: section.label, exact: true }).click();
     await expect(tabs.getByRole("link", { name: section.label, exact: true })).toHaveAttribute(
@@ -44,10 +43,6 @@ test("file storage navigation groups sources, storage and archives without losin
     );
     if (section.key === "storage")
       await expect(page.locator(".storage-inventory-tree")).toBeVisible({ timeout: 30_000 });
-    if (section.key === "archives")
-      await expect(
-        page.getByRole("button", { name: "生成并校验归档包", exact: true }),
-      ).toBeVisible();
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: 960 });
       await expectUiIntegrity(page);
@@ -56,7 +51,6 @@ test("file storage navigation groups sources, storage and archives without losin
       });
     }
   }
-  await page.goBack();
   await expect(tabs.getByRole("link", { name: "存储空间", exact: true })).toHaveAttribute(
     "aria-current",
     "page",
@@ -74,7 +68,27 @@ test("file storage navigation groups sources, storage and archives without losin
     "initialization",
   );
   await page.goto("/settings/platform?section=archives");
-  await expect(page).toHaveURL(/\/objects\?section=archives$/);
+  await expect(page).toHaveURL(/\/logs\?section=archives$/);
+  await page.goto("/objects?section=archives");
+  await expect(page).toHaveURL(/\/logs\?section=archives$/);
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectUiIntegrity(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`log-management-${width}.png`),
+      fullPage: true,
+    });
+  }
+  await page.getByRole("link", { name: "日志配置", exact: true }).click();
+  await expect(page.getByText("当前使用本地日志存储", { exact: true })).toBeVisible();
+  await page.goto("/settings/platform?section=diagnostics");
+  await expect(page).toHaveURL(/\/system-info$/);
+  await expect(navigation.getByRole("link", { name: "系统信息", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page.goto("/settings/platform?section=logs");
+  await expect(page).toHaveURL(/\/logs\?section=databases$/);
   await page.goto("/settings/platform?section=configuration");
   const settingsTabs = page.getByRole("navigation", { name: "平台设置模块", exact: true });
   await expect(settingsTabs.getByRole("link", { name: "存储空间", exact: true })).toHaveCount(0);
@@ -83,7 +97,7 @@ test("file storage navigation groups sources, storage and archives without losin
   const search = page.getByRole("dialog", { name: "配置搜索", exact: true });
   await search.getByRole("searchbox", { name: "搜索配置项" }).fill("日志归档");
   await search.getByRole("link", { name: /日志归档/ }).click();
-  await expect(page).toHaveURL(/\/objects\?section=archives$/);
+  await expect(page).toHaveURL(/\/logs\?section=archives$/);
 });
 
 async function createScopedReader(page: Page, permission: "settings.read" | "case_source.read") {
@@ -132,11 +146,9 @@ test("file storage tabs retain separate source and global settings permission bo
       await expect(
         tabs.getByRole("link", { name: settingsOnly ? "文件来源" : "存储空间", exact: true }),
       ).toHaveCount(0);
-      await expect(tabs.getByRole("link", { name: "日志归档", exact: true })).toHaveCount(
-        settingsOnly ? 1 : 0,
-      );
+      await expect(tabs.getByRole("link", { name: "日志归档", exact: true })).toHaveCount(0);
       if (settingsOnly) {
-        await tabs.getByRole("link", { name: "日志归档", exact: true }).click();
+        await reader.goto("/logs?section=archives");
         await expect(
           reader.getByRole("button", { name: "生成并校验归档包", exact: true }),
         ).toBeDisabled();

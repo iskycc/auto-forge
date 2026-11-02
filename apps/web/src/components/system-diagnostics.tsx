@@ -45,7 +45,7 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.message ?? "系统诊断读取失败。");
+      if (!response.ok) throw new Error(body.error?.message ?? "系统信息读取失败。");
       const next = systemDiagnosticSchema.parse(body);
       if (!controller.signal.aborted && epoch === browserCacheEpoch()) {
         setDiagnostic(next);
@@ -104,7 +104,7 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
   }
 
   return (
-    <section className={styles.page} aria-label="平台诊断报告" aria-busy={loading}>
+    <section className={styles.page} aria-label="系统信息报告" aria-busy={loading}>
       <div className={styles.toolbar}>
         <p aria-live="polite">
           {loading ? (
@@ -128,7 +128,7 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
             type="button"
           >
             <RefreshCw size={15} />
-            刷新诊断
+            刷新信息
           </Button>
           <LinkButton
             className={cn(
@@ -139,14 +139,14 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
             href="/api/v1/settings/diagnostics?download=1"
           >
             <Download size={15} />
-            下载脱敏诊断包
+            下载系统信息
           </LinkButton>
         </div>
       </div>
       {error ? (
         <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])} role="alert">
           {error}
-          {diagnostic ? " 当前保留上次诊断结果，请留意更新时间。" : ""}
+          {diagnostic ? " 当前保留上次系统信息，请留意更新时间。" : ""}
         </Notice>
       ) : null}
       {loading && !diagnostic ? (

@@ -8,5 +8,5 @@ export function fileStorageLocation(
   if (typeof filters.category === "string" && filters.category)
     query.set("category", filters.category);
   if (typeof filters.query === "string" && filters.query) query.set("query", filters.query);
-  return `/objects?${query}`;
+  return `${section === "archives" ? "/logs" : "/objects"}?${query}`;
 }

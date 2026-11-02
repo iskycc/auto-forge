@@ -33,7 +33,7 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
 }) => {
   await ensureAdministrator(page);
   await page.goto("/settings/platform?section=diagnostics");
-  const report = page.getByRole("region", { name: "平台诊断报告", exact: true });
+  const report = page.getByRole("region", { name: "系统信息报告", exact: true });
   await expect(report).toHaveAttribute("aria-busy", "false");
   const response = await page.request.get("/api/v1/settings/diagnostics");
   expect(response.status()).toBe(200);
@@ -44,6 +44,10 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
   expect(diagnostic.runtime?.cpuCapacity).toBeGreaterThan(0);
   expect(diagnostic.runtime?.memoryCapacityBytes).toBeGreaterThan(0);
   expect(diagnostic.queueDepth).toBeDefined();
+  expect(diagnostic.information?.traffic.requests).toBeGreaterThan(0);
+  expect(diagnostic.information?.execution.projectMaximumConcurrency).toBeGreaterThan(0);
+  expect(diagnostic.runtime?.processId).toBeGreaterThan(0);
+  await expect(page.getByLabel("运行摘要", { exact: true })).toContainText("累计请求");
   expect(diagnostic.database.ready).toBe(true);
   await expect(page.getByRole("region", { name: "节点与构建", exact: true })).toContainText(
     diagnostic.runtime!.hostname,
@@ -58,6 +62,11 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
     await page.evaluate(() => window.scrollTo(0, 0));
     await expectUiIntegrity(page);
     await captureDiagnosticUi(page, `diagnostics-normal-${viewport.width}`);
+    const configuration = page.getByRole("button", { name: "执行配置与进程内存", exact: true });
+    await configuration.click();
+    await expect(page.getByText("项目在途上限", { exact: true })).toBeVisible();
+    await captureDiagnosticUi(page, `system-runtime-details-${viewport.width}`);
+    await configuration.click();
     await page.getByRole("region", { name: "平台时间基准", exact: true }).scrollIntoViewIfNeeded();
     // The fixed application header intentionally overlays scrolled content. Inspect its
     // painted result in the viewport capture; the top-of-page guard already checks controls.
@@ -68,8 +77,8 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
   await page.route(matchesDiagnostics, (route) =>
     route.fulfill({ status: 503, json: { error: { message: "模拟诊断请求暂时失败" } } }),
   );
-  await page.getByRole("button", { name: "刷新诊断" }).click();
-  await expect(report.getByRole("alert")).toContainText("当前保留上次诊断结果");
+  await page.getByRole("button", { name: "刷新信息" }).click();
+  await expect(report.getByRole("alert")).toContainText("当前保留上次系统信息");
   await expect(page.getByRole("heading", { name: "资源与容量", exact: true })).toBeVisible();
   await page.unroute(matchesDiagnostics);
 
@@ -88,7 +97,7 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
       },
     }),
   );
-  await page.getByRole("button", { name: "刷新诊断" }).click();
+  await page.getByRole("button", { name: "刷新信息" }).click();
   await expect(report).toHaveAttribute("aria-busy", "false");
   await expect(page.getByRole("heading", { name: "部分检查不可用" })).toBeVisible();
   await expect(page.locator(".diagnostic-summary")).toContainText("1.17.999");
@@ -103,7 +112,7 @@ test("system diagnostics shows build provenance, bounded snapshots and resilient
     await captureDiagnosticUi(page, `diagnostics-degraded-${viewport.width}`);
   }
   await page.unroute(matchesDiagnostics);
-  await page.getByRole("button", { name: "刷新诊断" }).click();
+  await page.getByRole("button", { name: "刷新信息" }).click();
   await expect(report).toHaveAttribute("aria-busy", "false");
   await expect(page.getByText(longError, { exact: true })).toHaveCount(0);
 });
@@ -112,7 +121,13 @@ async function captureDiagnosticUi(page: Page, name: string, fullPage = true): P
   const directory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!directory) return;
   mkdirSync(directory, { recursive: true });
-  await page.screenshot({ path: resolve(directory, `${name}.png`), fullPage });
+  if (fullPage) await page.evaluate(() => window.scrollTo(0, 0));
+  await waitForUiTransitions(page);
+  await page.screenshot({
+    path: resolve(directory, `${name}.png`),
+    fullPage,
+    animations: "disabled",
+  });
 }
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
@@ -239,10 +254,10 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   ).toBeVisible();
 
   await expandAdministrationGroup(page, "平台运维");
-  await page.getByRole("link", { name: "系统诊断" }).click();
-  await expect(page.getByRole("heading", { name: "系统诊断" })).toBeVisible();
+  await page.getByRole("link", { name: "系统信息" }).click();
+  await expect(page.getByRole("heading", { name: "系统信息" })).toBeVisible();
   await expect(page.locator(".diagnostic-summary")).toContainText(/LITE|FULL/);
-  await page.getByRole("button", { name: "刷新诊断" }).click();
+  await page.getByRole("button", { name: "刷新信息" }).click();
   await expect(page.locator(".diagnostic-grid")).toContainText("就绪");
   const diagnostic = await page.request.get("/api/v1/settings/diagnostics?download=1");
   expect(diagnostic.status()).toBe(200);
@@ -258,7 +273,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   if (diagnosticBody.mode === "lite" && liteDataDirectory) {
     insertLiteDeadLetterFixture(liteDataDirectory);
     insertSqliteStorageFixture(liteDataDirectory);
-    await page.getByRole("button", { name: "刷新诊断" }).click();
+    await page.getByRole("button", { name: "刷新信息" }).click();
     const deadLetterPanel = page.locator(".diagnostic-dead-letters");
     await expect(deadLetterPanel).toContainText("对象清理");
     await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
@@ -1096,7 +1111,7 @@ test("middleware usage opens lazily with real counters, bounded failure handling
 }) => {
   await ensureAdministrator(page);
   await page.goto("/settings/platform?section=diagnostics");
-  const report = page.getByRole("region", { name: "平台诊断报告", exact: true });
+  const report = page.getByRole("region", { name: "系统信息报告", exact: true });
   await expect(report).toHaveAttribute("aria-busy", "false");
   for (const [dependency, label] of [
     ["database", "数据库"],

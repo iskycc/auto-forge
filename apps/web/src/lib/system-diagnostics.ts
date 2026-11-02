@@ -14,6 +14,7 @@ type DiagnosticSources = {
   queue: Pick<JobQueuePort, "depth" | "listDeadLetters">;
   runtime(): NonNullable<SystemDiagnostic["runtime"]>;
   dataDirectory: string;
+  information?: () => NonNullable<SystemDiagnostic["information"]>;
   disk?: (path: string) => Promise<DiskCapacity>;
 };
 
@@ -124,6 +125,7 @@ export class SystemDiagnosticReader {
       mode: this.sources.mode,
       configurationRevision: this.sources.configurationRevision(),
       runtime: this.sources.runtime(),
+      information: this.sources.information?.(),
       queueDepth: queue?.depth,
       deadLetters: (queue?.deadLetters ?? []).map((entry) => ({
         ...entry,

@@ -31,7 +31,8 @@ export class PostgresDailyLogDatabases {
       cipher: SecretCipherPort;
       platformId: string;
       migrationsFolder: string;
-      createPool(url: string, maximum: number): Pool;
+      withConnection<T>(url: string, id: string, operation: (pool: Pool) => Promise<T>): Promise<T>;
+      retireConnection(url: string): Promise<boolean>;
     },
   ) {}
 
@@ -307,6 +308,7 @@ export class PostgresDailyLogDatabases {
             return !(await payload.query("SELECT 1 FROM log_batches LIMIT 1")).rowCount;
           });
           if (!empty) return 0;
+          if (!(await this.dependencies.retireConnection(target.toString()))) return 0;
           // Do not force-disconnect readers or other platform nodes. Idle pools expire;
           // a busy database is retried by maintenance after their connections close.
           if (
@@ -401,13 +403,10 @@ export class PostgresDailyLogDatabases {
     id: string,
     operation: (pool: Pool) => Promise<T>,
   ): Promise<T> {
-    const pool = this.dependencies.createPool(url, 1);
     try {
-      return await operation(pool);
+      return await this.dependencies.withConnection(url, id, operation);
     } catch (cause) {
       throw logDatabaseError(cause, id);
-    } finally {
-      await pool.end();
     }
   }
 }

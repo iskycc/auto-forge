@@ -43,6 +43,10 @@ export const updateServiceAccountInputSchema = z.object({
   expectedRevision: z.number().int().positive(),
 });
 
+export const deleteServiceAccountInputSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+});
+
 export const apiTokenSchema = z.object({
   id: identifierSchema,
   serviceAccountId: identifierSchema,
@@ -354,6 +358,31 @@ export const systemDiagnosticSchema = z.object({
       createdAt: z.string().datetime().optional(),
     })
     .optional(),
+  information: z
+    .object({
+      traffic: z.object({
+        requests: z.number().int().nonnegative(),
+        clientErrors: z.number().int().nonnegative(),
+        serverErrors: z.number().int().nonnegative(),
+        meanDurationMs: z.number().nonnegative(),
+        sample: z
+          .object({
+            sampledAt: z.string().datetime(),
+            cpuUtilizationPercent: z.number().min(0).max(100),
+            eventLoopDelayMs: z.number().nonnegative(),
+          })
+          .optional(),
+      }),
+      execution: z.object({
+        workerConcurrency: z.number().int().positive(),
+        caseTimeoutSeconds: z.number().int().positive(),
+        projectMaximumConcurrency: z.number().int().positive(),
+        memoryAdmissionMode: z.enum(["reserved", "threshold", "disabled"]),
+        maximumCpuPercent: z.number(),
+        maximumMemoryPercent: z.number(),
+      }),
+    })
+    .optional(),
   runtime: z
     .object({
       nodeId: z.string(),
@@ -363,6 +392,11 @@ export const systemDiagnosticSchema = z.object({
       platform: z.string(),
       architecture: z.string(),
       uptimeSeconds: z.number().int().nonnegative(),
+      processId: z.number().int().positive().optional(),
+      v8Version: z.string().max(100).optional(),
+      heapTotalBytes: z.number().int().nonnegative().optional(),
+      externalMemoryBytes: z.number().int().nonnegative().optional(),
+      arrayBuffersBytes: z.number().int().nonnegative().optional(),
       cpuCapacity: z.number().positive(),
       memoryCapacityBytes: z.number().int().positive(),
       availableMemoryBytes: z.number().int().nonnegative(),

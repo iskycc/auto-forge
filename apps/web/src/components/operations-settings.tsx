@@ -158,6 +158,54 @@ export function OperationsSettings({
     });
   }
 
+  async function deleteAccount(account: ServiceAccount) {
+    if (
+      !(await confirmAction({
+        title: "删除服务账号",
+        description: `将永久删除“${account.name}”及其全部 API 令牌，自动化调用立即失效。审计与执行历史保留。`,
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
+      return;
+    await mutate(async () => {
+      await requestJson(`/api/v1/service-accounts/${encodeURIComponent(account.id)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ expectedRevision: account.revision }),
+      });
+      setAccounts((current) => current.filter((item) => item.id !== account.id));
+      setTokens((current) => {
+        const next = { ...current };
+        delete next[account.id];
+        return next;
+      });
+      setIssuedToken("");
+      return "服务账号及其 API 令牌已删除，审计和执行历史保留。";
+    });
+  }
+  async function deleteToken(token: ApiToken) {
+    if (
+      !(await confirmAction({
+        title: "删除令牌记录",
+        description: `永久删除“${token.name}”的密钥记录，审计和执行历史保留。`,
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
+      return;
+    await mutate(async () => {
+      await requestJson(`/api/v1/api-tokens/${encodeURIComponent(token.id)}`, { method: "DELETE" });
+      setTokens((current) => ({
+        ...current,
+        [token.serviceAccountId]: (current[token.serviceAccountId] ?? []).filter(
+          (item) => item.id !== token.id,
+        ),
+      }));
+      setIssuedToken("");
+      return "令牌记录已删除。";
+    });
+  }
+
   async function updateAccount(event: FormEvent<HTMLFormElement>, account: ServiceAccount) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -539,6 +587,16 @@ export function OperationsSettings({
                       >
                         编辑账号与权限
                       </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        disabled={pending}
+                        aria-label={`删除服务账号 ${account.name}`}
+                        onClick={() => void deleteAccount(account)}
+                      >
+                        <Trash2 size={15} />
+                        删除账号
+                      </Button>
                       {account.status === "active" ? (
                         <Button
                           onClick={() => {
@@ -752,13 +810,25 @@ export function OperationsSettings({
                                 ? `最近使用 ${formatDate(token.lastUsedAt)}`
                                 : "从未使用"}
                       </span>
+                      {canManageTokens &&
+                      (token.revokedAt || Date.parse(token.expiresAt) <= Date.now()) ? (
+                        <Button
+                          type="button"
+                          variant="danger"
+                          disabled={pending}
+                          aria-label={`删除令牌 ${token.name}`}
+                          onClick={() => void deleteToken(token)}
+                        >
+                          <Trash2 size={15} />
+                        </Button>
+                      ) : null}
                       {!token.revokedAt && canManageTokens && account.status === "active" ? (
                         <Button
                           aria-label={`撤销 ${token.name}`}
                           onClick={() => void revokeToken(token)}
                           type="button"
                         >
-                          <Trash2 size={15} />
+                          <KeyRound size={15} />
                         </Button>
                       ) : null}
                     </div>
