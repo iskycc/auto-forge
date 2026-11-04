@@ -227,6 +227,95 @@ class SpreadsheetTests(unittest.TestCase):
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_nested_map_order_does_not_change_hash_or_create_report_differences(self):
+        left = {"outer": {"b": 2, "a": 1}, "items": [{"y": False, "x": "中文"}]}
+        right = {"items": [{"x": "中文", "y": False}], "outer": {"a": 1, "b": 2}}
+        self.assertEqual(verifier.fingerprint(left), verifier.fingerprint(right))
+        with tempfile.TemporaryDirectory() as directory:
+            report = verifier.Report(Path(directory) / "report", True, False)
+            try:
+                # Equality must be established from values, independently of report digests.
+                with patch.object(verifier, "fingerprint", side_effect=AssertionError("unexpected digest")):
+                    self.assertFalse(report.compare("A", "file:2", "source_target", left, right))
+                self.assertEqual(report.summary["differences"], 0)
+            finally:
+                report.close()
+            with (report.directory / "differences.csv").open(encoding="utf-8-sig", newline="") as stream:
+                self.assertEqual(list(csv.DictReader(stream)), [])
+
+    def test_json_text_difference_preserves_original_strings_for_local_diagnosis(self):
+        left = {"payload": '{"b":2,"a":1}'}
+        right = {"payload": '{ "a": 1, "b": 2 }'}
+        self.assertEqual(json.loads(left["payload"]), json.loads(right["payload"]))
+        with tempfile.TemporaryDirectory() as directory:
+            report = verifier.Report(Path(directory) / "report", True, False)
+            try:
+                self.assertTrue(report.compare("A", "file:2", "source_target", left, right))
+            finally:
+                report.close()
+            with (report.directory / "differences.csv").open(encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["json_pointer"], "/payload")
+            self.assertEqual((rows[0]["left_type"], rows[0]["right_type"]), ("string", "string"))
+            self.assertEqual(json.loads(rows[0]["left_value_json"]), left["payload"])
+            self.assertEqual(json.loads(rows[0]["right_value_json"]), right["payload"])
+            self.assertEqual(rows[0]["comparison_result"], "值不同")
+            self.assertNotIn("left_sha256", rows[0])
+            readable = (report.directory / "differences.diff").read_text()
+            self.assertIn("--- 源平台 (string)", readable)
+            self.assertIn("+++ 目标平台 (string)", readable)
+
+    def test_readable_diff_distinguishes_types_missing_fields_and_ignored_empty_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = verifier.Report(Path(directory) / "report", True, True)
+            try:
+                self.assertTrue(report.compare("钱包-01", "cases.xlsx/data:2", "table_source",
+                                               {"amount": 100, "flag": False, "missing": None},
+                                               {"amount": "100", "flag": 0, "extra": "x"}))
+            finally:
+                report.close()
+            with (report.directory / "differences.csv").open(encoding="utf-8-sig", newline="") as stream:
+                rows = {row["json_pointer"]: row for row in csv.DictReader(stream)}
+            self.assertEqual(rows["/amount"]["comparison_result"], "类型不同")
+            self.assertEqual(rows["/amount"]["left_value_json"], "100")
+            self.assertEqual(rows["/amount"]["right_value_json"], '"100"')
+            self.assertEqual(rows["/extra"]["comparison_result"], "仅右侧存在")
+            self.assertEqual(rows["/extra"]["left_value_json"], "<missing>")
+            self.assertEqual(rows["/flag"]["left_value_json"], "false")
+            self.assertEqual(rows["/flag"]["right_value_json"], "0")
+            self.assertEqual(rows["/missing"]["comparison_result"], "已忽略空值差异")
+            readable = (report.directory / "differences.diff").read_text()
+            for expected in ('CaseID: "钱包-01"', "表格 → 源平台", '字段路径: "/amount"',
+                             "--- 表格 (number)", "+++ 源平台 (string)", "-100\n", '+"100"\n',
+                             "已忽略空值差异", "<字段不存在>"):
+                self.assertIn(expected, readable)
+
+    def test_report_creation_failure_closes_already_opened_files(self):
+        opened = [io.StringIO(), io.StringIO()]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(verifier, "private_file", side_effect=[*opened, OSError("disk full")]):
+                with self.assertRaisesRegex(OSError, "disk full"):
+                    verifier.Report(Path(directory) / "report", True, False)
+        self.assertTrue(all(stream.closed for stream in opened))
+
+    def test_inventory_hash_ignores_row_and_metadata_order_but_detects_revision_changes(self):
+        rows = [
+            ("A", {"id": "a", "revision": 1, "updatedAt": "2026-11-04T00:00:00Z"}),
+            ("B", {"id": "b", "revision": 2, "updatedAt": "2026-11-04T00:01:00Z"}),
+        ]
+        with contextlib.closing(sqlite3.connect(":memory:")) as connection:
+            index = verifier.CaseIndex(connection)
+            for case_id, metadata in rows:
+                index.add("source", case_id, metadata)
+            for case_id, metadata in reversed(rows):
+                index.add("source_after", case_id, dict(reversed(list(metadata.items()))))
+            self.assertEqual(index.inventory_hash("source"), index.inventory_hash("source_after"))
+            connection.execute("UPDATE cases SET body=? WHERE origin=? AND key=?", (
+                verifier.encoded({**rows[0][1], "revision": 2}), "source_after", "a",
+            ))
+            self.assertNotEqual(index.inventory_hash("source"), index.inventory_hash("source_after"))
+
     def test_missing_null_empty_number_false_and_json_pointer_are_distinct(self):
         pairs = list(verifier.differences(
             {"empty": "", "null": None, "zero": 0, "false": False, "a/b~": {"value": "x"}},
@@ -391,12 +480,34 @@ class HttpVerificationTests(unittest.TestCase):
             fixture.cases["target"]["changed"]["value"] = 1
             fixture.cases["target"]["typed"]["value"] = "0"
             fixture.cases["source"]["extra"] = {"CaseID": "extra", "srNum": "SR"}
-            code, summary, differences = self.run_verification(fixture, cases)
+            code, summary, differences = self.run_verification(fixture, cases, include_values=False)
         self.assertEqual(code, 1)
         self.assertEqual(summary["differentCases"], 4)
         self.assertEqual({row["CaseID"] for row in differences}, {"missing", "changed", "typed", "extra"})
         self.assertTrue(summary["complete"])
         self.assertNotIn("left_value_json", differences[0])
+        self.assertIn("left_sha256", differences[0])
+        self.assertFalse((self.directory / "report/differences.diff").exists())
+
+    def test_default_http_verification_reports_actual_values_and_readable_diff(self):
+        cases = [{"CaseID": "钱包-01", "srNum": "Wallet", "amount": 100}]
+        with FakePlatforms({row["CaseID"]: row for row in cases}) as fixture:
+            fixture.cases["target"]["钱包-01"]["amount"] = "100"
+            code, summary, differences = self.run_verification(fixture, cases)
+        self.assertEqual(code, 1)
+        self.assertTrue(summary["complete"])
+        self.assertEqual(summary["valueReporting"], "raw_values")
+        self.assertEqual({row["pair"] for row in differences}, {"table_target", "source_target"})
+        for row in differences:
+            self.assertEqual(row["json_pointer"], "/amount")
+            self.assertEqual(row["comparison_result"], "类型不同")
+            self.assertEqual(row["left_value_json"], "100")
+            self.assertEqual(row["right_value_json"], '"100"')
+            self.assertNotIn("left_sha256", row)
+        readable = (self.directory / "report/differences.diff").read_text()
+        self.assertIn("表格 → 目标平台", readable)
+        self.assertIn("源平台 → 目标平台", readable)
+        self.assertIn("# 结果: different", readable)
 
     def test_changed_revision_prevents_certification(self):
         cases = [{"CaseID": "A", "srNum": "SR"}]
@@ -472,6 +583,11 @@ class HttpVerificationTests(unittest.TestCase):
 
 
 class ScriptConfigurationTests(unittest.TestCase):
+    def test_default_configuration_reports_values_directly(self):
+        config = verifier.VerificationConfig(files=("cases.xlsx",), source_url="source", target_url="target")
+        self.assertTrue(config.include_values)
+        self.assertTrue(verifier.CONFIG.include_values)
+
     def test_run_without_arguments_reads_script_configuration_and_relative_paths(self):
         cases = {"中文-01": {"CaseID": "中文-01", "srNum": "Wallet", "value": 0}}
         with tempfile.TemporaryDirectory() as directory, FakePlatforms(cases) as fixture:

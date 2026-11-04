@@ -19,9 +19,10 @@ import time
 import uuid
 import zipfile
 from collections import OrderedDict
-from contextlib import closing
+from contextlib import ExitStack, closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from difflib import unified_diff
 from itertools import zip_longest
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -40,7 +41,7 @@ class VerificationConfig:
     output_dir: str = ""
     file_scope_only: bool = False
     ignore_empty: bool = False
-    include_values: bool = False
+    include_values: bool = True
     requests_per_second: float = 5
     timeout: float = 15
     retries: int = 2
@@ -69,7 +70,7 @@ CONFIG = VerificationConfig(
     output_dir="",
     file_scope_only=False,  # True 仅匿名验证表格内用例，不能证明平台全量一致。
     ignore_empty=False,  # True 将缺失／null／空串／纯空白互等，仍记录被忽略差异。
-    include_values=False,  # True 在差异报告中增加完整字段值，可能包含用例敏感信息。
+    include_values=True,  # 直接显示左右原值并生成 differences.diff；False 只保存摘要。
     requests_per_second=5,  # 两端合计请求上限，始终串行；范围 (0, 100]。
     timeout=15,  # 每次请求超时，单位秒；范围 (0, 300]。
     retries=2,  # 只读请求有限重试，范围 0–5。
@@ -633,6 +634,22 @@ def differences(left, right, pointer=""):
     yield pointer, left, right
 
 
+def difference_reason(left, right):
+    if left is MISSING:
+        return "仅右侧存在"
+    if right is MISSING:
+        return "仅左侧存在"
+    if value_type(left) != value_type(right):
+        return "类型不同"
+    return "值不同"
+
+
+def readable_diff_value(value):
+    if value is MISSING:
+        return "<字段不存在>\n"
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n"
+
+
 def csv_safe(value):
     text = str(value)
     return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r", "\n")) else text
@@ -648,18 +665,27 @@ class Report:
         self.directory = directory
         self.include_values = include_values
         self.ignore_empty = ignore_empty
-        self.diff_file = private_file(directory / "differences.csv")
-        self.error_file = private_file(directory / "errors.csv")
-        self.writer = csv.writer(self.diff_file)
-        self.errors = csv.writer(self.error_file)
-        columns = ["CaseID", "table_location", "pair", "json_pointer", "ignored", "left_type", "right_type", "left_sha256", "right_sha256"]
-        if include_values: columns += ["left_value_json", "right_value_json"]
-        self.writer.writerow(columns)
-        self.errors.writerow(["origin", "CaseID", "error"])
+        with ExitStack() as files:
+            self.diff_file = files.enter_context(private_file(directory / "differences.csv"))
+            self.error_file = files.enter_context(private_file(directory / "errors.csv"))
+            self.readable_diff_file = files.enter_context(private_file(
+                directory / "differences.diff", encoding="utf-8"
+            )) if include_values else None
+            self.writer = csv.writer(self.diff_file)
+            self.errors = csv.writer(self.error_file)
+            columns = ["CaseID", "table_location", "pair", "json_pointer", "comparison_result",
+                       "ignored", "left_type", "right_type"]
+            columns += ["left_value_json", "right_value_json"] if include_values else ["left_sha256", "right_sha256"]
+            self.writer.writerow(columns)
+            self.errors.writerow(["origin", "CaseID", "error"])
+            if self.readable_diff_file:
+                self.readable_diff_file.write("# DDT 逐字段差异：- 为左侧，+ 为右侧；原值使用 JSON 表示以区分字符串和数值。\n")
+            self._files = files.pop_all()
         self.summary = {"startedAt": utc_now(), "complete": False, "result": "incomplete", "checkedCases": 0,
                         "differentCases": 0, "differences": 0, "ignoredEmptyDifferences": 0, "readErrors": 0,
                         "rawApiDifferences": 0, "inventoryVerified": False, "stabilityVerified": False,
-                        "comparisonMode": "ignore_empty" if ignore_empty else "strict"}
+                        "comparisonMode": "ignore_empty" if ignore_empty else "strict",
+                        "valueReporting": "raw_values" if include_values else "sha256_only"}
 
     def compare(self, case_id, location, pair, left, right):
         different = False
@@ -668,12 +694,35 @@ class Report:
             self.summary["ignoredEmptyDifferences" if ignored else "differences"] += 1
             if pair == "source_target": self.summary["rawApiDifferences"] += 1
             different |= not ignored
-            record = [case_id, location, pair, pointer or "/", ignored, value_type(expected), value_type(actual),
-                      "" if expected is MISSING else fingerprint(expected), "" if actual is MISSING else fingerprint(actual)]
+            reason = "已忽略空值差异" if ignored else difference_reason(expected, actual)
+            record = [case_id, location, pair, pointer or "/", reason, ignored, value_type(expected), value_type(actual)]
             if self.include_values:
                 record += ["<missing>" if value is MISSING else encoded(value) for value in (expected, actual)]
+            else:
+                record += ["" if value is MISSING else fingerprint(value) for value in (expected, actual)]
             self.writer.writerow([csv_safe(value) for value in record])
+            self._write_diff(case_id, location, pair, pointer, reason, expected, actual)
         return different
+
+    def _write_diff(self, case_id, location, pair, pointer, reason, expected, actual):
+        if self.readable_diff_file is None:
+            return
+        left_label, right_label = {
+            "table_source": ("表格", "源平台"),
+            "table_target": ("表格", "目标平台"),
+            "source_target": ("源平台", "目标平台"),
+        }[pair]
+        self.readable_diff_file.write(
+            f"\nCaseID: {encoded(case_id)}\n表格位置: {encoded(location)}\n"
+            f"比较: {left_label} → {right_label} ({pair})\n"
+            f"字段路径: {encoded(pointer or '/')}\n结果: {reason}\n"
+        )
+        self.readable_diff_file.writelines(unified_diff(
+            readable_diff_value(expected).splitlines(keepends=True),
+            readable_diff_value(actual).splitlines(keepends=True),
+            fromfile=f"{left_label} ({value_type(expected)})",
+            tofile=f"{right_label} ({value_type(actual)})",
+        ))
 
     def error(self, origin, case_id, error):
         self.summary["readErrors"] += 1
@@ -682,8 +731,14 @@ class Report:
 
     def close(self):
         self.summary["finishedAt"] = utc_now()
-        self.diff_file.close()
-        self.error_file.close()
+        try:
+            if self.readable_diff_file:
+                self.readable_diff_file.write(
+                    f"\n# 结果: {self.summary['result']}；字段差异 {self.summary['differences']}；"
+                    f"忽略空值差异 {self.summary['ignoredEmptyDifferences']}；读取错误 {self.summary['readErrors']}。\n"
+                )
+        finally:
+            self._files.close()
         with private_file(self.directory / "summary.json", encoding="utf-8") as stream:
             stream.write(json.dumps(self.summary, ensure_ascii=False, allow_nan=False, indent=2) + "\n")
 
@@ -835,6 +890,9 @@ def main(configuration: VerificationConfig | None = None):
             try:
                 report.close()
                 print(f"结果：{report.summary['result']}；报告：{report.directory}", flush=True)
+                print(f"字段对照表：{report.directory / 'differences.csv'}", flush=True)
+                if options.include_values:
+                    print(f"可读 Diff：{report.directory / 'differences.diff'}", flush=True)
                 if options.file_scope_only:
                     print("仅验证表格范围，未证明两平台没有额外用例或验证期间没有修改。", flush=True)
             except OSError as error:
