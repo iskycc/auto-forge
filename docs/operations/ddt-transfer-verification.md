@@ -39,7 +39,7 @@ CONFIG = VerificationConfig(
 
     output_dir="",  # 每次调试自动生成新报告目录。
     file_scope_only=False,
-    ignore_empty=False,
+    ignore_empty=True,
     include_values=True,
     requests_per_second=5,
     timeout=15,
@@ -75,13 +75,13 @@ Windows 可用 `py -3 scripts/operations/verify_ddt_transfer.py`。不再读取�
 4. 逐字段比较“表格—源平台”“表格—目标平台”“源平台—目标平台”，用户旅程比较到具体 Step 和字段。忽略 JSON 字段顺序；字段名、大小写、非空字符串、数字／字符串／布尔类型和字段是否存在均参与比较，不擅自去空白或转换类型。CaseID 定位遵循平台的去首尾空白、不区分大小写规则，字段内容仍严格比较。
 5. 最后再次遍历两个平台目录，对比 CaseID、记录 ID、修订号和修改时间；对输入文件重新计算 SHA-256。如果验证期间用例或表格发生变化，判为未完成，不能认证一致。验证前应暂停用例编辑、导入和清理，保持两个范围的数据稳定；本脚本不会锁住平台。
 
-表格本身无法区分“字段不存在”“单元格为空字符串”和“原字段为 null”。默认仍严格检查：如果 API 保存了空字段而 XLSX 没有实际单元格，会报告字段存在性差异。需要明确按平台当前稀疏导入规则只验证有效数据时，在 `CONFIG` 内改为：
+表格本身无法区分“字段不存在”“单元格为空字符串”和“原字段为 null”。默认使用 `ignore_empty=True`，按平台稀疏导入规则校验有效数据。例如源平台有 `field=""`、表格和目标平台都没有该字段时，不计为有效差异；仅有这类差异时退出码为 `0`，报告仍保留两条“已忽略空值差异”供核对。沿用旧 CONFIG 时，请将该项改为 True：
 
 ```python
 ignore_empty=True,
 ```
 
-此选项仅让缺失、null、空串、仅空白字符互相等价；`0`、`false`、字符串 `"0"` 和 `"false"` 仍分别比较。被忽略的差异也完整写入报告并计数，结果标记为 `effective_data_match`，不会标为严格一致。默认不启用此选项。
+此选项仅让缺失、null、空串、仅空白字符互相等价；`0`、`false`、字符串 `"0"` 和 `"false"` 仍分别比较，缺失这些有效值仍算差异。被忽略的差异完整写入报告并计入 `ignoredEmptyDifferences`，不会增加 `differences` 或 `differentCases`；结果标记为 `effective_data_match`，不宣称所有原始字段严格一致。需要严格核对字段存在性时，设置 `ignore_empty=False`。
 
 XLSX 的 `data` 表及连续的 `step1…stepN` 用户旅程表可混合；保留导出的缺失 Step 标记，不凭空补齐旅程。附带的说明页不作为用例。重复表头、缺少 CaseID／srNum、重复 CaseID、旅程错行、损坏文件和公式单元格均停止校验，避免猜测数据。旧 XLS／XLSB／ODS 需先另存为平台标准 XLSX；脚本不计算公式或读取 Excel 的格式化显示值，数值按单元格真实类型比较。
 
@@ -124,13 +124,13 @@ CaseID: "钱包-01"
 
 | 退出码 | 含义                                                                                         |
 | ------ | -------------------------------------------------------------------------------------------- |
-| `0`    | 指定范围核对完成，无未忽略差异；默认全量模式且 `ignore_empty=False` 时，`result=exact_match` |
+| `0`    | 指定范围核对完成，无未忽略差异；默认 `result=effective_data_match`，严格模式下为 `exact_match` |
 | `1`    | 核对完成，存在缺失／多余用例或字段差异                                                       |
 | `2`    | `CONFIG` 配置不完整、类型／范围无效，或错误地传入了命令行参数                                |
 | `3`    | 未完成：文件无法解析、鉴权失败、请求重试耗尽、分页异常或校验期间数据变化等；修复原因后重试   |
 | `130`  | 用户中断，不能据此判断一致                                                                   |
 
-认证全量一致需同时满足：退出码 `0`、`complete=true`、`result=exact_match`、`inventoryVerified=true`、`stabilityVerified=true`、`readErrors=0`。仅比较数量、仅源目标相等、部分请求成功或只有文件范围通过，都不足以宣称全量三方一致。
+认证全量有效数据一致需同时满足：退出码 `0`、`complete=true`、`result=effective_data_match`、`inventoryVerified=true`、`stabilityVerified=true`、`readErrors=0`。若需认证原始字段严格一致，须设置 `ignore_empty=False` 并获得 `result=exact_match`，其余条件不变。仅比较数量、仅源目标相等、部分请求成功或只有文件范围通过，都不足以宣称全量三方一致。
 
 ## CONFIG 中的可选配置与负载
 

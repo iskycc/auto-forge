@@ -31,6 +31,7 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
     logServer: configuration.full.logServer,
     dataDirectory: runtime.paths.dataDirectory,
     natsServers: [...configuration.full.natsServers],
+    redisUrl: configuration.full.redisUrl,
     ...(configuration.full.natsToken ? { natsToken: configuration.full.natsToken } : {}),
     workerId: `full-worker-${hostname()}-${process.pid}`,
     concurrency: configuration.worker.concurrency,

@@ -18,6 +18,14 @@ const PERMISSION_PRESENTATIONS = {
     description: "将当前项目的失败用例分析分配给已有分析人员",
   },
   "analysis.manage": { label: "认领与分析用例", description: "认领最终失败用例并记录分析类别" },
+  "analysis.ai.read": {
+    label: "查看 AI 初析",
+    description: "读取已授权执行证据对应的 AI 初步建议",
+  },
+  "analysis.ai.create": {
+    label: "发起 AI 初析",
+    description: "允许将项目执行证据发送至已配置模型并生成初析",
+  },
   "run.create": { label: "发起执行", description: "从任务或单用例发起执行" },
   "run.cancel": { label: "终止执行", description: "取消排队中或运行中的执行" },
   "run.retry": { label: "重试执行", description: "重试失败或未完成的执行" },

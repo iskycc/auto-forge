@@ -38,3 +38,4 @@ export * from "./sqlite-ddt-sr-tags";
 export * from "./sqlite-log-archives";
 
 export * from "./archived-attempt-log-store";
+export * from "./sqlite-ai-analysis";

@@ -346,6 +346,7 @@ export const jenkinsJobInspectionSchema = z.object({
 
 export const caseSuiteExecutionPolicySchema = z
   .object({
+    aiAnalysisAfterCompletion: z.boolean().optional(),
     executor: z.enum(["testng", "testng-container"]).optional(),
     adapter: caseSuiteAdapterConfigurationSchema.optional(),
     priority: z.number().int().min(-100).max(100).optional(),

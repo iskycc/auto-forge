@@ -1,5 +1,6 @@
 "use client";
 import { BatchSchedulingButton } from "./batch-scheduling-button";
+import { AiAnalysisButton } from "./ai-analysis-button";
 import { ExecutionActors } from "./execution-actors";
 import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
 import { ExecutionStatisticsStatus } from "./execution-statistics-status";
@@ -315,7 +316,8 @@ export function ExecutionBatchDetails({
         </section>
       ) : null}
 
-      {(analysisScope ||
+      {((canReadLogs && !publicAccess && !activeBatch) ||
+        analysisScope ||
         (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
         batch.status === "failed" ||
         canCancelRuns ||
@@ -358,6 +360,9 @@ export function ExecutionBatchDetails({
             </span>
           </div>
           <div className={cn("button-row", uiPatterns["button-row"])}>
+            {canReadLogs && !publicAccess && !activeBatch ? (
+              <AiAnalysisButton batchId={batch.id} />
+            ) : null}
             {activeBatch && canReadConcurrencyDiagnostics && !publicAccess ? (
               <Button
                 type="button"

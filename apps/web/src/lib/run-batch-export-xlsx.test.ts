@@ -53,6 +53,60 @@ const completedClaim: FailureAnalysisClaim = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
+  it("keeps malformed model prose from invalidating otherwise compatible execution rows", async () => {
+    const { buffer } = await buildRunBatchExportWorkbook({
+      batchId: "ai-text",
+      scope: "final",
+      includesAi: true,
+      rows: [failedRow],
+      shareLinks: new Map(),
+      aiConclusions: new Map([[failedRow.attemptId!, `环境\ufffe建议\n${"下一步\n".repeat(300)}`]]),
+    });
+    const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
+    const headers = sheet.getRow(1).values as string[];
+    const value = sheet.getRow(2).getCell(headers.indexOf("AI 初步分析")).text;
+    expect(value).toContain("\\ufffe");
+    expect(value).toContain("过多换行已折叠");
+    expect(value.split("\n").length).toBeLessThan(254);
+  });
+  it.each(["results", "failure-analysis"] as const)(
+    "exports already published partial AI findings in %s without changing log links or ordinary rows",
+    async (template) => {
+      const { buffer } = await buildRunBatchExportWorkbook({
+        batchId: "ai-export",
+        template,
+        scope: "final",
+        includesAi: true,
+        rows: [
+          failedRow,
+          {
+            ...failedRow,
+            executionRunId: "other-run",
+            attemptId: "other-attempt",
+            displayName: "未分析用例",
+          },
+        ],
+        shareLinks: new Map([
+          [failedRow.attemptId!, "http://platform/CaseLog?AttemptId=attempt-failed"],
+        ]),
+        aiConclusions: new Map([
+          [failedRow.attemptId!, "AI 初步建议（分析中 1/3）\n可能是环境问题，待验证。"],
+        ]),
+      });
+      const sheet = (await loadWorkbook(buffer)).worksheets[0]!;
+      const headers = sheet.getRow(1).values as string[];
+      const aiColumn = headers.indexOf("AI 初步分析");
+      expect(aiColumn).toBeGreaterThan(0);
+      expect(sheet.getRow(2).getCell(aiColumn).value).toContain("分析中 1/3");
+      expect(sheet.getRow(3).getCell(aiColumn).text).toBe("");
+      expect(sheet.getRow(2).getCell(sheet.columnCount).value).toMatchObject({
+        hyperlink: "http://platform/CaseLog?AttemptId=attempt-failed",
+      });
+      expect(sheet.getRow(1).getCell(aiColumn).fill).toMatchObject({
+        fgColor: { argb: "FFEBF0E2" },
+      });
+    },
+  );
   it.each(
     (["results", "failure-analysis"] as const).flatMap((template) =>
       (["round", "final", "all"] as const).flatMap((scope) =>

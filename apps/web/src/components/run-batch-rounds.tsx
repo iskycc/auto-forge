@@ -1,4 +1,5 @@
 "use client";
+import { AiAnalysisButton } from "./ai-analysis-button";
 import { publicCaseLogPath } from "@autoforge/contracts";
 import { LoadingIcon } from "./ui/loading-icon";
 import { Timeline } from "antd";
@@ -1916,6 +1917,15 @@ function RoundCaseRow({
           <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
             {run.className}
           </small>
+          {attempt &&
+          canReadLogs &&
+          !publicRunShareToken &&
+          !publicLogAccess &&
+          ["failed", "timed_out"].includes(attempt.outcome ?? attempt.status) ? (
+            <div className="mt-1">
+              <AiAnalysisButton batchId={run.batchId} attemptId={attempt.id} compact />
+            </div>
+          ) : null}
         </TableCell>
         {showRoundColumn ? (
           <TableCell className={cn("round-cell-nowrap", runBatchRoundsStyles["round-cell-nowrap"])}>

@@ -101,6 +101,8 @@ export type RunBatchExportWorkbookInput = {
   scope: "round" | "final" | "all";
   /** Determined from the whole batch before reading filtered pages. */
   includesDdt?: boolean;
+  includesAi?: boolean;
+  aiConclusions?: ReadonlyMap<string, string>;
   /** scope=round 时记录具体轮次。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
@@ -233,7 +235,11 @@ function buildExecutionResultsSheet(
       : []),
     ...EXPORT_COLUMNS.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
-    ...EXPORT_COLUMNS.slice(2),
+    ...EXPORT_COLUMNS.slice(2, -1),
+    ...(input.includesAi
+      ? [{ header: "AI 初步分析", group: "analysis" as const, minimum: 36, maximum: 56 }]
+      : []),
+    ...EXPORT_COLUMNS.slice(-1),
   ];
   const cellsFor = (row: RunBatchExportRow) => executionResultCells(row, input, timestampFormatter);
   const samples = input.rows.slice(0, EXPORT_WIDTH_SAMPLE_ROWS).map(cellsFor);
@@ -290,6 +296,9 @@ function executionResultCells(
     formatExportTimestamp(row.startedAt, timestampFormatter),
     formatExportTimestamp(row.finishedAt, timestampFormatter),
     row.durationMs === null ? "" : Number((row.durationMs / 1_000).toFixed(1)),
+    ...(input.includesAi
+      ? [row.attemptId ? aiExportCell(input.aiConclusions?.get(row.attemptId) ?? "") : ""]
+      : []),
     shareLink ? { text: shareLink, hyperlink: shareLink } : "",
   ];
 }
@@ -336,6 +345,7 @@ function buildFailureAnalysisSheet(
         )
       : []),
     ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(2),
+    ...(input.includesAi ? [48] : []),
   ];
   sheet.columns = headers.map((header, index) => ({
     header,
@@ -382,8 +392,32 @@ function failureAnalysisCells(
         }
       : "",
     completedClaim?.remark ?? "",
+    ...(input.includesAi
+      ? [item.attemptId ? aiExportCell(input.aiConclusions?.get(item.attemptId) ?? "") : ""]
+      : []),
     shareLink ? { text: shareLink, hyperlink: shareLink } : "",
   ];
+}
+
+/** Model prose must never make an otherwise valid execution row incompatible with Excel. */
+function aiExportCell(value: string): string {
+  let normalized = "";
+  let lines = 0;
+  let folded = false;
+  for (const character of value.replace(/\r\n?/gu, "\n")) {
+    const code = character.codePointAt(0)!;
+    const forbidden =
+      (code < 32 && code !== 9 && code !== 10) ||
+      (code >= 0xd800 && code <= 0xdfff) ||
+      code === 0xfffe ||
+      code === 0xffff;
+    if (forbidden) normalized += `\\u${code.toString(16).padStart(4, "0")}`;
+    else if (character === "\n" && ++lines > 200) {
+      normalized += " ";
+      folded = true;
+    } else normalized += character;
+  }
+  return `${normalized.slice(0, 32000)}${normalized.length > 32000 ? "…（完整初析请在平台查看）" : ""}${folded ? "（过多换行已折叠）" : ""}`;
 }
 
 function ddtExportCells(
@@ -405,13 +439,13 @@ function emptyExportValidationReport(): ExportValidationReport {
 }
 
 function exportHeaders(
-  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt">,
+  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt" | "includesAi">,
 ): readonly string[] {
   return exportColumns(input).map((column) => column.header);
 }
 
 function exportColumns(
-  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt">,
+  input: Pick<RunBatchExportWorkbookInput, "template" | "scope" | "includesDdt" | "includesAi">,
 ) {
   const columns = input.template === "failure-analysis" ? FAILURE_ANALYSIS_COLUMNS : EXPORT_COLUMNS;
   return [
@@ -420,7 +454,9 @@ function exportColumns(
       : []),
     ...columns.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
-    ...columns.slice(2),
+    ...columns.slice(2, -1),
+    ...(input.includesAi ? [{ header: "AI 初步分析", group: "analysis" as const }] : []),
+    ...columns.slice(-1),
   ];
 }
 

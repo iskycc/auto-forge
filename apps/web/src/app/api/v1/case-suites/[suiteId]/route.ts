@@ -59,6 +59,11 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
     const input = updateCaseSuiteInputSchema.parse(await readJsonBody(request, 16 * 1024));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
+    if (input.policy?.aiAnalysisAfterCompletion) {
+      const current = await services.caseSuites.getSummary(suiteId, projectIds);
+      if (!current.policy.aiAnalysisAfterCompletion)
+        services.identityAccess.authorize(identity, "analysis.ai.create", current.projectId);
+    }
     const suite = await services.caseSuites.update(suiteId, input, identity.user.id, projectIds);
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.update",

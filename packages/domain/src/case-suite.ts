@@ -46,6 +46,7 @@ export function orderCaseSuitesByPins<Suite extends Pick<CaseSuite, "id" | "name
 }
 
 export type CaseSuiteExecutionPolicy = {
+  aiAnalysisAfterCompletion?: boolean;
   executor: "testng" | "testng-container";
   adapter: CaseSuiteAdapterConfiguration;
   priority: number;
@@ -251,6 +252,11 @@ export function mergeCaseSuiteExecutionPolicy(
   override: CaseSuiteExecutionPolicyOverride,
 ): CaseSuiteExecutionPolicy {
   return {
+    ...(override.aiAnalysisAfterCompletion !== undefined
+      ? { aiAnalysisAfterCompletion: override.aiAnalysisAfterCompletion }
+      : base.aiAnalysisAfterCompletion !== undefined
+        ? { aiAnalysisAfterCompletion: base.aiAnalysisAfterCompletion }
+        : {}),
     executor: override.executor ?? base.executor,
     adapter: override.adapter
       ? {

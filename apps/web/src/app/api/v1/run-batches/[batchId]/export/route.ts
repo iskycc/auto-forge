@@ -4,7 +4,7 @@ import {
   RUN_BATCH_EXPORT_TEMPLATES,
   type ExportOutcomeFilter,
 } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
+import { DomainError, hasPermission } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 import { Readable } from "node:stream";
 import { join } from "node:path";
@@ -59,6 +59,12 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     });
     const base = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const timeZone = services.configurationStore.read().web.timeZone;
+    const aiSnapshotAt = services.clock.now().toISOString();
+    const includesAi =
+      hasPermission(identity, "analysis.ai.read", exportData.projectId) &&
+      hasPermission(identity, "log.read", exportData.projectId) &&
+      hasPermission(identity, "case.read", exportData.projectId) &&
+      (await services.aiAnalysis.repository.hasConclusions(batchId, aiSnapshotAt));
     const filename = executionExportFilename({
       batch: exportData.batch,
       template: parsed.template,
@@ -104,6 +110,18 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           template: parsed.template,
           scope: parsed.scope,
           includesDdt: exportData.includesDdt,
+          includesAi,
+          aiConclusions: new Map(
+            includesAi
+              ? (
+                  await services.aiAnalysis.repository.exportConclusions(
+                    batchId,
+                    rows.flatMap((row) => (row.attemptId ? [row.attemptId] : [])),
+                    aiSnapshotAt,
+                  )
+                ).map((item) => [item.attemptId, item.conclusion])
+              : [],
+          ),
           ...(parsed.round !== undefined ? { round: parsed.round } : {}),
           rows,
           timeZone,

@@ -15,8 +15,9 @@ import { requirePagePermission } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
 import { SectionTabs } from "@/components/section-tabs";
+import { AiModelSettings } from "@/components/ai-model-settings";
 
-type PlatformSection = "nodes" | "configuration" | "accounts" | "retention";
+type PlatformSection = "nodes" | "configuration" | "accounts" | "retention" | "ai";
 
 export default async function PlatformSettingsPage({
   searchParams,
@@ -54,6 +55,7 @@ export default async function PlatformSettingsPage({
   const activeSection: PlatformSection =
     (requestedSection === "nodes" && Boolean(services.platformNodes)) ||
     requestedSection === "accounts" ||
+    requestedSection === "ai" ||
     requestedSection === "retention"
       ? requestedSection
       : requestedSection === "automation"
@@ -130,6 +132,11 @@ export default async function PlatformSettingsPage({
             active: activeSection === "accounts",
           },
           {
+            href: "/settings/platform?section=ai",
+            label: "模型配置",
+            active: activeSection === "ai",
+          },
+          {
             href: "/settings/platform?section=retention",
             label: "数据保留",
             active: activeSection === "retention",
@@ -137,6 +144,12 @@ export default async function PlatformSettingsPage({
         ]}
       />
       <TabContent activeKey={activeSection} className="gap-5">
+        {activeSection === "ai" ? (
+          <AiModelSettings
+            initial={await services.aiAnalysis.configuration()}
+            canManage={hasPermission(identity, "settings.manage")}
+          />
+        ) : null}
         {activeSection === "nodes" ? (
           <>
             <PlatformNodes
@@ -188,6 +201,11 @@ export default async function PlatformSettingsPage({
 
 function platformSectionHeading(section: PlatformSection): { title: string; description: string } {
   switch (section) {
+    case "ai":
+      return {
+        title: "模型配置",
+        description: "配置内网模型接口、上下文、Worker 共享额度与重试预算。",
+      };
     case "nodes":
       return {
         title: "平台节点",

@@ -24,6 +24,8 @@ import { LogStreamGateway } from "./log-stream-gateway.ts";
 import { LogStreamRelay } from "./log-stream-relay.ts";
 import { WorkerPool } from "./worker-pool.ts";
 import { ReadModelWorkerHost } from "./read-model-worker-host.ts";
+import { AiAnalysisWorkerHost } from "./ai-analysis-worker-host.ts";
+import { registerAiWorkerWake, unregisterAiWorkerWake } from "../src/lib/work-runtime.ts";
 import {
   FastPathUnavailable,
   handleRunnerFastPath,
@@ -153,6 +155,20 @@ if (!development) configureProductionRuntime(webDirectory);
 const createNext = next as unknown as typeof import("next/dist/server/next.js").default;
 const app = createNext({ dev: development, dir: webDirectory, hostname, port });
 await app.prepare();
+const aiWorker =
+  platformConfiguration.mode === "lite"
+    ? new AiAnalysisWorkerHost(
+        {
+          mode: "lite",
+          databasePath: platformConfiguration.databasePath,
+          dataDirectory: platformConfiguration.dataDirectory,
+          migrationsFolder: platformConfiguration.migrationsFolder,
+          masterKey: platformConfiguration.masterKey,
+        },
+        (error) => log("error", "AI worker unavailable", { error: errorMessage(error) }),
+      )
+    : undefined;
+if (aiWorker) registerAiWorkerWake(() => aiWorker.wake());
 
 const requestHandler = app.getRequestHandler();
 const nextUpgradeHandler = app.getUpgradeHandler();
@@ -284,6 +300,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
+  unregisterAiWorkerWake();
   if (shuttingDown) return;
   shuttingDown = true;
   log("info", "AutoForge control plane draining", { signal });
@@ -311,6 +328,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   };
   const results = await Promise.allSettled([
     app.close(),
+    aiWorker?.close(),
     workPool.close(),
     ...readModelWorkers.map((worker) => worker.close()),
     logIo.close(),

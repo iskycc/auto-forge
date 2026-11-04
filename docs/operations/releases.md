@@ -6,6 +6,8 @@ AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 Git
 
 正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 会同时触发相互独立的 `Release` 与 `Release checks` workflow；`Release` 成功完成后再触发 `Published Release acceptance`，不在测试 Job 内轮询未完成的发布。手动发布时，GitHub 的 “Use workflow from” 和 `Release` workflow 的 `tag` 输入必须指向同一个 tag，保证源码提交、构建来源证明和 Release 一致；源码检查和发布资产验收都可以从默认分支手动启动，并通过 `tag` 输入选择要复验的版本。手动发布资产复验使用所选默认分支 revision 的验收工具检查不可变 Release，允许在不改写历史 tag 的前提下修复验收工具。
 
+只有用户明确要求“最快路径”时，才采用仅 Release 的快速发布：复用已完成的定向验证，在变更说明中列出未运行的完整验收，发布提交使用 `[skip ci]`，再从对应不可变语义 tag 手动启动 Release。为避免标签源码检查与发布完成事件展开标准矩阵，可临时停用 `Release checks`、`Published Release acceptance`，先记录原状态，发布成功、失败或中断后都恢复原状态。不得永久停用检查或修改工作流断言；双架构构建、镜像启动、内置资源、SBOM、签名和资产完整性仍由 Release 保留。
+
 发布资产验收通过 `node scripts/release/download-assets.mjs TAG DIRECTORY [ASSET_PATTERN ...]` 下载文件：先按 tag 解析已公开 Release 的 ID，再分页读取独立的资产列表接口，避免刚发布时 tag 响应内嵌资产列表为空导致误报“无资产”。下载使用资产 ID，检查文件名及字节数，失败清理临时文件；后续签名、SHA-256、清单和离线闭环校验保持必需。多个文件模式取并集，全部不匹配时明确失败。
 
 ```bash

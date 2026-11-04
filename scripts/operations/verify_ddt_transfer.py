@@ -40,7 +40,7 @@ class VerificationConfig:
     target_api_key: str = field(default="", repr=False)
     output_dir: str = ""
     file_scope_only: bool = False
-    ignore_empty: bool = False
+    ignore_empty: bool = True
     include_values: bool = True
     requests_per_second: float = 5
     timeout: float = 15
@@ -69,7 +69,7 @@ CONFIG = VerificationConfig(
     # 选填：留空则在脚本旁自动创建唯一报告目录；填写时必须是尚不存在的新目录。
     output_dir="",
     file_scope_only=False,  # True 仅匿名验证表格内用例，不能证明平台全量一致。
-    ignore_empty=False,  # True 将缺失／null／空串／纯空白互等，仍记录被忽略差异。
+    ignore_empty=True,  # 默认将缺失／null／空串／纯空白互等；False 严格比较，忽略项仍留在报告中。
     include_values=True,  # 直接显示左右原值并生成 differences.diff；False 只保存摘要。
     requests_per_second=5,  # 两端合计请求上限，始终串行；范围 (0, 100]。
     timeout=15,  # 每次请求超时，单位秒；范围 (0, 300]。

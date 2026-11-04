@@ -2299,6 +2299,12 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
     const record = parsed as Record<string, unknown>;
     const concurrency = record.concurrency;
     return {
+      ...(typeof record.aiAnalysisAfterCompletion === "boolean"
+        ? { aiAnalysisAfterCompletion: record.aiAnalysisAfterCompletion }
+        : {}),
+      ...(typeof record.aiAnalysisExecutionId === "string"
+        ? { aiAnalysisExecutionId: record.aiAnalysisExecutionId }
+        : {}),
       executor: record.executor === "testng-container" ? "testng-container" : "testng",
       concurrency:
         typeof concurrency === "number" && Number.isInteger(concurrency) && concurrency >= 1

@@ -51,7 +51,18 @@ export interface WorkDispatcher {
 
 const runtime = globalThis as typeof globalThis & {
   __autoforgeWorkDispatcher?: WorkDispatcher;
+  __autoforgeWakeAiWorker?: () => void;
 };
+
+export function registerAiWorkerWake(wake: () => void) {
+  runtime.__autoforgeWakeAiWorker = wake;
+}
+export function unregisterAiWorkerWake() {
+  delete runtime.__autoforgeWakeAiWorker;
+}
+export function wakeAiWorker() {
+  runtime.__autoforgeWakeAiWorker?.();
+}
 
 export function registerWorkDispatcher(dispatcher: WorkDispatcher): void {
   runtime.__autoforgeWorkDispatcher = dispatcher;

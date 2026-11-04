@@ -1,4 +1,5 @@
 "use client";
+import { Checkbox } from "antd";
 import { Badge } from "@/components/ui/badge";
 
 import { LoadingIcon } from "@/components/ui/loading-icon";
@@ -187,6 +188,7 @@ export function CaseSuiteEditor({
           enabled: form.get("enabled") === "on",
           archived: form.get("archived") === "on",
           policy: {
+            aiAnalysisAfterCompletion: form.get("aiAnalysisAfterCompletion") === "on",
             executor: form.get("executor"),
             adapter: {
               enabled: form.get("adapterEnabled") === "on",
@@ -349,6 +351,19 @@ export function CaseSuiteEditor({
             onChange={() => setDirty(true)}
             onSubmit={(event) => void submit(event)}
           >
+            <div className="col-span-full">
+              <Checkbox
+                name="aiAnalysisAfterCompletion"
+                defaultChecked={suite.policy.aiAnalysisAfterCompletion ?? false}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 32 }}
+              >
+                任务结束后自动进行 AI 初步分析
+              </Checkbox>
+              <p className="text-xs text-muted-foreground">
+                仅分析最终失败或超时用例；使用执行快照，不阻塞任务结束。需启用模型并具有 AI
+                初析权限。
+              </p>
+            </div>
             <label>
               任务名称
               <Input name="name" required maxLength={120} defaultValue={suite.name} />

@@ -13,6 +13,8 @@ export const permissionCatalog = [
   "run.retry",
   "analysis.manage",
   "analysis.assign",
+  "analysis.ai.read",
+  "analysis.ai.create",
   "log.read",
   "artifact.read",
   "runner.read",

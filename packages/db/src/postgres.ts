@@ -46,3 +46,4 @@ export * from "./postgres-log-archives";
 export * from "./archived-attempt-log-store";
 
 export * from "./postgres-storage-monitoring";
+export * from "./postgres-ai-analysis";

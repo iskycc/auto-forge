@@ -6,6 +6,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import { detectRuntimeResources } from "@autoforge/platform-config/runtime-resources";
 import { BackgroundWorkerPool } from "../../web/server/worker-pool";
 import { ReadModelWorkerHost } from "../../web/server/read-model-worker-host";
+import { AiAnalysisWorkerHost } from "../../web/server/ai-analysis-worker-host";
 import { backgroundResourcePlan } from "../../web/src/lib/worker-sizing";
 import { runtimePriority } from "../../web/src/lib/runtime-priority";
 import { createHash, randomBytes } from "node:crypto";
@@ -213,6 +214,22 @@ const backgroundPool = new BackgroundWorkerPool(
     shutdownGraceMs: config.shutdownGraceMs,
   },
 );
+const aiWorker = new AiAnalysisWorkerHost(
+  {
+    mode: "full",
+    databaseUrl: config.databaseUrl,
+    dataDirectory: config.dataDirectory,
+    migrationsFolder: config.migrationsFolder,
+    masterKey: config.masterKey,
+    redisUrl: config.redisUrl,
+    minio: config.minio,
+  },
+  (error) =>
+    logger.error("AI background worker unavailable", {
+      error: error instanceof Error ? error.message : "Unknown failure",
+    }),
+  canRefresh,
+);
 const readModelWorkers = Array.from(
   { length: resourcePlan.snapshotLanes },
   (_, index) =>
@@ -285,6 +302,9 @@ const backgroundWorker = new JobWorker(
     "ddt-debug-import": handleBackgroundJob,
     "analytics-export": handleBackgroundJob,
     "project-version-copy": handleBackgroundJob,
+    "ai-analysis-wakeup": async () => {
+      aiWorker.wake();
+    },
   },
   clock,
   {
@@ -391,6 +411,7 @@ await Promise.allSettled([
   nats.drain(),
   database.close(),
   backgroundPool.close(),
+  aiWorker.close(),
   ...readModelWorkers.map((worker) => worker.close()),
 ]);
 await attemptLogs.close();

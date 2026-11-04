@@ -565,6 +565,47 @@ class HttpVerificationTests(unittest.TestCase):
         self.assertEqual(summary["rawApiDifferences"], 1)
         self.assertTrue(all(row["ignored"] == "True" for row in differences))
 
+    def test_source_only_empty_string_is_ignored_by_default_but_retained_for_audit(self):
+        cases = [{"CaseID": "A", "srNum": "SR"}]
+        with FakePlatforms({"A": cases[0]}) as fixture:
+            fixture.cases["source"]["A"]["empty"] = ""
+            code, summary, differences = self.run_verification(fixture, cases)
+        self.assertEqual(code, 0)
+        self.assertTrue(summary["complete"])
+        self.assertEqual(summary["comparisonMode"], "ignore_empty")
+        self.assertEqual(summary["result"], "effective_data_match")
+        self.assertEqual(summary["differentCases"], 0)
+        self.assertEqual(summary["differences"], 0)
+        self.assertEqual(summary["ignoredEmptyDifferences"], 2)
+        self.assertEqual(summary["rawApiDifferences"], 1)
+        self.assertEqual({row["pair"] for row in differences}, {"table_source", "source_target"})
+        self.assertTrue(all(row["comparison_result"] == "已忽略空值差异" for row in differences))
+        self.assertTrue(all(row["ignored"] == "True" for row in differences))
+
+    def test_empty_tolerance_does_not_hide_zero_false_or_nonempty_string_fields(self):
+        cases = [{"CaseID": "A", "srNum": "SR"}]
+        with FakePlatforms({"A": cases[0]}) as fixture:
+            fixture.cases["source"]["A"].update({
+                "empty": "", "zero": 0, "false": False, "textZero": "0", "textFalse": "false",
+            })
+            code, summary, differences = self.run_verification(fixture, cases)
+        self.assertEqual(code, 1)
+        self.assertEqual(summary["differences"], 8)
+        self.assertEqual(summary["ignoredEmptyDifferences"], 2)
+        self.assertEqual({row["json_pointer"] for row in differences if row["ignored"] == "False"},
+                         {"/zero", "/false", "/textZero", "/textFalse"})
+
+    def test_strict_mode_still_reports_a_source_only_empty_string(self):
+        cases = [{"CaseID": "A", "srNum": "SR"}]
+        with FakePlatforms({"A": cases[0]}) as fixture:
+            fixture.cases["source"]["A"]["empty"] = ""
+            code, summary, differences = self.run_verification(fixture, cases, ignore_empty=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(summary["comparisonMode"], "strict")
+        self.assertEqual(summary["differences"], 2)
+        self.assertEqual(summary["ignoredEmptyDifferences"], 0)
+        self.assertEqual({row["comparison_result"] for row in differences}, {"仅左侧存在", "仅右侧存在"})
+
     def test_complete_inventory_requires_explicit_api_key_without_falling_back_to_anonymous(self):
         with FakePlatforms({}) as fixture:
             config = verifier.VerificationConfig(
@@ -587,6 +628,8 @@ class ScriptConfigurationTests(unittest.TestCase):
         config = verifier.VerificationConfig(files=("cases.xlsx",), source_url="source", target_url="target")
         self.assertTrue(config.include_values)
         self.assertTrue(verifier.CONFIG.include_values)
+        self.assertTrue(config.ignore_empty)
+        self.assertTrue(verifier.CONFIG.ignore_empty)
 
     def test_run_without_arguments_reads_script_configuration_and_relative_paths(self):
         cases = {"中文-01": {"CaseID": "中文-01", "srNum": "Wallet", "value": 0}}
@@ -599,7 +642,7 @@ class ScriptConfigurationTests(unittest.TestCase):
                 files=("cases.xlsx",), source_url=fixture.url("source"),
                 target_url=fixture.url("target"), source_api_key="test-read-only",
                 target_api_key="test-read-only", output_dir="report",
-                requests_per_second=100, retries=0,
+                requests_per_second=100, retries=0, ignore_empty=False,
             )
             with (patch.object(verifier, "CONFIG", config),
                   patch.object(verifier, "__file__", str(root / "verify_ddt_transfer.py")),

@@ -3,6 +3,7 @@ import { build } from "esbuild";
 for (const entry of [
   "work-thread",
   "read-model-thread",
+  "ai-analysis-thread",
   "attempt-log-thread",
   "attempt-log-process",
   "runner-diagnostics-process",

@@ -1,4 +1,6 @@
 import { StorageMonitoringService } from "@autoforge/application";
+import { AiAnalysisService, type AiAnalysisRepository } from "@autoforge/application";
+import { wakeAiWorker } from "./work-runtime";
 import { httpTrafficSnapshot } from "./runtime-metrics";
 import { ArchivedAttemptLogStore, SqliteLogArchiveRepository } from "@autoforge/db/sqlite";
 import { readOnlyLegacyAttemptLogs } from "@autoforge/db/sqlite";
@@ -111,6 +113,7 @@ import {
   createSqliteDatabase,
   isSqliteLockContentionError,
   SqliteAttemptLogShareRepository,
+  SqliteAiAnalysisRepository,
   SqlitePublicExecutionAccessRepository,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
@@ -210,6 +213,7 @@ async function createPlatformServices() {
   let dashboardSnapshotRepository: DashboardSnapshotRepository;
   let readModelRepository: ReadModelSnapshotRepository;
   let failureAnalysisRepository: FailureAnalysisRepository;
+  let aiRepository: AiAnalysisRepository;
   let runners: RunnerRepository;
   let runnerInstallationProfileRepository: RunnerInstallationProfileRepository;
   let runnerGroupsRepository: RunnerGroupRepository;
@@ -285,6 +289,7 @@ async function createPlatformServices() {
       objectStore,
     );
     catalog = new SqliteCaseCatalogRepository(database);
+    aiRepository = new SqliteAiAnalysisRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
@@ -580,6 +585,9 @@ async function createPlatformServices() {
       throw new Error("无法初始化 Full 模式基础设施。", { cause: error });
     }
     catalog = new PostgresCaseCatalogRepository(database);
+    aiRepository = new (await import("@autoforge/db/postgres")).PostgresAiAnalysisRepository(
+      database,
+    );
     suites = new PostgresCaseSuiteRepository(database);
     suiteActivityRepository = new PostgresCaseSuiteActivityRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
@@ -804,6 +812,18 @@ async function createPlatformServices() {
     objectStore,
     publicExecutionAccess,
   );
+  const aiAnalysis = new AiAnalysisService(
+    aiRepository,
+    batches,
+    secretCipher,
+    clock,
+    ids,
+    config.mode === "full" ? cache : undefined,
+    (error) =>
+      workerLogger.error("AI progress cache unavailable", {
+        error: error instanceof Error ? error.message : "Unknown failure",
+      }),
+  );
   const roundRecovery = new RoundRecoveryService(
     roundRecoveries,
     jenkinsRoundRecoveryTransport,
@@ -872,6 +892,9 @@ async function createPlatformServices() {
             "project-version-copy": async (job, signal) => {
               if (!dispatcher) throw new Error("Version copying requires the background worker.");
               await dispatcher.executeBackgroundJob(job, signal);
+            },
+            "ai-analysis-wakeup": async () => {
+              wakeAiWorker();
             },
           },
           clock,
@@ -1300,6 +1323,7 @@ async function createPlatformServices() {
     webhooks,
     runBatches,
     failureAnalysis,
+    aiAnalysis,
     runScheduling,
     runnerRequestLimiter,
     jobQueue,

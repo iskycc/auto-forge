@@ -116,6 +116,7 @@ CONFIG = VerificationConfig(
     target_url=${JSON.stringify(`${prefix}/target/versions/version/stages/stage`)},
     source_api_key="read-only-fixture",
     target_api_key="read-only-fixture",
+    ignore_empty=False,
     requests_per_second=100,
     output_dir="report",
 )

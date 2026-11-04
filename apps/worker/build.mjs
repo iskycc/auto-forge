@@ -5,6 +5,7 @@ const entries = [
   ["worker", "src/index.ts"],
   ["work-thread", "../web/server/work-thread.ts"],
   ["read-model-thread", "../web/server/read-model-thread.ts"],
+  ["ai-analysis-thread", "../web/server/ai-analysis-thread.ts"],
 ];
 
 // Each entry owns a process/thread lifecycle. A multi-entry build can place shared

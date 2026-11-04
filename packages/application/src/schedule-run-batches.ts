@@ -336,6 +336,8 @@ export class RunBatchSchedulingService {
         secretBindings: [],
         runnerIds,
         policy: {
+          aiAnalysisAfterCompletion: suitePolicy.aiAnalysisAfterCompletion ?? false,
+          ...(suitePolicy.aiAnalysisAfterCompletion ? { aiAnalysisExecutionId: batchId } : {}),
           executor: suitePolicy.executor,
           concurrency: suitePolicy.concurrency,
           ...(suitePolicy.projectVersionId

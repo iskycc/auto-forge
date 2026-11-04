@@ -1651,6 +1651,7 @@ export class IdentityAccessService {
 function normalizeUsername(username: string): string {
   return username.trim().normalize("NFKC").toLocaleLowerCase("en-US");
 }
+export { normalizeUsername as normalizeIdentityUsername };
 
 function auditSearch(query?: string): { query?: string; queryActions?: string[] } {
   const normalized = query?.trim().slice(0, 128);

@@ -15,6 +15,9 @@
   "exclude": [
     "server/work-thread.ts",
     "server/read-model-thread.ts",
+    "server/ai-analysis-thread.ts",
+    "server/ai-evidence.ts",
+    "server/ai-model-gateway.ts",
     "server/attempt-log-thread.ts",
     "server/attempt-log-process.ts",
     "server/runner-diagnostics-process.ts",

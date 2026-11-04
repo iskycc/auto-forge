@@ -23,6 +23,7 @@ export const jobEnvelopeSchema = z.object({
     "ddt-import",
     "ddt-debug-import",
     "project-version-copy",
+    "ai-analysis-wakeup",
   ]),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 });

@@ -50,6 +50,22 @@ const cipher = {
 };
 
 describe("version-copy record boundaries", () => {
+  it("retains the original AI trigger identity so copying history cannot launch model work", () => {
+    const copied = copyVersionRecord({
+      job,
+      collection: "run_batches",
+      cipher,
+      row: {
+        id: "source-batch",
+        policy_json: JSON.stringify({
+          aiAnalysisAfterCompletion: true,
+          aiAnalysisExecutionId: "source-batch",
+        }),
+      },
+    });
+    expect(copied.id).not.toBe("source-batch");
+    expect(JSON.parse(String(copied.policy_json)).aiAnalysisExecutionId).toBe("source-batch");
+  });
   it("keeps historical actors without copying the source public execution replay key", () => {
     const actors = JSON.stringify({
       schemaVersion: 1,
