@@ -1,4 +1,5 @@
 "use client";
+import { authenticationDestination, loginPath } from "@/lib/authentication-return-path";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
@@ -69,7 +70,9 @@ export function ReadModelStatusBar({
           signal: controller.signal,
         });
         if (response.status === 401) {
-          window.location.replace("/login");
+          window.location.replace(
+            loginPath(authenticationDestination(new URL(window.location.href))),
+          );
           return;
         }
         if (response.status === 403 || response.status === 404) {

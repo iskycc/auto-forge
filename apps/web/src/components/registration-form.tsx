@@ -5,7 +5,7 @@ import { useState } from "react";
 import { registerUserInputSchema, type RegisterUserInput } from "@autoforge/contracts";
 import { readApiError } from "@/lib/client-api";
 import { authEntryValidationMessage } from "@/lib/auth-entry-validation";
-import { registrationReturnPath } from "@/lib/registration-return-path";
+import { authenticationReturnPath } from "@/lib/authentication-return-path";
 import { useLoginDialog } from "./login-dialog-provider";
 
 export function RegistrationForm({ returnTo }: { returnTo: string }) {
@@ -40,7 +40,7 @@ export function RegistrationForm({ returnTo }: { returnTo: string }) {
         setError(authEntryValidationMessage(failure.details) ?? failure.message);
         return;
       }
-      window.location.replace(registrationReturnPath(returnTo));
+      window.location.replace(authenticationReturnPath(returnTo));
     } catch (cause) {
       setError(
         cause instanceof Error && cause.name === "TimeoutError"

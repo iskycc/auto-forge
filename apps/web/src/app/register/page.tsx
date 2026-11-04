@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { RegistrationPageView } from "@/components/registration-page";
 import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { registrationReturnPath } from "@/lib/registration-return-path";
+import { authenticationReturnPath } from "@/lib/authentication-return-path";
+import { AuthenticationEntryRedirect } from "@/components/authentication-entry-redirect";
 
 export const metadata: Metadata = { title: "创建账号" };
 
@@ -12,9 +13,14 @@ export default async function RegistrationPage({
 }: {
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  const returnTo = registrationReturnPath((await searchParams).returnTo);
+  const returnTo = authenticationReturnPath((await searchParams).returnTo);
   const identity = await currentIdentity();
-  if (identity) redirect(identity.user.forcePasswordChange ? "/account/security" : returnTo);
+  if (identity)
+    return (
+      <AuthenticationEntryRedirect
+        mode={identity.user.forcePasswordChange ? "change_password" : "continue"}
+      />
+    );
   const availability = await (
     await getPlatformServices()
   ).identityAccess.registrationAvailability();

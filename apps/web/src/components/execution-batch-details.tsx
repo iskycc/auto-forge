@@ -2,6 +2,7 @@
 import { BatchSchedulingButton } from "./batch-scheduling-button";
 import { ExecutionActors } from "./execution-actors";
 import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
+import { ExecutionStatisticsStatus } from "./execution-statistics-status";
 import { Notice } from "@/components/ui/notice";
 
 import { cn } from "@/lib/utils";
@@ -248,16 +249,11 @@ export function ExecutionBatchDetails({
       )}
     >
       {batch.statistics ? (
-        <p role="status" className={cn("muted", uiPatterns["muted"])}>
-          {batch.statistics.generatedAt
-            ? `轮次统计更新于 ${formatLocalDateTime(batch.statistics.generatedAt)}`
-            : "正在准备轮次统计"}
-          {batch.statistics.state === "failed"
-            ? " · 后台统计暂时不可用"
-            : batch.statistics.state !== "ready"
-              ? " · 后台更新中"
-              : ""}
-        </p>
+        <ExecutionStatisticsStatus
+          statistics={batch.statistics}
+          canRefresh={!publicAccess}
+          onRefresh={refreshBatch}
+        />
       ) : null}
       <section
         className={cn("batch-metrics-band", executionBatchDetailsStyles["batch-metrics-band"])}

@@ -192,16 +192,17 @@ type PostgresRoundAggregateRow = {
   finishedAt: DatabaseTimestamp | null;
 };
 
-const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
-  SELECT * FROM execution_runs WHERE batch_id=$1
-), ranked_round_attempts AS (
-  SELECT attempt.*,ROW_NUMBER() OVER (
-    PARTITION BY attempt.execution_run_id,attempt.execution_round
-    ORDER BY attempt.attempt_number DESC
-  ) AS round_rank
+// DISTINCT ON keeps one fact per run/round without ROW_NUMBER's severe filter underestimation.
+// Reports and case payloads are fetched only for the bounded visible page, never materialized here.
+const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS MATERIALIZED (
+  SELECT id,execution_round,display_name,class_name,case_type,created_at,assigned_runner_id
+  FROM execution_runs WHERE batch_id=$1
+), round_attempts AS MATERIALIZED (
+  SELECT DISTINCT ON (attempt.execution_run_id,attempt.execution_round)
+    attempt.id,attempt.execution_run_id,attempt.execution_round,attempt.attempt_number,
+    attempt.status,attempt.outcome,attempt.started_at,attempt.created_at,attempt.finished_at
   FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
-), round_attempts AS (
-  SELECT * FROM ranked_round_attempts WHERE round_rank=1
+  ORDER BY attempt.execution_run_id,attempt.execution_round,attempt.attempt_number DESC
 ), round_numbers(round) AS (
   SELECT 1
   UNION SELECT current_round FROM run_batches WHERE id=$1
@@ -1040,24 +1041,31 @@ export class PostgresRunBatchRepository
       faultResult,
       participatingResult,
     ] = await Promise.all([
+      // Aggregate each side before joining rounds. A merge on round alone can otherwise
+      // compare every case with every attempt in that round before filtering by run ID.
       this.handle.pool.query<PostgresRoundAggregateRow>(
         `${POSTGRES_BATCH_ROUND_CTES}
-           SELECT rounds.round,
-                  COUNT(eligible.execution_run_id) AS "totalRuns",
-                  COUNT(attempt.id) AS executed,
-                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='succeeded') AS passed,
-                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='failed') AS failed,
-                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='timed_out') AS "timedOut",
-                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='cancelled') AS cancelled,
-                  COUNT(*) FILTER (WHERE attempt.status IN ('assigned','running')) AS active,
-                  MIN(COALESCE(attempt.started_at,attempt.created_at)) AS "startedAt",
-                  MAX(attempt.finished_at) AS "finishedAt"
+           , eligible_totals AS (
+             SELECT round,COUNT(*) AS total FROM eligible_runs GROUP BY round
+           ), attempt_totals AS (
+             SELECT execution_round AS round,COUNT(*) AS executed,
+               COUNT(*) FILTER (WHERE COALESCE(outcome,status)='succeeded') AS passed,
+               COUNT(*) FILTER (WHERE COALESCE(outcome,status)='failed') AS failed,
+               COUNT(*) FILTER (WHERE COALESCE(outcome,status)='timed_out') AS timed_out,
+               COUNT(*) FILTER (WHERE COALESCE(outcome,status)='cancelled') AS cancelled,
+               COUNT(*) FILTER (WHERE status IN ('assigned','running')) AS active,
+               MIN(COALESCE(started_at,created_at)) AS started_at,MAX(finished_at) AS finished_at
+             FROM round_attempts GROUP BY execution_round
+           )
+           SELECT rounds.round,COALESCE(eligible.total,0) AS "totalRuns",
+             COALESCE(attempt.executed,0) AS executed,COALESCE(attempt.passed,0) AS passed,
+             COALESCE(attempt.failed,0) AS failed,COALESCE(attempt.timed_out,0) AS "timedOut",
+             COALESCE(attempt.cancelled,0) AS cancelled,COALESCE(attempt.active,0) AS active,
+             attempt.started_at AS "startedAt",attempt.finished_at AS "finishedAt"
            FROM round_numbers rounds
-           LEFT JOIN eligible_runs eligible ON eligible.round=rounds.round
-           LEFT JOIN round_attempts attempt
-             ON attempt.execution_run_id=eligible.execution_run_id
-            AND attempt.execution_round=rounds.round
-           GROUP BY rounds.round ORDER BY rounds.round`,
+           LEFT JOIN eligible_totals eligible ON eligible.round=rounds.round
+           LEFT JOIN attempt_totals attempt ON attempt.round=rounds.round
+           ORDER BY rounds.round`,
         [batchId],
       ),
       this.handle.pool.query<{ firstRound: number; count: string }>(

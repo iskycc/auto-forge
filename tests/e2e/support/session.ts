@@ -151,7 +151,10 @@ export async function login(page: Page, username: string, password: string): Pro
 export async function logout(page: Page): Promise<void> {
   await page.getByRole("button", { name: "退出登录" }).click();
   // Accept the standalone entry in older Releases used by upgrade acceptance.
-  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/login" || (url.pathname === "/" && url.searchParams.get("login") === "1"),
+  );
 }
 
 export async function selectProjectContext(

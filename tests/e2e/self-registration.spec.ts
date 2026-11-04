@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  E2E_ADMIN_PASSWORD,
+  E2E_ADMIN_USERNAME,
+  uniqueName,
+} from "./support/session";
 import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 
 const password = "SelfRegistration!Password123";
@@ -167,6 +173,13 @@ test("registration from a public task returns to the task and reports existing u
     expect(new URL(visitor.url()).searchParams.get("returnTo")).toBe(
       `${destination.pathname}${destination.search}${destination.hash}`,
     );
+    await visitor.getByRole("button", { name: "登录现有账号", exact: true }).click();
+    const registrationLogin = visitor.getByRole("dialog", { name: "登录控制台", exact: true });
+    await registrationLogin.getByRole("link", { name: "创建账号", exact: true }).click();
+    await expect(registrationLogin).toBeHidden();
+    expect(new URL(visitor.url()).searchParams.get("returnTo")).toBe(
+      `${destination.pathname}${destination.search}${destination.hash}`,
+    );
     const form = await fillRegistration(visitor, existingUsername);
     await form.getByRole("button", { name: "创建账号并登录", exact: true }).click();
     await expect(form.getByRole("alert").first()).toContainText("用户名已存在");
@@ -178,6 +191,118 @@ test("registration from a public task returns to the task and reports existing u
     expect(
       (await (await visitor.request.get("/api/v1/auth/session")).json()).user.forcePasswordChange,
     ).toBe(false);
+  } finally {
+    await context.close();
+  }
+});
+
+for (const staleSession of [false, true]) {
+  test(`login returns to the requested protected link after switching registration with ${staleSession ? "an expired session" : "no session"}`, async ({
+    page,
+    browser,
+  }, testInfo) => {
+    const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
+    try {
+      if (staleSession)
+        await context.addCookies([
+          {
+            name: "autoforge_session",
+            value: "expired-auth-return-session",
+            url: new URL("/", page.url()).href,
+          },
+        ]);
+      const visitor = await context.newPage();
+      const original = new URL("/execution-records?kind=single#execution-history", page.url()).href;
+      await visitor.goto(original);
+      const login = visitor.getByRole("dialog", { name: "登录控制台", exact: true });
+      await expect(login).toBeVisible();
+      expect(new URL(visitor.url()).searchParams.get("returnTo")).toBe(
+        "/execution-records?kind=single#execution-history",
+      );
+      await visitor.reload();
+      await expect(login).toBeVisible();
+      await login.getByRole("link", { name: "创建账号", exact: true }).click();
+      await expect(visitor).toHaveURL(/\/register\?/);
+      expect(new URL(visitor.url()).searchParams.get("returnTo")).toBe(
+        "/execution-records?kind=single#execution-history",
+      );
+      await visitor.getByRole("button", { name: "登录现有账号", exact: true }).click();
+      await login.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+      await login.getByLabel("密码", { exact: true }).fill("incorrect-password");
+      await login.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(login.getByRole("alert")).toBeVisible();
+      await login.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+      for (const viewport of [
+        { width: 1024, height: 768 },
+        { width: 1536, height: 1024 },
+      ]) {
+        await visitor.setViewportSize(viewport);
+        await expectUiIntegrity(visitor);
+        await visitor.screenshot({
+          path: testInfo.outputPath(`login-return-${viewport.width}.png`),
+          animations: "disabled",
+        });
+      }
+      await login.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(visitor).toHaveURL(original);
+      await expect(login).toBeHidden();
+      expect((await visitor.request.get("/api/v1/auth/session")).status()).toBe(200);
+      for (const entry of ["/login", "/register"]) {
+        await visitor.goto(
+          `${entry}?${new URLSearchParams({
+            returnTo: "/execution-records?kind=single#execution-history",
+          })}`,
+        );
+        await expect(visitor).toHaveURL(original);
+      }
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test("mandatory password changes retain the protected destination through the next login", async ({
+  page,
+  browser,
+}) => {
+  const username = uniqueName("return-after-password");
+  const user = await browserJson<{ id: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: { username, displayName: username, password, forcePasswordChange: true },
+  });
+  expect(user.status).toBe(201);
+  expect(
+    (
+      await browserJson(page, `/api/v1/users/${user.body.id}/project-roles`, {
+        method: "POST",
+        body: { projectId: DEFAULT_PROJECT_ID, roleId: "00000000-0000-7000-8100-000000000004" },
+      })
+    ).status,
+  ).toBe(204);
+  const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const visitor = await context.newPage();
+    const originalPath = "/execution-records?kind=single#after-password";
+    await visitor.goto(`/login?${new URLSearchParams({ returnTo: originalPath })}`);
+    const login = visitor.getByRole("dialog", { name: "登录控制台", exact: true });
+    await login.getByLabel("用户名", { exact: true }).fill(username);
+    await login.getByLabel("密码", { exact: true }).fill(password);
+    await login.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(visitor).toHaveURL(
+      (url) =>
+        url.pathname === "/account/security" && url.searchParams.get("returnTo") === originalPath,
+    );
+    const newPassword = "ChangedReturn!Password123";
+    await visitor.getByLabel("当前密码", { exact: true }).fill(password);
+    await visitor.getByLabel("新密码", { exact: true }).fill(newPassword);
+    await visitor.getByLabel("确认新密码", { exact: true }).fill(newPassword);
+    await visitor.getByRole("button", { name: "修改密码并重新登录", exact: true }).click();
+    await expect(login).toContainText("密码已修改");
+    await login.getByLabel("用户名", { exact: true }).fill(username);
+    await login.getByLabel("密码", { exact: true }).fill(newPassword);
+    await login.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(visitor).toHaveURL(new URL(originalPath, page.url()).href);
+    expect((await visitor.request.get("/api/v1/auth/session")).status()).toBe(200);
   } finally {
     await context.close();
   }

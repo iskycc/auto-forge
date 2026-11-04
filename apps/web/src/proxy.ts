@@ -1,4 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  AUTHENTICATION_PAGE_PATH_HEADER,
+  authenticationReturnPath,
+  loginPath,
+} from "./lib/authentication-return-path";
 
 const PUBLIC_PATHS = new Set([
   "/",
@@ -21,13 +26,15 @@ export function isPublicPath(pathname: string): boolean {
 
 export function proxy(request: NextRequest): NextResponse {
   const pathname = request.nextUrl.pathname;
+  const pagePath = authenticationReturnPath(`${pathname}${request.nextUrl.search}`);
   if (!isPublicPath(pathname) && !request.cookies.has("autoforge_session")) {
-    return withSecurityHeaders(NextResponse.redirect(new URL("/login", request.url)));
+    return withSecurityHeaders(NextResponse.redirect(new URL(loginPath(pagePath), request.url)));
   }
 
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const contentSecurityPolicy = createContentSecurityPolicy(nonce);
   const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(AUTHENTICATION_PAGE_PATH_HEADER, pagePath);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
   const response = NextResponse.next({ request: { headers: requestHeaders } });

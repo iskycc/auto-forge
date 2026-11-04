@@ -16,7 +16,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 当前已实现
 
-- 无 LDAP 的内网可通过 `/register` 自助创建本地账号，注册后直接登录并获得默认项目的“执行操作员”权限，无需再次修改密码；登录框提供注册入口，公开页面发起注册后返回原页面。启用 LDAP 后注册页面、入口与 API 自动关闭，关闭 LDAP 后恢复，详见[身份与权限](./docs/architecture/identity-access.md#自助注册本地账号)。
+- 无 LDAP 的内网可通过 `/register` 自助创建本地账号，注册后直接登录并获得默认项目的“执行操作员”权限，无需再次修改密码；登录框提供注册入口。登录／注册保留来源页面的路径、参数和锚点，互相切换、刷新及强制改密后仍返回原页面。启用 LDAP 后注册页面、入口与 API 自动关闭，关闭 LDAP 后恢复，详见[身份与权限](./docs/architecture/identity-access.md#自助注册本地账号)。
 
 - DDT 提供独立 Python 三方校验脚本，在脚本顶部 CONFIG 填写文件、两端 API 地址和只读 API Key 后即可直接在 IDE 运行／调试，无需业务命令行参数；流式读取导出 XLSX／CSV，分页核对源、目标平台完整目录，并逐项比较原始字段、类型和用户旅程，输出差异并检查验证期间修订变化。只读、无需第三方 Python 包，详见[DDT 迁移三方校验](./docs/operations/ddt-transfer-verification.md)。
 

@@ -13,6 +13,8 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { LoginDialog } from "./login-dialog";
+import { loginPath } from "@/lib/authentication-return-path";
+import { browserAuthenticationDestination } from "@/lib/authentication-fragment";
 
 type LoginSessionState =
   { status: "checking" | "anonymous" | "authenticated" } | { status: "failed"; message: string };
@@ -52,6 +54,15 @@ export function LoginDialogProvider({
   }, []);
 
   const refreshIdentity = useCallback(() => {
+    const currentUrl = new URL(window.location.href);
+    const destination = browserAuthenticationDestination(currentUrl);
+    currentUrl.searchParams.delete("login");
+    currentUrl.searchParams.delete("passwordChanged");
+    if (`${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}` !== destination) {
+      // The authenticated entry applies mandatory password changes before leaving for the target.
+      window.location.replace(loginPath(destination));
+      return;
+    }
     closeLogin();
     // Merge authenticated server content without replacing the log document or its scroll state.
     startRefresh(() => router.refresh());

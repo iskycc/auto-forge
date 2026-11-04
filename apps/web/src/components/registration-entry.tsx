@@ -8,7 +8,7 @@ import {
   type RegistrationAvailability,
 } from "@autoforge/contracts";
 import { readApiError } from "@/lib/client-api";
-import { registrationReturnPath } from "@/lib/registration-return-path";
+import { browserAuthenticationDestination } from "@/lib/authentication-fragment";
 
 export function RegistrationEntry({ disabled }: { disabled: boolean }) {
   const router = useRouter();
@@ -45,9 +45,7 @@ export function RegistrationEntry({ disabled }: { disabled: boolean }) {
             className="!h-8 !px-1 !py-0"
             onClick={(event) => {
               event.preventDefault();
-              const returnTo = registrationReturnPath(
-                `${window.location.pathname}${window.location.search}${window.location.hash}`,
-              );
+              const returnTo = browserAuthenticationDestination(new URL(window.location.href));
               router.push(`/register?${new URLSearchParams({ returnTo })}`);
             }}
           >

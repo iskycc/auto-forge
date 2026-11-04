@@ -397,9 +397,15 @@ export function RunBatchRounds({
         className={cn("content-card", uiPatterns["content-card"])}
         aria-label="轮次列表"
       >
-        <LoadingStateMessage role="status">
-          后台正在准备轮次统计，执行控制仍可使用。
-        </LoadingStateMessage>
+        {batch.statistics.state === "failed" ? (
+          <Notice tone="error" role="alert">
+            轮次统计暂未生成，已有执行结果会保留。请按上方提示重新生成统计。
+          </Notice>
+        ) : (
+          <LoadingStateMessage role="status">
+            后台正在准备轮次统计，执行控制仍可使用。
+          </LoadingStateMessage>
+        )}
       </Card>
     );
   return (

@@ -4,6 +4,7 @@ import { uiPatterns } from "@/components/ui/patterns";
 
 import { clearBrowserSnapshots } from "@/lib/browser-read-cache";
 import { Button } from "@/components/ui";
+import { authenticationDestination, loginPath } from "@/lib/authentication-return-path";
 
 import { LogOut } from "lucide-react";
 import { useState } from "react";
@@ -16,7 +17,7 @@ export function LogoutButton() {
     clearBrowserSnapshots();
     await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => undefined);
     // Reload the root layout after removing the HTTP-only session cookie.
-    window.location.replace("/login");
+    window.location.replace(loginPath(authenticationDestination(new URL(window.location.href))));
   }
 
   return (

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { hasPermission, hasPermissionInAnyScope, permissionsForProject } from "@autoforge/domain";
 import { connection } from "next/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { authenticationFragmentCaptureScript } from "@/lib/authentication-fragment";
 import { COLOR_MODE_COOKIE, parseColorMode } from "@/lib/color-mode";
 
 import { PlatformTimeProvider } from "@/components/platform-time";
@@ -33,6 +34,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // rendering before opening SQLite so parallel prerender workers never race
   // while configuring the same database.
   await connection();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const colorMode = parseColorMode((await cookies()).get(COLOR_MODE_COOKIE)?.value);
   const services = await getPlatformServices();
   const platformTimeZone = services.configurationStore.read().web.timeZone;
@@ -58,6 +60,12 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       })) ?? [];
   return (
     <html data-time-zone={platformTimeZone} data-color-mode={colorMode} lang="zh-CN">
+      <head>
+        <script
+          nonce={nonce}
+          dangerouslySetInnerHTML={{ __html: authenticationFragmentCaptureScript() }}
+        />
+      </head>
       <body>
         <AntDesignProvider initialColorMode={colorMode}>
           <PlatformTimeProvider serverTime={services.clock.now().toISOString()}>

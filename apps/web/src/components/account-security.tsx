@@ -22,6 +22,7 @@ import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
 import { useConfirm } from "@/components/ui-feedback";
+import { authenticationDestination, loginPath } from "@/lib/authentication-return-path";
 
 export function AccountSecurity({
   identity,
@@ -57,7 +58,11 @@ export function AccountSecurity({
         }),
       });
       if (!response.ok) throw new Error(await responseMessage(response, "修改密码失败。"));
-      window.location.replace("/login?passwordChanged=1");
+      window.location.replace(
+        loginPath(authenticationDestination(new URL(window.location.href)), {
+          passwordChanged: true,
+        }),
+      );
     } catch (problem) {
       setPasswordError(problem instanceof Error ? problem.message : "修改密码失败。");
       setPendingAction(null);
@@ -82,7 +87,9 @@ export function AccountSecurity({
       });
       if (!response.ok) throw new Error(await responseMessage(response, "终止会话失败。"));
       if (session.id === identity.sessionId) {
-        window.location.replace("/login");
+        window.location.replace(
+          loginPath(authenticationDestination(new URL(window.location.href))),
+        );
         return;
       }
       setSessions((current) => current.filter((item) => item.id !== session.id));

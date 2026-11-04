@@ -10,10 +10,16 @@ import {
   isPermission,
   projectIdsForPermission,
 } from "@autoforge/domain";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getPlatformServices } from "./services";
+import {
+  AUTHENTICATION_PAGE_PATH_HEADER,
+  authenticationDestination,
+  loginPath,
+  passwordChangePath,
+} from "./authentication-return-path";
 
 export const SESSION_COOKIE_NAME = "autoforge_session";
 export { hasPermissionInAnyScope } from "@autoforge/domain";
@@ -107,6 +113,15 @@ export async function currentIdentity(): Promise<AuthenticatedIdentity | null> {
   }
 }
 
+async function currentPageDestination(): Promise<string> {
+  const path = (await headers()).get(AUTHENTICATION_PAGE_PATH_HEADER) ?? "/";
+  return authenticationDestination(new URL(path, "http://autoforge.local"));
+}
+
+export async function pageLoginPath(): Promise<string> {
+  return loginPath(await currentPageDestination());
+}
+
 export async function requirePagePermission(
   permission: Permission,
   projectId: string | undefined,
@@ -114,9 +129,10 @@ export async function requirePagePermission(
   const services = await getPlatformServices();
   const identity = await currentIdentity();
   if (!identity) {
-    redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
+    redirect((await services.identityAccess.setupRequired()) ? "/setup" : await pageLoginPath());
   }
-  if (identity.user.forcePasswordChange) redirect("/account/security");
+  if (identity.user.forcePasswordChange)
+    redirect(passwordChangePath(await currentPageDestination()));
   try {
     services.identityAccess.authorize(identity, permission, projectId);
     return identity;
@@ -132,9 +148,10 @@ export async function requirePageProjectScope(permission: Permission): Promise<{
   const services = await getPlatformServices();
   const identity = await currentIdentity();
   if (!identity) {
-    redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
+    redirect((await services.identityAccess.setupRequired()) ? "/setup" : await pageLoginPath());
   }
-  if (identity.user.forcePasswordChange) redirect("/account/security");
+  if (identity.user.forcePasswordChange)
+    redirect(passwordChangePath(await currentPageDestination()));
   try {
     return { identity, projectIds: services.identityAccess.projectScope(identity, permission) };
   } catch {
@@ -148,9 +165,10 @@ export async function requirePageAnyPermission(
   const services = await getPlatformServices();
   const identity = await currentIdentity();
   if (!identity) {
-    redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
+    redirect((await services.identityAccess.setupRequired()) ? "/setup" : await pageLoginPath());
   }
-  if (identity.user.forcePasswordChange) redirect("/account/security");
+  if (identity.user.forcePasswordChange)
+    redirect(passwordChangePath(await currentPageDestination()));
   if (!permissions.some((permission) => hasPermissionInAnyScope(identity, permission))) {
     redirect("/forbidden");
   }

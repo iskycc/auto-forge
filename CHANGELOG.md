@@ -4,6 +4,13 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.21.17 - 2026-11-04
+
+### Fixed
+
+- Full 大批次执行详情的轮次聚合先分别汇总候选与实际尝试，再按轮次合并，避免 PostgreSQL 更新表统计信息后生成同轮海量中间比较；最新尝试和分页键仅物化必要字段，保留原有查询期限及结果口径。统计失败或首次准备超过两分钟时提供“重新生成统计”入口，重建缓存不重新执行用例。
+- 登录与注册统一保留来源页面：受保护链接、过期会话、注册／登录切换及强制改密后的重新登录携带同一站内返回地址，成功后回到原路径、参数和锚点；公开页原地登录继续保留当前页面及滚动状态，拒绝外部或认证页循环返回地址。
+
 ## 1.21.16 - 2026-11-02
 
 ### Fixed

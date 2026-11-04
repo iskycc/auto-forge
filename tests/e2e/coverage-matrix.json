@@ -176,6 +176,7 @@
       "owner": "task-jenkins-integration",
       "evidence": [
         "tests/e2e/all-rounds.spec.ts",
+        "tests/e2e/execution-statistics.spec.ts",
         "integrations/jenkins/autoforge-execution/pom.xml",
         "integrations/jenkins/autoforge-dependency-publisher/pom.xml",
         ".github/workflows/release.yml"

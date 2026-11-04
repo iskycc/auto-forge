@@ -490,7 +490,10 @@ test("local user completes forced password change and self-service session lifec
   await page.getByLabel("新密码", { exact: true }).fill(replacementPassword);
   await page.getByLabel("确认新密码").fill(replacementPassword);
   await page.getByRole("button", { name: "修改密码并重新登录" }).click();
-  await expect(page).toHaveURL(/\/(?:login\?|\?login=1&)passwordChanged=1$/);
+  await expect(page).toHaveURL(
+    (url) =>
+      ["/", "/login"].includes(url.pathname) && url.searchParams.get("passwordChanged") === "1",
+  );
 
   await login(page, username, replacementPassword);
   const mainNavigation = page.getByRole("navigation", { name: "主导航" });

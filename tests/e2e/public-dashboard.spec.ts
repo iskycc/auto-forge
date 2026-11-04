@@ -580,7 +580,12 @@ test("legacy login and protected links open the homepage dialog and retain passw
   await dialog.getByRole("button", { name: "关闭登录控制台" }).click();
   await expect(page).toHaveURL(/\/$/u);
   await page.goto("/settings/platform");
-  await expect(page).toHaveURL(/\/\?login=1$/u);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/" &&
+      url.searchParams.get("login") === "1" &&
+      url.searchParams.get("returnTo") === "/settings/platform",
+  );
   await expect(dialog).toBeVisible();
   await expect(dialog).not.toContainText("密码已修改");
   await expect(page.getByRole("navigation", { name: "主导航" })).toHaveCount(0);

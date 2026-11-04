@@ -3,14 +3,14 @@ import { uiPatterns } from "@/components/ui/patterns";
 import { redirect } from "next/navigation";
 
 import { AccountSecurity } from "@/components/account-security";
-import { currentIdentity } from "@/lib/auth";
+import { currentIdentity, pageLoginPath } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccountSecurityPage() {
   const identity = await currentIdentity();
-  if (!identity) redirect("/login");
+  if (!identity) redirect(await pageLoginPath());
   const sessions = await (await getPlatformServices()).identityAccess.listSessions(identity);
 
   return (
