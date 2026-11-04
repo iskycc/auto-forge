@@ -295,4 +295,4 @@ Redis、NATS 不能代替业务备份；单机 Full 备份脚本不适合直接�
 
 ## PostgreSQL 数据卷容量采样
 
-容量监控改为独立 Node Exporter，PostgreSQL 健康检查只保留 `pg_isready`。导入固定版本监控镜像后执行 `docker compose --profile monitoring up -d`，再在平台“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../../../../docs/operations/postgres-monitoring.md)。
+主库使用[独立 monitoring Compose](../../monitoring/README.md)启动 Node Exporter；独立日志库模板已内置采集器，导入固定版本监控镜像后，普通 `docker compose up -d` 即会一起启动，无需 profile。原有离线覆盖参数保持不变；旧日志库模板可显式执行 `docker compose up -d node-exporter` 补启。主库在“系统信息 → 数据库使用详情 → 配置磁盘监控”、日志库在“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。PostgreSQL 健康检查仍只保留 `pg_isready`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../../../../docs/operations/postgres-monitoring.md)。

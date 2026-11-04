@@ -4,6 +4,12 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- 数据库部署模板移除 Node Exporter 的可选 profile，普通 Compose 启动即包含数据卷监控；同步补齐离线镜像导入、旧模板单独补启及平台监控配置说明；B 节点采集器复用公共运行配置，统一日志轮转和停止宽限。
+
 ## 1.21.17 - 2026-11-04
 
 ### Fixed

@@ -4,11 +4,13 @@
 
 ## 启动
 
-`fast-deploy/node-b`、`fast-deploy/log-postgres` 和 `deploy/compose/full-bind/log-postgres` 已有 `monitoring` profile。导入下述镜像、填写 `.env` 后，在数据库所在目录执行：
+`fast-deploy/node-b`、`fast-deploy/log-postgres` 和 `deploy/compose/full-bind/log-postgres` 默认同时启动 PostgreSQL 与 Node Exporter，无需额外 profile。先导入下述监控镜像，再填写 `.env`，在数据库所在目录执行：
 
 ```bash
-docker compose --profile monitoring up -d
+docker compose up -d
 ```
+
+旧版模板将采集器放在 `monitoring` profile，普通启动会跳过。已有数据库无需重建，保留原 Compose 参数及项目名，在相同目录执行 `docker compose up -d node-exporter` 即可补启；这是显式启动采集服务，也适用于旧模板。使用离线覆盖文件时仍须保留原有两个 `-f` 参数。单独执行 `docker compose up -d postgres` 只选择数据库服务，不会启动独立采集器。
 
 采集容器与 PostgreSQL 使用同一个 bind 源目录，只读挂载为 `/pgdata`。只启用 filesystem collector，禁用 exporter 自身额外指标；没有宿主机根目录挂载、host PID 或特权权限。主库默认映射 19100，日志库默认 19101，可通过 `.env` 修改。只把端口绑定可信内网 IP，并通过防火墙限制主平台访问。
 

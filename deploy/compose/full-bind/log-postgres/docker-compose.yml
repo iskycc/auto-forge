@@ -37,7 +37,6 @@ services:
     image: autoforge/offline-node-exporter:1.12.1-${AUTOFORGE_ARCH:-amd64}
     platform: linux/${AUTOFORGE_ARCH:-amd64}
     pull_policy: never
-    profiles: ["monitoring"]
     restart: unless-stopped
     read_only: true
     cpus: "0.25"

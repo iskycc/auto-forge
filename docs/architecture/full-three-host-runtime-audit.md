@@ -34,7 +34,7 @@
 
 PostgreSQL 原生 `pg_database_size`、`pg_tablespace_size` 提供已占用大小，**不能计算宿主机文件系统剩余空间**。参见 [PostgreSQL 15 管理函数](https://www.postgresql.org/docs/15/functions-admin.html)与[磁盘使用说明](https://www.postgresql.org/docs/15/diskusage.html)。
 
-使用标准 **Prometheus Node Exporter**，平台直接读取 `/metrics?collect[]=filesystem`，不额外依赖 Prometheus 或 Grafana。`fast-deploy/node-b`、`fast-deploy/log-postgres` 与 `full-bind/log-postgres` 的 `monitoring` profile 提供固定版本采集容器，只读挂载与 PostgreSQL 相同的数据目录为 `/pgdata`，只启用 filesystem collector，不使用 host PID、特权容器或整个宿主机根目录挂载。其他部署可使用独立 [monitoring Compose](../../deploy/compose/monitoring/README.md)。
+使用标准 **Prometheus Node Exporter**，平台直接读取 `/metrics?collect[]=filesystem`，不额外依赖 Prometheus 或 Grafana。`fast-deploy/node-b`、`fast-deploy/log-postgres` 与 `full-bind/log-postgres` 默认随普通 Compose 启动固定版本采集容器，无需额外 profile，只读挂载与 PostgreSQL 相同的数据目录为 `/pgdata`，只启用 filesystem collector，不使用 host PID、特权容器或整个宿主机根目录挂载。其他部署可使用独立 [monitoring Compose](../../deploy/compose/monitoring/README.md)。
 
 PostgreSQL 健康检查只运行 `pg_isready`。平台不再写入、读取采样 JSON，也不调用 `pg_read_file`，无需向数据库账号授予文件系统读取权限。主库在“系统信息 → 数据库使用详情”、日志服务器在“日志管理 → 日志配置 → 查看容量”分别配置监控地址和挂载点，并可先检查连接；配置存入 Full 主库共享，保存后生效。Lite 继续使用本地空间信息，不要求部署采集组件。
 

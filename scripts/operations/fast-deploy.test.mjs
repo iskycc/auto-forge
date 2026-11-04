@@ -32,7 +32,8 @@ async function compose(host, overrides = {}) {
       .filter((line) => line !== undefined)
       .join("\n");
     await writeFile(environment, configured, { mode: 0o600 });
-    const inherited = { ...process.env, COMPOSE_PROFILES: "monitoring" };
+    const inherited = { ...process.env };
+    delete inherited.COMPOSE_PROFILES;
     for (const key of Object.keys(values)) delete inherited[key];
     const result = await execute(
       "docker",
@@ -132,15 +133,23 @@ test("uses the same MinIO credentials for its server and bucket initialization",
   assert.equal(services["minio-init"].depends_on.minio.condition, "service_healthy");
 });
 
-test("uses a read-only standard exporter without filesystem scripts in PostgreSQL healthchecks", async () => {
+test("applies database-node log rotation and shutdown limits to monitoring", async () => {
+  const { services } = await compose("node-b");
+  const exporter = services["node-exporter"];
+  assert.deepEqual(exporter.logging, services.postgres.logging);
+  assert.equal(exporter.stop_grace_period, services.postgres.stop_grace_period);
+});
+
+test("starts the read-only exporter with PostgreSQL without enabling a profile", async () => {
   for (const host of ["node-b", "log-postgres"]) {
     const { services } = await compose(host);
     const postgres = services.postgres,
       exporter = services["node-exporter"];
+    assert.ok(exporter, "default Compose startup must include the PostgreSQL exporter");
     assert.equal(postgres.healthcheck.test[0], "CMD");
     assert.equal(postgres.healthcheck.test[1], "pg_isready");
     assert(!JSON.stringify(postgres).includes("autoforge-storage-capacity"));
-    assert.deepEqual(exporter.profiles, ["monitoring"]);
+    assert.equal(exporter.profiles, undefined);
     assert.equal(exporter.read_only, true);
     assert.deepEqual(exporter.cap_drop, ["ALL"]);
     assert.equal(exporter.volumes[0].source, postgres.volumes[0].source);

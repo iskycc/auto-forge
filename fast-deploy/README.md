@@ -2,13 +2,13 @@
 
 **复制对应主机目录，改 `.env`，创建本地数据目录，`docker compose up -d`。** 镜像全部固定为 amd64，不需要运行配置生成器、部署程序或架构检测。
 
-| 主机            | 复制目录  | 组件              |
-| --------------- | --------- | ----------------- |
-| A：`10.20.0.11` | `node-a/` | Web、worker       |
-| B：`10.20.0.12` | `node-b/` | PostgreSQL、Redis |
-| C：`10.20.0.13` | `node-c/` | MinIO、NATS       |
+| 主机            | 复制目录  | 组件                             |
+| --------------- | --------- | -------------------------------- |
+| A：`10.20.0.11` | `node-a/` | Web、worker                      |
+| B：`10.20.0.12` | `node-b/` | PostgreSQL、Redis、Node Exporter |
+| C：`10.20.0.13` | `node-c/` | MinIO、NATS                      |
 
-独立日志库另提供 [`log-postgres/`](./log-postgres/README.md)，复制到 C 或专用日志主机即可单独启动；默认端口 `5433`，无需脚本或额外镜像类型。
+独立日志库另提供 [`log-postgres/`](./log-postgres/README.md)，复制到 C 或专用日志主机即可单独启动；默认端口 `5433`，日志库复用主库同款 PostgreSQL 镜像，并附带 Node Exporter，无需脚本。
 
 示例 IP 替换成实际内网 IP；Runner 使用已有独立执行机。不使用 Nginx，也不使用 Docker named volume。持久数据就在各自目录的 `data/` 下，可以把整个目录放到实际数据盘。
 
@@ -19,10 +19,12 @@
 | 主机 | Docker tar 文件                                                                                                                                                                                                |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A    | `autoforge-backend-1.21.14-amd64.docker.tar`                                                                                                                                                                   |
-| B    | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar`                                                                                                       |
+| B    | `autoforge-infra-postgres-15-alpine-amd64.docker.tar`、`autoforge-infra-redis-7-alpine-amd64.docker.tar`、`autoforge-infra-node-exporter-1.12.1-amd64.docker.tar`                                              |
 | C    | `autoforge-infra-minio-RELEASE.2025-04-22T22-12-26Z-amd64.docker.tar`、`autoforge-infra-minio-client-RELEASE.2025-04-16T18-13-26Z-amd64.docker.tar`、`autoforge-infra-nats-2.14.3-alpine3.22-amd64.docker.tar` |
 
 主平台来自[正式 v1.21.14](https://github.com/iskycc/auto-forge/releases/tag/v1.21.14)，基础设施来自[amd64 离线包](https://github.com/iskycc/auto-forge/releases/tag/v1.20.22-infra.20261027.1)。Compose 已填写这些包导入后的镜像名，不需要覆盖文件；不会自动联网拉取。
+
+Node Exporter 镜像另从 [1.12.1 监控离线包](https://github.com/iskycc/auto-forge/releases/tag/infra-node-exporter-1.12.1-20261102)导入 B；日志数据库所在主机也需导入。模板默认一并启动数据卷监控，主库端口 `19100`、日志库端口 `19101`，仅允许平台主机访问。
 
 ## B：数据库与缓存
 
@@ -113,4 +115,4 @@ docker compose stop
 
 ## PostgreSQL 数据卷容量采样
 
-容量监控改为独立 Node Exporter，PostgreSQL 健康检查只保留 `pg_isready`。导入固定版本监控镜像后执行 `docker compose --profile monitoring up -d`，再在平台“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../docs/operations/postgres-monitoring.md)。
+Node Exporter 默认随 `docker compose up -d` 一起启动，无需启用 profile；启动前须导入固定版本监控镜像。B 节点的采集器复用 `x-runtime`，同样采用 20 MiB × 5 的容器日志轮转与 30 秒停止宽限。旧模板可执行 `docker compose up -d node-exporter` 补启采集容器，不重建 PostgreSQL。主库在“系统信息 → 数据库使用详情 → 配置磁盘监控”、日志库在“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。PostgreSQL 健康检查仍只保留 `pg_isready`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../docs/operations/postgres-monitoring.md)。

@@ -14,7 +14,7 @@ Full 禁止新增和追加本地 SQLite 日志，执行前必须登记并选择�
 需要为日志 PostgreSQL 预留内存和数据盘，优先与 MinIO／JetStream 分盘；容量不足时另选专用日志主机。
 多台 Full 平台节点都需能访问每一个已登记日志库；浏览器与 Runner 不直连这些数据库。
 
-导入已校验的 PostgreSQL 离线镜像。使用此前基础设施临时包时，将覆盖归档中的
+导入已校验的 PostgreSQL 离线镜像与对应架构的 [Node Exporter 离线镜像](../../../../docs/operations/postgres-monitoring.md#离线镜像)，默认随数据库启动采集容器。使用此前基础设施临时包时，将覆盖归档中的
 `postgres/compose.offline.yml` 复制到本目录；两套 Compose 都使用 `postgres` 服务名，可复用此镜像覆盖。
 此处的日志库不会新建另一种镜像发布物。
 
@@ -60,7 +60,7 @@ docker compose -f docker-compose.yml -f compose.offline.yml ps --all
 
 容量接近预算时，在另一台日志主机按本组件部署，或在同机复制本组件目录并使用独立配置：
 
-- 改用另一个端口，例如 `5434`。
+- 改用另一个数据库端口，例如 `5434`，同时将 `AUTOFORGE_NODE_EXPORTER_PORT` 改为未占用的监控端口，例如 `19102`。
 - 使用另一个数据目录和凭据目录。
 - 每次命令加入独立项目名，例如 `docker compose -p autoforge-log-02 -f docker-compose.yml -f compose.offline.yml up --detach`，
   配置检查、查看和后续启停均使用同一项目名，避免与第一个实例互相覆盖。
@@ -88,4 +88,4 @@ docker compose -f docker-compose.yml -f compose.offline.yml ps --all
 
 ## PostgreSQL 数据卷容量采样
 
-容量监控改为独立 Node Exporter，PostgreSQL 健康检查只保留 `pg_isready`。导入固定版本监控镜像后执行 `docker compose --profile monitoring up -d`，再在平台“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../../../../docs/operations/postgres-monitoring.md)。
+Node Exporter 默认随 `docker compose up -d` 一起启动，无需启用 profile；启动前须导入固定版本监控镜像。旧模板可执行 `docker compose up -d node-exporter` 补启采集容器，不重建 PostgreSQL。主库在“系统信息 → 数据库使用详情 → 配置磁盘监控”、日志库在“日志管理 → 日志配置 → 查看容量 → 配置磁盘监控”填写本机 IP、映射端口与 `/pgdata`。PostgreSQL 健康检查仍只保留 `pg_isready`。采集组件与 PostgreSQL 使用同一数据目录，只有只读挂载，无需数据库文件权限或采样脚本。部署与离线镜像说明见 [容量监控指南](../../../../docs/operations/postgres-monitoring.md)。
