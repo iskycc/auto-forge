@@ -1,8 +1,14 @@
 import type { ReadModelLease, ReadModelSnapshotRepository } from "@autoforge/application";
-import { READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT } from "@autoforge/application";
-import type { ReadModelQuery } from "@autoforge/contracts";
+import {
+  PAGE_BLOCKING_READ_MODEL_KINDS,
+  READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT,
+} from "@autoforge/application";
+import { readModelQuerySchema, type ReadModelQuery } from "@autoforge/contracts";
+import { runPostgresTransaction } from "./postgres-transaction";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { readModelSnapshotFromRow, type ReadModelSnapshotRow } from "./read-model-snapshot-row";
+
+const MAXIMUM_BATCH_LEASE_PROBES = 8;
 
 export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
@@ -38,22 +44,75 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
 
   async claim(now: string, expiresAt: string, token: string, options?: { onlyPageBlocking: true }) {
     await this.handle.ready;
-    const result = await this.handle.pool.query<ReadModelSnapshotRow>(
-      `UPDATE read_model_snapshots SET lease_token=$1,lease_expires_at=$2
-      WHERE id=(SELECT id FROM read_model_snapshots WHERE refresh_after<=$3 AND (lease_expires_at IS NULL OR lease_expires_at<=$3)
-      AND failed<5 AND accessed_at>=$4 AND ($5::boolean=FALSE OR generated_at IS NULL OR
-        (requested_revision>generated_revision AND query_json::jsonb->>'kind' IN ('case_directory','suite_directory')))
-      ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1 FOR UPDATE SKIP LOCKED)
-      RETURNING *`,
-      [
-        token,
-        expiresAt,
-        now,
-        new Date(Date.parse(now) - 300_000).toISOString(),
-        options?.onlyPageBlocking ?? false,
-      ],
-    );
-    return result.rows[0] ? { ...readModelSnapshotFromRow(result.rows[0]), token } : null;
+    const candidateSql = `SELECT candidate.id,candidate.query_json FROM read_model_snapshots candidate
+      WHERE candidate.refresh_after<=$1
+        AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at<=$1)
+        AND candidate.failed<5 AND candidate.accessed_at>=$2
+        AND ($3::boolean=FALSE OR candidate.generated_at IS NULL OR
+          (candidate.requested_revision>candidate.generated_revision AND
+           candidate.query_json::jsonb->>'kind'=ANY($5::text[])))
+        AND COALESCE(candidate.query_json::jsonb->>'batchId','')<>ALL($4::text[])
+        AND NOT EXISTS (
+          SELECT 1 FROM read_model_snapshots busy
+          WHERE busy.id<>candidate.id AND busy.lease_token IS NOT NULL AND busy.lease_expires_at>$1
+            AND busy.query_json::jsonb->>'batchId'=candidate.query_json::jsonb->>'batchId'
+        )
+      ORDER BY CASE WHEN candidate.generated_at IS NULL THEN 0 ELSE 1 END,candidate.refresh_after,candidate.id
+      LIMIT 1`;
+    const candidateParameters = (excludedBatches: string[]) => [
+      now,
+      new Date(Date.parse(now) - 300_000).toISOString(),
+      options?.onlyPageBlocking ?? false,
+      excludedBatches,
+      PAGE_BLOCKING_READ_MODEL_KINDS,
+    ];
+    // Keep idle polling read-only. The transaction reselects and grants the actual lease.
+    if (!(await this.handle.pool.query(candidateSql, candidateParameters([]))).rowCount)
+      return null;
+    return runPostgresTransaction(this.handle, async (client) => {
+      // The post-lock check needs a fresh statement snapshot, including when the DB default is stricter.
+      await client.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+      const excludedBatches: string[] = [];
+      // A racing claimant can take a batch after our probe. Try other batches within a bounded window.
+      for (let probe = 0; probe < MAXIMUM_BATCH_LEASE_PROBES; probe++) {
+        const candidate = (
+          await client.query<Pick<ReadModelSnapshotRow, "id" | "query_json">>(
+            candidateSql + " FOR UPDATE OF candidate SKIP LOCKED",
+            candidateParameters(excludedBatches),
+          )
+        ).rows[0];
+        if (!candidate) return null;
+        const query = readModelQuerySchema.parse(JSON.parse(candidate.query_json));
+        const batchId = "batchId" in query ? query.batchId : undefined;
+        if (batchId) {
+          const lock = await client.query<{ acquired: boolean }>(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended('autoforge:snapshot-batch:' || 'read_model_snapshots'::regclass::oid::text || ':' || $1,0)) AS acquired",
+            [batchId],
+          );
+          if (!lock.rows[0]!.acquired) {
+            excludedBatches.push(batchId);
+            continue;
+          }
+          // Recheck in a fresh statement snapshot after locking: another transaction may
+          // have committed its different query lease after our candidate SELECT began.
+          const busy = await client.query(
+            `SELECT 1 FROM read_model_snapshots WHERE lease_token IS NOT NULL AND lease_expires_at>$1
+              AND query_json::jsonb->>'batchId'=$2 LIMIT 1`,
+            [now, batchId],
+          );
+          if (busy.rowCount) {
+            excludedBatches.push(batchId);
+            continue;
+          }
+        }
+        const result = await client.query<ReadModelSnapshotRow>(
+          "UPDATE read_model_snapshots SET lease_token=$1,lease_expires_at=$2 WHERE id=$3 RETURNING *",
+          [token, expiresAt, candidate.id],
+        );
+        return result.rows[0] ? { ...readModelSnapshotFromRow(result.rows[0]), token } : null;
+      }
+      return null;
+    });
   }
 
   async renew(lease: ReadModelLease, now: string, expiresAt: string) {

@@ -202,22 +202,25 @@ type SqliteRunnerFaultRow = {
   lastOccurredAt: string;
 };
 
-const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS (
-  SELECT * FROM execution_runs WHERE batch_id=?
+const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS MATERIALIZED (
+  SELECT id,execution_round,display_name,class_name,case_type,created_at,assigned_runner_id
+  FROM execution_runs WHERE batch_id=?
 ), ranked_round_attempts AS (
-  SELECT attempt.*,ROW_NUMBER() OVER (
+  SELECT attempt.id,attempt.execution_run_id,attempt.execution_round,attempt.attempt_number,
+    attempt.status,attempt.outcome,attempt.started_at,attempt.created_at,attempt.finished_at,
+    ROW_NUMBER() OVER (
     PARTITION BY attempt.execution_run_id,attempt.execution_round
     ORDER BY attempt.attempt_number DESC
   ) AS round_rank
   FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
-), round_attempts AS (
+), round_attempts AS MATERIALIZED (
   SELECT * FROM ranked_round_attempts WHERE round_rank=1
 ), round_numbers(round) AS (
   SELECT 1
   UNION SELECT current_round FROM run_batches WHERE id=?
   UNION SELECT execution_round FROM round_attempts
   UNION SELECT execution_round FROM batch_runs
-), eligible_runs(execution_run_id,round) AS (
+), eligible_runs(execution_run_id,round) AS MATERIALIZED (
   SELECT id,1 FROM batch_runs
   UNION SELECT execution_run_id,execution_round FROM round_attempts
   UNION SELECT id,execution_round FROM batch_runs

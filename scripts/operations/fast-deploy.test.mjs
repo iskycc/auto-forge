@@ -113,7 +113,8 @@ test("isolates the daily log database from business data and supports a separate
   assert(!Object.hasOwn(postgres.environment, "POSTGRES_PASSWORD_FILE"));
   assert.equal(postgres.ports[0].published, "5433");
   assert.equal(postgres.volumes[0].source, resolve("fast-deploy/log-postgres/data/postgres"));
-  assert.equal(postgres.volumes[0].bind.create_host_path, false);
+  // Compose releases differ in whether their JSON output emits explicit false values.
+  assert.notEqual(postgres.volumes[0].bind?.create_host_path, true);
   const custom = await compose("log-postgres", {
     SERVICE_BIND: "127.0.0.1",
     LOG_POSTGRES_PORT: "15433",

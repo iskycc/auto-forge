@@ -25,6 +25,9 @@ type Fixture = {
   afterTotalsRead(operation: () => Promise<void> | void): () => void;
   replaceFact(): Promise<void> | void;
   seedMixedOutcomes(): Promise<void> | void;
+  failPublication(): Promise<void> | void;
+  restorePublication(): Promise<void> | void;
+  factCount(): Promise<number> | number;
   close(): Promise<void> | void;
 };
 
@@ -54,6 +57,27 @@ for (const mode of ["sqlite", "postgres"] as const) {
         filter: { ...analyticsQuery.filter, outcome: "failed" },
       });
       expect(failedOnly.flakyCases).toEqual([]);
+    });
+
+    it("rolls back a failed fact batch and retries without losing or duplicating results", async () => {
+      await fixture.seedMixedOutcomes();
+      await fixture.failPublication();
+      try {
+        await expect(fixture.repository.rebuildAnalyticsFacts(10)).rejects.toThrow(
+          "fixture publication failure",
+        );
+        expect(await fixture.factCount()).toBe(0);
+      } finally {
+        await fixture.restorePublication();
+      }
+      expect(await fixture.repository.rebuildAnalyticsFacts(10)).toBe(7);
+      expect(await fixture.repository.rebuildAnalyticsFacts(10)).toBe(0);
+      expect(await fixture.factCount()).toBe(7);
+      expect(await fixture.repository.readAnalytics(analyticsQuery)).toMatchObject({
+        sampleCount: 7,
+        passed: 4,
+        failed: 3,
+      });
     });
 
     it.each(["overview", "complete"] as const)(
@@ -98,6 +122,60 @@ describe.skipIf(!postgresUrl)("PostgreSQL analytics fact publication", () => {
   }, 30_000);
   afterEach(async () => {
     await fixture?.close();
+  });
+
+  it("publishes once when independent builders select the same completed attempts", async () => {
+    await fixture.seedMixedOutcomes();
+    await fixture.writer.query("DELETE FROM analytics_facts");
+    const inserted = await Promise.all([
+      fixture.repository.rebuildAnalyticsFacts(10),
+      fixture.publisher.rebuildAnalyticsFacts(10),
+    ]);
+    expect(inserted.reduce((total, count) => total + count, 0)).toBe(7);
+    expect(await fixture.factCount()).toBe(7);
+  });
+
+  it("defers a busy fact generator instead of reporting an empty completed scan", async () => {
+    await fixture.writer.query("DELETE FROM analytics_facts");
+    await fixture.reader.query("SET lock_timeout=25");
+    await fixture.writer.query("BEGIN");
+    try {
+      await fixture.writer.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('autoforge:analytics-facts:v4:' || 'analytics_facts'::regclass::oid::text,0))",
+      );
+      await expect(fixture.repository.rebuildAnalyticsFacts(10)).rejects.toMatchObject({
+        code: "55P03",
+      });
+      expect(await fixture.factCount()).toBe(0);
+    } finally {
+      await fixture.writer.query("ROLLBACK");
+      await fixture.reader.query("RESET lock_timeout");
+    }
+    expect(await fixture.repository.rebuildAnalyticsFacts(10)).toBe(1);
+  });
+
+  it("protects selected completions from retention until facts are committed", async () => {
+    await fixture.writer.query("DELETE FROM analytics_facts");
+    let observed = false;
+    const restore = fixture.afterCandidatesRead(async () => {
+      observed = true;
+      await fixture.writer.query("BEGIN");
+      try {
+        await fixture.writer.query("SET LOCAL lock_timeout=25");
+        await expect(
+          fixture.writer.query("DELETE FROM run_attempts WHERE id='analytics-snapshot-attempt'"),
+        ).rejects.toMatchObject({ code: "55P03" });
+      } finally {
+        await fixture.writer.query("ROLLBACK");
+      }
+    });
+    try {
+      expect(await fixture.repository.rebuildAnalyticsFacts(10)).toBe(1);
+      expect(observed).toBe(true);
+      expect(await fixture.factCount()).toBe(1);
+    } finally {
+      restore();
+    }
   });
 
   it("includes completed attempts while another connection holds a non-key row lock", async () => {
@@ -160,6 +238,18 @@ async function sqliteFixture(): Promise<Fixture> {
     seedMixedOutcomes: () => {
       writer.exec(mixedOutcomeSql());
     },
+    failPublication: () => {
+      writer.exec(`DELETE FROM analytics_facts;
+        CREATE TRIGGER fail_fact BEFORE INSERT ON analytics_facts
+        WHEN NEW.attempt_id='mixed-attempt-2'
+        BEGIN SELECT RAISE(ABORT,'fixture publication failure'); END;`);
+    },
+    restorePublication: () => {
+      writer.exec("DROP TRIGGER fail_fact");
+    },
+    factCount: () =>
+      (writer.prepare("SELECT COUNT(*) AS total FROM analytics_facts").get() as { total: number })
+        .total,
     close() {
       writer.close();
       handle.close();
@@ -177,7 +267,7 @@ async function postgresFixture() {
   const handle = createPostgresDatabase({
     connectionString: url.toString(),
     migrationsFolder: resolve("packages/db/drizzle/postgresql"),
-    poolMax: 2,
+    poolMax: 3,
   });
   await handle.ready;
   const reader = await handle.pool.connect();
@@ -203,7 +293,24 @@ async function postgresFixture() {
   await repository.rebuildAnalyticsFacts(10);
   return {
     repository,
+    publisher: new PostgresPlatformOperationsRepository(handle),
+    reader,
     writer,
+    afterCandidatesRead(operation: () => Promise<void>) {
+      const query = reader.query.bind(reader);
+      let observed = false;
+      observeQuery = (async (sql: string, values?: unknown[]) => {
+        const result = await query(sql, values);
+        if (!observed && sql.includes("a.id AS attempt_id")) {
+          observed = true;
+          await operation();
+        }
+        return result;
+      }) as PoolClient["query"];
+      return () => {
+        observeQuery = query;
+      };
+    },
     afterTotalsRead(operation: () => Promise<void> | void) {
       const query = reader.query.bind(reader);
       let publication: Promise<void> | undefined;
@@ -228,6 +335,24 @@ async function postgresFixture() {
     seedMixedOutcomes: async () => {
       await writer.query(mixedOutcomeSql());
     },
+    failPublication: async () => {
+      await writer.query(`DELETE FROM analytics_facts;
+        CREATE FUNCTION reject_fact() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.attempt_id='mixed-attempt-2' THEN RAISE EXCEPTION 'fixture publication failure'; END IF;
+          RETURN NEW;
+        END $$;
+        CREATE TRIGGER fail_fact BEFORE INSERT ON analytics_facts
+        FOR EACH ROW EXECUTE FUNCTION reject_fact();`);
+    },
+    restorePublication: async () => {
+      await writer.query("DROP TRIGGER fail_fact ON analytics_facts; DROP FUNCTION reject_fact()");
+    },
+    factCount: async () =>
+      Number(
+        (await writer.query<{ total: string }>("SELECT COUNT(*) AS total FROM analytics_facts"))
+          .rows[0]!.total,
+      ),
     async close() {
       reader.release();
       writer.release();

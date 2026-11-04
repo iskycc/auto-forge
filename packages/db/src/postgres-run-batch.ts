@@ -2411,34 +2411,50 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
   const parameters: unknown[] = [input.batchId];
   let scopeCte: string;
   if (input.scope === "attempts") {
-    scopeCte = `, scope_rows AS (
-      SELECT attempt.execution_run_id,attempt.execution_round AS round,attempt.id AS attempt_id
+    scopeCte = `, scope_rows AS MATERIALIZED (
+      SELECT attempt.execution_run_id,attempt.execution_round AS round,attempt.id AS attempt_id,attempt.attempt_number
       FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
     )`;
   } else if (input.scope === "summary") {
-    scopeCte = `, ranked_attempts AS (
-      SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,attempt.execution_round,
-             ROW_NUMBER() OVER (
-               PARTITION BY attempt.execution_run_id
-               ORDER BY CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 0 ELSE 1 END,
-                        attempt.attempt_number DESC
-             ) AS rank
+    scopeCte = `, summary_attempts AS MATERIALIZED (
+      SELECT DISTINCT ON (attempt.execution_run_id)
+        attempt.id,attempt.execution_run_id,attempt.execution_round,attempt.attempt_number
       FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
-    ), scope_rows AS (
+      ORDER BY attempt.execution_run_id,
+        CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 0 ELSE 1 END,
+        attempt.attempt_number DESC
+    ), scope_rows AS MATERIALIZED (
       SELECT run.id AS execution_run_id,COALESCE(attempt.execution_round,1) AS round,
-             attempt.id AS attempt_id
-      FROM batch_runs run LEFT JOIN ranked_attempts attempt
-        ON attempt.execution_run_id=run.id AND attempt.rank=1
+             attempt.id AS attempt_id,attempt.attempt_number
+      FROM batch_runs run LEFT JOIN summary_attempts attempt
+        ON attempt.execution_run_id=run.id
+    )`;
+  } else if (input.scope === "all") {
+    // Most eligible run/round pairs already have an attempt. Keep those rows directly;
+    // only initial/current qualifications can add a pair without an attempt.
+    scopeCte = `, unattempted_qualifications AS MATERIALIZED (
+      SELECT id AS execution_run_id,1 AS round FROM batch_runs
+      UNION SELECT id,execution_round FROM batch_runs
+    ), scope_rows AS MATERIALIZED (
+      SELECT execution_run_id,execution_round AS round,id AS attempt_id,attempt_number
+      FROM round_attempts
+      UNION ALL
+      SELECT eligible.execution_run_id,eligible.round,NULL::text,NULL::integer
+      FROM unattempted_qualifications eligible
+      WHERE NOT EXISTS (
+        SELECT 1 FROM round_attempts attempt
+        WHERE attempt.execution_run_id=eligible.execution_run_id
+          AND attempt.execution_round=eligible.round
+      )
     )`;
   } else {
-    const roundPlaceholder =
-      input.scope === "all" ? undefined : pushPostgresParameter(parameters, input.scope);
-    scopeCte = `, scope_rows AS (
-      SELECT eligible.execution_run_id,eligible.round,attempt.id AS attempt_id
+    const roundPlaceholder = pushPostgresParameter(parameters, input.scope);
+    scopeCte = `, scope_rows AS MATERIALIZED (
+      SELECT eligible.execution_run_id,eligible.round,attempt.id AS attempt_id,attempt.attempt_number
       FROM eligible_runs eligible LEFT JOIN round_attempts attempt
         ON attempt.execution_run_id=eligible.execution_run_id
        AND attempt.execution_round=eligible.round
-      ${roundPlaceholder ? `WHERE eligible.round=${roundPlaceholder}` : ""}
+      WHERE eligible.round=${roundPlaceholder}
     )`;
   }
   const where: string[] = [];
@@ -2458,29 +2474,61 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
     );
   }
   const direction = input.direction === "desc" ? "DESC" : "ASC";
-  const sortExpression = {
-    none: "run.created_at ASC,run.id ASC,scope.round ASC",
-    name: `${EXECUTION_CASE_IDENTITY_SORT_SQL} ${direction},run.id ${direction},scope.round ${direction}`,
-    status: `CASE COALESCE(attempt.status,'pending')
-      WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 WHEN 'timed_out' THEN 2
-      WHEN 'cancelled' THEN 3 WHEN 'running' THEN 4 WHEN 'assigned' THEN 5 ELSE 6 END ${direction},
-      CASE WHEN attempt.status='failed'
+  const ordered = (expression: string, order: "ASC" | "DESC" = direction) => ({
+    expression,
+    order,
+  });
+  const sortColumns = {
+    none: [
+      ordered("run.created_at", "ASC"),
+      ordered("run.id", "ASC"),
+      ordered("scope.round", "ASC"),
+    ],
+    name: [ordered(EXECUTION_CASE_IDENTITY_SORT_SQL), ordered("run.id"), ordered("scope.round")],
+    status: [
+      ordered(`CASE COALESCE(attempt.status,'pending')
+        WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 WHEN 'timed_out' THEN 2
+        WHEN 'cancelled' THEN 3 WHEN 'running' THEN 4 WHEN 'assigned' THEN 5 ELSE 6 END`),
+      ordered(`CASE WHEN attempt.status='failed'
         THEN COALESCE(NULLIF(TRIM(attempt.result_summary),''),attempt.result_code,'')
-        ELSE '' END ${direction},
-      run.display_name ${direction},run.id ${direction},scope.round ${direction}`,
-    runner: `COALESCE(attempt.runner_id,run.assigned_runner_id,'') ${direction},run.display_name ${direction}`,
-    duration: `CASE WHEN attempt.duration_ms IS NULL THEN 1 ELSE 0 END ASC,attempt.duration_ms ${direction},run.display_name ${direction}`,
+        ELSE '' END`),
+      ordered("run.display_name"),
+      ordered("run.id"),
+      ordered("scope.round"),
+    ],
+    runner: [
+      ordered("COALESCE(attempt.runner_id,run.assigned_runner_id,'')"),
+      ordered("run.display_name"),
+    ],
+    duration: [
+      ordered("CASE WHEN attempt.duration_ms IS NULL THEN 1 ELSE 0 END", "ASC"),
+      ordered("attempt.duration_ms"),
+      ordered("run.display_name"),
+    ],
   }[input.sort];
+  const usesAttemptFields = !!(
+    input.runnerId ||
+    (input.status && input.status !== "pending") ||
+    ["status", "runner", "duration"].includes(input.sort)
+  );
   const limit = pushPostgresParameter(parameters, input.limit);
   const offset = pushPostgresParameter(parameters, input.offset);
   return {
-    sqlText: `${POSTGRES_BATCH_ROUND_CTES}${scopeCte}
+    // Materialize compact filtered keys before ordering. Otherwise an index-ordered LIMIT
+    // can choose nested rescans even though COUNT OVER requires consuming every scoped row.
+    sqlText: `${POSTGRES_BATCH_ROUND_CTES}${scopeCte}, filtered_keys AS MATERIALIZED (
       SELECT scope.execution_run_id AS "runId",scope.attempt_id AS "attemptId",scope.round,
-             COUNT(*) OVER () AS total
-      FROM scope_rows scope JOIN batch_runs run ON run.id=scope.execution_run_id
-      LEFT JOIN run_attempts attempt ON attempt.id=scope.attempt_id
+        scope.attempt_number,
+        ${sortColumns.map((column, index) => `${column.expression} AS sort_${index}`).join(",")}
+      FROM scope_rows scope JOIN execution_runs run
+        ON run.id=scope.execution_run_id AND run.batch_id=$1
+      ${usesAttemptFields ? "LEFT JOIN run_attempts attempt ON attempt.id=scope.attempt_id" : ""}
       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY ${sortExpression},attempt.attempt_number ASC LIMIT ${limit} OFFSET ${offset}`,
+    )
+      SELECT "runId","attemptId",round,COUNT(*) OVER () AS total FROM filtered_keys
+      ORDER BY ${sortColumns.map((column, index) => `sort_${index} ${column.order}`).join(",")},
+        attempt_number ASC LIMIT ${limit} OFFSET ${offset}`,
+
     parameters,
   };
 }

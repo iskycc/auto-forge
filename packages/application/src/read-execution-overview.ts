@@ -1,9 +1,27 @@
-import { executionOverviewSnapshotSchema, type ReadModelStatus } from "@autoforge/contracts";
-import { DomainError, summarizeRunBatchCounters } from "@autoforge/domain";
+import {
+  executionOverviewSnapshotSchema,
+  type ReadModelQuery,
+  type ReadModelStatus,
+} from "@autoforge/contracts";
+import { DomainError, summarizeRunBatchCounters, type RunBatch } from "@autoforge/domain";
 import type { RunBatchDetailOverview, RunBatchRepository } from "./ports";
 import type { ReadModelSnapshotService } from "./read-model-snapshots";
 
 export type CachedExecutionOverview = RunBatchDetailOverview & { statistics: ReadModelStatus };
+
+export function executionOverviewQuery(
+  batch: Pick<RunBatch, "id" | "projectId" | "status" | "version">,
+): Extract<ReadModelQuery, { kind: "execution_overview" }> {
+  return {
+    kind: "execution_overview",
+    snapshotVersion: 3,
+    projectId: batch.projectId,
+    batchId: batch.id,
+    ...(["succeeded", "failed", "cancelled"].includes(batch.status)
+      ? { terminalVersion: batch.version }
+      : {}),
+  };
+}
 
 /** Control status reads current metadata; result counters and charts are explicitly timestamped background statistics. */
 export async function readExecutionOverview(
@@ -15,14 +33,7 @@ export async function readExecutionOverview(
   const metadata = await batches.getMetadata(batchId, projectIds);
   if (!metadata || metadata.kind === "case_log_rerun")
     throw new DomainError("RUN_BATCH_NOT_FOUND", "执行批次不存在或当前身份无权访问。");
-  const terminal = ["succeeded", "failed", "cancelled"].includes(metadata.status);
-  const projection = await snapshots.read({
-    kind: "execution_overview",
-    snapshotVersion: 3,
-    projectId: metadata.projectId,
-    batchId,
-    ...(terminal ? { terminalVersion: metadata.version } : {}),
-  });
+  const projection = await snapshots.read(executionOverviewQuery(metadata));
   const statistics = projection.payload
     ? executionOverviewSnapshotSchema.parse(projection.payload)
     : null;

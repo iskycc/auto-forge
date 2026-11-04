@@ -1602,6 +1602,9 @@ export const pgAnalyticsFacts = pgTable(
     schemaVersion: integer("schema_version").notNull().default(1),
   },
   (table) => [
+    index("analytics_facts_batch_idx").on(table.batchId),
+    index("analytics_facts_run_idx").on(table.runId),
+    index("analytics_facts_runner_idx").on(table.runnerId),
     index("analytics_facts_dimensions_idx").on(
       table.projectId,
       table.completedAt,

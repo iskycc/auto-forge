@@ -1012,7 +1012,7 @@
     {
       "ecosystem": "npm",
       "name": "decode-uri-component",
-      "version": "0.2.2",
+      "version": "0.5.1",
       "license": "MIT",
       "homepage": "https://github.com/SamVerschueren/decode-uri-component#readme"
     },

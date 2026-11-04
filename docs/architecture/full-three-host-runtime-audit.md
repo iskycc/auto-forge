@@ -42,6 +42,12 @@ PostgreSQL 健康检查只运行 `pg_isready`。平台不再写入、读取采�
 
 该容量是数据目录所在文件系统的余量，不是整机挂载点汇总。独立 tablespace／WAL 需要另行监控。升级需先更新主库迁移并启动 Node Exporter，再分别保存监控目标；旧健康检查内的采样命令应移除，旧 JSON 文件不再使用。安装、离线镜像、权限与回滚详见 [PostgreSQL 数据卷监控](../operations/postgres-monitoring.md)。
 
+## 2026-11-04：统计发布与 SDK 复查
+
+轮次明细与分析事实的 PostgreSQL 查询及并发发布保护见[快照复查](./read-model-snapshots.md#同类查询与并发发布复查2026-11-04)。数据库监控分别用 fast-deploy 主库与独立日志库模板实际启动，普通 `up -d` 包含采集器，`/pgdata` 返回 size／avail／device_error=0；不把 Compose JSON 是否序列化 false 当作功能差异。
+
+生产依赖审计发现 MinIO SDK 经 query-string 7 引入旧版 decode-uri-component。SDK 当前调用仅使用 stringify，但保留存在已知解码耗时告警的依赖会使安全门禁失败。固定到官方修复版 0.5.1，并在 `vendor/patches/query-string@7.1.3.patch` 适配 CommonJS require 到 ESM 默认导出；不更换 SDK 或查询字符串编码规则。补丁跟随 pnpm lockfile、离线依赖及许可证清单；Unicode、保留字符、异常编码及有超时终止的子进程测试覆盖兼容性。官方说明见 [GHSA-qr28-fpjm-wq7f](https://github.com/advisories/GHSA-qr28-fpjm-wq7f)。
+
 ## 三主机资源利用与后续调优
 
 | 观察到的指标 | 优先动作与边界 |

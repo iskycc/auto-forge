@@ -1,4 +1,5 @@
 import { readReadyModel } from "@/lib/read-ready-model";
+import { executionOverviewQuery } from "@autoforge/application";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
@@ -42,15 +43,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     if (!overview.statistics.generation) {
       await readReadyModel(
         services.readModels,
-        {
-          kind: "execution_overview",
-          snapshotVersion: 2,
-          projectId: overview.batch.projectId,
-          batchId,
-          ...(["succeeded", "failed", "cancelled"].includes(overview.batch.status)
-            ? { terminalVersion: overview.batch.version }
-            : {}),
-        },
+        executionOverviewQuery(overview.batch),
         request.signal,
       );
       overview = await services.executionOverview(batchId, [overview.batch.projectId]);

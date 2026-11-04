@@ -24,7 +24,67 @@ for (const dialect of ["sqlite", "postgres"] as const) {
     // Each isolated fixture applies the full migration history before checking snapshot behavior.
     { timeout: 30_000 },
     () => {
-      it("admits invalidated case and suite directories during execution pressure but leaves periodic statistics deferred", async () => {
+      it("shares the generation budget per batch while independent batches still progress", async () => {
+        const harness = await database(dialect);
+        const batchId = randomUUID();
+        const otherBatchId = randomUUID();
+        const queries: ReadModelQuery[] = [
+          { kind: "execution_overview", projectId, batchId },
+          {
+            kind: "execution_case_page",
+            projectId,
+            batchId,
+            filter: {
+              scope: "summary",
+              sort: "name",
+              direction: "asc",
+              offset: 0,
+              limit: 10,
+            },
+          },
+          { kind: "execution_overview", projectId, batchId: otherBatchId },
+        ];
+        try {
+          for (const query of queries)
+            await harness.repository.request(readModelKey(query), query, now);
+          const leases = await Promise.all([
+            harness.repository.claim(now, later, randomUUID()),
+            harness.repository.claim(now, later, randomUUID()),
+          ]);
+          expect(leases.every(Boolean)).toBe(true);
+          expect(
+            new Set(
+              leases.map((lease) => ("batchId" in lease!.query ? lease!.query.batchId : undefined)),
+            ),
+          ).toEqual(new Set([batchId, otherBatchId]));
+          expect(await harness.repository.claim(now, later, randomUUID())).toBeNull();
+          expect(
+            await harness.repository.claim(now, later, randomUUID(), { onlyPageBlocking: true }),
+          ).toBeNull();
+          const released = leases.find(
+            (lease) => lease && "batchId" in lease.query && lease.query.batchId === batchId,
+          )!;
+          expect(await harness.repository.complete(released, { value: 1 }, now, later)).toBe(true);
+          const next = (await harness.repository.claim(now, later, randomUUID()))!;
+          expect(next).not.toBeNull();
+          expect(next.id).not.toBe(released.id);
+          expect("batchId" in next.query && next.query.batchId).toBe(
+            "batchId" in released.query && released.query.batchId,
+          );
+          await harness.repository.fail(next, now, { deferred: true });
+          expect(await harness.repository.claim(now, later, randomUUID())).not.toBeNull();
+          const expired = await harness.repository.claim(
+            later,
+            "2026-09-05T00:02:00.000Z",
+            randomUUID(),
+          );
+          expect(expired).not.toBeNull();
+        } finally {
+          await harness.close();
+        }
+      });
+
+      it("admits explicitly invalidated JSON readers under pressure while periodic statistics remain deferred", async () => {
         const harness = await database(dialect);
         try {
           const service = new ReadModelSnapshotService(harness.repository, {
@@ -39,15 +99,43 @@ for (const dialect of ["sqlite", "postgres"] as const) {
               tree: true,
             },
             { kind: "suite_directory", projectId, suiteId: randomUUID(), tree: true },
+            { kind: "source_directory", projectId, sourceId: randomUUID() },
+            {
+              kind: "execution_case_page",
+              projectId,
+              batchId: randomUUID(),
+              filter: { scope: "all", sort: "none", direction: "asc", offset: 0, limit: 50 },
+            },
+            { kind: "execution_overview", projectId, batchId: randomUUID() },
+            {
+              kind: "batch_counters",
+              projectId,
+              batches: [{ id: randomUUID(), projectId }],
+            },
+            {
+              kind: "ddt_dashboard",
+              projectId,
+              projectVersionId: randomUUID(),
+              testStageId: randomUUID(),
+            },
+            { kind: "analytics_scope", projectId, filter: {} },
+            {
+              kind: "batch_comparison",
+              projectId,
+              leftBatchId: randomUUID(),
+              rightBatchId: randomUUID(),
+            },
+            { kind: "analysis_batches", projectId, view: "started", limit: 50 },
+            { kind: "analysis_batch", projectId, batchId: randomUUID() },
+            { kind: "analysis_statistics", projectId, batchId: randomUUID(), limit: 50 },
             { kind: "dashboard", projectId, projectVersionId: randomUUID(), timeZone: "UTC" },
           ];
           for (const query of queries) {
             const snapshot = await service.read(query);
             const lease = (await harness.repository.claim(now, later, randomUUID()))!;
             expect(lease.id).toBe(snapshot.id);
-            await harness.repository.complete(lease, { marker: query.kind }, now, later);
+            await harness.repository.complete(lease, { marker: query.kind }, now, now);
           }
-          await service.invalidate(projectId);
           const published: string[] = [];
           const worker = new ReadModelSnapshotWorker(
             harness.repository,
@@ -61,12 +149,28 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             () => false,
             () => true,
           );
-          expect(await worker.refreshOne()).toBe(true);
-          expect(await worker.refreshOne()).toBe(true);
           expect(await worker.refreshOne()).toBe(false);
-          expect(published.sort()).toEqual(["case_directory", "suite_directory"]);
-          expect((await service.read(queries[0]!)).synchronized).toBe(true);
-          expect((await service.read(queries[2]!)).synchronized).toBe(false);
+          await service.invalidate(projectId);
+          for (let remainingQueries = queries.length - 1; remainingQueries > 0; remainingQueries--)
+            expect(await worker.refreshOne()).toBe(true);
+          expect(await worker.refreshOne()).toBe(false);
+          expect(published.sort()).toEqual([
+            "analysis_batch",
+            "analysis_batches",
+            "analysis_statistics",
+            "analytics_scope",
+            "batch_comparison",
+            "batch_counters",
+            "case_directory",
+            "ddt_dashboard",
+            "execution_case_page",
+            "execution_overview",
+            "source_directory",
+            "suite_directory",
+          ]);
+          for (const query of queries.slice(0, -1))
+            expect((await service.read(query)).synchronized).toBe(true);
+          expect((await service.read(queries.at(-1)!)).synchronized).toBe(false);
         } finally {
           await harness.close();
         }

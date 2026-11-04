@@ -4,8 +4,16 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { createSqliteDatabase, SqliteRunBatchRepository } from "@autoforge/db/sqlite";
-import { createPostgresDatabase, PostgresRunBatchRepository } from "@autoforge/db/postgres";
+import {
+  createSqliteDatabase,
+  SqliteRunBatchRepository,
+  SqlitePlatformOperationsRepository,
+} from "@autoforge/db/sqlite";
+import {
+  createPostgresDatabase,
+  PostgresRunBatchRepository,
+  PostgresPlatformOperationsRepository,
+} from "@autoforge/db/postgres";
 
 import { seedLargeExecutionOverview } from "./fixtures/large-execution-overview";
 
@@ -58,22 +66,34 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             })),
           );
           expect(overview?.batch.succeededRuns).toBe(caseCount);
+          // Retained production databases have planner statistics; test both fresh and analyzed plans.
+          await harness.execute("ANALYZE");
           for (const scope of [1, roundCount, "all", "summary"] as const) {
-            const page = await harness.batches.listCasePage({
-              batchId: "overview-batch",
-              scope,
-              sort: "name",
-              direction: "asc",
-              offset: 0,
-              limit: 50,
-            });
-            expect(page?.total).toBe(scope === "all" ? caseCount * roundCount : caseCount);
-            expect(page?.items).toHaveLength(50);
+            for (const sort of ["none", "name", "status", "runner", "duration"] as const) {
+              const page = await harness.batches.listCasePage({
+                batchId: "overview-batch",
+                scope,
+                sort,
+                direction: "asc",
+                offset: 0,
+                limit: 50,
+              });
+              expect(page?.total).toBe(scope === "all" ? caseCount * roundCount : caseCount);
+              expect(page?.items).toHaveLength(50);
+            }
           }
+          // Refreshed table statistics must not turn the remaining candidates into repeated lookups.
+          for (let page = 0; page < 5; page++)
+            expect(await harness.operations.rebuildAnalyticsFacts(10_000)).toBe(10_000);
+          await harness.execute("ANALYZE");
+          expect(await harness.operations.rebuildAnalyticsFacts(100)).toBe(100);
+          await harness.execute(`DELETE FROM execution_runs WHERE id IN (
+            SELECT id FROM execution_runs WHERE batch_id='overview-batch' ORDER BY id LIMIT 1000
+          )`);
         } finally {
           await harness.close();
         }
-      }, 60_000);
+      }, 120_000);
     },
   );
 }
@@ -87,6 +107,7 @@ async function database(dialect: "sqlite" | "postgres") {
     });
     return {
       batches: new SqliteRunBatchRepository(handle),
+      operations: new SqlitePlatformOperationsRepository(handle),
       execute: async (statement: string) => {
         handle.client.exec(statement);
       },
@@ -117,6 +138,7 @@ async function database(dialect: "sqlite" | "postgres") {
   await handle.ready;
   return {
     batches: new PostgresRunBatchRepository(handle),
+    operations: new PostgresPlatformOperationsRepository(handle),
     execute: async (statement: string) => {
       await handle.pool.query("SET statement_timeout=30000");
       try {

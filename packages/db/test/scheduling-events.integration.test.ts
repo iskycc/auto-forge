@@ -344,6 +344,33 @@ function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarnes
         total: 1,
         items: [{ run: { id: extraRunId }, round: 2 }],
       });
+      const allRounds = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: "all",
+        sort: "none",
+        direction: "asc",
+        offset: 0,
+        limit: 50,
+      });
+      expect(allRounds).toMatchObject({
+        total: 3,
+        items: [
+          { run: { id: harness.executionRunId }, attempt: { id: harness.attemptId }, round: 1 },
+          { run: { id: extraRunId }, round: 1 },
+          { run: { id: extraRunId }, round: 2 },
+        ],
+      });
+      expect(
+        await harness.batches.listCasePage({
+          batchId: harness.batchIdA,
+          scope: "all",
+          status: "pending",
+          sort: "none",
+          direction: "asc",
+          offset: 0,
+          limit: 50,
+        }),
+      ).toMatchObject({ total: 2 });
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();

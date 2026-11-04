@@ -9,6 +9,22 @@ import type { Clock, IdGenerator } from "./ports";
 const CLEANUP_SNAPSHOT_BATCH_SIZE = 25;
 export const READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT = 20;
 
+/** JSON readers require a synchronized generation; a waiting request must not starve its rebuild. */
+export const PAGE_BLOCKING_READ_MODEL_KINDS: readonly ReadModelQuery["kind"][] = [
+  "case_directory",
+  "suite_directory",
+  "source_directory",
+  "execution_case_page",
+  "execution_overview",
+  "batch_counters",
+  "ddt_dashboard",
+  "analytics_scope",
+  "batch_comparison",
+  "analysis_batches",
+  "analysis_batch",
+  "analysis_statistics",
+];
+
 export type ReadModelSnapshot = {
   id: string;
   query: ReadModelQuery;
@@ -26,6 +42,7 @@ export type ReadModelLease = ReadModelSnapshot & { token: string };
 export interface ReadModelSnapshotRepository {
   request(id: string, query: ReadModelQuery, now: string): Promise<ReadModelSnapshot>;
   get(id: string): Promise<ReadModelSnapshot | null>;
+  /** Single-batch projections share one active generation lease; unrelated batches remain independent. */
   claim(
     now: string,
     expiresAt: string,
@@ -110,11 +127,11 @@ export class ReadModelSnapshotWorker {
     );
     if (!lease) return false;
     const assertBudget = () => {
-      // A published but explicitly invalidated directory also blocks selection and edited
-      // suite membership. The single page-waiting lane must finish it during batch execution.
+      // Explicitly invalidated JSON projections block their readers. The single waiting
+      // lane must finish them even while those readers consume the foreground budget.
       const pageIsWaiting =
         lease.generatedAt === null ||
-        ((lease.query.kind === "case_directory" || lease.query.kind === "suite_directory") &&
+        (PAGE_BLOCKING_READ_MODEL_KINDS.includes(lease.query.kind) &&
           lease.requestedRevision > lease.generatedRevision);
       if (!this.canRefresh() && !(pageIsWaiting && this.canServeWaitingPage()))
         throw new ReadModelRefreshDeferred();

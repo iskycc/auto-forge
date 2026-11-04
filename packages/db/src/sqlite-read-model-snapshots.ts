@@ -1,5 +1,8 @@
 import type { ReadModelLease, ReadModelSnapshotRepository } from "@autoforge/application";
-import { READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT } from "@autoforge/application";
+import {
+  PAGE_BLOCKING_READ_MODEL_KINDS,
+  READ_MODEL_CLEANUP_PARTS_PER_SNAPSHOT,
+} from "@autoforge/application";
 import type { ReadModelQuery } from "@autoforge/contracts";
 import { retrySqliteLockContention, type SqliteDatabaseHandle } from "./database";
 import { readModelSnapshotFromRow, type ReadModelSnapshotRow } from "./read-model-snapshot-row";
@@ -40,16 +43,23 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
   }
 
   async claim(now: string, expiresAt: string, token: string, options?: { onlyPageBlocking: true }) {
-    const candidateSql = `SELECT id FROM read_model_snapshots
-      WHERE refresh_after<=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)
-      AND failed<5 AND accessed_at>=? AND (?=0 OR generated_at IS NULL OR
-        (requested_revision>generated_revision AND json_extract(query_json,'$.kind') IN ('case_directory','suite_directory')))
-      ORDER BY CASE WHEN generated_at IS NULL THEN 0 ELSE 1 END,refresh_after,id LIMIT 1`;
+    const candidateSql = `SELECT candidate.id FROM read_model_snapshots candidate
+      WHERE candidate.refresh_after<=? AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at<=?)
+      AND candidate.failed<5 AND candidate.accessed_at>=? AND (?=0 OR candidate.generated_at IS NULL OR
+        (candidate.requested_revision>candidate.generated_revision AND json_extract(candidate.query_json,'$.kind') IN (${PAGE_BLOCKING_READ_MODEL_KINDS.map(() => "?").join(",")})))
+      AND NOT EXISTS (
+        SELECT 1 FROM read_model_snapshots busy
+        WHERE busy.id<>candidate.id AND busy.lease_token IS NOT NULL AND busy.lease_expires_at>?
+          AND json_extract(busy.query_json,'$.batchId')=json_extract(candidate.query_json,'$.batchId')
+      )
+      ORDER BY CASE WHEN candidate.generated_at IS NULL THEN 0 ELSE 1 END,candidate.refresh_after,candidate.id LIMIT 1`;
     const parameters = [
       now,
       now,
       new Date(Date.parse(now) - 300_000).toISOString(),
       Number(options?.onlyPageBlocking ?? false),
+      ...PAGE_BLOCKING_READ_MODEL_KINDS,
+      now,
     ];
     const row = await retrySqliteLockContention(() => {
       // Idle polling must not compete with heartbeats for SQLite's single writer.
