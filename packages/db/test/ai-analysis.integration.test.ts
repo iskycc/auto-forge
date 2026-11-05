@@ -43,7 +43,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         const baselineFolder = resolve(directory, "baseline-migrations");
         await mkdir(baselineFolder);
         for (const file of await readdir(migrationFolder)) {
-          if (file.endsWith(".sql") && !file.endsWith("_ai_analysis.sql"))
+          if (file.endsWith(".sql") && file < (dialect === "sqlite" ? "0094_" : "0093_"))
             await copyFile(resolve(migrationFolder, file), resolve(baselineFolder, file));
         }
         const sqlite =
@@ -177,6 +177,108 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           expect((await repository.view({ batchId, jobId: main.id, limit: 10 }))!.job.status).toBe(
             "cancelled",
           );
+          // The batch path collects first, never claims collected members for individual inference.
+          const grouped = await repository.create(
+            { ...job(`grouped-${suffix}`), strategy: "stack_groups_v2" },
+            "grouped",
+          );
+          expect(await repository.hasAnalysis(batchId, now)).toBe(true);
+          expect(
+            await repository.view({ batchId, attemptId: candidates[0]!.attemptId, limit: 10 }),
+          ).toBeNull();
+          const groupPlan = await repository.claimPlanning("group-plan", now, later);
+          const groupCandidates = await repository.candidates(groupPlan!, 100);
+          await repository.appendCandidates(groupPlan!, groupCandidates, true, now);
+          const collected = [];
+          for (let index = 0; index < groupCandidates.length; index++) {
+            const work = await repository.claimWork(`collect-${index}`, now, later);
+            expect(work!.strategy).toBe("stack_groups_v2");
+            collected.push(work!);
+            await repository.saveEvidence(
+              work!,
+              `evidence-${index}.json`,
+              "same-complete-stack",
+              now,
+            );
+          }
+          expect(await repository.claimWork("no-per-case-model", now, later)).toBeNull();
+          await repository.prepareGroups(now);
+          const group = await repository.claimGroup("group-model", now, later);
+          expect(group).toMatchObject({
+            memberCount: 2,
+            processed: 0,
+            strategy: "stack_groups_v2",
+          });
+          const members = await repository.groupMembers(group!, 50);
+          expect(members).toHaveLength(2);
+          expect(await repository.groupEvidence(group!)).toBeTruthy();
+          await repository.saveStackGroup(
+            group!,
+            {
+              cursor: members.at(-1)!.id,
+              partCursor: 1,
+              processed: 2,
+              conclusion: "可能重跑通过\n原因：依赖瞬断。\n依据：连接重置。",
+              done: true,
+            },
+            now,
+          );
+          await Promise.all([repository.prepareGroups(later), repository.prepareGroups(later)]);
+          const groupedView = (await repository.view({ batchId, jobId: grouped.id, limit: 10 }))!;
+          expect(groupedView.job).toMatchObject({ status: "completed", completed: 2, failed: 0 });
+          expect(groupedView.items.map((item) => item.conclusion)).toEqual(
+            Array(2).fill("可能重跑通过\n原因：依赖瞬断。\n依据：连接重置。"),
+          );
+          expect(
+            await repository.exportConclusions(
+              batchId,
+              collected.map((item) => item.attemptId),
+              later,
+            ),
+          ).toHaveLength(2);
+          // A stale group lease cannot overwrite the published common conclusion.
+          await repository.saveStackGroup(
+            group!,
+            { cursor: "wrong", partCursor: 1, processed: 2, conclusion: "stale", done: true },
+            later,
+          );
+          expect(
+            (await repository.view({ batchId, jobId: grouped.id, limit: 10 }))!.items[0]!
+              .conclusion,
+          ).not.toBe("stale");
+          const cancelledGroupJob = await repository.create(
+            { ...job(`cancel-grouped-${suffix}`), strategy: "stack_groups_v2" },
+            "cancel-grouped",
+          );
+          const cancelPlan = await repository.claimPlanning("cancel-plan", now, later);
+          const cancelCandidates = await repository.candidates(cancelPlan!, 100);
+          await repository.appendCandidates(cancelPlan!, cancelCandidates, true, now);
+          for (const candidate of cancelCandidates) {
+            const work = await repository.claimWork(candidate.executionRunId, now, later);
+            await repository.saveEvidence(work!, "cancel-manifest", "cancel-stack", now);
+          }
+          await repository.prepareGroups(now);
+          const cancelledGroup = await repository.claimGroup("cancel-group", now, later);
+          await repository.saveStackGroup(
+            cancelledGroup!,
+            {
+              cursor: "done",
+              partCursor: 1,
+              processed: 2,
+              conclusion: "cancelled draft",
+              done: true,
+            },
+            now,
+          );
+          await repository.cancel(cancelledGroupJob.id, now);
+          await repository.prepareGroups(later);
+          expect(
+            (await repository.view({
+              batchId,
+              jobId: cancelledGroupJob.id,
+              limit: 10,
+            }))!.items.every((item) => item.conclusion === null),
+          ).toBe(true);
           const attemptId = `${suffix}-passed-1`;
           await repository.create(job(`single-${suffix}`, attemptId), "single");
           const single = await repository.claimPlanning("single-planner", now, later);

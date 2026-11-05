@@ -16,6 +16,7 @@ export * from "./manage-case-sources";
 export * from "./manage-case-suites";
 export * from "./manage-ddt-cases";
 export * from "./manage-failure-analysis";
+export * from "./failure-analysis-sheet";
 export * from "./manage-identity-access";
 export * from "./manage-project-structure";
 export * from "./manage-runners";

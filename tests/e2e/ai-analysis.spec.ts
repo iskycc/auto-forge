@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { readExportedWorkbook } from "./support/export-workbook";
+import { createAttemptLogStore } from "../../packages/db/src/attempt-log-store";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import {
   browserJson,
@@ -79,6 +80,13 @@ test("AI settings, durable batch and single analysis, retry and partial export p
 }, testInfo) => {
   let attempts = 0;
   const receivedTools: string[][] = [];
+  const inferenceRequests: Array<{
+    stage: string;
+    partId?: string;
+    text: string;
+    members: Array<{ displayName: string }>;
+    messages: string;
+  }> = [];
   const model = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -87,6 +95,21 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       (tool: { function: { name: string } }) => tool.function.name,
     ) as string[];
     receivedTools.push(tools);
+    if (tools[0] === "submit_ai_conclusion") {
+      const instruction = JSON.parse(
+        input.messages.find((message: { role: string }) => message.role === "user").content,
+      );
+      const payload = JSON.parse(
+        input.messages.findLast((message: { role: string }) => message.role === "tool").content,
+      );
+      inferenceRequests.push({
+        stage: instruction.stage ?? "single_full",
+        partId: instruction.partId,
+        text: payload.text ?? "",
+        members: payload.members ?? [],
+        messages: JSON.stringify(input.messages),
+      });
+    }
     if (tools[0] === "submit_ai_conclusion" && ++attempts === 1) {
       response.writeHead(429, { "retry-after": "1", "content-type": "application/json" });
       response.end('{"error":{"code":"rate_limit_exceeded"}}');
@@ -100,12 +123,10 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       tools[0] === "connection_check"
         ? {}
         : {
-            summary: "合成模型建议：先核对失败时刻的环境依赖；不能据此确认产品缺陷。",
-            possibleCauses: ["执行环境依赖可能不可用。"],
-            checks: ["核对错误发生时的服务监听和请求参数。"],
+            recommendation: "rerun_likely",
+            reason: "合成模型建议：依赖瞬时不可用。",
+            evidence: "日志出现连接重置；此为离线验收合成建议。",
             evidenceReferences: [ref],
-            limitations: ["此为验收合成建议，未连接真实模型。"],
-            confidence: "low",
           };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(
@@ -182,29 +203,108 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     await enabled.click();
     await expect(enabled).not.toBeChecked();
     await enabled.click();
+    await page.getByRole("button", { name: "参考提示词（0）", exact: true }).click();
+    const prompts = page.getByRole("dialog", { name: "AI 分析参考提示词", exact: true });
+    for (const [index, content] of [
+      "连接重置优先考虑瞬时波动。",
+      "业务错误码需要结合协议判断。",
+    ].entries()) {
+      await prompts.getByRole("button", { name: /添加参考提示词$/u }).click();
+      await prompts
+        .getByLabel("提示词标题", { exact: true })
+        .nth(index)
+        .fill(`验收参考 ${index + 1}`);
+      await prompts.getByLabel("提示词内容", { exact: true }).nth(index).fill(content);
+    }
+    const promptScreenshots =
+      process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+    await mkdir(promptScreenshots, { recursive: true });
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(promptScreenshots, `ai-prompts-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await prompts.getByRole("button", { name: "应用到配置", exact: true }).click();
     await page.getByRole("button", { name: "保存配置", exact: true }).click();
     await expect(page.getByText("已保存；新分析请求立即使用此配置，无需重启。")).toBeVisible();
     await page.reload();
     await expect(enabled).toBeChecked();
+    await expect(page.getByRole("button", { name: "参考提示词（2）", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "检查连接", exact: true }).click();
     await expect(page.getByText("模型连接与工具调用检查通过。", { exact: true })).toBeVisible();
     const screenshots =
       process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
     await mkdir(screenshots, { recursive: true });
-    for (const width of [1024, 1536]) {
-      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await expectUiIntegrity(page);
-      await page.screenshot({
-        path: resolve(screenshots, `ai-settings-${width}.png`),
-        animations: "disabled",
-        fullPage: true,
-      });
+    for (const theme of ["light", "dark"] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+        ]);
+      await page.reload();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: resolve(screenshots, `ai-settings-${theme}-${width}.png`),
+          animations: "disabled",
+          fullPage: true,
+        });
+        await page.getByRole("button", { name: "参考提示词（2）", exact: true }).click();
+        await expect(prompts.getByLabel("提示词内容", { exact: true }).first()).toHaveValue(
+          "连接重置优先考虑瞬时波动。",
+        );
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: resolve(screenshots, `ai-prompts-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+        await prompts
+          .locator(".ant-modal-footer")
+          .getByRole("button", { name: "取消", exact: true })
+          .click();
+      }
     }
     const suffix = uniqueName("ai-analysis");
     const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
     if (!dataDirectory) throw new Error("Missing E2E data directory.");
     const fixture = insertFailureAnalysisFixture(dataDirectory, version.body.id, suffix);
+    const logStore = createAttemptLogStore(resolve(dataDirectory, "attempt-logs"));
+    try {
+      for (let index = 0; index < 4; index++)
+        await logStore.appendChunks({
+          batchId: fixture.batchId,
+          attemptId: `attempt-run-failed-${index}-${suffix}`,
+          receivedAt: new Date().toISOString(),
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 0,
+              recordedAt: new Date().toISOString(),
+              content: "全文开始标识\n" + "普通业务日志\n".repeat(1800) + "全文结束标识\n",
+            },
+            {
+              stream: "stderr",
+              sequence: 0,
+              recordedAt: new Date().toISOString(),
+              content:
+                "java.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)\n\n",
+            },
+            {
+              stream: "agent",
+              sequence: 0,
+              recordedAt: new Date().toISOString(),
+              content: "Agent 完整诊断标识\n",
+            },
+          ],
+        });
+    } finally {
+      logStore.close();
+    }
     let acceptedButDisconnected = false;
     let interruptedRequestKey = "";
     const submittedKeys: string[] = [];
@@ -260,7 +360,17 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         .first(),
     ).toBeVisible();
     await dialog.getByRole("button", { name: "收起完整初析", exact: true }).first().click();
-    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBe(2); // one shared-stack request, plus the deliberate 429 retry
+    expect(inferenceRequests.filter((request) => request.stage === "stack_group")).toHaveLength(2);
+    expect(inferenceRequests[1]!.members).toHaveLength(4);
+    expect(inferenceRequests[1]!.text).toContain("example.SharedTest.run");
+    expect(inferenceRequests[1]!.text).not.toContain("普通业务日志");
+    const grouped = await browserJson<{ items: Array<{ conclusion: string }> }>(
+      page,
+      `/api/v1/ai-analysis?batchId=${fixture.batchId}`,
+    );
+    expect(new Set(grouped.body.items.map((item) => item.conclusion)).size).toBe(1);
+    expect(grouped.body.items.every((item) => item.conclusion.split("\n").length === 3)).toBe(true);
     expect(
       receivedTools.every((tools) =>
         tools.every((tool) => ["connection_check", "submit_ai_conclusion"].includes(tool)),
@@ -288,6 +398,12 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       await page.getByRole("button", { name: "关闭", exact: true }).last().click();
     }
     await openExecutionCaseDetails(page);
+    const singleResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/ai-analysis" &&
+        response.request().method() === "POST" &&
+        response.request().postDataJSON().attemptId === `attempt-run-failed-0-${suffix}`,
+    );
     await page
       .getByRole("row")
       .filter({ hasText: fixture.failedNames[0] })
@@ -295,14 +411,32 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       .click();
     const singleDialog = page.getByRole("dialog", { name: "用例 AI 初步分析", exact: true });
     await expect(singleDialog).toBeVisible();
-    const singleResponse = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/v1/ai-analysis" &&
-        response.request().method() === "POST" &&
-        response.request().postDataJSON().attemptId === `attempt-run-failed-0-${suffix}`,
-    );
-    await singleDialog.getByRole("button", { name: "重新分析", exact: true }).click();
     expect((await singleResponse).status()).toBe(202);
+    await expect
+      .poll(
+        async () => {
+          const response = await browserJson<{ job: { status: string; strategy: string } }>(
+            page,
+            `/api/v1/ai-analysis?batchId=${fixture.batchId}&attemptId=attempt-run-failed-0-${suffix}`,
+          );
+          return response.body?.job.status;
+        },
+        { timeout: 90000 },
+      )
+      .toBe("completed");
+    const fullLogs = inferenceRequests
+      .filter((request) => request.stage === "single_full")
+      .map((request) => request.text)
+      .join("");
+    expect(fullLogs).toContain("全文开始标识");
+    expect(fullLogs).toContain("全文结束标识");
+    expect(fullLogs).toContain("Agent 完整诊断标识");
+    expect(
+      inferenceRequests.every(
+        (request) =>
+          request.messages.includes("验收参考 1") && request.messages.includes("验收参考 2"),
+      ),
+    ).toBe(true);
     await expect(singleDialog.getByText(/randomUUID/u)).toHaveCount(0);
     expect(submittedKeys.at(-1)).not.toBe(interruptedRequestKey);
     for (const width of [1024, 1536]) {
@@ -339,6 +473,16 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         animations: "disabled",
       });
     }
+    const analysisExport = await page.request.get(
+      `/api/v1/run-batches/${fixture.batchId}/export?template=failure-analysis&scope=final`,
+    );
+    expect(analysisExport.status()).toBe(200);
+    const analysisSheet = (await readExportedWorkbook(await analysisExport.body())).worksheets[0]!;
+    const analysisHeaders = analysisSheet.getRow(1).values as string[];
+    expect(analysisHeaders.indexOf("AI 初步分析")).toBe(analysisHeaders.indexOf("失败堆栈") + 1);
+    expect(analysisSheet.getRow(2).getCell(analysisHeaders.indexOf("AI 初步分析")).text).toContain(
+      "可能重跑通过",
+    );
     const updated = await browserJson(page, `/api/v1/case-suites/suite-${suffix}`, {
       method: "PATCH",
       body: {

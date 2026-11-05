@@ -1,4 +1,14 @@
-import { aiConclusionSchema, type AiConclusion } from "@autoforge/contracts";
+import {
+  aiConclusionSchema,
+  type AiConclusion,
+  type AiModelConfiguration,
+} from "@autoforge/contracts";
+import {
+  aiPromptMessages,
+  PRELIMINARY_TOOL,
+  readPreliminaryConclusion,
+  renderPreliminaryConclusion,
+} from "./ai-analysis-prompts";
 import { assertAiPermission, resolveAiActor, AI_KEY_PURPOSE } from "./ai-analysis";
 import {
   AiModelRequestError,
@@ -9,6 +19,7 @@ import {
   type AiModelMessage,
   type AiToolDefinition,
   type AiWork,
+  type AiGroupWork,
 } from "./ai-analysis-ports";
 import type {
   CachePort,
@@ -145,8 +156,14 @@ export class AiAnalysisWorker {
         if (!part) throw new AiModelRequestError("未取得可分析证据；原始日志可能已清理。", false);
         const text = await this.evidence.part(part);
         const previous = work.drafts.at(-1);
+        const compact = work.strategy === "single_full_v2";
         const messages: AiModelMessage[] = [
-          { role: "system", content: AI_SYSTEM_PROMPT },
+          ...(compact
+            ? aiPromptMessages(record.configuration)
+            : [
+                { role: "system" as const, content: AI_SYSTEM_PROMPT },
+                ...aiPromptMessages(record.configuration).slice(1),
+              ]),
           {
             role: "user",
             content: JSON.stringify({
@@ -223,7 +240,7 @@ export class AiAnalysisWorker {
               ? this.cipher.decrypt(record.encryptedKey, AI_KEY_PURPOSE)
               : "",
             messages,
-            tools: [SAVE_TOOL],
+            tools: [compact ? PRELIMINARY_TOOL : SAVE_TOOL],
             signal: AbortSignal.any([
               combined,
               AbortSignal.timeout(record.configuration.timeoutSeconds * 1000),
@@ -242,8 +259,10 @@ export class AiAnalysisWorker {
             "模型未按授权工具提交唯一初析，请检查工具兼容能力。",
             false,
           );
-        const conclusion = aiConclusionSchema.parse(JSON.parse(call.function.arguments));
         const allowed = new Set([part.id, ...(previous?.evidenceReferences ?? [])]);
+        const conclusion = compact
+          ? readPreliminaryConclusion(reply, [...allowed])
+          : aiConclusionSchema.parse(JSON.parse(call.function.arguments));
         if (
           !conclusion.evidenceReferences.includes(part.id) ||
           conclusion.evidenceReferences.some((ref) => !allowed.has(ref))
@@ -257,12 +276,10 @@ export class AiAnalysisWorker {
           return true;
         const cursor = work.partCursor + 1;
         const done = cursor >= evidence.parts.length;
-        const rendered = renderAiConclusion(
-          conclusion,
-          cursor,
-          evidence.parts.length,
-          evidence.limitations,
-        );
+        const rendered =
+          "recommendation" in conclusion
+            ? renderPreliminaryConclusion(conclusion, !done)
+            : renderAiConclusion(conclusion, cursor, evidence.parts.length, evidence.limitations);
         await this.repository.saveDraft(
           work,
           conclusion,
@@ -353,6 +370,10 @@ export class AiAnalysisWorker {
     if (!work) return false;
     try {
       await this.authorize(work);
+      if (work.strategy === "stack_groups_v2") {
+        await this.analyzeStackGroup(work, record, configuration, signal);
+        return true;
+      }
       const member = (await this.repository.groupMembers(work))[0];
       if (!member) {
         await this.repository.saveGroup(
@@ -376,6 +397,7 @@ export class AiAnalysisWorker {
       }
       const messages: AiModelMessage[] = [
         { role: "system", content: AI_SYSTEM_PROMPT },
+        ...aiPromptMessages(configuration).slice(1),
         {
           role: "user",
           content: JSON.stringify({
@@ -503,6 +525,138 @@ export class AiAnalysisWorker {
       }
     }
     return true;
+  }
+  private async analyzeStackGroup(
+    work: AiGroupWork,
+    record: Awaited<ReturnType<AiAnalysisRepository["configuration"]>>,
+    configuration: AiModelConfiguration,
+    signal: AbortSignal,
+  ) {
+    const key = await this.repository.groupEvidence(work);
+    if (!key) throw new AiModelRequestError("本组没有可读取的堆栈或日志证据。", false);
+    const manifest = await this.evidence.read(key);
+    // Equal complete stacks are sent once. Missing/incomplete stacks keep a unique group and all log parts.
+    const parts = work.signature.startsWith("exact-stack-bundle-")
+      ? (manifest.stackParts ?? manifest.parts)
+      : manifest.parts;
+    const partCursor = work.partCursor ?? 0;
+    const part = parts[partCursor];
+    const text = part ? await this.evidence.part(part) : null;
+    const candidates = await this.repository.groupMembers(work, 50);
+    const members: typeof candidates = [];
+    const reference = part?.id ?? candidates[0]?.id;
+    if (!reference) throw new AiModelRequestError("本组缺少待分析的证据或成员。", false);
+    const messagesFor = (): AiModelMessage[] => [
+      ...aiPromptMessages(configuration),
+      {
+        role: "user",
+        content: JSON.stringify({
+          stage: "stack_group",
+          groupSignature: work.signature,
+          totalCases: work.memberCount,
+          processedCases: work.processed,
+          stackPart: partCursor + (part ? 1 : 0),
+          stackParts: parts.length,
+          previousPreliminaryFinding: work.conclusion,
+          knownLimitations: manifest.limitations,
+          instruction:
+            "同一完整堆栈视为同一疑似问题，结合本次成员和已有建议给出一个精简结论。成员按页提供；不要逐例重复写报告。缺少完整堆栈的独立用例需逐片读取日志。",
+        }),
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "stack-evidence",
+            type: "function",
+            function: { name: "read_evidence", arguments: "{}" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "stack-evidence",
+        content: JSON.stringify({
+          evidenceId: reference,
+          text,
+          members: members.map(({ id, displayName }) => ({ id, displayName })),
+        }),
+      },
+    ];
+    const estimate = () =>
+      new TextEncoder().encode(JSON.stringify(messagesFor())).byteLength +
+      configuration.outputTokens +
+      1500;
+    for (const member of candidates) {
+      members.push(member);
+      if (estimate() > configuration.contextTokens) {
+        members.pop();
+        break;
+      }
+    }
+    if ((!part && !members.length) || estimate() > configuration.contextTokens)
+      throw new AiModelRequestError("分组证据超出模型上下文，请增大上下文后重新分析。", false);
+    const messages = messagesFor();
+    const tokens = estimate();
+    if (tokens > configuration.tokensPerMinute)
+      throw new AiModelRequestError("TPM 预算不足以读取当前分组证据，请提高预算后重试。", false);
+    signal.throwIfAborted();
+    if (!this.canWork()) throw new AiResourceDeferral();
+    const token = this.ids.next();
+    if (
+      !(await this.repository.reserveModel({
+        token,
+        revision: record.revision,
+        now: this.clock.now().toISOString(),
+        expiresAt: this.after((configuration.timeoutSeconds + 15) * 1000),
+        tokens,
+        configuration,
+      }))
+    ) {
+      await this.repository.deferGroup(
+        work,
+        "等待模型并发、RPM／TPM 限额或服务冷却。",
+        this.after(3000),
+        false,
+        this.clock.now().toISOString(),
+        false,
+      );
+      return;
+    }
+    let reply: AiModelMessage;
+    try {
+      reply = await this.model.complete({
+        configuration,
+        apiKey: record.encryptedKey ? this.cipher.decrypt(record.encryptedKey, AI_KEY_PURPOSE) : "",
+        messages,
+        tools: [PRELIMINARY_TOOL],
+        signal: AbortSignal.any([signal, AbortSignal.timeout(configuration.timeoutSeconds * 1000)]),
+      });
+    } finally {
+      await this.repository.releaseModel(token);
+    }
+    const draft = readPreliminaryConclusion(reply, [
+      reference,
+      ...members.map((member) => member.id),
+    ]);
+    if (!draft.evidenceReferences.includes(reference))
+      throw new AiModelRequestError("分组结论未引用当前堆栈证据。", false);
+    signal.throwIfAborted();
+    await this.authorize(work);
+    const nextPart = partCursor + (part ? 1 : 0);
+    const processed = work.processed + members.length;
+    await this.repository.saveStackGroup(
+      work,
+      {
+        cursor: members.at(-1)?.id ?? work.cursor,
+        partCursor: nextPart,
+        processed,
+        conclusion: renderPreliminaryConclusion(draft),
+        done: nextPart >= parts.length && processed >= work.memberCount,
+      },
+      this.clock.now().toISOString(),
+    );
   }
 }
 export function renderAiConclusion(

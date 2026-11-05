@@ -150,6 +150,7 @@ export function FailureAnalysisWorkspace({
   initialView,
   onClaimCountDelta,
   onCompletedCountDelta,
+  onMyClaimCountChange,
 }: {
   canManage: boolean;
   canAssign: boolean;
@@ -164,6 +165,7 @@ export function FailureAnalysisWorkspace({
   initialView: WorkspaceView;
   onClaimCountDelta: (delta: number) => void;
   onCompletedCountDelta: (delta: number) => void;
+  onMyClaimCountChange?: (count: number) => void;
 }) {
   const toast = useToast();
   const [assignmentOpen, setAssignmentOpen] = useState(false);
@@ -180,6 +182,9 @@ export function FailureAnalysisWorkspace({
   const [candidatePageCursor, setCandidatePageCursor] = useState<string>();
   const [claims, setClaims] = useState<FailureAnalysisClaimView[]>(initialClaimPage?.items ?? []);
   const [myClaimCount, setMyClaimCount] = useState(initialMyClaimCount);
+  useEffect(() => {
+    onMyClaimCountChange?.(myClaimCount);
+  }, [myClaimCount, onMyClaimCountChange]);
   const [claimsCursor, setClaimsCursor] = useState<string | undefined>(
     initialClaimPage?.nextCursor,
   );

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { FAILURE_ANALYSIS_REMARK_IMAGES_MAXIMUM_BYTES } from "@autoforge/contracts";
+import {
+  FAILURE_ANALYSIS_REMARK_IMAGES_MAXIMUM_BYTES,
+  FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES,
+} from "@autoforge/contracts";
 
-import { readFailureAnalysisCompletion } from "./failure-analysis-upload";
+import {
+  readFailureAnalysisCompletion,
+  readFailureAnalysisScreenshotBody,
+} from "./failure-analysis-upload";
 
 const input = {
   projectId: "project-a",
@@ -11,6 +17,32 @@ const input = {
   issueDescription: "代码错误",
   remark: "备注文字",
 };
+
+describe("bounded analysis screenshot body", () => {
+  it("preserves binary bytes and releases the request reader", async () => {
+    const bytes = new Uint8Array([0, 137, 80, 78, 71, 255, 13, 10]);
+    const request = new Request("http://localhost/proof", { method: "POST", body: bytes });
+    expect(await readFailureAnalysisScreenshotBody(request)).toEqual(bytes);
+    expect(request.body?.locked).toBe(false);
+  });
+  it("rejects both declared and streamed oversized images without keeping the reader locked", async () => {
+    const declared = new Request("http://localhost/proof", {
+      method: "POST",
+      headers: { "content-length": String(FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES + 1) },
+      body: "small",
+    });
+    const streamed = new Request("http://localhost/proof", {
+      method: "POST",
+      body: new Uint8Array(FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES + 1),
+    });
+    for (const request of [declared, streamed]) {
+      await expect(readFailureAnalysisScreenshotBody(request)).rejects.toMatchObject({
+        code: "FAILURE_ANALYSIS_SCREENSHOT_SIZE_INVALID",
+      });
+      expect(request.body?.locked).toBe(false);
+    }
+  });
+});
 
 describe("failure analysis completion upload", () => {
   it("keeps existing JSON clients compatible and reads text with multiple multipart images", async () => {

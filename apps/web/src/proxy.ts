@@ -13,6 +13,7 @@ const PUBLIC_PATHS = new Set([
   "/CaseLog",
   "/Execution",
   "/RunTask",
+  "/CaseAnalysis",
 ]);
 // Public pages enforce their own publication grant or legacy-token boundary.
 // The proxy only allows anonymous requests to reach these exact business paths.

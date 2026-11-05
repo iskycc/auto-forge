@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+export const aiReferencePromptSchema = z
+  .object({
+    title: z.string().trim().min(1).max(60),
+    content: z.string().trim().min(1).max(1500),
+  })
+  .strict();
+
 export const aiModelConfigurationSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -25,11 +32,20 @@ export const aiModelConfigurationSchema = z
     timeoutSeconds: z.number().int().min(10).max(300).default(90),
     maximumRetries: z.number().int().min(0).max(8).default(3),
     maximumEvidenceMiB: z.number().int().min(1).max(64).default(16),
+    referencePrompts: z.array(aiReferencePromptSchema).max(20).default([]),
   })
   .strict()
   .refine(
-    (value) => value.outputTokens * 4 + 5600 < value.contextTokens,
+    (value) =>
+      value.outputTokens * 4 +
+        5600 +
+        new TextEncoder().encode(JSON.stringify(value.referencePrompts)).byteLength <
+      value.contextTokens,
     "上下文不足，请降低输出预算或增大上下文，为工具、系统提示和证据保留空间。",
+  )
+  .refine(
+    (value) => new TextEncoder().encode(JSON.stringify(value.referencePrompts)).byteLength <= 20000,
+    "参考提示词合计不得超过 20,000 UTF-8 字节，请精简内容。",
   );
 export type AiModelConfiguration = z.infer<typeof aiModelConfigurationSchema>;
 export const updateAiModelConfigurationSchema = z
@@ -64,6 +80,22 @@ export const aiConclusionSchema = z
   })
   .strict();
 export type AiConclusion = z.infer<typeof aiConclusionSchema>;
+export const AI_RECOMMENDATION_LABELS = {
+  rerun_likely: "可能重跑通过",
+  case_change_likely: "可能用例问题需要修改",
+  business_issue_likely: "可能业务问题需要提单",
+} as const;
+export const aiPreliminaryConclusionSchema = z
+  .object({
+    recommendation: z.enum(["rerun_likely", "case_change_likely", "business_issue_likely"]),
+    reason: z.string().trim().min(1).max(160),
+    evidence: z.string().trim().min(1).max(200),
+    evidenceReferences: z.array(z.string().min(1).max(300)).min(1).max(100),
+  })
+  .strict();
+export type AiPreliminaryConclusion = z.infer<typeof aiPreliminaryConclusionSchema>;
+export type AiConclusionDraft = AiConclusion | AiPreliminaryConclusion;
+export type AiAnalysisStrategy = "legacy" | "stack_groups_v2" | "single_full_v2";
 export type AiAnalysisStatus =
   | "queued"
   | "preparing"
@@ -74,6 +106,7 @@ export type AiAnalysisStatus =
   | "failed"
   | "cancelled";
 export type AiAnalysisJob = {
+  strategy?: AiAnalysisStrategy;
   id: string;
   batchId: string;
   projectId: string;

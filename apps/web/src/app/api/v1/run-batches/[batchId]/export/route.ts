@@ -64,7 +64,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       hasPermission(identity, "analysis.ai.read", exportData.projectId) &&
       hasPermission(identity, "log.read", exportData.projectId) &&
       hasPermission(identity, "case.read", exportData.projectId) &&
-      (await services.aiAnalysis.repository.hasConclusions(batchId, aiSnapshotAt));
+      (await services.aiAnalysis.repository.hasAnalysis(batchId, aiSnapshotAt));
     const filename = executionExportFilename({
       batch: exportData.batch,
       template: parsed.template,

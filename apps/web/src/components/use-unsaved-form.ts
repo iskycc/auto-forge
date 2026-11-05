@@ -1,11 +1,13 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useConfirm } from "./ui-feedback";
 
 /** Keep sensitive drafts in the mounted form only, and confirm deliberate navigation. */
 export function useUnsavedForm() {
   const [dirty, setDirty] = useState(false);
   const confirm = useConfirm();
+  const markDirty = useCallback(() => setDirty(true), []);
+  const markSaved = useCallback(() => setDirty(false), []);
   useEffect(() => {
     if (!dirty) return;
     const unload = (event: BeforeUnloadEvent) => {
@@ -48,5 +50,5 @@ export function useUnsavedForm() {
       document.removeEventListener("click", navigate, true);
     };
   }, [dirty, confirm]);
-  return { dirty, markDirty: () => setDirty(true), markSaved: () => setDirty(false) };
+  return { dirty, markDirty, markSaved };
 }

@@ -69,7 +69,7 @@ test("analysis starts from execution history and detail, and project administrat
       await login(rolePage, user.username, password);
       await selectProjectContext(rolePage, DEFAULT_PROJECT_ID, versionId);
     }
-    await adminPage!.goto(`/case-analysis/${first.batchId}`);
+    await adminPage!.goto(`/case-analysis/${first.batchId}?layout=classic`);
     await adminPage!.getByLabel(`认领 ${first.failedNames[0]}`).check();
     await adminPage!.getByRole("button", { name: "分配给用户" }).click();
     const dialog = adminPage!.getByRole("dialog", { name: "分配用例分析" });
@@ -84,6 +84,14 @@ test("analysis starts from execution history and detail, and project administrat
     await expect(
       adminPage!.getByRole("row").filter({ hasText: first.failedNames[0] }),
     ).toContainText(analyst.username);
+    await adminPage!.getByRole("tab", { name: "表格分析", exact: true }).click();
+    await adminPage!.reload();
+    await expect(adminPage!.getByRole("tab", { name: "表格分析", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await adminPage!.getByRole("tab", { name: "详细工作台", exact: true }).click();
+    await expect(adminPage!.getByRole("tab", { name: /^我的分析\s*0$/u })).toBeVisible();
 
     await analystPage!.goto(`/case-analysis/${first.batchId}?view=workbench`);
     await expect(analystPage!.getByRole("heading", { name: first.failedNames[0] })).toBeVisible();
@@ -309,6 +317,7 @@ test("analysis tasks close only before progress and archives remain readable wit
     fullPage: true,
   });
   await workedCard.getByRole("link", { name: "查看用例分析详情" }).click();
+  await page.getByRole("tab", { name: "详细工作台", exact: true }).click();
   await expect(page.getByText("已归档 · 只读", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "开始分析", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "查看分析详情", exact: true }).click();

@@ -34,18 +34,24 @@ test("single and bulk analysis show previous executions and compare real logs wi
   await history.scrollIntoViewIfNeeded();
   await screenshot(page, "single-history-1536");
   const compareButton = history.getByRole("button", { name: "日志对比" }).first();
-  let delayLogReads = true;
+  let releaseLogReads: () => void = () => undefined;
+  const heldLogReads = new Promise<void>((resolveHold) => {
+    releaseLogReads = resolveHold;
+  });
   await page.route("**/api/v1/run-attempts/*/logs?**", async (route) => {
-    if (delayLogReads) await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
+    await heldLogReads;
     await route.continue();
   });
   await compareButton.click();
   const comparison = page.getByRole("dialog", { name: `日志对比 · ${fixture.failedNames[0]}` });
-  await expect(comparison.getByRole("progressbar", { name: "日志加载进度" })).toBeVisible();
-  await expect(comparison).toContainText("正在连续加载两侧日志");
-  await screenshot(page, "log-comparison-loading-1536");
+  try {
+    await expect(comparison.getByRole("progressbar", { name: "日志加载进度" })).toBeVisible();
+    await expect(comparison).toContainText("正在连续加载两侧日志");
+    await screenshot(page, "log-comparison-loading-1536");
+  } finally {
+    releaseLogReads();
+  }
   await expect(comparison).toContainText("2 处差异");
-  delayLogReads = false;
   await page.unroute("**/api/v1/run-attempts/*/logs?**");
   await expect(comparison.getByRole("progressbar", { name: "日志加载进度" })).toHaveCount(0);
   await expect(comparison.getByRole("region", { name: "历史日志", exact: true })).toContainText(

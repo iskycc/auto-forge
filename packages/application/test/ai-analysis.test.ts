@@ -6,6 +6,11 @@ import { aiModelConfigurationSchema } from "@autoforge/contracts";
 import type { AiAnalysisRepository, AiGroupWork } from "../src/ai-analysis-ports";
 import { AiAnalysisWorker, type AiEvidencePort } from "../src/ai-analysis-worker";
 import type { SecretCipherPort } from "../src/ports";
+import {
+  aiPromptMessages,
+  readPreliminaryConclusion,
+  renderPreliminaryConclusion,
+} from "../src/ai-analysis-prompts";
 
 function actor(permissions: Permission[]): AuthenticatedIdentity {
   return {
@@ -95,6 +100,7 @@ function groupWorker() {
       { id: "member", displayName: "case", conclusion: "初步建议", reason: null },
     ]);
   const deferGroup = vi.fn();
+  const saveStackGroup = vi.fn();
   const reserveModel = vi.fn();
   const repository = {
     configuration: async () => ({ revision: 1, configuration, encryptedKey: null }),
@@ -105,6 +111,9 @@ function groupWorker() {
     groupMembers,
     deferGroup,
     reserveModel,
+    releaseModel: vi.fn(),
+    groupEvidence: async () => "manifest.json",
+    saveStackGroup,
   } as unknown as AiAnalysisRepository;
   const identities = {
     findUser: async () => actor([]).user,
@@ -123,7 +132,14 @@ function groupWorker() {
   const busy = new Error("database busy");
   const worker = new AiAnalysisWorker(
     repository,
-    {} as AiEvidencePort,
+    {
+      read: async () => ({
+        parts: [{ id: "part-1" }],
+        stackParts: [{ id: "stack-1" }],
+        limitations: [],
+      }),
+      part: async () => "java.lang.AssertionError\n at example.Test.run(Test.java:10)",
+    } as unknown as AiEvidencePort,
     { complete },
     identities,
     {} as SecretCipherPort,
@@ -134,8 +150,106 @@ function groupWorker() {
     undefined,
     (error) => error === busy,
   );
-  return { worker, groupMembers, deferGroup, reserveModel, complete, canWork, busy, configuration };
+  return {
+    worker,
+    work,
+    saveStackGroup,
+    groupMembers,
+    deferGroup,
+    reserveModel,
+    complete,
+    canWork,
+    busy,
+    configuration,
+  };
 }
+
+describe("concise stack-first analysis", () => {
+  it("sends equal-stack members together and saves one concise group suggestion", async () => {
+    const fixture = groupWorker();
+    fixture.work.strategy = "stack_groups_v2";
+    fixture.work.signature = "exact-stack-bundle-v1:test";
+    fixture.configuration.referencePrompts = [
+      { title: "参考", content: "环境依赖波动优先核对重跑。" },
+    ];
+    fixture.groupMembers.mockResolvedValue([
+      { id: "a", displayName: "A" },
+      { id: "b", displayName: "B" },
+    ]);
+    fixture.reserveModel.mockResolvedValue(true);
+    // The fake must expose the same lifecycle boundary as a real model admission.
+    const conclusion = {
+      recommendation: "rerun_likely",
+      reason: "连接瞬断。",
+      evidence: "日志出现连接重置。",
+      evidenceReferences: ["stack-1"],
+    };
+    fixture.complete.mockResolvedValue({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call",
+          type: "function",
+          function: { name: "submit_ai_conclusion", arguments: JSON.stringify(conclusion) },
+        },
+      ],
+    });
+    await fixture.worker.tick(new AbortController().signal);
+    expect(fixture.complete).toHaveBeenCalledTimes(1);
+    const input = fixture.complete.mock.calls[0]![0];
+    expect(JSON.stringify(input.messages)).toContain("环境依赖波动");
+    const payload = JSON.parse(input.messages.at(-1).content);
+    expect(payload.members).toEqual([
+      { id: "a", displayName: "A" },
+      { id: "b", displayName: "B" },
+    ]);
+    expect(fixture.saveStackGroup).toHaveBeenCalledWith(
+      fixture.work,
+      expect.objectContaining({
+        processed: 2,
+        done: true,
+        partCursor: 1,
+        conclusion: "可能重跑通过（待人工确认）\n原因：连接瞬断。\n依据：日志出现连接重置。",
+      }),
+      expect.any(String),
+    );
+  });
+  it("limits suggestions to one category, reason and evidence and rejects invented references", () => {
+    const conclusion = {
+      recommendation: "business_issue_likely" as const,
+      reason: "状态不符。",
+      evidence: "响应返回了错误业务状态。",
+      evidenceReferences: ["stack"],
+    };
+    expect(renderPreliminaryConclusion(conclusion).split("\n")).toHaveLength(3);
+    expect(
+      aiPromptMessages(
+        aiModelConfigurationSchema.parse({
+          baseUrl: "http://model/v1",
+          modelId: "test",
+          referencePrompts: [{ title: "业务规则", content: "核对交易状态。" }],
+        }),
+      ),
+    ).toHaveLength(2);
+    expect(() =>
+      readPreliminaryConclusion(
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call",
+              type: "function",
+              function: { name: "submit_ai_conclusion", arguments: JSON.stringify(conclusion) },
+            },
+          ],
+        },
+        ["other"],
+      ),
+    ).toThrow("未读取");
+  });
+});
 
 describe("AI group reduction admission", () => {
   it("defers without charging a retry when platform pressure rises before inference", async () => {

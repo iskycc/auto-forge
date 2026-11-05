@@ -11,6 +11,93 @@ import type {
 import { AiResourceDeferral } from "@autoforge/application";
 
 describe("AI model boundary", () => {
+  it("keeps stack grouping independent of duplicated stack blocks and preserves all single-case log streams", async () => {
+    const objects = new Map<string, Uint8Array>();
+    const store = new AiEvidenceStore(
+      {
+        source: async () => ({ outcome: "failed", class_name: "example.Test" }),
+      } as unknown as AiAnalysisRepository,
+      {
+        listLogChunks: async ({ stream }: { stream: string }) => ({
+          items: [
+            {
+              sequence: 0,
+              recordedAt: "now",
+              content:
+                stream === "stdout"
+                  ? "日志开头\n" + "x".repeat(16001) + "🧪".repeat(10000) + "\n日志结尾\n"
+                  : stream === "stderr"
+                    ? "java.lang.AssertionError: mismatch\n\tat example.Test.run(Test.java:20)\n\n".repeat(
+                        2,
+                      )
+                    : "执行诊断末尾\n",
+            },
+          ],
+        }),
+      } as unknown as ExecutionControlRepository,
+      {
+        putObject: async ({
+          objectKey,
+          content,
+        }: {
+          objectKey: string;
+          content: AsyncIterable<Uint8Array>;
+        }) => {
+          for await (const bytes of content) objects.set(objectKey, bytes);
+        },
+        read: async (key: string) => objects.get(key)!,
+      } as unknown as JarObjectStorePort,
+      "test-key",
+    );
+    const result = await store.collect(
+      {
+        id: "single",
+        projectId: "p",
+        jobId: "j",
+        executionRunId: "r",
+        attemptId: "a",
+        strategy: "single_full_v2",
+      } as AiWork,
+      aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "model" }),
+      new AbortController().signal,
+    );
+    expect(result.evidence.signature).toMatch(/^exact-stack-bundle-v1:/);
+    expect(result.evidence.stackParts).toHaveLength(1);
+    const stack = await store.part(result.evidence.stackParts![0]!);
+    expect(stack.match(/AssertionError/gu)).toHaveLength(1);
+    const fullText = (
+      await Promise.all(result.evidence.parts.map((part) => store.part(part)))
+    ).join("");
+    expect(fullText).toContain("日志开头");
+    expect(fullText).toContain("日志结尾");
+    expect(fullText).toContain("🧪".repeat(10000));
+    expect(fullText).not.toContain("\ufffd");
+    expect(fullText).toContain("执行诊断末尾");
+    expect(result.evidence.parts.length).toBeGreaterThan(3);
+  });
+  it("refuses a single-case full-log analysis when the evidence budget would omit log text", async () => {
+    const store = new AiEvidenceStore(
+      { source: async () => ({ outcome: "failed" }) } as unknown as AiAnalysisRepository,
+      {
+        listLogChunks: async () => ({
+          items: [{ sequence: 0, recordedAt: "now", content: "x".repeat(2 * 1048576) }],
+        }),
+      } as unknown as ExecutionControlRepository,
+      { putObject: vi.fn().mockResolvedValue(undefined) } as unknown as JarObjectStorePort,
+      "test-key",
+    );
+    await expect(
+      store.collect(
+        { id: "i", strategy: "single_full_v2" } as AiWork,
+        aiModelConfigurationSchema.parse({
+          baseUrl: "http://model/v1",
+          modelId: "m",
+          maximumEvidenceMiB: 1,
+        }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("无法完成全文日志分析");
+  });
   it("defers a busy log database instead of publishing an incomplete finding", async () => {
     const busy = new Error("log database is busy");
     const store = new AiEvidenceStore(

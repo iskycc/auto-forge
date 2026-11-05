@@ -1,4 +1,13 @@
 import { StorageMonitoringService } from "@autoforge/application";
+import {
+  FailureAnalysisPublicationService,
+  FailureAnalysisSheetService,
+  type FailureAnalysisPublicationRepository,
+} from "@autoforge/application";
+import {
+  SqliteFailureAnalysisPublicationRepository,
+  PostgresFailureAnalysisPublicationRepository,
+} from "@autoforge/db";
 import { AiAnalysisService, type AiAnalysisRepository } from "@autoforge/application";
 import { wakeAiWorker } from "./work-runtime";
 import { httpTrafficSnapshot } from "./runtime-metrics";
@@ -224,6 +233,7 @@ async function createPlatformServices() {
   let attemptLogSharesRepository: AttemptLogShareRepository;
   let publicExecutionAccessRepository: PublicExecutionAccessRepository;
   let publicSuiteExecutionRepository: PublicSuiteExecutionRepository;
+  let analysisPublicationRepository: FailureAnalysisPublicationRepository;
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
@@ -314,6 +324,7 @@ async function createPlatformServices() {
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     publicExecutionAccessRepository = new SqlitePublicExecutionAccessRepository(database);
     publicSuiteExecutionRepository = new SqlitePublicSuiteExecutionRepository(database);
+    analysisPublicationRepository = new SqliteFailureAnalysisPublicationRepository(database);
 
     jobQueue = new SqliteJobQueue(database);
     const memoryCache = new MemoryCache();
@@ -620,6 +631,7 @@ async function createPlatformServices() {
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     publicExecutionAccessRepository = new PostgresPublicExecutionAccessRepository(database);
     publicSuiteExecutionRepository = new PostgresPublicSuiteExecutionRepository(database);
+    analysisPublicationRepository = new PostgresFailureAnalysisPublicationRepository(database);
 
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
@@ -1330,6 +1342,11 @@ async function createPlatformServices() {
     webhooks,
     runBatches,
     failureAnalysis,
+    analysisPublications: new FailureAnalysisPublicationService(
+      analysisPublicationRepository,
+      clock,
+    ),
+    analysisSheet: new FailureAnalysisSheetService(failureAnalysis, failureAnalysisRepository),
     aiAnalysis,
     runScheduling,
     runnerRequestLimiter,

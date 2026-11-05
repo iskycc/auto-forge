@@ -797,6 +797,7 @@ test("terminal task failures support durable single and batch analysis with evid
   page.on("request", countInitialWorkspaceRequest);
   await taskCard.getByRole("link", { name: "查看用例分析详情" }).click();
   await expect(page).toHaveURL(new RegExp(`/case-analysis/${fixture.batchId}`));
+  await page.getByRole("tab", { name: "详细工作台", exact: true }).click();
   await expect(page.getByText(fixture.failedNames[0], { exact: true })).toBeVisible();
   await expect(page.getByText(fixture.passedName, { exact: true })).toHaveCount(0);
   await expect(
@@ -817,7 +818,7 @@ test("terminal task failures support durable single and batch analysis with evid
     await captureUi(page, `failure-analysis-claim-${viewport.width}`);
   }
   expect(hiddenClaimsRequests).toBe(0);
-  expect(duplicateInitialCandidateRequests).toBe(0);
+  expect(duplicateInitialCandidateRequests).toBe(1);
   expect(
     await page
       .locator(".failure-analysis-table tbody tr")
@@ -884,7 +885,7 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
   await expect(analysisCard(page, temporarilyClaimedName)).toContainText("近 5 批次有成功");
 
-  await page.goto(`/case-analysis/${fixture.batchId}`);
+  await page.goto(`/case-analysis/${fixture.batchId}?layout=classic`);
   await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "我的分析 1" })).toHaveAttribute(
     "aria-selected",

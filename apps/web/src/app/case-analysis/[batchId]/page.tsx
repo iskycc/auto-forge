@@ -16,6 +16,11 @@ import {
   selectedProjectId,
 } from "@/lib/selected-project";
 import { getPlatformServices } from "@/lib/services";
+import { analysisWorkspaceLayout } from "@/lib/failure-analysis-layout";
+import {
+  analysisSheetQuery,
+  analysisSheetSearchParameters,
+} from "@/lib/failure-analysis-sheet-query";
 
 export const dynamic = "force-dynamic";
 
@@ -75,8 +80,9 @@ export default async function CaseAnalysisDetailPage({
   ]);
   if (!progress.exists) notFound();
   const initialView = requestedView ?? (initialMyClaimCount > 0 ? "workbench" : "claim");
+  const classic = analysisWorkspaceLayout(analysisSheetSearchParameters(parameters)) === "classic";
   const [initialCandidatePage, initialClaimPage] = await Promise.all([
-    initialView === "claim"
+    classic && initialView === "claim"
       ? services.failureAnalysis.listCandidates({
           projectId,
           projectVersionId: hierarchy.projectVersionId,
@@ -87,7 +93,7 @@ export default async function CaseAnalysisDetailPage({
           ...(initialFilters.candidateQuery ? { query: initialFilters.candidateQuery } : {}),
         })
       : undefined,
-    initialView === "workbench"
+    classic && initialView === "workbench"
       ? services.failureAnalysis.listMyClaims({
           projectId,
           projectVersionId: hierarchy.projectVersionId,
@@ -102,13 +108,31 @@ export default async function CaseAnalysisDetailPage({
         })
       : undefined,
   ]);
+  const initialSheetPage = classic
+    ? undefined
+    : await services.analysisSheet.read(
+        {
+          batchId,
+          projectId,
+          projectVersionId: hierarchy.projectVersionId,
+          suiteName: batch.suiteName,
+          sequenceNumber: batch.sequenceNumber,
+        },
+        analysisSheetQuery(analysisSheetSearchParameters(parameters), identity.user.id),
+        identity.user.id,
+      );
 
   return (
     <FailureAnalysisDetail
       batch={{ ...batch, ...progress }}
+      initialSheetPage={initialSheetPage}
       currentUserId={identity.user.id}
       canAssign={!progress.archivedAt && hasPermission(identity, "analysis.assign", projectId)}
       canReadStatistics={hasPermission(identity, "audit.read", projectId)}
+      canPublish={
+        hasPermission(identity, "analysis.manage", projectId) &&
+        hasPermission(identity, "log.read", projectId)
+      }
       canManage={!progress.archivedAt && hasPermission(identity, "analysis.manage", projectId)}
       initialCandidatePage={initialCandidatePage}
       initialClaimPage={

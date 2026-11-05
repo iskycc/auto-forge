@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import {
   AiResourceDeferral,
+  AiModelRequestError,
   type AiAnalysisRepository,
   type AiEvidence,
   type AiWork,
@@ -39,13 +40,19 @@ export class AiEvidenceStore {
       512,
       Math.min(
         8000,
-        Math.floor((configuration.contextTokens - configuration.outputTokens * 4 - 4000) / 6),
+        Math.floor(
+          (configuration.contextTokens -
+            configuration.outputTokens * 4 -
+            5600 -
+            Buffer.byteLength(JSON.stringify(configuration.referencePrompts))) /
+            6,
+        ),
       ),
     );
     const append = async (text: string, label: string) => {
       if (remaining === 0) return;
       const redacted = redactAiText(text);
-      for (let offset = 0; offset < redacted.length; offset += partCharacters) {
+      for (const fragment of evidenceTextParts(redacted, partCharacters)) {
         signal.throwIfAborted();
         if (!this.canWork()) throw new AiResourceDeferral();
         if (evidence.parts.length >= 4096) {
@@ -55,7 +62,7 @@ export class AiEvidenceStore {
           remaining = 0;
           return;
         }
-        const content = Buffer.from(redacted.slice(offset, offset + partCharacters), "utf8");
+        const content = Buffer.from(fragment, "utf8");
         if (content.length > remaining) {
           remaining = 0;
           if (!evidence.limitations.includes("用例证据超出配置的采集空间预算，剩余正文未分析。"))
@@ -85,6 +92,7 @@ export class AiEvidenceStore {
     } else evidence.limitations.push("没有可读取的实际尝试或执行快照。");
     for (const stream of ["stdout", "stderr", "agent"] as const) {
       let afterSequence = -1;
+      if (stream !== "agent") stackTexts.push("\n\n");
       try {
         while (remaining > 0) {
           signal.throwIfAborted();
@@ -95,11 +103,11 @@ export class AiEvidenceStore {
             limit: 16,
           });
           for (const chunk of page.items) {
+            if (stream !== "agent" && remaining > 0) stackTexts.push(chunk.content);
             await append(
               `[${stream} sequence=${chunk.sequence} time=${chunk.recordedAt}]\n${chunk.content}`,
               stream,
             );
-            if (stream !== "agent" && remaining > 0) stackTexts.push(chunk.content);
           }
           if (page.truncated) evidence.limitations.push(`${stream} 日志读取不完整或已离线归档。`);
           const last = page.items.at(-1)?.sequence;
@@ -112,10 +120,36 @@ export class AiEvidenceStore {
         evidence.limitations.push(`${stream} 日志读取失败，无法断言该流没有错误。`);
       }
     }
-    const stacks = extractCompleteStacks(stackTexts.join(""));
+    if (remaining === 0 && !evidence.limitations.some((value) => value.includes("预算")))
+      evidence.limitations.push("用例证据达到采集空间预算，无法确认剩余日志已完整读取。");
+    const stacks = [...new Set(extractCompleteStacks(stackTexts.join("")))].sort();
     if (stacks.length && !evidence.limitations.length)
       evidence.signature = `exact-stack-bundle-v1:${createHmac("sha256", this.signatureKey).update(JSON.stringify(stacks)).digest("hex")}`;
     else evidence.limitations.push("未取得可确认完整的堆栈集合；此项独立保留，不按摘要前缀合并。");
+    if (
+      work.strategy === "single_full_v2" &&
+      evidence.limitations.some(
+        (limitation) =>
+          !limitation.startsWith("未取得可确认完整的堆栈集合") && !limitation.includes("输入"),
+      )
+    )
+      throw new AiModelRequestError(
+        `无法完成全文日志分析：${evidence.limitations.join("；")}请检查日志可用性或提高每例证据预算后重试。`,
+        false,
+      );
+    if (stacks.length && evidence.signature.startsWith("exact-stack-bundle-")) {
+      evidence.stackParts = [];
+      const text = redactAiText(stacks.join("\n\n"));
+      for (const fragment of evidenceTextParts(text, partCharacters)) {
+        signal.throwIfAborted();
+        if (!this.canWork()) throw new AiResourceDeferral();
+        const content = Buffer.from(fragment);
+        const id = `stack-${evidence.stackParts.length + 1}`;
+        const objectKey = `${prefix}/stacks/${id}-${digest(content)}.txt`;
+        await put(this.objects, objectKey, content, "text/plain; charset=utf-8");
+        evidence.stackParts.push({ id, objectKey, sizeBytes: content.length });
+      }
+    }
     const key = `${prefix}/manifest.json`;
     await put(this.objects, key, Buffer.from(JSON.stringify(evidence)), "application/json");
     return { key, evidence };
@@ -125,6 +159,21 @@ export class AiEvidenceStore {
   }
   async part(part: AiEvidence["parts"][number]) {
     return Buffer.from(await this.objects.read(part.objectKey)).toString("utf8");
+  }
+}
+/** UTF-16 slice boundaries must not replace half of a non-BMP log character during UTF-8 encoding. */
+function* evidenceTextParts(text: string, maximumCharacters: number): Generator<string> {
+  let offset = 0;
+  while (offset < text.length) {
+    let end = Math.min(text.length, offset + maximumCharacters);
+    if (
+      end < text.length &&
+      /[\uD800-\uDBFF]/u.test(text[end - 1]!) &&
+      /[\uDC00-\uDFFF]/u.test(text[end]!)
+    )
+      end -= 1;
+    yield text.slice(offset, end);
+    offset = end;
   }
 }
 /** Conservatively group only complete exception blocks, never the 4,096-character summary. */

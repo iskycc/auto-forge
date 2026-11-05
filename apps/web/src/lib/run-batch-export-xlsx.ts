@@ -344,8 +344,9 @@ function buildFailureAnalysisSheet(
           ),
         )
       : []),
-    ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(2),
+    FAILURE_ANALYSIS_COLUMN_WIDTHS[2],
     ...(input.includesAi ? [48] : []),
+    ...FAILURE_ANALYSIS_COLUMN_WIDTHS.slice(3),
   ];
   sheet.columns = headers.map((header, index) => ({
     header,
@@ -377,6 +378,9 @@ function failureAnalysisCells(
     item.displayName,
     ...ddtExportCells(item, input),
     item.summary ?? "",
+    ...(input.includesAi
+      ? [item.attemptId ? aiExportCell(input.aiConclusions?.get(item.attemptId) ?? "") : ""]
+      : []),
     claim ? analystLabel(claim) : "",
     completedClaim?.category ? FAILURE_ANALYSIS_RESULT_LABELS[completedClaim.category] : "",
     completedClaim?.category === "case_fixed" || completedClaim?.category === "code_issue_filed"
@@ -392,9 +396,6 @@ function failureAnalysisCells(
         }
       : "",
     completedClaim?.remark ?? "",
-    ...(input.includesAi
-      ? [item.attemptId ? aiExportCell(input.aiConclusions?.get(item.attemptId) ?? "") : ""]
-      : []),
     shareLink ? { text: shareLink, hyperlink: shareLink } : "",
   ];
 }
@@ -454,8 +455,14 @@ function exportColumns(
       : []),
     ...columns.slice(0, 2),
     ...(input.includesDdt ? DDT_EXPORT_COLUMNS : []),
-    ...columns.slice(2, -1),
-    ...(input.includesAi ? [{ header: "AI 初步分析", group: "analysis" as const }] : []),
+    ...(input.template === "failure-analysis" ? columns.slice(2, 3) : []),
+    ...(input.template === "failure-analysis" && input.includesAi
+      ? [{ header: "AI 初步分析", group: "analysis" as const }]
+      : []),
+    ...columns.slice(input.template === "failure-analysis" ? 3 : 2, -1),
+    ...(input.template !== "failure-analysis" && input.includesAi
+      ? [{ header: "AI 初步分析", group: "analysis" as const }]
+      : []),
     ...columns.slice(-1),
   ];
 }

@@ -3,7 +3,8 @@ import type {
   AiAnalysisItem,
   AiAnalysisView,
   AiModelConfiguration,
-  AiConclusion,
+  AiConclusionDraft,
+  AiAnalysisStrategy,
 } from "@autoforge/contracts";
 
 export type AiConfigurationRecord = {
@@ -21,8 +22,10 @@ export type AiEvidence = {
   parts: AiEvidencePart[];
   limitations: string[];
   signature: string;
+  stackParts?: AiEvidencePart[];
 };
 export type AiWork = AiAnalysisItem & {
+  strategy?: AiAnalysisStrategy;
   projectId: string;
   batchId: string;
   requestedBy: string;
@@ -30,9 +33,11 @@ export type AiWork = AiAnalysisItem & {
   evidenceKey: string | null;
   attempts: number;
   partCursor: number;
-  drafts: AiConclusion[];
+  drafts: AiConclusionDraft[];
 };
 export type AiGroupWork = {
+  strategy?: AiAnalysisStrategy;
+  partCursor?: number;
   id: string;
   jobId: string;
   batchId: string;
@@ -45,6 +50,13 @@ export type AiGroupWork = {
   attempts: number;
   processed: number;
   memberCount: number;
+};
+export type AiGroupMember = {
+  id: string;
+  displayName: string;
+  conclusion: string | null;
+  reason: string | null;
+  evidenceKey?: string | null;
 };
 export interface AiAnalysisRepository {
   configuration(): Promise<AiConfigurationRecord>;
@@ -71,7 +83,7 @@ export interface AiAnalysisRepository {
   saveEvidence(work: AiWork, evidenceKey: string, signature: string, now: string): Promise<void>;
   saveDraft(
     work: AiWork,
-    draft: AiConclusion,
+    draft: AiConclusionDraft,
     cursor: number,
     conclusion: string,
     done: boolean,
@@ -83,11 +95,19 @@ export interface AiAnalysisRepository {
   wait(work: AiWork, reason: string, retryAt: string, now: string): Promise<void>;
   prepareGroups(now: string): Promise<void>;
   claimGroup(token: string, now: string, expiresAt: string): Promise<AiGroupWork | null>;
-  groupMembers(
+  groupMembers(work: AiGroupWork, limit?: number): Promise<AiGroupMember[]>;
+  groupEvidence(work: AiGroupWork): Promise<string | null>;
+  saveStackGroup(
     work: AiGroupWork,
-  ): Promise<
-    Array<{ id: string; displayName: string; conclusion: string | null; reason: string | null }>
-  >;
+    progress: {
+      cursor: string;
+      partCursor: number;
+      processed: number;
+      conclusion: string;
+      done: boolean;
+    },
+    now: string,
+  ): Promise<void>;
   saveGroup(
     work: AiGroupWork,
     cursor: string,
@@ -118,7 +138,7 @@ export interface AiAnalysisRepository {
     attemptIds: string[],
     before: string,
   ): Promise<Array<{ attemptId: string; conclusion: string }>>;
-  hasConclusions(batchId: string, before: string): Promise<boolean>;
+  hasAnalysis(batchId: string, before: string): Promise<boolean>;
   source(attemptId: string): Promise<Record<string, unknown> | null>;
   evidenceReference(jobId: string, itemId: string): Promise<string | null>;
   automaticCandidates(

@@ -11,6 +11,39 @@ import { parseMultipartFormData, readJsonBody } from "./api-response";
 
 const MAXIMUM_COMPLETION_JSON_BYTES = 32 * 1024;
 
+export async function readFailureAnalysisScreenshotBody(request: Request): Promise<Uint8Array> {
+  const tooLarge = () =>
+    new DomainError("FAILURE_ANALYSIS_SCREENSHOT_SIZE_INVALID", "截图不能超过 10 MiB。");
+  if (Number(request.headers.get("content-length")) > FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES)
+    throw tooLarge();
+  if (!request.body)
+    throw new DomainError("FAILURE_ANALYSIS_SCREENSHOT_REQUIRED", "请上传或粘贴截图。");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = request.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > FAILURE_ANALYSIS_IMAGE_MAXIMUM_BYTES) {
+        await reader.cancel();
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const content = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    content.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return content;
+}
+
 export async function readFailureAnalysisCompletion(request: Request) {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
     return {

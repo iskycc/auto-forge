@@ -270,6 +270,7 @@ export function AppShell({
     pathname === "/CaseLog" ||
     pathname === "/Execution" ||
     pathname === "/RunTask" ||
+    pathname === "/CaseAnalysis" ||
     pathname.startsWith("/progress/") ||
     (pathname === "/" && !userName)
   ) {

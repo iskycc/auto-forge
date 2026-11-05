@@ -9,10 +9,17 @@ import type {
   FailureAnalysisBatch,
   FailureAnalysisCandidatePage,
   FailureAnalysisClaimView,
+  FailureAnalysisSheetPage,
 } from "@autoforge/contracts";
 import { ArrowLeft, SearchCheck } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Tabs } from "./ui/tabs";
+import { FailureAnalysisSheet } from "./failure-analysis-sheet";
+import { FailureAnalysisPublicationButton } from "./failure-analysis-publication-button";
+import { useConfirm } from "./ui-feedback";
+import { analysisWorkspaceLayout } from "@/lib/failure-analysis-layout";
 
 import { FailureAnalysisExportButton } from "@/components/failure-analysis-export-button";
 import {
@@ -25,6 +32,7 @@ export function FailureAnalysisDetail({
   canManage,
   canAssign,
   canReadStatistics,
+  canPublish,
   currentUserId,
   projectId,
   projectVersionId,
@@ -33,11 +41,13 @@ export function FailureAnalysisDetail({
   initialFilters,
   initialMyClaimCount,
   initialView,
+  initialSheetPage,
 }: {
   batch: FailureAnalysisBatch;
   canManage: boolean;
   canAssign: boolean;
   canReadStatistics: boolean;
+  canPublish: boolean;
   currentUserId: string;
   projectId: string;
   projectVersionId: string;
@@ -46,9 +56,37 @@ export function FailureAnalysisDetail({
   initialFilters: FailureAnalysisWorkspaceFilters;
   initialMyClaimCount: number;
   initialView: "claim" | "workbench";
+  initialSheetPage?: FailureAnalysisSheetPage | undefined;
 }) {
   const [claimedRuns, setClaimedRuns] = useState(batch.claimedRuns);
   const [completedRuns, setCompletedRuns] = useState(batch.completedRuns);
+  const parameters = useSearchParams();
+  const [layout, setLayout] = useState<"sheet" | "classic">(() =>
+    analysisWorkspaceLayout(parameters),
+  );
+  const confirm = useConfirm();
+  const [sheetDirty, setSheetDirty] = useState(false);
+  const [layoutChanges, setLayoutChanges] = useState(0);
+  const [myClaims, setMyClaims] = useState(initialMyClaimCount);
+  async function changeLayout(next: "sheet" | "classic") {
+    if (next === layout) return;
+    if (
+      sheetDirty &&
+      !(await confirm({
+        title: "切换工作台并放弃草稿？",
+        description: "表格中还有未提交的分析草稿，切换后这些草稿将丢失。已提交的结论不受影响。",
+        confirmLabel: "放弃草稿并切换",
+        tone: "danger",
+      }))
+    )
+      return;
+    setSheetDirty(false);
+    setLayout(next);
+    setLayoutChanges((current) => current + 1);
+    const url = new URL(window.location.href);
+    url.searchParams.set("layout", next);
+    window.history.replaceState(null, "", url);
+  }
 
   return (
     <div
@@ -120,6 +158,7 @@ export function FailureAnalysisDetail({
             </LinkButton>
           ) : null}
           <FailureAnalysisExportButton batchId={batch.id} />
+          {canPublish ? <FailureAnalysisPublicationButton batchId={batch.id} /> : null}
           <span className={cn("hero-icon violet", failureAnalysisDetailStyles["hero-icon"])}>
             <SearchCheck size={24} />
           </span>
@@ -133,23 +172,64 @@ export function FailureAnalysisDetail({
           description="分析结论和证明材料已保留，可查看历史、分析统计及导出；不再接受认领、分配或修改。"
         />
       ) : null}
-      <FailureAnalysisWorkspace
-        canManage={canManage}
-        canAssign={canAssign}
-        currentUserId={currentUserId}
-        initialCandidatePage={initialCandidatePage}
-        initialBatchId={batch.id}
-        initialClaimPage={initialClaimPage}
-        initialFilters={initialFilters}
-        initialMyClaimCount={initialMyClaimCount}
-        initialView={initialView}
-        onClaimCountDelta={(delta) => setClaimedRuns((current) => Math.max(0, current + delta))}
-        onCompletedCountDelta={(delta) =>
-          setCompletedRuns((current) => Math.max(0, current + delta))
-        }
-        projectId={projectId}
-        projectVersionId={projectVersionId}
+      <Tabs
+        label="分析工作区布局"
+        value={layout}
+        items={[
+          { key: "sheet", label: "表格分析" },
+          { key: "classic", label: "详细工作台" },
+        ]}
+        onChange={(next) => void changeLayout(next)}
       />
+      {layout === "sheet" ? (
+        <div className="min-w-0">
+          <FailureAnalysisSheet
+            endpoint={`/api/v1/failure-analysis/batches/${encodeURIComponent(batch.id)}/sheet`}
+            currentUserId={currentUserId}
+            canManage={canManage}
+            stickyHeaderOffset={64}
+            initialPage={layoutChanges === 0 ? initialSheetPage : undefined}
+            onDirtyChange={setSheetDirty}
+            onClaimed={(count) => {
+              setClaimedRuns((current) => Math.max(0, current + count));
+              setMyClaims((current) => Math.max(0, current + count));
+            }}
+            onCompleted={(count) => setCompletedRuns((current) => current + count)}
+          />
+        </div>
+      ) : null}
+      {layout === "classic" ? (
+        <div className="min-w-0">
+          <FailureAnalysisWorkspace
+            canManage={canManage}
+            canAssign={canAssign}
+            currentUserId={currentUserId}
+            initialCandidatePage={layoutChanges === 0 ? initialCandidatePage : undefined}
+            initialBatchId={batch.id}
+            initialClaimPage={layoutChanges === 0 ? initialClaimPage : undefined}
+            initialFilters={initialFilters}
+            initialMyClaimCount={myClaims}
+            initialView={
+              parameters.get("view") === "claim"
+                ? "claim"
+                : parameters.get("view") === "workbench"
+                  ? "workbench"
+                  : myClaims > 0
+                    ? "workbench"
+                    : initialView
+            }
+            onMyClaimCountChange={setMyClaims}
+            onClaimCountDelta={(delta) => {
+              setClaimedRuns((current) => Math.max(0, current + delta));
+            }}
+            onCompletedCountDelta={(delta) =>
+              setCompletedRuns((current) => Math.max(0, current + delta))
+            }
+            projectId={projectId}
+            projectVersionId={projectVersionId}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

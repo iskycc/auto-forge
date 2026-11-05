@@ -148,6 +148,7 @@ export class AiAnalysisService {
         batchId: batch.id,
         projectId: batch.projectId,
         attemptId: parsed.attemptId ?? null,
+        strategy: parsed.attemptId ? "single_full_v2" : "stack_groups_v2",
         requestedBy: identity.user.id,
         status: "queued",
         createdAt: now,

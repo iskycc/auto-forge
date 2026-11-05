@@ -20,6 +20,9 @@ const LABELS: Record<string, string> = {
   collecting: "采集证据",
   ready: "等待分析",
   retry_wait: "退避重试",
+  group_ready: "等待同栈分析",
+  publishing: "回填组内建议",
+  running: "正在分析",
 };
 export function AiAnalysisButton({
   batchId,
@@ -215,6 +218,11 @@ export function AiAnalysisButton({
             title="初步建议，待人工确认"
             description="模型仅能读取证据并提交 AI 结论。页面关闭不影响后台工作；等待限流或平台资源时会自动退避。"
           />
+          <Typography.Text type="secondary">
+            {attemptId
+              ? "单例读取完整日志，必要时分片细查；最终仅保留初步分类、原因与依据。"
+              : "先按完整堆栈归类，同栈用例共用一个疑似问题建议；没有完整堆栈的用例独立分析。"}
+          </Typography.Text>
           {error ? <Alert type="error" title={error} showIcon /> : null}
           {job?.reason ? <Alert type="warning" title={job.reason} showIcon /> : null}
           {job ? (
@@ -243,7 +251,7 @@ export function AiAnalysisButton({
                 status={ACTIVE.has(job.status) ? "active" : "normal"}
               />
               {view?.groups?.length ? (
-                <Disclosure header="查看堆栈分组初析">
+                <Disclosure header="查看堆栈分组初析" defaultOpen={!attemptId}>
                   <Space orientation="vertical" style={{ width: "100%" }}>
                     {view.groups.map((group) => (
                       <Alert

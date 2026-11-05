@@ -29,3 +29,4 @@ export * from "./sqlite-ddt-sr-tags";
 
 export * from "./postgres-ddt-sr-tags";
 export * from "./public-suite-execution";
+export * from "./failure-analysis-publication";

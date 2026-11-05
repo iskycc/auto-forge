@@ -77,12 +77,15 @@ export function AttemptLogViewer({
   canReadLogs,
   canRetryRuns,
   onClose,
+  logEndpoint,
 }: {
   attemptId: string;
   attemptStatus: RunAttempt["status"];
   canReadLogs: boolean;
   canRetryRuns: boolean;
   onClose: () => void;
+  /** A scoped, read-only log source; execution and live-stream endpoints stay unchanged. */
+  logEndpoint?: string;
 }) {
   const [stream, setStream] = useState<LogStream>("stdout");
   const [query, setQuery] = useState("");
@@ -133,7 +136,9 @@ export function AttemptLogViewer({
         if (afterTimestamp) parameters.set("recordedAfter", afterTimestamp);
         if (beforeTimestamp) parameters.set("recordedBefore", beforeTimestamp);
         const response = await fetch(
-          `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/logs?${parameters}`,
+          logEndpoint
+            ? `${logEndpoint}${logEndpoint.includes("?") ? "&" : "?"}${parameters}`
+            : `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/logs?${parameters}`,
           { cache: "no-store", signal: controller.signal },
         );
         if (!response.ok) {
@@ -152,7 +157,7 @@ export function AttemptLogViewer({
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [activeAttempt.id],
+    [activeAttempt.id, logEndpoint],
   );
 
   useEffect(() => {

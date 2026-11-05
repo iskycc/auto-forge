@@ -97,6 +97,7 @@ describe("buildRunBatchExportWorkbook", () => {
       const headers = sheet.getRow(1).values as string[];
       const aiColumn = headers.indexOf("AI 初步分析");
       expect(aiColumn).toBeGreaterThan(0);
+      if (template === "failure-analysis") expect(aiColumn).toBe(headers.indexOf("失败堆栈") + 1);
       expect(sheet.getRow(2).getCell(aiColumn).value).toContain("分析中 1/3");
       expect(sheet.getRow(3).getCell(aiColumn).text).toBe("");
       expect(sheet.getRow(2).getCell(sheet.columnCount).value).toMatchObject({
@@ -110,18 +111,24 @@ describe("buildRunBatchExportWorkbook", () => {
   it.each(
     (["results", "failure-analysis"] as const).flatMap((template) =>
       (["round", "final", "all"] as const).flatMap((scope) =>
-        [false, true].map((includesDdt) => ({ template, scope, includesDdt })),
+        [false, true].flatMap((includesDdt) =>
+          [false, true].map((includesAi) => ({ template, scope, includesDdt, includesAi })),
+        ),
       ),
     ),
   )(
-    "groups $template headers by purpose for $scope exports (DDT=$includesDdt) in both writers",
-    async ({ template, scope, includesDdt }) => {
+    "groups $template headers by purpose for $scope exports (DDT=$includesDdt, AI=$includesAi) in both writers",
+    async ({ template, scope, includesDdt, includesAi }) => {
       const input = {
         batchId: "header-colors",
         template,
         scope,
         round: 2,
         includesDdt,
+        includesAi,
+        aiConclusions: new Map([
+          [failedRow.attemptId!, "可能重跑通过\n原因：瞬断。\n依据：连接重置。"],
+        ]),
         rows: [failedRow],
         shareLinks: new Map<string, string>(),
       };
@@ -150,6 +157,7 @@ describe("buildRunBatchExportWorkbook", () => {
         执行结束时间: "FFEEE9F5",
         "执行耗时(s)": "FFEEE9F5",
         分析责任人: "FFEBF0E2",
+        "AI 初步分析": "FFEBF0E2",
         分析结果: "FFEBF0E2",
         问题根因: "FFEBF0E2",
         备注: "FFEBF0E2",
@@ -160,6 +168,12 @@ describe("buildRunBatchExportWorkbook", () => {
       };
       for (const bytes of [normal.buffer, Buffer.concat(chunks)]) {
         const sheet = (await loadWorkbook(bytes)).worksheets[0]!;
+        if (includesAi && template === "failure-analysis") {
+          const headers = sheet.getRow(1).values as string[];
+          const column = headers.indexOf("AI 初步分析");
+          expect(column).toBe(headers.indexOf("失败堆栈") + 1);
+          expect(sheet.getRow(2).getCell(column).text).toContain("连接重置");
+        }
         const colors = new Set<string>();
         sheet.getRow(1).eachCell((cell) => {
           const color = expectedColors[cell.text];

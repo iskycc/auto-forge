@@ -15,6 +15,7 @@ import {
 import { useState } from "react";
 import type { AiModelConfigurationView } from "@autoforge/contracts";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { AiReferencePromptsDialog } from "./ai-reference-prompts-dialog";
 
 export function AiModelSettings({
   initial,
@@ -89,6 +90,7 @@ export function AiModelSettings({
             timeoutSeconds: 90,
             maximumRetries: 3,
             maximumEvidenceMiB: 16,
+            referencePrompts: [],
             ...initial.configuration,
           }}
         >
@@ -162,6 +164,13 @@ export function AiModelSettings({
               </Col>
             ))}
           </Row>
+          <Form.Item
+            name="referencePrompts"
+            label="分析参考提示词"
+            extra="每次批次和单例分析都会读取；应用后点击“保存配置”生效。"
+          >
+            <AiReferencePromptsDialog disabled={!canManage || pending !== null} />
+          </Form.Item>
           <Space wrap>
             <Button type="primary" loading={pending === "save"} onClick={() => void submit()}>
               保存配置

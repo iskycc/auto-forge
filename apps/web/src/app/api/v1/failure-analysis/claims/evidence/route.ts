@@ -2,10 +2,9 @@ import {
   failureAnalysisClaimSchema,
   uploadFailureAnalysisEvidenceQuerySchema,
 } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
-import { FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES } from "@autoforge/application";
+import { readFailureAnalysisScreenshotBody } from "@/lib/failure-analysis-upload";
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
@@ -29,7 +28,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       claimantId: identity.user.id,
       fileName: input.fileName,
       mediaType: request.headers.get("content-type") ?? "application/octet-stream",
-      content: await readBoundedBody(request),
+      content: await readFailureAnalysisScreenshotBody(request),
     });
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "failure_analysis.evidence.upload",
@@ -46,36 +45,4 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }
-}
-
-async function readBoundedBody(request: Request): Promise<Uint8Array> {
-  const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES) {
-    throw tooLarge();
-  }
-  if (!request.body) throw new DomainError("FAILURE_ANALYSIS_SCREENSHOT_REQUIRED", "请粘贴截图。");
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  const reader = request.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES) {
-      await reader.cancel();
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-  const content = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    content.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return content;
-}
-
-function tooLarge(): DomainError {
-  return new DomainError("FAILURE_ANALYSIS_SCREENSHOT_SIZE_INVALID", "截图不能超过 10 MiB。");
 }
