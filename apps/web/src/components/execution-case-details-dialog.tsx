@@ -18,6 +18,7 @@ export function ExecutionCaseDetailsDialog({
   onClose: () => void;
   children: ReactNode;
 }) {
+  // Full-screen workspaces enter at their final bounds; ordinary dialogs retain their native motion.
   return (
     <Modal
       open
@@ -27,6 +28,8 @@ export function ExecutionCaseDetailsDialog({
       focusable={{ focusTriggerAfterClose: false }}
       mask={{ closable: false }}
       footer={null}
+      transitionName=""
+      maskTransitionName=""
       width="100vw"
       className="execution-case-details-dialog"
       style={{ top: 0, margin: 0, paddingBottom: 0, maxWidth: "100vw" }}

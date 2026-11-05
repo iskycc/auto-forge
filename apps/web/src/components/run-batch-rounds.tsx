@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
 
 import { loadExecutionCasePage } from "@/lib/execution-case-page-client";
+import { executionRoundSelection } from "@/lib/execution-round-selection";
 
 import type { AttemptArtifactList, AttemptEventPage } from "@autoforge/contracts";
 import type {
@@ -289,7 +290,11 @@ export function RunBatchRounds({
     () => new Map(runnerDirectory.map((entry) => [entry.id, entry])),
     [runnerDirectory],
   );
-  const requestedRoundParam = searchParams.get("round");
+  const requestedRoundParam = executionRoundSelection(
+    searchParams.get("round"),
+    summaries.map((summary) => summary.round),
+    recoveries.map((recovery) => recovery.afterRound),
+  );
   // round=all/summary 都是虚拟轮次，不对应持久化的 executionRound。
   const allRoundsSelected = requestedRoundParam === "all";
   const summarySelected = requestedRoundParam === "summary";
@@ -298,14 +303,9 @@ export function RunBatchRounds({
     (recovery) => recovery.afterRound === Number(requestedRecoveryRound),
   );
   const requestedRound = Number(requestedRoundParam ?? "");
-  // 默认落在最后一个已执行的轮次；纯等待轮（还没有任何 attempt）不作为默认选中。
-  const defaultRound =
-    [...summaries].reverse().find((summary) => summary.status !== "waiting")?.round ??
-    summaries.at(-1)?.round ??
-    1;
   const selectedRound = summaries.some((summary) => summary.round === requestedRound)
     ? requestedRound
-    : defaultRound;
+    : 1;
   const selectedRoundLabel = selectedRecovery
     ? `环境恢复 · 第 ${selectedRecovery.afterRound} 轮后`
     : summarySelected
