@@ -572,10 +572,17 @@ export class ExecutionControlService {
     });
   }
 
-  /**
-   * Runner claim 是高频入口。全局恢复扫描按固定窗口合并，避免数百个并发 claim
-   * 重复扫描同一批租约并阻塞 Lite 的 Web 事件循环。
-   */
+  /** Bounded lifecycle repair also runs when no Runner will claim or replay a completion. */
+  async recoverInterruptedExecutions(): Promise<void> {
+    await this.executions.recoverExpired({
+      now: this.clock.now().toISOString(),
+      eventIds: Array.from({ length: 5 }, () => this.ids.next()),
+      limit: 5,
+      scope: "terminating_batches",
+    });
+  }
+
+  /** Coalesce high-frequency Runner claims without postponing lease recovery on their behalf. */
   private async recoverExpiredAttempts(now: Date): Promise<void> {
     if (now.getTime() < this.nextRecoveryAtMs) return;
     if (this.recoveryInFlight) return this.recoveryInFlight;

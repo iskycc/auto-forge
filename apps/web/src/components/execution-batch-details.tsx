@@ -5,6 +5,8 @@ import { ExecutionActors } from "./execution-actors";
 import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
 import { ExecutionStatisticsStatus } from "./execution-statistics-status";
 import { Notice } from "@/components/ui/notice";
+import { SemanticStatusTag } from "@/components/ui/semantic-status-tag";
+import { LoadingOutlined } from "@ant-design/icons";
 
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -348,7 +350,7 @@ export function ExecutionBatchDetails({
             <span>
               {batch.terminationRequestedAt
                 ? activeBatch
-                  ? "后续调度已停止，等待正在执行的用例自然完成。"
+                  ? "后续调度已停止，等待已领取用例自然完成及状态收尾；不会进入下一轮。"
                   : "本批次的执行与收尾已结束，执行记录和结果已保留。"
                 : batch.pauseRequestedAt && activeBatch
                   ? "新的调度已暂停，已下发的用例继续完成；点击继续调度执行剩余用例及重试。"
@@ -386,7 +388,7 @@ export function ExecutionBatchDetails({
             {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
               <StartFailureAnalysisButton scope={analysisScope} />
             ) : null}
-            {canCancelRuns && activeBatch ? (
+            {canCancelRuns && activeBatch && !batch.terminationRequestedAt ? (
               <BatchSchedulingButton
                 batch={batch}
                 onChanged={refreshBatch}
@@ -394,23 +396,30 @@ export function ExecutionBatchDetails({
               />
             ) : null}
             {canCancelRuns && activeBatch ? (
-              <Button
-                className={cn(
-                  "button button-danger-quiet",
-                  uiPatterns["button"],
-                  uiPatterns["button-danger-quiet"],
-                )}
-                disabled={actionPending !== undefined || Boolean(batch.terminationRequestedAt)}
-                onClick={() => void terminateBatch()}
-                type="button"
-              >
-                <OctagonX size={16} />
-                {batch.terminationRequestedAt
-                  ? "终止中"
-                  : actionPending === "cancel"
-                    ? "正在终止…"
-                    : "终止任务"}
-              </Button>
+              batch.terminationRequestedAt ? (
+                <span role="status" aria-live="polite">
+                  <SemanticStatusTag tone="info">
+                    <span className="inline-flex min-h-8 items-center gap-2">
+                      <LoadingOutlined spin />
+                      终止中
+                    </span>
+                  </SemanticStatusTag>
+                </span>
+              ) : (
+                <Button
+                  className={cn(
+                    "button button-danger-quiet",
+                    uiPatterns["button"],
+                    uiPatterns["button-danger-quiet"],
+                  )}
+                  disabled={actionPending !== undefined}
+                  onClick={() => void terminateBatch()}
+                  type="button"
+                >
+                  <OctagonX size={16} />
+                  {actionPending === "cancel" ? "正在终止…" : "终止任务"}
+                </Button>
+              )
             ) : null}
             {canCreateRuns && retrySuiteId && !activeBatch ? (
               <Button

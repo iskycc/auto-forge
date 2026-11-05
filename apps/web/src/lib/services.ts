@@ -1033,6 +1033,12 @@ async function createPlatformServices() {
       await roundRecovery.dispatchDue(`web-${process.pid}-round-recovery`);
     },
   );
+  const executionRecoveryLoop = runPeriodic(
+    scheduleAbort.signal,
+    5_000,
+    "executions.reconcile",
+    () => executionControl.recoverInterruptedExecutions(),
+  );
   const scheduleLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 30_000, "schedules.trigger", async () => {
@@ -1100,6 +1106,7 @@ async function createPlatformServices() {
         webhookLoop,
         retentionLoop,
         roundRecoveryLoop,
+        executionRecoveryLoop,
         nodeCleanupLoop,
         runtimeNoticeLoop,
       ]);

@@ -348,6 +348,115 @@ async function insertCaseHistoryRun(
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it.each(["round", "immediate"] as const)(
+    "settles a terminated %s retry batch without another Runner completion or claim",
+    async (retryMode) => {
+      const harness = await createHarness();
+      const { batchId } = harness.completion;
+      const now = "2026-08-10T00:00:02.000Z";
+      try {
+        // Model the durable boundary after attempt results committed but batch settlement failed.
+        await harness.rawQuery(
+          "UPDATE run_batches SET status='running',retry_limit=9,retry_mode=?,cancel_requested_at=?,pause_requested_at=? WHERE id=?",
+          [retryMode, now, now, batchId],
+        );
+        await harness.rawQuery(
+          "UPDATE run_attempts SET status='failed',outcome='failed',result_code='TESTNG_ASSERTIONS_FAILED',finished_at=? WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+          [now, batchId],
+        );
+        await harness.rawQuery("UPDATE assignments SET status='completed' WHERE batch_id=?", [
+          batchId,
+        ]);
+        await harness.rawQuery(
+          "UPDATE assignment_leases SET status='released' WHERE assignment_id IN (SELECT id FROM assignments WHERE batch_id=?)",
+          [batchId],
+        );
+        await harness.rawQuery(
+          "UPDATE execution_runs SET status='queued',held_round=2 WHERE batch_id=?",
+          [batchId],
+        );
+        expect((await harness.batches.getMetadata(batchId))?.status).toBe("running");
+        const unrelatedRunId = await insertQueuedRun(harness, harness.batchQueuedId);
+        await harness.rawQuery("UPDATE execution_runs SET queue_deadline_at=? WHERE id=?", [
+          now,
+          unrelatedRunId,
+        ]);
+        const recover = () =>
+          harness.executions.recoverExpired({
+            now,
+            eventIds: Array.from({ length: 10 }, () => randomUUID()),
+            limit: 10,
+            scope: "terminating_batches",
+          });
+        await recover();
+        expect((await harness.batches.getMetadata(harness.batchQueuedId))?.status).toBe("queued");
+        const settled = await harness.batches.get(batchId);
+        expect(settled?.status).toBe("cancelled");
+        expect(settled?.currentRound).toBe(1);
+        expect(settled?.attempts.every((attempt) => attempt.outcome === "failed")).toBe(true);
+        expect(settled?.runs.every((run) => run.status === "cancelled")).toBe(true);
+        const version = settled!.version;
+        await recover();
+        expect((await harness.batches.getMetadata(batchId))?.version).toBe(version);
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+  it("preserves valid leased work and finishes termination after its last failed result", async () => {
+    const harness = await createHarness();
+    const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+      harness.completion;
+    const now = "2026-08-10T00:00:02.000Z";
+    try {
+      await harness.rawQuery("UPDATE run_batches SET retry_limit=9,retry_mode='round' WHERE id=?", [
+        batchId,
+      ]);
+      await harness.executions.terminateBatch({
+        batchId,
+        actorId: "operator",
+        reason: "stop first failing round",
+        requestedAt: now,
+        eventId: randomUUID(),
+      });
+      await harness.executions.recoverExpired({
+        now,
+        eventIds: Array.from({ length: 10 }, () => randomUUID()),
+        limit: 10,
+      });
+      expect((await harness.batches.getMetadata(batchId))?.status).toBe("running");
+      for (const [attemptId, leaseTokenHash] of [
+        [attempt1Id, lease1TokenHash],
+        [attempt2Id, lease2TokenHash],
+      ]) {
+        const response = await harness.executions.completeAttempt({
+          runnerId: harness.runnerId,
+          attemptId: attemptId!,
+          leaseTokenHash: leaseTokenHash!,
+          completionId: randomUUID(),
+          resultDigest: randomUUID(),
+          eventId: randomUUID(),
+          acceptedAt: now,
+          result: {
+            status: "failed",
+            resultCode: "TESTNG_ASSERTIONS_FAILED",
+            summary: "first round failed",
+            durationMs: 100,
+            artifacts: [],
+          },
+        });
+        expect(response.retryScheduled).toBe(false);
+      }
+      const settled = await harness.batches.get(batchId);
+      expect(settled?.status).toBe("cancelled");
+      expect(settled?.failedRuns).toBe(2);
+      expect(settled?.currentRound).toBe(1);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
   it.each([
     { outcome: "succeeded" as const, recovery: false },
     { outcome: "failed" as const, recovery: false },

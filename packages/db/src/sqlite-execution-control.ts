@@ -44,6 +44,7 @@ import {
 } from "./database";
 import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
+import { terminatingBatchSettlementSql } from "./terminating-batch-settlement";
 
 type AssignmentRow = {
   id: string;
@@ -854,6 +855,10 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
   ): Promise<RecoveredAttemptExpiration[]> {
     return retrySqliteWriteTransaction(this.handle, () => {
+      if (input.scope === "terminating_batches") {
+        this.settleTerminatingBatches(input, 0);
+        return [];
+      }
       const queued = this.handle.client
         .prepare(
           `SELECT r.id, r.batch_id FROM execution_runs r
@@ -977,8 +982,23 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           recoveredAttempts.push(detail);
         }
       }
+      this.settleTerminatingBatches(input, recovered);
       return recoveredAttempts;
     });
+  }
+
+  private settleTerminatingBatches(
+    input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
+    consumed: number,
+  ): void {
+    const settlements = this.handle.client
+      .prepare(terminatingBatchSettlementSql("sqlite"))
+      .all(input.now, Math.min(5, Math.max(0, input.limit - consumed))) as Array<{ id: string }>;
+    for (const [index, batch] of settlements.entries()) {
+      const eventId = input.eventIds[consumed + index];
+      if (!eventId) break;
+      this.updateBatchStatus(batch.id, input.now, eventId, "batch.termination_reconciled");
+    }
   }
 
   async changeBatchScheduling(
@@ -1847,6 +1867,10 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         }
       | undefined;
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    if (isTerminalBatchStatus(batch.status)) return batch.status;
+    if (batch.cancel_requested_at) {
+      this.terminateWaitingRuns(batchId, "任务终止，关闭尚未执行的工作。", updatedAt);
+    }
     // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
     if (!batch.cancel_requested_at && !batch.pause_requested_at) {
       this.advanceRoundIfIdle(batchId, batch.retry_mode, batch.queue_timeout_ms, updatedAt);

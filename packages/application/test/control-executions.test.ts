@@ -449,6 +449,36 @@ describe("high-concurrency execution control", () => {
       }),
     );
   });
+  it("settles interrupted terminations without a Runner request or unrelated queue scans", async () => {
+    const recoverExpired = vi.fn().mockResolvedValue([]);
+    const runners = {} as RunnerRepository;
+    const executions = { recoverExpired } as unknown as ExecutionControlRepository;
+    let now = new Date("2026-11-04T00:00:00.000Z");
+    const service = new ExecutionControlService(
+      executions,
+      runners,
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => value,
+        verifyBootstrapToken: vi.fn(),
+      },
+      credentialCipherFake(),
+      {} as JarObjectStorePort,
+      { now: () => now },
+      { next: () => "recovery-event" },
+      batchesRepositoryFake(),
+      schedulingFake(),
+    );
+    await service.recoverInterruptedExecutions();
+    expect(recoverExpired).toHaveBeenCalledOnce();
+    now = new Date("2026-11-04T00:00:05.000Z");
+    await service.recoverInterruptedExecutions();
+    expect(recoverExpired).toHaveBeenCalledTimes(2);
+    expect(recoverExpired).toHaveBeenLastCalledWith(
+      expect.objectContaining({ now: now.toISOString(), limit: 5, scope: "terminating_batches" }),
+    );
+  });
 });
 
 describe("attempt completion scheduling events", () => {

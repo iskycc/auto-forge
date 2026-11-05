@@ -596,6 +596,8 @@ export interface ExecutionControlRepository {
     now: string;
     eventIds: string[];
     limit: number;
+    /** A periodic termination sweep must not scan unrelated queues or active attempts. */
+    scope?: "terminating_batches";
   }): Promise<RecoveredAttemptExpiration[]>;
   changeBatchScheduling(input: {
     batchId: string;

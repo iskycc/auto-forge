@@ -45,6 +45,7 @@ import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import type { SchedulingEventDraft } from "@autoforge/application";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
+import { terminatingBatchSettlementSql } from "./terminating-batch-settlement";
 
 type AssignmentRow = {
   id: string;
@@ -911,6 +912,10 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   ): Promise<RecoveredAttemptExpiration[]> {
     await this.handle.ready;
     return this.transaction(async (client) => {
+      if (input.scope === "terminating_batches") {
+        await settleTerminatingBatches(client, input, 0);
+        return [];
+      }
       const queued = await client.query<{ id: string; batch_id: string }>(
         `SELECT r.id, r.batch_id FROM execution_runs r
          JOIN run_batches b ON b.id = r.batch_id
@@ -1027,6 +1032,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           recoveredAttempts.push(detail);
         }
       }
+      await settleTerminatingBatches(client, input, recovered);
       return recoveredAttempts;
     });
   }
@@ -2210,6 +2216,22 @@ async function markBatchActiveOnClaim(
   );
 }
 
+async function settleTerminatingBatches(
+  client: PoolClient,
+  input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
+  consumed: number,
+): Promise<void> {
+  const settlements = await client.query<{ id: string }>(
+    terminatingBatchSettlementSql("postgres"),
+    [input.now, Math.min(5, Math.max(0, input.limit - consumed))],
+  );
+  for (const [index, batch] of settlements.rows.entries()) {
+    const eventId = input.eventIds[consumed + index];
+    if (!eventId) break;
+    await updateBatchStatus(client, batch.id, input.now, eventId, "batch.termination_reconciled");
+  }
+}
+
 async function updateBatchStatus(
   client: PoolClient,
   batchId: string,
@@ -2234,6 +2256,11 @@ async function updateBatchStatus(
   const batchState = lockedBatch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   if (isTerminalBatchStatus(batchState.status)) return batchState.status;
+  if (batchState.cancel_requested_at) {
+    // A completion may have read the previous retry policy before termination committed.
+    // Fence those freshly queued retries again under the authoritative batch row lock.
+    await terminateWaitingRuns(client, batchId, "任务终止，关闭尚未执行的工作。", updatedAt);
+  }
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
   if (!batchState.cancel_requested_at && !batchState.pause_requested_at) {
     await advanceRoundIfIdle(
