@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
 import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
@@ -1526,6 +1527,7 @@ public class MixedVisibleTest {
   expect(await artifactDownload.body()).toEqual(report);
 
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+  await openExecutionCaseDetails(page);
   await expect(page.getByText("执行完成", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   // 失败用例的堆栈摘要直接显示在状态列，无需展开详情。
@@ -1615,6 +1617,7 @@ public class MixedVisibleTest {
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
   await expectUiConsistency(page);
 
+  await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
   // 执行结果导出：弹窗默认失败+阻塞，补选成功后当前轮次两次尝试都应进入 Excel。
   await page.getByRole("button", { name: "导出结果" }).click();
   const exportDialog = page.getByRole("dialog", { name: "导出执行结果" });
@@ -1794,6 +1797,7 @@ public class MixedVisibleTest {
   // A never-claimed case is intentionally displayed as not executed.
   const cancellationClaim = await claimAssignment(page, identity);
   await page.goto(`/run-batches/${encodeURIComponent(cancellationBatch.id)}`);
+  await openExecutionCaseDetails(page);
   await page.getByRole("button", { name: "取消该用例" }).click();
   const cancellationDialog = page.getByRole("dialog", { name: "取消用例执行" });
   await cancellationDialog.getByLabel("取消原因").fill("E2E single run cancellation");

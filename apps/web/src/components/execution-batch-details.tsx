@@ -1,8 +1,7 @@
 "use client";
 import { BatchSchedulingButton } from "./batch-scheduling-button";
 import { AiAnalysisButton } from "./ai-analysis-button";
-import { ExecutionActors } from "./execution-actors";
-import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses";
+import { ExecutionBatchOverview } from "./execution-batch-overview";
 import { ExecutionStatisticsStatus } from "./execution-statistics-status";
 import { Notice } from "@/components/ui/notice";
 import { SemanticStatusTag } from "@/components/ui/semantic-status-tag";
@@ -15,7 +14,6 @@ import {
   StartFailureAnalysisButton,
   type FailureAnalysisScope,
 } from "./start-failure-analysis-button";
-import { usePlatformNow } from "./platform-time";
 
 import { AlertTriangle, Gauge, ListPlus, OctagonX, RotateCcw } from "lucide-react";
 import { ConcurrencyDiagnosticsDialog } from "./concurrency-diagnostics-dialog";
@@ -30,25 +28,7 @@ import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { useConfirm } from "@/components/ui-feedback";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
-import {
-  formatBatchDuration,
-  formatLocalDateTime,
-  isActiveRunBatch,
-  isTerminalRunBatch,
-  runBatchCompletionLabel,
-  runBatchPassRate,
-} from "@/lib/run-batch-presentation";
-
-// 计划开始时间由服务端在创建批次时固化；资源等待不能悄悄改写用户选择的开始时间。
-function batchStartedAt(batch: ExecutionBatchView): string {
-  return batch.scheduledFor;
-}
-
-// 终态批次的结束时间取最晚的 attempt 或环境恢复更新时间，缺失时回退批次
-// updatedAt。这样 Jenkins 恢复及构建后的等待不会从任务总时长中被扣除。
-function batchFinishedAt(batch: ExecutionBatchView): string {
-  return batch.finishedAt;
-}
+import { isActiveRunBatch, isTerminalRunBatch } from "@/lib/run-batch-presentation";
 
 /**
  * 批次详情编排层：概要指标带、批次级操作（取消/再次执行）、进行中批次的
@@ -111,9 +91,6 @@ export function ExecutionBatchDetails({
   const activeBatch = isActiveRunBatch(batch.status);
   const statisticsState = batch.statistics?.state;
   const statisticsPending = !!batch.statistics && !batch.statistics.generation;
-  const startedAt = batchStartedAt(batch);
-  const awaitingScheduledStart =
-    batch.status === "queued" && Date.parse(batch.scheduledFor) > Date.parse(batch.updatedAt);
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
   const canRerunFinalFailures =
     canRetryRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
@@ -258,222 +235,164 @@ export function ExecutionBatchDetails({
           onRefresh={refreshBatch}
         />
       ) : null}
-      <section
-        className={cn("batch-metrics-band", executionBatchDetailsStyles["batch-metrics-band"])}
-        aria-label="批次概览"
-      >
-        <Metric
-          label="状态"
-          value={awaitingScheduledStart ? "倒计时" : runBatchCompletionLabel(batch)}
-        />
-        <Metric
-          label="总通过率"
-          value={batch.statistics?.generation === null ? "—" : `${runBatchPassRate(batch)}%`}
-        />
-        <Metric
-          label="用例总数"
-          value={String(batch.totalRuns)}
-          hint={
-            batch.statistics?.generation === null
-              ? "统计准备中"
-              : `通过 ${batch.succeededRuns} · 失败 ${batch.failedRuns} · 超时 ${batch.timedOutRuns} · 终止 ${batch.finalSummary.cancelled}`
-          }
-        />
-        <Metric
-          label="开始时间"
-          value={formatLocalDateTime(startedAt)}
-          title={`UTC ${startedAt}`}
-        />
-        {awaitingScheduledStart ? (
-          <CountdownMetric scheduledFor={batch.scheduledFor} />
-        ) : (
-          <ElapsedMetric active={activeBatch} batch={batch} startedAt={startedAt} />
-        )}
-        <Metric
-          label="当前轮次"
-          value={
-            batch.retryMode === "round"
-              ? `第 ${batch.currentRound} 轮 · 用例重跑上限 ${batch.retryLimit} 次`
-              : "立即重跑模式"
-          }
-        />
-      </section>
-
-      <ExecutionActors
-        {...(batch.publicExecution ? { publicExecution: batch.publicExecution } : {})}
-        {...(batch.terminatedBy ? { terminatedBy: batch.terminatedBy } : {})}
-      />
-      {batch.environmentAddresses?.length ? (
-        <section
-          aria-label="本次执行环境"
-          className="grid min-w-0 gap-3 rounded-lg border border-border bg-card px-5 py-4"
-        >
-          <span className="text-sm font-medium">
-            本次执行环境 IP{" "}
-            <span className="ml-2 font-normal text-muted-foreground">
-              {batch.environmentAddresses.length} 个
-            </span>
-          </span>
-          <ExecutionEnvironmentAddresses addresses={batch.environmentAddresses} />
-        </section>
-      ) : null}
-
-      {((canReadLogs && !publicAccess && !activeBatch) ||
-        analysisScope ||
-        (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
-        batch.status === "failed" ||
-        canCancelRuns ||
-        (canCreateRuns && retrySuiteId) ||
-        canRerunFinalFailures ||
-        canCreateFailureTask) && (
-        <section
-          className={cn(
-            "execution-detail-actions",
-            executionBatchDetailsStyles["execution-detail-actions"],
-          )}
-          aria-label="批次操作"
-        >
-          <div>
-            <strong>
-              {batch.terminationRequestedAt
-                ? activeBatch
-                  ? "任务正在终止"
-                  : "任务已终止"
-                : batch.pauseRequestedAt && activeBatch
-                  ? batch.status === "queued"
-                    ? "任务已暂停"
-                    : "任务正在暂停"
-                  : activeBatch
-                    ? "批次仍在执行"
-                    : "批次已进入终态"}
-            </strong>
-            <span>
-              {batch.terminationRequestedAt
-                ? activeBatch
-                  ? "后续调度已停止，等待已领取用例自然完成及状态收尾；不会进入下一轮。"
-                  : "本批次的执行与收尾已结束，执行记录和结果已保留。"
-                : batch.pauseRequestedAt && activeBatch
-                  ? "新的调度已暂停，已下发的用例继续完成；点击继续调度执行剩余用例及重试。"
-                  : batch.status === "failed"
-                    ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
-                    : retrySuiteId
-                      ? "再次执行会读取任务当前版本的完整配置并创建新批次。"
-                      : "本批次的执行记录与配置快照已保留，可继续查看结果和日志。"}
-            </span>
-          </div>
-          <div className={cn("button-row", uiPatterns["button-row"])}>
-            {canReadLogs && !publicAccess && !activeBatch ? (
-              <AiAnalysisButton batchId={batch.id} />
-            ) : null}
-            {activeBatch && canReadConcurrencyDiagnostics && !publicAccess ? (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setConcurrencyDialogOpen(true)}
-              >
-                <Gauge size={16} />
-                并发诊断
-              </Button>
-            ) : null}
-            {batch.status === "failed" ? (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setExceptionsDialogOpen(true)}
-              >
-                <AlertTriangle size={16} />
-                查看异常原因
-              </Button>
-            ) : null}
-            {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
-              <StartFailureAnalysisButton scope={analysisScope} />
-            ) : null}
-            {canCancelRuns && activeBatch && !batch.terminationRequestedAt ? (
-              <BatchSchedulingButton
-                batch={batch}
-                onChanged={refreshBatch}
-                disabled={actionPending !== undefined}
-              />
-            ) : null}
-            {canCancelRuns && activeBatch ? (
-              batch.terminationRequestedAt ? (
-                <span role="status" aria-live="polite">
-                  <SemanticStatusTag tone="info">
-                    <span className="inline-flex min-h-8 items-center gap-2">
-                      <LoadingOutlined spin />
-                      终止中
-                    </span>
-                  </SemanticStatusTag>
-                </span>
-              ) : (
+      <ExecutionBatchOverview batch={batch}>
+        {((canReadLogs && !publicAccess && !activeBatch) ||
+          analysisScope ||
+          (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
+          batch.status === "failed" ||
+          canCancelRuns ||
+          (canCreateRuns && retrySuiteId) ||
+          canRerunFinalFailures ||
+          canCreateFailureTask) && (
+          <section
+            className={cn(
+              "execution-detail-actions",
+              executionBatchDetailsStyles["execution-detail-actions"],
+            )}
+            aria-label="批次操作"
+          >
+            <div>
+              <strong>
+                {batch.terminationRequestedAt
+                  ? activeBatch
+                    ? "任务正在终止"
+                    : "任务已终止"
+                  : batch.pauseRequestedAt && activeBatch
+                    ? batch.status === "queued"
+                      ? "任务已暂停"
+                      : "任务正在暂停"
+                    : activeBatch
+                      ? "批次仍在执行"
+                      : "批次已进入终态"}
+              </strong>
+              <span>
+                {batch.terminationRequestedAt
+                  ? activeBatch
+                    ? "后续调度已停止，等待已领取用例自然完成及状态收尾；不会进入下一轮。"
+                    : "本批次的执行与收尾已结束，执行记录和结果已保留。"
+                  : batch.pauseRequestedAt && activeBatch
+                    ? "新的调度已暂停，已下发的用例继续完成；点击继续调度执行剩余用例及重试。"
+                    : batch.status === "failed"
+                      ? "查看异常原因可定位非正常结束的用例或轮次恢复步骤。"
+                      : retrySuiteId
+                        ? "再次执行会读取任务当前版本的完整配置并创建新批次。"
+                        : "本批次的执行记录与配置快照已保留，可继续查看结果和日志。"}
+              </span>
+            </div>
+            <div className={cn("button-row", uiPatterns["button-row"])}>
+              {canReadLogs && !publicAccess && !activeBatch ? (
+                <AiAnalysisButton batchId={batch.id} />
+              ) : null}
+              {activeBatch && canReadConcurrencyDiagnostics && !publicAccess ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setConcurrencyDialogOpen(true)}
+                >
+                  <Gauge size={16} />
+                  并发诊断
+                </Button>
+              ) : null}
+              {batch.status === "failed" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setExceptionsDialogOpen(true)}
+                >
+                  <AlertTriangle size={16} />
+                  查看异常原因
+                </Button>
+              ) : null}
+              {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
+                <StartFailureAnalysisButton scope={analysisScope} />
+              ) : null}
+              {canCancelRuns && activeBatch && !batch.terminationRequestedAt ? (
+                <BatchSchedulingButton
+                  batch={batch}
+                  onChanged={refreshBatch}
+                  disabled={actionPending !== undefined}
+                />
+              ) : null}
+              {canCancelRuns && activeBatch ? (
+                batch.terminationRequestedAt ? (
+                  <span role="status" aria-live="polite">
+                    <SemanticStatusTag tone="info">
+                      <span className="inline-flex min-h-8 items-center gap-2">
+                        <LoadingOutlined spin />
+                        终止中
+                      </span>
+                    </SemanticStatusTag>
+                  </span>
+                ) : (
+                  <Button
+                    className={cn(
+                      "button button-danger-quiet",
+                      uiPatterns["button"],
+                      uiPatterns["button-danger-quiet"],
+                    )}
+                    disabled={actionPending !== undefined}
+                    onClick={() => void terminateBatch()}
+                    type="button"
+                  >
+                    <OctagonX size={16} />
+                    {actionPending === "cancel" ? "正在终止…" : "终止任务"}
+                  </Button>
+                )
+              ) : null}
+              {canCreateRuns && retrySuiteId && !activeBatch ? (
                 <Button
                   className={cn(
-                    "button button-danger-quiet",
+                    "button button-primary",
                     uiPatterns["button"],
-                    uiPatterns["button-danger-quiet"],
+                    uiPatterns["button-primary"],
                   )}
                   disabled={actionPending !== undefined}
-                  onClick={() => void terminateBatch()}
+                  onClick={() => void retryBatch()}
                   type="button"
                 >
-                  <OctagonX size={16} />
-                  {actionPending === "cancel" ? "正在终止…" : "终止任务"}
+                  <RotateCcw size={16} />
+                  {actionPending === "retry" ? "正在创建…" : "再次执行"}
                 </Button>
-              )
-            ) : null}
-            {canCreateRuns && retrySuiteId && !activeBatch ? (
-              <Button
-                className={cn(
-                  "button button-primary",
-                  uiPatterns["button"],
-                  uiPatterns["button-primary"],
-                )}
-                disabled={actionPending !== undefined}
-                onClick={() => void retryBatch()}
-                type="button"
+              ) : null}
+              {canRerunFinalFailures ? (
+                <Button
+                  className={cn(
+                    "button button-secondary",
+                    uiPatterns["button"],
+                    uiPatterns["button-secondary"],
+                  )}
+                  disabled={actionPending !== undefined}
+                  onClick={() => setFinalFailuresDialogOpen(true)}
+                  type="button"
+                >
+                  <RotateCcw size={16} />
+                  重新执行最后一轮
+                </Button>
+              ) : null}
+              {canCreateFailureTask ? (
+                <Button
+                  variant="secondary"
+                  disabled={actionPending !== undefined}
+                  onClick={() => setFailureTaskDialogOpen(true)}
+                  type="button"
+                >
+                  <ListPlus size={16} />
+                  以未通过用例创建任务
+                </Button>
+              ) : null}
+            </div>
+            {actionError ? (
+              <Notice
+                tone="error"
+                className={cn("form-error", uiPatterns["form-error"])}
+                role="alert"
               >
-                <RotateCcw size={16} />
-                {actionPending === "retry" ? "正在创建…" : "再次执行"}
-              </Button>
+                {actionError}
+              </Notice>
             ) : null}
-            {canRerunFinalFailures ? (
-              <Button
-                className={cn(
-                  "button button-secondary",
-                  uiPatterns["button"],
-                  uiPatterns["button-secondary"],
-                )}
-                disabled={actionPending !== undefined}
-                onClick={() => setFinalFailuresDialogOpen(true)}
-                type="button"
-              >
-                <RotateCcw size={16} />
-                重新执行最后一轮
-              </Button>
-            ) : null}
-            {canCreateFailureTask ? (
-              <Button
-                variant="secondary"
-                disabled={actionPending !== undefined}
-                onClick={() => setFailureTaskDialogOpen(true)}
-                type="button"
-              >
-                <ListPlus size={16} />
-                以未通过用例创建任务
-              </Button>
-            ) : null}
-          </div>
-          {actionError ? (
-            <Notice
-              tone="error"
-              className={cn("form-error", uiPatterns["form-error"])}
-              role="alert"
-            >
-              {actionError}
-            </Notice>
-          ) : null}
-        </section>
-      )}
+          </section>
+        )}
+      </ExecutionBatchOverview>
 
       {concurrencyDialogOpen && !publicAccess ? (
         <ConcurrencyDiagnosticsDialog
@@ -534,65 +453,8 @@ export function ExecutionBatchDetails({
   );
 }
 
-// 倒计时只更新这一张指标卡；不能把每秒时钟放在详情根组件，否则 500 行用例表、
-// 图表和轮次树都会跟着每秒重渲染。
-function CountdownMetric({ scheduledFor }: { scheduledFor: string }) {
-  const nowMs = usePlatformNow();
-
-  return (
-    <Metric
-      label="距离开始"
-      value={formatBatchDuration(Math.max(0, Date.parse(scheduledFor) - nowMs))}
-    />
-  );
-}
-
-function Metric({
-  label,
-  value,
-  hint,
-  title,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  title?: string;
-}) {
-  return (
-    <div className={cn("batch-metric", executionBatchDetailsStyles["batch-metric"])} title={title}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {hint ? <small>{hint}</small> : null}
-    </div>
-  );
-}
-
-// 进行中批次每秒滴答刷新已运行时长；终态批次显示开始结束之间的总时长。
-function ElapsedMetric({
-  active,
-  batch,
-  startedAt,
-}: {
-  active: boolean;
-  batch: ExecutionBatchView;
-  startedAt: string;
-}) {
-  const terminal = isTerminalRunBatch(batch.status);
-  const nowMs = usePlatformNow(active);
-
-  const endMs = terminal ? Date.parse(batchFinishedAt(batch)) : nowMs;
-  const durationMs = Math.max(0, endMs - Date.parse(startedAt));
-  return (
-    <Metric label={terminal ? "执行耗时" : "已运行时长"} value={formatBatchDuration(durationMs)} />
-  );
-}
-
 const executionBatchDetailsStyles = {
-  "batch-metric":
-    "grid min-w-0 gap-[5px] py-4.5 px-5 border-r border-solid border-border [&:last-child]:border-r-0 [&_>_span]:text-muted-foreground [&_>_span]:text-xs [&_>_strong]:text-base [&_>_strong]:tabular-nums [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal [&_>_small]:text-muted-foreground [&_>_small]:text-xs max-[1101px]:[&:nth-child(-n_+_3)]:border-b max-[1101px]:[&:nth-child(-n_+_3)]:border-solid max-[1101px]:[&:nth-child(-n_+_3)]:border-border max-[1101px]:[&:nth-child(3n)]:border-r-0",
-  "batch-metrics-band":
-    "grid grid-cols-6 border border-solid border-border rounded-xl bg-card shadow-xs overflow-hidden max-[1101px]:grid-cols-3",
   "execution-detail-actions":
-    "flex flex-wrap items-center justify-between gap-5 border border-solid border-border rounded-xl py-4 px-4.5 bg-card [&_>_div:first-child]:grid [&_>_div:first-child]:min-w-0 [&_>_div:first-child]:gap-1 [&_>_div:first-child_>_span]:text-muted-foreground [&_>_div:first-child_>_span]:text-xs [&_.button-row]:min-w-0 [&_.button-row]:max-w-full [&_.button-row]:mt-0 [&_.button-row_.button]:shrink-0 [&_.form-error]:m-0 max-[1181px]:items-start max-[1181px]:flex-col",
-  "execution-detail-layout": "grid grid-cols-[minmax(0,_1fr)] gap-6",
+    "grid min-w-0 gap-3 border-t border-border bg-muted/20 px-5 py-4 [&_>_div:first-child]:grid [&_>_div:first-child]:min-w-0 [&_>_div:first-child]:gap-1 [&_>_div:first-child_>_span]:text-muted-foreground [&_>_div:first-child_>_span]:text-xs [&_.button-row]:min-w-0 [&_.button-row]:max-w-full [&_.button-row]:mt-0 [&_.button-row]:gap-2 [&_.button-row_.button]:shrink-0 [&_.form-error]:m-0",
+  "execution-detail-layout": "grid grid-cols-[minmax(0,_1fr)] gap-4",
 } as const;

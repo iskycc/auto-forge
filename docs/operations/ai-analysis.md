@@ -1,6 +1,6 @@
 # AI 初步分析：使用、部署与验证
 
-状态：v1.21.19 首版实现与定向验证完成；发布状态以 GitHub Release 为准。更新时间：2026-11-04。
+状态：v1.21.19 首版实现与定向验证完成；发布状态以 GitHub Release 为准。更新时间：2026-11-05。
 
 完整需求见[实现指导](../architecture/ai-failure-analysis.md)，提示词目标规范见[提示词附录](../architecture/ai-failure-analysis-prompts.md)。本页说明当前代码接入方式，不把后续规划能力描述为已经完成。
 
@@ -9,6 +9,8 @@
 “平台设置 → 模型配置”配置 OpenAI 兼容 Chat Completions API 根地址、API Key、模型 ID、上下文和输出 token 预算、全端点共享并发／RPM／TPM、响应期限、最大重试及每例证据空间预算。例：`http://model.internal:8000/v1`，不要再附加 `/chat/completions`。API Key 加密保存，留空保留原值；无鉴权内网端点可以不设置。
 
 “检查连接”只发送合成指令，核对接口和工具调用，不发送真实执行日志。配置保存后对新请求生效，无需重启。已有在途请求可能仍用其已取得的配置；关闭功能后不领取新工作，已有请求有限排空。平台不下载模型、不默认访问公网。
+
+模型启用开关使用统一 Ant Design 尺寸，标签与开关同行。通过普通 HTTP／局域网 IP 访问时，分析入口使用浏览器 `getRandomValues` 生成幂等键，不依赖仅安全上下文提供的 `randomUUID`；提交响应丢失后，重试继续使用原键，避免重复创建分析作业。后台权限和模型连接方式保持不变。
 
 管理员需为项目使用者授予 `analysis.ai.read` 和 `analysis.ai.create`，同时具有 `run.read、case.read、log.read`。原人工分析权限不会自动变成模型数据披露权限。系统管理员可管理配置；普通项目成员不能读取密钥。报告和证据按当前权限重新校验。
 
@@ -105,3 +107,15 @@ pnpm exec playwright test tests/e2e/ai-analysis.spec.ts --workers=1
 已实际查看 10 张截图：1024×768 和 1536×960 下的模型配置、用例行按钮、任务自动初析开关，以及深／浅色初析弹窗。表格操作列保持原宽度，1024px 继续使用原有表内横向滚动；1536px 下原日志、公开日志和详情按钮完整显示。弹窗分页固定在页脚，正文单独滚动，未发现新增溢出、重叠或开关换行。截图位于本机 `/var/tmp/autoforge-ai-ui-20261104/`，不作为构建产物提交。
 
 本轮没有重跑整个仓库的全部 E2E、真实 Runner 执行与整套断网验收；未修改 Runner 协议或引入运行时下载依赖。**真实内网模型尚未接入验证**，根因准确性需要另用脱敏黄金集评估；合成模型测试仅证明编排、权限、重试、导出与页面行为，不能证明模型判断正确或所有负载下的性能。
+
+### 2026-11-05：HTTP 兼容与启用开关
+
+修复前，生产包的 Playwright 回归分别复现了 64×32 的偏大开关，以及浏览器没有 `randomUUID` 时分析弹窗中的 `crypto.randomUUID is not a function`。浏览器测试通过初始化脚本移除该方法，保留 `getRandomValues`，模拟普通 HTTP／局域网 IP 的接口可用性；服务端随机源不受影响。
+
+修复后，`pnpm exec playwright test tests/e2e/ai-analysis.spec.ts --workers=1` 两项场景通过。使用真实 Lite 生产页面、持久队列及本地合成模型，验证开关鼠标／键盘操作与保存后重载、模型连接检查、密钥不回显、首次创建批次分析、响应丢失后以相同幂等键重试、429 退避、结论展开、单用例独立重新分析、AI 列实际导出和任务结束自动分析。一次中间复验遇到新测试的“关闭”选择器同时匹配图标和页脚按钮，限定为页脚按钮后完整重跑通过，产品无需因此改动。
+
+开关恢复统一主题下的 44×22，标签点击区域不小于 32px，标签与开关同行。实际查看 1024×768、1536×960 下的深浅色、开关两种状态、批次及单用例分析截图，滑块在轨道内，对齐正常，没有新增溢出或重叠。截图位于 `/var/tmp/autoforge-ai-fixes-ui-20261105/`，完整复验记录为 `/var/tmp/autoforge-ai-fixes-playwright-final-20261105.log`。
+
+最终通过五个相关 Vitest 文件共 39 项测试：浏览器幂等键、共享 UI 使用约束、AI 契约、AI 应用编排及模型网关。变更 TypeScript 文件的 ESLint、`pnpm format:check`（含 Go 格式与许可证）、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix` 与 `git diff --check` 均通过。Web 生产构建通过，质量记录为 `/var/tmp/autoforge-ai-fixes-quality-20261105.log`，构建记录为 `/var/tmp/autoforge-ai-fixes-final-build-20261105.log`。
+
+本次仅修改共享浏览器提交和配置表单布局，Lite／Full 共用；未改调度、模型权限、API 契约及数据库 schema。Full 中间件矩阵、真实 Runner 与真实模型未重跑。

@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
@@ -258,6 +259,7 @@ async function verifyLogStreamIsolation(
   });
   try {
     await page.goto(`/run-batches/${batchId}`);
+    await openExecutionCaseDetails(page);
     await page.getByRole("button", { name: "查看日志", exact: true }).click();
     await stdoutReceived;
     await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();

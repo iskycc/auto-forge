@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails, closeExecutionCaseDetails } from "./support/execution-details";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -40,6 +41,7 @@ test("executes and cancels TestNG in a constrained immutable container", async (
       testNg: { total: 1, passed: 1, failed: 0, skipped: 0 },
     });
     await page.goto(`/run-batches/${encodeURIComponent(successfulBatchId)}`);
+    await openExecutionCaseDetails(page);
     await page.getByRole("button", { name: "查看日志" }).click();
     await expect(page.locator(".execution-log")).toContainText("CONTAINER_POLICY_STDOUT_中文_完成");
     await page.getByRole("radio", { name: "stderr", exact: true }).locator("..").click();
@@ -52,10 +54,13 @@ test("executes and cancels TestNG in a constrained immutable container", async (
       .getByRole("button", { name: "详情" })
       .click();
     await expect(page.getByText(/reports\/testng\/testng-results\.xml/)).toBeVisible();
+    await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
 
+    await closeExecutionCaseDetails(page);
     const cancellationBatchId = await scheduleExecution(page, cancellationSuiteName);
     await waitForRunningContainer(agent);
     await page.goto(`/run-batches/${encodeURIComponent(cancellationBatchId)}`);
+    await openExecutionCaseDetails(page);
     await page.getByRole("button", { name: "取消该用例" }).click();
     const cancellationDialog = page.getByRole("dialog", { name: "取消用例执行" });
     await cancellationDialog.getByLabel("取消原因").fill("Container cleanup acceptance");

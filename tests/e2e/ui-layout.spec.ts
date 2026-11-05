@@ -1,3 +1,8 @@
+import {
+  openExecutionCaseDetails,
+  closeExecutionCaseDetails,
+  selectExecutionRound,
+} from "./support/execution-details";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -86,8 +91,9 @@ test("execution case column sorts ordinary class paths and preserves desktop tab
   const fixture = insertExecutionCaseSortFixture(directory, version.body.id, suffix);
   const caseNames = page.locator(".execution-case-table tbody tr .execution-case-heading strong");
   await page.goto(`/run-batches/${fixture.batchId}`);
+  await openExecutionCaseDetails(page);
   for (const round of ["初始轮次", "总结", "全部轮次"]) {
-    await page.getByRole("button", { name: round, exact: true }).click();
+    await selectExecutionRound(page, round);
     await expect(caseNames).toHaveText(fixture.originalNames);
     const sortButton = page
       .locator(".execution-case-table")
@@ -107,6 +113,7 @@ test("execution case column sorts ordinary class paths and preserves desktop tab
       .context()
       .addCookies([{ name: "autoforge-color-mode", value: theme, url: page.url() }]);
     await page.goto(`/run-batches/${fixture.batchId}`);
+    await openExecutionCaseDetails(page);
     await expect(caseNames).toHaveCount(5);
     await page
       .locator(".execution-case-table")
@@ -134,6 +141,7 @@ test("execution case column sorts ordinary class paths and preserves desktop tab
   try {
     const publicPage = await context.newPage();
     await publicPage.goto(share.body.shareUrl);
+    await openExecutionCaseDetails(publicPage);
     const publicNames = publicPage.locator(
       ".execution-case-table tbody tr .execution-case-heading strong",
     );
@@ -383,6 +391,7 @@ test("batch runner panel separates round attempts from resource snapshots and co
     if (/\/api\/v1\/runners\/[^/]+\/telemetry$/.test(request.url())) telemetryRequests += 1;
   });
   await page.goto(`/run-batches/${fixture.batchId}`);
+  await openExecutionCaseDetails(page);
   const toolbar = page.locator(".round-tab-toolbar");
   await toolbar.getByText("执行机", { exact: true }).click();
   const panel = page.getByRole("region", { name: "本轮执行机状态" });
@@ -408,6 +417,7 @@ test("batch runner panel separates round attempts from resource snapshots and co
         { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
       ]);
     await page.reload();
+    await openExecutionCaseDetails(page);
     await toolbar.getByText("执行机", { exact: true }).click();
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
@@ -719,6 +729,7 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await expect(
       anonymousPage.getByRole("main").getByText("永久匿名只读执行详情", { exact: true }),
     ).toBeVisible();
+    await openExecutionCaseDetails(anonymousPage);
     await expect(anonymousPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
     await expect(anonymousPage.locator(".execution-case-table")).toContainText(
       `分析 Runner ${suffix}`,
@@ -768,8 +779,10 @@ test("anonymous execution details keep tables and actions within the page", asyn
       await expect(anonymousPage.locator(".testng-results")).toBeVisible();
       await expectUiIntegrity(anonymousPage);
       await captureUi(anonymousPage, "shared-execution-expanded", viewport.width);
-      await actions.getByRole("button", { name: "详情", exact: true }).click();
-      await anonymousPage.getByRole("button", { name: "全部轮次", exact: true }).click();
+      await anonymousPage
+        .getByRole("dialog", { name: "结构化执行详情", exact: true })
+        .press("Escape");
+      await selectExecutionRound(anonymousPage, "全部轮次");
       await expect(
         anonymousPage
           .locator(".execution-case-table")
@@ -777,9 +790,11 @@ test("anonymous execution details keep tables and actions within the page", asyn
       ).toBeVisible();
       await expectUiIntegrity(anonymousPage);
       await captureUi(anonymousPage, "shared-execution-all-rounds", viewport.width);
-      await anonymousPage.getByRole("button", { name: "初始轮次", exact: true }).click();
+      await selectExecutionRound(anonymousPage, "初始轮次");
     }
+    await closeExecutionCaseDetails(anonymousPage);
     await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await openExecutionCaseDetails(anonymousPage);
     await waitForUiTransitions(anonymousPage);
     await expectUiIntegrity(anonymousPage);
     await captureUi(anonymousPage, "shared-execution-dark", 1536);
@@ -790,6 +805,7 @@ test("anonymous execution details keep tables and actions within the page", asyn
     await anonymousPage.locator(".round-tab-toolbar").getByText("用例", { exact: true }).click();
     for (const executionPath of [share.body.shareUrl, legacyExecutionPath(fixture.batchId)]) {
       await anonymousPage.goto(executionPath);
+      await openExecutionCaseDetails(anonymousPage);
       const publicLog = anonymousPage
         .getByRole("link", { name: "查看公开日志", exact: true })
         .first();
@@ -828,7 +844,10 @@ test("anonymous execution details keep tables and actions within the page", asyn
   }
 });
 
-test("anonymous execution columns share space with failure stacks", async ({ page, browser }) => {
+test("anonymous execution columns stay stable and show full failure stacks in dialogs", async ({
+  page,
+  browser,
+}) => {
   await ensureAdministrator(page);
   const suffix = uniqueName("shared-columns");
   const version = await browserJson<{ id: string }>(
@@ -908,13 +927,23 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
     ]) {
       await anonymousPage.setViewportSize(viewport);
       const widths: number[][] = [];
+      const consoleScenarioWidths: number[][] = [];
       for (const [index, url] of shares.entries()) {
         await anonymousPage.goto(url);
+        await openExecutionCaseDetails(anonymousPage);
         const rows = anonymousPage.locator(".execution-case-table tbody tr");
         await expect(rows).toHaveCount(5);
-        await expect(rows.first().locator(".attempt-failure-line")).toHaveText(
+        await expect(rows.first().locator(".execution-case-status-preview small")).toHaveText(
           scenarios[index]!.summary,
         );
+        await rows
+          .first()
+          .getByRole("button", { name: /^查看执行结果：/ })
+          .click();
+        const content = anonymousPage.getByRole("dialog", { name: "用例执行信息", exact: true });
+        await expect(content).toContainText(scenarios[index]!.summary);
+        await content.press("Escape");
+        await expect(content).toHaveCount(0);
         await waitForUiTransitions(anonymousPage);
         await captureUi(anonymousPage, scenarios[index]!.screenshot, viewport.width);
         await expectUiIntegrity(anonymousPage);
@@ -926,12 +955,19 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
         );
         await page.setViewportSize(viewport);
         await page.goto(`/run-batches/${batches[index]}`);
+        await openExecutionCaseDetails(page);
         const consoleRows = page.locator(".execution-case-table tbody tr");
         await expect(consoleRows).toHaveCount(5);
         const consoleWidths = await consoleRows
           .first()
           .locator("td")
           .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+        consoleScenarioWidths.push(consoleWidths);
+        expect(consoleWidths).toEqual(consoleScenarioWidths[0]);
+        const rowHeights = await consoleRows.evaluateAll((elements) =>
+          elements.map((element) => element.getBoundingClientRect().height),
+        );
+        expect(Math.max(...rowHeights) - Math.min(...rowHeights)).toBeLessThan(2);
         const consoleBody = page.locator(".round-detail-body");
         if (viewport.width === 1536) {
           const bodyBounds = (await consoleBody.boundingBox())!;
@@ -946,12 +982,8 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
             expect(
               measured[1],
               "short results must not absorb all remaining table space",
-            ).toBeLessThan(measured.reduce((total, width) => total + width, 0) * 0.26);
+            ).toBeLessThan(measured.reduce((total, width) => total + width, 0) * 0.4);
           }
-        } else {
-          expect(consoleWidths[1], "console stacks also need readable width").toBeGreaterThan(
-            consoleWidths[0]!,
-          );
         }
         await expectUiIntegrity(page);
         await captureUi(
@@ -961,7 +993,7 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
         );
         if (index === 0) {
           for (const detailsPage of [anonymousPage, page]) {
-            await detailsPage.getByRole("button", { name: "全部轮次", exact: true }).click();
+            await selectExecutionRound(detailsPage, "全部轮次");
             await expect(detailsPage.locator(".execution-case-table tbody tr")).toHaveCount(5);
             await expect(
               detailsPage
@@ -976,25 +1008,14 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
             expect(
               allRoundWidths[2],
               "adding a round column keeps short results compact",
-            ).toBeLessThan(allRoundWidths.reduce((total, width) => total + width, 0) * 0.26);
+            ).toBeLessThan(allRoundWidths.reduce((total, width) => total + width, 0) * 0.4);
             await expectUiIntegrity(detailsPage);
-            await detailsPage.getByRole("button", { name: "初始轮次", exact: true }).click();
+            await selectExecutionRound(detailsPage, "初始轮次");
           }
         }
       }
-      expect(widths[1]![1], "long failure stacks need more space than case names").toBeGreaterThan(
-        widths[1]![0]!,
-      );
-      expect(widths[1]![0], "the case column yields space to longer failure details").toBeLessThan(
-        widths[0]![0]!,
-      );
-      expect(widths[1]![1], "the status column grows with its content").toBeGreaterThan(
-        widths[0]![1]!,
-      );
-      expect(
-        widths[2]![1],
-        "a single failure still gets enough space among successful cases",
-      ).toBeCloseTo(widths[1]![1]!, 0);
+      expect(widths[1], "long failure stacks keep the same column layout").toEqual(widths[0]);
+      expect(widths[2], "a single failure keeps the same column layout").toEqual(widths[0]);
       await anonymousPage.getByLabel("按名称搜索用例", { exact: true }).fill("通过用例");
       const filteredRows = anonymousPage.locator(".execution-case-table tbody tr");
       await expect(filteredRows).toHaveCount(1);
@@ -1002,14 +1023,7 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
         .first()
         .locator("td")
         .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
-      expect(
-        passedWidths[0],
-        "filtering out failures releases space for case names",
-      ).toBeGreaterThan(widths[1]![0]!);
-      expect(
-        passedWidths[1],
-        "short success statuses do not retain the failure width",
-      ).toBeLessThan(widths[1]![1]!);
+      expect(passedWidths, "filtering by result preserves column widths").toEqual(widths[2]);
       await expectUiIntegrity(anonymousPage);
       await captureUi(anonymousPage, "shared-passed-filter", viewport.width);
       await page.getByLabel("按名称搜索用例", { exact: true }).fill("通过用例");
@@ -1022,12 +1036,12 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
       expect(
         consolePassedWidths[1],
         "hidden successful summaries must not widen the result column",
-      ).toBeLessThan(consolePassedWidths.reduce((total, width) => total + width, 0) * 0.26);
+      ).toBeLessThan(consolePassedWidths.reduce((total, width) => total + width, 0) * 0.4);
       await expectUiIntegrity(page);
       await captureUi(page, "console-passed-filter", viewport.width);
       await anonymousPage.getByLabel("按名称搜索用例", { exact: true }).fill("");
       await expect(filteredRows).toHaveCount(5);
-      await anonymousPage.getByRole("button", { name: "全部轮次", exact: true }).click();
+      await selectExecutionRound(anonymousPage, "全部轮次");
       await expect(
         anonymousPage
           .locator(".execution-case-table")
@@ -1037,7 +1051,9 @@ test("anonymous execution columns share space with failure stacks", async ({ pag
       await expectUiIntegrity(anonymousPage);
     }
     await anonymousPage.setViewportSize({ width: 1536, height: 960 });
+    await closeExecutionCaseDetails(anonymousPage);
     await anonymousPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await openExecutionCaseDetails(anonymousPage);
     await waitForUiTransitions(anonymousPage);
     await captureUi(anonymousPage, "shared-failure-stack-dark", 1536);
     await expectUiIntegrity(anonymousPage);
@@ -1097,6 +1113,7 @@ test("execution exports preserve DDT CaseName and SRID while leaving mixed stand
     database.close();
   }
   await page.goto(`/run-batches/${fixture.batchId}?round=summary`);
+  await openExecutionCaseDetails(page);
   const dialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
   for (const template of ["results", "failure-analysis"] as const) {
     await page.getByRole("button", { name: "导出结果", exact: true }).click();
@@ -1244,6 +1261,7 @@ test("execution export dialog keeps choices readable and downloads the selected 
     exportDatabase.close();
   }
   await page.goto(`/run-batches/${fixture.batchId}?round=1`);
+  await openExecutionCaseDetails(page);
   await page.getByRole("button", { name: "导出结果", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
   await expect(dialog).toBeVisible();
@@ -1343,7 +1361,7 @@ test("execution export dialog keeps choices readable and downloads the selected 
   await expect(dialog).not.toBeVisible();
 
   await page.setViewportSize({ width: 1536, height: 960 });
-  await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+  await selectExecutionRound(page, "全部轮次");
   await expect(page).toHaveURL(/round=all/);
   await expect(page.locator(".round-cases")).toBeVisible();
   await page.getByRole("button", { name: "导出结果", exact: true }).click();
@@ -1351,7 +1369,7 @@ test("execution export dialog keeps choices readable and downloads the selected 
   await expect(dialog.getByRole("radio", { name: /^当前轮次/ })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
-  await page.getByRole("button", { name: "总结", exact: true }).click();
+  await selectExecutionRound(page, "总结");
   await expect(page).toHaveURL(/round=summary/);
   await page.getByRole("button", { name: "导出结果", exact: true }).click();
   await expect(dialog.getByRole("radio", { name: /^最终结果/ })).toBeChecked();
@@ -1368,7 +1386,9 @@ test("execution export dialog keeps choices readable and downloads the selected 
     await page.screenshot({ path: test.info().outputPath(`export-analysis-${width}.png`) });
   }
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await closeExecutionCaseDetails(page);
   await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await openExecutionCaseDetails(page);
   await page.getByRole("button", { name: "导出结果", exact: true }).click();
   await waitForUiTransitions(page);
   await page.screenshot({ path: test.info().outputPath("export-results-dark-1536.png") });
@@ -5095,6 +5115,7 @@ test("execution case actions stay on one line in console and shared details", as
       [anonymousPage, share.body.shareUrl, "public", 2],
     ] as const) {
       await target.goto(url);
+      await openExecutionCaseDetails(target);
       await expect(target.locator(".round-row-actions")).toHaveCount(5);
       for (const appearance of ["light", "dark"]) {
         await target
@@ -5103,11 +5124,12 @@ test("execution case actions stay on one line in console and shared details", as
             { name: "autoforge-color-mode", value: appearance, url: "http://127.0.0.1:3100" },
           ]);
         await target.reload();
+        await openExecutionCaseDetails(target);
         for (const width of [1024, 1536]) {
           await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
           for (const round of ["初始轮次", "全部轮次"]) {
             const roundSelector = target.getByRole("button", { name: round, exact: true });
-            await roundSelector.click();
+            await selectExecutionRound(target, round);
             // Both scopes have five rows; count alone can still observe the previous scope.
             await expect(roundSelector).toHaveAttribute("aria-current", "true");
             const actions = target.locator(".round-row-actions");
@@ -5159,7 +5181,7 @@ test("execution case actions stay on one line in console and shared details", as
         .getByRole("button", { name: "详情", exact: true });
       await detail.click();
       await expect(target.locator(".testng-results")).toBeVisible();
-      await detail.click();
+      await target.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
       await expect(target.locator(".testng-results")).toHaveCount(0);
     }
     await page
@@ -5167,9 +5189,9 @@ test("execution case actions stay on one line in console and shared details", as
       .first()
       .getByRole("button", { name: "查看日志", exact: true })
       .click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await page.getByRole("dialog").press("Escape");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /^执行日志 ·/ })).toBeVisible();
+    await page.getByRole("dialog", { name: /^执行日志 ·/ }).press("Escape");
+    await expect(page.getByRole("dialog", { name: /^执行日志 ·/ })).toHaveCount(0);
   } finally {
     await anonymousContext.close();
   }

@@ -1,3 +1,8 @@
+import {
+  openExecutionCaseDetails,
+  closeExecutionCaseDetails,
+  selectExecutionRound,
+} from "./support/execution-details";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -113,16 +118,17 @@ test("completed 13001-case ten-round tasks recover failed and delayed statistics
     await expect(page.locator(".execution-round-table tbody tr")).toHaveCount(12, {
       timeout: 60_000,
     });
+    await openExecutionCaseDetails(page);
     await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(50, {
       timeout: 60_000,
     });
     const rounds = page.getByLabel("轮次列表", { exact: true });
-    await rounds.getByRole("button", { name: "初始轮次", exact: true }).click();
+    await selectExecutionRound(page, "初始轮次");
     await expect(page.getByLabel("轮次详情：初始轮次", { exact: true })).toBeVisible();
     await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(50, {
       timeout: 30_000,
     });
-    await rounds.getByRole("button", { name: "全部轮次", exact: true }).click();
+    await selectExecutionRound(page, "全部轮次");
     await expect(page.getByLabel("轮次详情：全部轮次", { exact: true })).toBeVisible();
     await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(50, {
       timeout: 30_000,
@@ -138,7 +144,9 @@ test("completed 13001-case ten-round tasks recover failed and delayed statistics
         animations: "disabled",
       });
     }
+    await closeExecutionCaseDetails(page);
     await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await openExecutionCaseDetails(page);
     await page.screenshot({
       path: testInfo.outputPath("statistics-ready-dark-1536.png"),
       animations: "disabled",

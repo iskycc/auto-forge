@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -13,6 +14,65 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+
+test("AI model settings keep a compact switch with an aligned handle in both themes", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ensureAdministrator(page);
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  for (const theme of ["light", "dark"] as const) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+      ]);
+    await page.goto("/settings/platform?section=ai");
+    const enabled = page.getByRole("switch", { name: "启用 AI 初步分析", exact: true });
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await enabled.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: resolve(screenshots, `ai-switch-${theme}-${width}.png`),
+        fullPage: true,
+        animations: "disabled",
+      });
+      const track = await enabled.boundingBox();
+      expect(track).not.toBeNull();
+      expect(track!.width).toBeGreaterThanOrEqual(40);
+      expect(track!.width).toBeLessThanOrEqual(48);
+      expect(track!.height).toBeGreaterThanOrEqual(20);
+      expect(track!.height).toBeLessThanOrEqual(24);
+      const initiallyChecked = await enabled.isChecked();
+      for (const checked of [!initiallyChecked, initiallyChecked]) {
+        await enabled.focus();
+        await page.keyboard.press("Space");
+        await expect(enabled).toBeChecked({ checked });
+        const handle = enabled.locator(".ant-switch-handle");
+        await expect
+          .poll(async () => {
+            const bounds = (await handle.boundingBox())!;
+            return Math.abs(
+              checked
+                ? track!.x + track!.width - bounds.x - bounds.width - 2
+                : bounds.x - track!.x - 2,
+            );
+          })
+          .toBeLessThanOrEqual(1);
+        const bounds = (await handle.boundingBox())!;
+        expect(bounds.y).toBeGreaterThanOrEqual(track!.y);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(track!.y + track!.height);
+        await page.screenshot({
+          path: resolve(screenshots, `ai-switch-${theme}-${width}-${checked ? "on" : "off"}.png`),
+          fullPage: true,
+          animations: "disabled",
+        });
+      }
+      await expectUiIntegrity(page);
+    }
+  }
+});
 
 test("AI settings, durable batch and single analysis, retry and partial export preserve the execution UI", async ({
   page,
@@ -74,7 +134,16 @@ test("AI settings, durable batch and single analysis, retry and partial export p
   if (!address || typeof address === "string") throw new Error("Model fixture did not listen.");
   try {
     await page.emulateMedia({ reducedMotion: "reduce" });
+    // Plain HTTP on a LAN has getRandomValues but does not expose randomUUID.
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: undefined,
+        configurable: true,
+      });
+    });
     await ensureAdministrator(page);
+    expect(await page.evaluate(() => typeof globalThis.crypto.randomUUID)).toBe("undefined");
+    expect(await page.evaluate(() => typeof globalThis.crypto.getRandomValues)).toBe("function");
     const version = await browserJson<{ id: string }>(
       page,
       `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
@@ -108,6 +177,15 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     expect(saved.status).toBe(200);
     expect(JSON.stringify(saved.body)).not.toContain("e2e-only-key");
     await page.goto("/settings/platform?section=ai");
+    const enabled = page.getByRole("switch", { name: "启用 AI 初步分析", exact: true });
+    await expect(enabled).toBeChecked();
+    await enabled.click();
+    await expect(enabled).not.toBeChecked();
+    await enabled.click();
+    await page.getByRole("button", { name: "保存配置", exact: true }).click();
+    await expect(page.getByText("已保存；新分析请求立即使用此配置，无需重启。")).toBeVisible();
+    await page.reload();
+    await expect(enabled).toBeChecked();
     await page.getByRole("button", { name: "检查连接", exact: true }).click();
     await expect(page.getByText("模型连接与工具调用检查通过。", { exact: true })).toBeVisible();
     const screenshots =
@@ -158,6 +236,9 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     await dialog.getByRole("button", { name: "重新分析", exact: true }).click();
     await expect.poll(() => submittedKeys.length).toBe(2);
     expect(submittedKeys[1]).toBe(interruptedRequestKey);
+    expect(interruptedRequestKey).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
     await expect
       .poll(
         async () => {
@@ -206,15 +287,36 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       }
       await page.getByRole("button", { name: "关闭", exact: true }).last().click();
     }
-    const single = await browserJson(page, "/api/v1/ai-analysis", {
-      method: "POST",
-      body: {
-        batchId: fixture.batchId,
-        attemptId: `attempt-run-failed-0-${suffix}`,
-        requestKey: uniqueName("single"),
-      },
-    });
-    expect(single.status).toBe(202);
+    await openExecutionCaseDetails(page);
+    await page
+      .getByRole("row")
+      .filter({ hasText: fixture.failedNames[0] })
+      .getByRole("button", { name: "AI 初步分析", exact: true })
+      .click();
+    const singleDialog = page.getByRole("dialog", { name: "用例 AI 初步分析", exact: true });
+    await expect(singleDialog).toBeVisible();
+    const singleResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/ai-analysis" &&
+        response.request().method() === "POST" &&
+        response.request().postDataJSON().attemptId === `attempt-run-failed-0-${suffix}`,
+    );
+    await singleDialog.getByRole("button", { name: "重新分析", exact: true }).click();
+    expect((await singleResponse).status()).toBe(202);
+    await expect(singleDialog.getByText(/randomUUID/u)).toHaveCount(0);
+    expect(submittedKeys.at(-1)).not.toBe(interruptedRequestKey);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(screenshots, `ai-single-http-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await singleDialog
+      .locator(".ant-modal-footer")
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
     const exported = await page.request.get(
       `/api/v1/run-batches/${fixture.batchId}/export?template=results&scope=final&outcomes=failed,blocked`,
     );
@@ -224,6 +326,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     const headers = sheet.getRow(1).values as string[];
     expect(headers).toContain("AI 初步分析");
     expect(sheet.getRow(2).getCell(headers.indexOf("AI 初步分析")).text).toContain("合成模型建议");
+    await openExecutionCaseDetails(page);
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page

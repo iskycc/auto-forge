@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { associateDdtSr } from "./support/ddt-associations";
 import { expectUiIntegrity } from "./support/ui-guard";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
@@ -71,6 +72,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     // 实时 stdout 捕获验证：attempt 运行期间日志即出现在详情页。
     await waitForAttemptState(page, batchId, agent, "running");
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+    await openExecutionCaseDetails(page);
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "查看日志" }).click();
     const executionLog = page.locator(".execution-log");
@@ -96,6 +98,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     });
 
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+    await openExecutionCaseDetails(page);
     // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果与产物。
     await page
       .getByRole("row", { name: "JavaCasesFixture" })
@@ -105,6 +108,15 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     await expect(page.getByLabel("TestNG 结果汇总")).toContainText("通过1");
     await expect(page.getByText("executesThroughJavaCasesModule", { exact: true })).toBeVisible();
     await captureDetailsPage(page, "real-details-success-dark");
+
+    const customArtifact = page.getByLabel("下载 artifacts/java-cases.txt");
+    await expect(customArtifact).toBeVisible();
+    const artifactHref = await customArtifact.getAttribute("href");
+    expect(artifactHref).toBeTruthy();
+    const artifactDownload = await page.request.get(artifactHref!);
+    expect(artifactDownload.status()).toBe(200);
+    expect(await artifactDownload.text()).toBe("JAVA_CASES_ARTIFACT_SAFE\n");
+    await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
 
     await page.getByRole("button", { name: "查看日志" }).click();
     await captureDetailsPage(page, "real-logviewer-open-dark");
@@ -119,14 +131,6 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();
     await expect(executionLog).toContainText("AutoForge Runner Agent started the attempt.");
     await captureExecutionLog(page, "real-agent-dark");
-
-    const customArtifact = page.getByLabel("下载 artifacts/java-cases.txt");
-    await expect(customArtifact).toBeVisible();
-    const artifactHref = await customArtifact.getAttribute("href");
-    expect(artifactHref).toBeTruthy();
-    const artifactDownload = await page.request.get(artifactHref!);
-    expect(artifactDownload.status()).toBe(200);
-    expect(await artifactDownload.text()).toBe("JAVA_CASES_ARTIFACT_SAFE\n");
 
     await exerciseDdtExecution(page, agent, hierarchy);
 
@@ -149,6 +153,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
       expect(attempt.resultSummary).not.toContain("????");
     }
     await page.goto(`/run-batches/${encodeURIComponent(failureBatchId)}`);
+    await openExecutionCaseDetails(page);
     // 需求5后单用例不再自动展开，需先点详情才能看到方法级失败结果。
     await page
       .getByRole("row", { name: "JavaCasesFailureFixture" })
@@ -158,6 +163,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
       page.getByText("failsAfterRealProcessOutput", { exact: true }).last(),
     ).toBeVisible();
     await captureDetailsPage(page, "real-details-failure-dark");
+    await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
     await page.getByRole("button", { name: "查看日志" }).click();
     await expect(page.locator(".execution-log")).toContainText(
       "JAVA_CASES_FAILURE_OUTPUT_BEFORE_ASSERTION",
@@ -192,6 +198,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     expect(skippedDetails.body).toMatchObject({ succeededRuns: 0, failedRuns: 1 });
     expect(skippedDetails.body.runs[0]).toMatchObject({ terminalOutcome: "failed" });
     await page.goto(`/run-batches/${skippedBatchId}`);
+    await openExecutionCaseDetails(page);
     await page
       .getByRole("row", { name: "JavaCasesSkippedFixture" })
       .getByRole("button", { name: "详情" })
@@ -610,10 +617,12 @@ async function exerciseDdtExecution(
   );
 
   await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+  await openExecutionCaseDetails(page);
   const ddtRun = page.getByRole("row", { name: new RegExp(caseId) });
   await expect(ddtRun).toBeVisible();
   await expect(ddtRun.getByText("DDT", { exact: true })).toBeVisible();
   await ddtRun.getByRole("button", { name: "详情" }).click();
+  await page.getByRole("dialog", { name: "结构化执行详情", exact: true }).press("Escape");
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText(
     "JAVA_CASES_DDT_API_OK:CASE_ID_FETCHED_FROM_PUBLIC_API",

@@ -1,9 +1,11 @@
 "use client";
 import { Alert, Button, Empty, Modal, Progress, Space, Table, Tag, Typography } from "antd";
 import { RobotOutlined, PlusOutlined, MinusOutlined } from "@ant-design/icons";
+import { Disclosure } from "./ui/disclosure";
 import { useCallback, useEffect, useState, useRef } from "react";
 import type { AiAnalysisView } from "@autoforge/contracts";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
 
 const ACTIVE = new Set(["queued", "preparing", "analyzing", "summarizing"]);
 const LABELS: Record<string, string> = {
@@ -23,10 +25,12 @@ export function AiAnalysisButton({
   batchId,
   attemptId,
   compact = false,
+  iconOnly = false,
 }: {
   batchId: string;
   attemptId?: string;
   compact?: boolean;
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const requestEpoch = useRef(0);
@@ -72,7 +76,7 @@ export function AiAnalysisButton({
           batchId,
           ...(attemptId ? { attemptId } : {}),
           requestKey:
-            pendingRequestKey.current ?? (pendingRequestKey.current = crypto.randomUUID()),
+            pendingRequestKey.current ?? (pendingRequestKey.current = createClientIdempotencyKey()),
         }),
       });
       if (!response.ok)
@@ -152,7 +156,7 @@ export function AiAnalysisButton({
         icon={<RobotOutlined />}
         onClick={() => void show()}
       >
-        AI 初步分析
+        {iconOnly ? null : "AI 初步分析"}
       </Button>
       <Modal
         open={open}
@@ -239,8 +243,7 @@ export function AiAnalysisButton({
                 status={ACTIVE.has(job.status) ? "active" : "normal"}
               />
               {view?.groups?.length ? (
-                <details>
-                  <summary>查看堆栈分组初析</summary>
+                <Disclosure header="查看堆栈分组初析">
                   <Space orientation="vertical" style={{ width: "100%" }}>
                     {view.groups.map((group) => (
                       <Alert
@@ -266,7 +269,7 @@ export function AiAnalysisButton({
                       </Button>
                     </Space>
                   </Space>
-                </details>
+                </Disclosure>
               ) : null}
               <Table
                 size="small"

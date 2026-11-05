@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { readExportedWorkbookText } from "./support/export-workbook";
 import { insertAnalysisConclusionScopeFixture } from "./support/analysis-conclusion-scope-fixture";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
@@ -120,6 +121,7 @@ test("analysis exports report incompatible records and download only compatible 
   }
 
   await page.goto(`/run-batches/${fixture.batchId}`);
+  await openExecutionCaseDetails(page);
   await page.getByRole("button", { name: "导出结果", exact: true }).click();
   const exportDialog = page.getByRole("dialog", { name: "导出执行结果", exact: true });
   await exportDialog

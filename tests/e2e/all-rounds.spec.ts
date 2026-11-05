@@ -1,3 +1,8 @@
+import {
+  openExecutionCaseDetails,
+  closeExecutionCaseDetails,
+  selectExecutionRound,
+} from "./support/execution-details";
 import { readExportedWorkbookText } from "./support/export-workbook";
 import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -632,7 +637,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     const stable = caseName.includes("AllRoundsStableTest");
     if (claimed === 0) {
       await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
-      await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+      await openExecutionCaseDetails(page);
+      await selectExecutionRound(page, "初始轮次");
       const runningCases = page.locator(".round-cases");
       const overviewResponse = page.waitForResponse(
         (response) =>
@@ -658,6 +664,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   // 基础设施异常不等待整轮结束，但新的物理 attempt 必须仍属于初始逻辑轮次；
   // 用户重跑额度为 0 时不得凭空出现“重跑第 1 轮”。
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+  await openExecutionCaseDetails(page);
   const roundTable = page.locator(".execution-round-table");
   const initialRoundRow = roundTable.getByRole("row", { name: /初始轮次/ });
   const retryRoundRow = roundTable.getByRole("row", { name: /重跑第 1 轮/ });
@@ -715,6 +722,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // 全部轮次视图按逻辑轮次计数：Runner 异常 attempt 不得重复计入用例总数。
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+  await openExecutionCaseDetails(page);
   const completedAllRoundsRow = page
     .locator(".execution-round-table")
     .getByRole("row", { name: /全部轮次/ });
@@ -723,7 +731,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(completedAllRoundsRow.locator("td").nth(6)).toHaveText("2");
   await expect(completedAllRoundsRow.locator("td").nth(7)).toHaveText("0");
   await expect(completedAllRoundsRow.locator("td").nth(8)).toHaveText("0");
-  await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+  await selectExecutionRound(page, "全部轮次");
   await expect(page).toHaveURL(/round=all/);
   const casesRegion = page.locator(".round-cases");
   await expect(casesRegion.getByRole("columnheader", { name: "轮次" })).toBeVisible();
@@ -769,9 +777,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await captureUi(page, "all-rounds-view");
 
   // Runner 重调度完成后仍只有初始逻辑轮，且不会出现虚假的“未执行”行。
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  await selectExecutionRound(page, "初始轮次");
   await expect(
-    page.getByRole("img", { name: /截至本轮总体通过进度：累计通过 2 个用例，共 2 个/ }),
+    page.getByRole("img", { name: /总体通过进度：累计通过 2 个用例，共 2 个/ }),
   ).toBeVisible();
   await expect(casesRegion.getByRole("row", { name: /AllRoundsFlakyTest/ })).toHaveCount(1);
   await expect(casesRegion.getByRole("row", { name: /AllRoundsStableTest/ })).toHaveCount(1);
@@ -785,12 +793,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(summaryRow.locator("td").nth(4)).toHaveText("100%");
   await expect(summaryRow.locator("td").nth(6)).toHaveText("2");
   await expect(summaryRow.locator("td").nth(7)).toHaveText("0");
-  await page.getByRole("button", { name: "总结", exact: true }).click();
+  await selectExecutionRound(page, "总结");
   await expect(page).toHaveURL(/round=summary/);
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
 
   // PROCESS_START_FAILED 属于执行机异常：保留原失败记录、自动重新调度，并在执行机视图聚合展示。
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  await selectExecutionRound(page, "初始轮次");
   const retainedCaseSearch = page.getByRole("textbox", { name: "按名称搜索用例" });
   const searchWidthBeforeLongQuery = await waitForVisibleWidth(retainedCaseSearch);
   await retainedCaseSearch.fill("AllRoundsFlakyTest".repeat(8));
@@ -922,10 +930,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   );
 
   await page.goto(`/run-batches/${encodeURIComponent(cappedRetryBatch.id)}`);
+  await openExecutionCaseDetails(page);
   const cappedRoundTable = page.locator(".execution-round-table");
   await expect(cappedRoundTable.getByRole("row", { name: /重跑第 10 轮/ })).toBeVisible();
   await expect(cappedRoundTable.getByRole("row", { name: /重跑第 11 轮/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "重跑第 10 轮", exact: true }).click();
+  await selectExecutionRound(page, "重跑第 10 轮");
   const cappedFinalCaseRow = page
     .locator(".round-cases")
     .getByRole("row", { name: /AllRoundsFlakyTest/ });
@@ -1034,6 +1043,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       .toBe("succeeded");
 
     await page.goto(`/run-batches/${encodeURIComponent(recoveryBatch.id)}`);
+    await openExecutionCaseDetails(page);
     const recoveryRoundTable = page.locator(".execution-round-table");
     // Terminal state commits before the background round snapshot becomes visible.
     await expect(recoveryRoundTable).toBeVisible({ timeout: 30_000 });
@@ -1048,7 +1058,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       .locator(".round-concurrency");
     await expect(changedConcurrency).toContainText("1");
     await expect(changedConcurrency).toContainText("已变更");
-    await page.getByRole("button", { name: "重跑第 1 轮", exact: true }).click();
+    await selectExecutionRound(page, "重跑第 1 轮");
     await page.getByRole("button", { name: "总体调度日志", exact: true }).click();
     const schedulingLogDialog = page.getByRole("dialog", { name: "总体调度日志" });
     await expect(schedulingLogDialog).toContainText("第 2 轮触发动态并发规则，并发数由 2 调整为 1");
@@ -1058,7 +1068,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       .getByRole("row", { name: /环境恢复.*第 1 轮后/u });
     await expect(recoveryRow).toContainText("Jenkins 流水线 2 个 · 完成 2 · 失败 0");
     await expect(recoveryRow).toContainText("恢复完成");
+    await closeExecutionCaseDetails(page);
     await recoveryRow.getByRole("button", { name: "环境恢复", exact: true }).click();
+    await openExecutionCaseDetails(page);
     await expect(
       recoveryRow.getByRole("button", { name: "环境恢复", exact: true }),
     ).toHaveAttribute("aria-current", "true");
@@ -1083,7 +1095,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   }
 
   // 全部轮次导出：scope=all，Excel 首列为轮次，文件名标明全部轮次。
-  await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+  await selectExecutionRound(page, "全部轮次");
   // 等面板切换完成再点导出，否则导航重渲染会重置对话框的打开状态（偶发丢失点击）。
   await expect(page).toHaveURL(/round=all/);
   await expect(page.locator(".round-cases")).toBeVisible();
@@ -1157,6 +1169,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   ).toBeVisible();
   await expect(anonymousProgressPage.getByRole("region", { name: "批次概览" })).toBeVisible();
   await expect(anonymousProgressPage.locator(".execution-round-table")).toBeVisible();
+  await openExecutionCaseDetails(anonymousProgressPage);
   await expect(anonymousProgressPage.locator(".execution-case-table tbody tr")).toHaveCount(2);
   await expect(anonymousProgressPage.locator(".public-progress-card")).toHaveCount(0);
   await captureUi(anonymousProgressPage, "jenkins-active-execution-details");
@@ -1300,6 +1313,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     anonymousResultPage.getByRole("heading", { name: "轮次", exact: true }),
   ).toBeVisible();
   await expect(anonymousResultPage.locator(".execution-round-table")).toBeVisible();
+  await openExecutionCaseDetails(anonymousResultPage);
   await expect(anonymousResultPage.locator(".execution-case-table tbody tr")).toHaveCount(2);
   const sharedLogLinks = anonymousResultPage.getByRole("link", { name: "查看公开日志" });
   await expect(sharedLogLinks).toHaveCount(2);
@@ -1349,7 +1363,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     );
     await captureUi(anonymousResultPage, `shared-run-details-${viewport.width}`);
   }
+  await closeExecutionCaseDetails(anonymousResultPage);
   await anonymousResultPage.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await openExecutionCaseDetails(anonymousResultPage);
   for (const width of [1024, 1536]) {
     await anonymousResultPage.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await expectUiIntegrity(anonymousResultPage);
@@ -1572,7 +1588,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(currentDependencyUpdatedAt).not.toBe(historicalDependencyUpdatedAt);
 
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  await openExecutionCaseDetails(page);
+  await selectExecutionRound(page, "初始轮次");
   const failedCaseRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
   await expect(failedCaseRow).toHaveCount(1);
   await failedCaseRow.getByRole("button", { name: "查看日志" }).click();
@@ -1637,7 +1654,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   // 手动执行尚未结束时，永久日志详情的执行历史也必须立即出现“执行中”记录，
   // 登录用户可在当前页面打开实时日志，而不是等到完成后才看到它。
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  await openExecutionCaseDetails(page);
+  await selectExecutionRound(page, "初始轮次");
   const runningSourceRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
   const runningPublicLogPopupPromise = page.waitForEvent("popup");
   await runningSourceRow.getByRole("button", { name: "公开日志" }).click();
@@ -1702,7 +1720,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
 
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  await openExecutionCaseDetails(page);
+  await selectExecutionRound(page, "初始轮次");
   const refreshedFailedCaseRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
   const publicLogPopupPromise = page.waitForEvent("popup");
   const publicLogResponsePromise = page.waitForResponse(

@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { expect, test, type Page } from "@playwright/test";
 import { selectJarForInspection } from "./support/jar-import";
 import { zipSync } from "fflate";
@@ -335,6 +336,7 @@ async function verifyColdPublicLogDuringUploads(
   liveClaim: ClaimedAssignment,
 ): Promise<number> {
   await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+  await openExecutionCaseDetails(page);
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const failedRow = page
     .locator(".execution-case-table")

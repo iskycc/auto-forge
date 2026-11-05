@@ -1,8 +1,9 @@
 "use client";
 import { AiAnalysisButton } from "./ai-analysis-button";
+import { ExecutionCaseContentDialog } from "./execution-case-content-dialog";
 import { publicCaseLogPath } from "@autoforge/contracts";
 import { LoadingIcon } from "./ui/loading-icon";
-import { Timeline } from "antd";
+import { Modal, Timeline } from "antd";
 
 import { LoadingStateMessage } from "@/components/ui/loading-state-message";
 
@@ -54,10 +55,11 @@ import {
 } from "lucide-react";
 import { LinkButton } from "@/components/ui/link-button";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
-import { DonutChart, type DonutChartSegment } from "@/components/donut-chart";
+import { ExecutionRoundCharts } from "./execution-round-charts";
+import { ExecutionCaseDetailsDialog } from "./execution-case-details-dialog";
 import { RunBatchExportDialog } from "@/components/run-batch-export-dialog";
 import { RunnerFaultDialog } from "@/components/runner-fault-dialog";
 import { RunBatchRunnerPanel } from "@/components/run-batch-runner-panel";
@@ -79,10 +81,8 @@ import {
   formatBatchDuration,
   formatLocalDateTime,
 } from "@/lib/run-batch-presentation";
-import { columnCharacterWidthAtCoverage, widestText } from "@/lib/table-column-width";
 import {
   executionCaseColumnWidthsRem,
-  minimumCaseNameWidthCh,
   executionCaseColumnLayout,
 } from "@/lib/execution-case-column-layout";
 
@@ -90,6 +90,8 @@ const DEFAULT_CASE_PAGE_SIZE = 50;
 const EMPTY_CASE_ROWS: RoundCaseRowModel[] = [];
 // 用户可选的每页用例数；500 为需求上限。
 const CASE_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500] as const;
+// Text stays in bounded previews; filtering or polling must not resize the columns.
+const CASE_PREVIEW_COLUMN_WIDTHS = { case: 40, status: 24, runner: 18 } as const;
 
 /** 行内详情缓存：展开过的 attempt 产物与事件只请求一次，切换页面/重新展开不再重复拉取。 */
 type AttemptDetailEntry = {
@@ -222,25 +224,6 @@ function runnerDisplayName(
   return directory.get(runnerId)?.name || shortId(runnerId);
 }
 
-// 终态失败提示行：adapter 正常失败露出完整失败描述，blocked 露出原因码；
-// 提示文案为空（非终态或信息缺失）时不渲染。
-function AttemptFailureHintLine({ attempt }: { attempt: RunAttempt }) {
-  const hint = attemptFailureHint(attempt);
-  if (!hint) return null;
-  return (
-    <small
-      className={cn(
-        "table-secondary attempt-failure-line",
-        uiPatterns["table-secondary"],
-        runBatchRoundsStyles["attempt-failure-line"],
-      )}
-      title={hint}
-    >
-      {hint}
-    </small>
-  );
-}
-
 /**
  * 轮次列表 + 选中轮次的详情面板。轮次聚合来自领域纯函数 summarizeRunBatchRounds，
  * 选中轮次写入 ?round=N，刷新或分享链接后可恢复。
@@ -323,7 +306,6 @@ export function RunBatchRounds({
   const selectedRound = summaries.some((summary) => summary.round === requestedRound)
     ? requestedRound
     : defaultRound;
-  const selectedSummary = summaries.find((summary) => summary.round === selectedRound);
   const selectedRoundLabel = selectedRecovery
     ? `环境恢复 · 第 ${selectedRecovery.afterRound} 轮后`
     : summarySelected
@@ -334,6 +316,22 @@ export function RunBatchRounds({
   const allRoundsStats = batch.allRoundsSummary;
   const finalStats = batch.finalSummary;
   const [activeTab, setActiveTab] = useState<"cases" | "runners">("cases");
+  const [detailScope, setDetailScope] = useState<string | null>(null);
+  const detailsTrigger = useRef<HTMLButtonElement>(null);
+  const detailRecovery = recoveries.find((entry) => `recovery-${entry.afterRound}` === detailScope);
+  const detailSummary = summaries.find((entry) => String(entry.round) === detailScope);
+  const detailScopes = [
+    { value: "summary", label: "总结 · 最终结果" },
+    { value: "all", label: "全部轮次 · 逐条记录" },
+    ...summaries.map((entry) => ({
+      value: String(entry.round),
+      label: roundLabel(batch.retryMode, entry.round),
+    })),
+    ...recoveries.map((entry) => ({
+      value: `recovery-${entry.afterRound}`,
+      label: `环境恢复 · 第 ${entry.afterRound} 轮后`,
+    })),
+  ];
   const [logAttempt, setLogAttempt] = useState<RunAttempt | undefined>();
   const [schedulingViewer, setSchedulingViewer] = useState<
     { runnerId?: string; title: string } | undefined
@@ -391,7 +389,7 @@ export function RunBatchRounds({
     }
   }
 
-  if (batch.statistics && !batch.statistics.generation)
+  if (batch.statistics && !batch.statistics.generation && detailScope === null)
     return (
       <Card
         as="section"
@@ -411,6 +409,18 @@ export function RunBatchRounds({
     );
   return (
     <>
+      <ExecutionRoundCharts
+        batch={batch}
+        round={
+          selectedRecovery?.afterRound ??
+          (summarySelected ? "summary" : allRoundsSelected ? "all" : selectedRound)
+        }
+        label={
+          selectedRecovery
+            ? roundLabel(batch.retryMode, selectedRecovery.afterRound)
+            : selectedRoundLabel
+        }
+      />
       <section aria-label="轮次列表">
         <div className={cn("section-heading", uiPatterns["section-heading"])}>
           <div>
@@ -681,91 +691,143 @@ export function RunBatchRounds({
         </div>
       </section>
 
-      {selectedRecovery ? (
-        <RecoveryDetailPanel recovery={selectedRecovery} />
-      ) : summarySelected ? (
-        <SummaryRoundPanel
-          batch={batch}
-          canCancelRuns={canCancelRuns}
-          canReadLogs={canReadLogs}
-          canReadAttemptEvents={canReadAttemptEvents}
-          canReadArtifacts={canReadArtifacts}
-          artifactsEnabled={artifactsEnabled}
-          runnerDirectory={runnerDirectoryById}
-          cancelPending={cancelPending}
-          actionError={actionError}
-          detailCache={detailCache}
-          onRememberAttemptDetail={rememberAttemptDetail}
-          onCancelRun={(runId) => void cancelRun(runId)}
-          onOpenLogs={setLogAttempt}
-          onRefresh={onRefresh}
-        />
-      ) : allRoundsSelected ? (
-        <AllRoundsPanel
-          batch={batch}
-          canCancelRuns={canCancelRuns}
-          canReadLogs={canReadLogs}
-          canReadAttemptEvents={canReadAttemptEvents}
-          canReadArtifacts={canReadArtifacts}
-          artifactsEnabled={artifactsEnabled}
-          runnerDirectory={runnerDirectoryById}
-          cancelPending={cancelPending}
-          actionError={actionError}
-          detailCache={detailCache}
-          onRememberAttemptDetail={rememberAttemptDetail}
-          onCancelRun={(runId) => void cancelRun(runId)}
-          onOpenLogs={setLogAttempt}
-          onRefresh={onRefresh}
-        />
-      ) : selectedSummary ? (
-        <RoundDetailPanel
-          batch={batch}
-          summary={selectedSummary}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          canCancelRuns={canCancelRuns}
-          canReadLogs={canReadLogs}
-          canReadAttemptEvents={canReadAttemptEvents}
-          canReadArtifacts={canReadArtifacts}
-          artifactsEnabled={artifactsEnabled}
-          runnerDirectory={runnerDirectoryById}
-          cancelPending={cancelPending}
-          actionError={actionError}
-          detailCache={detailCache}
-          onRememberAttemptDetail={rememberAttemptDetail}
-          onCancelRun={(runId) => void cancelRun(runId)}
-          onOpenLogs={setLogAttempt}
-          onRefresh={onRefresh}
-          onOpenScheduling={(runnerId) =>
-            setSchedulingViewer(
-              runnerId
-                ? {
-                    runnerId,
-                    title: `runner ${runnerDisplayName(runnerId, runnerDirectoryById)} · 调度日志`,
-                  }
-                : { title: "总体调度日志" },
-            )
-          }
-        />
-      ) : null}
+      <Card
+        as="section"
+        aria-label="用例明细入口"
+        className="flex min-w-0 flex-wrap items-center justify-between gap-4 p-5"
+      >
+        <div className="grid min-w-0 gap-1">
+          <h2 className="m-0 text-base font-semibold">{selectedRoundLabel} · 执行明细</h2>
+          <p className="m-0 text-sm text-muted-foreground">
+            在全屏窗口中查看用例、搜索筛选和执行日志，独立于当前概览。
+          </p>
+        </div>
+        <Button
+          ref={detailsTrigger}
+          type="button"
+          onClick={() => {
+            setActiveTab("cases");
+            setDetailScope(
+              selectedRecovery
+                ? `recovery-${selectedRecovery.afterRound}`
+                : summarySelected
+                  ? "summary"
+                  : allRoundsSelected
+                    ? "all"
+                    : String(selectedRound),
+            );
+          }}
+        >
+          <Eye size={16} />
+          查看用例明细
+        </Button>
+      </Card>
+      {detailScope !== null ? (
+        <ExecutionCaseDetailsDialog
+          scope={detailScope}
+          scopes={detailScopes}
+          onScopeChange={(scope) => {
+            if (detailScopes.some((entry) => entry.value === scope)) {
+              setActiveTab("cases");
+              setDetailScope(scope);
+            }
+          }}
+          onClose={() => {
+            setDetailScope(null);
+            setLogAttempt(undefined);
+            setSchedulingViewer(undefined);
+            window.requestAnimationFrame(() =>
+              detailsTrigger.current?.focus({ preventScroll: true }),
+            );
+          }}
+        >
+          {detailRecovery ? (
+            <RecoveryDetailPanel recovery={detailRecovery} />
+          ) : detailScope === "summary" ? (
+            <SummaryRoundPanel
+              batch={batch}
+              canCancelRuns={canCancelRuns}
+              canReadLogs={canReadLogs}
+              canReadAttemptEvents={canReadAttemptEvents}
+              canReadArtifacts={canReadArtifacts}
+              artifactsEnabled={artifactsEnabled}
+              runnerDirectory={runnerDirectoryById}
+              cancelPending={cancelPending}
+              actionError={actionError}
+              detailCache={detailCache}
+              onRememberAttemptDetail={rememberAttemptDetail}
+              onCancelRun={(runId) => void cancelRun(runId)}
+              onOpenLogs={setLogAttempt}
+              onRefresh={onRefresh}
+            />
+          ) : detailScope === "all" ? (
+            <AllRoundsPanel
+              batch={batch}
+              canCancelRuns={canCancelRuns}
+              canReadLogs={canReadLogs}
+              canReadAttemptEvents={canReadAttemptEvents}
+              canReadArtifacts={canReadArtifacts}
+              artifactsEnabled={artifactsEnabled}
+              runnerDirectory={runnerDirectoryById}
+              cancelPending={cancelPending}
+              actionError={actionError}
+              detailCache={detailCache}
+              onRememberAttemptDetail={rememberAttemptDetail}
+              onCancelRun={(runId) => void cancelRun(runId)}
+              onOpenLogs={setLogAttempt}
+              onRefresh={onRefresh}
+            />
+          ) : detailSummary ? (
+            <RoundDetailPanel
+              batch={batch}
+              summary={detailSummary}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              canCancelRuns={canCancelRuns}
+              canReadLogs={canReadLogs}
+              canReadAttemptEvents={canReadAttemptEvents}
+              canReadArtifacts={canReadArtifacts}
+              artifactsEnabled={artifactsEnabled}
+              runnerDirectory={runnerDirectoryById}
+              cancelPending={cancelPending}
+              actionError={actionError}
+              detailCache={detailCache}
+              onRememberAttemptDetail={rememberAttemptDetail}
+              onCancelRun={(runId) => void cancelRun(runId)}
+              onOpenLogs={setLogAttempt}
+              onRefresh={onRefresh}
+              onOpenScheduling={(runnerId) =>
+                setSchedulingViewer(
+                  runnerId
+                    ? {
+                        runnerId,
+                        title: `runner ${runnerDisplayName(runnerId, runnerDirectoryById)} · 调度日志`,
+                      }
+                    : { title: "总体调度日志" },
+                )
+              }
+            />
+          ) : null}
 
-      {logAttempt ? (
-        <AttemptLogViewer
-          attemptId={logAttempt.id}
-          attemptStatus={logAttempt.status}
-          canReadLogs={canReadLogs}
-          canRetryRuns={canRetryRuns}
-          onClose={() => setLogAttempt(undefined)}
-        />
-      ) : null}
-      {schedulingViewer ? (
-        <SchedulingLogViewer
-          key={JSON.stringify([batch.id, schedulingViewer.runnerId])}
-          batchId={batch.id}
-          runnerId={schedulingViewer.runnerId}
-          title={schedulingViewer.title}
-          onClose={() => setSchedulingViewer(undefined)}
-        />
+          {logAttempt ? (
+            <AttemptLogViewer
+              attemptId={logAttempt.id}
+              attemptStatus={logAttempt.status}
+              canReadLogs={canReadLogs}
+              canRetryRuns={canRetryRuns}
+              onClose={() => setLogAttempt(undefined)}
+            />
+          ) : null}
+          {schedulingViewer ? (
+            <SchedulingLogViewer
+              key={JSON.stringify([batch.id, schedulingViewer.runnerId])}
+              batchId={batch.id}
+              runnerId={schedulingViewer.runnerId}
+              title={schedulingViewer.title}
+              onClose={() => setSchedulingViewer(undefined)}
+            />
+          ) : null}
+        </ExecutionCaseDetailsDialog>
       ) : null}
     </>
   );
@@ -1139,8 +1201,6 @@ function AllRoundsPanel({
           {actionError}
         </Notice>
       ) : null}
-      {/* 全部轮次没有环形图，不能使用 round-detail-body 的双列网格，
-          否则表格会被挤进 320px 的图表列。 */}
       <div className={cn("round-tab-content", runBatchRoundsStyles["round-tab-content"])}>
         <RoundCasesTable
           key="all"
@@ -1207,28 +1267,6 @@ function RoundDetailPanel({
   const [faultDialogOpen, setFaultDialogOpen] = useState(false);
   const [runnerTabMounted, setRunnerTabMounted] = useState(activeTab === "runners");
   const faultIncidents = batch.runnerFaultIncidents;
-  const passedRunsSoFar = summary.overallPassed;
-  const inProgress = Math.max(
-    0,
-    summary.executed - summary.passed - summary.failed - summary.timedOut - summary.cancelled,
-  );
-  const notExecuted = Math.max(0, batch.totalRuns - summary.executed);
-  const resultSegments: DonutChartSegment[] = [
-    { label: "通过", value: summary.passed, color: "var(--success)" },
-    { label: "失败", value: summary.failed, color: "var(--destructive)" },
-    { label: "超时", value: summary.timedOut, color: "var(--warning)" },
-    { label: "进行中", value: inProgress, color: "var(--info)" },
-    { label: "取消", value: summary.cancelled, color: "var(--muted-foreground)" },
-    { label: "未执行", value: notExecuted, color: "var(--input)" },
-  ];
-  const progressSegments: DonutChartSegment[] = [
-    { label: "累计通过", value: passedRunsSoFar, color: "var(--success)" },
-    {
-      label: "未通过",
-      value: Math.max(0, batch.totalRuns - passedRunsSoFar),
-      color: "var(--input)",
-    },
-  ];
 
   return (
     <section
@@ -1349,29 +1387,6 @@ function RoundDetailPanel({
             : "min-w-0"
         }
       >
-        <div
-          hidden={activeTab !== "cases"}
-          className={cn("round-donuts", "[&[hidden]]:hidden", runBatchRoundsStyles["round-donuts"])}
-        >
-          <div className={cn("round-donut-block", runBatchRoundsStyles["round-donut-block"])}>
-            <h3>本轮结果分布</h3>
-            <DonutChart
-              segments={resultSegments}
-              centerValue={String(summary.executed)}
-              centerLabel="已执行"
-              ariaLabel={`本轮结果分布：通过 ${summary.passed}，失败 ${summary.failed}，超时 ${summary.timedOut}，进行中 ${inProgress}，取消 ${summary.cancelled}，未执行 ${notExecuted}`}
-            />
-          </div>
-          <div className={cn("round-donut-block", runBatchRoundsStyles["round-donut-block"])}>
-            <h3>总体通过进度</h3>
-            <DonutChart
-              segments={progressSegments}
-              centerValue={`${summary.overallPassRate}%`}
-              centerLabel="总通过率"
-              ariaLabel={`截至本轮总体通过进度：累计通过 ${passedRunsSoFar} 个用例，共 ${batch.totalRuns} 个`}
-            />
-          </div>
-        </div>
         <div className={cn("round-tab-content", runBatchRoundsStyles["round-tab-content"])}>
           <div
             className={cn("round-tab-panel", runBatchRoundsStyles["round-tab-panel"])}
@@ -1544,29 +1559,7 @@ function RoundCasesTable({
     return () => controller.abort();
   }, [casePageUrl, requestKey, batch.updatedAt, batch.statistics?.generation]);
 
-  const columnWidths = useMemo(() => {
-    // Successful rows have no failure text; they must not dilute a visible stack's width.
-    const failureLines = rows.flatMap(({ attempt }) => {
-      if (!attempt || !isTerminalAttemptStatus(attempt.status) || attempt.status === "succeeded")
-        return [];
-      const hint = attemptFailureHint(attempt);
-      return hint ? [widestText(hint.split(/\r?\n/))] : [];
-    });
-    return {
-      case: columnCharacterWidthAtCoverage(
-        rows.map((row) => widestText([row.run.displayName, row.run.className])),
-        { minimum: minimumCaseNameWidthCh, maximum: 64 },
-      ),
-      status: columnCharacterWidthAtCoverage(failureLines, { minimum: 12, maximum: 96 }),
-      runner: columnCharacterWidthAtCoverage(
-        rows.map((row) => {
-          const runnerId = row.attempt?.runnerId ?? row.run.assignedRunnerId;
-          return runnerId ? runnerDisplayName(runnerId, runnerDirectory) : "—";
-        }),
-        { minimum: 10, maximum: 24 },
-      ),
-    };
-  }, [rows, runnerDirectory]);
+  const columnWidths = CASE_PREVIEW_COLUMN_WIDTHS;
   const columnLayout = executionCaseColumnLayout({
     widths: columnWidths,
     showRoundColumn,
@@ -1864,6 +1857,7 @@ function RoundCaseRow({
   const { run, attempt } = row;
   const unstartedFailure = unstartedRunFailure(row);
   const runnerId = attempt?.runnerId ?? run.assignedRunnerId;
+  const [contentOpen, setContentOpen] = useState(false);
   const [sharePending, setSharePending] = useState(false);
   const [shareError, setShareError] = useState("");
   const hasDetail =
@@ -1899,12 +1893,27 @@ function RoundCaseRow({
 
   return (
     <>
-      <TableRow>
+      <TableRow className="execution-case-result-row">
         <TableCell>
-          <span
-            className={cn("execution-case-heading", runBatchRoundsStyles["execution-case-heading"])}
-          >
-            <strong>{run.displayName}</strong>
+          <div className="execution-case-heading flex min-w-0 items-center gap-1">
+            <Button
+              variant="ghost"
+              type="button"
+              className="min-w-0 flex-1 justify-start px-0 text-left"
+              aria-label={`查看用例完整信息：${run.displayName}`}
+              onClick={() => setContentOpen(true)}
+            >
+              <strong className="block min-w-0 truncate">{run.displayName}</strong>
+            </Button>
+            {attempt &&
+            canReadLogs &&
+            !publicRunShareToken &&
+            !publicLogAccess &&
+            ["failed", "timed_out"].includes(attempt.outcome ?? attempt.status) ? (
+              <AiAnalysisButton batchId={run.batchId} attemptId={attempt.id} compact iconOnly />
+            ) : null}
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
             <span
               className={cn(
                 runBatchRoundsStyles["execution-case-type"],
@@ -1913,19 +1922,10 @@ function RoundCaseRow({
             >
               {run.caseType === "ddt" ? "DDT" : "普通用例"}
             </span>
-          </span>
-          <small className={cn("table-secondary", uiPatterns["table-secondary"])}>
-            {run.className}
-          </small>
-          {attempt &&
-          canReadLogs &&
-          !publicRunShareToken &&
-          !publicLogAccess &&
-          ["failed", "timed_out"].includes(attempt.outcome ?? attempt.status) ? (
-            <div className="mt-1">
-              <AiAnalysisButton batchId={run.batchId} attemptId={attempt.id} compact />
-            </div>
-          ) : null}
+            <small className="min-w-0 truncate text-xs text-muted-foreground" title={run.className}>
+              {run.className}
+            </small>
+          </div>
         </TableCell>
         {showRoundColumn ? (
           <TableCell className={cn("round-cell-nowrap", runBatchRoundsStyles["round-cell-nowrap"])}>
@@ -1933,47 +1933,38 @@ function RoundCaseRow({
           </TableCell>
         ) : null}
         <TableCell>
-          {attempt ? (
-            <>
-              <Badge
-                className={cn(
-                  runBatchRoundsStyles["batch-status"],
-                  `batch-status ${attemptStatusClass(attempt)}`,
-                ).trim()}
-              >
-                {attemptStatusLabel(attempt)}
-              </Badge>
-              {/* 终态失败提示直接露出，无需展开详情：adapter 正常失败显示完整描述，
-                  blocked（重启协调、超时等）显示原因码。 */}
-              {isTerminalAttemptStatus(attempt.status) && attempt.status !== "succeeded" ? (
-                <AttemptFailureHintLine attempt={attempt} />
-              ) : null}
-            </>
-          ) : (
-            <>
-              <Badge
-                className={cn(
-                  "batch-status batch-status-neutral",
-                  runBatchRoundsStyles["batch-status"],
-                  runBatchRoundsStyles["batch-status-neutral"],
-                )}
-              >
-                {unstartedFailure?.label ?? "未执行"}
-              </Badge>
-              {unstartedFailure ? (
-                <small className={cn(uiPatterns["table-secondary"], "break-all")}>
-                  {unstartedFailure.reasonCode}
-                </small>
-              ) : null}
-            </>
-          )}
+          <Button
+            variant="ghost"
+            type="button"
+            aria-label={`查看执行结果：${run.displayName}`}
+            onClick={() => setContentOpen(true)}
+            className="execution-case-status-preview !h-14 w-full min-w-0 !justify-start !px-0 text-left"
+          >
+            <span className="grid min-w-0 gap-1">
+              <span>
+                <Badge
+                  className={cn(
+                    runBatchRoundsStyles["batch-status"],
+                    `batch-status ${attempt ? attemptStatusClass(attempt) : "batch-status-neutral"}`,
+                  )}
+                >
+                  {attempt ? attemptStatusLabel(attempt) : (unstartedFailure?.label ?? "未执行")}
+                </Badge>
+              </span>
+              <small className="block min-w-0 truncate text-xs text-muted-foreground">
+                {attempt
+                  ? (attempt.status === "succeeded" ? "—" : attemptFailureHint(attempt)) || "—"
+                  : (unstartedFailure?.reasonCode ?? "—")}
+              </small>
+            </span>
+          </Button>
         </TableCell>
         {/* 执行机优先展示注册名称（一般为 runner-IP），title 保留完整 UUID。 */}
         <TableCell>
           {runnerId ? (
             <span
               className={cn("round-runner-name", runBatchRoundsStyles["round-runner-name"])}
-              title={runnerId}
+              title={`${runnerDisplayName(runnerId, runnerDirectory)} · ${runnerId}`}
             >
               {runnerDisplayName(runnerId, runnerDirectory)}
             </span>
@@ -2064,15 +2055,39 @@ function RoundCaseRow({
             ) : null}
           </div>
           {shareError ? (
-            <Notice tone="error" className={cn("form-error", uiPatterns["form-error"])}>
-              {shareError}
-            </Notice>
+            <Modal open title="打开公开日志失败" footer={null} onCancel={() => setShareError("")}>
+              <Notice tone="error">{shareError}</Notice>
+            </Modal>
           ) : null}
         </TableCell>
       </TableRow>
+      {contentOpen ? (
+        <ExecutionCaseContentDialog
+          title="用例执行信息"
+          onClose={() => setContentOpen(false)}
+          entries={[
+            { label: "用例名称", value: run.displayName },
+            { label: "用例类路径", value: run.className },
+            {
+              label: "执行结果",
+              value: attempt ? attemptStatusLabel(attempt) : (unstartedFailure?.label ?? "未执行"),
+            },
+            {
+              label: "结果摘要",
+              value: attempt ? attemptFailureHint(attempt) : (unstartedFailure?.reasonCode ?? ""),
+            },
+            {
+              label: "执行机",
+              value: runnerId
+                ? `${runnerDisplayName(runnerId, runnerDirectory)}（${runnerId}）`
+                : "",
+            },
+          ]}
+        />
+      ) : null}
       {expanded && attempt ? (
-        <TableRow className={cn("round-detail-row", runBatchRoundsStyles["round-detail-row"])}>
-          <TableCell colSpan={showRoundColumn ? 6 : 5}>
+        <Modal open title="结构化执行详情" width={920} footer={null} onCancel={onToggleDetail}>
+          <div className="max-h-[65vh] min-w-0 overflow-y-auto pr-2">
             <AttemptInlineDetail
               attempt={attempt}
               canReadAttemptEvents={canReadAttemptEvents}
@@ -2081,8 +2096,8 @@ function RoundCaseRow({
               cached={detailEntry}
               onRemember={onRememberDetail}
             />
-          </TableCell>
-        </TableRow>
+          </div>
+        </Modal>
       ) : null}
     </>
   );
@@ -2430,17 +2445,15 @@ const runBatchRoundsStyles = {
   "artifact-list": "grid gap-px mt-4.5 [border-block:1px_solid_var(--border)]",
   "artifact-row":
     "[&_small]:block [&_small]:text-muted-foreground [&_small]:text-xs grid grid-cols-[24px_minmax(0,_1fr)_auto] items-center gap-2.5 py-[11px] px-1 border-b border-solid border-border [&:last-child]:border-b-0 [&_span]:min-w-0 [&_strong]:block [&_strong]:overflow-hidden [&_strong]:text-sm [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap",
-  "attempt-failure-line": "mt-[3px] [overflow-wrap:anywhere] leading-[1.3] whitespace-pre-wrap",
+
   "attempt-inline-block": "grid gap-2.5 [&_>_h3]:m-0 [&_>_h3]:text-sm",
   "attempt-inline-detail": "grid gap-4.5 py-1.5 px-1",
   "batch-status": uiPatterns["batch-status"],
   "batch-status-failed": "bg-destructive/10 text-destructive",
   "batch-status-neutral": "bg-muted text-muted-foreground",
   "batch-status-succeeded": "bg-success/10 text-success",
-  "execution-case-heading":
-    "flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 [&_>_strong]:min-w-0 [&_>_strong]:[overflow-wrap:anywhere] [&_>_strong]:whitespace-normal",
   "execution-case-table":
-    "min-w-[760px] [table-layout:fixed] [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
+    "min-w-[760px] [table-layout:fixed] [&_.execution-case-result-row]:h-18 [&_.execution-case-result-row_>_td]:align-middle [&_th]:py-1.5 [&_th]:px-[9px] [&_th]:leading-[1.3] [&_th]:[overflow-wrap:anywhere] [&_td]:py-1.5 [&_td]:px-[9px] [&_td]:leading-[1.3] [&_td]:[overflow-wrap:anywhere] [&_td:first-child_strong]:block [&_td:first-child_strong]:min-w-0 [&_td:first-child_small]:block [&_td:first-child_small]:min-w-0 [&_.compact-button]:min-h-8 [&_.compact-button]:py-px [&_.danger-text-button]:min-h-8 [&_.danger-text-button]:py-px",
   "execution-case-type":
     "[flex:0_0_auto] rounded-full py-0.5 px-[7px] bg-info/10 text-info text-xs font-semibold [&.ddt]:bg-info/10 [&.ddt]:text-info",
   "execution-round-table":
@@ -2462,20 +2475,15 @@ const runBatchRoundsStyles = {
   "round-cell-nowrap": "whitespace-nowrap",
   "round-concurrency":
     "inline-flex items-center gap-[5px] tabular-nums font-semibold [&.changed]:text-warning [&_small]:rounded-full [&_small]:py-0.5 [&_small]:px-[5px] [&_small]:bg-warning/10 [&_small]:text-xs [&_small]:font-semibold [&_small]:whitespace-nowrap",
-  "round-detail-body":
-    "grid grid-cols-1 @[80rem]/round:grid-cols-[minmax(220px,_260px)_minmax(0,_1fr)] gap-4 items-start",
+  "round-detail-body": "grid min-w-0 grid-cols-1 gap-4 items-start",
   "round-detail-header":
-    "flex items-center justify-between gap-3 [&_.status-badge]:bg-info/10 [&_.status-badge]:text-info",
+    "flex min-w-0 flex-wrap items-center justify-between gap-3 [&_.status-badge]:bg-info/10 [&_.status-badge]:text-info",
   "round-detail-header-actions": "flex flex-wrap items-center gap-2",
   "round-detail-panel":
     "@container/round grid gap-3.5 border border-solid border-border rounded-xl p-4 bg-card shadow-xs [&_>_.form-error]:m-0",
-  "round-detail-row": "[&_>_td]:bg-muted",
   "round-detail-title": "flex items-center gap-2.5 [&_h2]:m-0 [&_h2]:text-base",
-  "round-donut-block":
-    "grid gap-2.5 [&_h3]:m-0 [&_h3]:text-muted-foreground [&_h3]:text-sm [&_h3]:font-semibold",
-  "round-donuts": "grid grid-cols-2 @[80rem]/round:grid-cols-1 gap-4.5 items-start",
   "round-filter-row":
-    "flex flex-wrap items-center gap-2.5 [&_.ui-select]:w-auto [&_.ui-select]:min-w-[150px]",
+    "flex min-w-0 flex-wrap items-center gap-3 [&>_.ui-field-feedback]:w-40 [&>_.ui-field-feedback]:shrink-0 [&_.ui-select]:w-full",
   "round-filter-search":
     "flex min-w-[min(360px,_100%)] [flex:1_0_360px] items-center gap-[7px] py-0 px-2.5 border border-solid border-border rounded-lg bg-card text-muted-foreground [&_.ui-input]:w-full [&_.ui-input]:min-h-8.5 [&_.ui-input]:min-w-0 [&_.ui-input]:[flex:1_1_auto] [&_.ui-input]:border-0 [&_.ui-input]:p-0 [&_.ui-input]:[outline:0] [&_.ui-input]:bg-transparent [&:focus-within]:border-info [&:focus-within]:shadow-xs",
   "round-inline-refresh":
@@ -2484,7 +2492,7 @@ const runBatchRoundsStyles = {
     "inline-flex items-center gap-1.5 mr-auto text-muted-foreground whitespace-nowrap [&>_.ui-field-feedback]:w-auto [&_.ui-select]:w-auto [&_.ui-select]:min-w-18 [&_.ui-select]:py-1",
   "round-pagination": "flex items-center justify-end gap-3 text-muted-foreground text-xs",
   "round-row-actions": "flex flex-nowrap items-center gap-1",
-  "round-runner-name": "block min-w-0 [overflow-wrap:anywhere] whitespace-normal",
+  "round-runner-name": "block min-w-0 truncate",
   "round-select-button": "gap-1 px-0 font-semibold [&[aria-current=true]]:text-primary-text",
   "round-tab-content":
     "grid w-full min-w-0 gap-3.5 justify-items-start [&_>_.round-cases]:w-full [&_>_.runner-card-grid]:w-full [&_>_.inline-empty]:w-full",

@@ -104,6 +104,6 @@ const pageStyles = {
   "shared-case-page":
     "min-h-screen p-12 bg-card [&_.is-enabled]:text-success [&_.is-muted]:text-muted-foreground max-[1101px]:p-8",
   "shared-case-page-center": "grid place-items-center",
-  "shared-run-detail-page": "min-h-screen bg-background p-9 max-[1101px]:p-6",
-  "shared-run-detail-shell": "mx-auto my-0 w-full max-w-[1600px]",
+  "shared-run-detail-page": "min-h-screen bg-background p-6",
+  "shared-run-detail-shell": "mx-auto my-0 w-full max-w-[1800px]",
 } as const;

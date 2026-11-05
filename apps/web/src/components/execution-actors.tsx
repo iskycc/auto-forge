@@ -3,15 +3,21 @@ import type { RunBatch } from "@autoforge/domain";
 export function ExecutionActors({
   publicExecution,
   terminatedBy,
+  compact = false,
 }: {
   publicExecution?: RunBatch["publicExecution"];
   terminatedBy?: RunBatch["terminatedBy"];
+  compact?: boolean;
 }) {
   if (!publicExecution && !terminatedBy) return null;
   return (
     <div
       aria-label="执行操作人"
-      className="flex min-w-0 flex-wrap gap-x-6 gap-y-2 rounded-lg border border-border bg-muted px-5 py-3 text-sm"
+      className={
+        compact
+          ? "flex min-w-0 flex-wrap gap-x-6 gap-y-2 border-t border-border pt-3 text-sm"
+          : "flex min-w-0 flex-wrap gap-x-6 gap-y-2 rounded-lg border border-border bg-muted px-5 py-3 text-sm"
+      }
     >
       {publicExecution ? (
         <>

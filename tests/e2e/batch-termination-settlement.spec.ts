@@ -11,6 +11,7 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectUiIntegrity, expectReadableText } from "./support/ui-guard";
+import { openExecutionCaseDetails, closeExecutionCaseDetails } from "./support/execution-details";
 
 test("termination stays visibly active while leased work drains and settles without another Runner request", async ({
   page,
@@ -142,9 +143,11 @@ test("termination stays visibly active while leased work drains and settles with
     expect(settled.body.currentRound).toBe(1);
     expect(settled.body.attempts).toHaveLength(5);
     expect(settled.body.attempts.every((attempt) => attempt.outcome === "failed")).toBe(true);
+    await openExecutionCaseDetails(page);
     await expect(page.getByRole("button", { name: "总体调度日志", exact: true })).toBeVisible({
       timeout: 20000,
     });
+    await closeExecutionCaseDetails(page);
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(page);

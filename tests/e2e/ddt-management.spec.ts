@@ -1,3 +1,4 @@
+import { openExecutionCaseDetails } from "./support/execution-details";
 import { buildAssociationWorkbookFixture } from "../../packages/ddt-import/test/association-fixture";
 import { parseDdtAssociationSpreadsheet } from "../../packages/ddt-import/src";
 import { buildSrTagSpreadsheetFixture } from "../../packages/ddt-import/test/sr-tag-fixture";
@@ -3840,6 +3841,7 @@ test("mixed and DDT-only tasks share execution and reject unbound members", asyn
         await anonymous.close();
       }
       await page.goto(`/run-batches/${created.body.id}`);
+      await openExecutionCaseDetails(page);
       const executionRows = page.locator(".execution-case-table tbody tr");
       await expect(executionRows).toHaveCount(runCount);
       for (const width of [1024, 1536]) {

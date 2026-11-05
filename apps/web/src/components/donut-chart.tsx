@@ -18,11 +18,13 @@ export function DonutChart({
   centerValue,
   centerLabel,
   ariaLabel,
+  size = "default",
 }: {
   segments: DonutChartSegment[];
   centerValue: string;
   centerLabel: string;
   ariaLabel: string;
+  size?: "default" | "large";
 }) {
   const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0);
   const visible = segments.filter((segment) => segment.value > 0 && total > 0);
@@ -47,7 +49,10 @@ export function DonutChart({
       aria-label={ariaLabel}
     >
       <svg
-        className={cn("round-donut-svg", donutChartStyles["round-donut-svg"])}
+        className={cn(
+          "round-donut-svg",
+          size === "large" ? "size-48 shrink-0" : donutChartStyles["round-donut-svg"],
+        )}
         viewBox="0 0 120 120"
         aria-hidden="true"
       >
