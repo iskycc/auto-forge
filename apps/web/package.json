@@ -35,6 +35,7 @@
     "clsx": "2.1.1",
     "dayjs": "1.11.22",
     "exceljs": "^4.4.0",
+    "fflate": "0.8.3",
     "ldapts": "8.1.5",
     "lucide-react": "1.30.0",
     "nats": "2.29.3",

@@ -6,6 +6,7 @@ import {
   executionExceptionExportFilename,
   executionExportFilename,
   exportContentDisposition,
+  failureLogsExportFilename,
 } from "./export-filename";
 import { parseExportFilename } from "./run-batch-export";
 
@@ -13,6 +14,17 @@ const time = { exportedAt: new Date("2026-10-23T16:30:45Z"), timeZone: "Asia/Sha
 const batch = { suiteName: "支付回归", sequenceNumber: 123 };
 
 describe("business spreadsheet filenames", () => {
+  it("names log ZIPs without replacing matching words in the task name", () => {
+    const suiteName = "任务_失败用例分析清单_原名";
+    const filename = failureLogsExportFilename({
+      ...time,
+      batch: { ...batch, suiteName },
+      scope: "round",
+      round: 2,
+    });
+    expect(filename).toBe(`${suiteName}_失败用例日志_第2轮_批次123_20261024-003045.zip`);
+    expect(exportContentDisposition(filename)).toContain('filename="AutoForge-export.zip"');
+  });
   it.each([
     ["final", undefined, "最终结果"],
     ["all", undefined, "全部轮次"],

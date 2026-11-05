@@ -146,6 +146,9 @@ importers:
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0(patch_hash=279b060828da8c0becc9521456ef47b8fc1be897a856d4a8192b42f3c7c71c5e)
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       ldapts:
         specifier: 8.1.5
         version: 8.1.5

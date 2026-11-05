@@ -56,7 +56,11 @@ const row: RunBatchExportRow = {
 beforeEach(async () => {
   paths.dataDirectory = await mkdtemp(join(tmpdir(), "autoforge-export-api-test-"));
   vi.resetAllMocks();
-  authenticateRequest.mockResolvedValue({ user: { id: "reader" } });
+  authenticateRequest.mockResolvedValue({
+    user: { id: "reader" },
+    systemPermissions: [],
+    projectPermissions: {},
+  });
   projectScope.mockReturnValue(["project"]);
   buildExport.mockImplementation(async () => ({
     projectId: "project",

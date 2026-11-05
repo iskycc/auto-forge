@@ -17,6 +17,7 @@ import {
   type RunBatchExportScope,
 } from "@/lib/run-batch-export";
 import { cn } from "@/lib/utils";
+import { downloadFailureLogsExport } from "@/lib/download-run-batch-export";
 
 /** Keeps export choices local; the shared dialog owns sizing, scrolling and focus. */
 export function RunBatchExportDialog({
@@ -40,8 +41,21 @@ export function RunBatchExportDialog({
   const [selectedOutcomes, setSelectedOutcomes] = useState<ExportOutcomeFilter[]>(() => [
     ...DEFAULT_EXPORT_OUTCOMES,
   ]);
-  const { exporting, error, report, exportFile, excludeInvalidRows, dismissReport } =
-    useRunBatchExport({ batchId, onDownloaded: onClose });
+  const {
+    exporting: exportingWorkbook,
+    error,
+    report,
+    exportFile,
+    excludeInvalidRows,
+    dismissReport,
+  } = useRunBatchExport({ batchId, onDownloaded: onClose });
+  const failureLogs = useRunBatchExport({
+    batchId,
+    onDownloaded: onClose,
+    downloadFile: downloadFailureLogsExport,
+    failureMessage: "导出失败日志失败。",
+  });
+  const exporting = exportingWorkbook || failureLogs.exporting;
   const hasSelection = template === "failure-analysis" || selectedOutcomes.length > 0;
   const exportLabel = exporting
     ? "正在导出…"
@@ -61,7 +75,7 @@ export function RunBatchExportDialog({
         open
         inactive={report !== null}
         title="导出执行结果"
-        description="选择导出内容与范围，下载 Excel（.xlsx）文件。"
+        description="选择导出范围，可分别下载 Excel 或失败日志 ZIP。"
         onClose={onClose}
         closeDisabled={exporting}
         footer={
@@ -162,6 +176,40 @@ export function RunBatchExportDialog({
           ) : (
             <Notice tone="info">分析结果列可选：重跑通过、用例问题已修改、代码问题已提单。</Notice>
           )}
+          <section
+            aria-label="失败日志导出"
+            className="grid min-w-0 gap-3 rounded-lg border border-border bg-muted/40 p-3"
+          >
+            <div>
+              <h3 className="m-0 text-sm font-semibold">失败日志</h3>
+              <p className="m-0 mt-1 text-xs leading-5 text-muted-foreground">
+                独立下载 ZIP，范围沿用上方选择，仅包含失败或异常结束的执行记录。每例一个完整 .log
+                文件，按类路径／CaseID 命名，清理颜色控制字符；不修改 Excel 内容。
+              </p>
+            </div>
+            <div>
+              <Button
+                type="button"
+                disabled={exporting}
+                loading={failureLogs.exporting}
+                aria-label="导出失败日志 ZIP"
+                onClick={() => {
+                  const parameters = new URLSearchParams({ scope });
+                  if (scope === "round" && round !== undefined)
+                    parameters.set("round", String(round));
+                  void failureLogs.exportFile(parameters.toString());
+                }}
+              >
+                <Download size={15} aria-hidden="true" />
+                导出失败日志 ZIP
+              </Button>
+            </div>
+          </section>
+          {failureLogs.error ? (
+            <Notice tone="error" role="alert">
+              {failureLogs.error}
+            </Notice>
+          ) : null}
           {error ? (
             <Notice tone="error" role="alert">
               {error}

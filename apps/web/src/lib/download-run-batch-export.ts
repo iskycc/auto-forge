@@ -8,10 +8,28 @@ export async function downloadRunBatchExport(
   failureMessage = "导出执行结果失败。",
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(
+  return downloadFile(
     `/api/v1/run-batches/${encodeURIComponent(batchId)}/export?${query}`,
-    { cache: "no-store", ...(signal ? { signal } : {}) },
+    failureMessage,
+    signal,
   );
+}
+
+export async function downloadFailureLogsExport(
+  batchId: string,
+  query: string,
+  failureMessage = "导出失败日志失败。",
+  signal?: AbortSignal,
+): Promise<void> {
+  return downloadFile(
+    `/api/v1/run-batches/${encodeURIComponent(batchId)}/failure-logs/export?${query}`,
+    failureMessage,
+    signal,
+  );
+}
+
+async function downloadFile(url: string, failureMessage: string, signal?: AbortSignal) {
+  const response = await fetch(url, { cache: "no-store", ...(signal ? { signal } : {}) });
   if (!response.ok) {
     await throwApiErrorResponse(response, failureMessage);
   }

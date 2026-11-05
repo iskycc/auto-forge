@@ -9,10 +9,12 @@ export function useRunBatchExport({
   batchId,
   failureMessage = "导出执行结果失败。",
   onDownloaded,
+  downloadFile = downloadRunBatchExport,
 }: {
   batchId: string;
   failureMessage?: string;
   onDownloaded?: () => void;
+  downloadFile?: typeof downloadRunBatchExport;
 }) {
   const [state, setState] = useState({
     batchId,
@@ -45,7 +47,7 @@ export function useRunBatchExport({
       report: current.batchId === batchId ? current.report : null,
     }));
     try {
-      await downloadRunBatchExport(batchId, query, failureMessage, controller.signal);
+      await downloadFile(batchId, query, failureMessage, controller.signal);
       if (controller.signal.aborted || activeDownload.current !== download) return;
       setState({ batchId, exporting: false, error: "", report: null });
       onDownloaded?.();

@@ -29,6 +29,16 @@ export function executionExceptionExportFilename(input: BatchExportName): string
   return workbookFilename(input.batch.suiteName, ["执行异常原因", batchLabel(input.batch)], input);
 }
 
+export function failureLogsExportFilename(
+  input: BatchExportName & { scope: RunBatchExportScope; round?: number | undefined },
+): string {
+  return workbookFilename(
+    input.batch.suiteName,
+    ["失败用例日志", executionRange(input.scope, input.round), batchLabel(input.batch)],
+    input,
+  ).replace(/\.xlsx$/u, ".zip");
+}
+
 export function caseSuiteExportFilename(input: ExportTime & { suiteName: string }): string {
   return workbookFilename(input.suiteName, ["任务用例清单"], input);
 }
@@ -144,5 +154,6 @@ export function exportContentDisposition(filename: string): string {
     /[!'()*]/gu,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
-  return `attachment; filename="AutoForge-export.xlsx"; filename*=UTF-8''${encoded}`;
+  const extension = filename.endsWith(".zip") ? "zip" : "xlsx";
+  return `attachment; filename="AutoForge-export.${extension}"; filename*=UTF-8''${encoded}`;
 }
