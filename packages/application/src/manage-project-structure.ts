@@ -5,6 +5,8 @@ import {
   jenkinsDependencyUploadInputSchema,
   projectAdapterConfigurationInputSchema,
   runtimeAssetUrlInputSchema,
+  runtimeAssetUsageQuerySchema,
+  type RuntimeAssetUsageQuery,
   type CreateProjectVersionInput,
   type CreateTestStageInput,
   type JenkinsDependencyPublicationInput,
@@ -57,6 +59,10 @@ export class ProjectStructureService {
 
   findRuntimeAssetsByObjectKeys(objectKeys: readonly string[]) {
     return this.structures.findRuntimeAssetsByObjectKeys(objectKeys);
+  }
+
+  listRuntimeAssetUsagesPage(input: RuntimeAssetUsageQuery) {
+    return this.structures.listRuntimeAssetUsagesPage(runtimeAssetUsageQuerySchema.parse(input));
   }
 
   createVersion(projectId: string, input: CreateProjectVersionInput) {

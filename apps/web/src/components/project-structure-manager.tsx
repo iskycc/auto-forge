@@ -23,6 +23,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, FileInput, Input, OperationProgress, Select } from "@/components/ui";
 import { readApiError, readApiErrorMessage } from "@/lib/client-api";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { ActionDialog } from "@/components/action-dialog";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
@@ -36,6 +37,7 @@ export function ProjectStructureManager({
   canManage,
   canCopy = false,
   baseUrl,
+  timeZone,
 }: {
   projectId: string;
   initialStructure: ProjectStructure;
@@ -43,6 +45,7 @@ export function ProjectStructureManager({
   canManage: boolean;
   canCopy?: boolean;
   baseUrl: string | undefined;
+  timeZone: string;
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
@@ -591,12 +594,14 @@ export function ProjectStructureManager({
             <div className="project-runtime-summary grid min-w-0 grid-cols-2 gap-3">
               <RuntimeAssetSummary
                 label="JDK"
+                timeZone={timeZone}
                 asset={configuration.jdkAsset}
                 disabled={pending || !canManage}
                 onDelete={() => void deleteAsset("jdk")}
               />
               <RuntimeAssetSummary
                 label="依赖包"
+                timeZone={timeZone}
                 asset={configuration.jarBundleAsset}
                 disabled={pending || !canManage}
                 onDelete={() => void deleteAsset("jar-bundle")}
@@ -819,11 +824,13 @@ function withAsset(
 
 function RuntimeAssetSummary({
   label,
+  timeZone,
   asset,
   disabled,
   onDelete,
 }: {
   label: string;
+  timeZone: string;
   asset: ProjectRuntimeAsset | undefined;
   disabled: boolean;
   onDelete: () => void;
@@ -857,6 +864,24 @@ function RuntimeAssetSummary({
         <p className="m-0 text-xs text-muted-foreground">
           {asset.sourceType === "upload" ? "本地上传" : "内网链接"} · {asset.archiveFormat} ·{" "}
           {formatBytes(asset.sizeBytes)}
+        </p>
+      ) : null}
+      {asset ? (
+        <p className="m-0 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>
+            {label === "JDK"
+              ? asset.sourceType === "upload"
+                ? "上传时间"
+                : "登记时间"
+              : "更新时间"}
+          </span>
+          <time
+            dateTime={asset.createdAt}
+            title={`UTC ${asset.createdAt}`}
+            className="[overflow-wrap:anywhere]"
+          >
+            {formatPlatformDateTime(asset.createdAt, timeZone)}
+          </time>
         </p>
       ) : null}
     </section>

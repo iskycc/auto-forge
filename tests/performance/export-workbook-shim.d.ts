@@ -38,6 +38,12 @@ declare module "exceljs" {
   const ExcelJS: {
     Workbook: new () => {
       xlsx: { load(buffer: Uint8Array): Promise<void> };
+      csv: {
+        read(
+          stream: import("node:stream").Readable,
+          options: { map(value: string): string },
+        ): Promise<{ eachRow(callback: (row: ExportedRow) => void): void }>;
+      };
       worksheets: Array<{
         rowCount: number;
         columnCount: number;

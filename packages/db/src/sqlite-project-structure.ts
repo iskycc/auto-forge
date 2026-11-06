@@ -19,6 +19,7 @@ import {
   type TestStage,
 } from "@autoforge/domain";
 import { VERSION_COPY_RESERVED } from "./version-copy-target";
+import { runtimeAssetUsagePage, runtimeAssetUsageQuery } from "./runtime-asset-usage-query";
 
 type VersionRow = {
   id: string;
@@ -83,6 +84,16 @@ type VersionRuntimeRow = {
 
 export class SqliteProjectStructureRepository implements ProjectStructureRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async listRuntimeAssetUsagesPage(
+    input: Parameters<ProjectStructureRepository["listRuntimeAssetUsagesPage"]>[0],
+  ) {
+    const query = runtimeAssetUsageQuery(input);
+    const rows = this.handle.client.prepare(query.sql).all(...query.parameters) as Parameters<
+      typeof runtimeAssetUsagePage
+    >[0];
+    return runtimeAssetUsagePage(rows, input.limit);
+  }
 
   async list(projectId: string) {
     const versions = (

@@ -17,6 +17,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { VERSION_COPY_RESERVED } from "./version-copy-target";
+import { runtimeAssetUsagePage, runtimeAssetUsageQuery } from "./runtime-asset-usage-query";
 
 type VersionRow = QueryResultRow & {
   id: string;
@@ -77,6 +78,21 @@ type VersionRuntimeRow = QueryResultRow & {
 
 export class PostgresProjectStructureRepository implements ProjectStructureRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
+
+  async listRuntimeAssetUsagesPage(
+    input: Parameters<ProjectStructureRepository["listRuntimeAssetUsagesPage"]>[0],
+  ) {
+    await this.handle.ready;
+    const query = runtimeAssetUsageQuery(input);
+    let position = 0;
+    const result = await this.handle.pool.query<
+      Parameters<typeof runtimeAssetUsagePage>[0][number]
+    >(
+      query.sql.replaceAll("?", () => `$${++position}`),
+      query.parameters,
+    );
+    return runtimeAssetUsagePage(result.rows, input.limit);
+  }
 
   async list(projectId: string) {
     await this.handle.ready;

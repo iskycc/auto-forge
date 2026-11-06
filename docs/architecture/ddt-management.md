@@ -67,6 +67,28 @@ Lite/Full 使用共享应用规则；分组和摘要读取经过可中断的独�
 | CoTest CaseID 执行                         | SR 统一关联同版本、同阶段候选范围内的 TestNG 类；批次保存 CaseID 和执行类，测试类自行调用公开 API 取数                         |
 | Open API 与示例                            | “DDT 管理 → 开放 API”；匿名单用例原始 JSON 查询，URL 固定项目、版本和阶段，提供查询验证及 cURL / JavaScript / Groovy 示例      |
 
+## 导入任务 CaseID 清单的 Excel 编码
+
+导入完成后的“导出本任务 CaseID”下载文件为 CSV，包含 `CaseID` 和“结果”两列，文件名沿用
+`DDT-import-<任务ID>-CaseIDs.csv`。它与“导出全部用例／当前范围／已选用例”的 XLSX 正文导出是不同入口。
+
+该入口原先虽设置浏览器 Blob 的 `text/csv;charset=utf-8`，本地文件却没有 UTF-8 BOM；
+Windows Excel 直接打开文件时无法读取 Blob 的 MIME 信息，可能按系统编码解释 UTF-8 字节，导致中文乱码。
+现在 CSV 从 `EF BB BF` 编码标记开始，使用 CRLF 换行；逗号、双引号继续按 CSV 规则转义，
+保留 API 返回的 CaseID、结果、顺序和条数，不转换大小写、不去除中文，也不改变数据库内容。
+重新导出后即可取得新文件，既有文件保持原状。
+
+修复仅在 Lite／Full 共用的浏览器下载生成器中生效，沿用原有鉴权、范围检查和导入结果 API；
+无需迁移、配置、生产依赖、后台任务或执行协议调整。
+
+### 2026-11-06 编码验证
+
+- 旧生成逻辑的文件字节测试先复现缺失 UTF-8 标记；修复后 `pnpm exec vitest run apps/web/src/lib/ddt-import-case-ids-export.test.ts apps/web/src/lib/ddt-case-selection.test.ts packages/ddt-import/test/sr-tags.test.ts --maxWorkers=1 --no-file-parallelism` 的 15 项通过，包含中文表头、中文／表情／扩展汉字、逗号和引号、前导零原文、全部导入结果及空清单。
+- 生产 Lite 的 Playwright 场景 `DDT import CaseID download identifies UTF-8 for Excel and preserves Chinese identifiers` 通过，实际上传中文 XLSX、完成后台导入并点击下载；四份文件均核对 `EF BB BF`，以独立 CSV 读取器逐行比对导入 API 的 CaseID、结果、顺序与条数。
+- 使用 LibreOffice 实际打开代表性中文 CSV 并另存 XLSX，再读取工作表核对中文、引号、逗号、表情及结果原值一致；本机未运行 Microsoft Excel。
+- 实际审查 1024×768、1536×960 深浅色截图，导入任务进度、统计和 CaseID 导出按钮无新增变形。截图位于本机 `/var/tmp/autoforge-ddt-caseids-csv-ui-20261106/`，不提交产物。
+- `pnpm format:check`、变更文件 ESLint、`tsc --noEmit -p tsconfig.tests.json`、Web 生产构建、17 项 UI 组件约定及 `pnpm test:e2e:matrix` 通过。Full 独立浏览器矩阵未重跑；此次未修改后端或适配器。
+
 ## 用例工作台布局
 
 DDT XLSX 导出在普通用例的 `data` Sheet 和每个用户旅程 Step 内分别规划列名，使用与导入一致的

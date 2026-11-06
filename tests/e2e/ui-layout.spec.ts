@@ -5,6 +5,7 @@ import {
 } from "./support/execution-details";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { unzipSync, zipSync } from "fflate";
@@ -1947,6 +1948,203 @@ test("dependency import opens the scoped Jenkins quick guide with a downloadable
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   expect((await browserJson(page, structurePath)).body).toEqual(savedStructure);
+});
+
+test("runtime archives show resource times and paginated project version usage without layout overflow", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const origin = new URL(page.url()).origin;
+  const jdkFileName = `${uniqueName("长期维护的共享执行工具链-JDK-17")}.zip`;
+  const jdkResponse = await page.request.post(
+    `/api/v1/projects/${scope.projectId}/runtime-assets/upload?kind=jdk&archiveFormat=zip`,
+    {
+      headers: {
+        origin,
+        "content-type": "application/zip",
+        "x-autoforge-file-name": encodeURIComponent(jdkFileName),
+      },
+      data: Buffer.from(zipSync({ "jdk/bin/java": new TextEncoder().encode("fixture") })),
+    },
+  );
+  expect(jdkResponse.status()).toBe(201);
+  const jdk = (await jdkResponse.json()) as { id: string; createdAt: string };
+  const dependency = await browserJson<{ id: string; createdAt: string }>(
+    page,
+    `/api/v1/projects/${scope.projectId}/runtime-assets/url`,
+    {
+      method: "POST",
+      body: {
+        kind: "jar-bundle",
+        archiveFormat: "zip",
+        fileName: "跨境支付与钱包回归依赖包-非常长的依赖名称.zip",
+        url: "http://runtime.invalid/long-dependencies.zip",
+        sha256: "a".repeat(64),
+        sizeBytes: 128,
+      },
+    },
+  );
+  expect(dependency.status).toBe(201);
+  expect(
+    (
+      await browserJson(
+        page,
+        `/api/v1/projects/${scope.projectId}/versions/${scope.projectVersionId}/adapter-configuration`,
+        {
+          method: "PUT",
+          body: { jdkAssetId: jdk.id, jarBundleAssetId: dependency.body.id, expectedRevision: 0 },
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const inheritedVersions: string[] = [];
+  for (let index = 0; index < 21; index++) {
+    const version = await browserJson<{ id: string }>(
+      page,
+      `/api/v1/projects/${scope.projectId}/versions`,
+      {
+        method: "POST",
+        body: { name: `共享版本 ${String(index).padStart(2, "0")} · 钱包与跨境支付长期维护回归集` },
+      },
+    );
+    expect(version.status).toBe(201);
+    inheritedVersions.push(version.body.id);
+    expect(
+      (
+        await browserJson(
+          page,
+          `/api/v1/projects/${scope.projectId}/versions/${version.body.id}/inherit-runtime`,
+          {
+            method: "POST",
+            body: { sourceProjectVersionId: scope.projectVersionId, expectedRevision: 0 },
+          },
+        )
+      ).status,
+    ).toBe(200);
+  }
+  const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  const other = await createUiProject(page, {
+    name: uniqueName("共享 JDK 的第二个项目-跨境支付结算平台"),
+    slug: uniqueName("runtime-other"),
+  });
+  if (dataDirectory && existsSync(resolve(dataDirectory, "db/autoforge.sqlite"))) {
+    const database = new DatabaseSync(resolve(dataDirectory, "db/autoforge.sqlite"));
+    try {
+      database
+        .prepare(
+          "INSERT INTO project_version_runtime_assets(project_version_id,project_id,jdk_asset_id,jar_bundle_asset_id,revision,updated_at) VALUES (?,?,?,?,1,?)",
+        )
+        .run(
+          other.projectVersionId,
+          other.projectId,
+          jdk.id,
+          dependency.body.id,
+          new Date().toISOString(),
+        );
+    } finally {
+      database.close();
+    }
+  }
+  await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
+  const unauthorized = await page.context().browser()!.newContext();
+  try {
+    expect(
+      (
+        await unauthorized.request.get(
+          `${origin}/api/v1/settings/storage/runtime-asset-usage?runtimeAssetId=${jdk.id}`,
+        )
+      ).status(),
+    ).toBe(401);
+  } finally {
+    await unauthorized.close();
+  }
+  expect(
+    (
+      await page.request.get(
+        `/api/v1/settings/storage/runtime-asset-usage?runtimeAssetId=${jdk.id}&limit=101`,
+      )
+    ).status(),
+  ).toBe(400);
+
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([{ name: "autoforge-color-mode", value: appearance, url: origin }]);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/settings/projects");
+      const jdkCard = page.getByRole("region", { name: "当前JDK", exact: true });
+      const dependencyCard = page.getByRole("region", { name: "当前依赖包", exact: true });
+      await expect(jdkCard).toContainText("上传时间");
+      await expect(jdkCard.locator("time")).toHaveAttribute("datetime", jdk.createdAt);
+      await expect(dependencyCard).toContainText("更新时间");
+      await expect(dependencyCard.locator("time")).toHaveAttribute(
+        "datetime",
+        dependency.body.createdAt,
+      );
+      await expectUiIntegrity(page);
+      await captureUi(page, `runtime-times-${appearance}`, viewport.width);
+      await page.goto(
+        `/objects?section=storage&category=jdk&query=${encodeURIComponent(jdkFileName)}`,
+      );
+      await page.getByRole("button", { name: "重新扫描", exact: true }).click();
+      const archive = page.locator(".storage-tree-file").filter({ hasText: jdkFileName });
+      await expect(archive).toHaveCount(1);
+      await archive.locator(".storage-tree-file-name").click();
+      const usage = archive.getByRole("region", { name: "项目与版本引用", exact: true });
+      await expect(usage).toHaveAttribute("aria-busy", "false");
+      await expect(usage.locator("tbody tr.ant-table-row")).toHaveCount(20);
+      await expect(usage).toContainText("使用项目与版本");
+      await usage.scrollIntoViewIfNeeded();
+      await waitForUiTransitions(page);
+      await captureUi(page, `runtime-usage-${appearance}`, viewport.width, false);
+      await expectUiIntegrity(page);
+      await usage.getByRole("button", { name: "下一页", exact: true }).click();
+      await expect(usage).toHaveAttribute("aria-busy", "false");
+      await expect(usage).toContainText("第 2 页");
+      expect(await usage.locator("tbody tr.ant-table-row").count()).toBeGreaterThanOrEqual(2);
+      await captureUi(page, `runtime-usage-multiple-projects-${appearance}`, viewport.width, false);
+      await usage.getByRole("button", { name: "上一页", exact: true }).click();
+      await expect(usage).toHaveAttribute("aria-busy", "false");
+      await expect(usage.locator("tbody tr.ant-table-row")).toHaveCount(20);
+    }
+  }
+  const usage = page.getByRole("region", { name: "项目与版本引用", exact: true });
+  const usageEndpoint = (url: URL) =>
+    url.pathname === "/api/v1/settings/storage/runtime-asset-usage";
+  await page.route(usageEndpoint, (route) =>
+    route.fulfill({ status: 503, json: { error: { message: "模拟引用读取暂时不可用" } } }),
+  );
+  await usage.getByRole("button", { name: "刷新引用", exact: true }).click();
+  await expect(usage.getByRole("alert")).toContainText("模拟引用读取暂时不可用");
+  await page.unroute(usageEndpoint);
+  await usage.getByRole("button", { name: "刷新引用", exact: true }).click();
+  await expect(usage).toHaveAttribute("aria-busy", "false");
+  await expect(usage.getByRole("alert")).toHaveCount(0);
+  await expect(usage.locator("tbody tr.ant-table-row")).toHaveCount(20);
+  // Current bindings are read live, independently of the storage filesystem snapshot.
+  const before = await page.request.get(
+    `/api/v1/settings/storage/runtime-asset-usage?runtimeAssetId=${dependency.body.id}&limit=100`,
+  );
+  const beforePage = (await before.json()) as { items: unknown[] };
+  expect(
+    (
+      await page.request.delete(
+        `/api/v1/projects/${scope.projectId}/versions/${inheritedVersions[0]}/adapter-configuration?kind=jar-bundle&expectedRevision=1`,
+        { headers: { origin } },
+      )
+    ).status(),
+  ).toBe(200);
+  const after = await page.request.get(
+    `/api/v1/settings/storage/runtime-asset-usage?runtimeAssetId=${dependency.body.id}&limit=100`,
+  );
+  expect(((await after.json()) as { items: unknown[] }).items).toHaveLength(
+    beforePage.items.length - 1,
+  );
 });
 
 test("many project versions stay compact and configure only the selected version", async ({

@@ -9,6 +9,7 @@ import { associateDdtSr, setUnlinkedSrFilter } from "./support/ddt-associations"
 import { expectLogCaseDetail } from "./support/log-case-detail";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { readExportedCsv } from "./support/export-workbook";
 
 import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { zipSync, unzipSync, strFromU8 } from "fflate";
@@ -1604,6 +1605,84 @@ test("DDT import refreshes an already opened case and shows its persisted change
     ddtPath(hierarchy, `cases/${encodeURIComponent(caseId)}/history`),
   );
   expect(unchanged.body.items).toHaveLength(2);
+});
+
+test("DDT import CaseID download identifies UTF-8 for Excel and preserves Chinese identifiers", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const caseIds = ["钱包支付-中文用例😀", '中文,带"引号"-001', "000012345", "路由/支付?场景=退款"];
+  const source = buildExportWorkbook(
+    caseIds.map((CaseID) => ({ CaseID, srNum: "中文SR", 内容: "保留原始字段" })),
+  );
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("button", { name: "导入表格", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入 DDT 用例", exact: true });
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "中文CaseID来源.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: source,
+  });
+  const previewResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/imports/preview?") && response.request().method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "开始预检", exact: true }).click();
+  const preview = await previewResponse;
+  expect(preview.status()).toBe(201);
+  const { id: jobId } = (await preview.json()) as { id: string };
+  await dialog.getByRole("button", { name: "确认并后台导入", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(ddtPath(hierarchy, `imports/${jobId}`));
+        expect(response.status()).toBe(200);
+        return ((await response.json()) as { status: string }).status;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("succeeded");
+  const sourceResponse = await page.request.get(ddtPath(hierarchy, `imports/${jobId}/case-ids`));
+  expect(sourceResponse.status()).toBe(200);
+  const imported = (await sourceResponse.json()) as {
+    items: Array<{ caseId: string; outcome: string }>;
+  };
+  expect(new Set(imported.items.map((item) => item.caseId))).toEqual(new Set(caseIds));
+  expect(imported.items.every((item) => item.outcome === "inserted")).toBe(true);
+
+  for (const appearance of ["light", "dark"]) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: appearance, url: new URL(page.url()).origin },
+      ]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.goto("/cases?tab=ddt&ddtView=imports");
+      const job = page.locator(".ddt-job").filter({ has: page.locator(".ddt-status.succeeded") });
+      const downloadEvent = page.waitForEvent("download");
+      await job.getByRole("button", { name: "导出本任务 CaseID", exact: true }).click();
+      const download = await downloadEvent;
+      expect(download.suggestedFilename()).toBe(`DDT-import-${jobId}-CaseIDs.csv`);
+      await download.saveAs(test.info().outputPath(`CaseIDs-${appearance}-${width}.csv`));
+      const path = await download.path();
+      if (!path) throw new Error("CaseID download was not saved.");
+      const bytes = await readFile(path);
+      expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      const sheet = await readExportedCsv(bytes);
+      const rows: unknown[][] = [];
+      sheet.eachRow((row) => rows.push((row.values as unknown[]).slice(1)));
+      expect(rows).toEqual([
+        ["CaseID", "结果"],
+        ...imported.items.map((item) => [item.caseId, item.outcome]),
+      ]);
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-import-caseids-${appearance}-${width}`);
+    }
+  }
 });
 
 test("DDT CaseID conflict strategies preserve existing data and report the outcome", async ({

@@ -25,6 +25,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Button, Input } from "@/components/ui";
+import { RuntimeAssetUsage } from "./runtime-asset-usage";
 
 import type {
   StorageDirectoryNode,
@@ -445,6 +446,11 @@ function StorageFileBranch({
         </dl>
         {file.kind === "sqlite-group" ? (
           <SqlitePhysicalFiles files={file.physicalFiles} timeZone={timeZone} />
+        ) : null}
+        {open &&
+        item.runtimeAssetId &&
+        (item.category === "jdk" || item.category === "dependency") ? (
+          <RuntimeAssetUsage key={item.runtimeAssetId} runtimeAssetId={item.runtimeAssetId} />
         ) : null}
         {canDeleteRuntimeAsset(item, deletion.canManage) ? (
           <div

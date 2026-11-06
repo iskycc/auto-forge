@@ -474,6 +474,31 @@ export const storageInventoryLocationSchema = z.enum([
   "external-reference",
 ]);
 
+export const runtimeAssetUsageQuerySchema = z.object({
+  runtimeAssetId: z.string().min(1).max(128),
+  cursor: z.string().min(1).max(300).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export const runtimeAssetUsageSchema = z.object({
+  referenceId: z.string().min(1).max(300),
+  projectId: z.string().min(1).max(128),
+  projectName: z.string().min(1),
+  projectArchived: z.boolean(),
+  projectVersionId: z.string().min(1).max(128).optional(),
+  projectVersionName: z.string().min(1).optional(),
+  versionStatus: z.enum(["active", "archived"]).optional(),
+});
+
+export const runtimeAssetUsagePageSchema = z.object({
+  items: z.array(runtimeAssetUsageSchema).max(100),
+  nextCursor: z.string().min(1).max(300).optional(),
+});
+
+export type RuntimeAssetUsageQuery = z.infer<typeof runtimeAssetUsageQuerySchema>;
+export type RuntimeAssetUsage = z.infer<typeof runtimeAssetUsageSchema>;
+export type RuntimeAssetUsagePage = z.infer<typeof runtimeAssetUsagePageSchema>;
+
 export const storageInventoryItemSchema = z.object({
   id: z.string().min(1).max(8_192),
   category: storageInventoryCategorySchema,

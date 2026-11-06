@@ -71,6 +71,7 @@ export default async function ProjectsPage({
           {...(hierarchy.projectVersionId ? { initialVersionId: hierarchy.projectVersionId } : {})}
           projectId={project.id}
           baseUrl={services.configurationStore.read().web.publicBaseUrl}
+          timeZone={services.configurationStore.read().web.timeZone}
         />
       ) : (
         <EmptyState className={cn("inline-empty", uiPatterns["inline-empty"])}>

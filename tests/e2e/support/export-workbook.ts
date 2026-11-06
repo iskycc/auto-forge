@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
 import { assertExportedWorkbookFeatureOrder } from "./export-workbook-structure";
 
 // Use the Web workspace's locked offline dependency and inspect cell values across XLSX encodings.
@@ -24,4 +25,8 @@ export async function readExportedWorkbookText(buffer: Buffer): Promise<string> 
   for (const sheet of workbook.worksheets)
     sheet.eachRow((row) => row.eachCell((cell) => values.push(cell.text)));
   return values.join("\n");
+}
+
+export async function readExportedCsv(buffer: Buffer) {
+  return new ExcelJS.Workbook().csv.read(Readable.from([buffer]), { map: (value) => value });
 }

@@ -51,7 +51,7 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 
 - 项目设置支持修改当前项目名称，包括系统默认项目；项目 ID、默认标记、版本和执行历史关联保持不变。执行节点的“管理操作”支持通过已核验 SSH 连接完整卸载 Agent，清除本地执行数据和已保存连接，保留平台历史执行；旧 Agent 可直接由平台内置工具清理，失败可重试。操作范围与本机命令见[项目改名与 Agent 卸载](./docs/operations/runner-uninstall.md)。
 
-- “项目设置 → JDK 与依赖 JAR 压缩包”提供“Jenkins 接入指导”，在当前页查看依赖导入快速步骤、内置依赖发布插件下载、必填／选填参数和可复制 Pipeline；示例按当前选中项目与版本填写，使用服务账号 `project.manage` 权限，具体行为见[依赖发布插件指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。
+- “项目设置 → JDK 与依赖 JAR 压缩包”显示 JDK 上传／登记时间和依赖包更新时间；“文件管理 → 存储空间”展开资源后，分页查看实际使用它的项目与版本，包含多个项目、继承版本和归档引用。时间与引用范围见[运行时资源管理](./docs/operations/runtime-assets.md)。页面还提供“Jenkins 接入指导”，包含内置插件下载、参数及按当前项目／版本生成的 Pipeline，使用服务账号 `project.manage` 权限，具体行为见[依赖发布插件指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。
 
 - 执行节点上报 Agent 数据目录所在分区的磁盘可用量；低于 20% 时，节点页右下角集中悬浮提醒，展示节点、容量、目录及采样时间，支持跨分页定位。离线／过期数据明确标注，旧 Agent 未上报不会误报空间不足；升级 Agent 后生效。详见[节点磁盘空间提醒](./docs/architecture/runner-agent.md#节点磁盘空间提醒)。
 

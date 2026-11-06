@@ -97,6 +97,7 @@ import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { readApiError } from "@/lib/client-api";
+import { ddtImportCaseIdsCsv } from "@/lib/ddt-import-case-ids-export";
 
 type HistoryItem = DdtHistoryItem;
 type Dashboard = {
@@ -1405,18 +1406,7 @@ export function DdtManagementWorkspace({
               const result = await requestJson<{
                 items: Array<{ caseId: string; outcome: string }>;
               }>(endpoint(`imports/${id}/case-ids`));
-              downloadBlob(
-                new Blob(
-                  [
-                    "CaseID,结果\n",
-                    ...result.items.map(
-                      (item) => `${csvCell(item.caseId)},${csvCell(item.outcome)}\n`,
-                    ),
-                  ],
-                  { type: "text/csv;charset=utf-8" },
-                ),
-                `DDT-import-${id}-CaseIDs.csv`,
-              );
+              downloadBlob(ddtImportCaseIdsCsv(result.items), `DDT-import-${id}-CaseIDs.csv`);
             }}
           />
         ) : null}
@@ -3336,10 +3326,6 @@ function downloadBlob(blob: Blob, fileName: string): void {
   anchor.download = fileName;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function csvCell(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`;
 }
 
 const ddtManagementWorkspaceStyles = {

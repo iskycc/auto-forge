@@ -1,4 +1,6 @@
 import type {
+  RuntimeAssetUsageQuery,
+  RuntimeAssetUsagePage,
   DdtScopeClearPage,
   DdtScopeClearPreview,
   DdtRecycleGroupsInput,
@@ -170,6 +172,7 @@ export type DeleteRuntimeAssetMetadataResult =
 
 export interface ProjectStructureRepository {
   list(projectId: string): Promise<ProjectStructure>;
+  listRuntimeAssetUsagesPage(input: RuntimeAssetUsageQuery): Promise<RuntimeAssetUsagePage>;
   listRuntimeAssetsPage(input: {
     sourceType?: ProjectRuntimeAsset["sourceType"];
     afterId?: string;
