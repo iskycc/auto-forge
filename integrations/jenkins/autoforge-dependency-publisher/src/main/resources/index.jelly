@@ -3,6 +3,7 @@
   Replaces the dependency archive assigned to an AutoForge project version from Jenkins Pipeline.
   Required parameters: <code>baseUrl</code>, <code>apiKey</code>, <code>projectId</code>,
   <code>version</code>, <code>filePath</code>.
-  SHA-256, size and format are detected automatically on the Jenkins Agent.
+  filePath accepts a workspace-relative path or an absolute path on the current Jenkins Agent.
+  SHA-256, size and format are detected automatically on that Agent.
   Optional parameters: <code>fileName</code> and <code>archiveFormat</code>.
 </div>

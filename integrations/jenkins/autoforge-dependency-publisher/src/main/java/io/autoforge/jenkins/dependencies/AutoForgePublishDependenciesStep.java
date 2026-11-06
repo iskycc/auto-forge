@@ -120,7 +120,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
             if (filePath != null) {
                 if (dependencyUrl != null) throw new AbortException("filePath 与旧 dependencyUrl 不能同时填写，请使用本地文件路径。");
                 FilePath workspace = getContext().get(FilePath.class);
-                if (workspace == null) throw new AbortException("直接上传依赖需要 Jenkins Agent 工作区，请在 node 或 Declarative Pipeline 的 agent 步骤中使用。");
+                if (workspace == null) throw new AbortException("直接上传依赖需要 Jenkins Agent 执行上下文，请在 node 或 Declarative Pipeline 的 agent 步骤中使用。");
                 Map<String, Object> result = workspace.act(new UploadDependencyFile(
                     baseUrl, apiKey.getPlainText(), projectId, version, filePath, fileName, archiveFormat, listener));
                 AutoForgeConsoleLog console = new AutoForgeConsoleLog(listener.getLogger(), apiKey.getPlainText());
@@ -130,7 +130,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
                 console.field("发布说明", "依赖已上传到平台托管存储，后续新建批次使用最新依赖。");
                 return result;
             }
-            if (dependencyUrl == null) throw new AbortException("请通过 filePath 指定 Jenkins Agent 工作区内已经构建好的依赖压缩包。");
+            if (dependencyUrl == null) throw new AbortException("请通过 filePath 指定当前 Jenkins Agent 上已经构建好的依赖压缩包，可使用工作区相对路径或绝对路径。");
             return new AutoForgeDependencyClient(
                     baseUrl, apiKey.getPlainText(), listener.getLogger())
                 .replace(

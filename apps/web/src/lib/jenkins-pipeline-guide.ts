@@ -19,6 +19,7 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
     apiKey: env.AUTOFORGE_API_KEY,
     projectId: ${groovyStringLiteral(scope.projectId)},
     version: ${groovyStringLiteral(scope.version)},
+    // 也支持当前 Agent 的绝对路径，例如 /opt/builds/dependencies.zip 或 D:/builds/dependencies.zip。
     filePath: 'target/autoforge-dependencies.zip'
   )
 }`;

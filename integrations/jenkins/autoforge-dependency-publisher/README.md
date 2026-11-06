@@ -1,6 +1,6 @@
 # AutoForge Dependency Publisher Jenkins Plugin
 
-`autoforgePublishDependencies` 直接读取 **Jenkins Agent 工作区内已经构建好的依赖压缩包**，
+`autoforgePublishDependencies` 直接读取 **Jenkins Agent 上已经构建好的依赖压缩包**，
 在插件内部计算 SHA-256 和字节数，再流式上传到 AutoForge，原子替换指定项目版本的依赖绑定。
 不需要 `archiveArtifacts`、Artifact URL、`sha256sum`、`stat` 或额外上传脚本。
 
@@ -24,10 +24,23 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
 }
 ```
 
-将 `filePath` 改为实际构建产物的相对路径即可。ZIP、`.tar.gz` 和 `.tgz` 都自动识别；
+将 `filePath` 改为实际构建产物路径即可，支持工作区相对路径和当前 Agent 的绝对路径。ZIP、`.tar.gz` 和 `.tgz` 都自动识别；
 Windows Agent 同样不需要安装 Shell 或摘要工具。文件必须已生成且不再被其他构建修改。
 插件通过 Jenkins `FilePath.act` 在当前 Agent 上完成读取和 HTTP 上传，不把整个文件经
 Controller 内存中转。Agent 必须能访问 `baseUrl`。
+
+绝对路径示例（同样需要放在 `node` 或已分配 `agent` 的 `steps` 中）：
+
+```groovy
+// Linux Agent
+filePath: '/opt/builds/autoforge-dependencies.zip'
+// Windows Agent：使用正斜杠可避免 Groovy 反斜杠转义
+filePath: 'D:/builds/autoforge-dependencies.zip'
+```
+
+路径必须存在于**当前执行该步骤的 Jenkins Agent**，而非 Controller 或主平台机器。
+绝对路径文件不要求工作区目录已经生成；相对路径仍依赖工作区。摘要、大小和上传方式相同，
+本次不改变 AutoForge API、项目权限、Lite／Full 对象存储或 Runner 下载协议。
 
 ## 参数说明
 
@@ -37,7 +50,7 @@ Controller 内存中转。Agent 必须能访问 `baseUrl`。
 | `apiKey` | 是 | 无 | `af_api_` 开头的 API Key。服务账号与令牌均需目标项目的“管理项目”（`project.manage`）权限。通过 Jenkins Secret text 凭据注入，禁止明文写入 Jenkinsfile。 |
 | `projectId` | 是 | 无 | 目标项目 ID，不是项目名称。 |
 | `version` | 是 | 无 | 版本名称，不是版本 ID。忽略首尾空白、大小写及兼容字符差异；不存在时创建，已归档时拒绝。 |
-| `filePath` | 是 | 无 | 当前 Agent 工作区内的单个普通文件相对路径，不支持通配符、绝对路径、`..` 越界或指向工作区外的符号链接。 |
+| `filePath` | 是 | 无 | 当前 Agent 上的普通文件路径，支持工作区相对路径或绝对路径。相对路径不得通过 `..` 或符号链接越出工作区；绝对路径允许工作区外文件，按 Agent 原生系统语义解析，并要求 Agent 运行账号可读。不支持通配符、`~` 或 Shell 变量展开。 |
 | `fileName` | 否 | 本地文件名 | 仅需更改平台显示文件名时填写；必须保留与格式一致的扩展名。 |
 | `archiveFormat` | 否 | 根据文件名识别 | 可填 `zip` 或 `tar.gz`；通常不必填写。 |
 
@@ -50,7 +63,7 @@ Controller 内存中转。Agent 必须能访问 `baseUrl`。
   并更新版本绑定。Lite 使用本地对象存储，Full 使用 MinIO；Runner 沿用平台的受控下载协议。
 - 只更新目标版本的依赖绑定，保留 JDK；不导入测试类、不自动执行任务。后续新建批次使用新绑定，
   已创建批次保持原执行快照。旧上传文件保留在托管文件库，沿用引用保护和文件管理清理流程。
-- 文件缺失、空文件、扩展名错误、工作区越界或上传期间文件改变会失败；服务端拒绝时展示可操作原因。
+- 文件缺失、空文件、扩展名错误、相对路径越界、文件不可读或上传期间文件改变会失败；服务端拒绝时展示可操作原因。
   数据库登记失败会清理本次新上传对象，保留原绑定；版本在上传期间被归档也会拒绝登记。
 - 使用 HTTP/1.1，不跟随重定向；连接超时 15 秒，上传请求等待上限 15 分钟。大文件采用有界缓冲，
   不整体装入 Java 或 Web 内存。平台暂存占用数据目录磁盘，需保留足够余量。

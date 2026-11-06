@@ -1889,6 +1889,8 @@ test("dependency import opens the scoped Jenkins quick guide with a downloadable
       await expect(code).toContainText("version: 'UI 验证版本'");
       await expect(code).toContainText("baseUrl: 'http://127.0.0.1:3100'");
       await expect(code).toContainText("filePath: 'target/autoforge-dependencies.zip'");
+      await expect(code).toContainText("/opt/builds/dependencies.zip");
+      await expect(code).toContainText("D:/builds/dependencies.zip");
       await expect(code).not.toContainText("archiveArtifacts");
       await expect(code).not.toContainText("dependencyUrl:");
       await code.locator(".ant-typography-copy").click();
@@ -1902,6 +1904,7 @@ test("dependency import opens the scoped Jenkins quick guide with a downloadable
       });
       await dialog.getByRole("tab", { name: "参数说明", exact: true }).click();
       await expect(dialog).toContainText("必填参数");
+      await expect(dialog).toContainText("Linux／Windows 绝对路径");
       await expect(dialog.getByText("projectId", { exact: true })).toHaveCSS(
         "white-space",
         "nowrap",

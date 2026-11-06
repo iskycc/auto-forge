@@ -6,6 +6,21 @@ and known limitations.
 
 ## Unreleased
 
+## 1.22.2 - 2026-11-06
+
+### Added
+
+- Jenkins 依赖发布的 `filePath` 支持当前 Jenkins Agent 的绝对路径，可直接上传工作区外的构建文件；相对路径继续按工作区解析。摘要、大小及流式上传仍由插件自动处理，接入指导增加 Linux／Windows 绝对路径示例。无新增平台 API、配置、数据库迁移、运行依赖或 Runner 协议。
+
+### Compatibility
+
+- 升级后从平台下载并重新安装内置依赖发布 HPI 才能使用绝对路径。路径属于当前执行步骤的 Jenkins Agent，运行账号需具有文件读取权限；既有相对路径和 URL Pipeline 保持兼容。
+
+### Verification
+
+- 完整 Maven `verify` 通过：42 项通过、2 项框架跳过，覆盖真实独立 Agent 的相对／绝对路径、摘要与大小、中文及空格文件名、路径边界和旧 Pipeline；SpotBugs 与 HPI 校验通过。两项生产 Lite Playwright 验证上传、指导、复制及 HPI 下载，已审查 1024×768、1536×960 深浅色截图，无新增溢出；指导生成器两项测试和 Web 生产构建通过。详见[绝对路径验证](./docs/architecture/jenkins-dependency-upload.md#agent-绝对路径扩展验证2026-11-06)。
+- 按要求采用最快发布路径，仅运行 Release；复用已完成的功能与 UI 定向验证，不运行标准 CI、标签源码检查、完整分布式及发布后完整验收，保留原生双架构构建、镜像启动、内置资源、SBOM、签名及完整资产校验。本轮未运行真实 Windows Agent 或 Full 存储完整矩阵，服务端上传契约与存储实现未改动。
+
 ## 1.22.1 - 2026-11-06
 
 ### Fixed

@@ -54,5 +54,5 @@ Maven 依赖；依赖缓存齐全后可使用 `mvn --offline` 构建和运行测
 任务执行插件的 API Key 需要项目的 `run.create`、`run.cancel`、`run.read` 权限。
 普通 Pipeline 停止会先请求平台平滑终止，等待最终报告后才结束步骤，具体收尾和失败边界见[执行插件说明](./autoforge-execution/README.md)。
 
-依赖发布使用 `filePath` 直传当前 Jenkins Agent 上的构建文件，插件内部计算摘要和大小，
+依赖发布使用 `filePath` 直传当前 Jenkins Agent 上的构建文件，支持工作区相对路径及 Agent 绝对路径，插件内部计算摘要和大小，
 不需要 Jenkins 文件归档或下载 URL。支持独立 Agent；网络和失败边界见[依赖发布指南](./autoforge-dependency-publisher/README.md)。

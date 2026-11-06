@@ -6,7 +6,7 @@ pipeline {
       steps {
         withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
           autoforgePublishDependencies(
-            // 必填：平台地址、API Key、项目/版本和当前 Agent 工作区文件路径。
+            // 必填：平台地址、API Key、项目/版本和当前 Agent 文件路径（相对工作区或绝对路径）。
             baseUrl: 'https://autoforge.internal',
             apiKey: env.AUTOFORGE_API_KEY,
             projectId: 'replace-with-project-id',

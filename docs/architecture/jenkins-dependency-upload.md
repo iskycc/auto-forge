@@ -1,13 +1,13 @@
 # Jenkins Agent 本地依赖直传
 
-`autoforgePublishDependencies` 的默认接入是工作区文件 `filePath`。用户提供平台地址、
-API Key、项目 ID、版本名称和相对路径，摘要、大小、压缩格式均由插件计算。
+`autoforgePublishDependencies` 的默认接入是 Agent 本机文件 `filePath`。用户提供平台地址、
+API Key、项目 ID、版本名称和文件路径（工作区相对路径或 Agent 绝对路径），摘要、大小、压缩格式均由插件计算。
 参数、示例及失败边界见[插件指南](../../integrations/jenkins/autoforge-dependency-publisher/README.md)。
 
 ## 传输与事务
 
 1. Pipeline 步骤通过 `FilePath.act` 在当前 Jenkins Agent 上执行读取与上传，支持 Controller／
-   Agent 分离。只接受工作区内的普通文件，拒绝越界路径及工作区外符号链接。文件不经 Jenkins
+   Agent 分离。源文件必须为当前 Agent 可读的普通文件。相对路径按工作区解析并拒绝越界及指向工作区外的符号链接；显式绝对路径按 Agent 原生操作系统解析，可指向工作区外文件，不依赖工作区目录已经创建。文件不经 Jenkins
    Artifact URL，不需要 `archiveArtifacts`，不经 Controller 全量缓冲。
 2. Agent 使用 64 KiB 缓冲计算 SHA-256 和大小，然后以 HTTP/1.1 原始正文流式 POST。
    摘要后文件大小变化立即失败；同大小变化由平台实际摘要校验拒绝。
@@ -52,3 +52,27 @@ Pipeline、参数与 HPI 下载，并实际审查截图。
 
 本次未运行 Windows Agent、完整真实 Runner 执行、整套 Full 浏览器／故障恢复或发布矩阵；
 文件分发复用既有平台托管资源与 Runner 协议，未将这些未运行项列为通过。
+
+## Agent 绝对路径扩展验证（2026-11-06）
+
+绝对路径由当前 Jenkins Agent 的原生 `Path` 解析，Linux 支持 `/opt/builds/dependencies.zip`，
+Windows 可填 `D:/builds/dependencies.zip`。步骤仍需放入已选择 Agent 的 `node`／`steps`。
+绝对路径分支不读取工作区目录；相对路径保留原有目录边界。普通文件及读取权限校验共享，
+缺失、目录、空路径和控制字符在 HTTP 上传前拒绝；相对符号链接越界继续拒绝，显式绝对来源允许解析符号链接。
+本次仅改变 Jenkins 侧取文件逻辑，平台 API、权限、数据库及 Lite／Full 托管存储共用原链路。
+
+先添加真实独立 Agent 的绝对路径 Pipeline，复现旧版本以“必须是工作区内的相对文件路径”拒绝；
+修复后完整 Maven `verify` 通过，两个插件合计 42 项通过、2 项框架跳过，SpotBugs 零问题。
+真实远端上传同时覆盖相对路径、工作区外绝对路径，逐项核对文件字节、摘要、大小和中文／空格文件名；
+六项路径测试覆盖未创建工作区、路径归一化、缺失文件／目录、控制字符和符号链接。
+旧 URL DSL 与原执行插件回归均通过，HPI 包校验保持原 Jenkins／Step API 最低版本及唯一直接插件依赖。
+
+指导生成器两项测试与 Web 生产构建通过。生产 Lite 的上传 API／UI 两项 Playwright 通过，
+覆盖原值字节一致、错误摘要／越权后保留绑定、复制与版本切换、HPI 下载和绝对路径说明。
+全仓 `pnpm format:check`、变更文件 ESLint、`tsconfig.tests.json` 类型检查及 E2E 覆盖矩阵校验通过。
+实际查看 1024×768、1536×960 深浅色的快速接入、Pipeline 和参数截图，代码只在自身区域滚动，
+参数标签列宽一致，关闭按钮可见，没有新增页面横向溢出。截图位于本机
+`/var/tmp/autoforge-jenkins-absolute-ui-20261106/`，不提交产物。
+
+Windows 路径沿用 Java 原生文件系统语义，本轮未运行真实 Windows Agent；未重跑 Full 数据库／对象存储完整矩阵，
+因为服务端上传契约与存储实现未改动。更新依赖发布 HPI 即可使用绝对路径，原已支持直传的平台接口可继续接收。

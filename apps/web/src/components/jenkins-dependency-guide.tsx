@@ -105,8 +105,8 @@ function JenkinsDependencyGuide({
                 </GuideStep>
                 <GuideStep number={3} title="发布依赖并核对当前版本">
                   <p className="m-0">
-                    先构建好依赖压缩包，通过 filePath 指定工作区相对路径，再调用{" "}
-                    <code>autoforgePublishDependencies</code>
+                    先构建好依赖压缩包，通过 filePath 指定工作区相对路径或当前 Agent
+                    的绝对路径，再调用 <code>autoforgePublishDependencies</code>
                     。发布成功后刷新本页，在“依赖包”中核对最新文件。该操作替换当前版本依赖绑定；已创建批次继续使用其执行快照，旧上传文件沿用文件管理的引用保护。
                   </p>
                   <Button type="button" variant="secondary" onClick={() => setTab("pipeline")}>
@@ -131,7 +131,7 @@ function JenkinsDependencyGuide({
                   type="info"
                   showIcon
                   title="当前项目、版本和平台地址已填入"
-                  description="示例放入有 agent 的 Pipeline steps 块，只需替换 filePath。插件自动计算摘要、大小并上传，支持 ZIP、tar.gz 和 tgz；无需 Shell 脚本、Jenkins 归档或下载 URL。"
+                  description="示例放入有 agent 的 Pipeline steps 块，filePath 支持工作区相对路径和当前 Agent 的绝对路径。插件自动计算摘要、大小并上传，支持 ZIP、tar.gz 和 tgz；无需 Jenkins 归档或下载 URL。"
                 />
                 <div
                   className="max-w-full overflow-x-auto rounded-lg border border-solid border-border bg-muted p-4"
@@ -181,7 +181,7 @@ function JenkinsDependencyGuide({
                       key: "filePath",
                       label: "filePath",
                       children:
-                        "当前 Jenkins Agent 工作区内已经构建好的文件相对路径；不支持通配符或工作区外路径。摘要和大小由插件自动计算。",
+                        "当前 Jenkins Agent 的文件路径：支持工作区相对路径，或 Linux／Windows 绝对路径（如 /opt/builds/dependencies.zip、D:/builds/dependencies.zip）。相对路径须位于工作区内，不支持通配符；Agent 账号需可读。摘要和大小自动计算。",
                     },
                   ]}
                 />

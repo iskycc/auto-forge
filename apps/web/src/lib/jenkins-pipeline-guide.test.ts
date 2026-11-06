@@ -14,6 +14,8 @@ describe("Jenkins dependency publication guide", () => {
     expect(pipeline).toContain("withCredentials([string(credentialsId: 'autoforge-api-key'");
     expect(pipeline).toContain("apiKey: env.AUTOFORGE_API_KEY");
     expect(pipeline).toContain("filePath: 'target/autoforge-dependencies.zip'");
+    expect(pipeline).toContain("/opt/builds/dependencies.zip");
+    expect(pipeline).toContain("D:/builds/dependencies.zip");
     expect(pipeline).not.toMatch(
       /archiveArtifacts|dependencyUrl:|sha256sum|stat -c|sha256:|sizeBytes:/u,
     );
