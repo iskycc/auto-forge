@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import {
   AiResourceDeferral,
   AiModelRequestError,
+  AI_EVIDENCE_INPUT_POLICY,
   type AiAnalysisRepository,
   type AiEvidence,
   type AiWork,
@@ -9,6 +10,16 @@ import {
   type JarObjectStorePort,
 } from "@autoforge/application";
 import type { AiModelConfiguration } from "@autoforge/contracts";
+import { isDomainError } from "@autoforge/domain";
+import { parseSafeAnsiStream, type AnsiParserState } from "../src/lib/safe-ansi";
+import {
+  prepareAiText,
+  shortenAiInput,
+  redactAiJson,
+  redactAiText,
+  AI_INPUT_MAXIMUM_CHARACTERS,
+} from "./ai-input-text";
+export { redactAiJson, redactAiText } from "./ai-input-text";
 
 export class AiEvidenceStore {
   constructor(
@@ -25,9 +36,11 @@ export class AiEvidenceStore {
     signal: AbortSignal,
   ): Promise<{ key: string; evidence: AiEvidence }> {
     const source = await this.repository.source(work.attemptId);
+    const inputTransformations: string[] = [];
     const evidence: AiEvidence = {
       version: 1,
-      inputPolicy: "stdout_business_v1",
+      inputPolicy: AI_EVIDENCE_INPUT_POLICY,
+      inputTransformations,
       stdoutComplete: true,
       executionRunId: work.executionRunId,
       attemptId: work.attemptId,
@@ -41,7 +54,7 @@ export class AiEvidenceStore {
     const partCharacters = Math.max(
       512,
       Math.min(
-        8000,
+        AI_INPUT_MAXIMUM_CHARACTERS,
         Math.floor(
           (configuration.contextTokens -
             configuration.outputTokens * 4 -
@@ -93,50 +106,59 @@ export class AiEvidenceStore {
           }
         }
       }
-      await append(redactAiJson(executionInput), "input");
+      let shortenedInput = false;
+      await append(
+        redactAiJson(executionInput, () => {
+          shortenedInput = true;
+        }),
+        "input",
+      );
+      if (shortenedInput)
+        inputTransformations.push("业务字段超过 5000 字符时仅保留末尾 2500 字符。");
       if (source.input_truncated) evidence.limitations.push("执行输入超过 8 MiB，未取得完整输入。");
     } else evidence.limitations.push("没有可读取的实际尝试或执行快照。");
-    let stdoutCharacters = 0;
-    for (const stream of ["stdout"] as const) {
-      let afterSequence = -1;
-      try {
-        while (remaining > 0) {
-          signal.throwIfAborted();
-          const page = await this.logs.listLogChunks({
-            attemptId: work.attemptId,
-            stream,
-            afterSequence,
-            limit: 16,
-          });
-          for (const chunk of page.items) {
-            if (remaining > 0) stackTexts.push(chunk.content);
-            stdoutCharacters += chunk.content.length;
-            await append(chunk.content, stream);
-          }
-          if (page.truncated) {
-            evidence.stdoutComplete = false;
-            evidence.limitations.push(`${stream} 日志读取不完整或已离线归档。`);
-          }
-          const last = page.items.at(-1)?.sequence;
-          if (last === undefined || last <= afterSequence || page.nextSequence === undefined) break;
-          afterSequence = last;
+    let stdoutBytes = 0;
+    let ansiState: AnsiParserState | undefined;
+    let afterSequence = -1;
+    while (remaining > 0 && evidence.stdoutComplete) {
+      signal.throwIfAborted();
+      const page = await this.readStdoutPage(work.attemptId, afterSequence, signal);
+      for (const chunk of page.items) {
+        signal.throwIfAborted();
+        if (!this.canWork()) throw new AiResourceDeferral();
+        stdoutBytes += Buffer.byteLength(chunk.content);
+        if (stdoutBytes > configuration.maximumEvidenceMiB * 1048576) {
+          evidence.stdoutComplete = false;
+          evidence.limitations.push("stdout 日志超出配置的采集空间预算，无法确认完整堆栈。");
+          break;
         }
-      } catch (error) {
-        if (signal.aborted || error instanceof AiResourceDeferral) throw error;
-        if (this.isBusy(error)) throw new AiResourceDeferral({ cause: error });
-        evidence.stdoutComplete = false;
-        evidence.limitations.push(`${stream} 日志读取失败，无法断言该流没有错误。`);
+        const parsed = parseSafeAnsiStream(chunk.content, ansiState);
+        ansiState = parsed.state;
+        stackTexts.push(parsed.segments.map((segment) => segment.text).join(""));
       }
+      if (page.truncated) {
+        evidence.stdoutComplete = false;
+        evidence.limitations.push("stdout 日志读取不完整或已离线归档。");
+      }
+      const last = page.items.at(-1)?.sequence;
+      if (last === undefined || last <= afterSequence || page.nextSequence === undefined) break;
+      afterSequence = last;
     }
     if (remaining === 0 && !evidence.limitations.some((value) => value.includes("预算")))
       evidence.limitations.push("用例证据达到采集空间预算，无法确认剩余日志已完整读取。");
-    if (remaining === 0 || !stdoutCharacters) {
+    const stdout = stackTexts.join("");
+    if (remaining === 0 || !stdout.length) {
       evidence.stdoutComplete = false;
-      if (!stdoutCharacters) evidence.limitations.push("没有可读取的 stdout 业务日志正文。");
+      if (!stdout.length) evidence.limitations.push("没有可读取的 stdout 业务日志正文。");
     }
-    const stacks = [
-      ...new Set(extractCompleteStacks(stackTexts.join(""), evidence.stdoutComplete)),
-    ].sort();
+    const preparedStdout = shortenAiInput(redactAiText(stdout));
+    if (preparedStdout.shortened)
+      inputTransformations.push(
+        "stdout 正文超过 5000 字符，仅提供末尾 2500 字符，不代表完整日志。",
+      );
+    await append(preparedStdout.text, "stdout");
+    if (remaining === 0) evidence.stdoutComplete = false;
+    const stacks = [...new Set(extractCompleteStacks(stdout, evidence.stdoutComplete))].sort();
     if (stacks.length && evidence.stdoutComplete)
       evidence.signature = `exact-stack-bundle-v2:${createHmac("sha256", this.signatureKey).update(JSON.stringify(stacks)).digest("hex")}`;
     else evidence.limitations.push("未取得可确认完整的堆栈集合；此项独立保留，不按摘要前缀合并。");
@@ -147,8 +169,12 @@ export class AiEvidenceStore {
       );
     if (stacks.length && evidence.signature.startsWith("exact-stack-bundle-")) {
       evidence.stackParts = [];
-      const text = redactAiText(stacks.join("\n\n"));
-      for (const fragment of evidenceTextParts(text, partCharacters)) {
+      const preparedStack = prepareAiText(stacks.join("\n\n"));
+      if (preparedStack.shortened)
+        inputTransformations.push(
+          "堆栈文本超过 5000 字符，仅提供末尾 2500 字符；分组签名仍使用完整堆栈。",
+        );
+      for (const fragment of evidenceTextParts(preparedStack.text, partCharacters)) {
         signal.throwIfAborted();
         if (!this.canWork()) throw new AiResourceDeferral();
         const content = Buffer.from(fragment);
@@ -162,13 +188,37 @@ export class AiEvidenceStore {
     await put(this.objects, key, Buffer.from(JSON.stringify(evidence)), "application/json");
     return { key, evidence };
   }
+  private async readStdoutPage(attemptId: string, afterSequence: number, signal: AbortSignal) {
+    try {
+      return await this.logs.listLogChunks({
+        attemptId,
+        stream: "stdout",
+        afterSequence,
+        limit: 16,
+      });
+    } catch (cause) {
+      if (signal.aborted || cause instanceof AiResourceDeferral) throw cause;
+      if (this.isBusy(cause) || (isDomainError(cause) && cause.code === "PLATFORM_LOG_BUSY"))
+        throw new AiResourceDeferral({ cause });
+      // Infrastructure domain messages are sanitized; raw driver messages may contain credentials.
+      const knownFailure = isDomainError(cause);
+      throw new AiModelRequestError(
+        knownFailure
+          ? `stdout 日志读取失败，${cause.code}：${cause.message}`
+          : "stdout 日志读取失败，请检查日志服务连接、权限及归档状态后重试。",
+        !knownFailure || cause.code === "PLATFORM_LOG_DATABASE_UNAVAILABLE",
+        undefined,
+        { cause },
+      );
+    }
+  }
   async read(key: string): Promise<AiEvidence> {
     const evidence = JSON.parse(
       Buffer.from(await this.objects.read(key)).toString("utf8"),
     ) as AiEvidence;
-    if (evidence.inputPolicy !== "stdout_business_v1")
+    if (evidence.inputPolicy !== AI_EVIDENCE_INPUT_POLICY)
       throw new AiModelRequestError(
-        "AI 证据范围已调整为 stdout 业务日志，请重新分析以生成新证据。",
+        "AI 证据处理规则已更新（清理颜色及长文本尾部裁剪），请重新分析以生成新证据。",
         false,
       );
     return evidence;
@@ -250,25 +300,4 @@ async function put(
       yield content;
     })(),
   });
-}
-/** Apply before splitting so secret values crossing a chunk boundary cannot leak. */
-export function redactAiText(value: string) {
-  return value
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]")
-    .replace(
-      /((?:password|passwd|secret|api[_-]?key|authorization|access[_-]?token)\s*["']?\s*[:=]\s*["']?)([^\s,"'}]+)/giu,
-      "$1[REDACTED]",
-    )
-    .replace(/(https?:\/\/)[^\s/:]+:[^\s/@]+@/giu, "$1[REDACTED]@");
-}
-export function redactAiJson(value: unknown) {
-  return JSON.stringify(value, (key, cell: unknown) =>
-    /(?:password|passwd|secret|api[_-]?key|authorization|access[_-]?token|cookie|private[_-]?key)/iu.test(
-      key,
-    )
-      ? "[REDACTED]"
-      : typeof cell === "string"
-        ? redactAiText(cell)
-        : cell,
-  );
 }

@@ -366,6 +366,7 @@ async function createPlatformServices() {
         PostgresPlatformNodeRepository,
         NodeAttemptLogStore,
         PostgresLogDatabaseRepository,
+        logStoragePlatformId,
         PostgresStorageMonitoringRepository,
         readPostgresStorageCapacity,
         PostgresLogWriteAdmission,
@@ -486,7 +487,7 @@ async function createPlatformServices() {
       const logRegistry = new PostgresLogDatabaseRepository(
         database,
         new AesGcmSecretCipher(config.masterKey),
-        createHash("sha256").update(config.masterKey).digest("hex"),
+        logStoragePlatformId(config.masterKey),
         join(config.migrationsFolder, "../log-postgresql"),
         (id, now) => monitoring.capacity({ kind: "logs", databaseId: id }, now),
       );

@@ -2,6 +2,8 @@ package io.autoforge.jenkins.dependencies;
 
 import hudson.AbortException;
 import hudson.Extension;
+import hudson.FilePath;
+import io.autoforge.jenkins.console.AutoForgeConsoleLog;
 import hudson.model.TaskListener;
 import hudson.util.Secret;
 import java.io.Serial;
@@ -21,10 +23,11 @@ public final class AutoForgePublishDependenciesStep extends Step {
     private final Secret apiKey;
     private final String projectId;
     private final String version;
-    private final String dependencyUrl;
+    private String dependencyUrl;
+    private String filePath;
     private String fileName;
-    private final String sha256;
-    private final long sizeBytes;
+    private String sha256;
+    private long sizeBytes;
     private String archiveFormat;
 
     @DataBoundConstructor
@@ -32,19 +35,11 @@ public final class AutoForgePublishDependenciesStep extends Step {
             String baseUrl,
             String apiKey,
             String projectId,
-            String version,
-            String dependencyUrl,
-            String sha256,
-            long sizeBytes) {
+            String version) {
         this.baseUrl = baseUrl;
         this.apiKey = Secret.fromString(apiKey);
         this.projectId = projectId;
         this.version = version;
-        this.dependencyUrl = dependencyUrl;
-        this.fileName = "autoforge-dependencies.zip";
-        this.sha256 = sha256;
-        this.sizeBytes = sizeBytes;
-        this.archiveFormat = "zip";
     }
 
     public String getBaseUrl() { return baseUrl; }
@@ -52,12 +47,23 @@ public final class AutoForgePublishDependenciesStep extends Step {
     public String getProjectId() { return projectId; }
     public String getVersion() { return version; }
     public String getDependencyUrl() { return dependencyUrl; }
+    public String getFilePath() { return filePath; }
     public String getFileName() { return fileName; }
     public String getSha256() { return sha256; }
     public long getSizeBytes() { return sizeBytes; }
     public String getArchiveFormat() { return archiveFormat; }
 
-    /** Optional for tar.gz/tgz artifacts; ZIP is the default used by the minimal example. */
+    @DataBoundSetter public void setFilePath(String filePath) {
+        if (filePath == null || filePath.isBlank()) throw new IllegalArgumentException("filePath 不能为空。");
+        this.filePath = filePath;
+    }
+
+    // Keep saved URL-based Pipelines working; new integrations use filePath only.
+    @Deprecated @DataBoundSetter public void setDependencyUrl(String value) { this.dependencyUrl = value; }
+    @Deprecated @DataBoundSetter public void setSha256(String value) { this.sha256 = value; }
+    @Deprecated @DataBoundSetter public void setSizeBytes(long value) { this.sizeBytes = value; }
+
+    /** Optional override; local file metadata is detected automatically. */
     @DataBoundSetter
     public void setFileName(String fileName) {
         if (fileName == null || fileName.isBlank()) {
@@ -66,7 +72,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
         this.fileName = fileName;
     }
 
-    /** Optional for tar.gz/tgz artifacts; ZIP is the default used by the minimal example. */
+    /** Optional override; local file metadata is detected automatically. */
     @DataBoundSetter
     public void setArchiveFormat(String archiveFormat) {
         if (!"zip".equals(archiveFormat) && !"tar.gz".equals(archiveFormat)) {
@@ -87,6 +93,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
         private final String projectId;
         private final String version;
         private final String dependencyUrl;
+        private final String filePath;
         private final String fileName;
         private final String sha256;
         private final long sizeBytes;
@@ -99,6 +106,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
             this.projectId = step.projectId;
             this.version = step.version;
             this.dependencyUrl = step.dependencyUrl;
+            this.filePath = step.filePath;
             this.fileName = step.fileName;
             this.sha256 = step.sha256;
             this.sizeBytes = step.sizeBytes;
@@ -109,16 +117,30 @@ public final class AutoForgePublishDependenciesStep extends Step {
         protected Map<String, Object> run() throws Exception {
             TaskListener listener = getContext().get(TaskListener.class);
             if (listener == null) throw new AbortException("无法获取 Jenkins 构建日志输出通道。");
+            if (filePath != null) {
+                if (dependencyUrl != null) throw new AbortException("filePath 与旧 dependencyUrl 不能同时填写，请使用本地文件路径。");
+                FilePath workspace = getContext().get(FilePath.class);
+                if (workspace == null) throw new AbortException("直接上传依赖需要 Jenkins Agent 工作区，请在 node 或 Declarative Pipeline 的 agent 步骤中使用。");
+                Map<String, Object> result = workspace.act(new UploadDependencyFile(
+                    baseUrl, apiKey.getPlainText(), projectId, version, filePath, fileName, archiveFormat, listener));
+                AutoForgeConsoleLog console = new AutoForgeConsoleLog(listener.getLogger(), apiKey.getPlainText());
+                console.section("依赖发布完成");
+                console.field("项目版本", String.valueOf(result.get("version")));
+                console.field("资产编号", String.valueOf(result.get("assetId")));
+                console.field("发布说明", "依赖已上传到平台托管存储，后续新建批次使用最新依赖。");
+                return result;
+            }
+            if (dependencyUrl == null) throw new AbortException("请通过 filePath 指定 Jenkins Agent 工作区内已经构建好的依赖压缩包。");
             return new AutoForgeDependencyClient(
                     baseUrl, apiKey.getPlainText(), listener.getLogger())
                 .replace(
                     projectId,
                     version,
                     dependencyUrl,
-                    fileName,
+                    fileName == null ? "autoforge-dependencies.zip" : fileName,
                     sha256,
                     sizeBytes,
-                    archiveFormat);
+                    archiveFormat == null ? "zip" : archiveFormat);
         }
     }
 

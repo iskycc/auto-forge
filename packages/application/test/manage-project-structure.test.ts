@@ -15,6 +15,84 @@ const archive = {
 };
 
 describe("version dependency publication", () => {
+  it("stores a Jenkins workspace upload and atomically binds its managed object to the version", async () => {
+    const structures = repositoryFake({ versions: [projectVersion("version-1", "Release A")] });
+    structures.replaceVersionRuntimeAsset.mockResolvedValue({
+      version: projectVersion("version-1", "Release A"),
+      asset: { id: "uploaded-1" },
+    });
+    const objects = { putObject: vi.fn().mockResolvedValue(undefined), delete: vi.fn() };
+    const service = new ProjectStructureService(
+      structures,
+      objects as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "uploaded-1" },
+    );
+    await service.replaceUploadedVersionDependency({
+      projectId: "project-1",
+      version: "release a",
+      fileName: archive.fileName,
+      sha256: archive.sha256,
+      sizeBytes: archive.sizeBytes,
+      archiveFormat: "zip",
+      content: (async function* () {
+        yield new Uint8Array([0x50, 0x4b]);
+      })(),
+      actorId: "ci-user",
+    });
+    expect(objects.putObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        objectKey: "projects/project-1/runtime-assets/uploaded-1.zip",
+        sha256: archive.sha256,
+        sizeBytes: archive.sizeBytes,
+      }),
+    );
+    expect(structures.replaceVersionRuntimeAsset).toHaveBeenCalledWith(
+      "version-1",
+      expect.objectContaining({
+        id: "uploaded-1",
+        sourceType: "upload",
+        kind: "jar-bundle",
+        objectKey: "projects/project-1/runtime-assets/uploaded-1.zip",
+        createdBy: "ci-user",
+      }),
+    );
+    expect(structures.replaceVersionRuntimeAsset.mock.calls[0]![1]).not.toHaveProperty("url");
+    expect(objects.delete).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a Jenkins upload when version replacement fails", async () => {
+    const structures = repositoryFake({ versions: [projectVersion("version-1", "Release A")] });
+    const cause = new Error("database write failed");
+    structures.replaceVersionRuntimeAsset.mockRejectedValue(cause);
+    const objects = {
+      putObject: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new ProjectStructureService(
+      structures,
+      objects as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "upload-failure" },
+    );
+    await expect(
+      service.replaceUploadedVersionDependency({
+        projectId: "project-1",
+        version: "Release A",
+        fileName: archive.fileName,
+        sha256: archive.sha256,
+        sizeBytes: archive.sizeBytes,
+        archiveFormat: "zip",
+        content: (async function* () {
+          yield new Uint8Array([0x50, 0x4b]);
+        })(),
+      }),
+    ).rejects.toBe(cause);
+    expect(objects.delete).toHaveBeenCalledWith(
+      "projects/project-1/runtime-assets/upload-failure.zip",
+    );
+  });
+
   it("creates a missing version and atomically replaces its sole dependency archive", async () => {
     const structures = repositoryFake({ versions: [] });
     structures.createVersion.mockResolvedValue(projectVersion("version-1", "2026.08"));

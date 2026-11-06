@@ -24,7 +24,7 @@ export async function stageRuntimeArchive(
     throw new DomainError("RUNTIME_ASSET_UPLOAD_INVALID", "运行时资源上传缺少请求体。");
   }
 
-  // 暂存目录必须与对象存储位于同一文件系统，避免 tmpfs 容量限制并保证原子重命名。
+  // 使用数据目录的磁盘暂存，避免大包占用进程堆或容量有限的 tmpfs。
   const directory = await createStagingDirectory(stagingRoot);
   const path = join(directory, "archive");
   const file = await open(path, "wx", 0o600).catch(async (cause: unknown) => {
@@ -44,6 +44,9 @@ export async function stageRuntimeArchive(
         throw new DomainError("RUNTIME_ASSET_UPLOAD_INVALID", "运行时资源大小超出协议范围。");
       }
       sizeBytes += value.byteLength;
+      if (declaredSize !== undefined && sizeBytes > declaredSize) {
+        throw new DomainError("RUNTIME_ASSET_UPLOAD_INVALID", "运行时资源实际大小超过请求声明。");
+      }
       for (let index = 0; index < value.byteLength && signature.length < 2; index += 1) {
         signature.push(value[index]!);
       }
@@ -75,7 +78,9 @@ export async function stageRuntimeArchive(
     fileName,
     sha256: digest.digest("hex"),
     sizeBytes,
-    content: createReadStream(path),
+    content: (async function* () {
+      yield* createReadStream(path);
+    })(),
     dispose: () => rm(directory, { force: true, recursive: true }),
   };
 }

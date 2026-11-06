@@ -13,16 +13,110 @@ import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import org.junit.jupiter.api.io.TempDir;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class AutoForgeDependencyClientTest {
     private HttpServer server;
+    @TempDir Path temporary;
+
+    @Test
+    void streamsTheLocalFileAndComputesDigestSizeAndUtf8FilenameWithoutArtifactUrls() throws Exception {
+        byte[] bytes = new byte[]{0x50, 0x4b, 3, 4, 9, 8, 7};
+        Path archive = temporary.resolve("依赖 包.zip");
+        Files.write(archive, bytes);
+        AtomicReference<byte[]> uploaded = new AtomicReference<>();
+        AtomicReference<String> digest = new AtomicReference<>();
+        AtomicReference<String> name = new AtomicReference<>();
+        AtomicReference<String> length = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/api/v1/jenkins/dependencies/upload", exchange -> {
+            uploaded.set(exchange.getRequestBody().readAllBytes());
+            digest.set(exchange.getRequestHeaders().getFirst("x-autoforge-sha256"));
+            name.set(java.net.URLDecoder.decode(exchange.getRequestHeaders().getFirst("x-autoforge-file-name"), StandardCharsets.UTF_8));
+            length.set(exchange.getRequestHeaders().getFirst("content-length"));
+            assertEquals("Bearer af_api_unit-test", exchange.getRequestHeaders().getFirst("authorization"));
+            respond(exchange, 201, """
+                {"projectId":"project-1","projectVersionId":"version-1","version":"中文版本","assetId":"asset-upload"}
+                """);
+        });
+        server.start();
+        Map<String, Object> result = new AutoForgeDependencyClient("http://127.0.0.1:" + server.getAddress().getPort(), "af_api_unit-test", new PrintStream(new ByteArrayOutputStream()))
+            .upload("project-1", "中文版本", archive, null, null);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(bytes, uploaded.get());
+        assertEquals(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)), digest.get());
+        assertEquals("依赖 包.zip", name.get());
+        assertEquals(String.valueOf(bytes.length), length.get());
+        assertEquals("asset-upload", result.get("assetId"));
+        assertEquals((long) bytes.length, result.get("sizeBytes"));
+    }
 
     @AfterEach
     void stopServer() {
         if (server != null) server.stop(0);
+    }
+
+    @Test
+    void infersGzipFormatAndEncodesTheTargetVersion() throws Exception {
+        Path archive = temporary.resolve("依赖.tgz");
+        Files.write(archive, new byte[]{0x1f, (byte) 0x8b, 1, 2});
+        AtomicReference<String> query = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/api/v1/jenkins/dependencies/upload", exchange -> {
+            query.set(exchange.getRequestURI().getRawQuery());
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, 201, """
+                {"projectId":"project-1","projectVersionId":"version-1","version":"钱包 & 回归","assetId":"gzip-asset"}
+                """);
+        });
+        server.start();
+        var result = new AutoForgeDependencyClient("http://127.0.0.1:" + server.getAddress().getPort(),
+                "af_api_unit-test", new PrintStream(new ByteArrayOutputStream()))
+            .upload("project-1", "钱包 & 回归", archive, null, null);
+        assertTrue(query.get().contains("archiveFormat=tar.gz"));
+        assertTrue(query.get().contains("%26"));
+        assertEquals("gzip-asset", result.get("assetId"));
+    }
+
+    @Test
+    void rejectsInvalidOrEmptyArchivesBeforeConnecting() throws Exception {
+        var client = new AutoForgeDependencyClient("http://127.0.0.1:1", "af_api_unit-test",
+            new PrintStream(new ByteArrayOutputStream()));
+        Path empty = temporary.resolve("empty.zip");
+        Files.write(empty, new byte[0]);
+        assertTrue(assertThrows(AbortException.class,
+            () -> client.upload("project-1", "version", empty, null, null)).getMessage().contains("为空"));
+        assertThrows(AbortException.class,
+            () -> client.upload("project-1", "version", empty, "invalid.txt", null));
+        assertThrows(AbortException.class,
+            () -> client.upload("project-1", "version", empty, "../outside.zip", null));
+    }
+
+    @Test
+    void exposesUploadRejectionWithoutLeakingTheCredential() throws Exception {
+        Path archive = temporary.resolve("dependencies.zip");
+        Files.write(archive, new byte[]{0x50, 0x4b, 3, 4});
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/api/v1/jenkins/dependencies/upload", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, 403, """
+                {"error":{"message":"没有管理项目权限 af_api_unit-test"}}
+                """);
+        });
+        server.start();
+        var client = new AutoForgeDependencyClient("http://127.0.0.1:" + server.getAddress().getPort(),
+            "af_api_unit-test", new PrintStream(new ByteArrayOutputStream()));
+        var failure = assertThrows(AbortException.class,
+            () -> client.upload("project-1", "version", archive, null, null));
+        assertTrue(failure.getMessage().contains("HTTP 403"));
+        assertTrue(failure.getMessage().contains("没有管理项目权限"));
+        assertTrue(!failure.getMessage().contains("af_api_unit-test"));
     }
 
     @Test

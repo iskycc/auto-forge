@@ -28,7 +28,7 @@ export function JenkinsDependencyGuideButton({
       <ActionDialog
         open={open}
         title="Jenkins 导入依赖接入快速指导"
-        description="将 Jenkins 构建的依赖压缩包登记到当前项目版本，供后续新建执行使用。"
+        description="将 Jenkins Agent 上构建的依赖压缩包直接上传到当前项目版本，供后续新建执行使用。"
         onClose={() => setOpen(false)}
         className="!w-[min(860px,calc(100vw-64px))]"
       >
@@ -97,17 +97,17 @@ function JenkinsDependencyGuide({
                 </GuideStep>
                 <GuideStep number={2} title="配置项目权限和 Jenkins 凭据">
                   <p className="m-0">
-                    请管理员在“系统设置 → 服务账号”签发 API Key，确保服务账号和令牌均拥有目标项目的{" "}
-                    <code>project.manage</code> 权限。在 Jenkins Credentials 中保存为 Secret
-                    text，凭据 ID 使用 <code>autoforge-api-key</code>，不要将密钥写入脚本或下载
-                    URL。
+                    请管理员在“平台设置 → 服务账号”签发 API Key，确保服务账号和令牌均拥有目标项目的{" "}
+                    “管理项目”（<code>project.manage</code>）权限。在 Jenkins Credentials 中保存为
+                    Secret text，凭据 ID 使用 <code>autoforge-api-key</code>
+                    ，不要将密钥写入脚本或下载 URL。
                   </p>
                 </GuideStep>
                 <GuideStep number={3} title="发布依赖并核对当前版本">
                   <p className="m-0">
-                    先生成 ZIP 依赖包，再使用示例计算 SHA-256 和字节数、归档并调用{" "}
+                    先构建好依赖压缩包，通过 filePath 指定工作区相对路径，再调用{" "}
                     <code>autoforgePublishDependencies</code>
-                    。构建成功后刷新本页，在“依赖包”中核对最新文件。该操作替换当前版本依赖，不保留旧依赖链接；已创建批次继续使用其执行快照。
+                    。发布成功后刷新本页，在“依赖包”中核对最新文件。该操作替换当前版本依赖绑定；已创建批次继续使用其执行快照，旧上传文件沿用文件管理的引用保护。
                   </p>
                   <Button type="button" variant="secondary" onClick={() => setTab("pipeline")}>
                     查看 Pipeline 示例
@@ -116,8 +116,8 @@ function JenkinsDependencyGuide({
                 <Alert
                   type="info"
                   showIcon
-                  title="只登记依赖链接，不上传 Jenkins 工作区文件"
-                  description="Jenkins Controller 必须能访问平台，候选 Runner 必须能直接下载依赖 URL。插件不会转发 Jenkins 登录 Cookie；若 Artifact 需要认证，请提供 Runner 可访问的受控下载地址。此入口不更新 JDK、不导入测试用例，也不自动执行任务。"
+                  title="从 Jenkins Agent 直接上传依赖文件"
+                  description="插件在当前 Jenkins Agent 上读取文件，自动计算 SHA-256 和大小并流式上传。无需 archiveArtifacts、摘要脚本或 Artifact URL；Agent 必须能访问平台，执行节点后续从平台托管存储下载。此入口不更新 JDK、不导入测试用例，也不自动执行任务。"
                 />
               </div>
             ),
@@ -131,7 +131,7 @@ function JenkinsDependencyGuide({
                   type="info"
                   showIcon
                   title="当前项目、版本和平台地址已填入"
-                  description="示例放入 Pipeline 的 steps 块，使用 Linux sha256sum 和 stat；请替换依赖包路径，先完成构建，再确认生成的 Artifact URL 可由所有候选 Runner 直接下载。ZIP 默认无需填写 fileName 或 archiveFormat。"
+                  description="示例放入有 agent 的 Pipeline steps 块，只需替换 filePath。插件自动计算摘要、大小并上传，支持 ZIP、tar.gz 和 tgz；无需 Shell 脚本、Jenkins 归档或下载 URL。"
                 />
                 <div
                   className="max-w-full overflow-x-auto rounded-lg border border-solid border-border bg-muted p-4"
@@ -151,6 +151,7 @@ function JenkinsDependencyGuide({
               <div className="grid min-w-0 gap-4">
                 <Descriptions
                   title="必填参数"
+                  classNames={{ label: "w-40 whitespace-nowrap" }}
                   size="small"
                   bordered
                   column={1}
@@ -177,25 +178,16 @@ function JenkinsDependencyGuide({
                         "版本名称，当前所选版本已填入；不是版本 ID。不存在时会创建版本，已归档版本不可更新。",
                     },
                     {
-                      key: "dependencyUrl",
-                      label: "dependencyUrl",
+                      key: "filePath",
+                      label: "filePath",
                       children:
-                        "候选 Runner 可直接下载的 HTTP(S) 压缩包地址，最长 2048 字符，不能携带用户名或密码。",
-                    },
-                    {
-                      key: "sha256",
-                      label: "sha256",
-                      children: "实际压缩包的 SHA-256，64 位小写十六进制。",
-                    },
-                    {
-                      key: "sizeBytes",
-                      label: "sizeBytes",
-                      children: "压缩包实际字节数，正整数，必须与下载内容一致。",
+                        "当前 Jenkins Agent 工作区内已经构建好的文件相对路径；不支持通配符或工作区外路径。摘要和大小由插件自动计算。",
                     },
                   ]}
                 />
                 <Descriptions
                   title="选填参数"
+                  classNames={{ label: "w-40 whitespace-nowrap" }}
                   size="small"
                   bordered
                   column={1}
@@ -203,13 +195,12 @@ function JenkinsDependencyGuide({
                     {
                       key: "fileName",
                       label: "fileName",
-                      children:
-                        "默认 autoforge-dependencies.zip；非 ZIP 时显式填写匹配格式的 .tar.gz 或 .tgz 文件名。",
+                      children: "默认使用本地文件名；仅在需要改名时填写，扩展名须与压缩格式一致。",
                     },
                     {
                       key: "archiveFormat",
                       label: "archiveFormat",
-                      children: "默认 zip，可选 tar.gz；发布 tar.gz 时与 fileName 一起显式填写。",
+                      children: "默认根据文件扩展名自动识别 zip 或 tar.gz，无需手工填写。",
                     },
                   ]}
                 />
@@ -217,7 +208,7 @@ function JenkinsDependencyGuide({
                   type="info"
                   showIcon
                   title="发布结果"
-                  description="成功返回 projectId、projectVersionId、version、assetId。Jenkins 控制台提供“下载依赖包”链接；拒绝时显示平台返回的具体原因。"
+                  description="成功返回 projectId、projectVersionId、version、assetId。Jenkins 控制台展示文件摘要、大小和资产编号；拒绝时显示平台返回的具体原因。"
                 />
               </div>
             ),

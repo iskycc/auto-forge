@@ -27,6 +27,7 @@ import {
   createPostgresClock,
   NodeAttemptLogStore,
   PostgresLogDatabaseRepository,
+  logStoragePlatformId,
   PostgresLogWriteAdmission,
   PostgresRoutedAttemptLogStore,
   createNodeLogTransport,
@@ -149,7 +150,7 @@ if (nodeLogs) await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs
 const logRegistry = new PostgresLogDatabaseRepository(
   database,
   new AesGcmSecretCipher(config.masterKey),
-  createHash("sha256").update(config.masterKey).digest("hex"),
+  logStoragePlatformId(config.masterKey),
   join(config.migrationsFolder, "../log-postgresql"),
 );
 if (config.logServer)

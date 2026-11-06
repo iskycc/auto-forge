@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   jenkinsDependencyPublicationInputSchema,
+  jenkinsDependencyUploadInputSchema,
   runtimeAssetUrlInputSchema,
 } from "../src/project-structure";
 
@@ -46,5 +47,27 @@ describe("project runtime asset contracts", () => {
 
     expect(publication.version).toBe("2026.08");
     expect(publication.dependencyArchive).not.toHaveProperty("kind");
+  });
+
+  it("validates plugin-computed upload metadata without accepting URLs or resource kinds", () => {
+    const input = {
+      projectId: "project-1",
+      version: "钱包版本",
+      fileName: "依赖.zip",
+      sha256: "a".repeat(64),
+      sizeBytes: 32,
+    };
+    expect(jenkinsDependencyUploadInputSchema.parse(input)).toMatchObject({
+      ...input,
+      archiveFormat: "zip",
+    });
+    for (const invalid of [
+      { ...input, kind: "jdk" },
+      { ...input, url: "https://outside.invalid/archive.zip" },
+      { ...input, fileName: "依赖.tgz" },
+      { ...input, sizeBytes: 0 },
+      { ...input, sha256: "invalid" },
+    ])
+      expect(jenkinsDependencyUploadInputSchema.safeParse(invalid).success).toBe(false);
   });
 });

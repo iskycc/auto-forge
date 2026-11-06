@@ -250,6 +250,11 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
             "指定的项目版本不存在或不属于当前项目。",
           );
         }
+        if (version.status === "archived")
+          throw new DomainError(
+            "PROJECT_VERSION_ARCHIVED",
+            "已归档的项目版本不能接收新的依赖压缩包。",
+          );
         const previous = await client.query<VersionRuntimeRow>(
           "SELECT * FROM project_version_runtime_assets WHERE project_version_id = $1 FOR UPDATE",
           [projectVersionId],

@@ -1888,6 +1888,9 @@ test("dependency import opens the scoped Jenkins quick guide with a downloadable
       await expect(code).toContainText(`projectId: '${scope.projectId}'`);
       await expect(code).toContainText("version: 'UI 验证版本'");
       await expect(code).toContainText("baseUrl: 'http://127.0.0.1:3100'");
+      await expect(code).toContainText("filePath: 'target/autoforge-dependencies.zip'");
+      await expect(code).not.toContainText("archiveArtifacts");
+      await expect(code).not.toContainText("dependencyUrl:");
       await code.locator(".ant-typography-copy").click();
       expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
         "autoforgePublishDependencies(",
@@ -1899,9 +1902,17 @@ test("dependency import opens the scoped Jenkins quick guide with a downloadable
       });
       await dialog.getByRole("tab", { name: "参数说明", exact: true }).click();
       await expect(dialog).toContainText("必填参数");
+      await expect(dialog.getByText("projectId", { exact: true })).toHaveCSS(
+        "white-space",
+        "nowrap",
+      );
       await dialog.getByText("选填参数", { exact: true }).scrollIntoViewIfNeeded();
       await expect(dialog).toContainText("archiveFormat");
       await expectUiIntegrity(page);
+      await page.screenshot({
+        path: testInfo.outputPath(`jenkins-dependency-parameters-${appearance}-${width}.png`),
+        animations: "disabled",
+      });
       await dialog
         .getByRole("button", { name: "关闭Jenkins 导入依赖接入快速指导", exact: true })
         .click();

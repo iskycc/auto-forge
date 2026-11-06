@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { createHash } from "node:crypto";
 import { PostgresConnectionPoolCache } from "./postgres-connection-pool-cache";
 import { DomainError } from "@autoforge/domain";
 import type { LogDatabaseRepository, SecretCipherPort } from "@autoforge/application";
@@ -19,6 +20,11 @@ export { logDatabaseError } from "./postgres-log-database-errors";
 const MAX_OPEN_DATABASES = 4;
 type PoolEntry = { pool: Pool; lockPool: Pool; users: number; encryptedConnection: string };
 type DatabaseRow = LogDatabaseRecord;
+
+/** All processes must present the same stable identity without exposing the encryption key. */
+export function logStoragePlatformId(masterKey: string): string {
+  return createHash("sha256").update(masterKey).digest("hex");
+}
 
 /** Registry lives in the business database; payload pools never use its connection settings. */
 export class PostgresLogDatabaseRepository implements LogDatabaseRepository {

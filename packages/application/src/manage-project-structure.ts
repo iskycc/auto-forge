@@ -2,6 +2,7 @@ import {
   createProjectVersionInputSchema,
   createTestStageInputSchema,
   jenkinsDependencyPublicationInputSchema,
+  jenkinsDependencyUploadInputSchema,
   projectAdapterConfigurationInputSchema,
   runtimeAssetUrlInputSchema,
   type CreateProjectVersionInput,
@@ -12,13 +13,31 @@ import {
 } from "@autoforge/contracts";
 import {
   DomainError,
+  isDomainError,
   type ProjectVersion,
   type ProjectRuntimeAsset,
   type RuntimeArchiveFormat,
   type RuntimeAssetKind,
 } from "@autoforge/domain";
 
-import type { Clock, IdGenerator, JarObjectStorePort, ProjectStructureRepository } from "./ports";
+import type {
+  Clock,
+  IdGenerator,
+  JarObjectStorePort,
+  ProjectStructureRepository,
+  CreateProjectRuntimeAssetRecord,
+} from "./ports";
+
+type UploadedRuntimeAssetInput = {
+  projectId: string;
+  kind: RuntimeAssetKind;
+  fileName: string;
+  content: AsyncIterable<Uint8Array>;
+  sizeBytes: number;
+  sha256: string;
+  archiveFormat: RuntimeArchiveFormat;
+  actorId?: string;
+};
 
 export class ProjectStructureService {
   constructor(
@@ -83,21 +102,7 @@ export class ProjectStructureService {
 
   async replaceVersionDependency(input: JenkinsDependencyPublicationInput, actorId?: string) {
     const validated = jenkinsDependencyPublicationInputSchema.parse(input);
-    const structure = await this.structures.list(validated.projectId);
-    const normalizedVersion = normalizeName(validated.version);
-    let version: ProjectVersion | undefined = structure.versions.find(
-      (candidate) => normalizeName(candidate.name) === normalizedVersion,
-    );
-    if (version?.status === "archived") {
-      throw new DomainError("PROJECT_VERSION_ARCHIVED", "已归档的项目版本不能接收新的依赖压缩包。");
-    }
-    version ??= await this.structures.createVersion({
-      id: this.ids.next(),
-      projectId: validated.projectId,
-      name: validated.version,
-      normalizedName: normalizedVersion,
-      recordedAt: this.clock.now().toISOString(),
-    });
+    const version = await this.dependencyVersion(validated.projectId, validated.version);
     const archive = validated.dependencyArchive;
     return this.structures.replaceVersionRuntimeAsset(version.id, {
       id: this.ids.next(),
@@ -114,16 +119,53 @@ export class ProjectStructureService {
     });
   }
 
-  async createUploadedAsset(input: {
-    projectId: string;
-    kind: RuntimeAssetKind;
-    fileName: string;
-    content: AsyncIterable<Uint8Array>;
-    sizeBytes: number;
-    sha256: string;
-    archiveFormat: RuntimeArchiveFormat;
-    actorId?: string;
-  }) {
+  async replaceUploadedVersionDependency(
+    input: Omit<UploadedRuntimeAssetInput, "kind"> & { version: string },
+  ) {
+    const { content, actorId, ...metadata } = input;
+    const validated = jenkinsDependencyUploadInputSchema.parse(metadata);
+    const version = await this.dependencyVersion(validated.projectId, validated.version);
+    return this.persistUploadedAsset(
+      { ...validated, content, ...(actorId ? { actorId } : {}), kind: "jar-bundle" },
+      (record) => this.structures.replaceVersionRuntimeAsset(version.id, record),
+    );
+  }
+
+  createUploadedAsset(input: UploadedRuntimeAssetInput) {
+    return this.persistUploadedAsset(input, (record) => this.structures.createRuntimeAsset(record));
+  }
+
+  private async dependencyVersion(projectId: string, name: string): Promise<ProjectVersion> {
+    const normalizedName = normalizeName(name);
+    const find = async () =>
+      (await this.structures.list(projectId)).versions.find(
+        (candidate) => normalizeName(candidate.name) === normalizedName,
+      );
+    let version: ProjectVersion | undefined = await find();
+    if (!version) {
+      try {
+        version = await this.structures.createVersion({
+          id: this.ids.next(),
+          projectId,
+          name: name.trim(),
+          normalizedName,
+          recordedAt: this.clock.now().toISOString(),
+        });
+      } catch (cause) {
+        if (!isDomainError(cause) || cause.code !== "PROJECT_STRUCTURE_NAME_CONFLICT") throw cause;
+        version = await find();
+        if (!version) throw cause;
+      }
+    }
+    if (version.status === "archived")
+      throw new DomainError("PROJECT_VERSION_ARCHIVED", "已归档的项目版本不能接收新的依赖压缩包。");
+    return version;
+  }
+
+  private async persistUploadedAsset<T>(
+    input: UploadedRuntimeAssetInput,
+    register: (record: CreateProjectRuntimeAssetRecord) => Promise<T>,
+  ): Promise<T> {
     if (!/^[a-f0-9]{64}$/u.test(input.sha256)) {
       throw new DomainError("RUNTIME_ASSET_DIGEST_INVALID", "运行时资源 SHA-256 格式无效。");
     }
@@ -138,7 +180,7 @@ export class ProjectStructureService {
       content: input.content,
     });
     try {
-      return await this.structures.createRuntimeAsset({
+      return await register({
         id: assetId,
         projectId: input.projectId,
         kind: input.kind,

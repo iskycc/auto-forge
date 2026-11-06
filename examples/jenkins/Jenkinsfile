@@ -27,26 +27,13 @@ pipeline {
 
     stage('发布依赖压缩包') {
       steps {
-        archiveArtifacts artifacts: "${DEPENDENCY_ARCHIVE}", fingerprint: true
-        script {
-          env.DEPENDENCY_SHA256 = sh(
-            script: "sha256sum '${DEPENDENCY_ARCHIVE}' | awk '{print \\$1}'",
-            returnStdout: true
-          ).trim()
-          env.DEPENDENCY_SIZE = sh(
-            script: "stat -c %s '${DEPENDENCY_ARCHIVE}'",
-            returnStdout: true
-          ).trim()
-        }
         withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
           autoforgePublishDependencies(
             baseUrl: params.AUTOFORGE_BASE_URL,
             apiKey: env.AUTOFORGE_API_KEY,
             projectId: params.AUTOFORGE_PROJECT_ID,
             version: params.AUTOFORGE_PROJECT_VERSION,
-            dependencyUrl: "${env.BUILD_URL}artifact/${env.DEPENDENCY_ARCHIVE}",
-            sha256: env.DEPENDENCY_SHA256,
-            sizeBytes: env.DEPENDENCY_SIZE as Long
+            filePath: env.DEPENDENCY_ARCHIVE
           )
         }
       }

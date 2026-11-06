@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { dependencyPublicationPipeline, groovyStringLiteral } from "./jenkins-pipeline-guide";
 
 describe("Jenkins dependency publication guide", () => {
-  it("generates a scoped ZIP example with required integrity metadata and credential binding", () => {
+  it("generates a direct workspace upload with credentials and no archive or shell steps", () => {
     const pipeline = dependencyPublicationPipeline({
       baseUrl: "https://platform.internal",
       projectId: "project-1",
@@ -13,10 +13,10 @@ describe("Jenkins dependency publication guide", () => {
     expect(pipeline).toContain("version: '中文版本 1.21'");
     expect(pipeline).toContain("withCredentials([string(credentialsId: 'autoforge-api-key'");
     expect(pipeline).toContain("apiKey: env.AUTOFORGE_API_KEY");
-    expect(pipeline).toContain("archiveArtifacts artifacts: archivePath");
-    expect(pipeline).toContain('dependencyUrl: "${env.BUILD_URL}artifact/${archivePath}"');
-    expect(pipeline).toContain("sha256: dependencySha256");
-    expect(pipeline).toContain("sizeBytes: dependencySize");
+    expect(pipeline).toContain("filePath: 'target/autoforge-dependencies.zip'");
+    expect(pipeline).not.toMatch(
+      /archiveArtifacts|dependencyUrl:|sha256sum|stat -c|sha256:|sizeBytes:/u,
+    );
     expect(pipeline).not.toContain("archiveFormat:");
     expect(pipeline).not.toContain("fileName:");
   });

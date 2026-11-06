@@ -9,6 +9,10 @@ import java.io.IOException;
 import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayInputStream;
+import java.util.concurrent.atomic.AtomicReference;
+import hudson.FilePath;
+import hudson.model.Result;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
@@ -23,6 +27,57 @@ class AutoForgePublishDependenciesPipelineE2ETest {
     @AfterEach
     void stopServer() {
         if (server != null) server.stop(0);
+    }
+
+    @Test @WithJenkins
+    void uploadsTheRemoteAgentsWorkspaceFileThroughTheInstalledPipelineStep(JenkinsRule jenkins) throws Exception {
+        var agent = jenkins.createOnlineSlave();
+        agent.setLabelString("dependency-upload-agent");
+        WorkflowJob job = jenkins.createProject(WorkflowJob.class, "remote-dependency-upload");
+        FilePath workspace = agent.getWorkspaceFor(job);
+        org.junit.jupiter.api.Assertions.assertNotNull(workspace);
+        assertTrue(workspace.isRemote());
+        workspace.child("target").mkdirs();
+        byte[] bytes = new byte[]{0x50, 0x4b, 3, 4, 1, 2, 3, 4};
+        workspace.child("target/构建依赖.zip").copyFrom(new ByteArrayInputStream(bytes));
+        AtomicReference<byte[]> received = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/api/v1/jenkins/dependencies/upload", exchange -> {
+            received.set(exchange.getRequestBody().readAllBytes());
+            assertEquals(String.valueOf(bytes.length), exchange.getRequestHeaders().getFirst("content-length"));
+            respond(exchange, 201, """
+                {"projectId":"project-e2e","projectVersionId":"version-e2e","version":"1.0.0","assetId":"uploaded-on-agent"}
+                """);
+        });
+        server.start();
+        job.setDefinition(new CpsFlowDefinition("""
+            node('dependency-upload-agent') {
+              autoforgePublishDependencies baseUrl: 'http://127.0.0.1:%s', apiKey: 'af_api_remote-e2e',
+                projectId: 'project-e2e', version: '1.0.0', filePath: 'target/构建依赖.zip'
+            }
+            """.formatted(server.getAddress().getPort()), true));
+        WorkflowRun run = jenkins.buildAndAssertSuccess(job);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(bytes, received.get());
+        jenkins.assertLogContains("依赖发布完成", run);
+        jenkins.assertLogContains("uploaded-on-agent", run);
+        jenkins.assertLogNotContains("af_api_remote-e2e", run);
+    }
+
+    @Test @WithJenkins
+    void rejectsWorkspaceEscapesBeforeSendingAnUpload(JenkinsRule jenkins) throws Exception {
+        var agent = jenkins.createOnlineSlave();
+        agent.setLabelString("dependency-safety-agent");
+        WorkflowJob job = jenkins.createProject(WorkflowJob.class, "reject-outside-workspace");
+        agent.getWorkspaceFor(job).mkdirs();
+        job.setDefinition(new CpsFlowDefinition("""
+            node('dependency-safety-agent') {
+              autoforgePublishDependencies baseUrl: 'http://127.0.0.1:1', apiKey: 'af_api_invalid-path',
+                projectId: 'project-e2e', version: '1.0.0', filePath: '../outside.zip'
+            }
+            """, true));
+        WorkflowRun run = jenkins.buildAndAssertStatus(Result.FAILURE, job);
+        jenkins.assertLogContains("不能超出当前工作区", run);
+        jenkins.assertLogNotContains("af_api_invalid-path", run);
     }
 
     @Test

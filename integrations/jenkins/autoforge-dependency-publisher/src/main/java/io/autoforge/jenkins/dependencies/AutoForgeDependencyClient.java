@@ -5,10 +5,18 @@ import io.autoforge.jenkins.console.AutoForgeConsoleLog;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Locale;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -16,13 +24,15 @@ import net.sf.json.JSONObject;
 
 final class AutoForgeDependencyClient {
     private final URI endpoint;
+    private final URI baseUri;
     private final String apiKey;
     private final AutoForgeConsoleLog console;
     private final HttpClient httpClient;
 
     AutoForgeDependencyClient(String baseUrl, String apiKey, PrintStream logger) {
-        URI baseUri = URI.create(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
-        if (!("http".equals(baseUri.getScheme()) || "https".equals(baseUri.getScheme())) || baseUri.getHost() == null) {
+        this.baseUri = URI.create(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
+        if (!("http".equals(baseUri.getScheme()) || "https".equals(baseUri.getScheme())) || baseUri.getHost() == null
+                || baseUri.getUserInfo() != null || baseUri.getQuery() != null || baseUri.getFragment() != null) {
             throw new IllegalArgumentException("baseUrl 必须是有效的 HTTP 或 HTTPS 地址。");
         }
         if (apiKey == null || !apiKey.startsWith("af_api_")) {
@@ -34,7 +44,69 @@ final class AutoForgeDependencyClient {
         this.httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(15))
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
+    }
+
+    Map<String, Object> upload(String projectId, String version, Path path, String suppliedName, String suppliedFormat)
+            throws IOException, InterruptedException {
+        Path localName = path.getFileName();
+        if (localName == null) throw new AbortException("依赖文件路径没有文件名。");
+        String name = suppliedName == null ? localName.toString() : suppliedName;
+        String lowerName = name.toLowerCase(Locale.ROOT);
+        String format = suppliedFormat == null
+            ? (lowerName.endsWith(".zip") ? "zip" : "tar.gz") : suppliedFormat;
+        if (name.length() > 255 || name.contains("/") || name.contains("\\") || name.chars().anyMatch(Character::isISOControl)
+                || !("zip".equals(format) && lowerName.endsWith(".zip")
+                    || "tar.gz".equals(format) && (lowerName.endsWith(".tar.gz") || lowerName.endsWith(".tgz"))))
+            throw new AbortException("依赖文件必须是 ZIP、tar.gz 或 tgz 压缩包，文件名扩展名须与格式一致。");
+        long size = Files.size(path);
+        if (size <= 0) throw new AbortException("依赖压缩包为空，请先完成构建。");
+        MessageDigest digest;
+        try { digest = MessageDigest.getInstance("SHA-256"); }
+        catch (NoSuchAlgorithmException cause) { throw new IllegalStateException("Java runtime lacks SHA-256", cause); }
+        try (InputStream content = Files.newInputStream(path)) {
+            byte[] block = new byte[65536];
+            for (int count; (count = content.read(block)) != -1;) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException("依赖上传已中断。");
+                digest.update(block, 0, count);
+            }
+        }
+        String sha256 = HexFormat.of().formatHex(digest.digest());
+        if (Files.size(path) != size) throw new AbortException("依赖文件在读取期间发生变化，请完成构建后重试。");
+        console.section("上传依赖");
+        console.field("目标项目", projectId);
+        console.field("项目版本", version);
+        console.field("依赖文件", name + "（" + AutoForgeConsoleLog.size(size) + "）");
+        console.field("SHA-256", sha256);
+        URI target = baseUri.resolve("api/v1/jenkins/dependencies/upload?projectId=" + encoded(projectId)
+            + "&version=" + encoded(version) + "&archiveFormat=" + encoded(format));
+        HttpRequest request = HttpRequest.newBuilder(target).timeout(Duration.ofMinutes(15))
+            .header("accept", "application/json").header("content-type", "application/octet-stream")
+            .header("authorization", "Bearer " + apiKey)
+            .header("x-autoforge-file-name", encoded(name))
+            .header("x-autoforge-sha256", sha256)
+            .POST(HttpRequest.BodyPublishers.ofFile(path)).build();
+        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        String body;
+        try (InputStream content = response.body()) {
+            byte[] bytes = content.readNBytes(65537);
+            if (bytes.length > 65536) throw new AbortException("平台响应超过大小限制，请检查平台服务状态。");
+            body = new String(bytes, StandardCharsets.UTF_8);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300)
+            throw new AbortException("AutoForge 依赖上传失败（HTTP " + response.statusCode() + "）：" + safeMessage(body));
+        JSONObject json = JSONObject.fromObject(body);
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (String key : new String[]{"projectId", "projectVersionId", "version", "assetId"}) result.put(key, requiredString(json, key));
+        result.put("fileName", name);
+        result.put("sha256", sha256);
+        result.put("sizeBytes", size);
+        return result;
+    }
+
+    private static String encoded(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     Map<String, Object> replace(

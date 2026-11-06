@@ -173,6 +173,7 @@ export class AiAnalysisWorker {
               partIndex: work.partCursor + 1,
               totalParts: evidence.parts.length,
               knownLimitations: evidence.limitations,
+              inputTransformations: evidence.inputTransformations ?? [],
               previousPreliminaryFinding: previous ?? null,
               instruction:
                 "先 read_evidence，再更新累计的初步建议并 submit_ai_conclusion。前片建议是未确认推测，保持反证；不要把本片当作全部日志。",
@@ -539,7 +540,7 @@ export class AiAnalysisWorker {
     const manifest = await this.evidence.read(key);
     if (fullLogs && manifest.stdoutComplete === false)
       throw new AiModelRequestError(
-        "同栈用例不足 10 个，需要完整 stdout 业务日志；请检查日志可用性和证据预算后重新分析。",
+        `本组需要完整 stdout 业务日志，当前证据不完整：${manifest.limitations.join("；").slice(0, 600) || "未取得完整正文"}。请检查日志可用性和证据预算后重新分析。`,
         false,
       );
     const parts = fullLogs ? manifest.parts : (manifest.stackParts ?? manifest.parts);
@@ -561,8 +562,9 @@ export class AiAnalysisWorker {
           stackParts: parts.length,
           previousPreliminaryFinding: work.conclusion,
           knownLimitations: manifest.limitations,
+          inputTransformations: manifest.inputTransformations ?? [],
           instruction: fullLogs
-            ? "本堆栈组不足10个用例，逐例提供完整 stdout 业务日志，每例可有多个证据片。结合前片和前例的建议更新同一疑似问题的精简结论；不可把本片当作全文，也不可把通用 TestNG 失败标识当根因。"
+            ? "本堆栈组不足10个用例，逐例提供清理、脱敏后的 stdout 业务日志，每例可有多个证据片。输入处理及尾部裁剪以 inputTransformations 为准；结合前片和前例更新同一疑似问题的精简结论，不可把本片当作全文或把通用 TestNG 失败标识当根因。"
             : "同一完整堆栈视为同一疑似问题，结合本次成员和已有建议给出一个精简结论。成员按页提供；不要逐例重复写报告。",
         }),
       },

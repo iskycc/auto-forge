@@ -286,9 +286,9 @@ test("AI settings, durable batch and single analysis, retry and partial export p
               sequence: 0,
               recordedAt: new Date().toISOString(),
               content:
-                `用例独立正文${index}\n全文开始标识\n` +
+                `\u001b[32m用例独立正文${index}\u001b[0m\n全文开始标识\n` +
                 "普通业务日志\n".repeat(1800) +
-                "全文结束标识\njava.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)",
+                `全文结束标识\n用例尾部正文${index}\n\u001b[31mjava.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)\u001b[0m`,
             },
             {
               stream: "stderr",
@@ -366,9 +366,16 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     const smallGroups = inferenceRequests.filter((request) => request.stage === "small_group_full");
     expect(smallGroups.length).toBeGreaterThan(4);
     const batchLogs = smallGroups.map((request) => request.text).join("");
-    for (let index = 0; index < 4; index++) expect(batchLogs).toContain(`用例独立正文${index}`);
-    expect(batchLogs).toContain("全文开始标识");
+    for (let index = 0; index < 4; index++) expect(batchLogs).toContain(`用例尾部正文${index}`);
+    expect(batchLogs).not.toContain("全文开始标识");
     expect(batchLogs).toContain("全文结束标识");
+    expect(smallGroups.every((request) => [...request.text].length <= 5000)).toBe(true);
+    expect(
+      smallGroups
+        .filter((request) => request.text.includes("用例尾部正文"))
+        .every((request) => [...request.text].length === 2500),
+    ).toBe(true);
+    expect(smallGroups.every((request) => !/\\u001b|\u001b/u.test(request.messages))).toBe(true);
     expect(smallGroups.every((request) => request.members.length === 1)).toBe(true);
     expect(
       inferenceRequests.every(
@@ -441,12 +448,17 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         { timeout: 90000 },
       )
       .toBe("completed");
+    await expect(singleDialog.getByText("分析完成", { exact: true }).first()).toBeVisible({
+      timeout: 10000,
+    });
     const fullLogs = inferenceRequests
       .filter((request) => request.stage === "single_full")
       .map((request) => request.text)
       .join("");
-    expect(fullLogs).toContain("全文开始标识");
+    expect(fullLogs).not.toContain("全文开始标识");
     expect(fullLogs).toContain("全文结束标识");
+    expect(fullLogs).toContain("用例尾部正文0");
+    expect(fullLogs).not.toMatch(/用例尾部正文[123]|\\u001b|\u001b/u);
     expect(fullLogs).not.toContain("Agent 完整诊断标识");
     expect(fullLogs).not.toContain("不应传给模型的 STDERR");
     expect(

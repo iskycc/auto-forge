@@ -268,6 +268,11 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
             );
           }
           const previous = this.versionRuntimeRow(projectVersionId);
+          if (version.status === "archived")
+            throw new DomainError(
+              "PROJECT_VERSION_ARCHIVED",
+              "已归档的项目版本不能接收新的依赖压缩包。",
+            );
           this.insertRuntimeAsset(record);
           this.handle.client
             .prepare(

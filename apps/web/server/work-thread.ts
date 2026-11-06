@@ -95,6 +95,7 @@ import {
   createPostgresClock,
   NodeAttemptLogStore,
   PostgresLogDatabaseRepository,
+  logStoragePlatformId,
   PostgresLogWriteAdmission,
   PostgresRoutedAttemptLogStore,
   createNodeLogTransport,
@@ -864,7 +865,7 @@ function fullLogStore(): AttemptLogStore | PostgresRoutedAttemptLogStore {
     new PostgresLogDatabaseRepository(
       postgresHandle(),
       new AesGcmSecretCipher(settings.masterKey),
-      createHash("sha256").update(settings.masterKey).digest("hex"),
+      logStoragePlatformId(settings.masterKey),
       join(configuration.migrationsFolder, "../log-postgresql"),
     ),
     nodeLogs ?? logStore(),

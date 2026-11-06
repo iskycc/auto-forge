@@ -1,16 +1,16 @@
 # AutoForge Dependency Publisher Jenkins Plugin
 
-`autoforgePublishDependencies` 在构建完成后，把可由 Runner 访问的依赖压缩包链接登记到
-指定项目版本。它发布的是外部 URL 和完整性元数据，不会把 Jenkins 工作区文件直接上传到
-AutoForge。
+`autoforgePublishDependencies` 直接读取 **Jenkins Agent 工作区内已经构建好的依赖压缩包**，
+在插件内部计算 SHA-256 和字节数，再流式上传到 AutoForge，原子替换指定项目版本的依赖绑定。
+不需要 `archiveArtifacts`、Artifact URL、`sha256sum`、`stat` 或额外上传脚本。
 
-最低支持 Jenkins `2.479.3` 和 Pipeline: Step API `700.v6e45cb_a_5a_a_21`，安装与兼容性验证见[插件说明](../README.md)。
-
-平台内入口：打开“项目设置”，选择目标版本，在“JDK 与依赖 JAR 压缩包”标题旁点击“Jenkins 接入指导”。弹窗包含快速步骤、主平台内置 HPI 下载、必填／选填参数以及可复制的 Pipeline 示例；当前项目 ID、版本名称和平台外部访问地址自动填入，未配置外部地址时使用当前浏览器地址。切换版本后重新打开会生成对应版本的示例，查看或复制指导不会修改现有依赖。
-
-平台示例放入 Pipeline 的 `steps` 块，要求先生成 `target/autoforge-dependencies.zip`，并使用 Linux `sha256sum`、`stat` 计算完整性元数据。默认 Jenkins Artifact URL 仅作示例；必须确认候选 Runner 能直接下载，不能依赖浏览器已登录 Cookie。发布成功后刷新版本配置核对“依赖包”。本功能只替换版本依赖，不更新 JDK、不导入测试类、不自动执行任务，也不改变已创建批次的执行快照。
+最低支持 Jenkins `2.479.3`、Java 17 和 Pipeline: Step API `700.v6e45cb_a_5a_a_21`，
+安装与兼容性验证见[插件说明](../README.md)。HPI 随主平台交付，可在“项目设置 →
+JDK 与依赖 JAR 压缩包 → Jenkins 接入指导”下载，弹窗提供当前项目、版本的 Pipeline 示例。
 
 ## 最小 Pipeline 示例
+
+在已分配 `agent` 的 Declarative Pipeline `steps` 内，或 Scripted Pipeline 的 `node` 内调用：
 
 ```groovy
 withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
@@ -19,78 +19,57 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
     apiKey: env.AUTOFORGE_API_KEY,
     projectId: '018f-project-id',
     version: '1.8.0',
-    dependencyUrl: 'https://jenkins.internal/job/app/42/artifact/test-dependencies.zip',
-    sha256: env.DEPENDENCY_SHA256,
-    sizeBytes: 12345678
+    filePath: 'target/autoforge-dependencies.zip'
   )
 }
 ```
 
+将 `filePath` 改为实际构建产物的相对路径即可。ZIP、`.tar.gz` 和 `.tgz` 都自动识别；
+Windows Agent 同样不需要安装 Shell 或摘要工具。文件必须已生成且不再被其他构建修改。
+插件通过 Jenkins `FilePath.act` 在当前 Agent 上完成读取和 HTTP 上传，不把整个文件经
+Controller 内存中转。Agent 必须能访问 `baseUrl`。
+
 ## 参数说明
 
-| 参数            | 必填 | 类型     | 默认值                       | 说明                                                                                                                                                                                                                      |
-| --------------- | ---- | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`       | 是   | `String` | 无                           | AutoForge 控制面的根地址，例如 `https://autoforge.internal.example`。只接受 `http://` 或 `https://`，不要追加 `/api/v1`；该地址必须能由 Jenkins Controller 访问。末尾 `/` 可省略。                                        |
-| `apiKey`        | 是   | `String` | 无                           | AutoForge API Key，格式以 `af_api_` 开头，并且需要对目标项目拥有 `project.manage` 权限。在平台“系统设置 → 服务账号”中签发后，应通过 Jenkins Credentials 的 Secret text 注入，禁止直接写入 Jenkinsfile。                   |
-| `projectId`     | 是   | `String` | 无                           | AutoForge 目标项目 ID，不是项目名称。API Key 必须对该项目有权限。                                                                                                                                                         |
-| `version`       | 是   | `String` | 无                           | 目标项目的版本名称，例如 `1.8.0`，不是版本 ID。按忽略首尾空白和大小写的名称匹配；版本不存在时平台会创建该版本，已归档版本会拒绝更新。                                                                                     |
-| `dependencyUrl` | 是   | `String` | 无                           | 压缩包的完整 `http://` 或 `https://` 下载地址，最长 2048 个字符且不能在 URL 中携带用户名或密码。执行任务的所有候选 Runner 都必须能访问该地址；若使用 Jenkins Artifact URL，应确保无需交互式登录或另行提供网络侧访问能力。 |
-| `sha256`        | 是   | `String` | 无                           | 压缩包实际内容的 SHA-256，必须是 64 位小写十六进制。可用 `sha256sum <文件>` 生成。Runner 下载后会据此校验内容。                                                                                                           |
-| `sizeBytes`     | 是   | `long`   | 无                           | 压缩包实际字节数，必须为正整数且不超过 JavaScript 安全整数。可用 Linux `stat -c %s <文件>` 生成，必须与下载内容完全一致。                                                                                                 |
-| `fileName`      | 否   | `String` | `autoforge-dependencies.zip` | 平台和 Runner 使用的逻辑文件名。ZIP 必须以 `.zip` 结尾；`tar.gz` 格式必须以 `.tar.gz` 或 `.tgz` 结尾。不能是空字符串。                                                                                                    |
-| `archiveFormat` | 否   | `String` | `zip`                        | 压缩格式，只允许 `zip` 或 `tar.gz`。发布非 ZIP 包时必须与 `fileName` 一起显式设置。                                                                                                                                       |
+| 参数 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `baseUrl` | 是 | 无 | AutoForge HTTP(S) 根地址，不追加 `/api/v1`，不能携带账号、密码或查询参数。当前 Jenkins Agent 必须能访问。 |
+| `apiKey` | 是 | 无 | `af_api_` 开头的 API Key。服务账号与令牌均需目标项目的“管理项目”（`project.manage`）权限。通过 Jenkins Secret text 凭据注入，禁止明文写入 Jenkinsfile。 |
+| `projectId` | 是 | 无 | 目标项目 ID，不是项目名称。 |
+| `version` | 是 | 无 | 版本名称，不是版本 ID。忽略首尾空白、大小写及兼容字符差异；不存在时创建，已归档时拒绝。 |
+| `filePath` | 是 | 无 | 当前 Agent 工作区内的单个普通文件相对路径，不支持通配符、绝对路径、`..` 越界或指向工作区外的符号链接。 |
+| `fileName` | 否 | 本地文件名 | 仅需更改平台显示文件名时填写；必须保留与格式一致的扩展名。 |
+| `archiveFormat` | 否 | 根据文件名识别 | 可填 `zip` 或 `tar.gz`；通常不必填写。 |
 
-发布 `tar.gz` 或 `.tgz` 时的选填参数示例：
+## 返回值和执行行为
 
-```groovy
-autoforgePublishDependencies(
-  baseUrl: params.AUTOFORGE_BASE_URL,
-  apiKey: env.AUTOFORGE_API_KEY,
-  projectId: params.AUTOFORGE_PROJECT_ID,
-  version: params.AUTOFORGE_PROJECT_VERSION,
-  dependencyUrl: "${env.BUILD_URL}artifact/target/autoforge-dependencies.tar.gz",
-  sha256: env.DEPENDENCY_SHA256,
-  sizeBytes: env.DEPENDENCY_SIZE as Long,
-  fileName: 'autoforge-dependencies.tar.gz', // 选填；非 ZIP 时需要显式填写
-  archiveFormat: 'tar.gz'                   // 选填；非 ZIP 时需要显式填写
-)
-```
+返回 Map 包含 `projectId`、`projectVersionId`、`version`、`assetId`、`fileName`、`sha256`
+和 `sizeBytes`。控制台展示中文上传阶段、文件、大小、摘要和资产编号，不输出 API Key。
 
-## 返回值
+- 平台先鉴权，再流式暂存并重新计算摘要、大小和压缩格式签名；校验通过才写入托管存储
+  并更新版本绑定。Lite 使用本地对象存储，Full 使用 MinIO；Runner 沿用平台的受控下载协议。
+- 只更新目标版本的依赖绑定，保留 JDK；不导入测试类、不自动执行任务。后续新建批次使用新绑定，
+  已创建批次保持原执行快照。旧上传文件保留在托管文件库，沿用引用保护和文件管理清理流程。
+- 文件缺失、空文件、扩展名错误、工作区越界或上传期间文件改变会失败；服务端拒绝时展示可操作原因。
+  数据库登记失败会清理本次新上传对象，保留原绑定；版本在上传期间被归档也会拒绝登记。
+- 使用 HTTP/1.1，不跟随重定向；连接超时 15 秒，上传请求等待上限 15 分钟。大文件采用有界缓冲，
+  不整体装入 Java 或 Web 内存。平台暂存占用数据目录磁盘，需保留足够余量。
+- 不自动重试上传。网络超时或 Jenkins 停止可能发生在平台已提交之后，请先刷新版本配置核对；
+  手工重试会发布一个新资产并更新绑定。该步骤不支持跨 Controller 重启恢复，重启后需要重新运行。
 
-步骤成功后返回包含 `projectId`、`projectVersionId`、`version` 和 `assetId` 的 Map；其中
-`assetId` 是本次登记的新依赖资产 ID。
+共享控制台库 `autoforge-console` 随 HPI 内置，无需额外安装。
+独立示例见 [`Jenkinsfile`](./Jenkinsfile)，完整构建、发布及执行见
+[`examples/jenkins/Jenkinsfile`](../../../examples/jenkins/Jenkinsfile)。
 
-## 运行行为与网络要求
+## 旧流水线兼容
 
-- 同一项目版本每次只保留最新依赖元数据；新链接原子替换旧链接，不累积历史文件。
-- ZIP 是默认格式，最小示例只填写安全校验所必需的 SHA-256 与字节数。
-- 插件客户端固定使用 HTTP/1.1；服务端拒绝请求时，Pipeline 控制台与构建错误会包含经过
-  安全提取的具体原因。
-- 日志统一使用中文阶段标题和字段，展示项目、版本、文件名、易读大小与资产编号；成功
-  后显示可点击的“下载依赖包”，不在正文铺开下载地址。在 Jenkins 经典控制台中，链接
-  使用原生控制台注解并在新标签页打开，带有 `noopener noreferrer`，无需额外日志插件。
-- 纯文本日志或不支持控制台注解的客户端只显示关键词；下载地址仍由 Pipeline 的
-  `dependencyUrl` 参数提供。外部错误与展示字段会去除换行/控制字符、限制长度，并隐藏
-  当前 API Key，避免错误内容破坏控制台布局。
-- 插件不会转发 Jenkins 登录 Cookie 或下载凭据。依赖 URL 若受保护，应在网络入口提供
-  Runner 可使用的受控下载机制，不要把账号、密码或 API Key 拼接进 URL。
+已有 `dependencyUrl`、`sha256`、`sizeBytes` 参数及 `POST /api/v1/jenkins/dependencies`
+保持兼容，避免升级插件后破坏现有流水线；新示例均使用 `filePath`，不能同时传入 `filePath`
+和 `dependencyUrl`。旧 URL 模式仍要求候选 Runner 可直接下载该 URL，不会变成文件上传。
 
-控制台示例（“下载依赖包”为可点击关键词）：
+新上传接口为 `POST /api/v1/jenkins/dependencies/upload`：查询参数 `projectId`、`version`、
+`archiveFormat`，请求头 `Authorization: Bearer …`、`X-Autoforge-Sha256`、
+`X-Autoforge-File-Name`（UTF-8 百分号编码），正文为文件原始字节，`Content-Length` 由插件计算。
+接口成功返回 HTTP 201；业务校验失败返回稳定错误码与 `requestId`。日常接入直接调用插件即可。
 
-```text
-[AutoForge] ── 发布依赖 ────────────────────
-[AutoForge] 目标项目：018f-project-id
-[AutoForge] 项目版本：1.8.0
-[AutoForge] 依赖文件：autoforge-dependencies.zip（11.8 MiB）
-[AutoForge] ── 依赖发布完成 ────────────────────
-[AutoForge] 项目版本：1.8.0
-[AutoForge] 资产编号：018f-asset-id
-[AutoForge] 依赖下载：下载依赖包（在新标签页打开）
-[AutoForge] 发布说明：当前版本已更新为本次依赖，后续新建批次将使用最新配置。
-```
-
-共享日志库 `autoforge-console` 随 HPI 内置，不要求安装另一个 AutoForge 插件。
-开发构建使用 `mvn --file integrations/jenkins/pom.xml verify`。
-
-当前插件目录的 [`Jenkinsfile`](./Jenkinsfile) 是只包含必要参数的独立示例。完整构建、归档、发布依赖并执行任务的 Declarative Pipeline 见 [`examples/jenkins/Jenkinsfile`](../../../examples/jenkins/Jenkinsfile)。依赖 URL 必须能由执行该项目任务的 Runner 所在网络读取。
+开发构建与测试使用 `mvn --file integrations/jenkins/pom.xml clean verify`。

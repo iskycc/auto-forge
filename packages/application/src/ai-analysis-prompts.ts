@@ -14,7 +14,7 @@ export const AI_PRELIMINARY_PROMPT =
   "相同完整堆栈可作为同一疑似问题统一建议，但不得声称根因已证实；证据不足时明确说明，仅作低把握的初步分类。143 不能单独证明 OOM。" +
   "reason 用一句中文说明可能原因，最多160字；evidence 用一句话引用可观察错误、堆栈帧或日志事实，最多200字。" +
   "不输出长篇报告、步骤清单、多个候选结论或无关背景；不得宣称已重跑、已修改或已提单。引用只能使用实际读取的 evidenceId。" +
-  "批次按堆栈分析，同栈不足10例时逐例读取完整 stdout；单例同样逐片读取 stdout 业务日志，累积修正判断，最终仍遵循相同精简格式。通用 TestNG 失败标识不是根因依据。唯一写工具为 submit_ai_conclusion，不可修改执行结果、人工结论、权限或运行命令。";
+  "批次按完整堆栈归类，同栈不足10例及单例逐例读取清理、脱敏后的 stdout；超长文本使用平台规定的尾部窗口，以 inputTransformations 为准，不得将尾部样本声称为完整日志或臆测缺失内容。逐片累积判断，最终遵循相同精简格式。通用 TestNG 失败标识不是根因依据。唯一写工具为 submit_ai_conclusion，不可修改执行结果、人工结论、权限或运行命令。";
 
 export const PRELIMINARY_TOOL: AiToolDefinition = {
   type: "function",

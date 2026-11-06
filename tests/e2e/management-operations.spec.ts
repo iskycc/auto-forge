@@ -3,7 +3,9 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { insertRunnerInstallationProfileFixture } from "./support/runner-installation-profile-fixture";
 import { createServer } from "node:http";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { zipSync } from "fflate";
 import { resolve } from "node:path";
 import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 import {
@@ -1260,3 +1262,82 @@ async function captureManagementDialog(page: Page, name: string) {
   await mkdir(directory, { recursive: true });
   await page.screenshot({ path: resolve(directory, `${name}.png`) });
 }
+
+test("Jenkins uploads local dependency bytes with a project API key and preserves the binding after rejected uploads", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const name = uniqueName("jenkins-upload");
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name, slug: name },
+  });
+  expect(project.status).toBe(201);
+  const account = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
+    method: "POST",
+    body: { name, projectPermissions: { [project.body.id]: ["project.manage"] } },
+  });
+  expect(account.status).toBe(201);
+  const token = await browserJson<{ token: string }>(
+    page,
+    `/api/v1/service-accounts/${account.body.id}/tokens`,
+    {
+      method: "POST",
+      body: {
+        name: "upload",
+        scopes: ["project.manage"],
+        expiresAt: new Date(Date.now() + 86400000).toISOString(),
+      },
+    },
+  );
+  expect(token.status).toBe(201);
+  const bytes = Buffer.from(zipSync({ "lib/示例.jar": new Uint8Array([1, 2, 3, 4]) }));
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const endpoint = `/api/v1/jenkins/dependencies/upload?${new URLSearchParams({ projectId: project.body.id, version: "钱包构建版本", archiveFormat: "zip" })}`;
+  const headers = {
+    authorization: `Bearer ${token.body.token}`,
+    "content-type": "application/octet-stream",
+    "x-autoforge-file-name": encodeURIComponent("构建依赖.zip"),
+    "x-autoforge-sha256": sha256,
+  };
+  const uploaded = await page.request.post(endpoint, { headers, data: bytes });
+  expect(uploaded.status(), await uploaded.text()).toBe(201);
+  const published = await uploaded.json();
+  expect(published).toMatchObject({
+    projectId: project.body.id,
+    version: "钱包构建版本",
+    sourceType: "upload",
+    fileName: "构建依赖.zip",
+    sha256,
+    sizeBytes: bytes.length,
+  });
+  const path = `/api/v1/projects/${project.body.id}/structure`;
+  const structure = await browserJson<{
+    versions: Array<{
+      id: string;
+      adapterConfiguration: {
+        jarBundleAsset: { id: string; objectKey: string; sourceType: string };
+      };
+    }>;
+  }>(page, path);
+  const asset = structure.body.versions.find(
+    (version) => version.id === published.projectVersionId,
+  )!.adapterConfiguration.jarBundleAsset;
+  expect(asset).toMatchObject({ id: published.assetId, sourceType: "upload" });
+  const stored = await readFile(
+    resolve(process.env.AUTOFORGE_E2E_DATA_DIR!, "objects", asset.objectKey),
+  );
+  expect(stored.equals(bytes)).toBe(true);
+  const mismatch = await page.request.post(endpoint, {
+    headers: { ...headers, "x-autoforge-sha256": "0".repeat(64) },
+    data: bytes,
+  });
+  expect(mismatch.status()).toBe(400);
+  expect(await mismatch.json()).toMatchObject({ error: { code: "RUNTIME_ASSET_UPLOAD_INVALID" } });
+  const denied = await page.request.post(endpoint.replace(project.body.id, "unpermitted-project"), {
+    headers,
+    data: bytes,
+  });
+  expect(denied.status()).toBe(403);
+  expect((await browserJson(page, path)).body).toEqual(structure.body);
+});

@@ -73,6 +73,22 @@ export const jenkinsDependencyPublicationInputSchema = z.object({
   dependencyArchive: z.object(runtimeAssetFileFields).superRefine(validateArchiveFileName),
 });
 
+export const jenkinsDependencyUploadTargetSchema = z
+  .object({
+    projectId: identifierSchema,
+    version: nameSchema,
+    archiveFormat: archiveFormatSchema.default("zip"),
+    sha256: runtimeAssetFileFields.sha256,
+  })
+  .strict();
+
+export const jenkinsDependencyUploadInputSchema = jenkinsDependencyUploadTargetSchema
+  .extend({
+    fileName: runtimeAssetFileFields.fileName,
+    sizeBytes: runtimeAssetFileFields.sizeBytes,
+  })
+  .superRefine(validateArchiveFileName);
+
 export type CreateProjectVersionInput = z.infer<typeof createProjectVersionInputSchema>;
 export type CreateTestStageInput = z.infer<typeof createTestStageInputSchema>;
 export type RuntimeAssetUrlInput = z.infer<typeof runtimeAssetUrlInputSchema>;

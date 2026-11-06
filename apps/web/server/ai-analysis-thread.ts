@@ -184,7 +184,7 @@ async function initialize() {
   const registry = new db.PostgresLogDatabaseRepository(
     handle,
     new AesGcmSecretCipher(configuration.masterKey),
-    configuration.masterKey,
+    db.logStoragePlatformId(configuration.masterKey),
     join(configuration.migrationsFolder, "../log-postgresql"),
   );
   const routed = new db.PostgresRoutedAttemptLogStore(

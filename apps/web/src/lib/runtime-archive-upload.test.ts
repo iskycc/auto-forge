@@ -67,6 +67,15 @@ describe("stageRuntimeArchive", () => {
     });
   });
 
+  it("stops an oversized stream as soon as it exceeds its declared length", async () => {
+    const request = archiveRequest([0x50, 0x4b, 1, 2]);
+    request.headers.set("content-length", "2");
+    await expect(stageRuntimeArchive(request, "zip", stagingRoot)).rejects.toMatchObject({
+      code: "RUNTIME_ASSET_UPLOAD_INVALID",
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+  });
+
   it("maps ENOSPC staging failures to a storage domain error and cleans up", async () => {
     const cause = Object.assign(new Error("ENOSPC: no space left on device, open"), {
       code: "ENOSPC",

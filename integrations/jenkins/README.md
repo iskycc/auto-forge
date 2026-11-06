@@ -25,7 +25,7 @@ Step API 版本，防止传递依赖升级掩盖兼容性问题。低于 `700` �
 Jenkins Controller 的最低版本保持不变。
 
 离线环境需提前安装 Pipeline 及其依赖，AutoForge HPI 不内嵌或自动下载 Pipeline 插件。
-`workflow-job`、`workflow-cps` 和 `scm-api` 的显式依赖仅用于测试，不会成为 AutoForge HPI 的
+`workflow-job`、`workflow-cps`、`workflow-durable-task-step` 和 `scm-api` 的显式依赖仅用于测试，不会成为 AutoForge HPI 的
 新增运行依赖。依赖声明与 HPI manifest 的关系见 [Jenkins 官方说明](https://www.jenkins.io/doc/developer/plugin-development/dependencies-and-class-loading/#depending-on-other-plugins)。
 
 ## 构建与验证
@@ -53,3 +53,6 @@ Maven 依赖；依赖缓存齐全后可使用 `mvn --offline` 构建和运行测
 
 任务执行插件的 API Key 需要项目的 `run.create`、`run.cancel`、`run.read` 权限。
 普通 Pipeline 停止会先请求平台平滑终止，等待最终报告后才结束步骤，具体收尾和失败边界见[执行插件说明](./autoforge-execution/README.md)。
+
+依赖发布使用 `filePath` 直传当前 Jenkins Agent 上的构建文件，插件内部计算摘要和大小，
+不需要 Jenkins 文件归档或下载 URL。支持独立 Agent；网络和失败边界见[依赖发布指南](./autoforge-dependency-publisher/README.md)。

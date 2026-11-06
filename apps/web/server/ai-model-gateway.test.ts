@@ -9,9 +9,10 @@ import type {
   JarObjectStorePort,
 } from "@autoforge/application";
 import { AiResourceDeferral } from "@autoforge/application";
+import { DomainError } from "@autoforge/domain";
 
 describe("AI model boundary", () => {
-  it("sends complete stdout and business input without generic result codes, stderr or Agent diagnostics", async () => {
+  it("sends the stdout tail and business input without generic result codes, stderr or Agent diagnostics", async () => {
     const objects = new Map<string, Uint8Array>();
     const store = new AiEvidenceStore(
       {
@@ -81,9 +82,10 @@ describe("AI model boundary", () => {
     const fullText = (
       await Promise.all(result.evidence.parts.map((part) => store.part(part)))
     ).join("");
-    expect(fullText).toContain("日志开头");
+    expect(fullText).not.toContain("日志开头");
     expect(fullText).toContain("日志结尾");
-    expect(fullText).toContain("🧪".repeat(10000));
+    expect(fullText).toContain("🧪".repeat(2000));
+    expect(fullText).not.toContain("🧪".repeat(2500));
     expect(fullText).not.toContain("\ufffd");
     expect(fullText).not.toContain("执行诊断末尾");
     expect(fullText).not.toMatch(
@@ -91,7 +93,13 @@ describe("AI model boundary", () => {
     );
     expect(fullText).toContain('"amount":0');
     expect(fullText).toContain('"enabled":false');
-    expect(result.evidence.parts.length).toBeGreaterThan(3);
+    const stdout = result.evidence.parts.filter((part) => part.id.startsWith("stdout-"));
+    const stdoutText = (await Promise.all(stdout.map((part) => store.part(part)))).join("");
+    expect([...stdoutText].length).toBe(2500);
+    expect(result.evidence.stdoutComplete).toBe(true);
+    expect(result.evidence.inputTransformations).toContainEqual(
+      expect.stringContaining("末尾 2500"),
+    );
   });
   it("ignores failures in excluded streams and rejects old broad evidence for new model requests", async () => {
     const listLogChunks = vi.fn(async ({ stream }: { stream: string }) => {
@@ -166,6 +174,116 @@ describe("AI model boundary", () => {
         new AbortController().signal,
       ),
     ).rejects.toMatchObject({ constructor: AiResourceDeferral, cause: busy });
+  });
+  it.each([
+    {
+      code: "LOG_DATABASE_IDENTITY_CONFLICT",
+      message: "日志数据库身份不匹配，请恢复原日志数据库。",
+      retryable: false,
+    },
+    {
+      code: "PLATFORM_LOG_DATABASE_UNAVAILABLE",
+      message: "日志数据库暂不可用，请检查连接及服务状态。",
+      retryable: true,
+    },
+  ])(
+    "reports the actual $code instead of saving a misleading incomplete manifest",
+    async ({ code, message, retryable }) => {
+      const cause = new DomainError(code, message);
+      const putObject = vi.fn();
+      const store = new AiEvidenceStore(
+        { source: async () => null } as unknown as AiAnalysisRepository,
+        {
+          listLogChunks: async () => {
+            throw cause;
+          },
+        } as unknown as ExecutionControlRepository,
+        { putObject } as unknown as JarObjectStorePort,
+        "test-key",
+      );
+      await expect(
+        store.collect(
+          { id: "item", strategy: "stack_groups_v2" } as AiWork,
+          aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "m" }),
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({
+        name: "AiModelRequestError",
+        message: expect.stringContaining(`${code}：${message}`),
+        retryable,
+        cause,
+      });
+      expect(putObject).not.toHaveBeenCalled();
+    },
+  );
+  it("does not expose raw driver credentials in a log-read failure", async () => {
+    const cause = new Error("connect postgresql://admin:private-password@db/logs failed");
+    const store = new AiEvidenceStore(
+      { source: async () => null } as unknown as AiAnalysisRepository,
+      {
+        listLogChunks: async () => {
+          throw cause;
+        },
+      } as unknown as ExecutionControlRepository,
+      { putObject: vi.fn() } as unknown as JarObjectStorePort,
+      "test-key",
+    );
+    await expect(
+      store.collect(
+        { id: "item" } as AiWork,
+        aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "m" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({
+      name: "AiModelRequestError",
+      message: expect.not.stringContaining("private-password"),
+      retryable: true,
+      cause,
+    });
+  });
+  it("defers a busy log-storage pool even when the business-database classifier does not recognize it", async () => {
+    const cause = new DomainError("PLATFORM_LOG_BUSY", "日志数据库繁忙。");
+    const store = new AiEvidenceStore(
+      { source: async () => null } as unknown as AiAnalysisRepository,
+      {
+        listLogChunks: async () => {
+          throw cause;
+        },
+      } as unknown as ExecutionControlRepository,
+      { putObject: vi.fn() } as unknown as JarObjectStorePort,
+      "test-key",
+    );
+    await expect(
+      store.collect(
+        { id: "item" } as AiWork,
+        aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "m" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ constructor: AiResourceDeferral, cause });
+  });
+  it("keeps an evidence-object write failure distinct from a log-read failure", async () => {
+    const cause = new Error("MinIO evidence write failed");
+    const store = new AiEvidenceStore(
+      { source: async () => null } as unknown as AiAnalysisRepository,
+      {
+        listLogChunks: async () => ({
+          items: [{ sequence: 0, recordedAt: "now", content: "业务日志" }],
+        }),
+      } as unknown as ExecutionControlRepository,
+      {
+        putObject: async () => {
+          throw cause;
+        },
+      } as unknown as JarObjectStorePort,
+      "test-key",
+    );
+    await expect(
+      store.collect(
+        { id: "item" } as AiWork,
+        aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "m" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toBe(cause);
   });
   it("stops all log pagination when the next fragment exceeds the remaining evidence budget", async () => {
     const listLogChunks = vi.fn(async (input: { afterSequence: number }) => {

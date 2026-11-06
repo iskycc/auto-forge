@@ -14,7 +14,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 完整的实现事项和阶段验收门见 [AutoForge 待办路线图](./docs/project-roadmap.md)。
 按里程碑统计的最新实现证据见 [AutoForge 实现进展](./docs/project-status.md)。
 
-Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/architecture/ai-failure-analysis.md)和[提示词草案](./docs/architecture/ai-failure-analysis-prompts.md)，配置、部署及当前实现边界见[AI 初析使用说明](./docs/operations/ai-analysis.md)。
+Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/architecture/ai-failure-analysis.md)和[提示词草案](./docs/architecture/ai-failure-analysis-prompts.md)，配置、部署及当前实现边界见[AI 初析使用说明](./docs/operations/ai-analysis.md)。全文证据由 Worker 分页采集后交给模型；Full 各进程共用日志平台身份标识，日志库读取故障直接展示具体原因，临时不可用有限重试、繁忙时退避。
 
 ## 当前已实现
 
@@ -26,7 +26,7 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 
 - 批次终止收尾在失败重跑与完成上报竞争时再次关闭残留等待；没有执行机后续请求也会周期恢复，保留有效租约及真实结果。不同版本、JDK 和依赖包的槽位隔离与边界见[终止恢复及执行机输入隔离](./docs/architecture/batch-termination-recovery.md)。
 
-- 可选 AI 初步分析支持 OpenAI 兼容模型配置、多条参考提示词、批次堆栈优先分组与单例全文细析；相同完整堆栈统一归类，不足 10 例的组逐例读取 stdout 全文，达到 10 例才共用堆栈，排除通用错误码与 stderr／Agent 诊断；新结论只展示初步分类、简短原因和依据。Lite 独立后台线程和 Full 多 Worker 共用持久租约／端点额度，资源紧张或模型限流时退让；工具仅可读取绑定证据并提交 AI 草稿。正常导出保留已有部分结论，失败分析清单的 AI 列紧接失败堆栈。默认关闭，需单独授权；[证据预算和当前限制](./docs/operations/ai-analysis.md)明确列出，模型建议仍待人工确认。
+- 可选 AI 初步分析支持 OpenAI 兼容模型配置、多条参考提示词、批次堆栈优先分组与单例全文细析；相同完整堆栈统一归类，不足 10 例的组逐例读取 stdout，达到 10 例才共用堆栈；先去除颜色及终端控制字符并脱敏，超过 5000 字符的业务字符串仅提供末尾 2500 字符，完整堆栈归类不受裁剪影响，排除通用错误码与 stderr／Agent 诊断；新结论只展示初步分类、简短原因和依据。Lite 独立后台线程和 Full 多 Worker 共用持久租约／端点额度，资源紧张或模型限流时退让；工具仅可读取绑定证据并提交 AI 草稿。正常导出保留已有部分结论，失败分析清单的 AI 列紧接失败堆栈。默认关闭，需单独授权；[证据预算和当前限制](./docs/operations/ai-analysis.md)明确列出，模型建议仍待人工确认。
 
 - 无 LDAP 的内网可通过 `/register` 自助创建本地账号，注册后直接登录并获得默认项目的“执行操作员”权限，无需再次修改密码；登录框提供注册入口。登录／注册保留来源页面的路径、参数和锚点，互相切换、刷新及强制改密后仍返回原页面。启用 LDAP 后注册页面、入口与 API 自动关闭，关闭 LDAP 后恢复，详见[身份与权限](./docs/architecture/identity-access.md#自助注册本地账号)。
 
@@ -132,7 +132,7 @@ Worker AI 初步用例分析的范围与约束见[需求与实现指导](./docs/
 - 顶栏提供全局项目切换；独立“配置搜索”按钮按当前权限检索平台、项目、访问和运行配置，点击结果可进入对应模块并聚焦具体平台字段。首页、用例、任务、记录、洞察、来源、审计和项目设置共享同一服务端校验上下文。任务快捷执行只提交 `suiteId` 并使用任务保存的完整配置；单用例快捷执行允许临时选择 Runner/Runner Group、重跑和 Adapter 环境地址，并默认启用 CoTest Adapter。任务与单用例均不提供手工参数覆盖；TestNG 发现参数只读固化。产品级执行环境与执行密文页面、API 和任务字段已退役，新批次不再接受这两类配置。
 - 批次执行前预检一次返回任务状态、参数、Runner capability/标签、项目版本 Java/TestNG 工具链、权威 JAR 对象和资源限制的逐项 blocker；正式创建复用相同规则，调度、claim 和下载仍执行权威复核。
 - 顶栏执行弹窗支持立即执行或最长七天、精确到秒的持久化倒计时。计划开始时间由服务端固化，Lite/Full 在到点前都不会分配用例，排队超时也从到点后开始；执行记录和详情会显示实时倒计时。
-- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期检查进度，在可配置总时限内等待批次终态，并返回永久匿名结果链接 `resultUrl`。日志按中文阶段展示轮次、通过/失败、通过率与等待耗时，进度不变时约每分钟提示一次；启动时的“执行详情”与结束时的“完整结果”统一指向同一个永久匿名详情地址，在 Jenkins 经典控制台中作为关键词链接于新标签页打开，不重复铺开长 URL。永久页复用执行历史详情的概览、轮次、图表和用例表格，但不加载产品侧栏或鉴权操作。后者按项目版本替换依赖压缩包链接，不保存历史版本文件，使用中文发布摘要和“下载依赖包”关键词链接，拒绝时显示服务端可操作错误。共享日志库随各自 HPI 内置，无需额外日志插件。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。必填、选填、默认值、权限和网络约束分别见[执行插件参数指南](./integrations/jenkins/autoforge-execution/README.md)与[依赖发布插件参数指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
+- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期检查进度，在可配置总时限内等待批次终态，并返回永久匿名结果链接 `resultUrl`。日志按中文阶段展示轮次、通过/失败、通过率与等待耗时，进度不变时约每分钟提示一次；启动时的“执行详情”与结束时的“完整结果”统一指向同一个永久匿名详情地址，在 Jenkins 经典控制台中作为关键词链接于新标签页打开，不重复铺开长 URL。永久页复用执行历史详情的概览、轮次、图表和用例表格，但不加载产品侧栏或鉴权操作。后者通过 `filePath` 直接读取 Jenkins Agent 工作区文件，插件自动计算 SHA-256 和大小并流式上传，原子替换当前版本依赖绑定；无需 Jenkins 归档、下载 URL 或摘要脚本。Lite 保存本地对象，Full 保存 MinIO，旧上传文件沿用文件管理引用保护，已创建批次保留执行快照。拒绝时显示服务端可操作错误。共享日志库随各自 HPI 内置，无需额外日志插件。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。必填、选填、默认值、权限和网络约束分别见[执行插件参数指南](./integrations/jenkins/autoforge-execution/README.md)与[依赖发布插件参数指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
 - 本地账号首次管理员引导、scrypt 密码、本地/LDAP 统一登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；登录来源由服务端根据已有账号来源与 LDAP 启用状态自动判定，同名本地账号优先且目录故障不影响本地紧急管理员。角色、服务账号、项目作用域和 API 令牌权限统一使用带人类友好名称与用途说明的复选框组。自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、负责人转移，以及从成员列表弹窗直接增加或减少项目角色。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
 - LDAP 配置字段与 DDT Insight 保持一致：`enabled`、`url`、服务 Bind、用户 Base/Filter、显示名/邮箱属性、Group 属性或 Group Search、统一默认角色、TLS 证书校验和连接超时。登录先使用服务账号（也可匿名）唯一检索用户 DN，再用同一连接绑定用户密码；平台用户名始终取登录框输入，不依赖额外的用户名映射属性。Group 仅保存到用户资料供查看，既不映射角色也不授予权限；首次建号只分配配置的统一默认角色。TLS 证书校验默认开启，可针对隔离目录显式关闭并持续显示风险提示；Bind 密码使用主密钥加密且不回显。历史 StartTLS、全量同步和 Group 权限映射字段只保留数据库升级兼容，不再通过页面、API 或后台作业执行。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
@@ -262,7 +262,8 @@ DDT 用例、SR 分类与测试类关联、用例任务。**每一步都可以�
 | `POST`           | `/api/v1/run-batches/{batchId}/terminate`                                                                       | 终止批次调度，在途用例自然完成后关闭任务                                                               |
 | `POST`           | `/api/v1/run-batches/{batchId}/cancel`                                                                          | 兼容旧客户端的批次终止别名                                                                             |
 | `POST`           | `/api/v1/jenkins/runs`                                                                                          | API Key 启动批次并返回统一详情链接与进度轮询地址                                                       |
-| `POST`           | `/api/v1/jenkins/dependencies`                                                                                  | API Key 按项目版本替换依赖压缩包链接                                                                   |
+| `POST`           | `/api/v1/jenkins/dependencies`                                                                                  | API Key 登记旧流水线的依赖压缩包 URL（兼容入口）                                                           |
+| `POST`           | `/api/v1/jenkins/dependencies/upload`                                                                           | Jenkins Agent 直传依赖压缩包，校验摘要与大小后替换版本绑定                                           |
 | `POST`           | `/api/v1/runner-agents/{runnerId}/claims`                                                                       | 认证长轮询并原子领取 assignment                                                                        |
 | `POST`           | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew`                                                       | 续租并获取取消/排空指令                                                                                |
 | `POST`           | `/api/v1/runner-agents/{runnerId}/reconcile`                                                                    | Agent 重启后的 attempt 恢复协商                                                                        |

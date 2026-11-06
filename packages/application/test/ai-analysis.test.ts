@@ -252,14 +252,14 @@ describe("concise stack-first analysis", () => {
       attemptId: "a",
       signature: "s",
       parts: [],
-      limitations: [],
+      limitations: ["stdout 日志超过配置的采集空间预算"],
       stdoutComplete: false,
     });
     await fixture.worker.tick(new AbortController().signal);
     expect(fixture.complete).not.toHaveBeenCalled();
     expect(fixture.deferGroup).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining("完整 stdout"),
+      expect.stringContaining("stdout 日志超过配置的采集空间预算"),
       expect.any(String),
       true,
       expect.any(String),
