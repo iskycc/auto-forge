@@ -217,8 +217,8 @@ export function AiAnalysisButton({
           />
           <Typography.Text type="secondary">
             {attemptId
-              ? "单例分析 stdout 业务日志，先清理颜色；字符串超过 5000 字符仅取末尾 2500 字符，再给出分类、原因与依据。"
-              : "按堆栈归类，不足 10 例逐例分析，达到 10 例共用堆栈。日志先清理颜色；字符串超过 5000 字符仅取末尾 2500 字符。"}
+              ? "单例分析清理颜色后的 stdout 全文；超过 50,000 字符时取末尾 25,000 字符，并补齐首行。按上下文分片累计分析，给出分类、原因与依据。"
+              : "按堆栈归类，不足 10 例逐例分析 stdout 全文，达到 10 例共用堆栈。清理颜色后超过 50,000 字符时取末尾 25,000 字符，并补齐首行。"}
           </Typography.Text>
           {error ? <Alert type="error" title={error} showIcon /> : null}
           {job?.reason ? <Alert type="warning" title={job.reason} showIcon /> : null}

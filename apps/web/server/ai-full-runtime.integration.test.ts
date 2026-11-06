@@ -213,6 +213,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           enabled: true,
           baseUrl: `http://127.0.0.1:${address.port}/v1`,
           modelId: "fixture",
+          contextTokens: 200000,
           concurrency: 2,
           requestsPerMinute: 1000,
           tokensPerMinute: 10000000,
@@ -291,8 +292,12 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
                   content:
                     (sequence === 16 ? "1m" : "") +
                     `实际日志 member=${index} page=${sequence}\n` +
+                    (sequence === 0
+                      ? "password=full-business-password\n全文开始标识\n" +
+                        "普通业务日志\n".repeat(1000)
+                      : "") +
                     (sequence === 24
-                      ? `java.lang.AssertionError: expected ${Math.floor(index / stackSize)}\n\tat example.Test.run(Test.java:20)`
+                      ? `java.lang.AssertionError: expected ${Math.floor(index / stackSize)}\n\tat example.Test.run(Test.java:20)\n\nTestNG exit code:1\n`
                       : "业务正文\n") +
                     (sequence === 15 ? "\u001b[3" : sequence === 16 ? "\u001b[0m" : ""),
                 })),
@@ -418,6 +423,9 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           for (let group = 0; group < groupSizes.length; group++)
             expect(delivered).toContain(`java.lang.AssertionError: expected ${group}`);
           expect(delivered).not.toContain("EXCLUDED_");
+          expect(delivered).not.toContain("TestNG exit code:1");
+          expect(delivered).toContain("全文开始标识");
+          expect(delivered).toContain("password=full-business-password");
           expect(delivered).not.toMatch(/\\u001b|\u001b/u);
           const original = await logStore.listChunks({
             batchId,

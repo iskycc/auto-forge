@@ -564,7 +564,7 @@ export class AiAnalysisWorker {
           knownLimitations: manifest.limitations,
           inputTransformations: manifest.inputTransformations ?? [],
           instruction: fullLogs
-            ? "本堆栈组不足10个用例，逐例提供清理、脱敏后的 stdout 业务日志，每例可有多个证据片。输入处理及尾部裁剪以 inputTransformations 为准；结合前片和前例更新同一疑似问题的精简结论，不可把本片当作全文或把通用 TestNG 失败标识当根因。"
+            ? "本堆栈组不足10个用例，逐例提供清理颜色后的 stdout 业务日志，每例可有多个证据片。输入处理及尾部裁剪以 inputTransformations 为准；结合前片和前例更新同一疑似问题的精简结论，不可把本片当作全文或把通用 TestNG 失败标识当根因。"
             : "同一完整堆栈视为同一疑似问题，结合本次成员和已有建议给出一个精简结论。成员按页提供；不要逐例重复写报告。",
         }),
       },

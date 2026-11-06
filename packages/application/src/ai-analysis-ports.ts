@@ -15,10 +15,10 @@ export type AiConfigurationRecord = {
 export type AiCandidate = { executionRunId: string; attemptId: string; displayName: string };
 export type AiPlanningJob = AiAnalysisJob & { cursor: string | null; leaseToken: string };
 export type AiEvidencePart = { id: string; objectKey: string; sizeBytes: number };
-export const AI_EVIDENCE_INPUT_POLICY = "stdout_business_tail_v2";
+export const AI_EVIDENCE_INPUT_POLICY = "stdout_business_tail_v3";
 export type AiEvidence = {
   version: 1;
-  inputPolicy?: "stdout_business_v1" | typeof AI_EVIDENCE_INPUT_POLICY;
+  inputPolicy?: "stdout_business_v1" | "stdout_business_tail_v2" | typeof AI_EVIDENCE_INPUT_POLICY;
   inputTransformations?: string[];
   stdoutComplete?: boolean;
   executionRunId: string;

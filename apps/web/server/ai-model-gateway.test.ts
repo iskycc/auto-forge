@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { aiModelConfigurationSchema } from "@autoforge/contracts";
 import { OpenAiCompatibleGateway, retryAfter } from "./ai-model-gateway";
-import { AiEvidenceStore, redactAiText, redactAiJson, extractCompleteStacks } from "./ai-evidence";
+import {
+  AiEvidenceStore,
+  prepareAiText,
+  prepareAiJson,
+  extractCompleteStacks,
+} from "./ai-evidence";
 import type {
   AiAnalysisRepository,
   AiWork,
@@ -34,8 +39,9 @@ describe("AI model boundary", () => {
               content:
                 stream === "stdout"
                   ? "日志开头\n" +
-                    "x".repeat(16001) +
-                    "🧪".repeat(10000) +
+                    "x".repeat(40001) +
+                    "\n" +
+                    "🧪".repeat(30000) +
                     "\n日志结尾\n" +
                     "java.lang.AssertionError: mismatch\n\tat example.Test.run(Test.java:20)\n\n".repeat(
                       2,
@@ -84,8 +90,8 @@ describe("AI model boundary", () => {
     ).join("");
     expect(fullText).not.toContain("日志开头");
     expect(fullText).toContain("日志结尾");
-    expect(fullText).toContain("🧪".repeat(2000));
-    expect(fullText).not.toContain("🧪".repeat(2500));
+    expect(fullText).toContain("🧪".repeat(30000));
+    expect(fullText).not.toContain("🧪".repeat(30001));
     expect(fullText).not.toContain("\ufffd");
     expect(fullText).not.toContain("执行诊断末尾");
     expect(fullText).not.toMatch(
@@ -95,10 +101,14 @@ describe("AI model boundary", () => {
     expect(fullText).toContain('"enabled":false');
     const stdout = result.evidence.parts.filter((part) => part.id.startsWith("stdout-"));
     const stdoutText = (await Promise.all(stdout.map((part) => store.part(part)))).join("");
-    expect([...stdoutText].length).toBe(2500);
+    expect(stdoutText).toBe(
+      "🧪".repeat(30000) +
+        "\n日志结尾\n" +
+        "java.lang.AssertionError: mismatch\n\tat example.Test.run(Test.java:20)\n\n".repeat(2),
+    );
     expect(result.evidence.stdoutComplete).toBe(true);
     expect(result.evidence.inputTransformations).toContainEqual(
-      expect.stringContaining("末尾 2500"),
+      expect.stringContaining("末尾 25000"),
     );
   });
   it("ignores failures in excluded streams and rejects old broad evidence for new model requests", async () => {
@@ -398,16 +408,16 @@ describe("AI model boundary", () => {
     expect(first.evidence.signature).toMatch(/^exact-stack-bundle-v2:/u);
     expect(second.evidence.signature).toBe(first.evidence.signature);
   });
-  it("redacts nested dynamic input secrets while preserving zero and false", () => {
+  it("preserves nested business credentials, zero and false without a second masking pass", () => {
     const value = JSON.parse(
-      redactAiJson({
+      prepareAiJson({
         credentials: { password: "secret with spaces", apiKey: "key" },
         count: 0,
         enabled: false,
       }),
     );
     expect(value).toEqual({
-      credentials: { password: "[REDACTED]", apiKey: "[REDACTED]" },
+      credentials: { password: "secret with spaces", apiKey: "key" },
       count: 0,
       enabled: false,
     });
@@ -419,12 +429,15 @@ describe("AI model boundary", () => {
     );
     expect(retryAfter("invalid")).toBeUndefined();
   });
-  it("redacts credentials before evidence partitioning", () => {
+  it("preserves supplied credentials while cleaning terminal color sequences", () => {
     expect(
-      redactAiText(
-        'password=very-secret apiKey:"token" Authorization: Bearer abc123 https://user:pass@host/path',
+      prepareAiText(
+        '\u001b[31mpassword=very-secret apiKey:"token" Authorization: Bearer abc123 https://user:pass@host/path\u001b[0m',
       ),
-    ).not.toMatch(/very-secret|"token"|abc123|user:pass/u);
+    ).toEqual({
+      text: 'password=very-secret apiKey:"token" Authorization: Bearer abc123 https://user:pass@host/path',
+      shortened: false,
+    });
   });
   it("does not retry billing failures or forward upstream bodies containing secrets", async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValue(

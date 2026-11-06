@@ -83,6 +83,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
   const inferenceRequests: Array<{
     stage: string;
     partId?: string;
+    evidenceId: string;
     text: string;
     members: Array<{ displayName: string }>;
     messages: string;
@@ -105,6 +106,7 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       inferenceRequests.push({
         stage: instruction.stage ?? "single_full",
         partId: instruction.partId,
+        evidenceId: payload.evidenceId,
         text: payload.text ?? "",
         members: payload.members ?? [],
         messages: JSON.stringify(input.messages),
@@ -286,9 +288,10 @@ test("AI settings, durable batch and single analysis, retry and partial export p
               sequence: 0,
               recordedAt: new Date().toISOString(),
               content:
-                `\u001b[32m用例独立正文${index}\u001b[0m\n全文开始标识\n` +
-                "普通业务日志\n".repeat(1800) +
-                `全文结束标识\n用例尾部正文${index}\n\u001b[31mjava.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)\u001b[0m`,
+                `\u001b[32m用例独立正文${index}\u001b[0m\n全文开始标识\npassword=e2e-business-password token=e2e-business-token\n` +
+                `\u001b[31mjava.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)\u001b[0m\n\n` +
+                "普通业务日志\n".repeat(index === 3 ? 9000 : 1800) +
+                `全文结束标识\n用例尾部正文${index}\nTestNG exit code:1\n`,
             },
             {
               stream: "stderr",
@@ -367,16 +370,38 @@ test("AI settings, durable batch and single analysis, retry and partial export p
     expect(smallGroups.length).toBeGreaterThan(4);
     const batchLogs = smallGroups.map((request) => request.text).join("");
     for (let index = 0; index < 4; index++) expect(batchLogs).toContain(`用例尾部正文${index}`);
-    expect(batchLogs).not.toContain("全文开始标识");
+    expect(batchLogs).toContain("全文开始标识");
+    expect(batchLogs).toContain("java.lang.AssertionError: connection reset");
+    expect(batchLogs).toContain("password=e2e-business-password token=e2e-business-token");
+    expect(batchLogs).not.toContain("TestNG exit code:1");
     expect(batchLogs).toContain("全文结束标识");
-    expect(smallGroups.every((request) => [...request.text].length <= 5000)).toBe(true);
-    expect(
-      smallGroups
-        .filter((request) => request.text.includes("用例尾部正文"))
-        .every((request) => [...request.text].length === 2500),
-    ).toBe(true);
+    for (let index = 0; index < 4; index++) {
+      const stdout = smallGroups
+        .filter(
+          (request) =>
+            request.evidenceId.startsWith("stdout-") &&
+            request.members[0]?.displayName === fixture.failedNames[index],
+        )
+        .map((request) => request.text)
+        .join("");
+      expect(stdout).toContain(`用例尾部正文${index}`);
+      if (index === 3) {
+        expect([...stdout].length).toBeGreaterThanOrEqual(25000);
+        expect([...stdout].length).toBeLessThan(25000 + "普通业务日志\n".length);
+        expect(stdout).toMatch(/^普通业务日志\n/u);
+        expect(stdout).not.toContain("全文开始标识");
+      } else {
+        expect([...stdout].length).toBeGreaterThan(5000);
+        expect([...stdout].length).toBeLessThan(50000);
+        expect(stdout).toContain(`用例独立正文${index}\n全文开始标识`);
+        expect(stdout).toContain("java.lang.AssertionError: connection reset");
+      }
+    }
     expect(smallGroups.every((request) => !/\\u001b|\u001b/u.test(request.messages))).toBe(true);
     expect(smallGroups.every((request) => request.members.length === 1)).toBe(true);
+    expect(inferenceRequests.every((request) => !request.messages.includes("e2e-only-key"))).toBe(
+      true,
+    );
     expect(
       inferenceRequests.every(
         (request) =>
@@ -455,7 +480,10 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       .filter((request) => request.stage === "single_full")
       .map((request) => request.text)
       .join("");
-    expect(fullLogs).not.toContain("全文开始标识");
+    expect(fullLogs).toContain("全文开始标识");
+    expect(fullLogs).toContain("java.lang.AssertionError: connection reset");
+    expect(fullLogs).toContain("password=e2e-business-password token=e2e-business-token");
+    expect(fullLogs).not.toContain("TestNG exit code:1");
     expect(fullLogs).toContain("全文结束标识");
     expect(fullLogs).toContain("用例尾部正文0");
     expect(fullLogs).not.toMatch(/用例尾部正文[123]|\\u001b|\u001b/u);

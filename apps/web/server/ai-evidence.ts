@@ -15,11 +15,11 @@ import { parseSafeAnsiStream, type AnsiParserState } from "../src/lib/safe-ansi"
 import {
   prepareAiText,
   shortenAiInput,
-  redactAiJson,
-  redactAiText,
+  prepareAiJson,
+  removeTestNgExitSummaries,
   AI_INPUT_MAXIMUM_CHARACTERS,
 } from "./ai-input-text";
-export { redactAiJson, redactAiText } from "./ai-input-text";
+export { prepareAiJson, prepareAiText } from "./ai-input-text";
 
 export class AiEvidenceStore {
   constructor(
@@ -66,8 +66,7 @@ export class AiEvidenceStore {
     );
     const append = async (text: string, label: string) => {
       if (remaining === 0) return;
-      const redacted = redactAiText(text);
-      for (const fragment of evidenceTextParts(redacted, partCharacters)) {
+      for (const fragment of evidenceTextParts(text, partCharacters)) {
         signal.throwIfAborted();
         if (!this.canWork()) throw new AiResourceDeferral();
         if (evidence.parts.length >= 4096) {
@@ -108,13 +107,15 @@ export class AiEvidenceStore {
       }
       let shortenedInput = false;
       await append(
-        redactAiJson(executionInput, () => {
+        prepareAiJson(executionInput, () => {
           shortenedInput = true;
         }),
         "input",
       );
       if (shortenedInput)
-        inputTransformations.push("业务字段超过 5000 字符时仅保留末尾 2500 字符。");
+        inputTransformations.push(
+          "业务字段超过 50000 字符时取末尾 25000 字符，并向前补齐首行；长行可能使保留内容超过 25000 字符。",
+        );
       if (source.input_truncated) evidence.limitations.push("执行输入超过 8 MiB，未取得完整输入。");
     } else evidence.limitations.push("没有可读取的实际尝试或执行快照。");
     let stdoutBytes = 0;
@@ -151,10 +152,19 @@ export class AiEvidenceStore {
       evidence.stdoutComplete = false;
       if (!stdout.length) evidence.limitations.push("没有可读取的 stdout 业务日志正文。");
     }
-    const preparedStdout = shortenAiInput(redactAiText(stdout));
+    const businessStdout = removeTestNgExitSummaries(stdout);
+    if (businessStdout !== stdout) {
+      inputTransformations.push("已排除通用 TestNG 退出码行，不作为失败原因依据。");
+      if (!businessStdout.trim())
+        throw new AiModelRequestError(
+          "stdout 仅有通用 TestNG 退出码，没有实际业务正文或异常堆栈，无法判断失败原因；请确认原日志内容后重新分析。",
+          false,
+        );
+    }
+    const preparedStdout = shortenAiInput(businessStdout);
     if (preparedStdout.shortened)
       inputTransformations.push(
-        "stdout 正文超过 5000 字符，仅提供末尾 2500 字符，不代表完整日志。",
+        "stdout 正文超过 50000 字符，取末尾 25000 字符并向前补齐首行；保留内容可能超过 25000 字符，省略部分不代表已读取。",
       );
     await append(preparedStdout.text, "stdout");
     if (remaining === 0) evidence.stdoutComplete = false;
@@ -172,7 +182,7 @@ export class AiEvidenceStore {
       const preparedStack = prepareAiText(stacks.join("\n\n"));
       if (preparedStack.shortened)
         inputTransformations.push(
-          "堆栈文本超过 5000 字符，仅提供末尾 2500 字符；分组签名仍使用完整堆栈。",
+          "堆栈文本超过 50000 字符，取末尾 25000 字符并向前补齐首行；分组签名仍使用完整堆栈。",
         );
       for (const fragment of evidenceTextParts(preparedStack.text, partCharacters)) {
         signal.throwIfAborted();
@@ -218,7 +228,7 @@ export class AiEvidenceStore {
     ) as AiEvidence;
     if (evidence.inputPolicy !== AI_EVIDENCE_INPUT_POLICY)
       throw new AiModelRequestError(
-        "AI 证据处理规则已更新（清理颜色及长文本尾部裁剪），请重新分析以生成新证据。",
+        "AI 证据处理规则已更新（50000 字符内保留全文，超长取末尾 25000 字符并补齐首行，排除通用退出码），请重新分析以生成新证据。",
         false,
       );
     return evidence;
