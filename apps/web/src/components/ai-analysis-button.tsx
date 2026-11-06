@@ -1,7 +1,6 @@
 "use client";
 import { Alert, Button, Empty, Modal, Progress, Space, Table, Tag, Typography } from "antd";
 import { RobotOutlined, PlusOutlined, MinusOutlined } from "@ant-design/icons";
-import { Disclosure } from "./ui/disclosure";
 import { useCallback, useEffect, useState, useRef } from "react";
 import type { AiAnalysisView } from "@autoforge/contracts";
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -43,7 +42,6 @@ export function AiAnalysisButton({
   const [error, setError] = useState("");
   const [cursor, setCursor] = useState("");
   const [previous, setPrevious] = useState<string[]>([]);
-  const [groupCursor, setGroupCursor] = useState("");
   const jobStatus = view?.job.status;
   const read = useCallback(
     async (signal?: AbortSignal) => {
@@ -53,7 +51,6 @@ export function AiAnalysisButton({
         limit: "10",
         ...(attemptId ? { attemptId } : {}),
         ...(cursor ? { after: cursor } : {}),
-        ...(groupCursor ? { groupAfter: groupCursor } : {}),
       });
       const response = await fetch(`/api/v1/ai-analysis?${parameters}`, {
         cache: "no-store",
@@ -65,7 +62,7 @@ export function AiAnalysisButton({
       if (epoch === requestEpoch.current) setView(next);
       return next;
     },
-    [batchId, attemptId, cursor, groupCursor],
+    [batchId, attemptId, cursor],
   );
   async function create() {
     requestEpoch.current += 1;
@@ -220,8 +217,8 @@ export function AiAnalysisButton({
           />
           <Typography.Text type="secondary">
             {attemptId
-              ? "单例读取完整日志，必要时分片细查；最终仅保留初步分类、原因与依据。"
-              : "先按完整堆栈归类，同栈用例共用一个疑似问题建议；没有完整堆栈的用例独立分析。"}
+              ? "单例读取完整 stdout 业务日志，必要时分片细查；最终仅保留初步分类、原因与依据。"
+              : "按堆栈归类，同栈不足 10 例时逐例读取 stdout 全文；达到 10 例时共用堆栈分析。"}
           </Typography.Text>
           {error ? <Alert type="error" title={error} showIcon /> : null}
           {job?.reason ? <Alert type="warning" title={job.reason} showIcon /> : null}
@@ -250,35 +247,6 @@ export function AiAnalysisButton({
                 }
                 status={ACTIVE.has(job.status) ? "active" : "normal"}
               />
-              {view?.groups?.length ? (
-                <Disclosure header="查看堆栈分组初析" defaultOpen={!attemptId}>
-                  <Space orientation="vertical" style={{ width: "100%" }}>
-                    {view.groups.map((group) => (
-                      <Alert
-                        key={group.id}
-                        type="info"
-                        title={`${group.processed}/${group.memberCount} 个成员 · ${LABELS[group.status] ?? group.status}`}
-                        description={
-                          <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                            {group.conclusion ?? group.reason ?? "等待汇总"}
-                          </div>
-                        }
-                      />
-                    ))}
-                    <Space>
-                      <Button disabled={!groupCursor} onClick={() => setGroupCursor("")}>
-                        分组首页
-                      </Button>
-                      <Button
-                        disabled={!view.nextGroupCursor}
-                        onClick={() => setGroupCursor(view.nextGroupCursor ?? "")}
-                      >
-                        下一组页
-                      </Button>
-                    </Space>
-                  </Space>
-                </Disclosure>
-              ) : null}
               <Table
                 size="small"
                 rowKey="id"

@@ -27,6 +27,8 @@ export class AiEvidenceStore {
     const source = await this.repository.source(work.attemptId);
     const evidence: AiEvidence = {
       version: 1,
+      inputPolicy: "stdout_business_v1",
+      stdoutComplete: true,
       executionRunId: work.executionRunId,
       attemptId: work.attemptId,
       parts: [],
@@ -77,7 +79,11 @@ export class AiEvidenceStore {
       }
     };
     if (source) {
-      const executionInput = { ...source };
+      const executionInput = Object.fromEntries(
+        ["class_name", "display_name", "case_type", "class_data_json", "parameters_json"]
+          .filter((key) => source[key] !== undefined && source[key] !== null)
+          .map((key) => [key, source[key]]),
+      );
       for (const key of ["class_data_json", "parameters_json"]) {
         if (typeof executionInput[key] === "string") {
           try {
@@ -90,9 +96,9 @@ export class AiEvidenceStore {
       await append(redactAiJson(executionInput), "input");
       if (source.input_truncated) evidence.limitations.push("执行输入超过 8 MiB，未取得完整输入。");
     } else evidence.limitations.push("没有可读取的实际尝试或执行快照。");
-    for (const stream of ["stdout", "stderr", "agent"] as const) {
+    let stdoutCharacters = 0;
+    for (const stream of ["stdout"] as const) {
       let afterSequence = -1;
-      if (stream !== "agent") stackTexts.push("\n\n");
       try {
         while (remaining > 0) {
           signal.throwIfAborted();
@@ -103,13 +109,14 @@ export class AiEvidenceStore {
             limit: 16,
           });
           for (const chunk of page.items) {
-            if (stream !== "agent" && remaining > 0) stackTexts.push(chunk.content);
-            await append(
-              `[${stream} sequence=${chunk.sequence} time=${chunk.recordedAt}]\n${chunk.content}`,
-              stream,
-            );
+            if (remaining > 0) stackTexts.push(chunk.content);
+            stdoutCharacters += chunk.content.length;
+            await append(chunk.content, stream);
           }
-          if (page.truncated) evidence.limitations.push(`${stream} 日志读取不完整或已离线归档。`);
+          if (page.truncated) {
+            evidence.stdoutComplete = false;
+            evidence.limitations.push(`${stream} 日志读取不完整或已离线归档。`);
+          }
           const last = page.items.at(-1)?.sequence;
           if (last === undefined || last <= afterSequence || page.nextSequence === undefined) break;
           afterSequence = last;
@@ -117,22 +124,23 @@ export class AiEvidenceStore {
       } catch (error) {
         if (signal.aborted || error instanceof AiResourceDeferral) throw error;
         if (this.isBusy(error)) throw new AiResourceDeferral({ cause: error });
+        evidence.stdoutComplete = false;
         evidence.limitations.push(`${stream} 日志读取失败，无法断言该流没有错误。`);
       }
     }
     if (remaining === 0 && !evidence.limitations.some((value) => value.includes("预算")))
       evidence.limitations.push("用例证据达到采集空间预算，无法确认剩余日志已完整读取。");
-    const stacks = [...new Set(extractCompleteStacks(stackTexts.join("")))].sort();
-    if (stacks.length && !evidence.limitations.length)
-      evidence.signature = `exact-stack-bundle-v1:${createHmac("sha256", this.signatureKey).update(JSON.stringify(stacks)).digest("hex")}`;
+    if (remaining === 0 || !stdoutCharacters) {
+      evidence.stdoutComplete = false;
+      if (!stdoutCharacters) evidence.limitations.push("没有可读取的 stdout 业务日志正文。");
+    }
+    const stacks = [
+      ...new Set(extractCompleteStacks(stackTexts.join(""), evidence.stdoutComplete)),
+    ].sort();
+    if (stacks.length && evidence.stdoutComplete)
+      evidence.signature = `exact-stack-bundle-v2:${createHmac("sha256", this.signatureKey).update(JSON.stringify(stacks)).digest("hex")}`;
     else evidence.limitations.push("未取得可确认完整的堆栈集合；此项独立保留，不按摘要前缀合并。");
-    if (
-      work.strategy === "single_full_v2" &&
-      evidence.limitations.some(
-        (limitation) =>
-          !limitation.startsWith("未取得可确认完整的堆栈集合") && !limitation.includes("输入"),
-      )
-    )
+    if (work.strategy === "single_full_v2" && !evidence.stdoutComplete)
       throw new AiModelRequestError(
         `无法完成全文日志分析：${evidence.limitations.join("；")}请检查日志可用性或提高每例证据预算后重试。`,
         false,
@@ -155,7 +163,15 @@ export class AiEvidenceStore {
     return { key, evidence };
   }
   async read(key: string): Promise<AiEvidence> {
-    return JSON.parse(Buffer.from(await this.objects.read(key)).toString("utf8")) as AiEvidence;
+    const evidence = JSON.parse(
+      Buffer.from(await this.objects.read(key)).toString("utf8"),
+    ) as AiEvidence;
+    if (evidence.inputPolicy !== "stdout_business_v1")
+      throw new AiModelRequestError(
+        "AI 证据范围已调整为 stdout 业务日志，请重新分析以生成新证据。",
+        false,
+      );
+    return evidence;
   }
   async part(part: AiEvidence["parts"][number]) {
     return Buffer.from(await this.objects.read(part.objectKey)).toString("utf8");
@@ -177,7 +193,7 @@ function* evidenceTextParts(text: string, maximumCharacters: number): Generator<
   }
 }
 /** Conservatively group only complete exception blocks, never the 4,096-character summary. */
-export function extractCompleteStacks(text: string): string[] {
+export function extractCompleteStacks(text: string, complete = false): string[] {
   const lines = text
     .replace(/\r\n?/gu, "\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, "")
@@ -192,7 +208,8 @@ export function extractCompleteStacks(text: string): string[] {
       stacks.push(current.join("\n"));
     current = [];
   };
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    const line = normalizeStackLogLine(rawLine);
     if (/^[\w.$]+(?:Exception|Error)(?::.*)?$/u.test(line)) {
       if (current.length) finish();
       current = [line];
@@ -202,8 +219,18 @@ export function extractCompleteStacks(text: string): string[] {
       else finish();
     }
   }
-  // An unterminated final block may have been cut off; only a following delimiter closes it.
+  // EOF closes a block only when the log repository confirmed the complete stdout stream.
+  if (complete) finish();
   return stacks;
+}
+function normalizeStackLogLine(line: string): string {
+  const cause = line.match(/(?:^|\s)((?:Caused by:|Suppressed:|\.\.\.\s+\d+\s+more).*)$/u);
+  if (cause) return cause[1]!.startsWith("Caused by:") ? cause[1]! : `\t${cause[1]}`;
+  const exception = line.match(/(?:^|\s|\])([\w.$]+(?:Exception|Error)(?::.*)?)$/u);
+  if (exception) return exception[1]!;
+  const frame = line.match(/(?:^|\s)(at\s+[\w.$/<>]+\([^\n]*\))\s*$/u);
+  if (frame) return `\tat ${frame[1]!.slice(3).trim()}`;
+  return line.trimEnd();
 }
 function digest(bytes: Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex");

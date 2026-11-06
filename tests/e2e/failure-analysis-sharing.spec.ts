@@ -13,6 +13,129 @@ import {
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
 import { expectUiIntegrity } from "./support/ui-guard";
 
+test("public analysis publication dialog keeps padding and controls inside the desktop modal", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const batch = await fixture(page);
+  const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR ?? testInfo.outputPath("screenshots");
+  await mkdir(screenshots, { recursive: true });
+  const endpoint = `/api/v1/failure-analysis/batches/${batch.batchId}/publication`;
+  for (const theme of ["light", "dark"] as const) {
+    await page
+      .context()
+      .addCookies([
+        { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+      ]);
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await page.goto(`/case-analysis/${batch.batchId}`);
+      let releaseRead: () => void = () => {};
+      const heldRead = new Promise<void>((resolveRead) => {
+        releaseRead = resolveRead;
+      });
+      let failPublish = true;
+      await page.route(endpoint, async (route) => {
+        if (route.request().method() === "GET") await heldRead;
+        if (route.request().method() === "POST" && failPublish) {
+          failPublish = false;
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: {
+                code: "PLATFORM_BUSY",
+                message: "暂时无法生成公开链接，请稍后重试。".repeat(30),
+                requestId: "publication-ui-fixture",
+              },
+            }),
+          });
+          return;
+        }
+        await route.continue();
+      });
+      const dialog = page.getByRole("dialog", { name: "公开分析链接", exact: true });
+      const capture = async (state: string) => {
+        await expectUiIntegrity(page);
+        const bounds = await dialog.boundingBox();
+        const title = await dialog
+          .getByRole("heading", { name: "公开分析链接", exact: true })
+          .boundingBox();
+        expect(title!.x - bounds!.x).toBeGreaterThanOrEqual(20);
+        expect(title!.y - bounds!.y).toBeGreaterThanOrEqual(16);
+        expect(bounds!.y).toBeGreaterThanOrEqual(0);
+        expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(width === 1024 ? 768 : 960);
+        const footer = dialog.locator("footer");
+        for (const control of await footer.locator("button,a").all()) {
+          await expect(control).toBeInViewport();
+          const box = (await control.boundingBox())!;
+          expect(box.x).toBeGreaterThanOrEqual(bounds!.x + 20);
+          expect(box.x + box.width).toBeLessThanOrEqual(bounds!.x + bounds!.width - 20);
+          expect(box.y + box.height).toBeLessThanOrEqual(bounds!.y + bounds!.height - 12);
+        }
+        await page.screenshot({
+          path: resolve(screenshots, `publication-${state}-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+      };
+      try {
+        await page.getByRole("button", { name: "公开分析", exact: true }).click();
+        await expect(dialog.getByText("正在读取链接状态…", { exact: true })).toBeVisible();
+        await expect(dialog.getByRole("button", { name: /启用并生成链接$/u })).toBeDisabled();
+        await capture("loading");
+      } finally {
+        releaseRead();
+      }
+      await expect(dialog.getByRole("button", { name: /启用并生成链接$/u })).toBeEnabled();
+      await capture("unpublished");
+      await dialog.getByRole("button", { name: /启用并生成链接$/u }).click();
+      await expect(dialog.getByText(/暂时无法生成公开链接/u)).toBeVisible();
+      await capture("error");
+      await dialog.getByRole("button", { name: /启用并生成链接$/u }).click();
+      const openLink = dialog.getByRole("link", { name: "新标签页查看", exact: true });
+      await expect(openLink).toHaveAttribute("href", batch.publicPath);
+      await expect(openLink).toHaveAttribute("target", "_blank");
+      await capture("published");
+      await dialog.locator(".ant-typography-copy").click();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(new URL(batch.publicPath, page.url()).href);
+      await dialog.getByRole("button", { name: "撤销链接", exact: true }).click();
+      const confirmation = page.getByRole("dialog", { name: "撤销公开分析链接？", exact: true });
+      await expect(confirmation).toBeVisible();
+      await expectUiIntegrity(page);
+      await page.screenshot({
+        path: resolve(screenshots, `publication-revoke-${theme}-${width}.png`),
+        animations: "disabled",
+      });
+      await confirmation.getByRole("button", { name: "确认撤销", exact: true }).click();
+      await expect(dialog.getByText("当前未启用公开分析。", { exact: true })).toBeVisible();
+      await capture("revoked");
+      await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+      await page.unroute(endpoint);
+      const longPath = `${batch.publicPath}&note=${"long-link-segment-".repeat(120)}`;
+      await page.route(endpoint, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ path: longPath }),
+        }),
+      );
+      await page.getByRole("button", { name: "公开分析", exact: true }).click();
+      await expect(openLink).toHaveAttribute("href", longPath);
+      await capture("long-link");
+      await dialog.locator(".ant-typography-copy").click();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(new URL(longPath, page.url()).href);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
+      await page.unroute(endpoint);
+    }
+  }
+});
+
 async function fixture(page: Page, extraCases = 0, options: { reuseSession?: boolean } = {}) {
   if (!options.reuseSession) await ensureAdministrator(page);
   const suffix = uniqueName("analysis-sheet");

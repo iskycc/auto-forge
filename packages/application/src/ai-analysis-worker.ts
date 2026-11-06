@@ -532,17 +532,20 @@ export class AiAnalysisWorker {
     configuration: AiModelConfiguration,
     signal: AbortSignal,
   ) {
-    const key = await this.repository.groupEvidence(work);
+    const fullLogs = work.memberCount < 10 || !work.signature.startsWith("exact-stack-bundle-");
+    const candidates = await this.repository.groupMembers(work, fullLogs ? 1 : 50);
+    const key = fullLogs ? candidates[0]?.evidenceKey : await this.repository.groupEvidence(work);
     if (!key) throw new AiModelRequestError("本组没有可读取的堆栈或日志证据。", false);
     const manifest = await this.evidence.read(key);
-    // Equal complete stacks are sent once. Missing/incomplete stacks keep a unique group and all log parts.
-    const parts = work.signature.startsWith("exact-stack-bundle-")
-      ? (manifest.stackParts ?? manifest.parts)
-      : manifest.parts;
+    if (fullLogs && manifest.stdoutComplete === false)
+      throw new AiModelRequestError(
+        "同栈用例不足 10 个，需要完整 stdout 业务日志；请检查日志可用性和证据预算后重新分析。",
+        false,
+      );
+    const parts = fullLogs ? manifest.parts : (manifest.stackParts ?? manifest.parts);
     const partCursor = work.partCursor ?? 0;
     const part = parts[partCursor];
     const text = part ? await this.evidence.part(part) : null;
-    const candidates = await this.repository.groupMembers(work, 50);
     const members: typeof candidates = [];
     const reference = part?.id ?? candidates[0]?.id;
     if (!reference) throw new AiModelRequestError("本组缺少待分析的证据或成员。", false);
@@ -551,16 +554,16 @@ export class AiAnalysisWorker {
       {
         role: "user",
         content: JSON.stringify({
-          stage: "stack_group",
-          groupSignature: work.signature,
+          stage: fullLogs ? "small_group_full" : "stack_group",
           totalCases: work.memberCount,
           processedCases: work.processed,
           stackPart: partCursor + (part ? 1 : 0),
           stackParts: parts.length,
           previousPreliminaryFinding: work.conclusion,
           knownLimitations: manifest.limitations,
-          instruction:
-            "同一完整堆栈视为同一疑似问题，结合本次成员和已有建议给出一个精简结论。成员按页提供；不要逐例重复写报告。缺少完整堆栈的独立用例需逐片读取日志。",
+          instruction: fullLogs
+            ? "本堆栈组不足10个用例，逐例提供完整 stdout 业务日志，每例可有多个证据片。结合前片和前例的建议更新同一疑似问题的精简结论；不可把本片当作全文，也不可把通用 TestNG 失败标识当根因。"
+            : "同一完整堆栈视为同一疑似问题，结合本次成员和已有建议给出一个精简结论。成员按页提供；不要逐例重复写报告。",
         }),
       },
       {
@@ -645,12 +648,13 @@ export class AiAnalysisWorker {
     signal.throwIfAborted();
     await this.authorize(work);
     const nextPart = partCursor + (part ? 1 : 0);
-    const processed = work.processed + members.length;
+    const memberComplete = nextPart >= parts.length;
+    const processed = work.processed + (fullLogs ? (memberComplete ? 1 : 0) : members.length);
     await this.repository.saveStackGroup(
       work,
       {
-        cursor: members.at(-1)?.id ?? work.cursor,
-        partCursor: nextPart,
+        cursor: fullLogs && !memberComplete ? work.cursor : (members.at(-1)?.id ?? work.cursor),
+        partCursor: fullLogs && memberComplete ? 0 : nextPart,
         processed,
         conclusion: renderPreliminaryConclusion(draft),
         done: nextPart >= parts.length && processed >= work.memberCount,

@@ -255,6 +255,8 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           });
           await put(manifestKey, {
             version: 1,
+            inputPolicy: "stdout_business_v1",
+            stdoutComplete: true,
             executionRunId: work.executionRunId,
             attemptId: work.attemptId,
             signature:
@@ -323,7 +325,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         expect(view.groups).toHaveLength(strategy === "legacy" ? 1 : 2);
         expect(view.groups?.[0]?.memberCount).toBe(strategy === "legacy" ? 4 : 2);
         expect(view.groups?.[0]?.processed).toBe(strategy === "legacy" ? 4 : 2);
-        expect(modelCalls).toBe(strategy === "legacy" ? 8 : 2);
+        expect(modelCalls).toBe(strategy === "legacy" ? 8 : 4);
         expect(peak).toBe(2);
         const progress = await redis.get(
           namespacedKey("ai-progress", DEFAULT_PROJECT_ID, 1, job.id),

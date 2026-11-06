@@ -11,11 +11,18 @@ import type {
 import { AiResourceDeferral } from "@autoforge/application";
 
 describe("AI model boundary", () => {
-  it("keeps stack grouping independent of duplicated stack blocks and preserves all single-case log streams", async () => {
+  it("sends complete stdout and business input without generic result codes, stderr or Agent diagnostics", async () => {
     const objects = new Map<string, Uint8Array>();
     const store = new AiEvidenceStore(
       {
-        source: async () => ({ outcome: "failed", class_name: "example.Test" }),
+        source: async () => ({
+          outcome: "failed",
+          class_name: "example.Test",
+          result_code: "TESTNG_ASSERTIONS_FAILED",
+          result_summary: "TESTNG_RESULT",
+          runner_id: "unhelpful-node",
+          class_data_json: '{"amount":0,"enabled":false}',
+        }),
       } as unknown as AiAnalysisRepository,
       {
         listLogChunks: async ({ stream }: { stream: string }) => ({
@@ -25,7 +32,13 @@ describe("AI model boundary", () => {
               recordedAt: "now",
               content:
                 stream === "stdout"
-                  ? "日志开头\n" + "x".repeat(16001) + "🧪".repeat(10000) + "\n日志结尾\n"
+                  ? "日志开头\n" +
+                    "x".repeat(16001) +
+                    "🧪".repeat(10000) +
+                    "\n日志结尾\n" +
+                    "java.lang.AssertionError: mismatch\n\tat example.Test.run(Test.java:20)\n\n".repeat(
+                      2,
+                    )
                   : stream === "stderr"
                     ? "java.lang.AssertionError: mismatch\n\tat example.Test.run(Test.java:20)\n\n".repeat(
                         2,
@@ -61,7 +74,7 @@ describe("AI model boundary", () => {
       aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "model" }),
       new AbortController().signal,
     );
-    expect(result.evidence.signature).toMatch(/^exact-stack-bundle-v1:/);
+    expect(result.evidence.signature).toMatch(/^exact-stack-bundle-v2:/);
     expect(result.evidence.stackParts).toHaveLength(1);
     const stack = await store.part(result.evidence.stackParts![0]!);
     expect(stack.match(/AssertionError/gu)).toHaveLength(1);
@@ -72,8 +85,36 @@ describe("AI model boundary", () => {
     expect(fullText).toContain("日志结尾");
     expect(fullText).toContain("🧪".repeat(10000));
     expect(fullText).not.toContain("\ufffd");
-    expect(fullText).toContain("执行诊断末尾");
+    expect(fullText).not.toContain("执行诊断末尾");
+    expect(fullText).not.toMatch(
+      /TESTNG_ASSERTIONS_FAILED|TESTNG_RESULT|unhelpful-node|\[stdout sequence/,
+    );
+    expect(fullText).toContain('"amount":0');
+    expect(fullText).toContain('"enabled":false');
     expect(result.evidence.parts.length).toBeGreaterThan(3);
+  });
+  it("ignores failures in excluded streams and rejects old broad evidence for new model requests", async () => {
+    const listLogChunks = vi.fn(async ({ stream }: { stream: string }) => {
+      if (stream !== "stdout") throw new Error("excluded stream must never be read");
+      return { items: [{ sequence: 0, recordedAt: "now", content: "完整业务日志\n" }] };
+    });
+    const store = new AiEvidenceStore(
+      { source: async () => null } as unknown as AiAnalysisRepository,
+      { listLogChunks } as unknown as ExecutionControlRepository,
+      {
+        putObject: vi.fn(),
+        read: async () => Buffer.from(JSON.stringify({ version: 1, parts: [{ id: "agent-1" }] })),
+      } as unknown as JarObjectStorePort,
+      "test-key",
+    );
+    const result = await store.collect(
+      { id: "i", strategy: "single_full_v2" } as AiWork,
+      aiModelConfigurationSchema.parse({ baseUrl: "http://model/v1", modelId: "m" }),
+      new AbortController().signal,
+    );
+    expect(listLogChunks.mock.calls.map(([query]) => query.stream)).toEqual(["stdout"]);
+    expect(result.evidence.stdoutComplete).toBe(true);
+    await expect(store.read("old-manifest")).rejects.toThrow("重新分析");
   });
   it("refuses a single-case full-log analysis when the evidence budget would omit log text", async () => {
     const store = new AiEvidenceStore(
@@ -163,8 +204,9 @@ describe("AI model boundary", () => {
     expect(
       result.evidence.parts.reduce((sum, part) => sum + part.sizeBytes, 0),
     ).toBeLessThanOrEqual(1048576);
-    expect(result.evidence.limitations).toContain(
-      "用例证据超出配置的采集空间预算，剩余正文未分析。",
+    expect(result.evidence.stdoutComplete).toBe(false);
+    expect(result.evidence.limitations.some((message) => message.includes("采集空间预算"))).toBe(
+      true,
     );
   });
   it("preserves distinct complete stack frames and excludes an unterminated tail", () => {
@@ -174,6 +216,69 @@ describe("AI model boundary", () => {
     expect(extractCompleteStacks(stack.replace(":20", ":21"))).not.toEqual(
       extractCompleteStacks(stack),
     );
+  });
+  it("groups identical complete stacks despite log prefixes, indentation and a final EOF", () => {
+    const stack =
+      "java.lang.AssertionError: expected 1\n\tat example.Test.run(Test.java:20)\nCaused by: java.io.IOException: connection reset\n\tat example.Client.read(Client.java:3)";
+    const prefixed = stack
+      .split("\n")
+      .map((line) => `2026-11-05 18:00:00 [thread-4] ERROR ${line.replace(/^\t/u, "    ")}`)
+      .join("\r\n");
+    expect(extractCompleteStacks(prefixed, true)).toEqual(extractCompleteStacks(stack, true));
+    expect(extractCompleteStacks(prefixed, true)[0]).toContain("Caused by:");
+    expect(extractCompleteStacks(stack, false)).toEqual([]);
+    expect(extractCompleteStacks(stack.replace(":20", ":21"), true)).not.toEqual(
+      extractCompleteStacks(stack, true),
+    );
+  });
+  it("keeps the same stack signature when only unrelated execution-input metadata is incomplete", async () => {
+    let partialInput = false;
+    const objects = new Map<string, Uint8Array>();
+    const store = new AiEvidenceStore(
+      {
+        source: async () => ({ class_name: "Example", input_truncated: partialInput }),
+      } as unknown as AiAnalysisRepository,
+      {
+        listLogChunks: async () => ({
+          items: [
+            {
+              sequence: 0,
+              recordedAt: "now",
+              content: "java.lang.AssertionError: mismatch\n at example.Test.run(Test.java:20)",
+            },
+          ],
+        }),
+      } as unknown as ExecutionControlRepository,
+      {
+        putObject: async ({
+          objectKey,
+          content,
+        }: {
+          objectKey: string;
+          content: AsyncIterable<Uint8Array>;
+        }) => {
+          for await (const bytes of content) objects.set(objectKey, bytes);
+        },
+      } as unknown as JarObjectStorePort,
+      "key",
+    );
+    const configuration = aiModelConfigurationSchema.parse({
+      baseUrl: "http://model/v1",
+      modelId: "m",
+    });
+    const first = await store.collect(
+      { id: "one" } as AiWork,
+      configuration,
+      new AbortController().signal,
+    );
+    partialInput = true;
+    const second = await store.collect(
+      { id: "two" } as AiWork,
+      configuration,
+      new AbortController().signal,
+    );
+    expect(first.evidence.signature).toMatch(/^exact-stack-bundle-v2:/u);
+    expect(second.evidence.signature).toBe(first.evidence.signature);
   });
   it("redacts nested dynamic input secrets while preserving zero and false", () => {
     const value = JSON.parse(

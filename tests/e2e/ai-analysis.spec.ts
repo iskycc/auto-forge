@@ -285,14 +285,16 @@ test("AI settings, durable batch and single analysis, retry and partial export p
               stream: "stdout",
               sequence: 0,
               recordedAt: new Date().toISOString(),
-              content: "全文开始标识\n" + "普通业务日志\n".repeat(1800) + "全文结束标识\n",
+              content:
+                `用例独立正文${index}\n全文开始标识\n` +
+                "普通业务日志\n".repeat(1800) +
+                "全文结束标识\njava.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)",
             },
             {
               stream: "stderr",
               sequence: 0,
               recordedAt: new Date().toISOString(),
-              content:
-                "java.lang.AssertionError: connection reset\n\tat example.SharedTest.run(SharedTest.java:10)\n\n",
+              content: "不应传给模型的 STDERR 内容\n",
             },
             {
               stream: "agent",
@@ -360,15 +362,30 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         .first(),
     ).toBeVisible();
     await dialog.getByRole("button", { name: "收起完整初析", exact: true }).first().click();
-    expect(attempts).toBe(2); // one shared-stack request, plus the deliberate 429 retry
-    expect(inferenceRequests.filter((request) => request.stage === "stack_group")).toHaveLength(2);
-    expect(inferenceRequests[1]!.members).toHaveLength(4);
-    expect(inferenceRequests[1]!.text).toContain("example.SharedTest.run");
-    expect(inferenceRequests[1]!.text).not.toContain("普通业务日志");
-    const grouped = await browserJson<{ items: Array<{ conclusion: string }> }>(
-      page,
-      `/api/v1/ai-analysis?batchId=${fixture.batchId}`,
-    );
+    expect(attempts).toBeGreaterThan(4);
+    const smallGroups = inferenceRequests.filter((request) => request.stage === "small_group_full");
+    expect(smallGroups.length).toBeGreaterThan(4);
+    const batchLogs = smallGroups.map((request) => request.text).join("");
+    for (let index = 0; index < 4; index++) expect(batchLogs).toContain(`用例独立正文${index}`);
+    expect(batchLogs).toContain("全文开始标识");
+    expect(batchLogs).toContain("全文结束标识");
+    expect(smallGroups.every((request) => request.members.length === 1)).toBe(true);
+    expect(
+      inferenceRequests.every(
+        (request) =>
+          !/不应传给模型的 STDERR|Agent 完整诊断标识|TESTNG_RESULT|TESTNG_ASSERTIONS_FAILED/u.test(
+            request.messages,
+          ),
+      ),
+    ).toBe(true);
+    await expect(dialog.getByText("查看堆栈分组初析", { exact: true })).toHaveCount(0);
+    const grouped = await browserJson<{
+      items: Array<{ conclusion: string }>;
+      groups: Array<{ memberCount: number; processed: number; status: string }>;
+    }>(page, `/api/v1/ai-analysis?batchId=${fixture.batchId}`);
+    expect(grouped.body.groups).toEqual([
+      expect.objectContaining({ memberCount: 4, processed: 4, status: "completed" }),
+    ]);
     expect(new Set(grouped.body.items.map((item) => item.conclusion)).size).toBe(1);
     expect(grouped.body.items.every((item) => item.conclusion.split("\n").length === 3)).toBe(true);
     expect(
@@ -430,7 +447,8 @@ test("AI settings, durable batch and single analysis, retry and partial export p
       .join("");
     expect(fullLogs).toContain("全文开始标识");
     expect(fullLogs).toContain("全文结束标识");
-    expect(fullLogs).toContain("Agent 完整诊断标识");
+    expect(fullLogs).not.toContain("Agent 完整诊断标识");
+    expect(fullLogs).not.toContain("不应传给模型的 STDERR");
     expect(
       inferenceRequests.every(
         (request) =>

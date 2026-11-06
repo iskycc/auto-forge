@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "./ui";
 import { Dialog } from "./ui/dialog";
 import { CopyableText } from "./ui/copyable-text";
+import { LinkButton } from "./ui/link-button";
 import { useConfirm } from "./ui-feedback";
 import { readApiErrorMessage } from "@/lib/client-api";
 
@@ -81,44 +82,44 @@ function PublicationDialog({ batchId, onClose }: { batchId: string; onClose: () 
       closeDisabled={pending}
       className="w-[min(720px,calc(100vw-48px))]"
     >
-      <section className="grid min-w-0 gap-4 p-6">
-        <div className="flex items-center justify-between gap-3">
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-solid border-border px-6 py-4">
           <h2 className="m-0 text-lg font-semibold">公开分析链接</h2>
           <Button type="button" variant="secondary" disabled={pending} onClick={onClose}>
             关闭
           </Button>
+        </header>
+        <div className="grid min-h-0 min-w-0 gap-4 overflow-y-auto px-6 py-4">
+          <Alert
+            showIcon
+            type="info"
+            title="面向持有链接的协作人员"
+            description="启用后，访客可只读查看本次任务的失败用例、人工分析结论、日志与证明。个人账号登录后，无需项目权限即可认领和分析自己认领的用例；不能修改他人的结论或管理任务。"
+          />
+          {error ? <Alert showIcon type="error" title={error} /> : null}
+          {path ? (
+            <div
+              className="max-h-40 min-w-0 overflow-y-auto rounded-lg border border-solid border-border bg-muted/40 p-3"
+              aria-label="公开分析地址"
+            >
+              <CopyableText
+                block
+                className="!mb-0 break-all"
+                text={new URL(path, window.location.origin).href}
+              />
+            </div>
+          ) : (
+            <p className="m-0 text-sm text-muted-foreground">
+              {pending ? "正在读取链接状态…" : "当前未启用公开分析。"}
+            </p>
+          )}
         </div>
-        <Alert
-          showIcon
-          type="info"
-          title="面向持有链接的协作人员"
-          description="启用后，访客可只读查看本次任务的失败用例、人工分析结论、日志与证明。个人账号登录后，无需项目权限即可认领和分析自己认领的用例；不能修改他人的结论或管理任务。"
-        />
-        {error ? <Alert showIcon type="error" title={error} /> : null}
-        {path ? (
-          <div className="min-w-0 rounded-lg border border-solid border-border bg-muted/40 p-3">
-            <CopyableText
-              block
-              className="!mb-0 break-all"
-              text={new URL(path, window.location.origin).href}
-            />
-          </div>
-        ) : (
-          <p className="m-0 text-sm text-muted-foreground">
-            {pending ? "正在读取链接状态…" : "当前未启用公开分析。"}
-          </p>
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
+        <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-solid border-border px-6 py-4">
           {path ? (
             <>
-              <a
-                href={path}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center text-sm text-info"
-              >
+              <LinkButton href={path} target="_blank" rel="noopener noreferrer" prefetch={false}>
                 新标签页查看
-              </a>
+              </LinkButton>
               <Button
                 type="button"
                 variant="danger"
@@ -139,8 +140,8 @@ function PublicationDialog({ batchId, onClose }: { batchId: string; onClose: () 
               启用并生成链接
             </Button>
           )}
-        </div>
-      </section>
+        </footer>
+      </div>
     </Dialog>
   );
 }

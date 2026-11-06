@@ -130,16 +130,17 @@ function groupWorker() {
   const canWork = vi.fn().mockReturnValue(true);
   const complete = vi.fn();
   const busy = new Error("database busy");
+  const evidence = {
+    read: async () => ({
+      parts: [{ id: "part-1" }],
+      stackParts: [{ id: "stack-1" }],
+      limitations: [],
+    }),
+    part: async () => "java.lang.AssertionError\n at example.Test.run(Test.java:10)",
+  } as unknown as AiEvidencePort;
   const worker = new AiAnalysisWorker(
     repository,
-    {
-      read: async () => ({
-        parts: [{ id: "part-1" }],
-        stackParts: [{ id: "stack-1" }],
-        limitations: [],
-      }),
-      part: async () => "java.lang.AssertionError\n at example.Test.run(Test.java:10)",
-    } as unknown as AiEvidencePort,
+    evidence,
     { complete },
     identities,
     {} as SecretCipherPort,
@@ -152,6 +153,7 @@ function groupWorker() {
   );
   return {
     worker,
+    evidence,
     work,
     saveStackGroup,
     groupMembers,
@@ -165,17 +167,118 @@ function groupWorker() {
 }
 
 describe("concise stack-first analysis", () => {
+  it.each([1, 9])(
+    "reads every stdout fragment of every member when the stack group has %i cases",
+    async (count) => {
+      const fixture = groupWorker();
+      Object.assign(fixture.work, {
+        strategy: "stack_groups_v2",
+        signature: "exact-stack-bundle-v2:shared",
+        memberCount: count,
+      });
+      fixture.groupMembers.mockImplementation(async () => {
+        const next = fixture.work.processed;
+        return next < count
+          ? [{ id: `member-${next}`, displayName: `Case ${next}`, evidenceKey: `manifest-${next}` }]
+          : [];
+      });
+      vi.spyOn(fixture.evidence, "read").mockImplementation(async (key) => ({
+        version: 1,
+        executionRunId: key,
+        attemptId: key,
+        signature: fixture.work.signature,
+        stdoutComplete: true,
+        limitations: [],
+        parts: [
+          { id: `${key}-stdout-1`, objectKey: `${key}-start`, sizeBytes: 10 },
+          { id: `${key}-stdout-2`, objectKey: `${key}-end`, sizeBytes: 10 },
+        ],
+        stackParts: [{ id: "stack-only", objectKey: "stack", sizeBytes: 10 }],
+      }));
+      vi.spyOn(fixture.evidence, "part").mockImplementation(
+        async (part) => `完整日志片 ${part.objectKey}`,
+      );
+      fixture.reserveModel.mockResolvedValue(true);
+      fixture.complete.mockImplementation(async (input) => ({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "reply",
+            type: "function",
+            function: {
+              name: "submit_ai_conclusion",
+              arguments: JSON.stringify({
+                recommendation: "rerun_likely",
+                reason: "连接瞬断。",
+                evidence: "业务日志显示连接重置。",
+                evidenceReferences: [JSON.parse(input.messages.at(-1).content).evidenceId],
+              }),
+            },
+          },
+        ],
+      }));
+      fixture.saveStackGroup.mockImplementation(async (_work, progress) => {
+        if (fixture.work.partCursor === 0) expect(progress.processed).toBe(fixture.work.processed);
+        Object.assign(fixture.work, progress);
+      });
+      for (let index = 0; index < count * 2; index++)
+        await fixture.worker.tick(new AbortController().signal);
+      expect(fixture.complete).toHaveBeenCalledTimes(count * 2);
+      const text = fixture.complete.mock.calls
+        .map(([input]) => JSON.parse(input.messages.at(-1).content).text)
+        .join("\n");
+      for (let index = 0; index < count; index++) {
+        expect(text).toContain(`manifest-${index}-start`);
+        expect(text).toContain(`manifest-${index}-end`);
+      }
+      expect(text).not.toContain("stack-only");
+      expect(fixture.saveStackGroup.mock.calls.at(-1)![1]).toMatchObject({
+        processed: count,
+        partCursor: 0,
+        done: true,
+      });
+    },
+  );
+  it("does not label incomplete stdout in a small group as a full-log analysis", async () => {
+    const fixture = groupWorker();
+    fixture.work.strategy = "stack_groups_v2";
+    fixture.groupMembers.mockResolvedValue([
+      { id: "member", displayName: "case", evidenceKey: "manifest" },
+    ]);
+    vi.spyOn(fixture.evidence, "read").mockResolvedValue({
+      version: 1,
+      executionRunId: "r",
+      attemptId: "a",
+      signature: "s",
+      parts: [],
+      limitations: [],
+      stdoutComplete: false,
+    });
+    await fixture.worker.tick(new AbortController().signal);
+    expect(fixture.complete).not.toHaveBeenCalled();
+    expect(fixture.deferGroup).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("完整 stdout"),
+      expect.any(String),
+      true,
+      expect.any(String),
+    );
+  });
   it("sends equal-stack members together and saves one concise group suggestion", async () => {
     const fixture = groupWorker();
     fixture.work.strategy = "stack_groups_v2";
     fixture.work.signature = "exact-stack-bundle-v1:test";
+    fixture.work.memberCount = 10;
     fixture.configuration.referencePrompts = [
       { title: "参考", content: "环境依赖波动优先核对重跑。" },
     ];
-    fixture.groupMembers.mockResolvedValue([
-      { id: "a", displayName: "A" },
-      { id: "b", displayName: "B" },
-    ]);
+    fixture.groupMembers.mockResolvedValue(
+      Array.from({ length: 10 }, (_, index) => ({
+        id: `member-${index}`,
+        displayName: `Case ${index}`,
+      })),
+    );
     fixture.reserveModel.mockResolvedValue(true);
     // The fake must expose the same lifecycle boundary as a real model admission.
     const conclusion = {
@@ -200,14 +303,11 @@ describe("concise stack-first analysis", () => {
     const input = fixture.complete.mock.calls[0]![0];
     expect(JSON.stringify(input.messages)).toContain("环境依赖波动");
     const payload = JSON.parse(input.messages.at(-1).content);
-    expect(payload.members).toEqual([
-      { id: "a", displayName: "A" },
-      { id: "b", displayName: "B" },
-    ]);
+    expect(payload.members).toHaveLength(10);
     expect(fixture.saveStackGroup).toHaveBeenCalledWith(
       fixture.work,
       expect.objectContaining({
-        processed: 2,
+        processed: 10,
         done: true,
         partCursor: 1,
         conclusion: "可能重跑通过（待人工确认）\n原因：连接瞬断。\n依据：日志出现连接重置。",

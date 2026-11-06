@@ -17,6 +17,8 @@ export type AiPlanningJob = AiAnalysisJob & { cursor: string | null; leaseToken:
 export type AiEvidencePart = { id: string; objectKey: string; sizeBytes: number };
 export type AiEvidence = {
   version: 1;
+  inputPolicy?: "stdout_business_v1";
+  stdoutComplete?: boolean;
   executionRunId: string;
   attemptId: string;
   parts: AiEvidencePart[];
