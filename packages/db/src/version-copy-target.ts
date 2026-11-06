@@ -31,6 +31,7 @@ export function versionCopyTargetHasContentSql(dialect: VersionCopySqlDialect): 
       ? `json_extract(${column}, '$.projectVersionId')`
       : `(${column}::jsonb ->> 'projectVersionId')`;
   return [
+    "EXISTS (SELECT 1 FROM version_jenkins_dependencies c WHERE c.project_id=v.project_id AND c.version_id=v.id)",
     ...DIRECT_VERSION_TABLES.map(
       (table) =>
         `EXISTS (SELECT 1 FROM ${table} c WHERE c.project_id=v.project_id AND c.project_version_id=v.id)`,

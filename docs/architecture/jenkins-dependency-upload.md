@@ -28,7 +28,7 @@ API Key、项目 ID、版本名称和文件路径（工作区相对路径或 Age
 
 ## 兼容与恢复
 
-- 无数据库迁移、平台配置、生产依赖或 Runner 协议变更；Jenkins 最低版本不变。
+- 插件直传链路不需要额外平台配置、生产依赖或 Runner 协议变更；Jenkins 最低版本不变。平台主动触发构建新增的独立数据库表见下文。
 - 原 URL 输入与 `/api/v1/jenkins/dependencies` 保留兼容，新指导只生成 `filePath`。
 - 上传最长等待 15 分钟，不自动重试。取消、断网或 Controller 重启与平台提交之间存在
   不确定边界，调用方应先核对当前绑定后再手工重试；该步骤不是持久上传队列。
@@ -76,3 +76,83 @@ Windows 可填 `D:/builds/dependencies.zip`。步骤仍需放入已选择 Agent 
 
 Windows 路径沿用 Java 原生文件系统语义，本轮未运行真实 Windows Agent；未重跑 Full 数据库／对象存储完整矩阵，
 因为服务端上传契约与存储实现未改动。更新依赖发布 HPI 即可使用绝对路径，原已支持直传的平台接口可继续接收。
+
+## 从平台触发版本依赖构建
+
+在「项目设置 → JDK 与依赖 JAR 压缩包」点击 **Jenkins 构建依赖**。此入口与
+「Jenkins 接入指导」并列，只向具有当前项目 `project.manage`（管理项目）权限的账号开放。
+选择的版本决定配置和构建记录的范围，切换版本不会复用其他版本的 Jenkins 凭据。
+
+1. 在「流水线配置」填写完整 Jenkins 任务地址、用户名和该用户的 **API Token**，
+   添加构建参数名和值。任务地址示例：`https://jenkins.example/jenkins/job/folder/job/update/`。
+   支持嵌套文件夹，不能填写某次构建的地址、`buildWithParameters` 地址、含用户名密码的 URL
+   或带查询参数的地址。Jenkins 账号需要读取任务、读取构建和 `Job/Build` 权限。
+2. 参数名须与 Jenkins 参数化构建中的名称一致；值原样按 UTF-8 表单编码传递，空字符串
+   也明确传递。未配置的参数沿用 Jenkins 的默认值。重复参数名在保存前拒绝。
+   支持字符串、文本以及用字符串表示的布尔／选项参数；此入口不上传 Jenkins 文件参数。
+   最多 100 个参数、单值最多 16,000 字符，整个配置请求不超过 256 KiB。
+3. 保存后点击「检查连接」查看任务是否可构建。检查不会执行流水线。
+   API Token 加密保存在主业务数据库，接口只返回“已配置”，不会回传 Token。
+   修改参数时留空保留原 Token；更改任务地址或用户名必须重新输入 Token。
+4. 在「构建状态」核对目标版本、任务链接和参数后点击「触发构建」。平台发送一次
+   `buildWithParameters` POST，先显示排队，随后跟踪该队列分配的准确构建编号、状态、
+   发起人和时间。构建编号在新标签页打开 Jenkins。构建可能成功、失败或被取消。
+   此入口没有增加终止 Jenkins 的权限；需要终止时在 Jenkins 操作。
+5. 弹窗前台可见时约每 4 秒串行读取状态，隐藏页面、切换到配置页或关闭弹窗停止轮询；
+   重新打开会读取持久化记录并继续跟踪。网络暂时不可用时显示重试提示，保留已知状态，
+   不把读取失败误判成构建失败。点击「刷新状态」可恢复。
+6. Pipeline 内继续使用 `autoforgePublishDependencies`，由插件上传本地构建产物。
+   平台触发成功与 Jenkins 构建成功不等同于依赖包已上传：须确保上传步骤实际执行成功，
+   并核对平台依赖包更新时间。插件使用的 **AutoForge API Key** 与本弹窗的
+   **Jenkins API Token** 是两个不同方向的凭据，不能混用。
+
+### 并发、失败与恢复
+
+- 主库新增版本配置表（SQLite `0097_jenkins_dependency_builds.sql`、PostgreSQL
+  `0096_jenkins_dependency_builds.sql`），每版本保存一份加密配置和最近一次平台触发记录。
+  配置修改和构建状态更新使用独立修订号；原子条件更新避免多个 Web 或多人同时重复触发。
+  浏览器重复提交同一请求时返回已有记录，不重复发送 POST。
+- 正在提交、排队、构建或结果待核对时禁止修改配置和再次触发。
+  提交超时、5xx、重定向或缺少合法队列链接属于**结果待核对**，不会自动重试 POST。
+  请先在 Jenkins 核对；勾选“我已在 Jenkins 核对本次构建，确认可以再次提交”，
+  点击「解除提交保护」后才可再次触发。进程中断遗留的提交状态超过 30 秒也转为待核对。
+- 已被 Jenkins 明确拒绝的 400／401／403／404／405／422 请求显示失败与错误状态码，
+  可修正配置。Jenkins 返回的正文不回显，避免泄漏凭据或巨型 HTML 页面。
+- 队列过期后按准确 `queueId` 在最近 20 次构建中查找，不使用可能属于他人的 `lastBuild`。
+  无法定位时转为待核对。代理必须返回与所配服务同源、同一 Jenkins 上下文的队列和构建链接；
+  平台不会携带认证头跟随外部重定向。
+- Jenkins 网络 I/O 均有 10 秒期限，JSON 响应最多 256 KiB；只读取所需字段，
+  不拉取控制台全量日志。网络等待不占数据库事务或连接，不参与用例调度通道。
+  Lite 用 SQLite，Full 用 PostgreSQL；这类外部构建不需要 Runner、Redis、NATS 或 MinIO
+  维护状态。原有依赖直传仍沿用 Lite 本地对象／Full MinIO，已有执行快照不变。
+- 版本复制和版本初始化不自动复制主动触发配置或 Jenkins 凭据，避免副本误操作源流水线；
+  已配置此入口的版本视为非空目标。升级只新增独立表，不重写原执行或依赖数据；回退时
+  保留新增表，先确认 Jenkins 在途构建，恢复旧版后仍可在 Jenkins 继续查看。
+
+参数化构建和 API Token 认证遵循 Jenkins 官方的
+[Remote Access API](https://www.jenkins.io/doc/book/using/remote-access-api/) 与
+[CSRF Protection](https://www.jenkins.io/doc/book/security/csrf-protection/)：使用 API Token
+认证的请求无需额外获取 crumb。未使用账号密码代替 API Token。
+
+### 主动构建验证记录（2026-11-06）
+
+- 定向 Vitest：9 个文件、76 项通过，覆盖应用编排、输入校验、API 鉴权、密钥不回传、
+  中文／空参数、准确队列关联、过期队列恢复、明确拒绝和不确定提交，以及原有环境恢复、
+  Pipeline 指导、浏览器幂等键、错误映射和共享 UI 约束。
+- `AUTOFORGE_TEST_POSTGRES_URL=... pnpm exec vitest run packages/db/test/jenkins-dependency-build.integration.test.ts packages/db/test/runtime-asset-usage.integration.test.ts packages/db/test/sqlite-project-structure.integration.test.ts --maxWorkers=1 --no-file-parallelism`：
+  3 个文件、10 项通过，使用真实 SQLite／PostgreSQL，验证全新建库、上一版升级、失败 DDL
+  回滚后恢复、多次并发领取只有一个成功、状态修订保护、版本隔离、归档保护与既有资源绑定。
+- `pnpm exec playwright test tests/e2e/jenkins-dependency-build.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/ui-layout.spec.ts --grep 'version dependency pipeline|Jenkins uploads local dependency|dependency import opens the scoped Jenkins quick guide' --workers=1`：
+  生产 Lite 外部服务运行，3 项通过。新增流程通过本地 HTTP Jenkins 契约模拟端验证真实出站
+  请求的认证头、UTF-8 参数和状态读取；原有实际依赖上传、错误摘要／越权后保留绑定、
+  接入指导与 HPI 下载继续通过。没有连接用户局域网 Jenkins。
+- 新入口、配置与构建中状态生成 12 张真实截图，覆盖 1024×768、1536×960 深浅主题；
+  编码代理逐张查看。长地址不再挤压标签列，长参数在弹窗正文内换行／滚动，
+  关闭按钮与底部操作始终可见，无新增横向溢出。截图位于本机
+  `/var/tmp/autoforge-jenkins-build-playwright-final/`，不提交构建产物。
+- `pnpm --filter @autoforge/web build`、`pnpm --filter @autoforge/web typecheck`、contracts／application／db
+  顺序 `typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、变更文件 ESLint（零警告）、
+  `pnpm format:check` 和 `pnpm test:e2e:matrix` 均通过。测试进程和临时 PostgreSQL 已关闭。
+
+本轮未运行真实 Jenkins 安装、整个 Full 浏览器矩阵、真实 Runner、离线发布验收或发布流水线。
+外部 Jenkins 构建不修改 Runner 协议或插件；上述本地接口模拟不替代用户网络和 Jenkins 权限配置的联调。

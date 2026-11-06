@@ -2256,7 +2256,23 @@ export const pgRunBatchHistorySnapshots = pgTable("run_batch_history_snapshots",
   createdAt: text("created_at").notNull(),
 });
 
+export const pgVersionJenkinsDependencies = pgTable("version_jenkins_dependencies", {
+  versionId: text("version_id")
+    .primaryKey()
+    .references(() => pgProjectVersions.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => pgProjects.id),
+  revision: integer("revision").notNull().default(1),
+  connectionCiphertext: text("connection_ciphertext").notNull(),
+  buildRevision: integer("build_revision").notNull().default(0),
+  buildStatus: text("build_status"),
+  buildJson: text("build_json"),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const postgresSchema = {
+  pgVersionJenkinsDependencies,
   runBatchHistorySnapshots: pgRunBatchHistorySnapshots,
   logDatabases: pgLogDatabases,
   storageMonitoring: pgStorageMonitoringSettings,

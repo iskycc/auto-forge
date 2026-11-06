@@ -28,6 +28,7 @@ import { ActionDialog } from "@/components/action-dialog";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 import { ProjectVersionCopyButton } from "./project-version-copy-dialog";
+import { JenkinsDependencyBuildButton } from "./jenkins-dependency-build-dialog";
 import { JenkinsDependencyGuideButton } from "./jenkins-dependency-guide";
 
 export function ProjectStructureManager({
@@ -585,11 +586,26 @@ export function ProjectStructureManager({
                 <h2>JDK 与依赖 JAR 压缩包</h2>
                 <p>资源仅应用于当前配置版本，支持上传、内网链接或从其他版本继承。</p>
               </div>
-              <JenkinsDependencyGuideButton
-                projectId={projectId}
-                version={selectedVersion?.name}
-                baseUrl={baseUrl}
-              />
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {canManage && selectedVersion ? (
+                  <JenkinsDependencyBuildButton
+                    key={selectedVersion.id}
+                    projectId={projectId}
+                    versionId={selectedVersion.id}
+                    versionName={selectedVersion.name}
+                    timeZone={timeZone}
+                    disabled={pending || selectedVersion.status === "archived"}
+                    onCompleted={() =>
+                      void run(() => refresh("Jenkins 构建状态已更新，请核对依赖包更新时间。"))
+                    }
+                  />
+                ) : null}
+                <JenkinsDependencyGuideButton
+                  projectId={projectId}
+                  version={selectedVersion?.name}
+                  baseUrl={baseUrl}
+                />
+              </div>
             </div>
             <div className="project-runtime-summary grid min-w-0 grid-cols-2 gap-3">
               <RuntimeAssetSummary

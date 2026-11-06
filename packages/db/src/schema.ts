@@ -2227,7 +2227,23 @@ export const runBatchHistorySnapshots = sqliteTable("run_batch_history_snapshots
   createdAt: text("created_at").notNull(),
 });
 
+export const versionJenkinsDependencies = sqliteTable("version_jenkins_dependencies", {
+  versionId: text("version_id")
+    .primaryKey()
+    .references(() => projectVersions.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id),
+  revision: integer("revision").notNull().default(1),
+  connectionCiphertext: text("connection_ciphertext").notNull(),
+  buildRevision: integer("build_revision").notNull().default(0),
+  buildStatus: text("build_status"),
+  buildJson: text("build_json"),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const schema = {
+  versionJenkinsDependencies,
   runBatchHistorySnapshots,
   logDatabases,
   logDatabaseSettings,

@@ -61,6 +61,7 @@ const actionsByCategory = {
     "project_version.copy_retry": "重试版本复制",
     "project_version.copy_cancel": "取消版本复制",
     "test_stage.create": "创建测试阶段",
+    "project_version.jenkins_configure": "配置版本依赖构建流水线",
     "project_version.runtime_update": "修改项目版本运行配置",
     "project_version.runtime_delete": "删除项目版本运行配置",
     "project_version.runtime_inherit": "继承项目版本运行配置",

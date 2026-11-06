@@ -6,6 +6,26 @@ and known limitations.
 
 ## Unreleased
 
+## 1.22.4 - 2026-11-06
+
+### Added
+
+- 版本依赖导入页新增 Jenkins 构建入口：保存任务地址、用户名、加密 API Token 和构建参数，支持连接检查、参数化触发、队列／构建状态、发起人与时间；关闭后可继续查看，Lite／Full 共用。
+- 增加每版本单次在途构建、请求幂等与不确定提交人工核对保护；新增独立配置表迁移，不改变已有依赖和执行快照。
+
+### Compatibility
+
+- 新增 SQLite `0097_jenkins_dependency_builds.sql`、PostgreSQL `0096_jenkins_dependency_builds.sql`，仅保存版本流水线配置及最近一次主动构建状态；升级前备份主库，迁移失败可回滚后重试。Jenkins 凭据使用当前主密钥加密，不自动复制到版本副本。不新增生产依赖或 Runner 协议；现有插件上传和执行快照保持原语义。
+
+### Verification
+
+- 已通过 76 项定向回归、10 项真实 SQLite／PostgreSQL 集成和生产 Lite 的 3 项 Playwright（新建构建流程、原有依赖上传、接入指导），以及格式／许可证、Lint、类型与生产构建。逐张审查 1024×768、1536×960 深浅主题截图，修正长地址挤压标签列；[详细验证记录](./docs/architecture/jenkins-dependency-upload.md#主动构建验证记录2026-11-06)。
+- 本地未运行真实 Jenkins 安装、完整 Full 浏览器矩阵、真实 Runner 或离线发布验收；按默认标准流程启动 CI、标签源码检查与 Release，发布后验收由现有流水线自动接续。当前记录只说明已完成的本地验证，不预先声明流水线成功。
+
+### Known issues
+
+- AI 初步分析仍可能因模型返回的 `evidence` 超过 200 字符而被校验拒绝；本次按要求暂缓排查修复，不包含 AI 行为变更。
+
 ## 1.22.3 - 2026-11-06
 
 ### Added

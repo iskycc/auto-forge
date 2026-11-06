@@ -47,3 +47,5 @@ export * from "./archived-attempt-log-store";
 
 export * from "./postgres-storage-monitoring";
 export * from "./postgres-ai-analysis";
+
+export * from "./postgres-jenkins-dependency";

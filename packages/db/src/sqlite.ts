@@ -39,3 +39,5 @@ export * from "./sqlite-log-archives";
 
 export * from "./archived-attempt-log-store";
 export * from "./sqlite-ai-analysis";
+
+export * from "./sqlite-jenkins-dependency";

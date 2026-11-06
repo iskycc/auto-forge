@@ -17,6 +17,7 @@ const RESOURCE_TITLES: Readonly<Record<string, string>> = {
   CASE_SOURCE_SYNC_STALE: "来源对比结果已经失效",
   PROJECT_ADAPTER_CONFIGURATION_REVISION_CONFLICT: "运行时配置已被其他人修改",
   PLATFORM_CONFIGURATION_CONFLICT: "平台配置已被其他人修改",
+  JENKINS_CONFIGURATION_REVISION_CONFLICT: "Jenkins 流水线配置已被其他人修改",
   REVISION_CONFLICT: "当前内容已被其他人修改",
 };
 

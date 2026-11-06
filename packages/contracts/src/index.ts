@@ -45,3 +45,5 @@ export * from "./log-archives";
 
 export { batchSchedulingControlSchema } from "./batch-scheduling-control";
 export * from "./ai-analysis";
+
+export * from "./jenkins-dependency-build";

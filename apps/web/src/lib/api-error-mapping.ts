@@ -116,6 +116,8 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (code === "JENKINS_BUILD_CONFLICT") return 409;
+  if (code === "JENKINS_STATUS_UNAVAILABLE" || code === "JENKINS_API_UNAVAILABLE") return 502;
   if (code === "LOG_ARCHIVE_OFFLINE") return 410;
   if (code === "LOG_ARCHIVE_UNAVAILABLE" || code === "LOG_ARCHIVE_VIEWER_INVALID") return 503;
   if (code === "LOG_ARCHIVE_DISK_FULL") return 507;

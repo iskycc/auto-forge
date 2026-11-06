@@ -1,3 +1,9 @@
+import {
+  JenkinsDependencyBuildService,
+  type JenkinsDependencyRepository,
+} from "@autoforge/application";
+import { SqliteJenkinsDependencyRepository } from "@autoforge/db/sqlite";
+import { JenkinsDependencyBuildTransport } from "./jenkins-dependency-build-transport";
 import { StorageMonitoringService } from "@autoforge/application";
 import {
   FailureAnalysisPublicationService,
@@ -241,6 +247,7 @@ async function createPlatformServices() {
   let projectStructuresRepository: ProjectStructureRepository;
   let versionCopyRepository: ProjectVersionCopyRepository & { close(): Promise<void> };
   let webhookRepository: WebhookRepository;
+  let jenkinsDependencyRepository: JenkinsDependencyRepository;
   let closeDatabase: () => Promise<void>;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let infrastructure: RuntimeInfrastructure | undefined;
@@ -352,6 +359,7 @@ async function createPlatformServices() {
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
     versionCopyRepository = new SqliteProjectVersionCopyRepository(database);
     webhookRepository = new SqliteWebhookRepository(database);
+    jenkinsDependencyRepository = new SqliteJenkinsDependencyRepository(database);
     closeDatabase = async () => {
       await versionCopyRepository.close();
       attemptLogs.close();
@@ -638,6 +646,8 @@ async function createPlatformServices() {
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
     versionCopyRepository = new PostgresProjectVersionCopyRepository(database);
     webhookRepository = new PostgresWebhookRepository(database);
+    const { PostgresJenkinsDependencyRepository } = await import("@autoforge/db/postgres");
+    jenkinsDependencyRepository = new PostgresJenkinsDependencyRepository(database);
   }
   const discovery = isolatedJarDiscovery(
     new TestNgJarDiscovery({
@@ -1247,6 +1257,12 @@ async function createPlatformServices() {
     caseSuites,
     caseSuiteActivity,
     roundRecoveryConfigurationInspector,
+    jenkinsDependencyBuilds: new JenkinsDependencyBuildService(
+      jenkinsDependencyRepository,
+      new JenkinsDependencyBuildTransport(),
+      secretCipher,
+      clock,
+    ),
     caseDefinitions,
     ddtCases,
     ddtAssociations: new DdtAssociationTransferService(

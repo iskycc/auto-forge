@@ -56,6 +56,7 @@
         "tests/e2e/identity-rbac.spec.ts",
         "tests/e2e/platform-initialization.spec.ts",
         "tests/e2e/management-operations.spec.ts",
+        "tests/e2e/jenkins-dependency-build.spec.ts",
         "packages/db/test/project-rename.integration.test.ts",
         "tests/e2e/file-storage-navigation.spec.ts"
       ],
