@@ -1988,6 +1988,8 @@ export function DdtImportDialog({
             <Button
               variant="primary"
               type="button"
+              aria-label={job ? "确认并后台导入" : "开始预检"}
+              aria-busy={busy}
               disabled={
                 busy ||
                 (job ? !job.validFiles || unresolvedColumnConflicts.length > 0 : !files.length)

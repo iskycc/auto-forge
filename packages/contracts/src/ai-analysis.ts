@@ -85,11 +85,12 @@ export const AI_RECOMMENDATION_LABELS = {
   case_change_likely: "可能用例问题需要修改",
   business_issue_likely: "可能业务问题需要提单",
 } as const;
+export const AI_PRELIMINARY_TEXT_LIMITS = { reason: 160, evidence: 200 } as const;
 export const aiPreliminaryConclusionSchema = z
   .object({
     recommendation: z.enum(["rerun_likely", "case_change_likely", "business_issue_likely"]),
-    reason: z.string().trim().min(1).max(160),
-    evidence: z.string().trim().min(1).max(200),
+    reason: z.string().trim().min(1).max(AI_PRELIMINARY_TEXT_LIMITS.reason),
+    evidence: z.string().trim().min(1).max(AI_PRELIMINARY_TEXT_LIMITS.evidence),
     evidenceReferences: z.array(z.string().min(1).max(300)).min(1).max(100),
   })
   .strict();

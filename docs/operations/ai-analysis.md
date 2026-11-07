@@ -102,7 +102,6 @@ Full 的日志平台身份由主密钥的既有 SHA-256 摘要生成，Web、后
 
 Web／Worker 生产构建与类型、E2E 类型、变更文件 ESLint、全仓格式／许可证及 E2E 矩阵检查通过。本轮未运行整套 Full 浏览器故障注入、真实 Runner 长时批跑或真实模型准确率评估。
 
-
 ### 2026-11-06：模型证据清理与长文本尾部窗口
 
 先补充输入回归并复现 7 项失败，再实现清理和尾部规则；11 个文件、90 项定向测试通过。覆盖 4999／5000／5001 字符、多字节中文、emoji、跨日志块及跨分页的 ANSI／OSC、跨块密钥脱敏、嵌套 JSON 类型保持。阈值在颜色清理与脱敏后判断，5000 字符的彩色正文不会因为颜色码而被误裁；两个完整堆栈不同但模型尾部样本相同的用例仍独立分组。
@@ -214,3 +213,5 @@ pnpm exec playwright test tests/e2e/ai-analysis.spec.ts --workers=1
 最终通过五个相关 Vitest 文件共 39 项测试：浏览器幂等键、共享 UI 使用约束、AI 契约、AI 应用编排及模型网关。变更 TypeScript 文件的 ESLint、`pnpm format:check`（含 Go 格式与许可证）、`pnpm --filter @autoforge/web typecheck`、`pnpm exec tsc --noEmit -p tsconfig.tests.json`、`pnpm test:e2e:matrix` 与 `git diff --check` 均通过。Web 生产构建通过，质量记录为 `/var/tmp/autoforge-ai-fixes-quality-20261105.log`，构建记录为 `/var/tmp/autoforge-ai-fixes-final-build-20261105.log`。
 
 本次仅修改共享浏览器提交和配置表单布局，Lite／Full 共用；未改调度、模型权限、API 契约及数据库 schema。Full 中间件矩阵、真实 Runner 与真实模型未重跑。
+
+模型返回的原因／依据超过工具限制时，Worker 会压缩空白并截短至 160／200 字符，末尾标记省略，不再因单纯超长丢失整组结论；分类、字段类型和证据引用仍严格校验。此规则同时适用于批次分组和单例全文分析，不改变输入日志的 50,000／25,000 字符规则。已经失败的历史作业不会自动改写，升级后可重新发起分析。

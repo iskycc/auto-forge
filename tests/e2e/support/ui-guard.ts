@@ -192,6 +192,27 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
     const interactiveElements = Array.from(
       inspectionRoot.querySelectorAll<HTMLElement>(controlSelector),
     ).filter(isVisible);
+    const isPinnedSticky = (element: HTMLElement): boolean => {
+      const bounds = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      let scrollTop = 0;
+      let scrollBottom = window.innerHeight;
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (!["auto", "scroll", "hidden"].includes(getComputedStyle(ancestor).overflowY)) continue;
+        const viewport = ancestor.getBoundingClientRect();
+        scrollTop = viewport.top + ancestor.clientTop;
+        scrollBottom = scrollTop + ancestor.clientHeight;
+        break;
+      }
+      const top = Number.parseFloat(style.top);
+      const bottom = Number.parseFloat(style.bottom);
+      const geometryTolerance = 2;
+      return (
+        (Number.isFinite(top) && Math.abs(bounds.top - scrollTop - top) <= geometryTolerance) ||
+        (Number.isFinite(bottom) &&
+          Math.abs(scrollBottom - bottom - bounds.bottom) <= geometryTolerance)
+      );
+    };
     const floatingSurface = (element: HTMLElement): HTMLElement | undefined => {
       for (
         let ancestor = element.parentElement;
@@ -201,7 +222,7 @@ export async function inspectUiIntegrity(page: Page): Promise<UiIntegrityReport>
         const position = window.getComputedStyle(ancestor).position;
         if (
           position === "fixed" ||
-          position === "sticky" ||
+          (position === "sticky" && isPinnedSticky(ancestor)) ||
           ancestor.matches(".ant-popover, .ant-select-dropdown, .ant-picker-dropdown")
         )
           return ancestor;

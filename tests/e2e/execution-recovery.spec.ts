@@ -1,3 +1,4 @@
+import { selectExecutionRound, closeExecutionCaseDetails } from "./support/execution-details";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import type { ExecutionExceptionPage } from "@autoforge/contracts";
 import { zipSync } from "fflate";
@@ -216,8 +217,10 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
   await page.goto(`/run-batches/${queueBatch}`);
-  // A cold detail page first prepares its statistics asynchronously.
+  // Summary is the default; per-attempt statuses belong to the selected round's details.
+  await selectExecutionRound(page, "初始轮次");
   await expect(page.getByText("排队超时", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await closeExecutionCaseDetails(page);
   const rounds = page.getByRole("region", { name: "轮次列表", exact: true });
   for (const theme of ["light", "dark"]) {
     if (theme === "dark")
@@ -564,6 +567,8 @@ test("authoritative execution recovery handles every timeout and idempotent race
   const claimTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     claimTimeoutMs: 1_000,
   });
+  // Creation confirms durable scheduling, not an existing assignment whose lease can expire.
+  await waitForAttemptStatus(page, claimTimeoutBatch, "assigned");
   await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, claimTimeoutBatch, "ASSIGNMENT_CLAIM_TIMEOUT");

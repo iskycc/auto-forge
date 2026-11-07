@@ -67,8 +67,8 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
     items: PlatformNode[];
   };
   expect(nodes.enabled).toBe(true);
-  await page.goto("/settings/platform?section=diagnostics");
-  await expect(page.getByRole("region", { name: "平台诊断报告", exact: true })).toHaveAttribute(
+  await page.goto("/system-info");
+  await expect(page.getByRole("region", { name: "系统信息报告", exact: true })).toHaveAttribute(
     "aria-busy",
     "false",
   );

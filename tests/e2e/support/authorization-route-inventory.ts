@@ -7,6 +7,8 @@ const anonymousEndpoints = new Set([
   "GET /health/ready",
   "GET /time",
   "GET /public/statistics",
+  "GET /public/failure-analysis/[batchId]",
+  "GET /public/failure-analysis/[batchId]/[action]",
   "GET /public/case-suites/[suiteId]",
   "GET /integrations/jenkins/[plugin]/download",
   "GET /auth/setup-status",
@@ -20,6 +22,7 @@ const anonymousEndpoints = new Set([
   "GET /public/ddt/projects/[projectId]/versions/[projectVersionId]/stages/[testStageId]/users/[ownerUserId]/debug/[accessKey]/case",
 ]);
 const protocolEndpoints = new Set([
+  "POST /auth/setup-platform/check",
   "POST /internal/platform-logs",
   "POST /runner-agents/register",
   "POST /runner-agents/[runnerId]/claims",
@@ -60,6 +63,11 @@ export function authorizationRouteInventory() {
 export function anonymousRequestBody(path: string) {
   // Supply valid protocol fields so the rejection exercises credentials, not
   // input validation. Unknown fields are discarded by the endpoint schemas.
+  if (path === "/auth/setup-platform/check")
+    return {
+      bootstrapToken: "anonymous-probe-".repeat(3),
+      target: { component: "redis", connection: { host: "127.0.0.1", port: 6379 } },
+    };
   if (path.startsWith("/runner-agents/"))
     return {
       schemaVersion: 1,

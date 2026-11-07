@@ -67,8 +67,8 @@ const primaryRoutes = [
   "/settings/platform?section=configuration",
   "/settings/platform?section=accounts",
   "/settings/platform?section=retention",
-  "/settings/platform?section=diagnostics",
-  "/settings/platform?section=storage",
+  "/system-info",
+  "/objects?section=storage",
   "/account/security",
 ] as const;
 
@@ -392,7 +392,7 @@ test("batch runner panel separates round attempts from resource snapshots and co
     if (/\/api\/v1\/runners\/[^/]+\/telemetry$/.test(request.url())) telemetryRequests += 1;
   });
   await page.goto(`/run-batches/${fixture.batchId}`);
-  await openExecutionCaseDetails(page);
+  await selectExecutionRound(page, "初始轮次");
   const toolbar = page.locator(".round-tab-toolbar");
   await toolbar.getByText("执行机", { exact: true }).click();
   const panel = page.getByRole("region", { name: "本轮执行机状态" });
@@ -610,6 +610,7 @@ test("execution details show the recorded initiator without stretching the heade
       await expect(initiator).toContainText("拉起人：");
       await expect(username).toHaveText(scenario.username ?? "未记录");
       await expect(initiator).not.toContainText("e2e-admin");
+      await openExecutionCaseDetails(page);
       await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
       for (const viewport of [
         { width: 1024, height: 768 },
@@ -969,7 +970,9 @@ test("anonymous execution columns stay stable and show full failure stacks in di
           elements.map((element) => element.getBoundingClientRect().height),
         );
         expect(Math.max(...rowHeights) - Math.min(...rowHeights)).toBeLessThan(2);
-        const consoleBody = page.locator(".round-detail-body");
+        const consoleBody = page
+          .getByRole("dialog", { name: "用例执行明细", exact: true })
+          .locator(".round-detail-panel");
         if (viewport.width === 1536) {
           const bodyBounds = (await consoleBody.boundingBox())!;
           const tableBounds = (await consoleBody.locator(".execution-case-table").boundingBox())!;
@@ -1717,6 +1720,21 @@ test("layout guard distinguishes floating actions from overlapping controls on t
   expect((await inspectUiIntegrity(page)).overlapViolations).toEqual([
     expect.objectContaining({ element: "input + button" }),
   ]);
+  await page.setContent(`
+    <style>
+      body { margin: 0; min-height: 1600px; font: 14px sans-serif; }
+      header { position: fixed; top: 0; left: 0; right: 0; height: 80px; z-index: 4; background: white; }
+      footer { position: sticky; bottom: 12px; margin-top: 600px; height: 60px; background: white; }
+      button { position: absolute; left: 24px; top: 24px; width: 160px; height: 36px; font: inherit; }
+    </style>
+    <header><button>Header action</button></header>
+    <footer><button>Scrolling sticky save</button></footer>
+  `);
+  await page.evaluate(() => window.scrollTo(0, 600));
+  // A bottom-only sticky footer scrolls away normally above its pinning boundary.
+  // It is covered by the header just like ordinary content, not a second pinned bar.
+  await expectUiIntegrity(page);
+  await page.getByRole("button", { name: "Header action", exact: true }).click({ trial: true });
 });
 
 test("administration entries are exposed as four-character first-level navigation", async ({

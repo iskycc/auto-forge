@@ -1,4 +1,4 @@
-import { openExecutionCaseDetails } from "./support/execution-details";
+import { selectExecutionRound, openExecutionCaseDetails } from "./support/execution-details";
 import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
 import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
@@ -1527,9 +1527,8 @@ public class MixedVisibleTest {
   expect(await artifactDownload.body()).toEqual(report);
 
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
-  await openExecutionCaseDetails(page);
+  await selectExecutionRound(page, "初始轮次");
   await expect(page.getByText("执行完成", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   // 失败用例的堆栈摘要直接显示在状态列，无需展开详情。
   const failureHint = page.locator(".attempt-failure-line").first();
   await expect(failureHint).toBeVisible();

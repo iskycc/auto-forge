@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
+import { closeExecutionCaseDetails } from "./execution-details";
 import { browserJson } from "./session";
 
 type SuitePolicyOverrides = {
@@ -94,6 +95,7 @@ export async function createTaskRun(page: Page, suiteId: string): Promise<{ id: 
 
 /** Exercises the globally visible top-bar shortcut and its task-only payload. */
 export async function startTaskFromTopbar(page: Page, suiteId: string): Promise<{ id: string }> {
+  await closeExecutionCaseDetails(page);
   await page.getByRole("button", { name: "开始执行", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "开始执行" });
   await expect(dialog).toBeVisible();

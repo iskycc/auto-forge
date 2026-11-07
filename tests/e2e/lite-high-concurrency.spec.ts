@@ -1,4 +1,4 @@
-import { openExecutionCaseDetails } from "./support/execution-details";
+import { selectExecutionRound } from "./support/execution-details";
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -376,7 +376,7 @@ async function inspectRunnerDiagnosticsDuringExecution(
   const openedAt = performance.now();
   try {
     await page.goto(`/run-batches/${batchId}`);
-    await openExecutionCaseDetails(page);
+    await selectExecutionRound(page, "初始轮次");
     await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
     const node = page
       .getByRole("region", { name: "本轮执行机状态" })

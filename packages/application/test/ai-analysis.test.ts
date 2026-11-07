@@ -3,7 +3,7 @@ import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
 import type { IdentityAccessRepository } from "../src/ports";
 import { assertAiPermission, resolveAiActor } from "../src/ai-analysis";
 import { aiModelConfigurationSchema } from "@autoforge/contracts";
-import type { AiAnalysisRepository, AiGroupWork } from "../src/ai-analysis-ports";
+import type { AiAnalysisRepository, AiGroupWork, AiWork } from "../src/ai-analysis-ports";
 import { AiAnalysisWorker, type AiEvidencePort } from "../src/ai-analysis-worker";
 import type { SecretCipherPort } from "../src/ports";
 import {
@@ -153,6 +153,7 @@ function groupWorker() {
   );
   return {
     worker,
+    repository,
     evidence,
     work,
     saveStackGroup,
@@ -238,6 +239,93 @@ describe("concise stack-first analysis", () => {
         partCursor: 0,
         done: true,
       });
+    },
+  );
+  it.each(["single", "small-group", "large-group"] as const)(
+    "persists an overlong compatible-model reply in %s analysis without retrying",
+    async (mode) => {
+      const fixture = groupWorker();
+      const saveDraft = vi.fn();
+      const defer = vi.fn();
+      fixture.repository.saveDraft = saveDraft;
+      fixture.repository.defer = defer;
+      fixture.repository.renew = async () => true;
+      const single: AiWork = {
+        id: "single",
+        jobId: "job",
+        executionRunId: "run",
+        attemptId: "attempt",
+        displayName: "case",
+        status: "running",
+        signature: "stack",
+        conclusion: null,
+        reason: null,
+        updatedAt: "2026-11-04T00:00:00Z",
+        strategy: "single_full_v2",
+        projectId: "project",
+        batchId: "batch",
+        requestedBy: "actor",
+        leaseToken: "lease",
+        evidenceKey: "manifest",
+        attempts: 0,
+        partCursor: 0,
+        drafts: [],
+      };
+      if (mode === "single") fixture.repository.claimWork = async () => single;
+      else {
+        fixture.work.strategy = "stack_groups_v2";
+        fixture.work.memberCount = mode === "small-group" ? 1 : 10;
+        fixture.groupMembers.mockResolvedValue(
+          Array.from({ length: fixture.work.memberCount }, (_, index) => ({
+            id: `member-${index}`,
+            displayName: `case-${index}`,
+            evidenceKey: "manifest",
+          })),
+        );
+      }
+      vi.spyOn(fixture.evidence, "read").mockResolvedValue({
+        version: 1,
+        executionRunId: "run",
+        attemptId: "attempt",
+        signature: "stack",
+        parts: [{ id: "stdout", objectKey: "stdout", sizeBytes: 10 }],
+        stackParts: [{ id: "stack", objectKey: "stack", sizeBytes: 10 }],
+        stdoutComplete: true,
+        limitations: [],
+      });
+      fixture.reserveModel.mockResolvedValue(true);
+      fixture.complete.mockImplementation(async (input) => ({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "reply",
+            type: "function",
+            function: {
+              name: "submit_ai_conclusion",
+              arguments: JSON.stringify({
+                recommendation: "rerun_likely",
+                reason: "连接瞬断。".repeat(80),
+                evidence: "业务日志显示连接重置。".repeat(80),
+                evidenceReferences: [JSON.parse(input.messages.at(-1).content).evidenceId],
+              }),
+            },
+          },
+        ],
+      }));
+      await fixture.worker.tick(new AbortController().signal);
+      expect(fixture.complete).toHaveBeenCalledTimes(1);
+      expect(defer).not.toHaveBeenCalled();
+      expect(fixture.deferGroup).not.toHaveBeenCalled();
+      const rendered =
+        mode === "single"
+          ? saveDraft.mock.calls[0]![3]
+          : fixture.saveStackGroup.mock.calls[0]![1].conclusion;
+      expect(rendered.split("\n")).toHaveLength(3);
+      expect(rendered).toContain("可能重跑通过");
+      expect(rendered.split("\n")[1].length).toBeLessThanOrEqual(163);
+      expect(rendered.split("\n")[2].length).toBeLessThanOrEqual(203);
+      expect(rendered).toMatch(/…$/u);
     },
   );
   it("does not label incomplete stdout in a small group as a full-log analysis", async () => {

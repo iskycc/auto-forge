@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { DomainError } from "@autoforge/domain";
 import { apiErrorResponse } from "@/lib/api-response";
-import { authorizeRequest, requireSameOrigin, requestId } from "@/lib/auth";
+import {
+  authenticateRequest,
+  authorizedProjectScope,
+  requireSameOrigin,
+  requestId,
+} from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ batchId: string }> };
@@ -13,10 +18,11 @@ async function publication(
   const currentRequestId = requestId(request);
   try {
     if (action !== "read") requireSameOrigin(request);
+    const actor = await authenticateRequest(request);
     const services = await getPlatformServices();
     const { batchId } = await context.params;
     const scope = await services.analysisPublications.requireBatch(batchId);
-    const actor = await authorizeRequest(request, "analysis.manage", scope.projectId);
+    authorizedProjectScope(actor, "analysis.manage", scope.projectId);
     if (action === "publish") {
       services.identityAccess.authorize(actor, "run.read", scope.projectId);
       services.identityAccess.authorize(actor, "log.read", scope.projectId);

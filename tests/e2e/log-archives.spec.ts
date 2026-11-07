@@ -87,7 +87,9 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
           chunks: Array.from({ length: 120 }, (_, sequence) => ({
             stream: "stdout",
             sequence,
-            content: `Wallet 离线归档：第 ${round} 轮，第 ${sequence + 1} 条；中文 CaseId 正常。\n`,
+            // Keep logical source bytes above 1 MiB in both database adapters.
+            // SQLite page allocation alone is not a portable volume boundary.
+            content: `Wallet 离线归档：第 ${round} 轮，第 ${sequence + 1} 条；中文 CaseId 正常。${createHash("sha256").update(`${attemptId}:${sequence}`).digest("hex").repeat(4)}\n`,
             recordedAt: now,
           })),
         });

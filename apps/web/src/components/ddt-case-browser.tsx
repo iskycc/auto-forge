@@ -830,14 +830,14 @@ const ddtCaseBrowserStyles = {
   "ddt-case-detail-scroll":
     "min-h-0 flex-1 overflow-auto p-3 [container-type:inline-size] [&_.ddt-execution-class-summary]:grid-cols-[minmax(0,_1fr)] [&_.ddt-execution-class-summary]:gap-[4px_8px] [&_.ddt-execution-class-summary]:mb-3 [&_.ddt-execution-class-summary]:py-2 [&_.ddt-execution-class-summary]:px-3 [&_.ddt-execution-class-summary_>_small]:col-span-full [&_.ddt-history]:block",
   "ddt-case-filters":
-    "m-0 border-0 grid grid-cols-2 [flex:0_0_auto] gap-2 overflow-visible py-2 px-3 [&_>_label]:col-span-full [&_>_label_>_span:not(.ui-select):not(.ui-field-feedback)]:hidden [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_.ui-input]:w-full [&_.ui-input]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-1 [&_.search-field_>_svg]:[flex:0_0_auto] [&_label_>_span]:text-muted-foreground [&_label_>_span]:text-xs",
+    "m-0 border-0 grid grid-cols-2 [flex:0_0_auto] gap-1 overflow-visible py-1 px-3 [&_.ant-input]:h-8 [&_.ant-select]:h-8 [&_.ant-select]:min-h-8 [&_>_label]:col-span-full [&_>_label_>_span:not(.ui-select):not(.ui-field-feedback)]:hidden [&_label]:grid [&_label]:min-w-0 [&_label]:gap-1 [&_.ui-input]:w-full [&_.ui-input]:min-w-0 [&_.ui-select]:w-full [&_.ui-select]:min-w-0 [&_.search-field]:flex [&_.search-field]:items-center [&_.search-field]:gap-1 [&_.search-field_>_svg]:[flex:0_0_auto] [&_label_>_span]:text-muted-foreground [&_label_>_span]:text-xs",
   "ddt-case-list": "min-h-0 flex-1 overflow-auto p-1",
   "ddt-case-list-item":
     "[&.ui-button]:shadow-none [&_>_span]:grid [&_>_span]:min-w-0 [&_>_span]:gap-0.5 [&_>_span]:flex-1 flex min-w-0 flex-1 items-center gap-2 border-0 py-1 px-1 bg-transparent text-foreground text-left [&_>_svg]:[flex:0_0_auto] [&_>_svg]:text-muted-foreground [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_small_>_span]:overflow-hidden [&_small_>_span]:text-ellipsis [&_small_>_span]:whitespace-nowrap [&_small]:flex [&_small]:min-w-0 [&_small]:items-center [&_small]:gap-2 [&_em]:[flex:0_0_auto] [&_em]:text-info [&_em]:[font-style:normal]",
   "ddt-case-list-row":
     "flex h-[52px] min-w-0 items-center gap-1 overflow-hidden border border-solid border-transparent rounded-lg pl-2 [&.active]:border-primary/30 [&.active]:bg-accent [&.active_.ddt-case-list-item]:text-primary-text [&:hover]:bg-muted/60",
   "ddt-case-navigation":
-    "flex min-w-0 min-h-0 flex-col bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:[flex:0_0_auto] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-1 [&_>_header]:px-3 [&_>_header_>_div]:flex [&_>_header_>_div]:items-baseline [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-2 [&_small]:text-muted-foreground [&_small]:text-xs",
+    "flex min-w-0 min-h-0 flex-col bg-card [&_>_header]:flex [&_>_header]:min-h-[calc(20px_*_2)] [&_>_header]:[flex:0_0_auto] [&_>_header]:items-center [&_>_header]:justify-between [&_>_header]:gap-2 [&_>_header]:border-b [&_>_header]:border-solid [&_>_header]:border-border [&_>_header]:py-0.5 [&_>_header]:px-3 [&_>_header_>_div]:flex [&_>_header_>_div]:items-baseline [&_>_header_>_div]:min-w-0 [&_>_header_>_div]:gap-2 [&_small]:text-muted-foreground [&_small]:text-xs",
   "ddt-case-navigation-content": "flex min-w-0 min-h-0 flex-col flex-1 [&[hidden]]:hidden",
   "ddt-case-preview":
     "[flex:0_0_auto] [&.ant-btn]:size-8 [&.ant-btn]:p-0 mr-1 text-muted-foreground",
@@ -872,6 +872,6 @@ const ddtCaseBrowserStyles = {
   "ddt-load-more":
     "[&.ant-btn]:flex [&.ant-btn]:w-[calc(100%_-_8px)] [&.ant-btn]:mx-1 [&.ant-btn]:my-2 [&.ant-btn]:rounded-lg",
   "ddt-loaded-selection":
-    "flex [flex:0_0_auto] items-center gap-2 [border-block:1px_solid_var(--border)] py-1.5 px-3 text-xs text-muted-foreground",
+    "flex [flex:0_0_auto] items-center gap-2 [border-block:1px_solid_var(--border)] py-1 px-3 text-xs text-muted-foreground",
   "ddt-navigation-empty": "p-3",
 } as const;

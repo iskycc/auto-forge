@@ -1,9 +1,10 @@
+import { readPlatformObject } from "./support/platform-object-store";
 import { expect, test, type Page } from "@playwright/test";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { insertRunnerInstallationProfileFixture } from "./support/runner-installation-profile-fixture";
 import { createServer } from "node:http";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { zipSync } from "fflate";
 import { resolve } from "node:path";
@@ -1324,9 +1325,7 @@ test("Jenkins uploads local dependency bytes with a project API key and preserve
     (version) => version.id === published.projectVersionId,
   )!.adapterConfiguration.jarBundleAsset;
   expect(asset).toMatchObject({ id: published.assetId, sourceType: "upload" });
-  const stored = await readFile(
-    resolve(process.env.AUTOFORGE_E2E_DATA_DIR!, "objects", asset.objectKey),
-  );
+  const stored = await readPlatformObject(asset.objectKey);
   expect(stored.equals(bytes)).toBe(true);
   const mismatch = await page.request.post(endpoint, {
     headers: { ...headers, "x-autoforge-sha256": "0".repeat(64) },

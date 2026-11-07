@@ -9,7 +9,7 @@ import {
 } from "@autoforge/contracts";
 import { DomainError, type AuthenticatedIdentity } from "@autoforge/domain";
 import { apiErrorResponse, readJsonBody } from "./api-response";
-import { authenticateRequest, authorizeRequest, requestId, requireSameOrigin } from "./auth";
+import { authenticateRequest, authorizedProjectScope, requestId, requireSameOrigin } from "./auth";
 import { readFailureAnalysisScreenshotBody } from "./failure-analysis-upload";
 import { getPlatformServices } from "./services";
 
@@ -18,12 +18,19 @@ const identifier = z.string().min(1).max(200);
 const selection = z.object({ analysisIds: z.array(identifier).min(1).max(100) }).strict();
 const responseHeaders = { "Cache-Control": "private, no-store" };
 
-async function sheetScope(batchId: string, access: SheetAccess) {
+async function sheetScope(
+  request: Request,
+  batchId: string,
+  access: SheetAccess,
+  operation: "read" | "write",
+) {
+  const identity =
+    access === "project" || operation === "write" ? await authenticateRequest(request) : undefined;
   const services = await getPlatformServices();
   const scope = await (access === "published"
     ? services.analysisPublications.requirePublic(identifier.parse(batchId))
     : services.analysisPublications.requireBatch(identifier.parse(batchId)));
-  return { services, scope };
+  return { services, scope, identity };
 }
 
 async function sheetActor(
@@ -31,14 +38,17 @@ async function sheetActor(
   access: SheetAccess,
   projectId: string,
   operation: "read" | "write",
+  authenticated?: AuthenticatedIdentity,
 ) {
-  if (access === "project")
-    return authorizeRequest(
-      request,
+  const identity = authenticated ?? (await authenticateRequest(request));
+  if (access === "project") {
+    authorizedProjectScope(
+      identity,
       operation === "read" ? "run.read" : "analysis.manage",
       projectId,
     );
-  const identity = await authenticateRequest(request);
+    return identity;
+  }
   if (identity.sessionId.startsWith("api-token:"))
     throw new DomainError("AUTH_REQUIRED", "请使用个人账号登录后操作公开分析链接。");
   return identity;
@@ -46,13 +56,13 @@ async function sheetActor(
 
 export async function readAnalysisSheet(request: Request, batchId: string, access: SheetAccess) {
   try {
-    const { services, scope } = await sheetScope(batchId, access);
+    const { services, scope, identity } = await sheetScope(request, batchId, access, "read");
     const query = failureAnalysisSheetQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams),
     );
     const actor =
       access === "project" || query.view === "mine"
-        ? await sheetActor(request, access, scope.projectId, "read")
+        ? await sheetActor(request, access, scope.projectId, "read", identity)
         : undefined;
     return NextResponse.json(await services.analysisSheet.read(scope, query, actor?.user.id), {
       headers: responseHeaders,
@@ -69,11 +79,14 @@ export async function readAnalysisSheetResource(
   access: SheetAccess,
 ) {
   try {
-    const { services, scope } = await sheetScope(batchId, access);
-    if (access === "project") await sheetActor(request, access, scope.projectId, "read");
+    const { services, scope, identity } = await sheetScope(request, batchId, access, "read");
+    const actor =
+      access === "project"
+        ? await sheetActor(request, access, scope.projectId, "read", identity)
+        : undefined;
     const parameters = new URL(request.url).searchParams;
     if (resource === "logs") {
-      if (access === "project") await authorizeRequest(request, "log.read", scope.projectId);
+      if (actor) authorizedProjectScope(actor, "log.read", scope.projectId);
       const attemptId = await services.analysisPublications.requireFailureAttempt(
         scope,
         identifier.parse(parameters.get("executionRunId")),
@@ -128,8 +141,8 @@ export async function changeAnalysisSheet(
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const { services, scope } = await sheetScope(batchId, access);
-    const actor = await sheetActor(request, access, scope.projectId, "write");
+    const { services, scope, identity } = await sheetScope(request, batchId, access, "write");
+    const actor = await sheetActor(request, access, scope.projectId, "write", identity);
     services.analysisSheet.requireWritable(scope);
     let result: unknown;
     if (action === "claim") {

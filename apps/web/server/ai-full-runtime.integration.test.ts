@@ -134,8 +134,8 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
                           strategy === "stack_groups_v2"
                             ? {
                                 recommendation: "rerun_likely",
-                                reason: "Full 合成初析，待验证。",
-                                evidence: "共同堆栈显示依赖连接异常。",
+                                reason: "Full 合成初析，待验证。".repeat(40),
+                                evidence: "共同堆栈显示依赖连接异常。".repeat(40),
                                 evidenceReferences: [ref],
                               }
                             : {
@@ -447,6 +447,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
         if (strategy === "legacy") expect(progress).not.toBeNull();
         else {
           expect(view.items.every((item) => item.conclusion?.split("\n").length === 3)).toBe(true);
+          for (const item of view.items) assertBoundedConclusion(item.conclusion);
           expect(
             await repository.exportConclusions(
               batchId,
@@ -489,6 +490,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           expect(singleView.items).toHaveLength(1);
           expect(singleView.items[0]?.attemptId).toBe(`attempt-0-${suffix}`);
           expect(singleView.items[0]?.conclusion).toContain("Full 合成初析");
+          assertBoundedConclusion(singleView.items[0]?.conclusion);
           expect(modelCalls - firstSingleCall).toBe(2);
           const delivered = modelEvidence.slice(firstSingleCall).join("\n");
           for (let sequence = 0; sequence < 25; sequence++)
@@ -534,3 +536,12 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
     90000,
   );
 });
+
+function assertBoundedConclusion(conclusion: string | null | undefined): void {
+  const lines = conclusion?.split("\n");
+  expect(lines).toHaveLength(3);
+  expect(lines![1]!.length).toBeLessThanOrEqual(3 + 160);
+  expect(lines![2]!.length).toBeLessThanOrEqual(3 + 200);
+  expect(lines![1]).toMatch(/…$/u);
+  expect(lines![2]).toMatch(/…$/u);
+}

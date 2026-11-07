@@ -701,6 +701,10 @@ describe("SQLite case suite lifecycle", () => {
       const preflight = await scheduler.preflight({ suiteId: "suite-1" });
       expect(preflight.blockers).toEqual([]);
       const batch = await scheduler.create({ suiteId: "suite-1" });
+      expect(
+        handle.client.prepare("SELECT id FROM assignments WHERE batch_id = ?").all(batch.id),
+      ).toHaveLength(0);
+      await scheduler.schedule(batch.id);
 
       expect(batch).toMatchObject({
         priority: 5,

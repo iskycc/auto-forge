@@ -1857,6 +1857,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expectUiIntegrity(publicLogPage);
   await captureUi(publicLogPage, "shared-diagnostic-history-live-update");
   expect(publicLogPage.context().pages()).toHaveLength(openPageCount);
+  const manualFinished = waitForManualTerminalState(
+    publicLogPage,
+    publicPageRerunClaim.assignment.attemptId,
+    "succeeded",
+  );
   await completeAttempt(page, identity, publicPageRerunClaim, {
     completionId: "e2e-public-page-diagnostic-rerun",
     status: "succeeded",
@@ -1864,6 +1869,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     summary: "public page diagnostic rerun passed",
     stdoutWatermark: 1,
   });
+  await manualFinished;
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   await expect(
     publicLogPage.getByRole("button", { name: "执行此用例", exact: true }),
@@ -1975,12 +1981,14 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     );
     expect(renewed.status()).toBe(200);
     expect(await renewed.json()).toMatchObject({ instruction: "cancel" });
+    const stopFinished = waitForManualTerminalState(publicLogPage, stopAttemptId, "cancelled");
     await completeAttempt(page, identity, stopClaim, {
       completionId: `e2e-manual-stop-${stopIndex}`,
       status: "cancelled",
       resultCode: "CANCELLED_BY_USER",
       summary: "Agent stopped the manually cancelled case",
     });
+    await stopFinished;
     await expect(publicLogPage.getByRole("button", { name: "中断中…", exact: true })).toHaveCount(
       0,
     );
@@ -2120,4 +2128,21 @@ async function confirmLogRerun(page: Page): Promise<void> {
   const dialog = page.getByRole("dialog", { name: "执行此用例", exact: true });
   await dialog.getByRole("button", { name: "确认执行", exact: true }).click();
   await expect(dialog).toBeHidden();
+}
+
+function waitForManualTerminalState(
+  page: Page,
+  attemptId: string,
+  status: "succeeded" | "cancelled",
+) {
+  // State probes deliberately run every five seconds. Observe the terminal probe
+  // before asserting the refreshed controls, rather than racing the same 5s deadline.
+  return page.waitForResponse(async (response) => {
+    if (
+      new URL(response.url()).pathname !== `/api/v1/run-attempts/${attemptId}/manual-state` ||
+      response.status() !== 200
+    )
+      return false;
+    return (await response.json()).status === status;
+  });
 }

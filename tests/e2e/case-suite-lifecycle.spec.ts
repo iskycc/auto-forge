@@ -1628,7 +1628,7 @@ test("tasks and execution history follow the selected project version", async ({
   await page.goto("/case-suites");
   await expect(page.getByText(firstSuiteName, { exact: true })).toBeVisible();
   await expect(page.getByText(secondSuiteName, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(/当前版本「Lifecycle version」共 1 个任务/u)).toBeVisible();
+  await expect(page.getByText(/当前版本「Lifecycle version」.*活动任务 1 个/u)).toBeVisible();
   const suiteCard = page.getByRole("article", { name: `任务 ${firstSuiteName}`, exact: true });
   await expect(suiteCard.getByLabel("近 7 天执行统计")).toContainText("7 天执行次数");
   await expect(suiteCard.locator(".suite-statistics dd").first()).toHaveText("1次");

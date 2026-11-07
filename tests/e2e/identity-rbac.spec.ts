@@ -476,7 +476,7 @@ test("local user completes forced password change and self-service session lifec
   await expect(page.getByRole("group", { name: "登录来源" })).toHaveCount(0);
   await expect(page.getByText("系统会自动识别认证方式")).toBeVisible();
   await login(page, username, initialPassword);
-  await expect(page).toHaveURL(/\/account\/security$/);
+  await expect(page).toHaveURL(/\/account\/security(?:\?|$)/);
   await expect(page.getByText("管理员要求你先修改初始密码")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeEmpty();
 
@@ -507,7 +507,8 @@ test("local user completes forced password change and self-service session lifec
   await expect(page.getByText("当前会话", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "终止" }).click();
   await acceptSystemDialog(page, "终止登录会话", "终止会话");
-  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
+  await expect(page).toHaveURL(/\/(?:login(?:\?|$)|\?login=1(?:&|$))/);
+  expect(new URL(page.url()).searchParams.get("returnTo")).toBe("/account/security");
 });
 
 test("administrator can reset a user password and the last administrator binding is protected", async ({
@@ -552,7 +553,7 @@ test("administrator can reset a user password and the last administrator binding
 
   await logout(page);
   await login(page, username, resetPassword);
-  await expect(page).toHaveURL(/\/account\/security$/);
+  await expect(page).toHaveURL(/\/account\/security(?:\?|$)/);
   await logout(page);
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
   await expandAdministrationGroup(page, "平台运维");

@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("./auth", () => ({
   authenticateRequest: mocks.authenticate,
-  authorizeRequest: mocks.authorize,
+  authorizedProjectScope: mocks.authorize,
   requireSameOrigin: mocks.origin,
   requestId: () => "sheet-request",
 }));
@@ -81,6 +81,20 @@ beforeEach(() => {
   mocks.claim.mockResolvedValue({ claimed: [], conflicts: [] });
 });
 describe("public analysis HTTP boundary", () => {
+  it("authenticates private reads and all writes before looking up any batch", async () => {
+    mocks.authenticate.mockRejectedValue(new DomainError("AUTH_REQUIRED", "请先登录"));
+    mocks.batch.mockRejectedValue(new DomainError("FAILURE_ANALYSIS_NOT_FOUND", "不存在"));
+    mocks.scope.mockRejectedValue(new DomainError("FAILURE_ANALYSIS_PUBLIC_NOT_FOUND", "不存在"));
+    expect((await readAnalysisSheet(request(), "missing", "project")).status).toBe(401);
+    expect((await readAnalysisSheetResource(request(), "missing", "logs", "project")).status).toBe(
+      401,
+    );
+    for (const access of ["project", "published"] as const)
+      expect((await changeAnalysisSheet(request({}), "missing", "claim", access)).status).toBe(401);
+    expect(mocks.batch).not.toHaveBeenCalled();
+    expect(mocks.scope).not.toHaveBeenCalled();
+  });
+
   it("lets anonymous visitors read only an explicitly published scope", async () => {
     expect((await readAnalysisSheet(request(), "batch", "published")).status).toBe(200);
     expect(mocks.authenticate).not.toHaveBeenCalled();
@@ -136,7 +150,7 @@ describe("public analysis HTTP boundary", () => {
         )
       ).status,
     ).toBe(200);
-    expect(mocks.authorize).toHaveBeenCalledWith(expect.any(Request), "analysis.manage", "project");
+    expect(mocks.authorize).toHaveBeenCalledWith(actor, "analysis.manage", "project");
     mocks.authorize.mockClear();
     expect(
       (

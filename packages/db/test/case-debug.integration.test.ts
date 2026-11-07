@@ -106,6 +106,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
           });
           const requestedBy = { username: "task-launcher", source: "ldap" as const };
           const created = await service.create({ suiteId }, requestedBy);
+          await service.schedule(created.id);
           const batch = (await fixture.batches.get(created.id))!;
           expect(created.requestedBy).toEqual(requestedBy);
           expect(batch.requestedBy).toEqual(requestedBy);

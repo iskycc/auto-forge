@@ -1,4 +1,4 @@
-import { openExecutionCaseDetails } from "./support/execution-details";
+import { openExecutionCaseDetails, selectExecutionRound } from "./support/execution-details";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -41,7 +41,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     // 实时 stdout 捕获验证：attempt 运行期间日志即出现在详情页。
     await waitForAttemptState(page, batchId, agent, "running");
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
-    await openExecutionCaseDetails(page);
+    await selectExecutionRound(page, "初始轮次");
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "查看日志" }).click();
     await expect
