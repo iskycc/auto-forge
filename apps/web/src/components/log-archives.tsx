@@ -35,6 +35,7 @@ import {
   archiveCopyRemovalBlocker,
 } from "@/lib/log-archive-download-commands";
 import { ArchiveDownloadCopy } from "./archive-download-copy";
+import { useClientReadiness } from "./ui/use-client-readiness";
 type ArchiveFormOptions = LogArchiveOptions & { projectId?: string };
 
 const labels: Record<LogArchiveJob["status"], string> = {
@@ -62,6 +63,7 @@ export function LogArchives({
   projects?: { id: string; name: string }[];
 }) {
   const { token } = theme.useToken();
+  const clientReady = useClientReadiness();
   const [page, setPage] = useState(initial);
   const [cursors, setCursors] = useState([""]);
   const [pending, setPending] = useState("");
@@ -247,7 +249,7 @@ export function LogArchives({
                   selectedRowKeys: selectedDownloads.map((job) => job.id),
                   onChange: (keys: Key[]) => setSelectedIds(keys.map(String)),
                   getCheckboxProps: (job: LogArchiveJob) => ({
-                    disabled: !archiveDownloadAvailable(job),
+                    disabled: !clientReady || !archiveDownloadAvailable(job),
                     "aria-label": `选择归档 ${job.filename ?? job.id}`,
                   }),
                   columnWidth: 40,

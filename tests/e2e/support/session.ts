@@ -122,7 +122,11 @@ async function waitForAuthenticatedRoute(page: Page): Promise<void> {
 }
 
 export async function login(page: Page, username: string, password: string): Promise<void> {
-  if (new URL(page.url()).pathname !== "/login") {
+  const currentUrl = new URL(page.url());
+  // Fixture logins deliberately start from the default entry. A preceding
+  // logout can remember a page belonging to the previous account's project.
+  // Return-destination scenarios exercise their forms directly instead.
+  if (currentUrl.pathname !== "/login" || currentUrl.searchParams.has("returnTo")) {
     await page.goto("/login");
   }
   // Wait for the login submit button before filling: while setup is still
@@ -160,6 +164,11 @@ export async function logout(page: Page): Promise<void> {
     (url) =>
       url.pathname === "/login" || (url.pathname === "/" && url.searchParams.get("login") === "1"),
   );
+  // /login is a compatibility entry that can still redirect into the in-page
+  // form. Do not let the caller race that document hand-off.
+  await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 export async function selectProjectContext(

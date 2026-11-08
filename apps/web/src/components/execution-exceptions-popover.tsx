@@ -159,7 +159,8 @@ export function ExecutionExceptionsPopover({
             </div>
           }
         >
-          {children}
+          {/* Keep Ant's trigger ref and pointer events on a native element. */}
+          <span className="inline-flex">{children}</span>
         </Popover>
       </span>
       {dialogOpen ? (

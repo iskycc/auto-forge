@@ -175,6 +175,7 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
     { times: 1 },
   );
   await abnormalStatus.hover();
+  await expect.poll(() => previewRequests).toBe(1);
   const preview = page.getByRole("tooltip").filter({ hasText: "执行异常原因" });
   await expect(preview.getByRole("alert")).toContainText("悬浮原因暂时不可用");
   await preview.getByRole("button", { name: "重试", exact: true }).click();
