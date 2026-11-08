@@ -186,6 +186,11 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
 
 test("reserves bounded CI headroom for longer browser acceptance partitions", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  assert.match(
+    workflow,
+    /system-acceptance:[\s\S]*?timeout-minutes: \$\{\{ matrix\.timeout_minutes \|\| 15 \}\}/,
+    "System acceptance includes cold toolchains, builds, tests and evidence collection",
+  );
   const distributed = await readFile(".github/workflows/distributed.yml", "utf8");
   assert.match(
     distributed,

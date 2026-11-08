@@ -590,9 +590,9 @@ jobs:
   system-acceptance:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    # Asset and governance browser checks take about six minutes, in addition to
-    # source build, infrastructure setup and cleanup; allow bounded headroom.
-    timeout-minutes: ${{ matrix.timeout_minutes || 8 }}
+    # Pinned toolchains can fall back to upstream downloads. Include preparation,
+    # source builds and bounded business checks within the job's total deadline.
+    timeout-minutes: ${{ matrix.timeout_minutes || 15 }}
     strategy:
       fail-fast: false
       matrix:
