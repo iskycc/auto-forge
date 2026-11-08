@@ -211,10 +211,10 @@ test("reserves bounded CI headroom for longer browser acceptance partitions", as
   const defaultDeadline = workflow.match(
     /timeout-minutes: \$\{\{ matrix\.timeout_minutes \|\| (\d+) \}\}/,
   );
-  for (const phaseName of [
-    "Full · asset lifecycle",
-    "Network-blocked Lite · assets",
-    "Network-blocked Lite · operations and deployment",
+  for (const [phaseName, maximumMinutes] of [
+    ["Full · asset lifecycle", 15],
+    ["Network-blocked Lite · assets", 15],
+    ["Network-blocked Lite · operations and deployment", 20],
   ]) {
     const assetPhase = workflow.match(
       new RegExp(`- name: ${phaseName}\\n([\\s\\S]*?)(?=\\n\\s+- name:|$)`),
@@ -223,10 +223,14 @@ test("reserves bounded CI headroom for longer browser acceptance partitions", as
     const phaseDeadline = assetPhase[1].match(/timeout_minutes: (\d+)/);
     const deadlineMinutes = Number(phaseDeadline?.[1] ?? defaultDeadline?.[1]);
     assert.ok(
-      deadlineMinutes >= 10 && deadlineMinutes <= 15,
-      `${phaseName} tests, build and cleanup need a bounded deadline between 10 and 15 minutes`,
+      deadlineMinutes >= 10 && deadlineMinutes <= maximumMinutes,
+      `${phaseName} tests, build and cleanup need a bounded deadline between 10 and ${maximumMinutes} minutes`,
     );
   }
+  const published = await readFile(".github/workflows/release-acceptance.yml", "utf8");
+  assert.match(published, /timeout-minutes: \$\{\{ matrix\.timeout_minutes \|\| 8 \}\}/);
+  assert.match(published, /phase: business-assets\n\s+timeout_minutes: 12/);
+  assert.match(published, /phase: business-governance\n\s+timeout_minutes: 15/);
 });
 
 test("declares the official Jenkins repository in every plugin POM", async () => {

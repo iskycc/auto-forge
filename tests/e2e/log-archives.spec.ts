@@ -235,8 +235,29 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
   for (const item of groupJobs)
     await page.locator(`tr[data-row-key="${item.id}"]`).getByRole("checkbox").check();
   const copied = new Map<string, string>();
+  const copyDownloads = page.getByRole("button", { name: "复制下载方式", exact: true });
+  await copyDownloads.focus();
+  await copyDownloads.press("Enter");
+  await expect(page.getByRole("menuitem", { name: "复制 wget 命令", exact: true })).toBeVisible();
+  await page
+    .getByRole("menu")
+    .filter({ has: page.getByRole("menuitem", { name: "复制 wget 命令", exact: true }) })
+    .press("Escape");
+  await expect(
+    page.getByRole("menuitem", { name: "复制 wget 命令", exact: true }),
+  ).not.toBeVisible();
   for (const label of ["复制 wget 命令", "复制 curl 命令", "复制下载直链"]) {
-    await page.getByRole("button", { name: "复制下载方式", exact: true }).hover();
+    await copyDownloads.click();
+    if (label === "复制 wget 命令") {
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await waitForUiTransitions(page);
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: testInfo.outputPath(`archive-copy-menu-${width}.png`),
+        });
+      }
+    }
     const generated = page.waitForResponse(
       (candidate) =>
         new URL(candidate.url()).pathname === "/api/v1/settings/log-archives/download-links" &&

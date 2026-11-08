@@ -3,6 +3,7 @@
 import { Button, Tooltip } from "antd";
 import { useRouter } from "next/navigation";
 import type { ComponentProps } from "react";
+import { useClientReadiness } from "./use-client-readiness";
 
 type LinkButtonProps = Omit<ComponentProps<typeof Button>, "href" | "type" | "variant"> & {
   href: string;
@@ -22,13 +23,16 @@ export function LinkButton({
   onClick,
   onMouseEnter,
   title,
+  disabled,
   ...props
 }: LinkButtonProps) {
   const router = useRouter();
+  const clientReady = useClientReadiness();
   const internal = href.startsWith("/") && !href.startsWith("//") && !href.startsWith("/api/");
   const control = (
     <Button
       {...props}
+      disabled={disabled || !clientReady}
       href={href}
       type={variant}
       onMouseEnter={(event) => {
@@ -36,6 +40,10 @@ export function LinkButton({
         if (internal && prefetch !== false) router.prefetch(href);
       }}
       onClick={(event) => {
+        if (disabled || !clientReady) {
+          event.preventDefault();
+          return;
+        }
         onClick?.(event);
         if (
           event.defaultPrevented ||

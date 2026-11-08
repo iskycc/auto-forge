@@ -203,8 +203,30 @@ for (const view of ["task", "single"] as const)
       process.env.AUTOFORGE_E2E_POSTGRES_URL,
     );
     await selectProjectContext(page, project.projectId, version.body.id);
-    await page.goto(`/execution-records?view=${view}&limit=10&status=succeeded`);
     const pagination = page.getByRole("navigation", { name: "执行记录分页", exact: true });
+    let releaseScripts!: () => void;
+    const scriptsReady = new Promise<void>((resolve) => {
+      releaseScripts = resolve;
+    });
+    const delayScripts = async (route: import("@playwright/test").Route) => {
+      await scriptsReady;
+      await route.continue();
+    };
+    await page.route(/\/_next\/static\/.*\.js(?:\?|$)/, delayScripts);
+    try {
+      await page.goto(`/execution-records?view=${view}&limit=10&status=succeeded`, {
+        waitUntil: "commit",
+      });
+      await expect(pagination.locator("a").filter({ hasText: /^下一页$/ })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    } finally {
+      releaseScripts();
+      await page.waitForLoadState("load");
+      await page.unroute(/\/_next\/static\/.*\.js(?:\?|$)/, delayScripts);
+    }
+    await expect(pagination.getByRole("link", { name: "下一页", exact: true })).toBeEnabled();
     const card = page.locator(".execution-records-card");
     const rows = card.getByRole("row").filter({ has: page.getByRole("cell") });
     const keys = async () =>
@@ -236,7 +258,8 @@ for (const view of ["task", "single"] as const)
     expect(new URL(page.url()).searchParams.get("limit")).toBe("10");
     await page.reload();
     await expect(pagination).toContainText("第 2 页 · 本页 10 条");
-    expect(await keys()).toEqual(second);
+    await expect(rows).toHaveCount(10);
+    await expect.poll(keys).toEqual(second);
     for (const appearance of ["light", "dark"]) {
       await page
         .context()

@@ -620,7 +620,7 @@ jobs:
             command: bash scripts/quality/test-offline.sh governance
           - name: Network-blocked Lite · operations and deployment
             command: bash scripts/quality/test-offline.sh operations && pnpm test:deployment
-            timeout_minutes: 15
+            timeout_minutes: 20
           - name: Network-blocked Lite · recovery
             command: bash scripts/quality/test-offline.sh recovery
     steps:

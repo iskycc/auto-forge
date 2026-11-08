@@ -52,6 +52,8 @@ export function ArchiveDownloadCopy({
   return (
     <>
       <Dropdown
+        trigger={["click"]}
+        placement="bottomRight"
         disabled={!archiveIds.length || pending}
         menu={{
           items: [
