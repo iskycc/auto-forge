@@ -186,6 +186,12 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
 
 test("reserves bounded CI headroom for longer browser acceptance partitions", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  const distributed = await readFile(".github/workflows/distributed.yml", "utf8");
+  assert.match(
+    distributed,
+    /timeout-minutes: \$\{\{ matrix\.phase == 'browser-background' && 40 \|\| 25 \}\}/,
+    "The full mixed workload needs build and evidence headroom without extending other phases",
+  );
   for (let shard = 1; shard <= 3; shard += 1) {
     const scenario = workflow.match(
       new RegExp(`- scenario: ui-${shard}\\n([\\s\\S]*?)(?=\\n\\s+- scenario:|\\n    steps:)`),

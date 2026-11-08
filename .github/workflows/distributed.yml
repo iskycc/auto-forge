@@ -39,7 +39,8 @@ jobs:
   acceptance:
     name: Distributed · ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.phase == 'browser-background' && 30 || 25 }}
+    # The mixed 73-scenario, 500-slot run needs build and evidence-upload headroom.
+    timeout-minutes: ${{ matrix.phase == 'browser-background' && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix:
