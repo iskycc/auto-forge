@@ -566,7 +566,7 @@ public class MixedVisibleTest {
   );
 
   await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
+  await expect(page).toHaveURL(/\/(?:login(?:\?|$)|\?login=1(?:&|$))/);
   await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
   await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
@@ -998,15 +998,9 @@ public class MixedVisibleTest {
   await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
   await page.locator(".project-picker-trigger").click();
   await expect(page.getByRole("listbox")).toBeVisible();
-  const projectSelection = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/v1/selected-project" &&
-      response.request().method() === "PUT",
-  );
   await page.getByRole("option", { name: "默认项目" }).click();
-  expect((await projectSelection).status()).toBe(200);
-  // Selecting the project clears its version and refreshes the server tree.
-  // Open the form after that transition so its first edit cannot be remounted away.
+  // Selecting the current project can be a no-op; wait on its UI state,
+  // rather than requiring a request that only a changed selection sends.
   await expect(page.getByLabel("当前项目层级", { exact: true })).toHaveAttribute(
     "aria-busy",
     "false",
@@ -1014,7 +1008,9 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
   // This scenario executes the imported TestNG JAR directly, without Adapter dependencies.
-  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").uncheck();
+  const adapterCheckbox = createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter");
+  await adapterCheckbox.click({ trial: true });
+  await adapterCheckbox.uncheck();
   await createSuiteDialog.getByLabel("任务名称").fill("每日冒烟测试");
   await createSuiteDialog.getByLabel("说明").fill("E2E 创建的可复用任务");
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
@@ -2255,8 +2251,9 @@ public class MixedVisibleTest {
     expect(secondaryReadiness.status()).toBe(200);
   }
 
+  const loginReturnUrl = page.url();
   await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/(?:login|\?login=1)$/);
+  await expect(page).toHaveURL(/\/(?:login(?:\?|$)|\?login=1(?:&|$))/);
   await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
   await expectUiConsistency(page);
 
@@ -2275,7 +2272,11 @@ public class MixedVisibleTest {
   await loginUsername.fill(E2E_ADMIN_USERNAME);
   await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
+  await expect(page).toHaveURL(loginReturnUrl, { timeout: 20_000 });
+  if (new URL(loginReturnUrl).pathname === "/forbidden")
+    await expect(page.getByText("没有访问权限")).toBeVisible();
+  else
+    await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
   const authenticatedSession = await page.request.get("/api/v1/auth/session");
   expect(authenticatedSession.status()).toBe(200);
 });

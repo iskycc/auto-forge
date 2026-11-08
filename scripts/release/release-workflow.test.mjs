@@ -186,6 +186,17 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
 
 test("reserves bounded CI headroom for longer browser acceptance partitions", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+  for (let shard = 1; shard <= 3; shard += 1) {
+    const scenario = workflow.match(
+      new RegExp(`- scenario: ui-${shard}\\n([\\s\\S]*?)(?=\\n\\s+- scenario:|\\n    steps:)`),
+    );
+    assert.ok(scenario, `UI shard ${shard} must remain in the CI matrix`);
+    assert.match(
+      scenario[1],
+      /timeout_minutes: 20/,
+      "UI assertions, source build and screenshot upload need bounded completion headroom",
+    );
+  }
   const defaultDeadline = workflow.match(
     /timeout-minutes: \$\{\{ matrix\.timeout_minutes \|\| (\d+) \}\}/,
   );

@@ -33,7 +33,9 @@ test("AI model settings keep a compact switch with an aligned handle in both the
     const enabled = page.getByRole("switch", { name: "启用 AI 初步分析", exact: true });
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
-      await enabled.scrollIntoViewIfNeeded();
+      // Probe actionability without toggling; unlike an ElementHandle scroll,
+      // this follows the live control if hydration replaces its initial DOM.
+      await enabled.click({ trial: true });
       await page.screenshot({
         path: resolve(screenshots, `ai-switch-${theme}-${width}.png`),
         fullPage: true,
