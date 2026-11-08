@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-test("manages node addresses behind Nginx and reads owner-local logs through either platform", async ({
+test("manages node addresses and preserves PostgreSQL and legacy log availability through either platform", async ({
   page,
 }, testInfo) => {
   const primary = process.env.E2E_PRIMARY_BASE_URL;
@@ -127,7 +127,9 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
     (await page.request.post(`${primary}/api/v1/internal/platform-logs`, { data: {} })).status(),
   ).toBe(401);
   const fixture = await distributedLogFixture(ids);
+  let legacy: Awaited<ReturnType<typeof distributedLogFixture>> | undefined;
   try {
+    legacy = await distributedLogFixture(ids, "legacy");
     const input = {
       batchId: fixture.batchId,
       attemptId: fixture.attemptId,
@@ -136,17 +138,24 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
         {
           stream: "stdout" as const,
           sequence: 0,
-          content: "跨节点日志正文，仅保存在节点 1",
+          content: "跨节点日志正文，保存在共享 PostgreSQL 日志库",
           recordedAt: "2026-09-05T00:00:00.000Z",
         },
       ],
     };
     expect((await fixture.logStore.appendChunks(input)).stdout).toBe(0);
     expect((await fixture.logStore.appendChunks(input)).stdout).toBe(0);
+    const legacyInput = {
+      ...input,
+      batchId: legacy.batchId,
+      attemptId: legacy.attemptId,
+      chunks: [{ ...input.chunks[0]!, content: "历史本地日志，仅保存在节点 1" }],
+    };
+    expect((await legacy.logStore.appendChunks(legacyInput)).stdout).toBe(0);
     const peerBody = JSON.stringify({
       operation: "list",
-      batchId: fixture.batchId,
-      attemptId: fixture.attemptId,
+      batchId: legacy.batchId,
+      attemptId: legacy.attemptId,
       stream: "stdout",
       afterSequence: -1,
       limit: 10,
@@ -246,17 +255,28 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
       const session = await page.request.get("/api/v1/auth/session");
       expect(session.status()).toBe(200);
       expect(session.headers()["x-autoforge-node"]).toBe(ids[1]);
-      const unavailable = await page.request.get(
+      const sharedLogsDuringOutage = await page.request.get(
         `${secondary}/api/v1/run-attempts/${fixture.attemptId}/logs?stream=stdout`,
       );
-      expect(unavailable.status()).toBe(503);
-      expect((await unavailable.json()).error.code).toBe("PLATFORM_LOG_NODE_UNAVAILABLE");
-      expect(await fixture.owner()).toBe(ids[0]);
+      expect(sharedLogsDuringOutage.status()).toBe(200);
+      expect(
+        (await sharedLogsDuringOutage.json()).items.map(
+          (chunk: { sequence: number }) => chunk.sequence,
+        ),
+      ).toEqual([0, 1, 2]);
+      const legacyUnavailable = await page.request.get(
+        `${secondary}/api/v1/run-attempts/${legacy.attemptId}/logs?stream=stdout`,
+      );
+      expect(legacyUnavailable.status()).toBe(503);
+      expect((await legacyUnavailable.json()).error.code).toBe("PLATFORM_LOG_NODE_UNAVAILABLE");
+      expect(await legacy.owner()).toBe(ids[0]);
       const directories = JSON.parse(process.env.E2E_DISTRIBUTED_LOG_DIRECTORIES!) as [
         string,
         string,
       ];
-      expect(existsSync(join(directories[0], `${fixture.batchId}.sqlite`))).toBe(true);
+      expect(existsSync(join(directories[0], `${legacy.batchId}.sqlite`))).toBe(true);
+      expect(existsSync(join(directories[1], `${legacy.batchId}.sqlite`))).toBe(false);
+      expect(existsSync(join(directories[0], `${fixture.batchId}.sqlite`))).toBe(false);
       expect(existsSync(join(directories[1], `${fixture.batchId}.sqlite`))).toBe(false);
     } finally {
       await distributedFault("primary.start");
@@ -268,6 +288,15 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
     expect(
       (await recovered.json()).items.map((chunk: { sequence: number }) => chunk.sequence),
     ).toEqual([0, 1, 2]);
+    const legacyRecovered = await page.request.get(
+      `${secondary}/api/v1/run-attempts/${legacy.attemptId}/logs?stream=stdout`,
+    );
+    expect(legacyRecovered.status()).toBe(200);
+    expect((await legacyRecovered.json()).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: legacyInput.chunks[0]!.content }),
+      ]),
+    );
     await page.goto("/settings/platform?section=configuration");
     await expect(
       page.getByText("分布式运行配置由部署文件统一管理。", { exact: false }),
@@ -275,6 +304,7 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
     await expect(page.getByLabel("监听地址", { exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "保存平台配置" })).toHaveCount(0);
   } finally {
+    await legacy?.dispose();
     await fixture.dispose();
   }
 });

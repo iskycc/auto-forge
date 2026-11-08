@@ -1,4 +1,4 @@
-import { openExecutionCaseDetails } from "./support/execution-details";
+import { openExecutionCaseDetails, selectExecutionRound } from "./support/execution-details";
 import { associateDdtSr } from "./support/ddt-associations";
 import { expectUiIntegrity } from "./support/ui-guard";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
@@ -72,7 +72,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     // 实时 stdout 捕获验证：attempt 运行期间日志即出现在详情页。
     await waitForAttemptState(page, batchId, agent, "running");
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
-    await openExecutionCaseDetails(page);
+    await selectExecutionRound(page, "初始轮次");
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "查看日志" }).click();
     const executionLog = page.locator(".execution-log");

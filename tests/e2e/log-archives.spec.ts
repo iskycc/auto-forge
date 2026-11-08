@@ -7,7 +7,10 @@ import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import type { LogArchiveJob } from "@autoforge/contracts";
 import { LocalObjectStore } from "../../packages/object-store/src/local-object-store";
-import { PlatformConfigurationStore } from "@autoforge/platform-config";
+import {
+  PlatformConfigurationStore,
+  type PersistedPlatformConfiguration,
+} from "@autoforge/platform-config";
 import { createAttemptLogStore } from "@autoforge/db/sqlite";
 import { ensureAdministrator, browserJson } from "./support/session";
 import { openHistoryFixtureConnection } from "./support/history-fixture-connection";
@@ -36,8 +39,10 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     runnerId = randomUUID();
   const projectName = `Wallet 归档验收项目 ${projectId.slice(-4)}`;
   const attempts: string[] = [];
-  const logs = createAttemptLogStore(join(directory, "attempt-logs"));
+  let logFixture: Awaited<ReturnType<typeof createArchiveFixtureLogs>> | undefined;
   try {
+    logFixture = await createArchiveFixtureLogs(configuration, directory);
+    const { logs } = logFixture;
     const booleanFalse = configuration.mode === "lite" ? "0" : "FALSE";
     await database.execute(
       `INSERT INTO runners(id,credential_hash,name,disabled,draining,os,architecture,agent_version,protocol_version,labels_json,capabilities_json,max_concurrency,busy_slots,last_seen_at,created_at,updated_at) VALUES(?,?,?,${booleanFalse},${booleanFalse},'linux','amd64','e2e',1,'{}','[]',1,0,?,?,?)`,
@@ -57,7 +62,7 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     );
     await database.execute(
       `INSERT INTO run_batches(id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,total_runs,environment_json,created_at,updated_at,attempt_logs_path) VALUES(?,${database.nextBatchSequence},'archive-e2e','Wallet · 中文 DDT 月度归档验收任务',1,'failed',0,24,'[]',?,?,?)`,
-      [batchId, now, now, logs.relativeStorePath(batchId)],
+      [batchId, now, now, configuration.mode === "lite" ? logs.relativeStorePath(batchId) : null],
     );
     for (let index = 0; index < 24; index++) {
       const runId = randomUUID();
@@ -102,7 +107,13 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     ]);
     await database.execute(
       `INSERT INTO run_batches(id,sequence_number,project_id,suite_id,suite_name,suite_version,status,retry_limit,total_runs,environment_json,created_at,updated_at,attempt_logs_path) VALUES(?,${database.nextBatchSequence},?,'archive-e2e-extra','分卷边界普通用例任务',1,'succeeded',0,1,'[]',?,?,?)`,
-      [extraBatchId, projectId, now, now, logs.relativeStorePath(extraBatchId)],
+      [
+        extraBatchId,
+        projectId,
+        now,
+        now,
+        configuration.mode === "lite" ? logs.relativeStorePath(extraBatchId) : null,
+      ],
     );
     const extraAttempt = randomUUID();
     await database.execute(
@@ -125,33 +136,12 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
       "INSERT INTO public_attempt_access(attempt_id,created_by,created_at) VALUES(?,'archive-e2e',?)",
       [attempts[0]!, now],
     );
-    if (configuration.mode === "full") {
-      await database.execute(
-        "INSERT INTO run_batch_log_storage(batch_id,database_id) VALUES(?,NULL)",
-        [batchId],
-      );
-      await database.execute(
-        "INSERT INTO run_batch_log_storage(batch_id,database_id) VALUES(?,NULL)",
-        [extraBatchId],
-      );
-      if (configuration.deployment === "distributed")
-        await database.execute(
-          "INSERT INTO run_batch_log_locations(batch_id,node_id,stored_bytes) VALUES(?,?,?)",
-          [batchId, configuration.nodeId!, logs.batchStoreStats([batchId]).get(batchId) ?? 0],
-        );
-      if (configuration.deployment === "distributed")
-        await database.execute(
-          "INSERT INTO run_batch_log_locations(batch_id,node_id,stored_bytes) VALUES(?,?,?)",
-          [
-            extraBatchId,
-            configuration.nodeId!,
-            logs.batchStoreStats([extraBatchId]).get(extraBatchId) ?? 0,
-          ],
-        );
-    }
   } finally {
-    logs.close();
-    await database.close();
+    try {
+      await logFixture?.close();
+    } finally {
+      await database.close();
+    }
   }
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
@@ -557,3 +547,49 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     await expired.close();
   }
 });
+
+async function createArchiveFixtureLogs(
+  configuration: PersistedPlatformConfiguration,
+  directory: string,
+) {
+  const local = createAttemptLogStore(join(directory, "attempt-logs"));
+  if (configuration.mode === "lite") return { logs: local, close: async () => local.close() };
+  const {
+    createPostgresDatabase,
+    PostgresLogDatabaseRepository,
+    PostgresRoutedAttemptLogStore,
+    logStoragePlatformId,
+    readOnlyLegacyAttemptLogs,
+  } = await import("@autoforge/db/postgres");
+  const { AesGcmSecretCipher } = await import("../../apps/web/src/lib/secret-cipher-core");
+  const database = createPostgresDatabase({
+    connectionString: configuration.full!.databaseUrl,
+    migrationsFolder: resolve("packages/db/drizzle/postgresql"),
+    poolMax: 2,
+  });
+  let logs: InstanceType<typeof PostgresRoutedAttemptLogStore>;
+  try {
+    await database.ready;
+    const registry = new PostgresLogDatabaseRepository(
+      database,
+      new AesGcmSecretCipher(configuration.secrets.masterKey),
+      logStoragePlatformId(configuration.secrets.masterKey),
+      resolve("packages/db/drizzle/log-postgresql"),
+    );
+    logs = new PostgresRoutedAttemptLogStore(registry, readOnlyLegacyAttemptLogs(local));
+  } catch (cause) {
+    local.close();
+    await database.close();
+    throw cause;
+  }
+  return {
+    logs,
+    close: async () => {
+      try {
+        await logs.close();
+      } finally {
+        await database.close();
+      }
+    },
+  };
+}

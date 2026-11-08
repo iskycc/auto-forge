@@ -1,4 +1,8 @@
-import { selectExecutionRound } from "./support/execution-details";
+import {
+  selectExecutionRound,
+  closeExecutionCaseDetails,
+  openExecutionCaseDetails,
+} from "./support/execution-details";
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -385,8 +389,12 @@ async function inspectRunnerDiagnosticsDuringExecution(
     const screenshots = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
     if (screenshots) await mkdir(screenshots, { recursive: true });
     for (const appearance of ["light", "dark"] as const) {
-      if (appearance === "dark")
+      if (appearance === "dark") {
+        await closeExecutionCaseDetails(page);
         await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+        await openExecutionCaseDetails(page);
+        await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
+      }
       for (const width of [1024, 1536]) {
         await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
         await node.getByRole("button", { name: "调度日志", exact: true }).click();

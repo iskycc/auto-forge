@@ -6,7 +6,7 @@ and known limitations.
 
 ## Unreleased
 
-## 1.22.5 - 2026-11-07
+## 1.22.5 - 2026-11-08
 
 ### Fixed
 

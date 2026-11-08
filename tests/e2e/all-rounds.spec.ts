@@ -2135,14 +2135,17 @@ function waitForManualTerminalState(
   attemptId: string,
   status: "succeeded" | "cancelled",
 ) {
-  // State probes deliberately run every five seconds. Observe the terminal probe
-  // before asserting the refreshed controls, rather than racing the same 5s deadline.
-  return page.waitForResponse(async (response) => {
-    if (
-      new URL(response.url()).pathname !== `/api/v1/run-attempts/${attemptId}/manual-state` ||
-      response.status() !== 200
-    )
-      return false;
-    return (await response.json()).status === status;
-  });
+  // Probes deliberately run every five seconds. A control-triggered RSC refresh
+  // can expose the terminal UI first and unmount the probe; accept either boundary.
+  return Promise.any([
+    page.waitForResponse(async (response) => {
+      if (
+        new URL(response.url()).pathname !== `/api/v1/run-attempts/${attemptId}/manual-state` ||
+        response.status() !== 200
+      )
+        return false;
+      return (await response.json()).status === status;
+    }),
+    page.getByRole("button", { name: "执行此用例", exact: true }).waitFor({ state: "visible" }),
+  ]);
 }

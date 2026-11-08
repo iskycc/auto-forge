@@ -5,15 +5,27 @@ import { join, resolve } from "node:path";
 import {
   createAttemptLogStore,
   createPostgresDatabase,
-  NodeAttemptLogStore,
-  createNodeLogTransport,
+  PostgresLogDatabaseRepository,
+  PostgresRoutedAttemptLogStore,
+  logStoragePlatformId,
+  readOnlyLegacyAttemptLogs,
 } from "@autoforge/db/postgres";
 
-export async function distributedLogFixture(nodeIds: [string, string]) {
+import { AesGcmSecretCipher } from "../../../apps/web/src/lib/secret-cipher-core";
+
+export async function distributedLogFixture(
+  nodeIds: [string, string],
+  storage: "postgres" | "legacy" = "postgres",
+) {
   const connectionString = process.env.AUTOFORGE_E2E_POSTGRES_URL;
   const masterKey = process.env.E2E_PLATFORM_MASTER_KEY;
   if (!connectionString || !masterKey)
     throw new Error("Distributed E2E requires isolated PostgreSQL and shared test credentials.");
+  const ownerDirectories = JSON.parse(
+    process.env.E2E_DISTRIBUTED_LOG_DIRECTORIES ?? "[]",
+  ) as string[];
+  if (storage === "legacy" && !ownerDirectories[0])
+    throw new Error("Legacy log fixture requires the owner directory.");
   const handle = createPostgresDatabase({
     connectionString,
     migrationsFolder: resolve("packages/db/drizzle/postgresql"),
@@ -67,30 +79,56 @@ export async function distributedLogFixture(nodeIds: [string, string]) {
   const assignmentId = randomUUID();
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-  await handle.pool.query(
-    `INSERT INTO assignments (id,attempt_id,execution_run_id,batch_id,runner_id,status,
+  if (storage === "postgres") {
+    await handle.pool.query(
+      `INSERT INTO assignments (id,attempt_id,execution_run_id,batch_id,runner_id,status,
        execution_spec_json,available_at,claim_deadline_at,created_at,updated_at)
      VALUES ($1,$2,$2,$3,$4,'running','{}',$5,$6,$5,$5)`,
-    [assignmentId, attemptIds[0], batchId, runnerId, now, expiresAt],
-  );
-  await handle.pool.query(
-    `INSERT INTO assignment_leases (id,assignment_id,runner_id,token_hash,token_encrypted,status,
+      [assignmentId, attemptIds[0], batchId, runnerId, now, expiresAt],
+    );
+    await handle.pool.query(
+      `INSERT INTO assignment_leases (id,assignment_id,runner_id,token_hash,token_encrypted,status,
        expires_at,renewed_at,created_at) VALUES ($1,$2,$3,$4,'fixture','active',$5,$6,$6)`,
-    [randomUUID(), assignmentId, runnerId, digest(leaseToken), expiresAt, now],
-  );
-  await handle.pool.query("INSERT INTO run_batch_log_locations(batch_id,node_id) VALUES($1,$2)", [
-    batchId,
-    nodeIds[0],
-  ]);
+      [randomUUID(), assignmentId, runnerId, digest(leaseToken), expiresAt, now],
+    );
+  }
   const directory = await mkdtemp(join(tmpdir(), "autoforge-distributed-browser-"));
-  const logStore = new NodeAttemptLogStore(
-    handle,
-    nodeIds[1],
-    createAttemptLogStore(directory),
-    createNodeLogTransport(masterKey, nodeIds[1], { now: () => new Date() }),
-    directory,
-    { now: () => new Date() },
-  );
+  const localLogs = createAttemptLogStore(storage === "legacy" ? ownerDirectories[0]! : directory);
+  const logStore =
+    storage === "postgres"
+      ? new PostgresRoutedAttemptLogStore(
+          new PostgresLogDatabaseRepository(
+            handle,
+            new AesGcmSecretCipher(masterKey),
+            logStoragePlatformId(masterKey),
+            resolve("packages/db/drizzle/log-postgresql"),
+          ),
+          readOnlyLegacyAttemptLogs(localLogs),
+        )
+      : localLogs;
+  if (storage === "legacy") {
+    // Seed historical files out of band. Full itself must never append SQLite logs.
+    await handle.pool.query("INSERT INTO run_batch_log_locations(batch_id,node_id) VALUES($1,$2)", [
+      batchId,
+      nodeIds[0],
+    ]);
+    await handle.pool.query(
+      "INSERT INTO run_batch_log_storage(batch_id,database_id) VALUES($1,NULL)",
+      [batchId],
+    );
+    await handle.pool.query(
+      "UPDATE run_batches SET status='succeeded',attempt_logs_path=$2 WHERE id=$1",
+      [batchId, localLogs.relativeStorePath(batchId)],
+    );
+    await handle.pool.query(
+      "UPDATE execution_runs SET status='succeeded',terminal_outcome='succeeded' WHERE batch_id=$1",
+      [batchId],
+    );
+    await handle.pool.query(
+      "UPDATE run_attempts SET status='succeeded',outcome='succeeded',finished_at=$2 WHERE id=ANY($1::text[])",
+      [[...attemptIds], now],
+    );
+  }
   return {
     batchId,
     attemptId: attemptIds[0],

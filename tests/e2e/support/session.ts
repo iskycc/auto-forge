@@ -146,6 +146,11 @@ export async function login(page: Page, username: string, password: string): Pro
     )
     .toBe(true);
   await page.waitForLoadState("load");
+  // Closing the login query can precede its authenticated RSC refresh. Wait for
+  // the real shell before a caller starts another document navigation.
+  await expect(page.getByRole("button", { name: "退出登录", exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 export async function logout(page: Page): Promise<void> {

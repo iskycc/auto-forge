@@ -121,9 +121,23 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /scenario: assets\n\s+specs: .*case-suite-lifecycle.*jar-import/);
   assert.match(workflow, /scenario: execution\n\s+specs: .*execution-recovery.*single-case-run/);
   assert.match(workflow, /scenario: identity\n\s+specs: .*identity-rbac.*all-rounds/);
-  assert.match(
-    workflow,
-    /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill.*memory-admission/,
+  const operations = [
+    ...workflow.matchAll(/scenario: operations-(?:configuration|runtime)\n\s+specs: ([^\n]+)/g),
+  ];
+  assert.equal(operations.length, 2);
+  const specifications = operations.flatMap((match) => match[1].trim().split(/\s+/));
+  assert.deepEqual(
+    specifications.sort(),
+    [
+      "tests/e2e/platform-initialization.spec.ts",
+      "tests/e2e/log-archives.spec.ts",
+      "tests/e2e/security-audit.spec.ts",
+      "tests/e2e/management-operations.spec.ts",
+      "tests/e2e/runner-telemetry.spec.ts",
+      "tests/e2e/platform-operations.spec.ts",
+      "tests/e2e/scheduling-refill.spec.ts",
+      "tests/e2e/memory-admission.spec.ts",
+    ].sort(),
   );
   for (let shard = 1; shard <= 3; shard += 1) {
     assert.match(

@@ -1,4 +1,8 @@
-import { selectExecutionRound, openExecutionCaseDetails } from "./support/execution-details";
+import {
+  selectExecutionRound,
+  closeExecutionCaseDetails,
+  openExecutionCaseDetails,
+} from "./support/execution-details";
 import { legacyAttemptLogPath, legacyExecutionPath } from "./support/legacy-public-links";
 import { readExportedWorkbookText } from "./support/export-workbook";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
@@ -534,7 +538,10 @@ public class MixedVisibleTest {
 
     await page.goto("/setup");
     await page.getByRole("button", { name: /^Full/ }).click();
-    await expect(page.getByLabel("PostgreSQL URL")).toBeVisible();
+    for (const component of ["PostgreSQL 主库", "PostgreSQL 日志库", "Redis", "NATS", "MinIO"]) {
+      await expect(page.getByRole("button", { name: `检查${component}连接` })).toBeVisible();
+    }
+    await expect(page.getByLabel("IP / 主机名", { exact: true })).toHaveCount(5);
     await expectUiConsistency(page);
     await page.getByRole("button", { name: /^Lite/ }).click();
   }
@@ -985,7 +992,19 @@ public class MixedVisibleTest {
   await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
   await page.locator(".project-picker-trigger").click();
   await expect(page.getByRole("listbox")).toBeVisible();
+  const projectSelection = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/selected-project" &&
+      response.request().method() === "PUT",
+  );
   await page.getByRole("option", { name: "默认项目" }).click();
+  expect((await projectSelection).status()).toBe(200);
+  // Selecting the project clears its version and refreshes the server tree.
+  // Open the form after that transition so its first edit cannot be remounted away.
+  await expect(page.getByLabel("当前项目层级", { exact: true })).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
   // This scenario executes the imported TestNG JAR directly, without Adapter dependencies.
@@ -1530,7 +1549,7 @@ public class MixedVisibleTest {
   await selectExecutionRound(page, "初始轮次");
   await expect(page.getByText("执行完成", { exact: true }).first()).toBeVisible();
   // 失败用例的堆栈摘要直接显示在状态列，无需展开详情。
-  const failureHint = page.locator(".attempt-failure-line").first();
+  const failureHint = page.locator(".execution-case-status-preview small").first();
   await expect(failureHint).toBeVisible();
   expect(await failureHint.textContent()).toBe(expectedFailureSummary);
   // 总体调度日志必须能定位用例之外/失败的异常：原因码与精简摘要都要出现在事件里。
@@ -1594,7 +1613,9 @@ public class MixedVisibleTest {
   );
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
+  await closeExecutionCaseDetails(page);
   await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await openExecutionCaseDetails(page);
   await page.getByRole("button", { name: "查看日志", exact: true }).click();
   await expect(page.locator(".execution-log")).toHaveClass(/(?:^|\s)execution-log-dark(?:\s|$)/);
   await page.getByRole("button", { name: "浅色日志", exact: true }).click();
@@ -1606,7 +1627,9 @@ public class MixedVisibleTest {
     .evaluate((element) => getComputedStyle(element).backgroundColor);
   expect(logBackground).toBe("rgb(240, 244, 249)");
   await page.keyboard.press("Escape");
+  await closeExecutionCaseDetails(page);
   await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await openExecutionCaseDetails(page);
   // 需求5后单用例不再自动展开，需显式点击详情才能看到产物列表。
   await page
     .getByRole("row", { name: taskCase.displayName })

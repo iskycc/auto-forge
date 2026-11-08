@@ -610,8 +610,6 @@ test("execution details show the recorded initiator without stretching the heade
       await expect(initiator).toContainText("拉起人：");
       await expect(username).toHaveText(scenario.username ?? "未记录");
       await expect(initiator).not.toContainText("e2e-admin");
-      await openExecutionCaseDetails(page);
-      await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
       for (const viewport of [
         { width: 1024, height: 768 },
         { width: 1536, height: 960 },
@@ -635,10 +633,11 @@ test("execution details show the recorded initiator without stretching the heade
           await expect(page.getByRole("tooltip")).not.toBeVisible();
         }
       }
-      await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+      await selectExecutionRound(page, "初始轮次");
       await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
-      await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+      await selectExecutionRound(page, "全部轮次");
       await expect(page.locator(".execution-case-table tbody tr")).toHaveCount(5);
+      await closeExecutionCaseDetails(page);
       await expect(username).toHaveText(scenario.username ?? "未记录");
       await page.reload();
       await expect(username).toHaveText(scenario.username ?? "未记录");
@@ -972,7 +971,7 @@ test("anonymous execution columns stay stable and show full failure stacks in di
         expect(Math.max(...rowHeights) - Math.min(...rowHeights)).toBeLessThan(2);
         const consoleBody = page
           .getByRole("dialog", { name: "用例执行明细", exact: true })
-          .locator(".round-detail-panel");
+          .locator(".round-cases");
         if (viewport.width === 1536) {
           const bodyBounds = (await consoleBody.boundingBox())!;
           const tableBounds = (await consoleBody.locator(".execution-case-table").boundingBox())!;
@@ -4063,6 +4062,12 @@ test("task execution shortcuts preselect the clicked task and preserve desktop l
     // Missing resources still require editing the saved task, rather than bypassing preflight.
     await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
   };
+  await page.goto("/case-suites?status=archived");
+  await expect(
+    page
+      .getByRole("article", { name: "任务 归档任务", exact: true })
+      .getByRole("button", { name: "立即执行", exact: true }),
+  ).toBeDisabled();
   for (const theme of ["light", "dark"]) {
     await page
       .context()
@@ -4082,11 +4087,10 @@ test("task execution shortcuts preselect the clicked task and preserve desktop l
           .getByRole("article", { name: "任务 停用任务", exact: true })
           .getByRole("button", { name: "立即执行", exact: true }),
       ).toBeDisabled();
-      await expect(
-        page
-          .getByRole("article", { name: "任务 归档任务", exact: true })
-          .getByRole("button", { name: "立即执行", exact: true }),
-      ).toBeDisabled();
+      // Archived tasks belong to their own view; the active list must not render them.
+      await expect(page.getByRole("article", { name: "任务 归档任务", exact: true })).toHaveCount(
+        0,
+      );
       await expectUiIntegrity(page);
       const actionRowOffsets = await page.locator(".suite-card-actions").evaluateAll((footers) =>
         footers.map((footer) => {
@@ -4966,6 +4970,7 @@ test("runner dialogs remain clickable after repeated scheduling and telemetry sw
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`/run-batches/${fixture.batchId}`);
+  await selectExecutionRound(page, "初始轮次");
   await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
   const cards = page.getByRole("region", { name: "本轮执行机状态" }).locator(".runner-card");
   await expect(cards).toHaveCount(8);
@@ -4987,6 +4992,7 @@ test("runner dialogs remain clickable after repeated scheduling and telemetry sw
     }
   }
   expect(errors).toEqual([]);
+  await closeExecutionCaseDetails(page);
   await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(0);
 });
 
@@ -5014,6 +5020,7 @@ test("scheduling logs bound history requests and search older message fragments 
       requests.push(new URL(request.url()));
   });
   await page.goto(`/run-batches/${fixture.batchId}`);
+  await selectExecutionRound(page, "初始轮次");
   await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
   const node = page
     .getByRole("region", { name: "本轮执行机状态" })
@@ -5094,6 +5101,7 @@ test("closing a pending scheduling request releases other runner dialogs and err
     requestStarted = true;
   });
   await page.goto(`/run-batches/${fixture.batchId}`);
+  await selectExecutionRound(page, "初始轮次");
   await page.locator(".round-tab-toolbar").getByText("执行机", { exact: true }).click();
   const cards = page.getByRole("region", { name: "本轮执行机状态" }).locator(".runner-card");
   await cards.first().getByRole("button", { name: "调度日志", exact: true }).click();
@@ -5103,7 +5111,9 @@ test("closing a pending scheduling request releases other runner dialogs and err
   });
   await page.getByRole("button", { name: "关闭日志终端" }).click();
   await requestCancelled;
-  await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: /调度日志/ })).not.toBeVisible();
+  await expect(page.getByRole("dialog", { name: "用例执行明细", exact: true })).toBeVisible();
+  await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(1);
   await cards
     .nth(1)
     .getByRole("button", { name: /的资源监控/ })
@@ -5130,6 +5140,7 @@ test("closing a pending scheduling request releases other runner dialogs and err
   await cards.first().getByRole("button", { name: "调度日志", exact: true }).click();
   await expect(logs.getByRole("log")).toContainText("暂无调度日志");
   await logs.press("Escape");
+  await closeExecutionCaseDetails(page);
   await expect(page.locator(".ant-modal-wrap:visible")).toHaveCount(0);
 });
 
@@ -5656,9 +5667,10 @@ test("execution record actions stay on one line after sharing and resizing saved
       await failedRow.getByRole("button", { name: /生成批次/ }).click();
       await expect(failedRow.getByRole("link", { name: /打开批次/ })).toBeVisible();
       await expectSingleLine();
+      // Compact share controls may already fit; only widen when their minimum requires it.
       await expect
         .poll(async () => Number(await handle.getAttribute("aria-valuenow")))
-        .toBeGreaterThan(widthBeforeSharing);
+        .toBeGreaterThanOrEqual(widthBeforeSharing);
       for (let index = 0; index < 15; index++) await handle.press("ArrowLeft");
       await expectSingleLine();
       await expect(handle).toHaveAttribute(

@@ -145,7 +145,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     const restartBatchId = await scheduleExecution(page, restartSuiteName);
     const restartAttemptId = await waitForAttemptState(page, restartBatchId, agent, "running");
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
-    await openExecutionCaseDetails(page);
+    await selectExecutionRound(page, "初始轮次");
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "查看日志" }).click();
     await page.getByRole("radio", { name: "agent", exact: true }).locator("..").click();
@@ -184,7 +184,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       "REAL_AGENT_RESTART_FIXTURE_RECOVERED",
     );
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
-    await openExecutionCaseDetails(page);
+    await selectExecutionRound(page, "初始轮次");
     await page.getByRole("radio", { name: "执行机", exact: true }).locator("..").click();
     await page.getByRole("button", { name: /执行机异常 1/ }).click();
     const restartFaultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
