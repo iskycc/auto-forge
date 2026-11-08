@@ -181,16 +181,16 @@ start_minio_proxy() {
 }
 
 download_dependencies() {
-  curl --fail --location --silent --show-error \
-    "https://github.com/nats-io/nats-server/releases/download/v2.14.3/nats-server-v2.14.3-linux-amd64.tar.gz" \
-    --output "${temporary_directory}/nats.tar.gz"
-  printf '%s  %s\n' "${nats_archive_sha256}" "${temporary_directory}/nats.tar.gz" | sha256sum --check --status
+  # NATS 2.14.3, linux-amd64: immutable asset ID plus the original pinned digest.
+  bash "${repository_root}/scripts/quality/download-acceptance-dependency.sh" \
+    "https://api.github.com/repos/nats-io/nats-server/releases/assets/461252831" \
+    "${nats_archive_sha256}" "${temporary_directory}/nats.tar.gz"
   tar -xzf "${temporary_directory}/nats.tar.gz" -C "${temporary_directory}"
 
-  curl --fail --location --silent --show-error \
-    "https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.linux-amd64.RELEASE.2025-04-22T22-12-26Z" \
-    --output "${temporary_directory}/minio"
-  printf '%s  %s\n' "${minio_binary_sha256}" "${temporary_directory}/minio" | sha256sum --check --status
+  # MinIO RELEASE.2025-04-22T22-12-26Z, linux-amd64.
+  bash "${repository_root}/scripts/quality/download-acceptance-dependency.sh" \
+    "https://api.github.com/repos/minio/minio/releases/assets/404660713" \
+    "${minio_binary_sha256}" "${temporary_directory}/minio"
   chmod 0755 "${temporary_directory}/minio"
 }
 
