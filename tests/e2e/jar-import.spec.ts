@@ -538,7 +538,13 @@ public class MixedVisibleTest {
 
     await page.goto("/setup");
     await page.getByRole("button", { name: /^Full/ }).click();
-    for (const component of ["PostgreSQL 主库", "PostgreSQL 日志库", "Redis", "NATS", "MinIO"]) {
+    for (const component of [
+      "PostgreSQL 主库",
+      "PostgreSQL 日志库",
+      "Redis 缓存",
+      "NATS 消息队列",
+      "MinIO 对象存储",
+    ]) {
       await expect(page.getByRole("button", { name: `检查${component}连接` })).toBeVisible();
     }
     await expect(page.getByLabel("IP / 主机名", { exact: true })).toHaveCount(5);
