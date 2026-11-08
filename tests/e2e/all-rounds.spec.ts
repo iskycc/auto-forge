@@ -1379,7 +1379,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     window.localStorage.removeItem("autoforge.execution-records.column-widths.v1"),
   );
   await page.reload();
-  const executionRecordsTable = page.locator(".execution-records-table");
+  const executionRecordsTable = page.locator('.execution-records-table[aria-hidden="false"]');
   await expect(executionRecordsTable).toBeVisible();
   const jenkinsRecord = executionRecordsTable.locator("tbody tr", {
     has: page.locator(`a[href="/run-batches/${jenkinsRun.batchId}"]`),

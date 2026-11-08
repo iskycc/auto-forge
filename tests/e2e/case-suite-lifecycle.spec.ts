@@ -1702,7 +1702,7 @@ test("tasks and execution history follow the selected project version", async ({
 
   await page.goto("/execution-records");
   await expect(page.getByLabel("执行记录范围")).toContainText("Lifecycle version");
-  const firstVersionRecords = page.locator(".execution-records-table");
+  const firstVersionRecords = page.locator('.execution-records-table[aria-hidden="false"]');
   await expect(firstVersionRecords).toContainText(firstSuiteName);
   await expect(firstVersionRecords).not.toContainText(secondSuiteName);
   await page.getByRole("button", { name: "开始执行", exact: true }).click();
@@ -1747,7 +1747,7 @@ test("tasks and execution history follow the selected project version", async ({
     await page.setViewportSize(viewport);
     await page.goto("/execution-records");
     await expect(page.getByLabel("执行记录范围")).toContainText("Lifecycle version 2");
-    const secondVersionRecords = page.locator(".execution-records-table");
+    const secondVersionRecords = page.locator('.execution-records-table[aria-hidden="false"]');
     await expect(secondVersionRecords).toContainText(secondSuiteName);
     await expect(secondVersionRecords).not.toContainText(firstSuiteName);
     await expectUiIntegrity(page);

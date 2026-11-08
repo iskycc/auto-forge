@@ -425,7 +425,9 @@ for (const targetMode of ["new", "existing"] as const)
     await selectProjectContext(page, targetProject.projectId, version.id, version.stages[0]!.id);
     await page.goto("/execution-records");
     await expect(
-      page.locator(".execution-records-table").getByText(source.suiteName, { exact: true }),
+      page
+        .locator('.execution-records-table[aria-hidden="false"]')
+        .getByText(source.suiteName, { exact: true }),
     ).toBeVisible();
     await expectUiIntegrity(page);
     await page.goto("/case-suites");
