@@ -19,7 +19,7 @@
     "lint": "eslint . --max-warnings=0 && go -C apps/runner-agent vet ./... && go -C apps/log-archive-viewer vet ./...",
     "typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run --exclude \"**/*.integration.test.ts\" && go -C apps/runner-agent test ./... && node --test scripts/release/*.test.mjs scripts/operations/*.test.mjs scripts/quality/*.test.mjs && go -C apps/log-archive-viewer test ./...",
-    "test:integration": "node scripts/release/ensure-log-viewer-resources.mjs && pnpm --filter @autoforge/web build:work-thread && vitest run integration.test",
+    "test:integration": "node scripts/release/ensure-log-viewer-resources.mjs && node scripts/quality/prepare-acceptance-build.mjs threads && vitest run integration.test",
     "test:ddt-transfer": "python3 -B -m unittest discover -s tests/operations -p 'test_verify_ddt_transfer.py' -v && vitest run apps/web/src/lib/ddt-transfer-verifier.integration.test.ts --maxWorkers=1 --no-file-parallelism",
     "test:full": "bash scripts/quality/test-full.sh",
     "test:full-business-recovery": "bash scripts/quality/test-full-business-recovery.sh",

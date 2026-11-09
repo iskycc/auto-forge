@@ -1,9 +1,9 @@
 name: Release checks
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -13,18 +13,21 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: release-checks-${{ inputs.tag || github.ref_name }}
+  group: release-checks-${{ inputs.tag || github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   prepare:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     name: Resolve release tag
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       checks_revision: ${{ steps.release.outputs.checks_revision }}
+      build_run_id: ${{ steps.release.outputs.build_run_id }}
       tag: ${{ steps.release.outputs.tag }}
       tag_revision: ${{ steps.release.outputs.tag_revision }}
       version: ${{ steps.release.outputs.version }}
@@ -33,12 +36,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
 
       - name: Resolve semantic version tag
         id: release
         env:
-          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          REQUESTED_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+          RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           if [[ ! "${REQUESTED_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release tag: ${REQUESTED_TAG}" >&2
@@ -46,19 +51,43 @@ jobs:
           fi
           tag_revision="$(git rev-parse --verify "refs/tags/${REQUESTED_TAG}^{commit}")"
           checks_revision="${tag_revision}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" && "${tag_revision}" != "${RELEASE_REVISION}" ]]; then
+            echo 'Release artifact revision does not match the requested tag.' >&2
+            exit 1
+          fi
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             checks_revision="${GITHUB_SHA}"
           fi
           {
             echo "checks_revision=${checks_revision}"
+            echo "build_run_id=${RELEASE_RUN_ID}"
             echo "tag=${REQUESTED_TAG}"
             echo "tag_revision=${tag_revision}"
             echo "version=${REQUESTED_TAG#v}"
           } >> "${GITHUB_OUTPUT}"
 
+  full-tools:
+    name: Prepare shared Full acceptance tools
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.checks_revision }}
+      - uses: ./.github/actions/setup-full-tools
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceptance-full-tools
+          path: .acceptance-build/dependencies/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   quality:
     name: Release source · ${{ matrix.name }}
-    needs: prepare
+    needs: [prepare, full-tools]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -78,7 +107,7 @@ jobs:
           - name: deployment
             command: pnpm test:deployment
           - name: production build
-            command: pnpm build
+            command: node scripts/quality/prepare-acceptance-build.mjs all
           - name: Full adapter contracts
             command: bash scripts/quality/test-full.sh contracts
           - name: Full asset lifecycle
@@ -101,10 +130,14 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.checks_revision }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+
+      - name: Restore the actual release build
+        if: needs.prepare.outputs.build_run_id != ''
+        uses: ./.github/actions/restore-acceptance-build
         with:
-          node-version: 24.16.0
+          run_id: ${{ needs.prepare.outputs.build_run_id }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -128,11 +161,6 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Install locked JavaScript dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -141,6 +169,16 @@ jobs:
             exit 1
           fi
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+
+      - name: Restore shared Full tools
+        if: startsWith(matrix.name, 'Full ')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: acceptance-full-tools
+          path: .acceptance-build/dependencies
+      - name: Use verified local dependency copies
+        if: startsWith(matrix.name, 'Full ')
+        run: echo "AUTOFORGE_ACCEPTANCE_DEPENDENCY_CACHE=${GITHUB_WORKSPACE}/.acceptance-build/dependencies" >> "${GITHUB_ENV}"
 
       - name: Run release-source quality partition
         run: ${{ matrix.command }}
@@ -155,7 +193,7 @@ jobs:
           retention-days: 7
 
       - name: Upload Lite concurrency measurements
-        if: always() && matrix.name == 'Lite 500 protocol concurrency'
+        if: always() && !cancelled() && matrix.name == 'Lite 500 protocol concurrency'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-lite-concurrency-${{ needs.prepare.outputs.tag }}
@@ -178,21 +216,20 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.checks_revision }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+
+      - name: Restore the actual release build
+        if: needs.prepare.outputs.build_run_id != ''
+        uses: ./.github/actions/restore-acceptance-build
         with:
-          node-version: 24.16.0
+          run_id: ${{ needs.prepare.outputs.build_run_id }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
-
-      - name: Install locked JavaScript dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
 
       - name: Locate preinstalled Chromium
         run: |
@@ -226,21 +263,20 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.checks_revision }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+
+      - name: Restore the actual release build
+        if: needs.prepare.outputs.build_run_id != ''
+        uses: ./.github/actions/restore-acceptance-build
         with:
-          node-version: 24.16.0
+          run_id: ${{ needs.prepare.outputs.build_run_id }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
-
-      - name: Install locked JavaScript dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
 
       - name: Run Runner Agent credential lifecycle unit tests
         run: |
@@ -272,14 +308,15 @@ jobs:
 
   release-checks-gate:
     name: Release checks gate
-    if: always()
-    needs: [prepare, quality, offline-quality, runner-reinstall-gate]
+    if: always() && !cancelled()
+    needs: [prepare, full-tools, quality, offline-quality, runner-reinstall-gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every release-source partition
         run: |
           test "${{ needs.prepare.result }}" = success
+          test "${{ needs.full-tools.result }}" = success
           test "${{ needs.quality.result }}" = success
           test "${{ needs.offline-quality.result }}" = success
           test "${{ needs.runner-reinstall-gate.result }}" = success

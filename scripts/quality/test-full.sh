@@ -526,7 +526,7 @@ start_platform_node() {
 }
 
 start_full_platform() {
-  pnpm --filter @autoforge/web build >"${temporary_directory}/web-build.log" 2>&1
+  node scripts/quality/prepare-acceptance-build.mjs web >"${temporary_directory}/web-build.log" 2>&1
   start_platform_node web "${platform_data_directory}" 3199
   web_pid="${started_web_pid}"
   start_platform_node web-replica "${replica_platform_data_directory}" 3198
@@ -534,7 +534,7 @@ start_full_platform() {
 }
 
 start_full_worker() {
-  pnpm --filter @autoforge/worker build >/dev/null
+  node scripts/quality/prepare-acceptance-build.mjs worker >/dev/null
   AUTOFORGE_TEST_WALL_CLOCK_OFFSET_MS=600000 setsid node \
     --import "${repository_root}/scripts/quality/clock-skew-fixture.mjs" \
     apps/worker/dist/worker.mjs --data-dir="${platform_data_directory}" \
@@ -720,7 +720,7 @@ verify_dependency_recovery() {
 cd "${repository_root}"
 # Contract-only phases instantiate the same log threads as the production server.
 # Build their entrypoints before tests even when no Web bundle is requested.
-pnpm --filter @autoforge/web build:work-thread
+node scripts/quality/prepare-acceptance-build.mjs threads
 download_dependencies
 start_dependencies
 

@@ -75,10 +75,9 @@ test("builds embedded Jenkins plugins on Java 21 while retaining the Java 8 Adap
     tagged,
     /if: matrix\.name == 'CoTest Adapter current runtime' \|\| matrix\.name == 'production build'\n[\s\S]*?java-version: "21"/,
   );
-  assert.match(
-    ci,
-    /  build:\n[\s\S]*?Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/,
-  );
+  assert.match(ci, /uses: \.\/\.github\/workflows\/acceptance-build\.yml/);
+  const producer = await readFile(".github/workflows/acceptance-build.yml", "utf8");
+  assert.match(producer, /Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/);
 });
 
 test("partitions tagged and published checks without polling inside a test job", async () => {
@@ -151,10 +150,10 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
     workflow,
     /scenario_filters\+=\(--fully-parallel --shard "\$\{E2E_SCENARIO_SHARD\}"\)/,
   );
-  assert.match(
-    workflow,
-    /Build verified Agent resources for Runner update controls[\s\S]*?run: pnpm build:agent-resources/,
-  );
+  const sharedBuild = await readFile(".github/workflows/acceptance-build.yml", "utf8");
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/acceptance-build\.yml/);
+  assert.match(sharedBuild, /run: pnpm build/);
+  assert.match(workflow, /Restore shared production outputs/);
   assert.doesNotMatch(workflow, /scenario: operations\n\s+specs: .*ui-layout/);
   assert.match(workflow, /scenario: ui-pages\n\s+specs: .*ui-layout/);
   assert.match(workflow, /grep_invert: primary product and administration routes/);
@@ -271,24 +270,28 @@ test("shares the release asset contract with published acceptance", async () => 
 
 test("prepares embedded Jenkins plugins before disconnecting source acceptance from the network", async () => {
   const offline = await readFile("scripts/quality/test-offline.sh", "utf8");
-  assert.ok(offline.indexOf("pnpm build:jenkins-resources") < offline.indexOf("if unshare --user"));
+  assert.ok(
+    offline.indexOf("node scripts/quality/prepare-acceptance-build.mjs resources") <
+      offline.indexOf("if unshare --user"),
+  );
   for (const path of [
     "scripts/quality/test-real-agent.sh",
     "scripts/quality/test-container-executor.sh",
   ]) {
     const script = await readFile(path, "utf8");
-    assert.match(script, /run_network_blocked_browser_flow\(\) \{\n  pnpm build:jenkins-resources/);
+    assert.match(
+      script,
+      /run_network_blocked_browser_flow\(\) \{\n  node scripts\/quality\/prepare-acceptance-build\.mjs resources/,
+    );
   }
-  const ci = await readFile(".github/workflows/ci.yml", "utf8");
-  assert.match(
-    ci,
-    /Build verified Agent resources for Runner update controls[\s\S]*?Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/,
-  );
+  const producer = await readFile(".github/workflows/acceptance-build.yml", "utf8");
+  assert.match(producer, /Set up Java for embedded Jenkins plugins[\s\S]*?java-version: "21"/);
+  assert.match(producer, /run: pnpm build/);
 });
 
 test("prepares the offline viewer before browser startup deadlines and network isolation", async () => {
   const playwright = await readFile("playwright.config.ts", "utf8");
-  const viewerPreparation = playwright.indexOf('"scripts/release/ensure-log-viewer-resources.mjs"');
+  const viewerPreparation = playwright.indexOf('"scripts/quality/prepare-acceptance-build.mjs"');
   assert.ok(viewerPreparation >= 0 && viewerPreparation < playwright.indexOf("webServer:"));
   for (const path of [
     "scripts/quality/test-offline.sh",
@@ -296,7 +299,9 @@ test("prepares the offline viewer before browser startup deadlines and network i
     "scripts/quality/test-container-executor.sh",
   ]) {
     const script = await readFile(path, "utf8");
-    const preparation = script.indexOf("node scripts/release/ensure-log-viewer-resources.mjs");
+    const preparation = script.indexOf(
+      "node scripts/quality/prepare-acceptance-build.mjs resources",
+    );
     assert.ok(preparation >= 0 && preparation < script.indexOf("if unshare --user"), path);
   }
 });
@@ -305,9 +310,11 @@ test("prepares pinned Node and locked frontend dependencies before building host
   const workflow = await readFile(".github/workflows/release.yml", "utf8");
   const backend = workflow.match(/  backend:\n([\s\S]*?)\n  jenkins-plugins:/)?.[1];
   assert.ok(backend, "Both native backend targets must remain in the release matrix");
-  assert.match(backend, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
-  assert.match(backend, /node-version: 24\.16\.0/);
-  const installation = backend.indexOf("pnpm install --frozen-lockfile");
+  const setup = await readFile(".github/actions/setup-dependencies/action.yml", "utf8");
+  assert.match(setup, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
+  assert.match(setup, /node-version: 24\.16\.0/);
+  assert.match(setup, /pnpm install --frozen-lockfile/);
+  const installation = backend.indexOf("uses: ./.github/actions/setup-dependencies");
   const imageBuild = backend.indexOf("bash scripts/release/build-backend-image.sh");
   assert.ok(
     installation >= 0 && installation < imageBuild,

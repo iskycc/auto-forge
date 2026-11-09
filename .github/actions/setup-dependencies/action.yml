@@ -1,0 +1,23 @@
+name: Locked Node and pnpm dependencies
+description: Install the pinned toolchain and reuse the content-addressed pnpm store
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.16.0
+    - name: Enable locked pnpm and locate its store
+      id: pnpm
+      shell: bash
+      run: |
+        corepack enable
+        echo "store=$(pnpm store path --silent)" >> "${GITHUB_OUTPUT}"
+    - name: Restore pnpm package store
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm.outputs.store }}
+        key: pnpm-${{ runner.os }}-${{ runner.arch }}-node24-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-node24-
+    - name: Install locked dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

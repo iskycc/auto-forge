@@ -40,6 +40,12 @@ prepare_agent_binary() {
       exit 1
       ;;
   esac
+  if [[ "${AUTOFORGE_ACCEPTANCE_PREBUILT:-}" == "1" ]]; then
+    node scripts/quality/prepare-acceptance-build.mjs agents
+    E2E_BATCH_SHARE_AGENT_BINARY="${repository_root}/resources/agents/linux-${architecture}/autoforge-agent"
+    export E2E_BATCH_SHARE_AGENT_BINARY
+    return
+  fi
   SOURCE_DATE_EPOCH=0 \
   AUTOFORGE_RELEASE_REVISION="${GITHUB_SHA:-unknown}" \
     bash "${repository_root}/scripts/release/build-agent.sh" \

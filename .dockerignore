@@ -30,3 +30,6 @@ fast-deploy/**/data
 output
 docs/design/ant-design-ui/*.png
 docs/design/ant-design-ui-audit/*.png
+
+# CI artifacts are outputs, never Docker build inputs
+.acceptance-build

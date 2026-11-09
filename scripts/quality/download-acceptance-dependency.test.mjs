@@ -98,3 +98,26 @@ test("stops after three retries when the gateway remains unavailable", async () 
     },
   );
 });
+
+test("reuses checksum-verified cached tools without any network request", async () => {
+  let requests = 0;
+  await withDownloadFixture(
+    (_request, response) => {
+      requests++;
+      response.end(content);
+    },
+    async (url, directory) => {
+      const cache = join(directory, "cache");
+      const env = { ...process.env, AUTOFORGE_ACCEPTANCE_DEPENDENCY_CACHE: cache };
+      await execute("bash", [script, url, checksum, join(directory, "first")], { env });
+      await execute("bash", [script, url, checksum, join(directory, "second")], { env });
+      assert.equal(requests, 1);
+      assert.deepEqual(await readFile(join(directory, "second")), content);
+      await writeFile(join(cache, checksum), "corrupted cache");
+      await assert.rejects(
+        execute("bash", [script, url, checksum, join(directory, "third")], { env }),
+      );
+      assert.equal(requests, 1);
+    },
+  );
+});

@@ -35,8 +35,8 @@ trap cleanup EXIT
 
 # Explicitly offline: the immutable release base image and build dependencies must exist.
 docker image inspect "${node_image}" >/dev/null
-pnpm --filter @autoforge/web build >"${evidence_directory}/web-build.log" 2>&1
-pnpm --filter @autoforge/worker build >"${evidence_directory}/worker-build.log" 2>&1
+node scripts/quality/prepare-acceptance-build.mjs web >"${evidence_directory}/web-build.log" 2>&1
+node scripts/quality/prepare-acceptance-build.mjs worker >"${evidence_directory}/worker-build.log" 2>&1
 node scripts/release/package-backend-runtime.mjs "${runtime_directory}"
 pnpm --filter @autoforge/web exec esbuild \
   "${repository_root}/tests/performance/runtime-resources-probe.ts" \

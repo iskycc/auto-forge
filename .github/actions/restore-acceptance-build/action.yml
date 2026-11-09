@@ -1,0 +1,28 @@
+name: Restore verified acceptance build
+description: Reuse production outputs from this workflow without recompiling
+inputs:
+  artifact:
+    description: Artifact produced by the current workflow build job
+    default: acceptance-runtime
+  run_id:
+    description: Originating Release run; defaults to the current workflow
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: ${{ inputs.artifact }}
+        path: .acceptance-build
+        run-id: ${{ inputs.run_id || github.run_id }}
+        github-token: ${{ github.token }}
+    - name: Extract and verify exact source, runtime and output digests
+      shell: bash
+      run: |
+        tar --extract --gzip --file .acceptance-build/runtime.tar.gz
+        node scripts/quality/acceptance-build.mjs verify
+        echo 'AUTOFORGE_ACCEPTANCE_PREBUILT=1' >> "${GITHUB_ENV}"
+        echo "AUTOFORGE_ACCEPTANCE_DEPENDENCY_CACHE=${GITHUB_WORKSPACE}/.acceptance-build/dependencies" >> "${GITHUB_ENV}"
+        agent_architecture="$(node -p "process.arch === 'arm64' ? 'arm64' : 'amd64'")"
+        echo "E2E_PREBUILT_AGENT_BINARY=${GITHUB_WORKSPACE}/resources/agents/linux-${agent_architecture}/autoforge-agent" >> "${GITHUB_ENV}"
+        echo "E2E_PREBUILT_ADAPTER_JAR=${GITHUB_WORKSPACE}/resources/agents/cotest-testng-adapter.jar" >> "${GITHUB_ENV}"

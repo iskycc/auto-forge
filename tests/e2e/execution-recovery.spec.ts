@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { expectUiIntegrity } from "./support/ui-guard";
+import { expectUiIntegrity, waitForUiTransitions } from "./support/ui-guard";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
@@ -175,9 +175,18 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
     { times: 1 },
   );
   await abnormalStatus.hover();
-  await expect.poll(() => previewRequests).toBe(1);
+  await expect
+    .poll(async () => {
+      // Snapshot/layout publication can move a row after the pointer was placed.
+      // Reposition only when it has actually left the badge; never retry a request.
+      if (!(await abnormalStatus.evaluate((element) => element.matches(":hover"))))
+        await abnormalStatus.hover();
+      return previewRequests;
+    })
+    .toBe(1);
   const preview = page.getByRole("tooltip").filter({ hasText: "执行异常原因" });
   await expect(preview.getByRole("alert")).toContainText("悬浮原因暂时不可用");
+  await waitForUiTransitions(page);
   await preview.getByRole("button", { name: "重试", exact: true }).click();
   await expect(preview).toContainText("QUEUE_TIMEOUT");
   await expect(preview).toContainText("第 1 轮");

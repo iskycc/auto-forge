@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,19 +22,13 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
       - name: Validate source and E2E coverage inventory
         run: |
           pnpm format:check
@@ -43,15 +38,16 @@ jobs:
 
   unit-integration:
     name: Unit, integration and performance
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -63,10 +59,6 @@ jobs:
           distribution: temurin
           java-version: "8"
           cache: maven
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
       - name: Run automated tests
         run: |
           pnpm test
@@ -101,11 +93,11 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Set up Node.js
+      - name: Set up Node.js for plugin metadata checks
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.16.0
-      - name: Enable pnpm launcher
+      - name: Enable locked pnpm launcher
         run: corepack enable
       - name: Build and verify Jenkins plugins
         run: pnpm test:jenkins-plugins
@@ -117,6 +109,7 @@ jobs:
 
   lite-browser:
     name: Lite browser · ${{ matrix.scenario }}
+    needs: build
     runs-on: ubuntu-24.04
     # Production build, desktop screenshots and artifact upload share this deadline.
     timeout-minutes: ${{ matrix.timeout_minutes || 15 }}
@@ -185,14 +178,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Install CJK font for reviewable UI screenshots
         if: matrix.screenshots
         run: |
@@ -200,27 +189,6 @@ jobs:
           sudo apt-get install --yes --no-install-recommends fonts-wqy-microhei
           fc-cache --force
           test -n "$(fc-list :lang=zh family)"
-      - name: Set up Go for embedded executable resources
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Set up Java 8 for bundled Adapter
-        if: matrix.agent_resources
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: "8"
-          cache: maven
-      - name: Build verified Agent resources for Runner update controls
-        if: matrix.agent_resources
-        run: pnpm build:agent-resources
-      - name: Set up Java for embedded Jenkins plugins
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -271,19 +239,16 @@ jobs:
 
   lite-concurrency:
     name: Lite 500-slot protocol concurrency
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -310,33 +275,8 @@ jobs:
           retention-days: 14
 
   build:
-    name: Production platform and Agent build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Set up Java for embedded Jenkins plugins
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-      - name: Build immutable production outputs
-        run: pnpm build
+    name: Build shared production outputs
+    uses: ./.github/workflows/acceptance-build.yml
 
   verification-image:
     name: Current SHA amd64 verification image
@@ -358,10 +298,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
       - name: Set up Go for embedded Agent resources
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -399,24 +337,16 @@ jobs:
 
   real-agent-acceptance:
     name: Network-blocked real Agent acceptance
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -438,24 +368,16 @@ jobs:
 
   batch-input-sharing-acceptance:
     name: Batch-shared Runner inputs
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -477,24 +399,16 @@ jobs:
 
   container-executor-acceptance:
     name: Immutable container executor acceptance
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -516,19 +430,16 @@ jobs:
 
   ldap-acceptance:
     name: Network-blocked real LDAP acceptance
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -550,24 +461,16 @@ jobs:
 
   runner-install-acceptance:
     name: Offline SSH and systemd Runner installation
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -589,6 +492,7 @@ jobs:
 
   system-acceptance:
     name: ${{ matrix.name }}
+    needs: build
     runs-on: ubuntu-24.04
     # Pinned toolchains can fall back to upstream downloads. Include preparation,
     # source builds and bounded business checks within the job's total deadline.
@@ -608,8 +512,6 @@ jobs:
           - name: Full · asset lifecycle
             command: bash scripts/quality/test-full-business-recovery.sh browser-assets
             timeout_minutes: 15
-          - name: Full distributed deployment
-            command: pnpm test:distributed
           - name: Full · governance
             command: bash scripts/quality/test-full-business-recovery.sh browser-governance
             timeout_minutes: 15
@@ -626,19 +528,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-      - name: Install locked dependencies
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Restore shared production outputs
+        uses: ./.github/actions/restore-acceptance-build
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -658,15 +551,24 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  distributed-acceptance:
+    name: Full distributed acceptance
+    needs: build
+    uses: ./.github/workflows/distributed.yml
+    with:
+      build_artifact: acceptance-runtime
+
   ci-gate:
     name: CI gate
-    if: always()
+    if: always() && !cancelled()
     needs:
       [
         static-quality,
         unit-integration,
         jenkins-plugins,
         lite-browser,
+        lite-concurrency,
+        distributed-acceptance,
         build,
         real-agent-acceptance,
         batch-input-sharing-acceptance,
@@ -678,12 +580,26 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Set up Node.js for cost reporting
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Check out the cost reporting script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Report cumulative runner time and slowest jobs
+        if: always() && !cancelled()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/quality/report-ci-cost.mjs
       - name: Require every parallel gate
         run: |
           test "${{ needs.static-quality.result }}" = success
           test "${{ needs.unit-integration.result }}" = success
           test "${{ needs.jenkins-plugins.result }}" = success
           test "${{ needs.lite-browser.result }}" = success
+          test "${{ needs.lite-concurrency.result }}" = success
+          test "${{ needs.distributed-acceptance.result }}" = success
           test "${{ needs.build.result }}" = success
           test "${{ needs.real-agent-acceptance.result }}" = success
           test "${{ needs.batch-input-sharing-acceptance.result }}" = success

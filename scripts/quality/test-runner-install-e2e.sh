@@ -130,8 +130,8 @@ done
 
 initialize_platform
 prepare_agent_ca
-pnpm build:agent-resources
-pnpm --filter @autoforge/web build
+node scripts/quality/prepare-acceptance-build.mjs agents
+node scripts/quality/prepare-acceptance-build.mjs web
 start_services
 
 export E2E_BASE_URL="${web_base_url}"

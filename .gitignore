@@ -72,3 +72,6 @@ jenkins-test/
 
 /apps/log-archive-viewer/cmd/viewer/assets/viewer.js.LEGAL.txt
 /apps/log-archive-viewer/cmd/viewer/assets/licenses.txt
+
+# Verified CI-only production output bundle
+/.acceptance-build/

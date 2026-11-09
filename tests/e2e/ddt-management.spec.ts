@@ -1511,7 +1511,7 @@ test("DDT recycle folders paginate and safely clear all pages with recoverable f
   await recycle.getByRole("button", { name: "清空回收站", exact: true }).click();
   await confirmation.getByRole("button", { name: "确认清空", exact: true }).click();
   await expect(recycle).toContainText("回收站为空");
-  await expect(recycle.getByRole("button", { name: "清空回收站", exact: true })).toBeDisabled();
+  await expect(recycle.getByRole("button", { name: /清空回收站$/u })).toBeDisabled();
   expect(clearRequests).toBe(3);
   expect((await browserJson(page, ddtPath(other, "recycle/groups"))).body).toMatchObject({
     totalCases: 1,

@@ -11,11 +11,11 @@ const externalServer = process.env.AUTOFORGE_E2E_EXTERNAL_SERVER === "1";
 // Executable and Maven preparation precede the server's bounded startup clock.
 // Network-blocked harnesses prepare the same verified resources before entering their namespace.
 if (!externalServer) {
-  for (const preparation of [
-    "scripts/release/ensure-jenkins-resources.mjs",
-    "scripts/release/ensure-log-viewer-resources.mjs",
-  ])
-    execFileSync(process.execPath, [resolve(preparation)], { stdio: "inherit" });
+  execFileSync(
+    process.execPath,
+    [resolve("scripts/quality/prepare-acceptance-build.mjs"), "resources"],
+    { stdio: "inherit" },
+  );
 }
 if (externalServer && !process.env.AUTOFORGE_E2E_DATA_DIR)
   throw new Error("External E2E server requires its existing AUTOFORGE_E2E_DATA_DIR.");
@@ -88,7 +88,7 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: `pnpm --filter @autoforge/web build && NODE_ENV=production pnpm --filter @autoforge/web start -- --data-dir=${e2eDataDirectory}`,
+          command: `node scripts/quality/prepare-acceptance-build.mjs web && NODE_ENV=production pnpm --filter @autoforge/web start -- --data-dir=${e2eDataDirectory}`,
           url: "http://127.0.0.1:3100",
           reuseExistingServer: true,
           timeout: 120_000,

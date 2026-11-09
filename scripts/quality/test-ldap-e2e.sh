@@ -226,7 +226,7 @@ prepare_certificates
 prepare_directory_entries
 if [[ -z "${E2E_LDAP_EXTERNAL_BASE_URL:-}" ]]; then
   initialize_platform
-  pnpm --filter @autoforge/web build
+  node scripts/quality/prepare-acceptance-build.mjs web
 elif [[ -z "${E2E_ADMIN_BOOTSTRAP_TOKEN:-}" ]]; then
   echo "E2E_ADMIN_BOOTSTRAP_TOKEN is required with an external AutoForge service." >&2
   exit 1

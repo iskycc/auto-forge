@@ -183,6 +183,12 @@ prepare_agent_binary() {
       exit 1
       ;;
   esac
+  if [[ "${AUTOFORGE_ACCEPTANCE_PREBUILT:-}" == "1" ]]; then
+    node scripts/quality/prepare-acceptance-build.mjs agents
+    E2E_CONTAINER_AGENT_BINARY="${repository_root}/resources/agents/linux-${architecture}/autoforge-agent"
+    export E2E_CONTAINER_AGENT_BINARY
+    return
+  fi
   SOURCE_DATE_EPOCH=0 \
   AUTOFORGE_RELEASE_REVISION="${GITHUB_SHA:-unknown}" \
     bash "${repository_root}/scripts/release/build-agent.sh" \
@@ -224,8 +230,7 @@ prepare_cgroup_delegation() {
 }
 
 run_network_blocked_browser_flow() {
-  pnpm build:jenkins-resources
-  node scripts/release/ensure-log-viewer-resources.mjs
+  node scripts/quality/prepare-acceptance-build.mjs resources
   # Both wrappers bring the isolated loopback up while they still hold the
   # capability to do so; the acceptance script must not retry `ip link` after
   # setpriv has dropped privileges, because it fails with RTNETLINK EPERM.

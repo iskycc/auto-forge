@@ -1,12 +1,33 @@
 # Release 与离线交付
 
-AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release，由 `.github/workflows/release-checks.yml` 并行检查标签源码，并在 Release 成功后由 `.github/workflows/release-acceptance.yml` 检查已发布资产。Release 交付 Lite/Full 共用的后端镜像和版本化 Compose 部署包；每个后端镜像内置 Linux `amd64`、`arm64` Runner Agent，不再生成独立 Agent Release 资产。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行导出镜像、锁定版本并遵守各项目许可。
+AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release，Release 成功后，由 `.github/workflows/release-checks.yml` 复用实际镜像中的产物检查标签源码，并由 `.github/workflows/release-acceptance.yml` 检查已发布资产。Release 交付 Lite/Full 共用的后端镜像和版本化 Compose 部署包；每个后端镜像内置 Linux `amd64`、`arm64` Runner Agent，不再生成独立 Agent Release 资产。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行导出镜像、锁定版本并遵守各项目许可。
+
+## 构建复用与运行成本
+
+普通分支 CI 通过 `acceptance-build.yml` 先生成一份生产构建。Lite 浏览器、500 槽位、真实 Agent、SSH 安装、LDAP、Full 与断网分组下载同一份 `acceptance-runtime`，各自使用独立数据库和临时目录。Full 分布式验收改为 CI 调用的可复用工作流，删除与原系统矩阵完全重复的 `browser-distributed` 调用；四个 Full 分区和所有既有场景保留，500 槽位和 Full 分布式结果均纳入 CI gate。手动启动 Full 分布式验收也只构建一次。
+
+正式发布先完成双架构镜像，amd64 作业从刚验证过的镜像提取 Web、Worker、Agent、Jenkins 插件和离线查看器，供后续 `Release checks` 复用；没有再次执行 Next、Worker 或内置资源构建。`Published Release acceptance` 继续下载并核对签名后的正式离线包，验证实际容器、升级、回滚和断网路径。两个 CPU 架构仍使用原生 runner 独立构建，不把 amd64 代码直接放入 arm64 镜像。
+
+共享产物有逐文件 SHA-256、可执行位、符号链接、源码摘要、Git 提交、Node 精确版本、ABI 和架构清单；消费者校验后才启动。校验失败直接失败，不偷偷重建或使用别的提交。发布事件还核对 tag 与构建提交，并通过原始 Release run ID 下载产物。手动从新分支复验历史版本时不套用旧产物，保留源码独立构建路径。
+
+产物不包含 `.next/cache`、开发输出、平台配置、凭据或测试数据库。编译缓存通过独立的 Next 缓存保存；pnpm 使用操作系统、CPU、Node 主版本和 lockfile 区分内容存储，安装仍使用 `--frozen-lockfile`。Full 的固定 NATS／MinIO 工具仅准备一次，按内容摘要缓存和分发，使用前仍核对原始固定 SHA-256；缓存损坏不会被当作可执行文件使用。
+
+CI gate 的作业摘要汇总累计 runner 运行分钟和最慢作业，不将排队时间计作运行成本。2026-11-08 的优化前基线为 CI 265.8 分钟、独立 Full 46.2 分钟，共约 312 runner 分钟；优化后的实际节省应以相同范围的完整流水线报告为准。长时间的混合负载和故障恢复检查仍完整执行，不以延长超时、跳过断言或整场景重试降低失败率。
+
+本地默认命令继续按源码构建。排查 CI 产物复用时，可在还原归档后运行：
+
+```bash
+node scripts/quality/acceptance-build.mjs verify
+AUTOFORGE_ACCEPTANCE_PREBUILT=1 node scripts/quality/prepare-acceptance-build.mjs web
+```
+
+手动标记预构建不会绕过校验；缺失、损坏或源码不匹配均拒绝启动。
 
 ## 发布条件
 
 当前正式发布线从 `v1.22.0` 开始，后续默认小版本按 `v1.22.1`、`v1.22.2` 递增，不再新增 `v1.21.x` 版本；切换下一发布线时另行明确版本号。既有版本和不可变 tag 保留。
 
-正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 会同时触发相互独立的 `Release` 与 `Release checks` workflow；`Release` 成功完成后再触发 `Published Release acceptance`，不在测试 Job 内轮询未完成的发布。手动发布时，GitHub 的 “Use workflow from” 和 `Release` workflow 的 `tag` 输入必须指向同一个 tag，保证源码提交、构建来源证明和 Release 一致；源码检查和发布资产验收都可以从默认分支手动启动，并通过 `tag` 输入选择要复验的版本。手动发布资产复验使用所选默认分支 revision 的验收工具检查不可变 Release，允许在不改写历史 tag 的前提下修复验收工具。
+正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 先触发 `Release`；成功完成后再触发 `Release checks` 与 `Published Release acceptance`，不在测试 Job 内轮询未完成的发布。手动发布时，GitHub 的 “Use workflow from” 和 `Release` workflow 的 `tag` 输入必须指向同一个 tag，保证源码提交、构建来源证明和 Release 一致；源码检查和发布资产验收都可以从默认分支手动启动，并通过 `tag` 输入选择要复验的版本。手动发布资产复验使用所选默认分支 revision 的验收工具检查不可变 Release，允许在不改写历史 tag 的前提下修复验收工具。
 
 只有用户明确要求“最快路径”时，才采用仅 Release 的快速发布：复用已完成的定向验证，在变更说明中列出未运行的完整验收，发布提交使用 `[skip ci]`，再从对应不可变语义 tag 手动启动 Release。为避免标签源码检查与发布完成事件展开标准矩阵，可临时停用 `Release checks`、`Published Release acceptance`，先记录原状态，发布成功、失败或中断后都恢复原状态。不得永久停用检查或修改工作流断言；双架构构建、镜像启动、内置资源、SBOM、签名和资产完整性仍由 Release 保留。
 

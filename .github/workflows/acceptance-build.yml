@@ -1,0 +1,47 @@
+name: Shared acceptance build
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Production platform and Agent build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install cached locked dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Set up Java for embedded Jenkins plugins
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Cache incremental Next compiler state
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/web/.next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: next-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      - name: Prepare cached Full tools
+        uses: ./.github/actions/setup-full-tools
+      - name: Build immutable production outputs
+        run: pnpm build
+      - name: Seal the shared production build
+        run: node scripts/quality/acceptance-build.mjs seal
+      - name: Share the exact production outputs with all acceptance jobs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceptance-runtime
+          path: .acceptance-build/runtime.tar.gz
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
