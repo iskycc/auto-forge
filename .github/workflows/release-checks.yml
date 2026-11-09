@@ -10,6 +10,10 @@ on:
         description: Existing semantic version tag to check, for example v0.2.0
         required: true
         type: string
+      build_run_id:
+        description: Optional CI or Release run with a successful build of this harness's exact commit
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -38,12 +42,19 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
 
+      - name: Set up Node.js for build provenance verification
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
       - name: Resolve semantic version tag
         id: release
         env:
           REQUESTED_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
           RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
           RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+          REUSE_BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ ! "${REQUESTED_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release tag: ${REQUESTED_TAG}" >&2
@@ -57,6 +68,9 @@ jobs:
           fi
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             checks_revision="${GITHUB_SHA}"
+            if [[ -n "${REUSE_BUILD_RUN_ID}" ]]; then
+              RELEASE_RUN_ID="$(node scripts/quality/acceptance-build-origin.mjs "${REUSE_BUILD_RUN_ID}" "${checks_revision}" "${GITHUB_REPOSITORY}")"
+            fi
           fi
           {
             echo "checks_revision=${checks_revision}"
@@ -196,7 +210,7 @@ jobs:
         if: always() && !cancelled() && matrix.name == 'Lite 500 protocol concurrency'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-lite-concurrency-${{ needs.prepare.outputs.tag }}
+          name: release-lite-concurrency-${{ needs.prepare.outputs.tag }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/autoforge-performance
           if-no-files-found: warn
           retention-days: 14

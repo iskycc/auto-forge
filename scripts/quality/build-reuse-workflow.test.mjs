@@ -41,3 +41,14 @@ test("release source acceptance starts after publishing and consumes that exact 
   assert.match(checks, /run_id: \$\{\{ needs.prepare.outputs.build_run_id \}\}/);
   assert.match(checks, /node scripts\/quality\/prepare-acceptance-build.mjs all/);
 });
+
+test("manual source checks reuse only a successfully built artifact for the harness's own commit", async () => {
+  const checks = await readFile(".github/workflows/release-checks.yml", "utf8");
+  assert.match(checks, /build_run_id:\n\s+description: Optional CI or Release run/);
+  assert.match(checks, /checks_revision="\$\{GITHUB_SHA\}"/);
+  assert.match(
+    checks,
+    /acceptance-build-origin.mjs "\$\{REUSE_BUILD_RUN_ID\}" "\$\{checks_revision\}" "\$\{GITHUB_REPOSITORY\}"/,
+  );
+  assert.match(checks, /run_id: \$\{\{ needs.prepare.outputs.build_run_id \}\}/);
+});

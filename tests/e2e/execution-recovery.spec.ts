@@ -186,6 +186,9 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
     .toBe(1);
   const preview = page.getByRole("tooltip").filter({ hasText: "执行异常原因" });
   await expect(preview.getByRole("alert")).toContainText("悬浮原因暂时不可用");
+  // Keep keyboard focus in the interactive popup while the error changes its
+  // size. A table refresh may otherwise move the badge away from the pointer.
+  await preview.getByRole("button", { name: "重试", exact: true }).focus();
   await waitForUiTransitions(page);
   await preview.getByRole("button", { name: "重试", exact: true }).click();
   await expect(preview).toContainText("QUEUE_TIMEOUT");

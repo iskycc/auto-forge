@@ -8,7 +8,15 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-const execute = promisify(execFile);
+const executeFile = promisify(execFile);
+function execute(command, args, options = {}) {
+  // A restored CI build exposes its real tool cache. Fault fixtures must use
+  // an isolated environment so an earlier successful download cannot mask HTTP failures.
+  return executeFile(command, args, {
+    ...options,
+    env: { ...process.env, AUTOFORGE_ACCEPTANCE_DEPENDENCY_CACHE: "", ...options.env },
+  });
+}
 const script = resolve("scripts/quality/download-acceptance-dependency.sh");
 const content = Buffer.from("Pinned acceptance dependency\n");
 const checksum = createHash("sha256").update(content).digest("hex");

@@ -10,7 +10,7 @@ AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 Git
 
 还原时显式保留归档中的文件权限，避免普通用户的 umask 改变校验结果；从镜像提取时先复制完整 `/app`，让 Next 的相对模块链接始终位于同一应用目录内，再筛选所需构建文件。
 
-共享产物有逐文件 SHA-256、可执行位、符号链接、源码摘要、Git 提交、Node 精确版本、ABI 和架构清单；消费者校验后才启动。校验失败直接失败，不偷偷重建或使用别的提交。发布事件还核对 tag 与构建提交，并通过原始 Release run ID 下载产物。手动从新分支复验历史版本时不套用旧产物，保留源码独立构建路径。
+共享产物有逐文件 SHA-256、可执行位、符号链接、源码摘要、Git 提交、Node 精确版本、ABI 和架构清单；消费者校验后才启动。校验失败直接失败，不偷偷重建或使用别的提交。发布事件还核对 tag 与构建提交，并通过原始 Release run ID 下载产物。手动从新分支复验历史版本时不套用旧提交的产物。可填写 `build_run_id`，复用当前验收工具提交已经成功生成的 CI 构建：核对同仓库、相同完整 SHA、可信构建作业成功和未过期产物摘要，再进行逐文件校验；其他 CI 测试仍在运行时即可使用已完成的构建。未填写时保留源码独立构建路径，填错提交、构建未完成或产物过期会明确拒绝，不等待或静默换用别的提交。已发布镜像的签名、实际业务和升级回滚仍由独立发布后验收覆盖。
 
 产物不包含 `.next/cache`、开发输出、平台配置、凭据或测试数据库。编译缓存通过独立的 Next 缓存保存；pnpm 使用操作系统、CPU、Node 主版本和 lockfile 区分内容存储，安装仍使用 `--frozen-lockfile`。Full 的固定 NATS／MinIO 工具仅准备一次，按内容摘要缓存和分发，使用前仍核对原始固定 SHA-256；缓存损坏不会被当作可执行文件使用。
 
@@ -24,6 +24,8 @@ CI gate 的作业摘要汇总累计 runner 运行分钟和最慢作业，不将�
 node scripts/quality/acceptance-build.mjs verify
 AUTOFORGE_ACCEPTANCE_PREBUILT=1 node scripts/quality/prepare-acceptance-build.mjs web
 ```
+
+例如修正了测试夹具后，可从默认分支运行 `gh workflow run release-checks.yml --ref main -f tag=v1.22.6 -f build_run_id=RUN_ID`；RUN_ID 必须是该默认分支当前提交的成功构建所属运行 ID。这样复验无需在每个分组重编译，且不会改写历史 tag 或正式镜像。
 
 手动标记预构建不会绕过校验；缺失、损坏或源码不匹配均拒绝启动。
 
