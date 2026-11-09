@@ -4,7 +4,7 @@ AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 Git
 
 ## 构建复用与运行成本
 
-普通分支 CI 通过 `acceptance-build.yml` 先生成一份生产构建。Lite 浏览器、500 槽位、真实 Agent、SSH 安装、LDAP、Full 与断网分组下载同一份 `acceptance-runtime`，各自使用独立数据库和临时目录。Full 分布式验收改为 CI 调用的可复用工作流，删除与原系统矩阵完全重复的 `browser-distributed` 调用；四个 Full 分区和所有既有场景保留，500 槽位和 Full 分布式结果均纳入 CI gate。手动启动 Full 分布式验收也只构建一次。
+普通分支 CI 通过 `acceptance-build.yml` 先生成一份生产构建。Lite 浏览器、500 槽位、真实 Agent、SSH 安装、LDAP、Full 与断网分组下载同一份 `acceptance-runtime`，各自使用独立数据库和临时目录。Full 分布式验收改为 CI 调用的可复用工作流，删除与原系统矩阵完全重复的 `browser-distributed` 调用；四个 Full 分区和所有既有场景保留，500 槽位和 Full 分布式结果均纳入 CI gate。手动启动 Full 分布式验收也只构建一次。Lite 浏览器矩阵最多同时运行 4 组，系统矩阵最多 3 组，避免它们占满常见的 20 个托管 runner 配额，让 500 槽位长场景尽早开始；实际同启数量仍取决于账户配额及其他 workflow，所有场景和单个场景的压力负载不变。
 
 正式发布先完成双架构镜像，amd64 作业从刚验证过的镜像提取 Web、Worker、Agent、Jenkins 插件和离线查看器，供后续 `Release checks` 复用；没有再次执行 Next、Worker 或内置资源构建。`Published Release acceptance` 继续下载并核对签名后的正式离线包，验证实际容器、升级、回滚和断网路径。两个 CPU 架构仍使用原生 runner 独立构建，不把 amd64 代码直接放入 arm64 镜像。
 

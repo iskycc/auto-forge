@@ -11,6 +11,14 @@ test("CI shares one production build across all browser and distributed partitio
   assert.match(ci, /needs\.lite-concurrency\.result/);
   assert.match(ci, /test-offline.sh assets/);
   assert.match(ci, /test-offline.sh recovery/);
+  const browserLane = ci.split("  lite-browser:\n")[1].split("  lite-concurrency:\n")[0];
+  const systemLane = ci.split("  system-acceptance:\n")[1].split("  distributed-acceptance:\n")[0];
+  const browserSlots = Number(browserLane.match(/max-parallel: (\d+)/)?.[1]);
+  const systemSlots = Number(systemLane.match(/max-parallel: (\d+)/)?.[1]);
+  // Seven single-partition consumers and up to two finishing initial checks
+  // share a common 20-runner pool with four distributed consumers.
+  assert.ok(browserSlots > 0 && systemSlots > 0);
+  assert.ok(7 + 2 + browserSlots + systemSlots <= 16);
   assert.match(ci, /ci-gate:[\s\S]*Check out the cost reporting script[\s\S]*report-ci-cost.mjs/);
   for (const job of [
     "lite-browser",

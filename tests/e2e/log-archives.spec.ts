@@ -495,6 +495,9 @@ test("monthly log archive downloads an offline viewer and keeps public logs afte
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page.goto("/settings/platform?section=archives");
+      // The page can finish loading before this client island is hydrated.
+      // Its selection control explicitly becomes enabled when handlers are ready.
+      await expect(archiveRow.getByRole("checkbox")).toBeEnabled();
       await archiveRow.getByRole("button", { name: /删除平台副本$/ }).click();
       const dialog = page.getByRole("dialog", { name: "确认下载并删除平台归档副本", exact: true });
       await expect(
