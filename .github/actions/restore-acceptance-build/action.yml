@@ -19,8 +19,7 @@ runs:
     - name: Extract and verify exact source, runtime and output digests
       shell: bash
       run: |
-        tar --extract --gzip --file .acceptance-build/runtime.tar.gz
-        node scripts/quality/acceptance-build.mjs verify
+        bash "${{ github.action_path }}/restore.sh"
         echo 'AUTOFORGE_ACCEPTANCE_PREBUILT=1' >> "${GITHUB_ENV}"
         echo "AUTOFORGE_ACCEPTANCE_DEPENDENCY_CACHE=${GITHUB_WORKSPACE}/.acceptance-build/dependencies" >> "${GITHUB_ENV}"
         agent_architecture="$(node -p "process.arch === 'arm64' ? 'arm64' : 'amd64'")"

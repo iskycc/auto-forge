@@ -224,7 +224,7 @@ jobs:
         if: always() && matrix.screenshots
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ui-layout-screenshots-${{ matrix.scenario }}-${{ github.sha }}
+          name: ui-layout-screenshots-${{ matrix.scenario }}-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/autoforge-ui-screenshots
           if-no-files-found: warn
           retention-days: 7
@@ -232,7 +232,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: browser-trace-${{ matrix.scenario }}
+          name: browser-trace-${{ matrix.scenario }}-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
@@ -361,7 +361,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: real-agent-acceptance-diagnostics
+          name: real-agent-acceptance-diagnostics-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
@@ -392,7 +392,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: batch-input-sharing-diagnostics
+          name: batch-input-sharing-diagnostics-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
@@ -423,7 +423,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: container-executor-acceptance-diagnostics
+          name: container-executor-acceptance-diagnostics-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
@@ -454,7 +454,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ldap-acceptance-diagnostics
+          name: ldap-acceptance-diagnostics-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
@@ -485,7 +485,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: runner-install-acceptance-diagnostics
+          name: runner-install-acceptance-diagnostics-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
@@ -546,7 +546,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: system-acceptance-diagnostics-${{ matrix.name }}
+          name: system-acceptance-diagnostics-${{ matrix.name }}-${{ github.run_attempt }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7

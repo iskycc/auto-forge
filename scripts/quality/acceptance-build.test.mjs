@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -109,6 +109,41 @@ test("does not accept a manifest with omitted mandatory outputs", async (t) => {
   await assert.rejects(verifyAcceptanceBuild(root, "web"), /BUILD_ID/);
 });
 
+test("restores archived permissions despite a restrictive consumer umask", async (t) => {
+  const { root } = await fixture(t);
+  const output = join(root, "apps/web/.next/BUILD_ID");
+  await chmod(output, 0o666);
+  await mkdir(join(root, "scripts/quality"), { recursive: true });
+  await cp(
+    resolve("scripts/quality/acceptance-build.mjs"),
+    join(root, "scripts/quality/acceptance-build.mjs"),
+  );
+  await sealAcceptanceBuild(root);
+  await packAcceptanceBuild(root);
+  execFileSync(
+    "bash",
+    [
+      "-c",
+      "umask 0022; tar --extract --gzip --no-same-permissions --file .acceptance-build/runtime.tar.gz",
+    ],
+    { cwd: root },
+  );
+  assert.equal((await stat(output)).mode & 0o777, 0o644);
+  await assert.rejects(verifyAcceptanceBuild(root, "web"), /BUILD_ID/);
+  execFileSync(
+    "bash",
+    [
+      "-c",
+      'umask 0022; bash "$1"',
+      "restore",
+      resolve(".github/actions/restore-acceptance-build/restore.sh"),
+    ],
+    { cwd: root },
+  );
+  assert.equal((await stat(output)).mode & 0o777, 0o666);
+  await verifyAcceptanceBuild(root, "web");
+});
+
 test("exports the actual image outputs, replaces stale files and cleans up the temporary container", async (t) => {
   const { root, git } = await fixture(t);
   const imageFiles = join(root, "image-files");
@@ -132,7 +167,10 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FIXTURE_CALLS, args[0] + "\\n");
 if (args[0] === "image") process.stdout.write(process.env.FIXTURE_REVISION);
 else if (args[0] === "create") process.stdout.write("fixture-container");
-else if (args[0] === "cp") fs.cpSync(path.join(process.env.FIXTURE_IMAGE, args[1].split(":/app/")[1]), args[2], { recursive: true });
+else if (args[0] === "cp") {
+  if (args[1] !== "fixture-container:/app/.") throw new Error("invalid symlink outside a partial Docker copy");
+  fs.cpSync(process.env.FIXTURE_IMAGE, args[2], { recursive: true, verbatimSymlinks: true });
+}
 else if (args[0] !== "rm") process.exit(1);
 `,
   );
