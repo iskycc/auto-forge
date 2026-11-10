@@ -1,3 +1,9 @@
+import { discoverableExecutionWorkSql, recoverableRoundTailSql } from "./round-dispatch-probe";
+import { advanceSqliteSchedulingRound } from "./sqlite-round-dispatch";
+import {
+  batchConcurrencyLimitSql,
+  overlappingRoundConcurrencySql,
+} from "./round-concurrency-query";
 import {
   createExecutionDispatchOrderKey,
   executionDispatchOrderExpression,
@@ -8,6 +14,11 @@ import {
   serializeBatchPolicy,
 } from "./run-batch-environment-addresses";
 import { publicRequestKey } from "./public-suite-execution";
+import {
+  assertPublicSuiteEnvironmentAvailable,
+  publicSuiteEnvironmentPageQuery,
+  type PublicSuiteEnvironmentRow,
+} from "./public-suite-environment-guard";
 import { auditEventRow } from "./audit-event-row";
 import { HISTORY_SNAPSHOT_VERSION, historySnapshotWrite } from "./run-batch-history-snapshot";
 import { runBatchCountersSchema } from "@autoforge/contracts";
@@ -298,16 +309,19 @@ export class SqliteRunBatchRepository
               "PUBLIC_SUITE_LINK_NOT_FOUND",
               "公开执行链接已撤销或分享人已停用。",
             );
-          const active = this.handle.client
-            .prepare(
-              "SELECT id FROM run_batches WHERE suite_id=? AND status IN ('queued','dispatching','scheduled','running') AND batch_kind<>'case_log_rerun' LIMIT 1",
-            )
-            .get(record.suiteId);
-          if (active)
-            throw new DomainError(
-              "PUBLIC_SUITE_EXECUTION_ACTIVE",
-              "此任务已有待执行或执行中的批次，请等待结束后再执行。",
+          let afterId = "";
+          for (;;) {
+            const rows = this.handle.db.all<PublicSuiteEnvironmentRow>(
+              publicSuiteEnvironmentPageQuery("sqlite", record.suiteId, afterId),
             );
+            for (const row of rows)
+              assertPublicSuiteEnvironmentAvailable(
+                adapterRuntime?.environmentAddresses ?? [],
+                row,
+              );
+            if (rows.length < 100) break;
+            afterId = rows.at(-1)!.id;
+          }
         }
         // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
         const nextSequence = (
@@ -1287,14 +1301,10 @@ export class SqliteRunBatchRepository
       this.handle.client
         .prepare(
           `SELECT id FROM run_batches
-           WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL AND pause_requested_at IS NULL
+           WHERE status IN ('queued','dispatching','scheduled','running') AND cancel_requested_at IS NULL AND pause_requested_at IS NULL
              AND scheduled_for <= ?
              AND ${schedulableBatchCapacitySql("sqlite", "run_batches")}
-             AND EXISTS (
-               SELECT 1 FROM execution_runs run
-               WHERE run.batch_id = run_batches.id
-                 AND run.status = 'queued' AND run.held_round = 0
-             )
+             AND ${discoverableExecutionWorkSql("sqlite", "run_batches")}
            ORDER BY ${schedulableBatchOrderSql("sqlite", "run_batches")} LIMIT ?`,
         )
         .all(now, now, agingIntervalMinutes, limit) as Array<{ id: string }>
@@ -1311,14 +1321,10 @@ export class SqliteRunBatchRepository
       this.handle.client
         .prepare(
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
-           WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
+           WHERE br.runner_id=? AND b.status IN ('queued','dispatching','scheduled','running')
              AND b.cancel_requested_at IS NULL AND b.pause_requested_at IS NULL AND b.scheduled_for <= ?
              AND ${schedulableBatchCapacitySql("sqlite", "b")}
-             AND EXISTS (
-               SELECT 1 FROM execution_runs run
-               WHERE run.batch_id = b.id
-                 AND run.status = 'queued' AND run.held_round = 0
-             )
+             AND ${discoverableExecutionWorkSql("sqlite", "b")}
            ORDER BY ${schedulableBatchOrderSql("sqlite", "b")} LIMIT ?`,
         )
         .all(runnerId, now, now, agingIntervalMinutes, limit) as Array<{ id: string }>
@@ -1403,7 +1409,12 @@ export class SqliteRunBatchRepository
         : this.handle.db.select().from(runners).where(inArray(runners.id, selectedRunnerIds)).all();
     const reservations = activeReservations(this.handle, selectedRunnerIds);
     const runtimeRow = this.handle.db
-      .select({ adapterRuntimeJson: runBatches.adapterRuntimeJson })
+      .select({
+        adapterRuntimeJson: runBatches.adapterRuntimeJson,
+        overlappingConcurrency: sql<
+          number | null
+        >`${sql.raw(overlappingRoundConcurrencySql("sqlite", "run_batches"))}`,
+      })
       .from(runBatches)
       .where(eq(runBatches.id, batchId))
       .get();
@@ -1439,6 +1450,9 @@ export class SqliteRunBatchRepository
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attempts),
       runnerHistoryByRun,
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
+      ...(runtimeRow?.overlappingConcurrency == null
+        ? {}
+        : { overlappingRoundConcurrency: runtimeRow.overlappingConcurrency }),
       ...(retryConcurrencyStateRow
         ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
         : {}),
@@ -1576,6 +1590,20 @@ export class SqliteRunBatchRepository
     });
   }
 
+  async prepareSchedulingRound(batchId: string, now: string): Promise<void> {
+    const pending = this.handle.client
+      .prepare(
+        `SELECT 1 FROM run_batches b WHERE id=?
+      AND retry_mode='round' AND status IN ('queued','dispatching','scheduled','running') AND pause_requested_at IS NULL AND cancel_requested_at IS NULL
+      AND ${recoverableRoundTailSql("sqlite", "b")}`,
+      )
+      .get(batchId);
+    if (!pending) return;
+    await retrySqliteWriteTransaction(this.handle, () =>
+      advanceSqliteSchedulingRound(this.handle, batchId, now),
+    );
+  }
+
   async hasSchedulableRuns(batchId: string): Promise<boolean> {
     const row = this.handle.client
       .prepare(
@@ -1596,6 +1624,7 @@ export class SqliteRunBatchRepository
       const batchScope = this.handle.db
         .select({
           projectId: runBatches.projectId,
+          currentRound: runBatches.currentRound,
           policyJson: runBatches.policyJson,
           adapterRuntimeJson: runBatches.adapterRuntimeJson,
           terminationRequestedAt: runBatches.cancelRequestedAt,
@@ -1613,6 +1642,11 @@ export class SqliteRunBatchRepository
       if (!batchScope) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       if (batchScope.terminationRequestedAt || batchScope.pauseRequestedAt)
         return { reserved: 0, acceptedAttemptIds: [] };
+      if (
+        input.expectedCurrentRound !== undefined &&
+        input.expectedCurrentRound !== batchScope.currentRound
+      )
+        return { reserved: 0, acceptedAttemptIds: [] };
       let remainingProjectSlots = Math.max(
         0,
         (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
@@ -1620,16 +1654,17 @@ export class SqliteRunBatchRepository
       );
       const adapterRuntime = parseProjectAdapterRuntime(batchScope.adapterRuntimeJson);
       const policy = batchPolicy(batchScope.policyJson);
-      const retryConcurrencyState = this.handle.db
-        .select({ concurrency: runBatchRetryConcurrencyStates.concurrency })
-        .from(runBatchRetryConcurrencyStates)
-        .where(eq(runBatchRetryConcurrencyStates.batchId, input.batchId))
-        .get();
-      const batchConcurrency = retryConcurrencyState?.concurrency ?? policy?.concurrency;
-      let remainingBatchSlots =
-        batchConcurrency === undefined
-          ? Number.POSITIVE_INFINITY
-          : Math.max(0, batchConcurrency - batchActiveRuns(this.handle, input.batchId));
+      const batchConcurrency = this.handle.db
+        .select({
+          concurrency: sql<number>`${sql.raw(batchConcurrencyLimitSql("sqlite", "run_batches"))}`,
+        })
+        .from(runBatches)
+        .where(eq(runBatches.id, input.batchId))
+        .get()!.concurrency;
+      let remainingBatchSlots = Math.max(
+        0,
+        batchConcurrency - batchActiveRuns(this.handle, input.batchId),
+      );
       const selectedRunnerIds = new Set(
         this.handle.db
           .select({ runnerId: runBatchRunners.runnerId })

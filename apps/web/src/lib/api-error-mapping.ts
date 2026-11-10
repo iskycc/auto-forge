@@ -116,6 +116,8 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (code === "CASE_SUITE_LOCKED") return 403;
+  if (code === "CASE_SUITE_ARCHIVED") return 409;
   if (code === "JENKINS_BUILD_CONFLICT") return 409;
   if (code === "JENKINS_STATUS_UNAVAILABLE" || code === "JENKINS_API_UNAVAILABLE") return 502;
   if (code === "LOG_ARCHIVE_OFFLINE") return 410;

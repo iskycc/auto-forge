@@ -99,6 +99,7 @@ export type DdtImportJob = DdtScope & {
   id: string;
   status: DdtImportJobStatus;
   conflictStrategy?: "overwrite" | "skip" | "error";
+  overwriteReason?: string;
   uploads: DdtUploadReference[];
   files: DdtImportFile[];
   progressPercent: number;

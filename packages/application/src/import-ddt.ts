@@ -178,6 +178,8 @@ export class DdtImportService {
     jobId: string,
     conflictStrategy: "overwrite" | "skip" | "error",
     projectIds?: readonly string[],
+    overwriteReason?: string,
+    actorId?: string,
   ): Promise<DdtImportJob> {
     const current = await this.repository.getImportJob(jobId, projectIds);
     if (!current) throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
@@ -185,6 +187,8 @@ export class DdtImportService {
     return this.repository.confirmImport({
       jobId,
       conflictStrategy,
+      ...(overwriteReason?.trim() ? { overwriteReason: overwriteReason.trim() } : {}),
+      ...(actorId ? { actorId } : {}),
       dispatchJob: this.jobEnvelope(
         jobId,
         now,
@@ -464,6 +468,7 @@ export class DdtImportService {
             sourceName: file.fileName,
             rows,
             conflictStrategy: job.conflictStrategy,
+            ...(job.overwriteReason ? { overwriteReason: job.overwriteReason } : {}),
             ...(job.requestedBy ? { actorId: job.requestedBy } : {}),
             importedAt: this.clock.now().toISOString(),
             historyIds: rows.map(() => this.ids.next()),

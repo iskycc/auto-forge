@@ -1,3 +1,4 @@
+import { DomainError, assertCaseSuiteLockOwner } from "@autoforge/domain";
 import { batchEnvironmentAddresses } from "./run-batch-environment-addresses";
 import { storedActor } from "./run-batch-actors";
 import type { PublicSuiteExecutionRepository } from "@autoforge/application";
@@ -8,9 +9,9 @@ import {
   publicSuiteExecutionContextSchema,
 } from "@autoforge/contracts";
 import type { SqliteDatabaseHandle } from "./database";
-import { retrySqliteLockContention } from "./database";
+import { retrySqliteLockContention, retrySqliteWriteTransaction } from "./database";
 import type { PostgresDatabaseHandle } from "./postgres-database";
-import { retryPostgresWrite } from "./postgres-transaction";
+import { retryPostgresWrite, runPostgresTransaction } from "./postgres-transaction";
 
 const BATCH_COLUMNS =
   "id,sequence_number,status,total_runs,current_round,requested_by_username,public_execution_json,terminated_by_json,cancel_requested_at,pause_requested_at,scheduled_for,created_at";
@@ -20,23 +21,37 @@ type Query = (
   parameters: readonly string[],
 ) => Promise<Record<string, unknown>[]>;
 
+type WriteLink = (
+  statement: string,
+  parameters: readonly string[],
+  suiteId: string,
+  actorId: string,
+) => Promise<Record<string, unknown>[]>;
+
 class PublicSuiteExecutionQueries implements PublicSuiteExecutionRepository {
   constructor(
     private readonly query: Query,
     private readonly parameter: (index: number) => string,
     private readonly environmentProjection: string,
+    private readonly writeLink: WriteLink,
   ) {}
 
   async publish(suiteId: string, publisherId: string, createdAt: string) {
-    await this.query(
-      `INSERT INTO public_suite_execution_links (suite_id,publisher_id,created_at) VALUES (${this.parameters(3)}) ON CONFLICT(suite_id,publisher_id) DO UPDATE SET revoked_at=NULL,created_at=excluded.created_at`,
+    const rows = await this.writeLink(
+      `INSERT INTO public_suite_execution_links (suite_id,publisher_id,created_at) VALUES (${this.parameters(3)}) ON CONFLICT(suite_id,publisher_id) DO UPDATE SET revoked_at=NULL,created_at=excluded.created_at RETURNING suite_id`,
       [suiteId, publisherId, createdAt],
+      suiteId,
+      publisherId,
     );
+    if (!rows.length)
+      throw new DomainError("CASE_SUITE_LOCKED", "任务已锁定或不存在，不能修改公开执行接入。");
   }
   async revoke(suiteId: string, publisherId: string, revokedAt: string) {
-    await this.query(
+    await this.writeLink(
       `UPDATE public_suite_execution_links SET revoked_at=${this.parameter(1)} WHERE suite_id=${this.parameter(2)} AND publisher_id=${this.parameter(3)}`,
       [revokedAt, suiteId, publisherId],
+      suiteId,
+      publisherId,
     );
   }
   async publisher(suiteId: string, publisherId: string) {
@@ -111,15 +126,25 @@ export class SqlitePublicSuiteExecutionRepository extends PublicSuiteExecutionQu
     super(
       async (statement, parameters) => {
         const prepared = handle.client.prepare(statement);
-        return prepared.reader
-          ? (prepared.all(...parameters) as Record<string, unknown>[])
-          : retrySqliteLockContention(() => {
-              prepared.run(...parameters);
-              return [];
-            });
+        return retrySqliteLockContention(() => {
+          if (prepared.reader) return prepared.all(...parameters) as Record<string, unknown>[];
+          prepared.run(...parameters);
+          return [];
+        });
       },
       () => "?",
       "coalesce(json_extract(policy_json, '$.environmentAddresses'), json_extract(adapter_runtime_json, '$.environmentAddresses'))",
+      async (statement, parameters, suiteId, actorId) =>
+        retrySqliteWriteTransaction(handle, () => {
+          const suite = handle.client
+            .prepare("SELECT locked_by AS lockedBy FROM case_suites WHERE id=?")
+            .get(suiteId) as { lockedBy: string | null } | undefined;
+          assertCaseSuiteLockOwner(suite, actorId);
+          const prepared = handle.client.prepare(statement);
+          if (prepared.reader) return prepared.all(...parameters) as Record<string, unknown>[];
+          prepared.run(...parameters);
+          return [];
+        }),
     );
   }
 }
@@ -135,6 +160,17 @@ export class PostgresPublicSuiteExecutionRepository extends PublicSuiteExecution
       },
       (index) => `$${index}`,
       "coalesce(policy_json::jsonb ->> 'environmentAddresses', adapter_runtime_json::jsonb ->> 'environmentAddresses')",
+      async (statement, parameters, suiteId, actorId) => {
+        await handle.ready;
+        return runPostgresTransaction(handle, async (client) => {
+          const result = await client.query<{ lockedBy: string | null }>(
+            'SELECT locked_by AS "lockedBy" FROM case_suites WHERE id=$1 FOR UPDATE',
+            [suiteId],
+          );
+          assertCaseSuiteLockOwner(result.rows[0], actorId);
+          return (await client.query(statement, [...parameters])).rows as Record<string, unknown>[];
+        });
+      },
     );
   }
 }

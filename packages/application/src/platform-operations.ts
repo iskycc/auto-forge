@@ -256,6 +256,7 @@ export class PlatformOperationsService {
         updatedAt: now.toISOString(),
       },
       parsed.expectedRevision,
+      actor.user.id,
     );
   }
 
@@ -264,7 +265,7 @@ export class PlatformOperationsService {
     schedule: { id: string; projectId: string; revision: number },
   ) {
     requirePermission(actor, "case_suite.manage", schedule.projectId);
-    await this.repository.deleteSchedule(schedule.id, schedule.revision);
+    await this.repository.deleteSchedule(schedule.id, schedule.revision, actor.user.id);
   }
 
   async triggerDueSchedules(

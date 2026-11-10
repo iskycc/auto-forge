@@ -599,8 +599,8 @@ export interface ExecutionControlRepository {
     now: string;
     eventIds: string[];
     limit: number;
-    /** A periodic termination sweep must not scan unrelated queues or active attempts. */
-    scope?: "terminating_batches";
+    /** Bounded lifecycle repair skips unrelated queue and attempt expiry scans. */
+    scope?: "terminating_batches" | "batch_lifecycle";
   }): Promise<RecoveredAttemptExpiration[]>;
   changeBatchScheduling(input: {
     batchId: string;
@@ -1271,6 +1271,8 @@ export interface DdtRepository {
     jobId: string;
     conflictStrategy: "overwrite" | "skip" | "error";
     dispatchJob: JobEnvelope;
+    overwriteReason?: string;
+    actorId?: string;
     updatedAt: string;
     projectIds?: readonly string[];
   }): Promise<DdtImportJob>;
@@ -1328,6 +1330,7 @@ export interface DdtRepository {
     actorId?: string;
     importedAt: string;
     historyIds: readonly string[];
+    overwriteReason?: string;
   }): Promise<DdtImportFileResult>;
   listImportCaseIds(
     jobId: string,
@@ -1343,7 +1346,17 @@ export type CaseSuiteMemberPageQuery = {
   limit: number;
 };
 
+export type SetCaseSuiteLockRecord = {
+  suiteId: string;
+  locked: boolean;
+  expectedRevision: number;
+  actorId: string;
+  actorName: string;
+  updatedAt: string;
+};
+
 export interface CaseSuiteRepository {
+  setLock(input: SetCaseSuiteLockRecord): Promise<CaseSuite>;
   archiveReruns(input: {
     projectId: string;
     projectVersionId: string;
@@ -1396,7 +1409,11 @@ export interface CaseSuiteRepository {
     ruleIds: readonly string[],
   ): Promise<Record<string, string>>;
   updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite>;
-  deleteSuite(input: { suiteId: string; expectedRevision: number }): Promise<void>;
+  deleteSuite(input: {
+    suiteId: string;
+    expectedRevision: number;
+    actorId?: string;
+  }): Promise<void>;
   copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite>;
   addCases(input: {
     suiteId: string;
@@ -1847,6 +1864,8 @@ export type SchedulingSnapshot = {
   /** 每个 run 已使用的 Runner，按 attempt 顺序排列；用于重试轮询。 */
   runnerHistoryByRun?: Record<string, string[]>;
   projectActiveRuns: number;
+  /** Cap of unfinished older rounds (including queued infrastructure retries), never slot count. */
+  overlappingRoundConcurrency?: number;
   retryConcurrencyState?: RetryConcurrencyState;
   retryContext?: {
     executionRound: number;
@@ -1862,6 +1881,8 @@ export type RunnerLiveCapacity = {
 
 export type ReserveSchedulingAssignmentsInput = {
   batchId: string;
+  /** Reject a plan computed before another transaction advanced the batch window. */
+  expectedCurrentRound?: number;
   eventId?: string;
   projectMaximumConcurrency?: number;
   decisions: Array<SchedulingDecision & { attemptId: string; assignmentId: string }>;
@@ -2345,6 +2366,8 @@ export interface RunBatchRepository {
     };
     recordedAt: string;
   }): Promise<"created" | "existing">;
+  /** Releases an eligible adjacent retry round in a short transaction; idle probes stay read-only. */
+  prepareSchedulingRound(batchId: string, now: string): Promise<void>;
   /** 批次是否仍有可立即调度的排队 run；用于短路无分配的空调度轮。 */
   hasSchedulableRuns(batchId: string): Promise<boolean>;
   reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<ReserveAssignmentsOutcome>;
@@ -2389,6 +2412,7 @@ export type RoundRecoveryClaim = {
 export type RoundRecoveryStepCompletion =
   | { outcome: "claim_lost" }
   | { outcome: "step_completed"; remainingSteps: number }
+  | { outcome: "release_deferred" }
   | { outcome: "round_releasing" };
 
 export interface RoundRecoveryRepository {
@@ -2552,8 +2576,12 @@ export interface PlatformOperationsRepository {
 
   listSchedules(projectIds?: readonly string[]): Promise<CaseSuiteSchedule[]>;
   findScheduleBySuite(suiteId: string): Promise<CaseSuiteSchedule | null>;
-  upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number): Promise<CaseSuiteSchedule>;
-  deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void>;
+  upsertSchedule(
+    record: CaseSuiteSchedule,
+    expectedRevision?: number,
+    actorId?: string,
+  ): Promise<CaseSuiteSchedule>;
+  deleteSchedule(scheduleId: string, expectedRevision: number, actorId?: string): Promise<void>;
   listDueSchedules(now: string, limit: number): Promise<CaseSuiteSchedule[]>;
   claimScheduleTrigger(input: {
     scheduleId: string;
@@ -2787,6 +2815,7 @@ export interface WebhookRepository {
     suiteId: string;
     webhookIds: readonly string[];
     recordedAt: string;
+    actorId?: string;
     projectIds?: readonly string[];
   }): Promise<string[]>;
   listDeliveries(

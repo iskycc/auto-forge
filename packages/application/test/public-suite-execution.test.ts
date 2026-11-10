@@ -103,6 +103,37 @@ describe("public task execution", () => {
     expect(f.runs.getSummary).toHaveBeenCalledWith("batch");
     expect(f.runs.create).not.toHaveBeenCalled();
   });
+  it("keeps a locked task executable for other users and allows one-time IP selection", async () => {
+    f.getSummary.mockResolvedValue({
+      ...suite,
+      lockedBy: publisher.id,
+      lockedByName: publisher.username,
+      policy: {
+        ...suite.policy,
+        adapter: { ...suite.policy.adapter, enabled: true, environmentAddresses: ["10.0.0.11"] },
+      },
+    });
+    expect(await f.service.read("suite", publisher.id)).toMatchObject({
+      executable: true,
+      environmentAddresses: ["10.0.0.11"],
+    });
+    for (const delaySeconds of [0, 120]) {
+      await f.service.start(
+        "suite",
+        publisher.id,
+        { requestKey: key, delaySeconds, environmentAddresses: ["10.0.0.21"] },
+        actor,
+      );
+      expect(f.runs.create).toHaveBeenLastCalledWith(
+        { suiteId: "suite", delaySeconds },
+        { username: actor.username, source: actor.source },
+        { publisher, initiator: actor, requestKey: key, environmentAddresses: ["10.0.0.21"] },
+      );
+    }
+    expect(await f.service.read("suite", publisher.id)).toMatchObject({
+      environmentAddresses: ["10.0.0.11"],
+    });
+  });
   it("passes one-time environment addresses into the authorized execution context", async () => {
     const environmentAddresses = ["10.0.0.21", "2001:db8::21"];
     await f.service.start(

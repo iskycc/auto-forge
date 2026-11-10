@@ -517,6 +517,9 @@ export const pgCaseSuites = pgTable(
     id: text("id").primaryKey(),
     isRerun: boolean("is_rerun").notNull().default(false),
     projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
+    lockedBy: text("locked_by"),
+    lockedByName: text("locked_by_name"),
+    lockedAt: text("locked_at"),
     name: text("name").notNull(),
     description: text("description"),
     version: integer("version").notNull(),
@@ -1044,6 +1047,9 @@ export const pgExecutionRuns = pgTable(
       executionDispatchOrderExpression(table),
       table.id,
     ),
+    index("execution_runs_active_round_idx")
+      .on(table.batchId, table.executionRound)
+      .where(sql`${table.status} IN ('assigned','running')`),
     index("execution_runs_batch_round_status_idx").on(
       table.batchId,
       table.executionRound,
@@ -1666,6 +1672,7 @@ export const pgCaseImportJobs = pgTable(
 export const pgDdtImportJobs = pgTable(
   "ddt_import_jobs",
   {
+    overwriteReason: text("overwrite_reason"),
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull(),
     projectVersionId: text("project_version_id").notNull(),
@@ -1898,6 +1905,7 @@ export const pgCaseSuiteDdtItems = pgTable(
 export const pgDdtCaseHistory = pgTable(
   "ddt_case_history",
   {
+    changeReason: text("change_reason"),
     id: text("id").primaryKey(),
     ddtCaseId: text("ddt_case_id").notNull(),
     caseId: text("case_id").notNull(),

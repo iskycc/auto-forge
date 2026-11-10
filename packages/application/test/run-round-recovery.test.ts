@@ -13,6 +13,21 @@ import type {
 const now = "2026-08-23T00:00:00.000Z";
 
 describe("RoundRecoveryService", () => {
+  it("leaves a completed recovery deferred without scheduling or failing the task", async () => {
+    const repository = repositoryWithClaims(claim({ status: "waiting" }));
+    repository.completeWaitingStep.mockResolvedValue({ outcome: "release_deferred" });
+    const scheduling = { schedule: vi.fn(), scheduleForRunner: vi.fn() };
+    const service = createService(
+      repository,
+      { inspectJob: vi.fn(), rebuildLast: vi.fn(), inspectRebuild: vi.fn() },
+      scheduling,
+    );
+    await service.dispatchDue("worker-1");
+    expect(scheduling.schedule).not.toHaveBeenCalled();
+    expect(repository.completeRoundRelease).not.toHaveBeenCalled();
+    expect(repository.fail).not.toHaveBeenCalled();
+  });
+
   it("decrypts the snapshot credential and triggers Rebuild for the last Jenkins build", async () => {
     const repository = repositoryWithClaims(claim({ status: "pending" }));
     const transport = {

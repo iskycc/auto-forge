@@ -7,7 +7,7 @@ import {
 import type { RoundRecoveryClaim, RoundRecoveryRepository } from "@autoforge/application";
 import type { RunBatchStatus } from "@autoforge/domain";
 
-import { queueDeadlineAfter } from "./execution-queue-timing";
+import { advanceSqliteSchedulingRound } from "./sqlite-round-dispatch";
 
 type RecoveryRow = {
   batch_id: string;
@@ -149,8 +149,8 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         .run(input.updatedAt, input.batchId, input.ruleId, input.workerId);
       if (updated.changes !== 1) return { outcome: "claim_lost" };
       const batch = this.handle.client
-        .prepare("SELECT queue_timeout_ms FROM run_batches WHERE id = ?")
-        .get(input.batchId) as { queue_timeout_ms: number };
+        .prepare("SELECT current_round FROM run_batches WHERE id = ?")
+        .get(input.batchId) as { current_round: number };
       const recovery = this.handle.client
         .prepare(
           `SELECT after_round, next_round FROM run_batch_round_recoveries
@@ -173,26 +173,30 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
           .run(input.batchId, input.ruleId, input.workerId);
         return { outcome: "step_completed", remainingSteps: barrier.remaining_steps };
       }
+      if (batch.current_round < recovery.next_round) {
+        advanceSqliteSchedulingRound(this.handle, input.batchId, input.updatedAt);
+      }
+      const current = this.handle.client
+        .prepare("SELECT current_round FROM run_batches WHERE id=?")
+        .get(input.batchId) as { current_round: number };
+      if (
+        batch.current_round >= recovery.next_round ||
+        current.current_round !== recovery.next_round
+      ) {
+        this.handle.client
+          .prepare(
+            `UPDATE run_batch_round_recoveries SET lease_owner=NULL,lease_expires_at=NULL
+          WHERE batch_id=? AND rule_id=? AND lease_owner=? AND status='succeeded'`,
+          )
+          .run(input.batchId, input.ruleId, input.workerId);
+        return { outcome: "release_deferred" };
+      }
       this.handle.client
         .prepare(
-          `UPDATE run_batch_round_recoveries SET status = 'releasing'
-           WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'succeeded'`,
+          `UPDATE run_batch_round_recoveries SET status='releasing'
+        WHERE batch_id=? AND rule_id=? AND lease_owner=? AND status='succeeded'`,
         )
         .run(input.batchId, input.ruleId, input.workerId);
-      this.handle.client
-        .prepare(
-          `UPDATE execution_runs SET held_round = 0, queue_deadline_at = ?, updated_at = ?
-           WHERE batch_id = ? AND status = 'queued' AND held_round <= ?`,
-        )
-        .run(
-          queueDeadlineAfter(input.updatedAt, batch.queue_timeout_ms),
-          input.updatedAt,
-          input.batchId,
-          recovery.next_round,
-        );
-      this.handle.client
-        .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
-        .run(recovery.next_round, input.updatedAt, input.batchId);
       return { outcome: "round_releasing" };
     });
   }

@@ -22,6 +22,7 @@ import {
   ADAPTER_FAILURE_RESULT_CODES,
   ADAPTER_SUCCESS_RESULT_CODES,
   DomainError,
+  assertCaseSuiteEditable,
   RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
 } from "@autoforge/domain";
 
@@ -327,12 +328,13 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     return row ? mapSchedule(row) : null;
   }
 
-  async upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number) {
+  async upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number, actorId?: string) {
     return retrySqliteWriteTransaction(this.handle, () => {
       const suite = this.handle.client
-        .prepare("SELECT id FROM case_suites WHERE id = ?")
-        .get(record.suiteId);
-      if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+        .prepare("SELECT status, locked_by FROM case_suites WHERE id = ?")
+        .get(record.suiteId) as
+        { status: "active" | "archived"; locked_by: string | null } | undefined;
+      assertCaseSuiteEditable(suite && { ...suite, lockedBy: suite.locked_by }, actorId);
       const current = this.handle.client
         .prepare("SELECT * FROM case_suite_schedules WHERE suite_id = ?")
         .get(record.suiteId) as ScheduleRow | undefined;
@@ -387,13 +389,24 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     });
   }
 
-  async deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void> {
-    const result = await retrySqliteLockContention(() =>
-      this.handle.client
+  async deleteSchedule(
+    scheduleId: string,
+    expectedRevision: number,
+    actorId?: string,
+  ): Promise<void> {
+    await retrySqliteWriteTransaction(this.handle, () => {
+      const suite = this.handle.client
+        .prepare(
+          "SELECT s.status, s.locked_by FROM case_suites s JOIN case_suite_schedules p ON p.suite_id=s.id WHERE p.id=?",
+        )
+        .get(scheduleId) as { status: "active" | "archived"; locked_by: string | null } | undefined;
+      if (!suite) versionConflict();
+      assertCaseSuiteEditable(suite && { ...suite, lockedBy: suite.locked_by }, actorId);
+      const result = this.handle.client
         .prepare("DELETE FROM case_suite_schedules WHERE id = ? AND revision = ?")
-        .run(scheduleId, expectedRevision),
-    );
-    if (result.changes !== 1) versionConflict();
+        .run(scheduleId, expectedRevision);
+      if (result.changes !== 1) versionConflict();
+    });
   }
 
   async listDueSchedules(now: string, limit: number): Promise<CaseSuiteSchedule[]> {

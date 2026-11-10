@@ -76,6 +76,7 @@ export default async function CaseSuitesPage({
       </section>
       {activityProjection ? <ReadModelStatusBar snapshots={[activityProjection.status]} /> : null}
       <CaseSuiteManager
+        currentUserId={identity.user.id}
         key={`${activeProjectId}:${hierarchy.projectVersionId ?? ""}:${hierarchy.testStageId ?? ""}:${status}`}
         adapterNameDefaults={caseSuiteAdapterDefaults(
           projects.find((project) => project.id === activeProjectId)?.name ?? "",

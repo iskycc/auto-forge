@@ -36,6 +36,7 @@ import {
   isManualCaseExecution,
   REQUIRED_EXECUTION_LABELS,
   retryConcurrencyDecisionForRound,
+  roundWindowConcurrency,
   scheduleExecutionRuns,
   type CaseSuiteDetails,
   type DdtCase,
@@ -1160,6 +1161,7 @@ export class RunBatchSchedulingService {
     let reserved = 0;
     // 完成上报后的补位调度绝大多数时候无 run 可分配；单个索引探针短路，
     // 避免每次完成都支付整页快照（含候选执行机与项目计数）的成本。
+    await this.batches.prepareSchedulingRound(batchId, now.toISOString());
     if (!(await this.batches.hasSchedulableRuns(batchId))) {
       const batch = await this.batches.getSummary(batchId);
       if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
@@ -1252,6 +1254,10 @@ export class RunBatchSchedulingService {
           recordedAt: now.toISOString(),
         });
       }
+      effectiveBatchConcurrency = roundWindowConcurrency(
+        effectiveBatchConcurrency,
+        snapshot.overlappingRoundConcurrency,
+      );
       const suiteMaximumAssignments =
         effectiveBatchConcurrency === undefined
           ? undefined
@@ -1310,6 +1316,7 @@ export class RunBatchSchedulingService {
           const chunk = decisions.slice(offset, offset + ASSIGNMENTS_PER_RESERVATION);
           const reservation = await this.batches.reserveAssignments({
             batchId,
+            expectedCurrentRound: snapshot.batch.currentRound,
             eventId: this.ids.next(),
             projectMaximumConcurrency: configuration.projectMaximumConcurrency,
             decisions: chunk,
@@ -1340,6 +1347,7 @@ export class RunBatchSchedulingService {
         }
       }
     }
+    await this.batches.prepareSchedulingRound(batchId, this.clock.now().toISOString());
     const batch = await this.batches.getSummary(batchId);
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     return { batch, reserved };

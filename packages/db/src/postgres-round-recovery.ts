@@ -3,7 +3,7 @@ import type { RoundRecoveryClaim, RoundRecoveryRepository } from "@autoforge/app
 import type { RunBatchStatus } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
-import { queueDeadlineAfter } from "./execution-queue-timing";
+import { advancePostgresSchedulingRound } from "./postgres-round-dispatch";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 
 type RecoveryRow = {
@@ -126,12 +126,12 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     return withTransaction(this.handle, async (client) => {
       // 同轮步骤可以在不同 Web/Worker 实例上同时到期。锁定批次可避免两个
       // 最后步骤互相看不到未提交结果，导致全部 succeeded 却无人释放下一轮。
-      const batch = await client.query<{ queue_timeout_ms: number }>(
-        "SELECT queue_timeout_ms FROM run_batches WHERE id = $1 FOR UPDATE",
+      const batch = await client.query<{ current_round: number }>(
+        "SELECT current_round FROM run_batches WHERE id = $1 FOR UPDATE",
         [input.batchId],
       );
-      const queueTimeoutMs = batch.rows[0]?.queue_timeout_ms;
-      if (queueTimeoutMs === undefined) return { outcome: "claim_lost" };
+      const currentRound = batch.rows[0]?.current_round;
+      if (currentRound === undefined) return { outcome: "claim_lost" };
       const updated = await client.query<{ after_round: number; next_round: number }>(
         `UPDATE run_batch_round_recoveries
          SET status = 'succeeded', updated_at = $1
@@ -156,24 +156,28 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         );
         return { outcome: "step_completed", remainingSteps };
       }
+      if (currentRound < recovery.next_round) {
+        await advancePostgresSchedulingRound(client, input.batchId, input.updatedAt);
+      }
+      const current = await client.query<{ current_round: number }>(
+        "SELECT current_round FROM run_batches WHERE id=$1",
+        [input.batchId],
+      );
+      if (
+        currentRound >= recovery.next_round ||
+        current.rows[0]?.current_round !== recovery.next_round
+      ) {
+        await client.query(
+          `UPDATE run_batch_round_recoveries SET lease_owner=NULL,lease_expires_at=NULL
+          WHERE batch_id=$1 AND rule_id=$2 AND lease_owner=$3 AND status='succeeded'`,
+          [input.batchId, input.ruleId, input.workerId],
+        );
+        return { outcome: "release_deferred" };
+      }
       await client.query(
-        `UPDATE run_batch_round_recoveries SET status = 'releasing'
-         WHERE batch_id = $1 AND rule_id = $2 AND lease_owner = $3 AND status = 'succeeded'`,
+        `UPDATE run_batch_round_recoveries SET status='releasing'
+        WHERE batch_id=$1 AND rule_id=$2 AND lease_owner=$3 AND status='succeeded'`,
         [input.batchId, input.ruleId, input.workerId],
-      );
-      await client.query(
-        `UPDATE execution_runs SET held_round = 0, queue_deadline_at = $1, updated_at = $2
-         WHERE batch_id = $3 AND status = 'queued' AND held_round <= $4`,
-        [
-          queueDeadlineAfter(input.updatedAt, queueTimeoutMs),
-          input.updatedAt,
-          input.batchId,
-          recovery.next_round,
-        ],
-      );
-      await client.query(
-        "UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3",
-        [recovery.next_round, input.updatedAt, input.batchId],
       );
       return { outcome: "round_releasing" };
     });

@@ -4,17 +4,20 @@ import { exportValidationReportSchema, type ExportValidationReport } from "@auto
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError } from "@/lib/client-api";
 import { downloadRunBatchExport } from "@/lib/download-run-batch-export";
+import { runBatchExportAccessQuery, type RunBatchExportAccess } from "@/lib/run-batch-export";
 
 export function useRunBatchExport({
   batchId,
   failureMessage = "导出执行结果失败。",
   onDownloaded,
   downloadFile = downloadRunBatchExport,
+  access,
 }: {
   batchId: string;
   failureMessage?: string;
   onDownloaded?: () => void;
   downloadFile?: typeof downloadRunBatchExport;
+  access?: RunBatchExportAccess;
 }) {
   const [state, setState] = useState({
     batchId,
@@ -36,6 +39,7 @@ export function useRunBatchExport({
 
   async function exportFile(query: string): Promise<void> {
     if (activeDownload.current) return;
+    query = runBatchExportAccessQuery(query, access);
     const controller = new AbortController();
     const download = { batchId, controller };
     activeDownload.current = download;

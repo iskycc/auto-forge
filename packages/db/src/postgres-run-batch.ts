@@ -1,3 +1,9 @@
+import { discoverableExecutionWorkSql, recoverableRoundTailSql } from "./round-dispatch-probe";
+import { advancePostgresSchedulingRound } from "./postgres-round-dispatch";
+import {
+  batchConcurrencyLimitSql,
+  overlappingRoundConcurrencySql,
+} from "./round-concurrency-query";
 import {
   createExecutionDispatchOrderKey,
   executionDispatchOrderExpression,
@@ -8,6 +14,11 @@ import {
   serializeBatchPolicy,
 } from "./run-batch-environment-addresses";
 import { publicRequestKey } from "./public-suite-execution";
+import {
+  assertPublicSuiteEnvironmentAvailable,
+  publicSuiteEnvironmentPageQuery,
+  type PublicSuiteEnvironmentRow,
+} from "./public-suite-environment-guard";
 import { auditEventRow } from "./audit-event-row";
 import { HISTORY_SNAPSHOT_VERSION, historySnapshotWrite } from "./run-batch-history-snapshot";
 import { runBatchCountersSchema } from "@autoforge/contracts";
@@ -46,7 +57,11 @@ import {
   type ExceptionRecordRow,
   type ExceptionCompletionRow,
 } from "./execution-exceptions-query";
-import { runPostgresDrizzleTransaction, retryPostgresWrite } from "./postgres-transaction";
+import {
+  runPostgresTransaction,
+  runPostgresDrizzleTransaction,
+  retryPostgresWrite,
+} from "./postgres-transaction";
 import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
@@ -275,14 +290,16 @@ export class PostgresRunBatchRepository
         );
     if (adapterRuntime && record.ddtDebug) adapterRuntime.ddtDebug = record.ddtDebug;
     return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
-      if (record.expectedSuiteRevision !== undefined) {
+      if (record.expectedSuiteRevision !== undefined || record.publicExecution) {
         // Hold the task until the snapshot commits, so deletion and start have a defined order.
         const [suite] = await transaction
           .select({ revision: pgCaseSuites.revision })
           .from(pgCaseSuites)
           .where(eq(pgCaseSuites.id, record.suiteId))
           .for(record.publicExecution ? "update" : "share");
-        assertCaseSuiteRevision(suite?.revision, record.expectedSuiteRevision);
+        if (record.expectedSuiteRevision !== undefined)
+          assertCaseSuiteRevision(suite?.revision, record.expectedSuiteRevision);
+        else if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
       }
       if (record.publicExecution) {
         const context = record.publicExecution;
@@ -303,14 +320,16 @@ export class PostgresRunBatchRepository
             "PUBLIC_SUITE_LINK_NOT_FOUND",
             "公开执行链接已撤销或分享人已停用。",
           );
-        const active = await transaction.execute(
-          sql`SELECT id FROM run_batches WHERE suite_id=${record.suiteId} AND status IN ('queued','dispatching','scheduled','running') AND batch_kind<>'case_log_rerun' LIMIT 1`,
-        );
-        if (active.rows.length > 0)
-          throw new DomainError(
-            "PUBLIC_SUITE_EXECUTION_ACTIVE",
-            "此任务已有待执行或执行中的批次，请等待结束后再执行。",
+        let afterId = "";
+        for (;;) {
+          const result = await transaction.execute<PublicSuiteEnvironmentRow>(
+            publicSuiteEnvironmentPageQuery("postgres", record.suiteId, afterId),
           );
+          for (const row of result.rows)
+            assertPublicSuiteEnvironmentAvailable(adapterRuntime?.environmentAddresses ?? [], row);
+          if (result.rows.length < 100) break;
+          afterId = result.rows.at(-1)!.id;
+        }
       }
       // 展示编号在同一插入语句内取序列（nextval 不参与回滚，空洞不影响展示），
       // RETURNING 直接带回完整批次行，创建完成后无需再往返读取摘要。
@@ -1287,14 +1306,10 @@ export class PostgresRunBatchRepository
     await this.ready();
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT id FROM run_batches
-       WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL AND pause_requested_at IS NULL
+       WHERE status IN ('queued','dispatching','scheduled','running') AND cancel_requested_at IS NULL AND pause_requested_at IS NULL
          AND scheduled_for <= $1
          AND ${schedulableBatchCapacitySql("postgres", "run_batches")}
-         AND EXISTS (
-           SELECT 1 FROM execution_runs run
-           WHERE run.batch_id = run_batches.id
-             AND run.status = 'queued' AND run.held_round = 0
-         )
+         AND ${discoverableExecutionWorkSql("postgres", "run_batches")}
        ORDER BY ${schedulableBatchOrderSql("postgres", "run_batches")} LIMIT $3`,
       [now, agingIntervalMinutes, limit],
     );
@@ -1310,14 +1325,10 @@ export class PostgresRunBatchRepository
     await this.ready();
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
-       WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
+       WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','scheduled','running')
          AND b.cancel_requested_at IS NULL AND b.pause_requested_at IS NULL AND b.scheduled_for <= $2
          AND ${schedulableBatchCapacitySql("postgres", "b")}
-         AND EXISTS (
-           SELECT 1 FROM execution_runs run
-           WHERE run.batch_id = b.id
-             AND run.status = 'queued' AND run.held_round = 0
-         )
+         AND ${discoverableExecutionWorkSql("postgres", "b")}
        ORDER BY ${schedulableBatchOrderSql("postgres", "b")} LIMIT $4`,
       [runnerId, now, agingIntervalMinutes, limit],
     );
@@ -1425,7 +1436,12 @@ export class PostgresRunBatchRepository
     ]);
     const retryContextValue = await retryContext(this.handle, batch);
     const [runtimeRow] = await this.handle.db
-      .select({ adapterRuntimeJson: pgRunBatches.adapterRuntimeJson })
+      .select({
+        adapterRuntimeJson: pgRunBatches.adapterRuntimeJson,
+        overlappingConcurrency: sql<
+          number | null
+        >`${sql.raw(overlappingRoundConcurrencySql("postgres", "run_batches"))}`.mapWith(Number),
+      })
       .from(pgRunBatches)
       .where(eq(pgRunBatches.id, batchId))
       .limit(1);
@@ -1465,6 +1481,9 @@ export class PostgresRunBatchRepository
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attempts),
       runnerHistoryByRun,
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
+      ...(runtimeRow?.overlappingConcurrency == null
+        ? {}
+        : { overlappingRoundConcurrency: runtimeRow.overlappingConcurrency }),
       ...(retryConcurrencyStateRow
         ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
         : {}),
@@ -1631,6 +1650,22 @@ export class PostgresRunBatchRepository
     });
   }
 
+  async prepareSchedulingRound(batchId: string, now: string): Promise<void> {
+    await this.ready();
+    const pending = (
+      await this.handle.pool.query(
+        `SELECT 1 FROM run_batches b WHERE id=$1
+      AND retry_mode='round' AND status IN ('queued','dispatching','scheduled','running') AND pause_requested_at IS NULL AND cancel_requested_at IS NULL
+      AND ${recoverableRoundTailSql("postgres", "b")}`,
+        [batchId],
+      )
+    ).rows[0];
+    if (!pending) return;
+    await runPostgresTransaction(this.handle, (client) =>
+      advancePostgresSchedulingRound(client, batchId, now),
+    );
+  }
+
   async hasSchedulableRuns(batchId: string): Promise<boolean> {
     await this.ready();
     const result = await this.handle.pool.query<{ value: boolean }>(
@@ -1652,6 +1687,7 @@ export class PostgresRunBatchRepository
       const [lockedBatch] = await transaction
         .select({
           projectId: pgRunBatches.projectId,
+          currentRound: pgRunBatches.currentRound,
           policyJson: pgRunBatches.policyJson,
           adapterRuntimeJson: pgRunBatches.adapterRuntimeJson,
           terminationRequestedAt: pgRunBatches.cancelRequestedAt,
@@ -1668,6 +1704,11 @@ export class PostgresRunBatchRepository
         .for("update");
       if (!lockedBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
       if (lockedBatch.terminationRequestedAt || lockedBatch.pauseRequestedAt)
+        return { reserved: 0, acceptedAttemptIds: [] };
+      if (
+        input.expectedCurrentRound !== undefined &&
+        input.expectedCurrentRound !== lockedBatch.currentRound
+      )
         return { reserved: 0, acceptedAttemptIds: [] };
       await transaction
         .select({ id: pgProjects.id })
@@ -1708,17 +1749,19 @@ export class PostgresRunBatchRepository
           Number(projectActive[0]?.value ?? 0),
       );
       const policy = batchPolicy(lockedBatch.policyJson);
-      const [retryConcurrencyState] = await transaction
-        .select({ concurrency: pgRunBatchRetryConcurrencyStates.concurrency })
-        .from(pgRunBatchRetryConcurrencyStates)
-        .where(eq(pgRunBatchRetryConcurrencyStates.batchId, input.batchId))
+      const [concurrencyLimit] = await transaction
+        .select({
+          concurrency:
+            sql<number>`${sql.raw(batchConcurrencyLimitSql("postgres", "run_batches"))}`.mapWith(
+              Number,
+            ),
+        })
+        .from(pgRunBatches)
+        .where(eq(pgRunBatches.id, input.batchId))
         .limit(1);
-      const batchConcurrency = retryConcurrencyState?.concurrency ?? policy?.concurrency;
+      const batchConcurrency = concurrencyLimit!.concurrency;
       const adapterRuntime = parseProjectAdapterRuntime(lockedBatch.adapterRuntimeJson);
-      let remainingBatchSlots =
-        batchConcurrency === undefined
-          ? Number.POSITIVE_INFINITY
-          : Math.max(0, batchConcurrency - Number(batchActive[0]?.value ?? 0));
+      let remainingBatchSlots = Math.max(0, batchConcurrency - Number(batchActive[0]?.value ?? 0));
       const selectedRunnerIds = new Set(
         (
           await transaction

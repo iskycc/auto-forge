@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { readExportedWorkbook } from "./support/export-workbook";
 import { resolve } from "node:path";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { insertFailureAnalysisFixture } from "./support/failure-analysis-fixture";
@@ -151,6 +152,46 @@ test("console and anonymous execution overviews isolate full-screen case details
             animations: "disabled",
           });
         }
+        if (access === "anonymous") {
+          for (const scope of ["summary", "all", "1"]) {
+            await workspace
+              .getByLabel("明细查看范围")
+              .and(workspace.locator("select"))
+              .selectOption(scope);
+            await workspace.getByRole("button", { name: "导出结果", exact: true }).click();
+            const exportDialog = target.getByRole("dialog", { name: "导出执行结果", exact: true });
+            await expect(exportDialog).toBeVisible();
+            await expect(exportDialog).not.toHaveClass(/ant-zoom-(?:appear|enter)/u);
+            await expect(exportDialog.getByRole("radio", { name: /分析/ })).toHaveCount(0);
+            await expect(
+              exportDialog.getByRole("button", { name: "导出失败日志 ZIP", exact: true }),
+            ).toHaveCount(0);
+            if (scope === "summary")
+              for (const width of [1024, 1536]) {
+                await target.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+                await expectUiIntegrity(target);
+                await target.screenshot({
+                  path: resolve(screenshots, `public-export-${theme}-${width}.png`),
+                });
+              }
+            const [download] = await Promise.all([
+              target.waitForEvent("download"),
+              exportDialog.getByRole("button", { name: "导出 Excel", exact: true }).click(),
+            ]);
+            const file = await download.path();
+            expect(file).not.toBeNull();
+            const workbook = await readExportedWorkbook(await readFile(file!));
+            expect(workbook.worksheets[0]!.rowCount).toBeGreaterThan(1);
+            expect(workbook.worksheets[0]!.getRow(1).values!.toString()).not.toContain(
+              "AI 初步分析",
+            );
+            await expect(exportDialog).not.toBeVisible();
+          }
+          await workspace
+            .getByLabel("明细查看范围")
+            .and(workspace.locator("select"))
+            .selectOption("summary");
+        }
         await workspace
           .getByRole("button", { name: /^查看执行结果：失败/ })
           .first()
@@ -193,12 +234,14 @@ test("console and anonymous execution overviews isolate full-screen case details
         expect(target.url()).toBe(overviewUrl);
         expect(await charts.innerText()).toBe(overviewText);
         if (access === "anonymous") {
+          await expect(
+            workspace.getByRole("button", { name: "导出结果", exact: true }),
+          ).toHaveCount(1);
           for (const name of [
             "终止任务",
             "再次执行",
             "以未通过用例创建任务",
             "总体调度日志",
-            "导出结果",
             "AI 初步分析",
           ])
             await expect(workspace.getByRole("button", { name, exact: true })).toHaveCount(0);

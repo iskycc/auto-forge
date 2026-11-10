@@ -9,7 +9,7 @@ import { associateDdtSr, setUnlinkedSrFilter } from "./support/ddt-associations"
 import { expectLogCaseDetail } from "./support/log-case-detail";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { readExportedCsv } from "./support/export-workbook";
+import { readExportedCsv, readExportedWorkbook } from "./support/export-workbook";
 
 import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { zipSync, unzipSync, strFromU8 } from "fflate";
@@ -1543,6 +1543,14 @@ test("DDT import refreshes an already opened case and shows its persisted change
   });
   await dialog.getByRole("button", { name: "开始预检", exact: true }).click();
   await expect(dialog.locator(".ddt-preview-summary")).toContainText("预计更新1");
+  await dialog
+    .getByRole("textbox", { name: "覆盖说明（选填）", exact: true })
+    .fill("修正钱包预期结果，关联变更单 SR-2026");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+    await expectUiIntegrity(page);
+    await captureDdtUi(page, `ddt-overwrite-reason-light-${width}`);
+  }
   const [response] = await Promise.all([
     page.waitForResponse(
       (response) => response.url().includes("/confirm?") && response.request().method() === "POST",
@@ -1575,11 +1583,25 @@ test("DDT import refreshes an already opened case and shows its persisted change
   await expect(detail.locator(".ddt-field-card", { hasText: "marker" }).locator("pre")).toHaveText(
     "2",
   );
-  for (const width of [1024, 1536]) {
-    await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
-    await expectUiIntegrity(page);
-    await detail.locator(".ddt-history").scrollIntoViewIfNeeded();
-    await captureDdtUi(page, `ddt-import-history-${width}`);
+  await expect(detail.locator(".ddt-history")).toContainText("操作人：e2e-admin");
+  await expect(detail.locator(".ddt-history")).toContainText(
+    "修正钱包预期结果，关联变更单 SR-2026",
+  );
+  for (const theme of ["light", "dark"]) {
+    await detail.getByRole("button", { name: "查看变更", exact: true }).click();
+    const changes = page.getByRole("dialog", { name: "字段变更详情", exact: true });
+    await expect(changes).toContainText("操作人：e2e-admin");
+    await expect(changes).toContainText("覆盖理由：修正钱包预期结果");
+    await expect(changes.getByRole("row", { name: /marker/u })).toContainText("1");
+    await expect(changes.getByRole("row", { name: /marker/u })).toContainText("2");
+    for (const width of [1024, 1536]) {
+      await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-history-diff-${theme}-${width}`);
+    }
+    await changes.getByRole("button", { name: "关闭", exact: true }).click();
+    if (theme === "light")
+      await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
   }
   await detail.getByRole("button", { name: "编辑字段 marker", exact: true }).click();
   await detail.getByRole("textbox", { name: "marker 的值", exact: true }).fill("99");
@@ -1611,7 +1633,42 @@ test("DDT import CaseID download identifies UTF-8 for Excel and preserves Chines
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);
   await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
-  const caseIds = ["钱包支付-中文用例😀", '中文,带"引号"-001', "000012345", "路由/支付?场景=退款"];
+  const caseIds = [
+    "钱包支付-中文用例😀",
+    '中文,带"引号"-001',
+    "000012345",
+    "路由/支付?场景=退款",
+    ...Array.from({ length: 4997 }, (_, index) => `导入范围-${String(index).padStart(5, "0")}`),
+  ];
+  const target = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      name: "本次导入的目标任务",
+    },
+  });
+  const archived = await browserJson<{ id: string; revision: number }>(
+    page,
+    "/api/v1/case-suites",
+    {
+      method: "POST",
+      body: {
+        projectId: hierarchy.projectId,
+        projectVersionId: hierarchy.versionId,
+        name: "不可添加的归档任务",
+      },
+    },
+  );
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${archived.body.id}`, {
+        method: "PATCH",
+        body: { expectedRevision: archived.body.revision, archived: true },
+      })
+    ).status,
+  ).toBe(200);
+  await importDdtApiFixture(page, hierarchy, "不属于本次导入的用例", 1);
   const source = buildExportWorkbook(
     caseIds.map((CaseID) => ({ CaseID, srNum: "中文SR", 内容: "保留原始字段" })),
   );
@@ -1660,7 +1717,7 @@ test("DDT import CaseID download identifies UTF-8 for Excel and preserves Chines
     for (const width of [1024, 1536]) {
       await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await page.goto("/cases?tab=ddt&ddtView=imports");
-      const job = page.locator(".ddt-job").filter({ has: page.locator(".ddt-status.succeeded") });
+      const job = page.getByRole("article", { name: `导入任务 ${jobId}`, exact: true });
       const downloadEvent = page.waitForEvent("download");
       await job.getByRole("button", { name: "导出本任务 CaseID", exact: true }).click();
       const download = await downloadEvent;
@@ -1679,6 +1736,72 @@ test("DDT import CaseID download identifies UTF-8 for Excel and preserves Chines
       ]);
       await expectUiIntegrity(page);
       await captureDdtUi(page, `ddt-import-caseids-${appearance}-${width}`);
+      await job.getByRole("button", { name: "加入用例任务", exact: true }).click();
+      const addDialog = page.getByRole("dialog", {
+        name: `将 ${caseIds.length} 条 DDT 用例加入任务`,
+        exact: true,
+      });
+      await expect(addDialog).toContainText("范围来自本次导入记录");
+      await expect(addDialog.locator(`option[value="${archived.body.id}"]`)).toHaveCount(0);
+      await addDialog
+        .getByLabel("目标用例任务")
+        .and(addDialog.locator("select"))
+        .selectOption(target.body.id);
+      await expectUiIntegrity(page);
+      await captureDdtUi(page, `ddt-import-add-task-${appearance}-${width}`);
+      if (appearance === "light" && width === 1024) {
+        const memberUrl = `**/api/v1/case-suites/${target.body.id}/ddt-cases`;
+        const requests: number[] = [];
+        let failed = false;
+        await page.route(memberUrl, async (route) => {
+          const ids = (route.request().postDataJSON() as { caseIds: string[] }).caseIds;
+          requests.push(ids.length);
+          if (ids.length === 1 && !failed) {
+            failed = true;
+            await route.fulfill({
+              status: 503,
+              json: {
+                error: {
+                  code: "PLATFORM_BUSY",
+                  message: "临时写入失败，请继续重试。",
+                  requestId: "import-add-retry",
+                },
+              },
+            });
+          } else await route.continue();
+        });
+        await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+        await expect(addDialog).toContainText("临时写入失败，请继续重试。");
+        await expect(addDialog.getByRole("status")).toContainText("5,000 / 5,001");
+        await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+        await expect(addDialog).not.toBeVisible();
+        await page.unroute(memberUrl);
+        expect(requests).toEqual([5000, 1, 1]);
+        const members = await browserJson<{ caseCount: number }>(
+          page,
+          `/api/v1/case-suites/${target.body.id}?view=summary`,
+        );
+        expect(members.status).toBe(200);
+        expect(members.body.caseCount).toBe(caseIds.length);
+        const exportedMembers = await page.request.get(
+          `/api/v1/case-suites/${target.body.id}/export`,
+        );
+        expect(exportedMembers.status()).toBe(200);
+        const memberWorkbook = await readExportedWorkbook(await exportedMembers.body());
+        const actualIds: string[] = [];
+        memberWorkbook.worksheets[0]!.eachRow((row, index) => {
+          if (index > 1) actualIds.push(row.getCell(2).text);
+        });
+        expect(new Set(actualIds)).toEqual(new Set(caseIds));
+      } else if (appearance === "dark" && width === 1536) {
+        await addDialog
+          .getByLabel("目标用例任务")
+          .and(addDialog.locator("select"))
+          .selectOption("new");
+        await addDialog.getByLabel("新任务名称").fill("从本次导入新建任务");
+        await addDialog.getByRole("button", { name: "加入任务", exact: true }).click();
+        await expect(addDialog).not.toBeVisible();
+      } else await addDialog.getByRole("button", { name: "取消", exact: true }).click();
     }
   }
 });

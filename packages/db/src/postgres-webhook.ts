@@ -2,6 +2,7 @@ import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transacti
 import type { WebhookRepository } from "@autoforge/application";
 import {
   DomainError,
+  assertCaseSuiteEditable,
   type WebhookConfiguration,
   type WebhookDelivery,
   type WebhookDispatchClaim,
@@ -202,12 +203,17 @@ export class PostgresWebhookRepository implements WebhookRepository {
       const projectClause = input.projectIds
         ? ` AND project_id = ANY($${parameters.push(input.projectIds)}::text[])`
         : "";
-      const suiteResult = await client.query<{ project_id: string }>(
-        `SELECT project_id FROM case_suites WHERE id = $1${projectClause} FOR UPDATE`,
+      const suiteResult = await client.query<{
+        project_id: string;
+        status: "active" | "archived";
+        locked_by: string | null;
+      }>(
+        `SELECT project_id, status, locked_by FROM case_suites WHERE id = $1${projectClause} FOR UPDATE`,
         parameters,
       );
       const suite = suiteResult.rows[0];
       if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "任务不存在。");
+      assertCaseSuiteEditable({ ...suite, lockedBy: suite.locked_by }, input.actorId);
       const webhookIds = [...new Set(input.webhookIds)];
       if (webhookIds.length > 0) {
         const countResult = await client.query<{ count: string }>(

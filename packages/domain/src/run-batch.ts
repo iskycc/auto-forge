@@ -117,7 +117,7 @@ export type RunBatch = {
   priority: number;
   retryLimit: number;
   retryMode: "immediate" | "round";
-  // 当前执行轮次；immediate 模式恒为 1，round 模式随整轮推进递增。
+  // 最新开放轮次；immediate 模式恒为 1，round 模式最多与相邻上一轮同时在途。
   currentRound: number;
   queueTimeoutMs: number;
   claimTimeoutMs: number;

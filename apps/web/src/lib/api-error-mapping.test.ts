@@ -4,6 +4,23 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it("reports archived task mutations as actionable conflicts", () => {
+    expect(
+      mapApiError(
+        new DomainError("CASE_SUITE_ARCHIVED", "任务已归档，请先恢复任务。"),
+        "archived-request",
+      ),
+    ).toMatchObject({
+      status: 409,
+      body: {
+        error: {
+          code: "CASE_SUITE_ARCHIVED",
+          message: "任务已归档，请先恢复任务。",
+          requestId: "archived-request",
+        },
+      },
+    });
+  });
   it("keeps independent log database lock failures separate from business database contention", () => {
     const cause = Object.assign(new Error("log storage lock timeout"), { code: "55P03" });
     expect(

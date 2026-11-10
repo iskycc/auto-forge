@@ -458,6 +458,9 @@ for (const mode of ["sqlite", "postgres"] as const) {
         await context.execute(
           "ALTER TABLE case_suites ADD COLUMN is_rerun BOOLEAN NOT NULL DEFAULT FALSE",
         );
+        for (const column of ["locked_by", "locked_by_name", "locked_at"]) {
+          await context.execute(`ALTER TABLE case_suites ADD COLUMN ${column} TEXT`);
+        }
         const { service } = await seed(context);
         const versions = await context.rows("SELECT * FROM case_suite_versions ORDER BY id");
         const batches = await context.rows("SELECT * FROM run_batches ORDER BY id");

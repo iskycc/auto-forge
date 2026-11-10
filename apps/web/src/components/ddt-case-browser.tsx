@@ -48,13 +48,8 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { OpenRunDialogButton } from "./global-run-dialog";
 import { useDdtBrowserLayout } from "./use-ddt-browser-layout";
 
-export type DdtHistoryItem = {
-  id: string;
-  changeType: string;
-  sourceName: string;
-  changes: Array<{ field: string }>;
-  createdAt: string;
-};
+import { DdtHistoryDetails, type DdtHistoryItem } from "./ddt-history-details";
+export type { DdtHistoryItem } from "./ddt-history-details";
 export type DdtEditorStatus = "idle" | "editing" | "saving";
 
 export function DdtCaseBrowser({
@@ -336,6 +331,7 @@ export function DdtCaseDetail({
   onPrevious: (() => void) | undefined;
   onNext: (() => void) | undefined;
 }) {
+  const [historyDetail, setHistoryDetail] = useState<DdtHistoryItem>();
   const toast = useToast();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const [activeStep, setActiveStep] = useState("");
@@ -769,10 +765,19 @@ export function DdtCaseDetail({
                 <div>
                   <strong>{historyLabel(entry.changeType)}</strong>
                   <span>{entry.sourceName}</span>
+                  <small>操作人：{entry.actorName ?? entry.actorId ?? "未记录"}</small>
+                  {entry.changeReason ? (
+                    <small className="line-clamp-2 whitespace-pre-wrap">
+                      覆盖理由：{entry.changeReason}
+                    </small>
+                  ) : null}
                   <small>
                     {formatPlatformDateTime(entry.createdAt)} · {entry.changes.length} 个字段
                   </small>
                 </div>
+                <Button type="button" size="compact" onClick={() => setHistoryDetail(entry)}>
+                  查看变更
+                </Button>
                 {canManage ? (
                   <Button
                     type="button"
@@ -789,6 +794,9 @@ export function DdtCaseDetail({
             <EmptyState>暂无修改历史</EmptyState>
           )}
         </Disclosure>
+        {historyDetail ? (
+          <DdtHistoryDetails entry={historyDetail} onClose={() => setHistoryDetail(undefined)} />
+        ) : null}
       </div>
     </>
   );
@@ -862,7 +870,7 @@ const ddtCaseBrowserStyles = {
   "ddt-fields-heading":
     "[&_p]:text-muted-foreground [&_p]:text-xs [&_p]:[margin:4px_0_0] [&_p]:[overflow-wrap:anywhere] [&_small]:text-muted-foreground [&_small]:text-xs flex items-center gap-3 mb-2 [&_>_div]:min-w-0 [&_>_div]:flex-1 [&_h3]:m-0 [&_h3]:text-sm [&_>_small]:[flex:0_0_auto]",
   "ddt-history":
-    "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&_article_>_div]:min-w-0 [&_article_>_div]:[overflow-wrap:anywhere] [&_article_>_div]:grid [&_article_>_div]:gap-0.5 [&_article_>_div]:mr-auto [&_article_>_button]:[flex:0_0_auto] grid gap-2 mt-5 [&_h3]:flex [&_h3]:items-center [&_h3]:gap-[7px] [&_h3]:m-0 [&_article]:flex [&_article]:items-center [&_article]:gap-3 [&_article]:border-t [&_article]:border-solid [&_article]:border-border [&_article]:py-2.5 [&_article]:px-0 [&_span]:text-muted-foreground [&_small]:text-muted-foreground",
+    "[&_.ui-disclosure-label]:flex [&_.ui-disclosure-label]:items-center [&_.ui-disclosure-label]:gap-2 [&_.ui-disclosure-label]:py-2 [&_.ui-disclosure-label]:cursor-pointer [&_.ui-disclosure-label]:font-semibold [&_article_>_div]:min-w-0 [&_article_>_div]:[overflow-wrap:anywhere] [&_article_>_div]:grid [&_article_>_div]:gap-0.5 [&_article_>_div]:mr-auto [&_article_>_button]:[flex:0_0_auto] grid gap-2 mt-5 [&_h3]:flex [&_h3]:items-center [&_h3]:gap-[7px] [&_h3]:m-0 [&_article]:flex [&_article]:flex-wrap [&_article]:items-center [&_article]:gap-3 [&_article]:border-t [&_article]:border-solid [&_article]:border-border [&_article]:py-2.5 [&_article]:px-0 [&_span]:text-muted-foreground [&_small]:text-muted-foreground",
   "ddt-journey-switcher":
     'grid gap-2 my-4 [&_>_div]:flex [&_>_div]:gap-2 [&_>_div]:overflow-auto [&_>_div]:pb-1 [&_button]:border [&_button]:border-solid [&_button]:border-border [&_button]:rounded-lg [&_button]:py-2 [&_button]:px-3 [&_button]:bg-muted [&_button[aria-selected="true"]]:border-ring [&_button[aria-selected="true"]]:bg-info/10 [&_button[aria-selected="true"]]:text-info',
   "ddt-json-editor":

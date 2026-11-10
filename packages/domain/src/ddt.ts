@@ -104,6 +104,8 @@ export type DdtCaseHistory = {
   caseId: string;
   changeType: "edit" | "bulk_edit" | "import_overwrite" | "restore";
   actorId?: string;
+  actorName?: string;
+  changeReason?: string;
   sourceName: string;
   changes: DdtHistoryChange[];
   before: DdtCaseData;

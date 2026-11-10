@@ -9,6 +9,7 @@ import {
   ddtValueSearchInputSchema,
   ddtValueSearchPageSchema,
   ddtImportFilesQuerySchema,
+  ddtImportCaseIdsSchema,
   ddtCategoryIdsSchema,
   inheritDdtCasesInputSchema,
   ddtInheritancePageSchema,
@@ -293,9 +294,12 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       const job = await services.ddtImports.get(path[1], [scope.projectId]);
       assertJobScope(job, scope);
       if (path[2] === "case-ids") {
-        return NextResponse.json({
-          items: await services.ddtImports.caseIds(path[1], [scope.projectId]),
-        });
+        return NextResponse.json(
+          ddtImportCaseIdsSchema.parse({
+            items: await services.ddtImports.caseIds(path[1], [scope.projectId]),
+          }),
+          { headers: { "Cache-Control": "private, no-store" } },
+        );
       }
       if (path.length === 2) return NextResponse.json(job);
     }
@@ -551,9 +555,13 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         const input = confirmDdtImportInputSchema.parse(await readJsonBody(request, 16 * 1_024));
         const current = await services.ddtImports.get(path[1], [scope.projectId]);
         assertJobScope(current, scope);
-        const job = await services.ddtImports.confirm(path[1], input.conflictStrategy, [
-          scope.projectId,
-        ]);
+        const job = await services.ddtImports.confirm(
+          path[1],
+          input.conflictStrategy,
+          [scope.projectId],
+          input.overwriteReason,
+          ddtActorId(identity),
+        );
         await audit(identity, services, scope, currentRequestId, "ddt_import.confirm", {
           jobId: job.id,
           conflictStrategy: input.conflictStrategy,

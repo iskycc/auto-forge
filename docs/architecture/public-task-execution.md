@@ -14,7 +14,9 @@
 
 执行采用任务最新保存的完整配置，在创建时固定快照。公开入口仅允许显式覆盖本次执行的 Adapter 环境 IP；Runner、并发、重跑、恢复等参数仍读取任务配置。倒计时为 1 秒至 7 天，复用原有持久化 `scheduledFor` 和调度队列；关闭网页不会取消倒计时。
 
-公开执行采用单批次保护：同一任务已有待执行或执行中的普通批次时，新的公开启动返回 `PUBLIC_SUITE_EXECUTION_ACTIVE`。该检查与任务版本校验、授权有效性检查和批次写入在同一事务内完成；PostgreSQL 锁定任务行，SQLite 使用现有短写事务。此规则只约束公开入口，不改变控制台允许创建多个批次的行为。
+公开执行按环境隔离：同一任务已有待执行或执行中的普通批次时，只要新批次的环境 IP 与全部未结束批次都没有交集，就允许再次拉起。同一个地址、任一方包含另一方、两个多地址集合存在任一公共地址，都返回 `PUBLIC_SUITE_EXECUTION_ACTIVE`（HTTP 409），消息包含冲突批次及重叠地址。按完整 IP 比较，IPv6 大小写、展开／压缩和 IPv4-mapped 等价写法视为相同；不使用字符串子串匹配，也不进行 DNS 网络探测。比较本次实际执行快照，不使用任务后来修改的默认地址。
+
+倒计时、排队、待领取、运行、暂停和终止收尾中的批次均保留环境占用，只有批次终态才释放。没有可判定环境 IP 的任一方仍沿用单批次保护。该检查与任务版本校验、授权有效性检查和批次写入在同一事务内完成；PostgreSQL 锁定同一个任务行，跨分享链接也串行校验，SQLite 使用现有短写事务。每页只读取最多 100 个活动批次的地址投影，检查全部页面，不受公开页面最多展示 10 条的限制，不加载用例清单或完整运行资产。幂等重放先于冲突检查，重复请求返回原批次。此规则只约束公开入口，不改变控制台允许创建多个批次的行为。
 
 一次提交包含浏览器生成的 UUID `requestKey`，数据库以任务、分享人和请求键建立唯一索引。同一次提交重试返回原批次，即使原批次已经结束，也不会重复执行。创建成功但回执丢失时可安全重试；重试不会改变原批次的实际拉起人。
 
@@ -28,9 +30,35 @@
 
 `POST /api/v1/public/case-suites/:suiteId/executions?PublisherId=…` 在原有 `requestKey`、`delaySeconds` 外新增可选 `environmentAddresses`。省略该字段使用任务默认地址；提交只影响新批次的运行快照，不修改任务或其他批次。立即执行与服务端倒计时共用该规则；提交成功后表单恢复任务默认地址，刷新／重新打开页面也不会保留临时覆盖。现有任务普通执行和 Jenkins API 不接受此覆盖。
 
+任务被他人锁定时，上述修改入口与公开执行权限保持可用。用例范围及任务持久配置的写入继续受锁定人保护，本次 IP 选择不属于任务配置修改，不能借此覆盖成员、并发或其他策略。
+
 多人查看时，当前与最近批次各自显示实际保存的全部地址；修改草稿仅属于当前浏览器页面。任务执行详情及公开执行进展也显示本批次环境 IP，保留原顺序，按任务既有环境池规则分配用例。长 IPv6 地址可换行，多地址区域限制高度并可滚动，不拉宽页面。
 
+存在活动批次时，环境 IP 编辑和启动方式仍可用；页面根据当前已展示批次提示冲突并禁止提交重叠地址，选择独立 IP 后可立即或倒计时执行。服务端事务是最终判定，防止多人页面未刷新或冲突批次未展示时绕过。提交成功后表单仍恢复任务默认地址，若默认地址正被占用，提示修改本次 IP。
+
 Lite／Full 从已有批次 Adapter 快照读取历史地址，无新增迁移。新批次在较小的策略 JSON 中额外保存地址投影，状态轮询优先读取该投影，旧批次回退到数据库 JSON 投影；不向公开页面发送运行资产或逐用例地址映射。
+
+### 2026-11-09 锁定任务与临时 IP 兼容验证
+
+86 项应用／接口／SQLite／PostgreSQL 定向回归通过，覆盖他人锁定的任务仍可创建执行、公开页仍可执行并选择临时 IP，以及批次保存 IP 后原任务摘要保持不变。命令为：
+
+```bash
+pnpm exec vitest run packages/application/test/public-suite-execution.test.ts packages/application/test/schedule-run-batches.test.ts packages/db/test/public-suite-execution.integration.test.ts apps/web/src/lib/public-suite-execution-api.test.ts --maxWorkers=1 --no-file-parallelism
+pnpm exec playwright test tests/e2e/case-suite-lifecycle.spec.ts --grep 'public task links execute with login only' --workers=1
+```
+
+生产 Lite 的浏览器闭环通过：先由分享人实际锁定任务，再由没有项目权限的另一登录用户修改 IP，立即执行与倒计时执行都成功，Runner Protocol 领取的执行规格包含本次选择地址；公开进展与后台详情显示相同地址。任务原 IP、修订号和用例数量保持不变，后续省略覆盖参数的新批次仍使用原 IP。同时保留暂停／恢复、终止、多人观察、登录过期及撤销链接检查。
+
+已实际查看 1024×768、1536×960 浅色／深色的 IP 修改弹窗及执行详情截图，无新增溢出。受影响文件格式／ESLint、测试 TypeScript 与差异检查通过。本轮只补充测试和文档，复用上轮已通过构建的生产产物；没有新增生产代码、迁移或依赖，未运行 Full 整栈浏览器或真实 Jenkins／Java 进程。证据位于本机 `/var/tmp/autoforge-locked-public-ip-ui/`。
+
+### 2026-11-10 不同环境并行执行验证
+
+- 先复现 20 项相关失败，再修改环境隔离规则。8 个文件共 184 项定向回归通过，SQLite／PostgreSQL 均实际执行：同地址、双向包含、部分交集、独立集合、IPv6 等价形式、不同分享人并发启动、没有修订号的历史调用、幂等重放、倒计时、暂停、终止收尾及终态释放。102 个活动批次场景确认校验跨越 100 条分页边界，不遗漏公开展示范围以外的冲突批次。
+- 生产 Lite Playwright 完整公开执行场景通过：他人锁定任务、无项目权限用户原地登录并修改 IP、保留第一批次时创建第二个独立 IP 的倒计时批次、页面禁用重叠输入及直接 API 返回具体冲突 IP、两浏览器会话观察、分别终止、实际 Runner HTTP 领取规格、完成上报、暂停／继续、默认 IP 恢复、登录过期与撤销链接。没有新增真实 JVM 或 Jenkins 进程。
+- 已实际审查新生成的 1024×768 浅色冲突／并行批次和 1536×960 深色并行批次截图；长名称、IP、按钮和表单正常换行，无横向溢出或布局变形。截图位于 `/var/tmp/autoforge-public-ip-ui/`。
+- 受影响文件 Prettier／ESLint、领域／应用／数据库类型检查、E2E TypeScript、Web 生产构建和独立 Worker 构建通过。未新增依赖、数据库迁移或 Runner 协议字段；测试和构建串行限核执行。未运行 Full 整栈浏览器、跨物理主机负载或发布流水线。
+
+定向回归使用 `pnpm exec vitest run`，文件为 `public-suite-execution.integration.test.ts`、`public-suite-migration.integration.test.ts`、`execution-environment-overlap.test.ts`、`public-suite-execution.test.ts`、`schedule-run-batches.test.ts`、`public-suite-execution-api.test.ts`、`api-error-mapping.test.ts` 和 `ui-usage.test.ts`；浏览器沿用上节公开执行场景命令。证据日志前缀为本机 `/var/tmp/autoforge-public-ip-final-`，浏览器结果为 `/var/tmp/autoforge-public-ip-e2e.log`。
 
 ## 操作人记录与双数据库
 

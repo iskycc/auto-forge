@@ -670,6 +670,7 @@ function fixture() {
   const create = vi.fn();
   const batches = {
     create,
+    prepareSchedulingRound: async () => {},
     hasSchedulableRuns: vi.fn().mockResolvedValue(false),
     getSummary: vi.fn().mockResolvedValue({ id: "batch" }),
   } as unknown as RunBatchRepository;

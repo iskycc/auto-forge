@@ -3,6 +3,7 @@ import {
   rerunArchiveCandidates,
   busyRerunCount,
   RERUN_ARCHIVE_PAGE_SIZE,
+  activeSuiteBatchQuery,
 } from "./rerun-suite-archive";
 import { auditEventRow } from "./audit-event-row";
 import { pgAuditEvents } from "./postgres-schema";
@@ -78,6 +79,10 @@ import {
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteEditable,
+  assertCaseSuiteLockOwner,
+  assertCaseSuiteCanArchive,
+  assertCaseSuiteUpdateAllowed,
   FailureCaseSuiteNameSequence,
   buildCaseSuiteVersionSnapshot,
   defaultCaseSuiteExecutionPolicy,
@@ -346,6 +351,9 @@ function latestRunBatchesOf<T>(items: readonly T[], size: number): T[][] {
 function toSuite(row: typeof pgCaseSuites.$inferSelect, caseCount: number): CaseSuite {
   return {
     id: row.id,
+    ...(row.lockedBy ? { lockedBy: row.lockedBy } : {}),
+    ...(row.lockedByName ? { lockedByName: row.lockedByName } : {}),
+    ...(row.lockedAt ? { lockedAt: row.lockedAt } : {}),
     isRerun: row.isRerun,
     projectId: row.projectId,
     name: row.name,
@@ -2022,9 +2030,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     await this.ready();
     return runPostgresDrizzleTransaction(this.handle, async (transaction) => {
       const suite = (
-        await transaction.execute<{ id: string }>(ddtClearSuiteCandidate(input, "postgres"))
+        await transaction.execute<{ id: string; locked_by: string | null }>(
+          ddtClearSuiteCandidate(input, "postgres"),
+        )
       ).rows[0];
       if (!suite) return 0;
+      assertCaseSuiteLockOwner({ lockedBy: suite.locked_by }, input.actorId);
       const result = await transaction.execute(ddtClearSuiteMembers(input, suite.id));
       const removed = result.rowCount ?? 0;
       if (!removed) return 0;
@@ -2048,7 +2059,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       const version = sql`suite.policy_json::jsonb->>'projectVersionId'=${input.projectVersionId}`;
       const candidates = (
         await transaction.execute<{ id: string }>(
-          rerunArchiveCandidates(input.projectId, version, true),
+          rerunArchiveCandidates(input.projectId, version, true, input.actorId),
         )
       ).rows;
       // A batch may have committed after the candidate statement's MVCC snapshot.
@@ -2060,8 +2071,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
           candidates.map(({ id }) => sql`${id}`),
           sql`,`,
         )})
-        AND NOT EXISTS(SELECT 1 FROM run_batches batch WHERE batch.suite_id=suite.id
-          AND batch.status IN ('queued','dispatching','scheduled','running')) ORDER BY suite.id
+        AND NOT EXISTS(${activeSuiteBatchQuery(sql`suite.id`)}) ORDER BY suite.id
       `)
           ).rows
         : [];
@@ -2673,6 +2683,10 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   }): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteEditable(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input.actorId,
+      );
       if (!input.items.length) return;
       let added = 0;
       for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
@@ -2723,6 +2737,10 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   }): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteEditable(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input.actorId,
+      );
       let removed = 0;
       for (const ids of batchesOf(input.caseDefinitionIds, POSTGRES_WRITE_BATCH_SIZE)) {
         removed += (
@@ -2770,6 +2788,10 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   }): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteEditable(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input.actorId,
+      );
       let added = 0;
       for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
         const inserted = await transaction
@@ -2811,6 +2833,10 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   }): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteEditable(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input.actorId,
+      );
       let removed = 0;
       for (const ids of batchesOf(input.ddtCaseIds, POSTGRES_WRITE_BATCH_SIZE)) {
         removed += (
@@ -2844,6 +2870,17 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteUpdateAllowed(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input,
+        input.actorId,
+      );
+      if (input.archived === true) {
+        const active = (
+          await transaction.execute<{ id: string }>(activeSuiteBatchQuery(input.suiteId))
+        ).rows[0];
+        assertCaseSuiteCanArchive(active);
+      }
       const patch: Record<string, unknown> = {
         version: sql`${pgCaseSuites.version} + 1`,
         revision: sql`${pgCaseSuites.revision} + 1`,
@@ -2866,6 +2903,20 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         )
         .returning({ id: pgCaseSuites.id });
       if (updated.length !== 1) await throwPostgresSuiteConflict(transaction, input.suiteId);
+      if (input.archived === true)
+        await transaction
+          .update(pgCaseSuiteSchedules)
+          .set({
+            enabled: false,
+            updatedAt: input.updatedAt,
+            revision: sql`${pgCaseSuiteSchedules.revision} + 1`,
+          })
+          .where(
+            and(
+              eq(pgCaseSuiteSchedules.suiteId, input.suiteId),
+              eq(pgCaseSuiteSchedules.enabled, true),
+            ),
+          );
       for (const [ruleId, apiKeyCiphertext] of Object.entries(
         input.roundRecoveryCredentialUpserts ?? {},
       )) {
@@ -2911,9 +2962,45 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return suite;
   }
 
-  async deleteSuite(input: { suiteId: string; expectedRevision: number }): Promise<void> {
+  async setLock(input: Parameters<CaseSuiteRepository["setLock"]>[0]): Promise<CaseSuite> {
     await this.ready();
     await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteLockOwner(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input.actorId,
+      );
+      const [saved] = await transaction
+        .update(pgCaseSuites)
+        .set({
+          lockedBy: input.locked ? input.actorId : null,
+          lockedByName: input.locked ? input.actorName : null,
+          lockedAt: input.locked ? input.updatedAt : null,
+          revision: sql`${pgCaseSuites.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseSuites.id, input.suiteId),
+            eq(pgCaseSuites.revision, input.expectedRevision),
+          ),
+        )
+        .returning({ id: pgCaseSuites.id });
+      if (!saved) await throwPostgresSuiteConflict(transaction, input.suiteId);
+    });
+    return (await this.getSummary(input.suiteId))!;
+  }
+
+  async deleteSuite(input: {
+    suiteId: string;
+    expectedRevision: number;
+    actorId?: string;
+  }): Promise<void> {
+    await this.ready();
+    await runPostgresDrizzleTransaction(this.handle, async (transaction) => {
+      assertCaseSuiteLockOwner(
+        await lockPostgresSuiteMutationState(transaction, input.suiteId),
+        input.actorId,
+      );
       const deleted = await transaction
         .delete(pgCaseSuites)
         .where(
@@ -3083,6 +3170,19 @@ function toPostgresDdtExecutionClass(
       archived: definition.archived,
     },
   };
+}
+
+async function lockPostgresSuiteMutationState(
+  transaction: PostgresSuiteTransaction,
+  suiteId: string,
+) {
+  // Serialize member/configuration writes with archiving, without loading the member list.
+  const [suite] = await transaction
+    .select({ status: pgCaseSuites.status, lockedBy: pgCaseSuites.lockedBy })
+    .from(pgCaseSuites)
+    .where(eq(pgCaseSuites.id, suiteId))
+    .for("update");
+  return suite;
 }
 
 async function touchPostgresSuite(

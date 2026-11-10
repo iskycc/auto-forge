@@ -476,7 +476,7 @@ describe("high-concurrency execution control", () => {
     await service.recoverInterruptedExecutions();
     expect(recoverExpired).toHaveBeenCalledTimes(2);
     expect(recoverExpired).toHaveBeenLastCalledWith(
-      expect.objectContaining({ now: now.toISOString(), limit: 5, scope: "terminating_batches" }),
+      expect.objectContaining({ now: now.toISOString(), limit: 5, scope: "batch_lifecycle" }),
     );
   });
 });

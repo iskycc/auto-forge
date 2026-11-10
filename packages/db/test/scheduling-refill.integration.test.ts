@@ -1,3 +1,5 @@
+import { SqliteRoundRecoveryRepository } from "../src/sqlite-round-recovery";
+import { PostgresRoundRecoveryRepository } from "../src/postgres-round-recovery";
 import { randomUUID } from "node:crypto";
 import { insertCaseExecutionHistoryFixture } from "../../../tests/e2e/support/case-execution-history-fixture";
 import { insertExecutionRecordsFixture } from "../../../tests/e2e/support/execution-records-fixture";
@@ -14,6 +16,7 @@ import type {
   ExecutionControlRepository,
   LatestCaseRunOutcome,
   RunBatchRepository,
+  RoundRecoveryRepository,
   RunnerRepository,
 } from "@autoforge/application";
 import { RunBatchSchedulingService } from "@autoforge/application";
@@ -40,6 +43,7 @@ type RefillHarness = {
   sqliteDataDirectory?: string;
   batches: RunBatchRepository;
   executions: ExecutionControlRepository;
+  roundRecoveries: RoundRecoveryRepository;
   listCaseActivity(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
   listCaseExecutionHistory(
     caseDefinitionId: string,
@@ -90,6 +94,7 @@ async function createSqliteHarness(): Promise<RefillHarness> {
   return {
     sqliteDataDirectory: directory,
     batches: new SqliteRunBatchRepository(handle),
+    roundRecoveries: new SqliteRoundRecoveryRepository(handle),
     executions: new SqliteExecutionControlRepository(
       handle,
       createAttemptLogStore(resolve(directory, "attempt-logs")),
@@ -347,7 +352,766 @@ async function insertCaseHistoryRun(
   return { batchId, runId, attemptIds };
 }
 
+async function createOverlappingRound(harness: RefillHarness) {
+  const now = "2026-08-10T00:05:00.000Z";
+  const { batchId, attempt1Id, lease1TokenHash } = harness.completion;
+  const completion = (
+    attemptId: string,
+    token: string,
+    status: "succeeded" | "failed" = "failed",
+  ) => ({
+    runnerId: harness.runnerId,
+    attemptId,
+    leaseTokenHash: token,
+    completionId: randomUUID(),
+    resultDigest: randomUUID(),
+    eventId: randomUUID(),
+    acceptedAt: now,
+    result: {
+      status,
+      resultCode: status === "failed" ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED",
+      summary: "fault trace",
+      durationMs: 1,
+      artifacts: [],
+    },
+  });
+  await harness.rawQuery("UPDATE run_batches SET retry_mode='round',retry_limit=2 WHERE id=?", [
+    batchId,
+  ]);
+  await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+    batchId,
+    harness.runnerId,
+  ]);
+  await harness.executions.completeAttempt(completion(attempt1Id, lease1TokenHash));
+  const retry = (await harness.batches.get(batchId))!.runs.find((run) => run.status === "queued")!;
+  await prepareRefillExecutions(harness, batchId, [retry.id], "testng", now);
+  await harness.rawQuery(
+    "UPDATE runners SET last_seen_at=?,metrics_observed_at=?,max_concurrency=4,cpu_utilization_percent=10,memory_utilization_percent=30,logical_cpu_count=4,load_average_1m=0 WHERE id=?",
+    [now, now, harness.runnerId],
+  );
+  const scheduleAndClaim = async () => {
+    await refillSchedulingService(harness, now).schedule(batchId);
+    const token = randomUUID();
+    const request = {
+      runnerId: harness.runnerId,
+      requestId: randomUUID(),
+      availableSlots: 1,
+      labels: ["linux", "java", "testng"],
+      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+      now,
+      leaseExpiresAt: "2026-08-10T00:10:00.000Z",
+      leaseSeeds: [
+        { id: randomUUID(), eventId: randomUUID(), tokenHash: token, tokenEncrypted: token },
+      ],
+    };
+    const [claim] = await harness.executions.claim(request);
+    expect(claim).toBeTruthy();
+    expect(await harness.executions.claim(request)).toEqual([claim]);
+    return { claim: claim!, token };
+  };
+  const second = await scheduleAndClaim();
+  return { now, batchId, retry, completion, scheduleAndClaim, second };
+}
+
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it.each(["current", "legacy"] as const)(
+    "preserves the previous-result barrier for a %s stored concurrency rule",
+    async (format) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+        harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      const finish = (attemptId: string, token: string, status: "failed" | "succeeded") =>
+        harness.executions.completeAttempt({
+          runnerId: harness.runnerId,
+          attemptId,
+          leaseTokenHash: token,
+          completionId: randomUUID(),
+          resultDigest: randomUUID(),
+          eventId: randomUUID(),
+          acceptedAt: now,
+          result: {
+            status,
+            resultCode: status === "failed" ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED",
+            summary: "stored rule",
+            durationMs: 1,
+            artifacts: [],
+          },
+        });
+      try {
+        const rule = {
+          id: "complete-results",
+          concurrency: 2,
+          previousRoundPassRateMinimum: 50,
+          ...(format === "current"
+            ? { executionRound: 2 }
+            : { executionRoundFrom: 2, executionRoundTo: 4 }),
+        };
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=2,policy_json=? WHERE id=?",
+          [
+            JSON.stringify({
+              concurrency: 4,
+              retryConcurrencyRules:
+                format === "legacy" ? [null, false, 42, "legacy", {}, rule] : [rule],
+            }),
+            batchId,
+          ],
+        );
+        await finish(attempt1Id, lease1TokenHash, "failed");
+        expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(1);
+        expect(await harness.batches.listSchedulableBatchIds(10, now)).not.toContain(batchId);
+        await harness.batches.prepareSchedulingRound(batchId, now);
+        expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(1);
+        await finish(attempt2Id, lease2TokenHash, "succeeded");
+        expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+        expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(true);
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it.each(["round", "immediate"] as const)(
+    "repairs a completed %s batch after exit without completion replay and preserves incomplete snapshots",
+    async (retryMode) => {
+      const harness = await createHarness();
+      const batchId = harness.completion.batchId;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery("UPDATE run_batches SET retry_mode=? WHERE id=?", [
+          retryMode,
+          batchId,
+        ]);
+        // Durable completion writes survived, but the separate batch settlement did not.
+        await harness.rawQuery(
+          "UPDATE run_attempts SET status='succeeded',outcome='succeeded',finished_at=? WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+          [now, batchId],
+        );
+        await harness.rawQuery("UPDATE assignments SET status='completed' WHERE batch_id=?", [
+          batchId,
+        ]);
+        await harness.rawQuery(
+          "UPDATE assignment_leases SET status='released' WHERE assignment_id IN (SELECT id FROM assignments WHERE batch_id=?)",
+          [batchId],
+        );
+        await harness.rawQuery(
+          "UPDATE execution_runs SET status='succeeded',terminal_outcome='succeeded' WHERE batch_id=?",
+          [batchId],
+        );
+        await harness.rawQuery("UPDATE run_batches SET total_runs=2 WHERE id=?", [
+          harness.batchQueuedId,
+        ]);
+        const incomplete = await insertQueuedRun(harness, harness.batchQueuedId);
+        await harness.rawQuery(
+          "UPDATE execution_runs SET status='succeeded',terminal_outcome='succeeded' WHERE id=?",
+          [incomplete],
+        );
+        await harness.executions.recoverExpired({
+          now,
+          eventIds: Array.from({ length: 5 }, () => randomUUID()),
+          limit: 5,
+          scope: "batch_lifecycle",
+        });
+        expect((await harness.batches.getMetadata(batchId))?.status).toBe("succeeded");
+        expect((await harness.batches.getMetadata(harness.batchQueuedId))?.status).toBe("queued");
+        expect((await harness.batches.getMetadata(harness.batchRunningId))?.status).toBe("running");
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it("rolls back a failed round release atomically and retries it through normal discovery", async () => {
+    const harness = await createHarness();
+    const batchId = harness.batchQueuedId;
+    const now = "2026-08-10T00:05:00.000Z";
+    const triggerName = `round_fault_${randomUUID().replaceAll("-", "")}`;
+    const dropTrigger = async () => {
+      await harness.rawQuery(
+        `DROP TRIGGER IF EXISTS ${triggerName}${harness.sqliteDataDirectory ? "" : " ON run_batches"}`,
+      );
+      if (!harness.sqliteDataDirectory)
+        await harness.rawQuery(`DROP FUNCTION IF EXISTS ${triggerName}()`);
+    };
+    try {
+      await harness.rawQuery("UPDATE run_batches SET retry_mode='round',retry_limit=2 WHERE id=?", [
+        batchId,
+      ]);
+      const held = await insertQueuedRun(harness, batchId);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET held_round=2,execution_round=2,queue_deadline_at=NULL WHERE id=?",
+        [held],
+      );
+      if (harness.sqliteDataDirectory) {
+        await harness.rawQuery(
+          `CREATE TRIGGER ${triggerName} BEFORE UPDATE OF current_round ON run_batches WHEN NEW.id='${batchId}' BEGIN SELECT RAISE(ABORT,'injected round release failure'); END`,
+        );
+      } else {
+        await harness.rawQuery(
+          `CREATE FUNCTION ${triggerName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected round release failure'; END $$`,
+        );
+        await harness.rawQuery(
+          `CREATE TRIGGER ${triggerName} BEFORE UPDATE OF current_round ON run_batches FOR EACH ROW WHEN (NEW.id='${batchId}') EXECUTE FUNCTION ${triggerName}()`,
+        );
+      }
+      await expect(harness.batches.prepareSchedulingRound(batchId, now)).rejects.toThrow(
+        "injected round release failure",
+      );
+      const failed = (await harness.batches.get(batchId))!;
+      expect(failed.currentRound).toBe(1);
+      expect(failed.runs[0]).toMatchObject({ status: "queued", heldRound: 2, executionRound: 2 });
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+      expect(await harness.batches.listSchedulableBatchIds(10, now)).toContain(batchId);
+      await dropTrigger();
+      await harness.batches.prepareSchedulingRound(batchId, now);
+      expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(true);
+    } finally {
+      await dropTrigger();
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("serializes concurrent old/new-round completions and duplicate reports, then finishes the final retry once", async () => {
+    const harness = await createHarness();
+    try {
+      const trace = await createOverlappingRound(harness);
+      const secondResult = trace.completion(
+        trace.second.claim.assignment.attemptId,
+        trace.second.token,
+      );
+      const previousResult = trace.completion(
+        harness.completion.attempt2Id,
+        harness.completion.lease2TokenHash,
+        "succeeded",
+      );
+      const results = await Promise.all([
+        harness.executions.completeAttempt(secondResult),
+        harness.executions.completeAttempt(previousResult),
+      ]);
+      expect(results.every((result) => result.disposition === "accepted")).toBe(true);
+      expect((await harness.batches.getMetadata(trace.batchId))?.currentRound).toBe(3);
+      expect(await harness.executions.completeAttempt(secondResult)).toMatchObject({
+        disposition: "duplicate",
+      });
+      expect(await harness.executions.completeAttempt(previousResult)).toMatchObject({
+        disposition: "duplicate",
+      });
+      expect((await harness.batches.get(trace.batchId))?.attempts).toHaveLength(3);
+      const third = await trace.scheduleAndClaim();
+      const final = trace.completion(third.claim.assignment.attemptId, third.token, "succeeded");
+      expect(await harness.executions.completeAttempt(final)).toMatchObject({ batchClosed: true });
+      expect(await harness.executions.completeAttempt(final)).toMatchObject({
+        disposition: "duplicate",
+        batchClosed: true,
+      });
+      const batch = (await harness.batches.get(trace.batchId))!;
+      expect(batch.status).toBe("succeeded");
+      expect(batch.attempts.map((attempt) => attempt.executionRound).sort()).toEqual([1, 1, 2, 3]);
+      const rounds = (await harness.batches.getDetailOverview(trace.batchId))!.roundSummaries;
+      expect(
+        rounds
+          .filter((round) => round.round > 0)
+          .map((round) => [round.round, round.executed, round.passed, round.failed]),
+      ).toEqual([
+        [1, 2, 1, 1],
+        [2, 1, 0, 1],
+        [3, 1, 1, 0],
+      ]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("keeps a lease-expired old-round retry in its original round and fences late completion, pause and termination", async () => {
+    const harness = await createHarness();
+    try {
+      const trace = await createOverlappingRound(harness);
+      const previous = harness.completion.attempt2Id;
+      await harness.rawQuery(
+        "UPDATE assignment_leases SET expires_at='2026-08-10T00:04:59.999Z' WHERE assignment_id IN (SELECT id FROM assignments WHERE attempt_id=?)",
+        [previous],
+      );
+      const recovered = await harness.executions.recoverExpired({
+        now: trace.now,
+        eventIds: Array.from({ length: 10 }, () => randomUUID()),
+        limit: 10,
+      });
+      expect(recovered).toContainEqual(
+        expect.objectContaining({ attemptId: previous, retryScheduled: true }),
+      );
+      const late = trace.completion(previous, harness.completion.lease2TokenHash);
+      expect(await harness.executions.completeAttempt(late)).toMatchObject({ disposition: "late" });
+      await harness.executions.completeAttempt(
+        trace.completion(trace.second.claim.assignment.attemptId, trace.second.token),
+      );
+      const batch = (await harness.batches.get(trace.batchId))!;
+      expect(batch.currentRound).toBe(2);
+      const previousRun = batch.runs.find((run) => run.id !== trace.retry.id)!;
+      expect(previousRun).toMatchObject({ status: "queued", executionRound: 1 });
+      expect(batch.runs.find((run) => run.id === trace.retry.id)).toMatchObject({ heldRound: 3 });
+      expect(
+        (await harness.batches.getSchedulingSnapshot(trace.batchId, "2026-08-09"))?.queuedRuns.map(
+          (run) => run.id,
+        ),
+      ).toEqual([previousRun.id]);
+      await harness.executions.changeBatchScheduling({
+        batchId: trace.batchId,
+        action: "pause",
+        actorId: "operator",
+        eventId: randomUUID(),
+        requestedAt: trace.now,
+      });
+      await refillSchedulingService(harness, trace.now).schedule(trace.batchId);
+      expect((await harness.batches.get(trace.batchId))?.attempts).toHaveLength(3);
+      await harness.executions.changeBatchScheduling({
+        batchId: trace.batchId,
+        action: "resume",
+        actorId: "operator",
+        eventId: randomUUID(),
+        requestedAt: trace.now,
+      });
+      expect((await harness.batches.getMetadata(trace.batchId))?.currentRound).toBe(2);
+      await harness.executions.terminateBatch({
+        batchId: trace.batchId,
+        actorId: "operator",
+        reason: "fault trace shutdown",
+        requestedAt: trace.now,
+        eventId: randomUUID(),
+      });
+      expect((await harness.batches.getMetadata(trace.batchId))?.status).toBe("cancelled");
+      expect(await harness.batches.hasSchedulableRuns(trace.batchId)).toBe(false);
+      await expect(
+        harness.executions.completeAttempt(
+          trace.completion(previous, harness.completion.lease2TokenHash),
+        ),
+      ).rejects.toMatchObject({ code: "ATTEMPT_COMPLETION_CONFLICT" });
+      expect(await harness.executions.completeAttempt(late)).toMatchObject({
+        disposition: "duplicate",
+        batchClosed: true,
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it.each(["paused", "active", "terminated", "advanced"] as const)(
+    "fences a completed Jenkins recovery when the batch is %s",
+    async (guard) => {
+      const harness = await createHarness();
+      const batchId = harness.batchQueuedId;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=3,current_round=? WHERE id=?",
+          [guard === "advanced" ? 3 : 1, batchId],
+        );
+        const held = await insertQueuedRun(harness, batchId);
+        await harness.rawQuery(
+          "UPDATE execution_runs SET held_round=2,execution_round=2 WHERE id=?",
+          [held],
+        );
+        await harness.rawQuery(
+          "INSERT INTO run_batch_round_recoveries(batch_id,rule_id,after_round,next_round,jenkins_job_url,api_key_ciphertext,wait_minutes,status,available_at,lease_owner,lease_expires_at,created_at,updated_at) VALUES (?,'fenced-recovery',1,2,'https://jenkins.internal/job/reset/','fixture',0,'waiting',?,'recovery-worker','2026-08-10T00:10:00.000Z',?,?)",
+          [batchId, now, now, now],
+        );
+        if (guard === "paused")
+          await harness.rawQuery("UPDATE run_batches SET pause_requested_at=? WHERE id=?", [
+            now,
+            batchId,
+          ]);
+        if (guard === "terminated")
+          await harness.rawQuery(
+            "UPDATE run_batches SET status='cancelled',cancel_requested_at=? WHERE id=?",
+            [now, batchId],
+          );
+        if (guard === "active") {
+          const active = await insertQueuedRun(harness, batchId);
+          await harness.rawQuery("UPDATE execution_runs SET status='running' WHERE id=?", [active]);
+        }
+        if (guard !== "advanced") {
+          expect(await harness.batches.listSchedulableBatchIds(10, now)).not.toContain(batchId);
+        }
+        expect(
+          await harness.roundRecoveries.completeWaitingStep({
+            batchId,
+            ruleId: "fenced-recovery",
+            workerId: "recovery-worker",
+            updatedAt: now,
+          }),
+        ).toEqual({ outcome: "release_deferred" });
+        const batch = (await harness.batches.get(batchId))!;
+        expect(batch.currentRound).toBe(guard === "advanced" ? 3 : 1);
+        if (guard !== "advanced")
+          expect(batch.runs.find((run) => run.id === held)?.heldRound).toBe(2);
+        if (guard === "paused") {
+          await harness.executions.changeBatchScheduling({
+            batchId,
+            action: "resume",
+            actorId: "operator",
+            eventId: randomUUID(),
+            requestedAt: now,
+          });
+          expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+          expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(true);
+        }
+        if (guard === "active") {
+          await harness.rawQuery(
+            "UPDATE execution_runs SET status='succeeded' WHERE batch_id=? AND status='running'",
+            [batchId],
+          );
+          expect(await harness.batches.listSchedulableBatchIds(10, now)).toContain(batchId);
+          await harness.batches.prepareSchedulingRound(batchId, now);
+          expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+        }
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it("rediscovers a durable held tail after a restart without another completion, and never discovers a third round", async () => {
+    const harness = await createHarness();
+    const { batchId, attempt1Id, lease1TokenHash } = harness.completion;
+    const now = "2026-08-10T00:05:00.000Z";
+    try {
+      await harness.rawQuery("UPDATE run_batches SET retry_mode='round',retry_limit=2 WHERE id=?", [
+        batchId,
+      ]);
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+        batchId,
+        harness.runnerId,
+      ]);
+      await harness.executions.completeAttempt({
+        runnerId: harness.runnerId,
+        attemptId: attempt1Id,
+        leaseTokenHash: lease1TokenHash,
+        completionId: randomUUID(),
+        resultDigest: randomUUID(),
+        eventId: randomUUID(),
+        acceptedAt: now,
+        result: {
+          status: "failed",
+          resultCode: "TESTNG_ASSERTIONS_FAILED",
+          summary: "durable failure",
+          durationMs: 1,
+          artifacts: [],
+        },
+      });
+      const retry = (await harness.batches.get(batchId))!.runs.find(
+        (run) => run.status === "queued",
+      )!;
+      // A rule for a later round must not prevent discovery of this eligible tail.
+      await harness.rawQuery("UPDATE run_batches SET policy_json=? WHERE id=?", [
+        JSON.stringify({
+          concurrency: 4,
+          retryConcurrencyRules: [
+            { id: "later", executionRound: 3, previousRoundPassRateMinimum: 0, concurrency: 4 },
+          ],
+        }),
+        batchId,
+      ]);
+      // Model exit after the completion transaction committed but before the release transaction.
+      await harness.rawQuery("UPDATE run_batches SET current_round=1 WHERE id=?", [batchId]);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET held_round=2,queue_deadline_at=NULL WHERE id=?",
+        [retry.id],
+      );
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+      expect(await harness.batches.listSchedulableBatchIds(10, now)).toContain(batchId);
+      expect(
+        await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 10, now),
+      ).toContain(batchId);
+      // The periodic lifecycle sweep also repairs the tail while the old case is still running.
+      await harness.executions.recoverExpired({
+        now,
+        eventIds: Array.from({ length: 5 }, () => randomUUID()),
+        limit: 5,
+        scope: "batch_lifecycle",
+      });
+      expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(true);
+      // A fresh application instance uses the ordinary scan/claim path, without a replayed completion.
+      await prepareRefillExecutions(harness, batchId, [retry.id], "testng", now);
+      await harness.rawQuery(
+        "UPDATE runners SET last_seen_at=?,metrics_observed_at=?,max_concurrency=4,cpu_utilization_percent=10,memory_utilization_percent=30,logical_cpu_count=4,load_average_1m=0 WHERE id=?",
+        [now, now, harness.runnerId],
+      );
+      expect(
+        await refillSchedulingService(harness, now).scheduleForRunner(harness.runnerId, 1, 1),
+      ).toBe(1);
+      expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+      expect((await harness.batches.get(batchId))!.attempts).toContainEqual(
+        expect.objectContaining({
+          executionRunId: retry.id,
+          executionRound: 2,
+          status: "assigned",
+        }),
+      );
+      // A round 3 retry cannot displace the still-running first round after a restart.
+      await harness.rawQuery(
+        "UPDATE execution_runs SET status='queued',execution_round=3,held_round=3 WHERE id=?",
+        [retry.id],
+      );
+      expect(await harness.batches.listSchedulableBatchIds(10, now)).not.toContain(batchId);
+      expect(
+        await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 10, now),
+      ).not.toContain(batchId);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("overlaps only two adjacent rounds, admits late failures, and preserves attempt attribution", async () => {
+    const harness = await createHarness();
+    const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+      harness.completion;
+    const now = "2026-08-10T00:05:00.000Z";
+    const finish = (attemptId: string, token: string, status: "succeeded" | "failed" = "failed") =>
+      harness.executions.completeAttempt({
+        runnerId: harness.runnerId,
+        attemptId,
+        leaseTokenHash: token,
+        completionId: randomUUID(),
+        resultDigest: randomUUID(),
+        eventId: randomUUID(),
+        acceptedAt: now,
+        result: {
+          status,
+          resultCode: status === "failed" ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED",
+          summary: "round result",
+          durationMs: 10,
+          artifacts: [],
+        },
+      });
+    try {
+      await harness.rawQuery("UPDATE run_batches SET retry_mode='round',retry_limit=2 WHERE id=?", [
+        batchId,
+      ]);
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+        batchId,
+        harness.runnerId,
+      ]);
+      expect(await finish(attempt1Id, lease1TokenHash)).toMatchObject({
+        retryScheduled: true,
+        batchClosed: false,
+      });
+      let details = (await harness.batches.get(batchId))!;
+      const retry = details.runs.find((run) => run.status === "queued")!;
+      expect(details.currentRound).toBe(2);
+      expect(retry.executionRound).toBe(2);
+      expect(details.attempts.find((attempt) => attempt.id === attempt1Id)?.executionRound).toBe(1);
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(true);
+      // Reserve and claim the retry through the actual scheduler, alongside the long first-round case.
+      await prepareRefillExecutions(harness, batchId, [retry.id], "testng", now);
+      await harness.rawQuery(
+        "UPDATE runners SET last_seen_at=?,metrics_observed_at=?,max_concurrency=4,cpu_utilization_percent=10,memory_utilization_percent=30,logical_cpu_count=4,load_average_1m=0 WHERE id=?",
+        [now, now, harness.runnerId],
+      );
+      await refillSchedulingService(harness, now).schedule(batchId);
+      const afterSchedule = (await harness.batches.get(batchId))!;
+      expect(
+        afterSchedule.attempts.filter((attempt) => attempt.executionRound === 2),
+        JSON.stringify(await harness.batches.listSchedulingEvents({ batchId, limit: 10 })),
+      ).toHaveLength(1);
+      const [claim] = await harness.executions.claim({
+        runnerId: harness.runnerId,
+        requestId: randomUUID(),
+        availableSlots: 1,
+        labels: ["linux", "java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        now,
+        leaseExpiresAt: "2026-08-10T00:10:00.000Z",
+        leaseSeeds: [
+          {
+            id: randomUUID(),
+            eventId: randomUUID(),
+            tokenHash: "round-two",
+            tokenEncrypted: "round-two",
+          },
+        ],
+      });
+      expect(claim).toBeTruthy();
+      const secondAttemptId = claim!.assignment.attemptId;
+      expect(await finish(secondAttemptId, "round-two")).toMatchObject({
+        retryScheduled: true,
+        batchClosed: false,
+      });
+      // Round 3 waits while any round 1 attempt remains, even though no round 2 cases are active.
+      expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+      await harness.batches.prepareSchedulingRound(batchId, now);
+      expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(2);
+      // The late failure must enter the open second round; it must never be skipped into round 3.
+      await finish(attempt2Id, lease2TokenHash);
+      details = (await harness.batches.get(batchId))!;
+      expect(details.currentRound).toBe(2);
+      expect(details.runs.filter((run) => run.executionRound === 2)).toHaveLength(1);
+      expect(details.attempts.find((attempt) => attempt.id === attempt2Id)?.executionRound).toBe(1);
+      expect(
+        details.attempts.find((attempt) => attempt.id === secondAttemptId)?.executionRound,
+      ).toBe(2);
+      expect(
+        (await harness.batches.getSchedulingSnapshot(batchId, "2026-08-09"))?.queuedRuns.map(
+          (run) => run.id,
+        ),
+      ).toEqual([details.runs.find((run) => run.executionRound === 2)!.id]);
+      await harness.executions.terminateBatch({
+        batchId,
+        actorId: "operator",
+        reason: "cancel overlapping tail",
+        requestedAt: now,
+        eventId: randomUUID(),
+      });
+      expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+      expect((await harness.batches.getMetadata(batchId))?.status).toBe("cancelled");
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("opens the adjacent round after the last queued original case is assigned, without waiting for its result", async () => {
+    const harness = await createHarness();
+    const { batchId, attempt1Id, lease1TokenHash } = harness.completion;
+    const now = "2026-08-10T00:05:00.000Z";
+    try {
+      await harness.rawQuery(
+        "UPDATE run_batches SET retry_mode='round',retry_limit=2,total_runs=3,policy_json=? WHERE id=?",
+        [
+          JSON.stringify({
+            executor: "testng",
+            concurrency: 3,
+            runnerLabels: [],
+            artifactPatterns: [],
+          }),
+          batchId,
+        ],
+      );
+      await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+        batchId,
+        harness.runnerId,
+      ]);
+      const original = await insertQueuedRun(harness, batchId);
+      await harness.executions.completeAttempt({
+        runnerId: harness.runnerId,
+        attemptId: attempt1Id,
+        leaseTokenHash: lease1TokenHash,
+        completionId: randomUUID(),
+        resultDigest: randomUUID(),
+        eventId: randomUUID(),
+        acceptedAt: now,
+        result: {
+          status: "failed",
+          resultCode: "TESTNG_ASSERTIONS_FAILED",
+          summary: "first failure",
+          durationMs: 1,
+          artifacts: [],
+        },
+      });
+      expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(1);
+      expect(
+        (await harness.batches.getSchedulingSnapshot(batchId, "2026-08-09"))?.queuedRuns.map(
+          (run) => run.id,
+        ),
+      ).toEqual([original]);
+      await prepareRefillExecutions(harness, batchId, [original], "testng", now);
+      await harness.rawQuery(
+        "UPDATE runners SET last_seen_at=?,metrics_observed_at=?,max_concurrency=4,cpu_utilization_percent=10,memory_utilization_percent=30,logical_cpu_count=4,load_average_1m=0 WHERE id=?",
+        [now, now, harness.runnerId],
+      );
+      await refillSchedulingService(harness, now).schedule(batchId);
+      const after = (await harness.batches.get(batchId))!;
+      expect(after.currentRound).toBe(2);
+      expect(after.attempts).toContainEqual(
+        expect.objectContaining({
+          executionRunId: original,
+          executionRound: 1,
+          status: "assigned",
+        }),
+      );
+      const queued = (await harness.batches.getSchedulingSnapshot(batchId, "2026-08-09"))!
+        .queuedRuns;
+      expect(queued).toHaveLength(1);
+      expect(queued[0]!.id).not.toBe(original);
+      expect(after.runs.find((run) => run.id === queued[0]!.id)?.executionRound).toBe(2);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it.each(["paused", "adaptive", "normal"] as const)(
+    "guards the %s tail and never starts an empty retry round",
+    async (guard) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, attempt2Id, lease1TokenHash, lease2TokenHash } =
+        harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=2,policy_json=? WHERE id=?",
+          [
+            JSON.stringify(
+              guard === "adaptive"
+                ? {
+                    retryConcurrencyRules: [
+                      {
+                        id: "r",
+                        executionRound: 2,
+                        previousRoundPassRateMinimum: 50,
+                        concurrency: 1,
+                      },
+                    ],
+                  }
+                : {},
+            ),
+            batchId,
+          ],
+        );
+        if (guard === "paused")
+          await harness.rawQuery("UPDATE run_batches SET pause_requested_at=? WHERE id=?", [
+            now,
+            batchId,
+          ]);
+        for (const [attemptId, token] of [
+          [attempt1Id, lease1TokenHash],
+          [attempt2Id, lease2TokenHash],
+        ]) {
+          await harness.executions.completeAttempt({
+            runnerId: harness.runnerId,
+            attemptId: attemptId!,
+            leaseTokenHash: token!,
+            completionId: randomUUID(),
+            resultDigest: randomUUID(),
+            eventId: randomUUID(),
+            acceptedAt: now,
+            result: {
+              status: "succeeded",
+              resultCode: "TESTNG_SUCCEEDED",
+              summary: "pass",
+              durationMs: 1,
+              artifacts: [],
+            },
+          });
+          expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(1);
+        }
+        expect((await harness.batches.getMetadata(batchId))?.status).toBe("succeeded");
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
   it.each(["round", "immediate"] as const)(
     "settles a terminated %s retry batch without another Runner completion or claim",
     async (retryMode) => {
@@ -1033,6 +1797,241 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       await cleanupTemporaryDirectories();
     }
   });
+
+  it.each([
+    { base: 50, previous: 50, next: 30, active: 31, round: 2, recorded: true },
+    { base: 30, previous: 30, next: 50, active: 29, round: 2, recorded: true },
+    { base: 60, previous: 20, next: 50, active: 19, round: 3, recorded: true },
+    { base: 30, previous: 30, next: 50, active: 29, round: 2, recorded: false },
+  ])(
+    "shares the smaller overlap budget ($previous -> $next, old round $round, recorded=$recorded)",
+    async ({ base, previous, next, active, round, recorded }) => {
+      const harness = await createHarness();
+      const batchId = harness.batchQueuedId;
+      const now = "2026-08-10T00:10:00.000Z";
+      const limit = Math.min(previous, next);
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=4,current_round=?,status='running',policy_json=? WHERE id=?",
+          [
+            round,
+            JSON.stringify({
+              executor: "testng",
+              concurrency: base,
+              runnerLabels: [],
+              artifactPatterns: [],
+              retryConcurrencyRules: [
+                { id: "overlap-cap", executionRound: round, concurrency: next },
+              ],
+            }),
+            batchId,
+          ],
+        );
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          batchId,
+          harness.runnerId,
+        ]);
+        await harness.rawQuery(
+          "INSERT INTO run_batch_retry_concurrency_states(batch_id,rule_id,rule_index,concurrency,activated_round,updated_at) VALUES (?,'overlap-cap',0,?,?,?)",
+          [batchId, next, round, now],
+        );
+        if (recorded)
+          await harness.rawQuery(
+            "INSERT INTO run_batch_round_concurrencies(batch_id,execution_round,concurrency,source,recorded_at) VALUES (?,?,?,'base',?)",
+            [batchId, round - 1, previous, now],
+          );
+        await harness.rawQuery(
+          `UPDATE runners SET max_concurrency=128,busy_slots=0,
+          memory_total_bytes=?,memory_available_bytes=?,logical_cpu_count=128,load_average_1m=0,
+          cpu_utilization_percent=10,memory_utilization_percent=10,metrics_observed_at=?,last_seen_at=? WHERE id=?`,
+          [1024 ** 4, 900 * 1024 ** 3, now, now, harness.runnerId],
+        );
+        const olderRunIds: string[] = [];
+        for (let index = 0; index < active; index++) {
+          const older = await insertCaseHistoryRun(harness, randomUUID(), {
+            batchId,
+            status: index % 2 ? "assigned" : "running",
+            createdAt: now,
+            attempts: [
+              {
+                status: index % 2 ? "assigned" : "running",
+                executionRound: round - 1,
+                finished: false,
+              },
+            ],
+          });
+          await harness.rawQuery("UPDATE execution_runs SET execution_round=? WHERE id=?", [
+            round - 1,
+            older.runId,
+          ]);
+          olderRunIds.push(older.runId);
+        }
+        const queuedRunIds: string[] = [];
+        for (let index = 0; index < next + 3; index++)
+          queuedRunIds.push(await insertQueuedRun(harness, batchId));
+        await prepareRefillExecutions(harness, batchId, queuedRunIds, "testng", now);
+        await harness.rawQuery(
+          "UPDATE execution_runs SET execution_round=? WHERE batch_id=? AND status='queued'",
+          [round, batchId],
+        );
+        await harness.rawQuery("UPDATE run_batches SET total_runs=? WHERE id=?", [
+          active + queuedRunIds.length,
+          batchId,
+        ]);
+
+        const snapshot = await harness.batches.getSchedulingSnapshot(batchId, now);
+        expect(snapshot).toMatchObject({ overlappingRoundConcurrency: previous });
+        expect(
+          (await harness.batches.readConcurrencySnapshot(batchId, now))?.targetConcurrency,
+        ).toBe(limit);
+        const reserve = (offset: number, expectedCurrentRound = round) =>
+          harness.batches.reserveAssignments({
+            batchId,
+            expectedCurrentRound,
+            projectMaximumConcurrency: 128,
+            decisions: queuedRunIds.slice(offset, offset + 3).map((executionRunId) => ({
+              executionRunId,
+              runnerId: harness.runnerId,
+              score: 1,
+              attemptId: randomUUID(),
+              assignmentId: randomUUID(),
+            })),
+            thresholds: {
+              maximumCpuUtilizationPercent: 80,
+              maximumMemoryUtilizationPercent: 85,
+              maximumLoadPerCpu: 1,
+            },
+            offlineBefore: "2026-08-09",
+            metricsFreshAfter: "2026-08-09",
+            scheduledAt: now,
+          });
+        if (active >= limit) {
+          expect(await reserve(0)).toMatchObject({ reserved: 0 });
+          // Existing work drains naturally; lowering a cap must not terminate it.
+          for (const runId of olderRunIds.splice(0, active - limit + 1)) {
+            await harness.rawQuery(
+              "UPDATE run_attempts SET status='succeeded' WHERE execution_run_id=?",
+              [runId],
+            );
+            await harness.rawQuery("UPDATE execution_runs SET status='succeeded' WHERE id=?", [
+              runId,
+            ]);
+          }
+        }
+        // A delayed plan from before the round transition must not use the old cap.
+        expect(await reserve(0, round - 1)).toMatchObject({ reserved: 0 });
+        // Two schedulers with stale plans share the final remaining slot atomically.
+        const reservations = await Promise.all([reserve(0), reserve(3)]);
+        expect(reservations.reduce((total, result) => total + result.reserved, 0)).toBe(1);
+        expect((await harness.batches.getSummary(batchId))?.assignedRuns).toBe(limit);
+        expect(await harness.batches.listSchedulableBatchIds(20, now)).not.toContain(batchId);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 20, now),
+        ).not.toContain(batchId);
+        await refillSchedulingService(harness, now).schedule(batchId);
+        expect((await harness.batches.getSummary(batchId))?.assignedRuns).toBe(limit);
+
+        // Only the new round's full configured budget applies once the old round is empty.
+        await harness.rawQuery(
+          "UPDATE run_attempts SET status='succeeded' WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=? AND execution_round=?)",
+          [batchId, round - 1],
+        );
+        await harness.rawQuery(
+          "UPDATE execution_runs SET status='succeeded' WHERE batch_id=? AND execution_round=?",
+          [batchId, round - 1],
+        );
+        if (previous < next) {
+          // A node failure can leave the last older-round run queued between leases.
+          // It has not drained and must not briefly release the smaller round budget.
+          const olderRetryId = olderRunIds[0]!;
+          await harness.rawQuery(
+            "UPDATE execution_runs SET status='queued',held_round=0 WHERE id=?",
+            [olderRetryId],
+          );
+          expect(
+            (await harness.batches.readConcurrencySnapshot(batchId, now))?.targetConcurrency,
+          ).toBe(limit);
+          expect(await harness.batches.getSchedulingSnapshot(batchId, now)).toMatchObject({
+            overlappingRoundConcurrency: previous,
+          });
+          await harness.rawQuery("UPDATE execution_runs SET status='succeeded' WHERE id=?", [
+            olderRetryId,
+          ]);
+        }
+        expect(
+          (await harness.batches.readConcurrencySnapshot(batchId, now))?.targetConcurrency,
+        ).toBe(next);
+        await refillSchedulingService(harness, now).schedule(batchId);
+        const filled = (await harness.batches.get(batchId))!;
+        expect(filled.assignedRuns).toBe(next);
+        expect(
+          filled.attempts
+            .filter((attempt) => attempt.status === "assigned")
+            .every((attempt) => attempt.executionRound === round),
+        ).toBe(true);
+        expect(filled.roundConcurrencies).toContainEqual(
+          expect.objectContaining({ round, concurrency: next }),
+        );
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
+
+  it.each(["idle", "pending", "polling", "waiting", "succeeded", "failed"] as const)(
+    "never overlaps a Jenkins recovery barrier in status %s",
+    async (recoveryStatus) => {
+      const harness = await createHarness();
+      const { batchId, attempt1Id, lease1TokenHash } = harness.completion;
+      const now = "2026-08-10T00:05:00.000Z";
+      try {
+        await harness.rawQuery(
+          "UPDATE run_batches SET retry_mode='round',retry_limit=2 WHERE id=?",
+          [batchId],
+        );
+        await harness.rawQuery("INSERT INTO run_batch_runners(batch_id,runner_id) VALUES (?,?)", [
+          batchId,
+          harness.runnerId,
+        ]);
+        await harness.rawQuery(
+          "INSERT INTO run_batch_round_recoveries(batch_id,rule_id,after_round,next_round,jenkins_job_url,api_key_ciphertext,wait_minutes,status,available_at,created_at,updated_at) VALUES (?,'no-overlap',1,2,'https://jenkins.internal/job/reset/','fixture',5,?,?,?,?)",
+          [batchId, recoveryStatus, now, now, now],
+        );
+        await harness.executions.completeAttempt({
+          runnerId: harness.runnerId,
+          attemptId: attempt1Id,
+          leaseTokenHash: lease1TokenHash,
+          completionId: randomUUID(),
+          resultDigest: randomUUID(),
+          eventId: randomUUID(),
+          acceptedAt: now,
+          result: {
+            status: "failed",
+            resultCode: "TESTNG_ASSERTIONS_FAILED",
+            summary: "retry after recovery",
+            durationMs: 1,
+            artifacts: [],
+          },
+        });
+        await harness.batches.prepareSchedulingRound(batchId, now);
+        await harness.executions.recoverExpired({
+          now,
+          scope: "batch_lifecycle",
+          limit: 5,
+          eventIds: Array.from({ length: 5 }, () => randomUUID()),
+        });
+        expect((await harness.batches.getMetadata(batchId))?.currentRound).toBe(1);
+        expect(await harness.batches.hasSchedulableRuns(batchId)).toBe(false);
+        expect(
+          await harness.batches.listSchedulableBatchIdsForRunner(harness.runnerId, 20, now),
+        ).not.toContain(batchId);
+      } finally {
+        await harness.dispose();
+        await cleanupTemporaryDirectories();
+      }
+    },
+  );
 
   it("reports the persisted dynamic concurrency cap instead of the base policy", async () => {
     const harness = await createHarness();
@@ -3162,6 +4161,7 @@ describe.skipIf(!postgresConnectionString)("PostgreSQL scheduling refill contrac
     const attemptLogs = createAttemptLogStore(logsDirectory);
     return {
       batches: new PostgresRunBatchRepository(handle),
+      roundRecoveries: new PostgresRoundRecoveryRepository(handle),
       executions: new PostgresExecutionControlRepository(handle, attemptLogs),
       listCaseActivity: (caseDefinitionId, limit) =>
         new PostgresCaseCatalogRepository(handle).listCaseActivity(caseDefinitionId, limit),

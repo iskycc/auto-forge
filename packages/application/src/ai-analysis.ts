@@ -118,6 +118,19 @@ export class AiAnalysisService {
     };
   }
   async create(identity: AuthenticatedIdentity, input: unknown): Promise<AiAnalysisJob> {
+    return this.createJob(identity, input, "manual");
+  }
+
+  async createAutomatic(identity: AuthenticatedIdentity, batchId: string): Promise<AiAnalysisJob> {
+    return this.createJob(identity, { batchId, requestKey: "automatic" }, "automatic");
+  }
+
+  private async createJob(
+    identity: AuthenticatedIdentity,
+    input: unknown,
+    mode: "manual" | "automatic",
+  ): Promise<AiAnalysisJob> {
+    const automatic = mode === "automatic";
     const parsed = createAiAnalysisSchema.parse(input);
     const batch = await this.batches.getMetadata(
       parsed.batchId,
@@ -128,6 +141,15 @@ export class AiAnalysisService {
     const configuration = await this.repository.configuration();
     if (!configuration.configuration?.enabled)
       throw new DomainError("AI_DISABLED", "请先在模型配置中启用 AI 初析。");
+    if (
+      automatic &&
+      (!batch.policy?.aiAnalysisAfterCompletion ||
+        batch.policy.aiAnalysisExecutionId !== batch.id ||
+        (!["succeeded", "failed", "cancelled"].includes(batch.status) &&
+          (batch.currentRound ?? 1) < batch.retryLimit + 1 &&
+          batch.retryMode !== "immediate"))
+    )
+      throw new DomainError("AI_BATCH_ACTIVE", "尚未进入最终轮次，暂不启动自动初析。");
     if (parsed.attemptId) {
       const source = await this.repository.source(parsed.attemptId);
       if (
@@ -136,7 +158,7 @@ export class AiAnalysisService {
         !["failed", "timed_out"].includes(String(source.outcome))
       )
         throw new DomainError("AI_ATTEMPT_INVALID", "请选择本批次已结束的失败或超时尝试。");
-    } else if (!["succeeded", "failed", "cancelled"].includes(batch.status))
+    } else if (!automatic && !["succeeded", "failed", "cancelled"].includes(batch.status))
       throw new DomainError(
         "AI_BATCH_ACTIVE",
         "批次初析需要等待任务结束；已完成的失败用例可单独分析。",
@@ -161,6 +183,7 @@ export class AiAnalysisService {
         revision: 1,
       },
       parsed.requestKey,
+      automatic ? { followFinalResults: true } : undefined,
     );
     if (
       created.attemptId !== (parsed.attemptId ?? null) ||

@@ -1,3 +1,5 @@
+import { batchConcurrencyLimitSql } from "./round-concurrency-query";
+
 /** The scan window must contain batches that can actually accept another assignment.
  * Otherwise a full earlier batch consumes the entire one-slot claim scan and starves later work.
  */
@@ -5,16 +7,7 @@ export function schedulableBatchCapacitySql(
   dialect: "sqlite" | "postgres",
   batch: "b" | "run_batches",
 ): string {
-  const concurrencyField =
-    dialect === "sqlite"
-      ? `json_extract(${batch}.policy_json, '$.concurrency')`
-      : `(${batch}.policy_json::jsonb ->> 'concurrency')::integer`;
-  // A legacy NULL policy has no batch cap; an object without concurrency uses the reader's default.
-  const configuredConcurrency = `CASE WHEN ${batch}.policy_json IS NULL THEN NULL ELSE COALESCE(${concurrencyField},4) END`;
-  return `COALESCE(
-    (SELECT state.concurrency FROM run_batch_retry_concurrency_states state WHERE state.batch_id=${batch}.id),
-    ${configuredConcurrency}, ${Number.MAX_SAFE_INTEGER}
-  ) > ${activeBatchRunsSql(batch)}`;
+  return `${batchConcurrencyLimitSql(dialect, batch)} > ${activeBatchRunsSql(batch)}`;
 }
 
 /** Waiting-time promotion prevents queued tasks from starving. Once work is in flight,

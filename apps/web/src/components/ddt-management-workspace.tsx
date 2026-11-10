@@ -10,7 +10,11 @@ import { DdtRecycleBrowser } from "./ddt-recycle-browser";
 import { DdtScopeClearDialog } from "./ddt-scope-clear-dialog";
 import type { DdtRecycleGroupPage } from "@autoforge/contracts";
 import { ddtImportStatusLabel as statusLabel } from "@/lib/ddt-import-status";
-import { ddtImportJobSummaryPageSchema, type DdtImportJobSummary } from "@autoforge/contracts";
+import {
+  DDT_BULK_MUTATION_LIMIT,
+  ddtImportJobSummaryPageSchema,
+  type DdtImportJobSummary,
+} from "@autoforge/contracts";
 import { DdtChangeReview } from "./ddt-change-review";
 import { Radio, Upload as AntUpload } from "antd";
 import { Progress } from "@/components/ui/progress";
@@ -98,6 +102,7 @@ import { useConfirm, useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { readApiError } from "@/lib/client-api";
 import { ddtImportCaseIdsCsv } from "@/lib/ddt-import-case-ids-export";
+import { canAddDdtImportToTask, ddtImportTaskCaseIds } from "@/lib/ddt-import-task-selection";
 
 type HistoryItem = DdtHistoryItem;
 type Dashboard = {
@@ -308,6 +313,13 @@ export function DdtManagementWorkspace({
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [showAddToSuite, setShowAddToSuite] = useState(false);
+  const [importTaskSelection, setImportTaskSelection] = useState<{
+    jobId: string;
+    caseIds: string[];
+  }>();
+  const [loadingImportCaseIds, setLoadingImportCaseIds] = useState<string>();
+  const importSelectionRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => importSelectionRequest.current?.abort(), []);
   const [showRemoveFromSuite, setShowRemoveFromSuite] = useState(false);
   const [showCaseSelection, setShowCaseSelection] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{
@@ -1397,6 +1409,30 @@ export function DdtManagementWorkspace({
             jobs={imports}
             fileEndpoint={(id) => endpoint(`imports/${id}/files`)}
             canManage={canManage}
+            canManageSuites={canManageSuites}
+            loadingCaseIds={loadingImportCaseIds}
+            onAddToSuite={async (jobId) => {
+              if (importSelectionRequest.current) return;
+              const controller = new AbortController();
+              importSelectionRequest.current = controller;
+              setLoadingImportCaseIds(jobId);
+              try {
+                const caseIds = ddtImportTaskCaseIds(
+                  await requestJson(endpoint(`imports/${jobId}/case-ids`), {
+                    signal: controller.signal,
+                  }),
+                );
+                controller.signal.throwIfAborted();
+                setImportTaskSelection({ jobId, caseIds });
+              } catch (cause) {
+                if (!controller.signal.aborted) toast.error(messageOf(cause));
+              } finally {
+                if (importSelectionRequest.current === controller) {
+                  importSelectionRequest.current = null;
+                  setLoadingImportCaseIds(undefined);
+                }
+              }
+            }}
             onOpen={() => setShowImport(true)}
             onCancel={async (id) => {
               await requestJson(endpoint(`imports/${id}/cancel`), { method: "POST" });
@@ -1544,6 +1580,24 @@ export function DdtManagementWorkspace({
           }}
         />
       ) : null}
+      {importTaskSelection ? (
+        <AddDdtToSuiteDialog
+          key={importTaskSelection.jobId}
+          caseIds={importTaskSelection.caseIds}
+          scope={scope}
+          suites={suites}
+          sourceDescription="范围来自本次导入记录，包含新增、更新、未变及按策略跳过的已有用例；失败文件和无效行不加入。"
+          initialSuiteId={searchParameters.get("targetSuiteId") ?? undefined}
+          onClose={() => setImportTaskSelection(undefined)}
+          onComplete={async (suiteName) => {
+            toast.success(
+              `已将本次导入的 ${importTaskSelection.caseIds.length} 条 DDT 用例加入任务“${suiteName}”。`,
+            );
+            setImportTaskSelection(undefined);
+            router.refresh();
+          }}
+        />
+      ) : null}
       {showRemoveFromSuite ? (
         <RemoveDdtFromSuiteDialog
           caseIds={[...selected]}
@@ -1613,6 +1667,9 @@ function ImportJobs({
   onOpen,
   onCancel,
   onExportCaseIds,
+  canManageSuites,
+  loadingCaseIds,
+  onAddToSuite,
 }: {
   jobs: DdtImportJobSummary[];
   fileEndpoint(id: string): string;
@@ -1620,6 +1677,9 @@ function ImportJobs({
   onOpen(): void;
   onCancel(id: string): Promise<void>;
   onExportCaseIds(id: string): Promise<void>;
+  canManageSuites: boolean;
+  loadingCaseIds: string | undefined;
+  onAddToSuite(id: string): Promise<void>;
 }) {
   return (
     <div className={cn("ddt-section", ddtManagementWorkspaceStyles["ddt-section"])}>
@@ -1653,6 +1713,7 @@ function ImportJobs({
                 ddtManagementWorkspaceStyles["ddt-job"],
               )}
               key={job.id}
+              aria-label={`导入任务 ${job.id}`}
             >
               <div className={cn("ddt-job-main", ddtManagementWorkspaceStyles["ddt-job-main"])}>
                 <Badge
@@ -1713,15 +1774,27 @@ function ImportJobs({
                   取消
                 </Button>
               ) : null}
-              {["succeeded", "partially_succeeded"].includes(job.status) ? (
-                <Button
-                  className={cn("text-button", uiPatterns["text-button"])}
-                  type="button"
-                  onClick={() => void onExportCaseIds(job.id)}
-                >
-                  <Download size={14} /> 导出本任务 CaseID
-                </Button>
-              ) : null}
+              <div className="flex min-w-0 flex-wrap items-center gap-2 empty:hidden">
+                {["succeeded", "partially_succeeded"].includes(job.status) ? (
+                  <Button
+                    className={cn("text-button", uiPatterns["text-button"])}
+                    type="button"
+                    onClick={() => void onExportCaseIds(job.id)}
+                  >
+                    <Download size={14} /> 导出本任务 CaseID
+                  </Button>
+                ) : null}
+                {canManageSuites && canAddDdtImportToTask(job) ? (
+                  <Button
+                    type="button"
+                    loading={loadingCaseIds === job.id}
+                    disabled={loadingCaseIds !== undefined}
+                    onClick={() => void onAddToSuite(job.id)}
+                  >
+                    {loadingCaseIds !== job.id ? <ListPlus size={15} /> : null} 加入用例任务
+                  </Button>
+                ) : null}
+              </div>
               <DdtImportFileResults filesUrl={fileEndpoint(job.id)} updatedAt={job.updatedAt} />
             </Card>
           ))}
@@ -1839,6 +1912,7 @@ export function DdtImportDialog({
   const [files, setFiles] = useState<File[]>([]);
   const [job, setJob] = useState<ImportJob>();
   const [strategy, setStrategy] = useState("overwrite");
+  const [overwriteReason, setOverwriteReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showColumnConflicts, setShowColumnConflicts] = useState(false);
@@ -1954,7 +2028,12 @@ export function DdtImportDialog({
       await requestJson(endpoint(`imports/${job.id}/confirm`), {
         method: "POST",
         headers: jsonHeaders,
-        body: JSON.stringify({ conflictStrategy: strategy }),
+        body: JSON.stringify({
+          conflictStrategy: strategy,
+          ...(strategy === "overwrite" && overwriteReason.trim()
+            ? { overwriteReason: overwriteReason.trim() }
+            : {}),
+        }),
       });
       await onComplete(job.id);
     } catch (confirmError) {
@@ -2219,6 +2298,23 @@ export function DdtImportDialog({
                   ))}
                 </div>
               </Radio.Group>
+              {strategy === "overwrite" ? (
+                <label className="grid min-w-0 gap-2 text-sm">
+                  <span>覆盖说明（选填）</span>
+                  <Textarea
+                    aria-label="覆盖说明（选填）"
+                    value={overwriteReason}
+                    onChange={(event) => setOverwriteReason(event.target.value)}
+                    disabled={busy}
+                    maxLength={2000}
+                    rows={3}
+                    placeholder="说明本次覆盖原因；仅实际覆盖的用例会写入修改历史。"
+                  />
+                  <small className="text-muted-foreground">
+                    最多 2000 字，将显示在被覆盖用例的修改历史中。
+                  </small>
+                </label>
+              ) : null}
             </>
           )}
         </div>
@@ -2924,6 +3020,7 @@ function AddDdtToSuiteDialog({
   initialSuiteId,
   onClose,
   onComplete,
+  sourceDescription,
 }: {
   caseIds: string[];
   scope: Scope;
@@ -2931,6 +3028,7 @@ function AddDdtToSuiteDialog({
   suites: Array<{ id: string; name: string }>;
   onClose(): void;
   onComplete(suiteName: string): Promise<void>;
+  sourceDescription?: string;
 }) {
   const [suiteId, setSuiteId] = useState(
     suites.some((suite) => suite.id === initialSuiteId)
@@ -2941,7 +3039,13 @@ function AddDdtToSuiteDialog({
   const [createdSuite, setCreatedSuite] = useState<{ id: string; name: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [completedCount, setCompletedCount] = useState(0);
+  const additionRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => additionRequest.current?.abort(), []);
   const save = async () => {
+    if (busy) return;
+    const controller = new AbortController();
+    additionRequest.current = controller;
     let suite = suiteId === "new" ? createdSuite : suites.find((item) => item.id === suiteId);
     setBusy(true);
     setError("");
@@ -2949,6 +3053,7 @@ function AddDdtToSuiteDialog({
       if (!suite && suiteId === "new") {
         suite = await requestJson<{ id: string; name: string }>("/api/v1/case-suites", {
           method: "POST",
+          signal: controller.signal,
           headers: jsonHeaders,
           body: JSON.stringify({
             name: newSuiteName.trim(),
@@ -2959,17 +3064,30 @@ function AddDdtToSuiteDialog({
         // Keep the created task on a membership failure so retrying cannot create duplicates.
         setCreatedSuite(suite);
       }
-      if (!suite) return;
-      await requestJson(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/ddt-cases`, {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({ testStageId: scope.testStageId, caseIds }),
-      });
+      if (!suite) throw new Error("所选任务已不可用，请重新选择活动任务。");
+      for (
+        let offset = completedCount;
+        offset < caseIds.length;
+        offset += DDT_BULK_MUTATION_LIMIT
+      ) {
+        const members = caseIds.slice(offset, offset + DDT_BULK_MUTATION_LIMIT);
+        await requestJson(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/ddt-cases`, {
+          method: "POST",
+          headers: jsonHeaders,
+          signal: controller.signal,
+          body: JSON.stringify({ testStageId: scope.testStageId, caseIds: members }),
+        });
+        setCompletedCount(offset + members.length);
+      }
+      controller.signal.throwIfAborted();
       await onComplete(suite.name);
     } catch (saveError) {
-      setError(messageOf(saveError));
+      if (!controller.signal.aborted) setError(messageOf(saveError));
     } finally {
-      setBusy(false);
+      if (additionRequest.current === controller) {
+        additionRequest.current = null;
+        setBusy(false);
+      }
     }
   };
   return (
@@ -3018,6 +3136,17 @@ function AddDdtToSuiteDialog({
           ddtManagementWorkspaceStyles["ddt-add-suite-dialog"],
         )}
       >
+        {sourceDescription ? (
+          <Notice tone="info" className="col-span-full">
+            {sourceDescription}
+          </Notice>
+        ) : null}
+        {caseIds.length > DDT_BULK_MUTATION_LIMIT ? (
+          <p className="col-span-full m-0 text-sm text-muted-foreground" role="status">
+            已处理 {completedCount.toLocaleString()} / {caseIds.length.toLocaleString()}{" "}
+            条，分批加入任务；已完成的部分会保留，失败后可继续重试。
+          </p>
+        ) : null}
         {error ? (
           <Notice
             tone="error"
@@ -3035,7 +3164,7 @@ function AddDdtToSuiteDialog({
           <span>目标用例任务</span>
           <Select
             value={suiteId}
-            disabled={busy || Boolean(createdSuite)}
+            disabled={busy || Boolean(createdSuite) || completedCount > 0}
             onChange={(event) => setSuiteId(event.target.value)}
           >
             {suites.map((suite) => (

@@ -21,6 +21,7 @@ describe("task creation commit boundary", () => {
     const accepted = { id: "accepted-batch", status: "queued", totalRuns: 1 };
     const batches = {
       create: vi.fn().mockResolvedValue(accepted),
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi
         .fn()
         .mockRejectedValue(Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" })),
@@ -105,6 +106,7 @@ describe("live scheduling configuration", () => {
     const runner = schedulingRunner();
     runner.resourceSnapshot.memoryUtilizationPercent = 99;
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn(async () => {
         // A concurrent administrator change must not alter an already started pass.
@@ -642,36 +644,40 @@ describe("run batch creation with suite policy", () => {
     ).rejects.toMatchObject({ code: "RUN_BATCH_PREFLIGHT_FAILED" });
   });
   it.each([undefined, "local", "ldap"] as const)(
-    "freezes suite policy and initiator snapshot (%s)",
+    "executes a task locked by another user and freezes its policy and initiator (%s)",
     async (source) => {
       const requestedBy = source ? { username: "launcher", source } : undefined;
-      const suite = readySuite({
-        policy: {
-          priority: 3,
-          concurrency: 2,
-          retryLimit: 2,
-          queueTimeoutMs: 60_000,
-          runnerLabels: [],
-          artifactPatterns: ["reports/**"],
-          retryMode: "round",
-          roundRecoveryRules: [
-            {
-              id: "recovery-app",
-              afterRound: 1,
-              jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
-              waitMinutes: 3,
-              apiKeyConfigured: true,
-            },
-            {
-              id: "recovery-database",
-              afterRound: 1,
-              jenkinsJobUrl: "https://jenkins.internal/job/reset-database/",
-              waitMinutes: 7,
-              apiKeyConfigured: true,
-            },
-          ],
-        },
-      });
+      const suite = {
+        ...readySuite({
+          policy: {
+            priority: 3,
+            concurrency: 2,
+            retryLimit: 2,
+            queueTimeoutMs: 60_000,
+            runnerLabels: [],
+            artifactPatterns: ["reports/**"],
+            retryMode: "round",
+            roundRecoveryRules: [
+              {
+                id: "recovery-app",
+                afterRound: 1,
+                jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
+                waitMinutes: 3,
+                apiKeyConfigured: true,
+              },
+              {
+                id: "recovery-database",
+                afterRound: 1,
+                jenkinsJobUrl: "https://jenkins.internal/job/reset-database/",
+                waitMinutes: 7,
+                apiKeyConfigured: true,
+              },
+            ],
+          },
+        }),
+        lockedBy: "different-task-owner",
+        lockedByName: "任务维护人",
+      };
       const suites = {
         get: vi.fn().mockResolvedValue(suite),
         getRoundRecoveryCredentials: vi.fn().mockResolvedValue({
@@ -685,6 +691,7 @@ describe("run batch creation with suite policy", () => {
           created.push(record);
           return { id: "batch-1" };
         }),
+        prepareSchedulingRound: async () => {},
         hasSchedulableRuns: vi.fn().mockResolvedValue(true),
         getSchedulingSnapshot: vi.fn().mockResolvedValue({
           batch: { assignedRuns: 0, secretBindings: [] },
@@ -743,6 +750,7 @@ describe("run batch creation with suite policy", () => {
         created.push(record);
         return { id: "batch-1" };
       }),
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -793,6 +801,7 @@ describe("run batch creation with suite policy", () => {
         created.push(record);
         return { id: "batch-1" };
       }),
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
@@ -867,6 +876,7 @@ describe("run batch creation with suite policy", () => {
     );
     const appendSchedulingEvents = vi.fn().mockResolvedValue(undefined);
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -930,6 +940,7 @@ describe("run batch creation with suite policy", () => {
     const decisions: unknown[] = [];
     const suites = { get: vi.fn() } as unknown as CaseSuiteRepository;
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -981,6 +992,67 @@ describe("run batch creation with suite policy", () => {
     ).toEqual(["run-1", "run-2"]);
   });
 
+  it.each([
+    { previous: 50, next: 30, active: 31, expected: 0 },
+    { previous: 50, next: 30, active: 30, expected: 0 },
+    { previous: 50, next: 30, active: 29, expected: 1 },
+    { previous: 30, next: 50, active: 29, expected: 1 },
+    { previous: undefined, next: 50, active: 29, expected: 21 },
+  ])(
+    "plans only $expected assignments with overlap caps $previous / $next and $active in flight",
+    async ({ previous, next, active, expected }) => {
+      const reserveAssignments = vi.fn(
+        async (input: { decisions: Array<{ attemptId: string }> }) => ({
+          reserved: input.decisions.length,
+          acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+        }),
+      );
+      const batches = {
+        prepareSchedulingRound: async () => {},
+        hasSchedulableRuns: async () => true,
+        getSchedulingSnapshot: async () => ({
+          batch: {
+            id: "batch-1",
+            currentRound: 2,
+            assignedRuns: active,
+            policy: { concurrency: next, runnerLabels: [], artifactPatterns: [] },
+          },
+          overlappingRoundConcurrency: previous,
+          queuedRuns: Array.from({ length: 25 }, (_, index) => queuedRun(`run-${index}`)),
+          candidates: [
+            { runner: { ...schedulingRunner(), maxConcurrency: 100 }, reservedSlots: active },
+          ],
+          projectActiveRuns: active,
+        }),
+        recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
+        reserveAssignments,
+        appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+        getSummary: async () => ({ id: "batch-1" }),
+      } as unknown as RunBatchRepository;
+      const service = new RunBatchSchedulingService(
+        batches,
+        {} as CaseSuiteRepository,
+        {} as RunnerRepository,
+        { now: () => new Date(timestamp) },
+        { next: () => randomUUID() },
+        {
+          maximumCpuUtilizationPercent: 85,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        45,
+      );
+      await service.schedule("batch-1");
+      expect(reserveAssignments.mock.calls.flatMap(([input]) => input.decisions)).toHaveLength(
+        expected,
+      );
+      // Keep the configured cap in round history, so the new round can use it after draining.
+      expect(batches.recordRoundConcurrency).toHaveBeenCalledWith(
+        expect.objectContaining({ round: 2, concurrency: next }),
+      );
+    },
+  );
+
   it("refills from live claim capacity when the last heartbeat still reports a full Runner", async () => {
     const runner = schedulingRunner();
     runner.busySlots = runner.maxConcurrency;
@@ -992,6 +1064,7 @@ describe("run batch creation with suite policy", () => {
     );
     const batches = {
       listSchedulableBatchIdsForRunner: vi.fn().mockResolvedValue(["batch-1"]),
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -1039,6 +1112,7 @@ describe("run batch creation with suite policy", () => {
       async (input: { state: { concurrency: number } }) => input.state,
     );
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -1135,6 +1209,7 @@ describe("run batch creation with suite policy", () => {
     const decisions: unknown[] = [];
     const activateRetryConcurrency = vi.fn();
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -1219,6 +1294,7 @@ describe("run batch creation with suite policy", () => {
 
   it("does not schedule when the project concurrency budget is exhausted", async () => {
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -1279,6 +1355,7 @@ describe("run batch creation with suite policy", () => {
       const create = vi.fn();
       const batches = {
         create,
+        prepareSchedulingRound: async () => {},
         hasSchedulableRuns: vi.fn().mockResolvedValue(true),
         getSchedulingSnapshot: vi.fn().mockResolvedValue({
           batch: { assignedRuns: 0, secretBindings: [] },
@@ -1337,6 +1414,7 @@ describe("run batch creation with suite policy", () => {
     const create = vi.fn();
     const batches = {
       create,
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
@@ -1413,6 +1491,7 @@ describe("run batch creation with suite policy", () => {
     const create = vi.fn();
     const batches = {
       create,
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
@@ -1544,6 +1623,7 @@ describe("scheduling event log", () => {
   function schedulingBatchesFake() {
     const appended: Array<Array<Record<string, unknown>>> = [];
     const batches = {
+      prepareSchedulingRound: async () => {},
       hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {

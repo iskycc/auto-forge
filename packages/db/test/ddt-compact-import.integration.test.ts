@@ -143,7 +143,7 @@ for (const dialect of ["sqlite", "postgres"] as const) {
             },
           ]);
           expect(preview.validFiles).toBe(1);
-          await service.confirm(preview.id, "overwrite");
+          await service.confirm(preview.id, "overwrite", undefined, "修正钱包返回值");
           await service.jobHandler()(
             {
               schemaVersion: 1,
@@ -181,6 +181,10 @@ for (const dialect of ["sqlite", "postgres"] as const) {
         });
         const history = await repository.listHistory({ ...scope, caseId: "中文普通", limit: 10 });
         expect(history.items.length).toBeGreaterThanOrEqual(1);
+        expect(history.items[0]).toMatchObject({
+          changeReason: "修正钱包返回值",
+          changes: [{ field: "value", before: "原值", after: "更新后" }],
+        });
         const saved = await repository.getCase(scope, "中文普通");
         expect(saved?.data).toEqual({
           CaseID: "中文普通",

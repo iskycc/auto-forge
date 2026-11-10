@@ -1,3 +1,5 @@
+import { CaseSuiteLockButton } from "@/components/case-suite-lock-button";
+import { Notice } from "@/components/ui/notice";
 import { TaskExecutionAccess } from "@/components/task-execution-access";
 import { cn } from "@/lib/utils";
 import { uiPatterns } from "@/components/ui/patterns";
@@ -41,6 +43,8 @@ export default async function CaseSuitePage({ params }: Props) {
     search: "",
   });
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
+  const canMutate = canManage && (!suite.lockedBy || suite.lockedBy === identity.user.id);
+  const canEdit = canMutate && suite.status === "active";
   const canExecute = hasPermission(identity, "run.create", suite.projectId);
   const [
     runners,
@@ -84,7 +88,8 @@ export default async function CaseSuitePage({ params }: Props) {
         </div>
         {canManage || canExecute ? (
           <div className={cn("button-row", uiPatterns["button-row"], "justify-end")}>
-            {canManage ? (
+            {canMutate ? <CaseSuiteLockButton suite={suite} /> : null}
+            {canEdit ? (
               <>
                 <LinkButton
                   className={cn(
@@ -121,6 +126,14 @@ export default async function CaseSuitePage({ params }: Props) {
           </div>
         ) : null}
       </section>
+      {suite.lockedBy ? (
+        <Notice tone="info">
+          任务已由 {suite.lockedByName ?? suite.lockedBy} 锁定。
+          {suite.lockedBy === identity.user.id
+            ? "您可以继续修改，其他用户仅可查看任务配置。"
+            : "仅锁定人可以修改、删除、归档或解除锁定。"}
+        </Notice>
+      ) : null}
       <nav className={cn("section-links", pageStyles["section-links"])} aria-label="任务分区">
         <a href="#suite-members">用例列表</a>
         <a href="#suite-settings">任务配置</a>
@@ -133,7 +146,7 @@ export default async function CaseSuitePage({ params }: Props) {
         <div id="suite-members">
           <CachedSuiteDirectory
             key={suite.id}
-            canManage={canManage}
+            canManage={canEdit}
             suite={suite}
             snapshot={directory.status}
             manifest={
@@ -143,10 +156,11 @@ export default async function CaseSuitePage({ params }: Props) {
         </div>
         <div id="suite-settings">
           <CaseSuiteEditor
+            key={`${suite.id}:${suite.status}:${suite.lockedBy ?? ""}`}
             projectName={projects.find((project) => project.id === suite.projectId)?.name ?? ""}
             selectedTestStageId={hierarchy.testStageId}
             artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
-            canManage={canManage}
+            canManage={canMutate}
             projectVersions={projectStructure.versions}
             runnerGroups={runnerGroups}
             runners={runners}
@@ -156,7 +170,7 @@ export default async function CaseSuitePage({ params }: Props) {
         <div id="suite-schedule">
           <CaseSuiteSchedulePanel
             key={suite.id}
-            canManage={canManage}
+            canManage={canEdit}
             canReadExecutions={hasPermission(identity, "run.read", suite.projectId)}
             initialSchedule={schedule}
             suite={{
@@ -171,7 +185,7 @@ export default async function CaseSuitePage({ params }: Props) {
         </div>
         <div id="suite-notifications">
           <CaseSuiteWebhookBindings
-            canManage={canManage}
+            canManage={canEdit}
             configurations={webhookConfigurations}
             initialWebhookIds={webhookIds}
             suiteId={suiteId}
@@ -181,7 +195,7 @@ export default async function CaseSuitePage({ params }: Props) {
           <TaskExecutionAccess
             suiteId={suite.id}
             baseUrl={services.configurationStore.read().web.publicBaseUrl}
-            canPublish={canManage && canExecute}
+            canPublish={canEdit && canExecute}
           />
         </div>
       </CaseSuiteRevisionProvider>

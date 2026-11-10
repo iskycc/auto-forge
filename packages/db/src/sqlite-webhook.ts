@@ -7,6 +7,7 @@ import {
 import type { WebhookRepository } from "@autoforge/application";
 import {
   DomainError,
+  assertCaseSuiteEditable,
   type WebhookConfiguration,
   type WebhookDelivery,
   type WebhookDispatchClaim,
@@ -195,9 +196,13 @@ export class SqliteWebhookRepository implements WebhookRepository {
       const projectClause = sqliteProjectClause(input.projectIds, "project_id");
       if (projectClause.denied) throw new DomainError("CASE_SUITE_NOT_FOUND", "任务不存在。");
       const suite = this.handle.client
-        .prepare(`SELECT project_id FROM case_suites WHERE id = ?${projectClause.sql}`)
-        .get(input.suiteId, ...projectClause.parameters) as { project_id: string } | undefined;
+        .prepare(
+          `SELECT project_id, status, locked_by FROM case_suites WHERE id = ?${projectClause.sql}`,
+        )
+        .get(input.suiteId, ...projectClause.parameters) as
+        { project_id: string; status: "active" | "archived"; locked_by: string | null } | undefined;
       if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "任务不存在。");
+      assertCaseSuiteEditable({ ...suite, lockedBy: suite.locked_by }, input.actorId);
       const uniqueWebhookIds = [...new Set(input.webhookIds)];
       if (uniqueWebhookIds.length > 0) {
         const placeholders = uniqueWebhookIds.map(() => "?").join(", ");

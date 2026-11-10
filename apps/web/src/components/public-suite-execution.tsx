@@ -31,6 +31,7 @@ import { ExecutionEnvironmentAddresses } from "./execution-environment-addresses
 import { usePlatformNow } from "./platform-time";
 import { ApiClientError, throwApiErrorResponse } from "@/lib/client-api";
 import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
+import { overlappingEnvironmentAddresses } from "@autoforge/domain";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export function PublicSuiteExecution({
@@ -55,6 +56,15 @@ export function PublicSuiteExecution({
   const authenticated = session.status === "authenticated";
   const endpoint = `/api/v1/public/case-suites/${encodeURIComponent(view.suiteId)}`;
   const query = new URLSearchParams({ PublisherId: view.publisher.id });
+  const requestedAddresses = view.adapterEnabled
+    ? (environmentOverride ?? view.environmentAddresses)
+    : [];
+  const environmentConflict = view.active.find(
+    (batch) =>
+      requestedAddresses.length === 0 ||
+      batch.environmentAddresses.length === 0 ||
+      overlappingEnvironmentAddresses(requestedAddresses, batch.environmentAddresses).length > 0,
+  );
 
   async function start() {
     if (submitting.current) return;
@@ -295,7 +305,7 @@ export function PublicSuiteExecution({
             <div className="grid gap-4">
               <p className="m-0 text-sm leading-6 text-muted-foreground">
                 {view.active.length
-                  ? "任务正在执行或等待启动，当前批次结束后可再次拉起。"
+                  ? "任务正在执行或等待启动，使用不重叠的环境 IP 可同时拉起新批次。"
                   : "登录后即可执行，无需额外项目权限。"}
               </p>
               {!view.executable ? <Alert type="warning" title={view.unavailableReason} /> : null}
@@ -305,7 +315,7 @@ export function PublicSuiteExecution({
                     aria-label="启动方式"
                     virtual={false}
                     value={mode}
-                    disabled={pending || view.active.length > 0 || unconfirmedRequest}
+                    disabled={pending || unconfirmedRequest}
                     onChange={setMode}
                     options={[
                       { value: "immediate", label: "立即执行" },
@@ -326,7 +336,7 @@ export function PublicSuiteExecution({
                       precision={0}
                       value={delay}
                       onChange={setDelay}
-                      disabled={pending || view.active.length > 0 || unconfirmedRequest}
+                      disabled={pending || unconfirmedRequest}
                       className="!w-full"
                     />
                   </Form.Item>
@@ -340,7 +350,7 @@ export function PublicSuiteExecution({
                   disabled={
                     pending ||
                     !view.executable ||
-                    view.active.length > 0 ||
+                    !!environmentConflict ||
                     !!refreshError ||
                     (mode === "delay" && (!delay || delay < 1 || delay > 604800))
                   }
@@ -353,20 +363,24 @@ export function PublicSuiteExecution({
                 <SessionLoginButton label="登录后执行任务" />
               )}
               <PublicSuiteEnvironment
-                addresses={
-                  view.adapterEnabled ? (environmentOverride ?? view.environmentAddresses) : []
-                }
+                addresses={requestedAddresses}
                 enabled={view.adapterEnabled}
-                disabled={
-                  !authenticated ||
-                  pending ||
-                  view.active.length > 0 ||
-                  !!refreshError ||
-                  unconfirmedRequest
-                }
+                disabled={!authenticated || pending || !!refreshError || unconfirmedRequest}
                 overridden={view.adapterEnabled && !!environmentOverride}
                 onChange={setEnvironmentOverride}
               />
+              {environmentConflict ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title={`环境与批次 #${environmentConflict.sequenceNumber} 冲突`}
+                  description={
+                    requestedAddresses.length && environmentConflict.environmentAddresses.length
+                      ? "环境 IP 有重叠，请修改本次环境 IP 后再执行。"
+                      : "环境 IP 未配置，无法确认环境隔离，请等待当前批次结束。"
+                  }
+                />
+              ) : null}
               <p className="m-0 text-xs leading-6 text-muted-foreground">
                 执行记录会保存链接分享人和实际拉起人。终止操作也会记录操作人。
               </p>

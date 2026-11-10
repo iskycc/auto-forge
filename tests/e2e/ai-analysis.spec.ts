@@ -567,16 +567,37 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         animations: "disabled",
       });
     }
+    const automaticSuffix = uniqueName("ai-automatic");
     const automaticFixture = insertFailureAnalysisFixture(
       dataDirectory,
       version.body.id,
-      uniqueName("ai-automatic"),
+      automaticSuffix,
     );
+    const automaticLogs = createAttemptLogStore(resolve(dataDirectory, "attempt-logs"));
+    try {
+      for (let index = 0; index < 4; index++)
+        await automaticLogs.appendChunks({
+          batchId: automaticFixture.batchId,
+          attemptId: `attempt-run-failed-${index}-${automaticSuffix}`,
+          receivedAt: new Date().toISOString(),
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 0,
+              recordedAt: new Date().toISOString(),
+              content: `渐进初析业务正文 ${index}\n\u001b[31mjava.lang.AssertionError: progressive connection reset\n\tat example.Progressive.run(Progressive.java:10)\u001b[0m\n全文结束 ${index}\n`,
+            },
+          ],
+        });
+    } finally {
+      automaticLogs.close();
+    }
     const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
     try {
+      database.exec("BEGIN IMMEDIATE");
       database
         .prepare(
-          "UPDATE run_batches SET policy_json=?,requested_by_username='e2e-admin',requested_by_source='local' WHERE id=?",
+          "UPDATE run_batches SET status='running',retry_mode='round',retry_limit=2,current_round=3,scheduled_for=created_at,policy_json=?,requested_by_username='e2e-admin',requested_by_source='local' WHERE id=?",
         )
         .run(
           JSON.stringify({
@@ -586,8 +607,94 @@ test("AI settings, durable batch and single analysis, retry and partial export p
           }),
           automaticFixture.batchId,
         );
+      database
+        .prepare("UPDATE execution_runs SET execution_round=3 WHERE batch_id=?")
+        .run(automaticFixture.batchId);
+      database
+        .prepare(
+          "UPDATE run_attempts SET execution_round=3 WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+        )
+        .run(automaticFixture.batchId);
+      database
+        .prepare("UPDATE execution_runs SET status='running',terminal_outcome=NULL WHERE id=?")
+        .run(`run-failed-3-${automaticSuffix}`);
+      database
+        .prepare(
+          "UPDATE run_attempts SET status='running',outcome=NULL,finished_at=NULL WHERE id=?",
+        )
+        .run(`attempt-run-failed-3-${automaticSuffix}`);
+      database.exec("COMMIT");
     } finally {
       database.close();
+    }
+    const manualRequestsBeforeAutomatic = submittedKeys.length;
+    await page.goto(`/run-batches/${automaticFixture.batchId}`);
+    await page
+      .getByRole("button", { name: /AI 初步分析$/u })
+      .first()
+      .click();
+    const progressiveDialog = page.getByRole("dialog", { name: "批次 AI 初步分析", exact: true });
+    await expect
+      .poll(
+        async () => {
+          const result = await browserJson<{
+            job: { completed: number; total: number; acceptingFinalResults?: boolean };
+          } | null>(page, `/api/v1/ai-analysis?batchId=${automaticFixture.batchId}`);
+          return result.body?.job;
+        },
+        { timeout: 60000 },
+      )
+      .toMatchObject({ completed: 3, total: 3, acceptingFinalResults: true });
+    const running = await browserJson<{ status: string }>(
+      page,
+      `/api/v1/run-batches/${automaticFixture.batchId}/overview`,
+    );
+    expect(running.body.status).toBe("running");
+    expect(inferenceRequests.some((input) => input.text.includes("渐进初析业务正文"))).toBe(true);
+    expect(submittedKeys).toHaveLength(manualRequestsBeforeAutomatic);
+    await expect(progressiveDialog.getByText(/末轮结果持续接收中/u)).toBeVisible();
+    for (const theme of ["light", "dark"] as const) {
+      await page
+        .context()
+        .addCookies([
+          { name: "autoforge-color-mode", value: theme, url: new URL("/", page.url()).href },
+        ]);
+      await page.reload();
+      await page
+        .getByRole("button", { name: /AI 初步分析$/u })
+        .first()
+        .click();
+      for (const width of [1024, 1536]) {
+        await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+        await expect(progressiveDialog.getByText(/末轮结果持续接收中/u)).toBeVisible();
+        await expectUiIntegrity(page);
+        await page.screenshot({
+          path: resolve(screenshots, `ai-progressive-${theme}-${width}.png`),
+          animations: "disabled",
+        });
+      }
+    }
+    await progressiveDialog
+      .locator(".ant-modal-footer")
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+    const finishDatabase = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
+    try {
+      finishDatabase.exec("BEGIN IMMEDIATE");
+      finishDatabase
+        .prepare("UPDATE execution_runs SET status='failed',terminal_outcome='failed' WHERE id=?")
+        .run(`run-failed-3-${automaticSuffix}`);
+      finishDatabase
+        .prepare(
+          "UPDATE run_attempts SET status='failed',outcome='failed',finished_at=? WHERE id=?",
+        )
+        .run(new Date().toISOString(), `attempt-run-failed-3-${automaticSuffix}`);
+      finishDatabase
+        .prepare("UPDATE run_batches SET status='failed',version=version+1 WHERE id=?")
+        .run(automaticFixture.batchId);
+      finishDatabase.exec("COMMIT");
+    } finally {
+      finishDatabase.close();
     }
     await expect
       .poll(
@@ -600,7 +707,15 @@ test("AI settings, durable batch and single analysis, retry and partial export p
         },
         { timeout: 60000 },
       )
-      .toMatch(/completed|partial/u);
+      .toBe("completed");
+    const progressiveResult = await browserJson<{
+      job: { total: number; completed: number };
+      items: Array<{ conclusion: string }>;
+      groups: Array<{ memberCount: number }>;
+    }>(page, `/api/v1/ai-analysis?batchId=${automaticFixture.batchId}`);
+    expect(progressiveResult.body.job).toMatchObject({ total: 4, completed: 4 });
+    expect(progressiveResult.body.groups).toEqual([expect.objectContaining({ memberCount: 4 })]);
+    expect(new Set(progressiveResult.body.items.map((item) => item.conclusion)).size).toBe(1);
   } finally {
     await new Promise<void>((resolveClose, reject) =>
       model.close((error) => (error ? reject(error) : resolveClose())),

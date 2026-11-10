@@ -2,6 +2,70 @@ import type { CaseDefinitionWithMethods } from "./case-definition";
 import type { DdtCase } from "./ddt";
 import { DomainError } from "./errors";
 
+export function assertCaseSuiteCanArchive(activeBatch: { id: string } | undefined): void {
+  if (activeBatch)
+    throw new DomainError(
+      "CASE_SUITE_ARCHIVE_CONFLICT",
+      "任务仍有待执行、倒计时或执行中的批次，请等待结束或终止后再归档。",
+      {
+        details: { batchId: activeBatch.id },
+      },
+    );
+}
+
+type CaseSuiteLockState = { lockedBy?: string | null };
+type CaseSuiteWriteState = Pick<CaseSuite, "status"> & CaseSuiteLockState;
+
+/** A task lock has no administrator bypass or expiry; only its recorded owner can change it. */
+export function assertCaseSuiteLockOwner(
+  suite: CaseSuiteLockState | undefined,
+  actorId?: string,
+): void {
+  if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+  if (suite.lockedBy && suite.lockedBy !== actorId)
+    throw new DomainError(
+      "CASE_SUITE_LOCKED",
+      "任务已被锁定，仅锁定人可修改、删除、归档或解除锁定。",
+    );
+}
+
+export function assertCaseSuiteEditable(
+  suite: CaseSuiteWriteState | undefined,
+  actorId?: string,
+): void {
+  assertCaseSuiteLockOwner(suite, actorId);
+  if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+  if (suite.status === "archived")
+    throw new DomainError("CASE_SUITE_ARCHIVED", "任务已归档，不能变更用例或配置，请先恢复任务。");
+}
+
+/** Restoring is a separate lifecycle action and cannot carry configuration edits. */
+export function assertCaseSuiteUpdateAllowed(
+  suite: CaseSuiteWriteState | undefined,
+  changes: {
+    archived?: boolean | undefined;
+    name?: string | undefined;
+    description?: string | null | undefined;
+    enabled?: boolean | undefined;
+    policy?: object | undefined;
+    roundRecoveryCredentialUpserts?: Record<string, string> | undefined;
+  },
+  actorId?: string,
+): void {
+  assertCaseSuiteLockOwner(suite, actorId);
+  if (
+    suite?.status === "archived" &&
+    changes.archived === false &&
+    changes.name === undefined &&
+    changes.description === undefined &&
+    changes.enabled === undefined &&
+    changes.policy === undefined &&
+    changes.roundRecoveryCredentialUpserts === undefined
+  )
+    return;
+  assertCaseSuiteEditable(suite, actorId);
+}
+
 export function assertCaseSuiteRevision(
   currentRevision: number | undefined,
   expectedRevision: number,
@@ -17,6 +81,9 @@ export function assertCaseSuiteRevision(
 export type CaseSuite = {
   id: string;
   isRerun?: boolean;
+  lockedBy?: string;
+  lockedByName?: string;
+  lockedAt?: string;
   projectId: string;
   name: string;
   description?: string;

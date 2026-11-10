@@ -3,6 +3,7 @@ import {
   FAILURE_ANALYSIS_EXPORT_OUTCOMES,
   RUN_BATCH_EXPORT_TEMPLATES,
   type ExportOutcomeFilter,
+  publicCaseLogPath,
 } from "@autoforge/contracts";
 import { DomainError, hasPermission } from "@autoforge/domain";
 import { NextResponse } from "next/server";
@@ -13,6 +14,7 @@ import { z } from "zod";
 
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
+import { executionReadProjectScope } from "@/lib/execution-public-access";
 import { publicLinkBase } from "@/lib/public-link-base";
 import { exportCompatibleAttemptIds } from "@/lib/run-batch-export-xlsx";
 import { prepareRunBatchExportFile, readRunBatchExportFile } from "@/lib/run-batch-export-file";
@@ -27,6 +29,8 @@ const exportQuerySchema = z.object({
   round: z.coerce.number().int().min(1).optional(),
   outcomes: z.string().default(""),
   invalidRows: z.enum(["reject", "exclude"]).default("reject"),
+  public: z.literal("1").optional(),
+  access_token: z.string().min(1).max(4096).optional(),
 });
 
 export const dynamic = "force-dynamic";
@@ -37,9 +41,12 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {
-    const identity = await authenticateRequest(request);
+    const url = new URL(request.url);
+    const publicExport =
+      url.searchParams.get("public") === "1" || url.searchParams.has("access_token");
+    const identity = publicExport ? undefined : await authenticateRequest(request);
     const { batchId } = await context.params;
-    const parsed = exportQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
+    const parsed = exportQuerySchema.parse(Object.fromEntries(url.searchParams));
     // 分析清单的失败口径由服务端固定，不允许客户端将成功用例混入模板。
     const outcomes: ExportOutcomeFilter[] =
       parsed.template === "failure-analysis"
@@ -49,7 +56,16 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       throw new DomainError("INVALID_ROUND", "按轮次导出时必须提供轮次号。");
     }
     const services = await getPlatformServices();
-    const projectIds = services.identityAccess.projectScope(identity, "run.read");
+    const projectIds = identity
+      ? services.identityAccess.projectScope(identity, "run.read")
+      : await executionReadProjectScope(
+          request,
+          batchId,
+          { accessToken: parsed.access_token, publicAccess: parsed.public === "1" },
+          services,
+        );
+    if (publicExport && parsed.template !== "results")
+      throw new DomainError("AUTH_FORBIDDEN", "公开访问仅支持导出标准执行结果。");
     const exportData = await services.runBatchExport.prepare({
       batchId,
       scope: parsed.scope,
@@ -61,6 +77,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const timeZone = services.configurationStore.read().web.timeZone;
     const aiSnapshotAt = services.clock.now().toISOString();
     const includesAi =
+      !!identity &&
       hasPermission(identity, "analysis.ai.read", exportData.projectId) &&
       hasPermission(identity, "log.read", exportData.projectId) &&
       hasPermission(identity, "case.read", exportData.projectId) &&
@@ -131,11 +148,21 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         };
         const attemptIds = await exportCompatibleAttemptIds(input, request.signal);
         // Only compatible rows receive public access; each read/write remains bounded by this page.
-        const links = await services.publicExecutionAccess.ensureLinksForAttemptsInBatch(
-          attemptIds,
-          batchId,
-          identity.user.id,
-        );
+        // A public read reuses the existing batch grant/signature; it cannot publish new logs.
+        const links = identity
+          ? await services.publicExecutionAccess.ensureLinksForAttemptsInBatch(
+              attemptIds,
+              batchId,
+              identity.user.id,
+            )
+          : new Map(
+              attemptIds.map((attemptId) => [
+                attemptId,
+                parsed.access_token
+                  ? `/share/run/${encodeURIComponent(parsed.access_token)}/attempt/${encodeURIComponent(attemptId)}`
+                  : publicCaseLogPath(attemptId),
+              ]),
+            );
         input.shareLinks = new Map(
           [...links.entries()].map(([attemptId, path]) => [
             attemptId,

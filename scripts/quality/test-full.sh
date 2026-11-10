@@ -294,6 +294,7 @@ run_adapter_tests() {
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
     pnpm exec vitest run --no-file-parallelism \
       packages/db/test/ai-analysis.integration.test.ts \
+      packages/db/test/progressive-ai-analysis.integration.test.ts \
       apps/web/server/ai-full-runtime.integration.test.ts \
       packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \

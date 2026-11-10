@@ -64,6 +64,10 @@ export default async function RunBatchDetailsPage({
         {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
       />
       <ExecutionBatchDetails
+        automaticAiAnalysis={
+          batch.policy?.aiAnalysisAfterCompletion === true &&
+          batch.policy.aiAnalysisExecutionId === batch.id
+        }
         batch={toExecutionBatchView(overview)}
         {...(retrySuite ? { retrySuiteId: retrySuite.id } : {})}
         {...(batch.kind !== "case_log_rerun" &&

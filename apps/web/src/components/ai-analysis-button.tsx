@@ -28,11 +28,13 @@ export function AiAnalysisButton({
   attemptId,
   compact = false,
   iconOnly = false,
+  waitForAutomatic = false,
 }: {
   batchId: string;
   attemptId?: string;
   compact?: boolean;
   iconOnly?: boolean;
+  waitForAutomatic?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const requestEpoch = useRef(0);
@@ -98,7 +100,7 @@ export function AiAnalysisButton({
     setPending(true);
     try {
       const existing = await read();
-      if (!existing) await create();
+      if (!existing && !waitForAutomatic) await create();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "读取失败。");
     } finally {
@@ -110,7 +112,7 @@ export function AiAnalysisButton({
       void read().catch((cause) => setError(cause instanceof Error ? cause.message : "读取失败。"));
   }, [open, read]);
   useEffect(() => {
-    if (!open || !jobStatus || !ACTIVE.has(jobStatus)) return;
+    if (!open || (!ACTIVE.has(jobStatus ?? "") && !(waitForAutomatic && !jobStatus))) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -128,7 +130,7 @@ export function AiAnalysisButton({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [open, jobStatus, read]);
+  }, [open, jobStatus, read, waitForAutomatic]);
   const job = view?.job;
   async function cancel() {
     if (!job) return;
@@ -198,7 +200,12 @@ export function AiAnalysisButton({
                   取消分析
                 </Button>
               ) : (
-                <Button type="primary" onClick={() => void create()} loading={pending}>
+                <Button
+                  type="primary"
+                  onClick={() => void create()}
+                  loading={pending}
+                  disabled={waitForAutomatic}
+                >
                   重新分析
                 </Button>
               )}
@@ -213,7 +220,11 @@ export function AiAnalysisButton({
             type="info"
             showIcon
             title="初步建议，待人工确认"
-            description="模型仅能读取证据并提交 AI 结论。页面关闭不影响后台工作；等待限流或平台资源时会自动退避。"
+            description={
+              job?.acceptingFinalResults && ACTIVE.has(job.status)
+                ? "末轮结果持续接收中，统计仅含已结束的未通过用例；剩余用例继续执行，完成后自动加入。页面关闭不影响后台分析，资源紧张时会自动退避。"
+                : "模型仅能读取证据并提交 AI 结论。页面关闭不影响后台工作；等待限流或平台资源时会自动退避。"
+            }
           />
           <Typography.Text type="secondary">
             {attemptId
@@ -234,7 +245,9 @@ export function AiAnalysisButton({
                         : "processing"
                   }
                 >
-                  {LABELS[job.status] ?? job.status}
+                  {job.acceptingFinalResults && job.status === "queued"
+                    ? "等待末轮结果"
+                    : (LABELS[job.status] ?? job.status)}
                 </Tag>
                 <Typography.Text>
                   处理 {job.completed} / {job.total} · 已采集 {job.prepared} · 异常或证据不足{" "}
@@ -297,7 +310,15 @@ export function AiAnalysisButton({
               />
             </>
           ) : (
-            <Empty description={pending ? "正在读取初析记录…" : "尚无初析记录"} />
+            <Empty
+              description={
+                pending
+                  ? "正在读取初析记录…"
+                  : waitForAutomatic
+                    ? "进入末轮后，后台将自动接收已结束的未通过用例。"
+                    : "尚无初析记录"
+              }
+            />
           )}
         </Space>
       </Modal>

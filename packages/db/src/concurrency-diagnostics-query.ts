@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
 import type { ConcurrencySnapshot, RunBatchMetadata } from "@autoforge/application";
-import type { Runner } from "@autoforge/domain";
+import { roundWindowConcurrency, type Runner } from "@autoforge/domain";
 import { projectAdapterCapabilitiesForFeatures } from "./project-adapter-runtime";
+import { overlappingRoundConcurrencySql } from "./round-concurrency-query";
 
 export type ConcurrencyCountRow = {
   running: number | string;
@@ -12,6 +13,7 @@ export type ConcurrencyCountRow = {
   runtimeAssets: number | boolean;
   ddt: number | boolean;
   ruleConcurrency: number | null;
+  overlappingConcurrency: number | string | null;
   recoveryPending: number | boolean;
 };
 export type RunnerReservationRow = {
@@ -46,6 +48,7 @@ export function concurrencyCountsQuery(dialect: "sqlite" | "postgres", batchId: 
     COALESCE((${feature("jdk")} AND ${feature("jarBundle")}),FALSE) AS "runtimeAssets",
     (COALESCE(${ddt},FALSE) OR p.ddt>0) AS ddt,
     (SELECT s.concurrency FROM run_batch_retry_concurrency_states s WHERE s.batch_id=b.id) AS "ruleConcurrency",
+    ${sql.raw(overlappingRoundConcurrencySql(dialect, "b"))} AS "overlappingConcurrency",
     EXISTS(SELECT 1 FROM run_batch_round_recoveries rr WHERE rr.batch_id=b.id AND rr.status IN ('pending','polling','waiting','releasing')) AS "recoveryPending"
     FROM run_batches b CROSS JOIN pending p WHERE b.id=${batchId}`;
 }
@@ -91,7 +94,11 @@ export function concurrencySnapshot(
         : {}),
       ...(metadata.policy ? { policy: metadata.policy } : {}),
     },
-    targetConcurrency: counts.ruleConcurrency ?? metadata.policy?.concurrency ?? null,
+    targetConcurrency:
+      roundWindowConcurrency(
+        counts.ruleConcurrency ?? metadata.policy?.concurrency,
+        counts.overlappingConcurrency == null ? undefined : Number(counts.overlappingConcurrency),
+      ) ?? null,
     runningRuns: Number(counts.running),
     assignedRuns: Number(counts.assigned),
     readyRuns: Number(counts.ready),

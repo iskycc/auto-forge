@@ -8,7 +8,7 @@ import {
   type PublicSuiteView,
   type StartPublicSuiteExecution,
 } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
+import { DomainError, assertCaseSuiteLockOwner } from "@autoforge/domain";
 import type {
   CaseSuiteRepository,
   Clock,
@@ -46,6 +46,7 @@ export class PublicSuiteExecutionService {
 
   async publish(suiteId: string, publisherId: string): Promise<string> {
     const suite = await this.requireSuite(suiteId);
+    assertCaseSuiteLockOwner(suite, publisherId);
     if (!suite.enabled || suite.status !== "active")
       throw new DomainError("CASE_SUITE_DISABLED", "请先启用任务再生成公开执行链接。");
     await this.links.publish(suiteId, publisherId, this.clock.now().toISOString());
@@ -53,6 +54,7 @@ export class PublicSuiteExecutionService {
   }
 
   async revoke(suiteId: string, publisherId: string): Promise<void> {
+    assertCaseSuiteLockOwner(await this.requireSuite(suiteId), publisherId);
     await this.links.revoke(suiteId, publisherId, this.clock.now().toISOString());
   }
 

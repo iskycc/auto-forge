@@ -1243,7 +1243,7 @@ export class SqliteDdtRepository implements DdtRepository {
     const rows = this.handle.client
       .prepare(
         `SELECT id, ddt_case_id AS ddtCaseId, case_id AS caseId, change_type AS changeType,
-                actor_id AS actorId, source_name AS sourceName, before_json AS beforeJson,
+                actor_id AS actorId, (SELECT username FROM users WHERE users.id = ddt_case_history.actor_id) AS actorName, change_reason AS changeReason, source_name AS sourceName, before_json AS beforeJson,
                 after_json AS afterJson, changes_json AS changesJson, created_at AS createdAt
          FROM ddt_case_history
          WHERE ddt_case_id = ? ${input.cursor ? "AND id < ?" : ""}
@@ -1261,7 +1261,7 @@ export class SqliteDdtRepository implements DdtRepository {
     const row = this.handle.client
       .prepare(
         `SELECT id, ddt_case_id AS ddtCaseId, case_id AS caseId, change_type AS changeType,
-                actor_id AS actorId, source_name AS sourceName, before_json AS beforeJson,
+                actor_id AS actorId, (SELECT username FROM users WHERE users.id = ddt_case_history.actor_id) AS actorName, change_reason AS changeReason, source_name AS sourceName, before_json AS beforeJson,
                 after_json AS afterJson, changes_json AS changesJson, created_at AS createdAt
          FROM ddt_case_history WHERE id = ? AND ddt_case_id = ? LIMIT 1`,
       )
@@ -1513,10 +1513,17 @@ export class SqliteDdtRepository implements DdtRepository {
           throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
         const result = this.handle.client
           .prepare(
-            `UPDATE ddt_import_jobs SET status = 'queued', conflict_strategy = ?, updated_at = ?
+            `UPDATE ddt_import_jobs SET status = 'queued', conflict_strategy = ?, overwrite_reason = ?, requested_by = COALESCE(?, requested_by), updated_at = ?
            WHERE id = ? AND status = 'previewed' AND valid_files > 0 ${scope}`,
           )
-          .run(input.conflictStrategy, input.updatedAt, input.jobId, ...(input.projectIds ?? []));
+          .run(
+            input.conflictStrategy,
+            input.overwriteReason ?? null,
+            input.actorId ?? null,
+            input.updatedAt,
+            input.jobId,
+            ...(input.projectIds ?? []),
+          );
         if (result.changes !== 1) {
           throw new DomainError(
             "DDT_IMPORT_STATE_CONFLICT",
@@ -1806,8 +1813,8 @@ export class SqliteDdtRepository implements DdtRepository {
                 .prepare(
                   `INSERT INTO ddt_case_history
                  (id, ddt_case_id, case_id, change_type, actor_id, source_name,
-                  before_json, after_json, changes_json, created_at)
-                 VALUES (?, ?, ?, 'import_overwrite', ?, ?, ?, ?, ?, ?)`,
+                  before_json, after_json, changes_json, created_at, change_reason)
+                 VALUES (?, ?, ?, 'import_overwrite', ?, ?, ?, ?, ?, ?, ?)`,
                 )
                 .run(
                   input.historyIds[index],
@@ -1819,6 +1826,7 @@ export class SqliteDdtRepository implements DdtRepository {
                   JSON.stringify(caseData),
                   JSON.stringify(diffDdtCaseData(before, caseData)),
                   input.importedAt,
+                  input.overwriteReason ?? null,
                 );
               result.updatedCount += 1;
               outcome = "updated";
@@ -1909,6 +1917,7 @@ export class SqliteDdtRepository implements DdtRepository {
       testStageId: row.test_stage_id,
       status: row.status,
       ...(row.conflict_strategy ? { conflictStrategy: row.conflict_strategy } : {}),
+      ...(row.overwrite_reason ? { overwriteReason: row.overwrite_reason } : {}),
       uploads: parseUploads(row.uploads_json),
       files: fileRows.map(mapImportFile),
       progressPercent: row.progress_percent,
@@ -1965,6 +1974,8 @@ type HistoryRow = {
   caseId: string;
   changeType: DdtCaseHistory["changeType"];
   actorId: string | null;
+  actorName?: string | null;
+  changeReason?: string | null;
   sourceName: string;
   beforeJson: string;
   afterJson: string;
@@ -1987,6 +1998,7 @@ type ImportJobRow = {
   test_stage_id: string;
   status: DdtImportJob["status"];
   conflict_strategy: DdtImportJob["conflictStrategy"] | null;
+  overwrite_reason: string | null;
   uploads_json: string;
   progress_percent: number;
   total_files: number;
@@ -2125,6 +2137,8 @@ function mapHistory(row: HistoryRow): DdtCaseHistory {
     caseId: row.caseId,
     changeType: row.changeType,
     ...(row.actorId ? { actorId: row.actorId } : {}),
+    ...(row.actorName ? { actorName: row.actorName } : {}),
+    ...(row.changeReason ? { changeReason: row.changeReason } : {}),
     sourceName: row.sourceName,
     before: parseCaseData(row.beforeJson),
     after: parseCaseData(row.afterJson),

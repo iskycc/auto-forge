@@ -105,6 +105,20 @@ test("public task links execute with login only, share live status, record actor
   const parsed = new URL(url);
   const publisherId = parsed.searchParams.get("PublisherId")!;
   expect(parsed.searchParams.get("SuiteId")).toBe(suite.id);
+  const unlockedSuite = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suite.id}?view=summary`,
+  );
+  const lockedSuite = await browserJson<{ revision: number; lockedBy: string }>(
+    page,
+    `/api/v1/case-suites/${suite.id}/lock`,
+    {
+      method: "PUT",
+      body: { expectedRevision: unlockedSuite.body.revision, locked: true },
+    },
+  );
+  expect(lockedSuite.status).toBe(200);
+  expect(lockedSuite.body.lockedBy).toBe(publisherId);
   for (const width of [1024, 1536]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
     await access.scrollIntoViewIfNeeded();
@@ -158,7 +172,7 @@ test("public task links execute with login only, share live status, record actor
       (
         await browserJson(visitor, startPath, {
           method: "POST",
-          body: { requestKey: crypto.randomUUID() },
+          body: { requestKey: crypto.randomUUID(), environmentAddresses: overrideAddresses },
         })
       ).status,
     ).toBe(401);
@@ -184,6 +198,14 @@ test("public task links execute with login only, share live status, record actor
       (
         await browserJson(visitor, `/api/v1/case-suites/${suite.id}/execution-link`, {
           method: "POST",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await browserJson(visitor, `/api/v1/case-suites/${suite.id}/cases`, {
+          method: "POST",
+          body: { caseDefinitionIds: [definition.id] },
         })
       ).status,
     ).toBe(403);
@@ -262,7 +284,7 @@ test("public task links execute with login only, share live status, record actor
       (
         await browserJson(visitor, startPath, {
           method: "POST",
-          body: { requestKey: crypto.randomUUID() },
+          body: { requestKey: crypto.randomUUID(), environmentAddresses: overrideAddresses },
         })
       ).status,
     ).toBe(409);
@@ -286,6 +308,68 @@ test("public task links execute with login only, share live status, record actor
     await popup.close();
     // Resume foreground animations after opening the public progress tab.
     await visitor.bringToFront();
+    // A second run can use a disjoint environment while the first one remains active.
+    await expect(execute).toBeEnabled();
+    await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
+    await environmentDialog
+      .getByRole("textbox", { name: "本次执行环境 IP" })
+      .fill(`${overrideAddresses[0]}\n10.88.0.1`);
+    await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await expect(execute).toBeDisabled();
+    await expect(
+      visitor.getByText("环境 IP 有重叠，请修改本次环境 IP 后再执行。", { exact: true }),
+    ).toBeVisible();
+    for (const width of [1024, 1536]) {
+      await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(visitor);
+      await captureUi(visitor, `public-task-environment-conflict-${width}`);
+    }
+    await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
+    await environmentDialog.getByRole("textbox", { name: "本次执行环境 IP" }).fill("10.88.0.1");
+    await environmentDialog.getByRole("button", { name: "使用这些 IP", exact: true }).click();
+    await visitor.getByLabel("启动方式", { exact: true }).click();
+    await visitor.getByRole("option", { name: "倒计时执行", exact: true }).click();
+    await visitor.getByRole("spinbutton", { name: "倒计时秒数" }).fill("600");
+    const concurrentResponse = visitor.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(`/case-suites/${suite.id}/executions`),
+    );
+    await refreshRunnerHeartbeat(page, runner);
+    await visitor.getByRole("button", { name: "开始倒计时", exact: true }).click();
+    const concurrentCreated = await concurrentResponse;
+    expect(concurrentCreated.status()).toBe(201);
+    const concurrent = (await concurrentCreated.json()) as { batchId: string };
+    await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(2);
+    await expect(observer.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(2);
+    for (const width of [1024, 1536]) {
+      await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
+      await expectUiIntegrity(visitor);
+      await captureUi(visitor, `public-task-concurrent-${width}`);
+      await visitor.getByRole("button", { name: "切换到深色模式" }).click();
+      await captureUi(visitor, `public-task-concurrent-dark-${width}`);
+      await visitor.getByRole("button", { name: "切换到浅色模式" }).click();
+    }
+    const overlap = await browserJson<{ error: { message: string } }>(visitor, startPath, {
+      method: "POST",
+      body: { requestKey: crypto.randomUUID(), environmentAddresses: ["10.88.0.1", "10.88.0.2"] },
+    });
+    expect(overlap.status).toBe(409);
+    expect(JSON.stringify(overlap.body)).toContain("10.88.0.1");
+    expect(
+      (
+        await browserJson(
+          visitor,
+          `/api/v1/public/case-suites/${suite.id}/executions/${concurrent.batchId}/terminate?PublisherId=${publisherId}`,
+          { method: "POST" },
+        )
+      ).status,
+    ).toBe(200);
+    await visitor.getByRole("button", { name: "刷新任务状态" }).click();
+    await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(1);
+    await visitor.getByLabel("启动方式", { exact: true }).click();
+    await visitor.getByRole("option", { name: "立即执行", exact: true }).click();
+    await refreshRunnerHeartbeat(page, runner);
     const claim = await claimDeletionAttempt(page, runner);
     expect(overrideAddresses).toContain(claim.assignment.executionSpec.adapter?.environmentAddress);
     await uploadDeletionLog(page, runner, claim, "Public task execution functional test\n");
@@ -324,8 +408,16 @@ test("public task links execute with login only, share live status, record actor
     for (const address of originalAddresses) await expect(environment).toContainText(address);
     const savedSuite = await browserJson<{
       policy: { adapter: { environmentAddresses: string[] } };
+      lockedBy: string;
+      revision: number;
+      caseCount: number;
     }>(page, `/api/v1/case-suites/${suite.id}?view=summary`);
     expect(savedSuite.body.policy.adapter.environmentAddresses).toEqual(originalAddresses);
+    expect(savedSuite.body).toMatchObject({
+      lockedBy: publisherId,
+      revision: lockedSuite.body.revision,
+      caseCount: 1,
+    });
     await environment.getByRole("button", { name: "修改环境 IP", exact: true }).click();
     await environmentDialog
       .getByRole("textbox", { name: "本次执行环境 IP" })
@@ -344,10 +436,11 @@ test("public task links execute with login only, share live status, record actor
     const delayed = await delayedResponse;
     expect(delayed.status()).toBe(201);
     const second = (await delayed.json()) as { batchId: string };
-    const delayedSummary = await browserJson<{ scheduledFor: string; createdAt: string }>(
-      page,
-      `/api/v1/run-batches/${second.batchId}?view=summary`,
-    );
+    const delayedSummary = await browserJson<{
+      scheduledFor: string;
+      createdAt: string;
+      sequenceNumber: number;
+    }>(page, `/api/v1/run-batches/${second.batchId}?view=summary`);
     expect(
       Date.parse(delayedSummary.body.scheduledFor) - Date.parse(delayedSummary.body.createdAt),
     ).toBe(3000);
@@ -386,7 +479,14 @@ test("public task links execute with login only, share live status, record actor
       "Finishing the already claimed case after termination\n",
     );
     await completeDeletionAttempt(page, runner, runningClaim, "succeeded");
-    await expect(visitor.getByText(`终止人：${username}`, { exact: true })).toBeVisible({
+    await expect(
+      visitor
+        .getByRole("article", {
+          name: `执行批次 ${delayedSummary.body.sequenceNumber}`,
+          exact: true,
+        })
+        .getByText(`终止人：${username}`, { exact: true }),
+    ).toBeVisible({
       timeout: 15000,
     });
     await page.goto(`/run-batches/${second.batchId}`);

@@ -11,7 +11,64 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectUiIntegrity, expectReadableText } from "./support/ui-guard";
-import { openExecutionCaseDetails, closeExecutionCaseDetails } from "./support/execution-details";
+import { selectExecutionRound, closeExecutionCaseDetails } from "./support/execution-details";
+
+test("completed batches settle through periodic recovery without another Runner request", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    {
+      method: "POST",
+      body: { name: uniqueName("完成收尾验收") },
+    },
+  );
+  const directory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!directory) throw new Error("This Lite fixture requires AUTOFORGE_E2E_DATA_DIR.");
+  const fixture = insertFailureAnalysisFixture(
+    directory,
+    version.body.id,
+    uniqueName("completed-recovery"),
+  );
+  const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout=5000");
+    database.exec("BEGIN IMMEDIATE");
+    database
+      .prepare(
+        "UPDATE execution_runs SET status='succeeded',terminal_outcome='succeeded' WHERE batch_id=?",
+      )
+      .run(fixture.batchId);
+    database
+      .prepare(
+        "UPDATE run_attempts SET status='succeeded',outcome='succeeded',finished_at=? WHERE execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id=?)",
+      )
+      .run(new Date().toISOString(), fixture.batchId);
+    database
+      .prepare(
+        "UPDATE run_batches SET status='running',scheduled_for=created_at,version=version+1 WHERE id=?",
+      )
+      .run(fixture.batchId);
+    database.exec("COMMIT");
+  } finally {
+    database.close();
+  }
+  // No protocol completion, claim or explicit repair call is made after the durable boundary.
+  await expect
+    .poll(
+      async () => {
+        const result = await browserJson<{ status: string }>(
+          page,
+          `/api/v1/run-batches/${fixture.batchId}/overview`,
+        );
+        return result.body.status;
+      },
+      { timeout: 20000 },
+    )
+    .toBe("succeeded");
+});
 
 test("termination stays visibly active while leased work drains and settles without another Runner request", async ({
   page,
@@ -35,6 +92,7 @@ test("termination stays visibly active while leased work drains and settles with
   const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
   try {
     database.exec("PRAGMA busy_timeout=5000");
+    database.exec("BEGIN IMMEDIATE");
     database
       .prepare(
         "UPDATE run_batches SET status='running',retry_limit=9,retry_mode='round',scheduled_for=?,version=version+1 WHERE id=?",
@@ -87,6 +145,7 @@ test("termination stays visibly active while leased work drains and settles with
         now,
         now,
       );
+    database.exec("COMMIT");
     await page.goto(`/run-batches/${fixture.batchId}`);
     const actions = page.getByRole("region", { name: "批次操作", exact: true });
     await actions.getByRole("button", { name: "终止任务", exact: true }).click();
@@ -143,7 +202,7 @@ test("termination stays visibly active while leased work drains and settles with
     expect(settled.body.currentRound).toBe(1);
     expect(settled.body.attempts).toHaveLength(5);
     expect(settled.body.attempts.every((attempt) => attempt.outcome === "failed")).toBe(true);
-    await openExecutionCaseDetails(page);
+    await selectExecutionRound(page, "初始轮次");
     await expect(page.getByRole("button", { name: "总体调度日志", exact: true })).toBeVisible({
       timeout: 20000,
     });

@@ -51,6 +51,7 @@ export function ExecutionBatchDetails({
   runnerDirectory,
   accessToken,
   publicAccess = false,
+  automaticAiAnalysis = false,
 }: {
   batch: ExecutionBatchView;
   retrySuiteId?: string;
@@ -71,6 +72,7 @@ export function ExecutionBatchDetails({
   runnerDirectory: readonly RunnerDirectoryEntry[];
   accessToken?: string;
   publicAccess?: boolean;
+  automaticAiAnalysis?: boolean;
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
@@ -89,6 +91,7 @@ export function ExecutionBatchDetails({
   const [exceptionsDialogOpen, setExceptionsDialogOpen] = useState(false);
   const [concurrencyDialogOpen, setConcurrencyDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
+  const canViewBatchAi = canReadLogs && !publicAccess && (!activeBatch || automaticAiAnalysis);
   const statisticsState = batch.statistics?.state;
   const statisticsPending = !!batch.statistics && !batch.statistics.generation;
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
@@ -236,7 +239,7 @@ export function ExecutionBatchDetails({
         />
       ) : null}
       <ExecutionBatchOverview batch={batch}>
-        {((canReadLogs && !publicAccess && !activeBatch) ||
+        {(canViewBatchAi ||
           analysisScope ||
           (activeBatch && canReadConcurrencyDiagnostics && !publicAccess) ||
           batch.status === "failed" ||
@@ -280,8 +283,8 @@ export function ExecutionBatchDetails({
               </span>
             </div>
             <div className={cn("button-row", uiPatterns["button-row"])}>
-              {canReadLogs && !publicAccess && !activeBatch ? (
-                <AiAnalysisButton batchId={batch.id} />
+              {canViewBatchAi ? (
+                <AiAnalysisButton batchId={batch.id} waitForAutomatic={activeBatch} />
               ) : null}
               {activeBatch && canReadConcurrencyDiagnostics && !publicAccess ? (
                 <Button

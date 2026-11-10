@@ -43,6 +43,7 @@ import { throwApiErrorResponse } from "@/lib/client-api";
 import { caseSuiteAdapterDefaults } from "@/lib/case-suite-adapter-defaults";
 import { RoundRecoveryCredentialDialog } from "./round-recovery-credential-dialog";
 import { DeleteCaseSuiteButton } from "./delete-case-suite-button";
+import { CaseSuiteArchiveButton } from "./case-suite-archive-button";
 import {
   canReuseRecoveryCredential,
   recoveryInspectionCredential,
@@ -100,6 +101,11 @@ export function CaseSuiteEditor({
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const archived = suite.status === "archived";
+
+  function acceptArchiveChange(updated: CaseSuite): void {
+    acceptMutation(revision, updated.revision);
+  }
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
     suite.policy.runnerGroupId ? "group" : "runners",
   );
@@ -340,12 +346,30 @@ export function CaseSuiteEditor({
           <span className={cn("eyebrow", uiPatterns["eyebrow"])}>任务设置</span>
           <h2>基本信息与执行策略</h2>
         </div>
+        {canManage && !archived ? (
+          <CaseSuiteArchiveButton suite={{ ...suite, revision }} onChanged={acceptArchiveChange} />
+        ) : null}
       </div>
-      <fieldset
-        disabled={!canManage || pending}
-        className={cn("settings-form-fieldset", caseSuiteEditorStyles["settings-form-fieldset"])}
-      >
-        <div className={cn("suite-settings-body", caseSuiteEditorStyles["suite-settings-body"])}>
+      {archived ? (
+        <Notice tone="info">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>任务已归档，用例和配置只读。恢复任务后可继续修改。</span>
+            {canManage ? (
+              <CaseSuiteArchiveButton
+                suite={{ ...suite, revision }}
+                onChanged={acceptArchiveChange}
+              />
+            ) : null}
+          </div>
+        </Notice>
+      ) : null}
+      {archived && error ? <Notice tone="error">{error}</Notice> : null}
+      <div className={cn("suite-settings-body", caseSuiteEditorStyles["suite-settings-body"])}>
+        <fieldset
+          disabled={!canManage || pending || archived}
+          inert={archived || !canManage}
+          className={cn("settings-form-fieldset", caseSuiteEditorStyles["settings-form-fieldset"])}
+        >
           <form
             className={cn("settings-grid-form", uiPatterns["settings-grid-form"])}
             onChange={() => setDirty(true)}
@@ -1063,111 +1087,114 @@ export function CaseSuiteEditor({
               启用（停用后不能创建新批次，在途批次继续）
             </label>
             <label className={cn("checkbox-field", uiPatterns["checkbox-field"])}>
-              <Input name="archived" type="checkbox" defaultChecked={suite.status === "archived"} />
-              归档（保留历史记录，不能创建新批次）
+              <Input
+                key={suite.status}
+                name="archived"
+                type="checkbox"
+                defaultChecked={suite.status === "archived"}
+              />
+              归档（保留历史记录，锁定用例和配置）
             </label>
-            <div
-              className={cn(
-                "settings-form-actions suite-save-actions",
-                caseSuiteEditorStyles["settings-form-actions"],
-                caseSuiteEditorStyles["suite-save-actions"],
-              )}
-            >
-              <span role="status">{dirty ? "任务配置有未保存的修改" : "任务配置已保存"}</span>
-              {error ? (
-                <Notice
-                  tone="error"
-                  className={cn("form-error", uiPatterns["form-error"])}
-                  role="alert"
-                >
-                  {error}
-                </Notice>
-              ) : null}
-              <Button
-                className={cn("primary-button", uiPatterns["primary-button"])}
-                disabled={pending}
-                type="submit"
+            {!archived && canManage ? (
+              <div
+                className={cn(
+                  "settings-form-actions suite-save-actions",
+                  caseSuiteEditorStyles["settings-form-actions"],
+                  caseSuiteEditorStyles["suite-save-actions"],
+                )}
               >
-                {pending ? <LoadingIcon size={15} /> : <Save size={15} />} 保存修改
-              </Button>
-            </div>
-          </form>
-          <div className="suite-secondary-actions flex flex-wrap items-center gap-2">
-            <Button
-              onClick={() => {
-                setCopyError(null);
-                setCopyOpen(true);
-              }}
-              type="button"
-            >
-              <Copy size={15} /> 复制任务
-            </Button>
-            <DeleteCaseSuiteButton suiteId={suite.id} suiteName={suite.name} revision={revision} />
-          </div>
-          <ActionDialog
-            description="复制已保存的任务配置，可选择是否包含用例；历史执行记录不会复制。"
-            onClose={() => !copying && setCopyOpen(false)}
-            open={copyOpen}
-            title="复制用例任务"
-            protectUnsavedChanges
-            closeDisabled={copying}
-            footer={
-              <>
+                <span role="status">{dirty ? "任务配置有未保存的修改" : "任务配置已保存"}</span>
+                {error ? (
+                  <Notice
+                    tone="error"
+                    className={cn("form-error", uiPatterns["form-error"])}
+                    role="alert"
+                  >
+                    {error}
+                  </Notice>
+                ) : null}
                 <Button
-                  type="button"
-                  data-dialog-dismiss
-                  disabled={copying}
-                  onClick={() => setCopyOpen(false)}
+                  className={cn("primary-button", uiPatterns["primary-button"])}
+                  disabled={pending}
+                  type="submit"
                 >
-                  取消
-                </Button>{" "}
-                <Button variant="primary" form="suite-copy-form" disabled={copying} type="submit">
-                  {copying ? <LoadingIcon size={15} /> : <Copy size={15} />} 复制任务
+                  {pending ? <LoadingIcon size={15} /> : <Save size={15} />} 保存修改
                 </Button>
-              </>
-            }
+              </div>
+            ) : null}
+          </form>
+        </fieldset>
+        <fieldset
+          disabled={!canManage || pending}
+          className="suite-secondary-actions m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0"
+        >
+          <Button
+            onClick={() => {
+              setCopyError(null);
+              setCopyOpen(true);
+            }}
+            type="button"
           >
-            <form
-              id="suite-copy-form"
-              className={cn(
-                "stack-form suite-copy-form action-dialog-form",
-                caseSuiteEditorStyles["stack-form"],
-                caseSuiteEditorStyles["suite-copy-form"],
-                caseSuiteEditorStyles["action-dialog-form"],
-              )}
-              onSubmit={(event) => void copySuite(event)}
-            >
-              <label>
-                复制为新任务
-                <Input
-                  name="copyName"
-                  required
-                  maxLength={120}
-                  placeholder={`${suite.name} 副本`}
-                />
-              </label>
-              <label
-                className={cn("checkbox-field suite-copy-scope", uiPatterns["checkbox-field"])}
+            <Copy size={15} /> 复制任务
+          </Button>
+          <DeleteCaseSuiteButton suiteId={suite.id} suiteName={suite.name} revision={revision} />
+        </fieldset>
+        <ActionDialog
+          description="复制已保存的任务配置，可选择是否包含用例；历史执行记录不会复制。"
+          onClose={() => !copying && setCopyOpen(false)}
+          open={copyOpen}
+          title="复制用例任务"
+          protectUnsavedChanges
+          closeDisabled={copying}
+          footer={
+            <>
+              <Button
+                type="button"
+                data-dialog-dismiss
+                disabled={copying}
+                onClick={() => setCopyOpen(false)}
               >
-                <Input type="checkbox" name="configurationOnly" disabled={copying} />
-                仅复制配置，不复制用例
-              </label>
-              <p className={cn("field-hint", uiPatterns["field-hint"])}>
-                勾选后保留执行策略、Adapter 和恢复配置，新任务不包含普通或 DDT 用例。
-              </p>
-              {copyError ? (
-                <Notice
-                  tone="error"
-                  className={cn("inline-error", caseSuiteEditorStyles["inline-error"])}
-                  role="alert"
-                >
-                  {copyError}
-                </Notice>
-              ) : null}
-            </form>
-          </ActionDialog>
-        </div>
-      </fieldset>
+                取消
+              </Button>{" "}
+              <Button variant="primary" form="suite-copy-form" disabled={copying} type="submit">
+                {copying ? <LoadingIcon size={15} /> : <Copy size={15} />} 复制任务
+              </Button>
+            </>
+          }
+        >
+          <form
+            id="suite-copy-form"
+            className={cn(
+              "stack-form suite-copy-form action-dialog-form",
+              caseSuiteEditorStyles["stack-form"],
+              caseSuiteEditorStyles["suite-copy-form"],
+              caseSuiteEditorStyles["action-dialog-form"],
+            )}
+            onSubmit={(event) => void copySuite(event)}
+          >
+            <label>
+              复制为新任务
+              <Input name="copyName" required maxLength={120} placeholder={`${suite.name} 副本`} />
+            </label>
+            <label className={cn("checkbox-field suite-copy-scope", uiPatterns["checkbox-field"])}>
+              <Input type="checkbox" name="configurationOnly" disabled={copying} />
+              仅复制配置，不复制用例
+            </label>
+            <p className={cn("field-hint", uiPatterns["field-hint"])}>
+              勾选后保留执行策略、Adapter 和恢复配置，新任务不包含普通或 DDT 用例。
+            </p>
+            {copyError ? (
+              <Notice
+                tone="error"
+                className={cn("inline-error", caseSuiteEditorStyles["inline-error"])}
+                role="alert"
+              >
+                {copyError}
+              </Notice>
+            ) : null}
+          </form>
+        </ActionDialog>
+      </div>
       {credentialTargetRuleId ? (
         <RoundRecoveryCredentialDialog
           suiteId={suite.id}

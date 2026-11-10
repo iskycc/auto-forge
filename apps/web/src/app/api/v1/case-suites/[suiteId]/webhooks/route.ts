@@ -37,6 +37,7 @@ export async function PUT(request: Request, context: Context): Promise<NextRespo
       suiteId,
       input.webhookIds,
       projectIds,
+      identity.user.id,
     );
     const suite = await services.caseSuites.get(suiteId, projectIds);
     await services.identityAccess.recordAuthorizedOperation(identity, {

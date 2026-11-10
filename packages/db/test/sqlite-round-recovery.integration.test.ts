@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createSqliteDatabase, type SqliteDatabaseHandle } from "../src/database";
+import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteRoundRecoveryRepository } from "../src/sqlite-round-recovery";
 
 const createdAt = "2026-08-23T00:00:00.000Z";
@@ -26,6 +27,16 @@ describe("SqliteRoundRecoveryRepository", () => {
     };
     const writer = createSqliteDatabase(options);
     const poller = createSqliteDatabase(options);
+    seedRecovery(writer, "blocked-tail", "waiting");
+    writer.client
+      .prepare("UPDATE run_batch_round_recoveries SET status='idle' WHERE batch_id='blocked-tail'")
+      .run();
+    writer.client
+      .prepare(
+        `INSERT INTO execution_runs(id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,execution_round,created_at,updated_at)
+      VALUES('active-old','blocked-tail','active-case',1,'old tail','example.Tail','running',1,1,?,?)`,
+      )
+      .run(createdAt, createdAt);
     writer.client.exec("BEGIN IMMEDIATE");
     try {
       const repository = new SqliteRoundRecoveryRepository(poller);
@@ -37,6 +48,12 @@ describe("SqliteRoundRecoveryRepository", () => {
           limit: 10,
         }),
       ).resolves.toEqual([]);
+      await expect(
+        new SqliteRunBatchRepository(poller).prepareSchedulingRound("missing", createdAt),
+      ).resolves.toBeUndefined();
+      await expect(
+        new SqliteRunBatchRepository(poller).prepareSchedulingRound("blocked-tail", createdAt),
+      ).resolves.toBeUndefined();
     } finally {
       writer.client.exec("ROLLBACK");
       writer.close();

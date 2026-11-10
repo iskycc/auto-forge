@@ -49,7 +49,7 @@ export function mapDdtScopeClearCounts(row: DdtScopeClearCountRow) {
 }
 
 export function ddtClearSuiteCandidate(input: DdtScopeClearWrite, dialect: "sqlite" | "postgres") {
-  return sql`SELECT suite.id FROM case_suites suite
+  return sql`SELECT suite.id, suite.locked_by FROM case_suites suite
     WHERE suite.project_id=${input.scope.projectId} AND EXISTS (
       SELECT 1 FROM case_suite_ddt_items m JOIN ddt_cases c ON c.id=m.ddt_case_id
       WHERE m.suite_id=suite.id AND ${ddtClearCondition("c", input.scope, input.clearedBefore)})

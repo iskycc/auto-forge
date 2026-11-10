@@ -69,7 +69,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         })
       : Promise.resolve(null),
     projectVersion
-      ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id)
+      ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id, "active")
       : Promise.resolve([]),
   ]);
   const targetSuiteId = single(parameters.targetSuiteId);
@@ -83,6 +83,9 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     )
       suites.unshift(target);
   }
+  const editableSuites = suites.filter(
+    (suite) => !suite.lockedBy || suite.lockedBy === identity.user.id,
+  );
   const directoryManifest = directoryProjection?.generation
     ? caseDirectoryManifestSchema.parse(directoryProjection.payload)
     : null;
@@ -119,7 +122,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                 suiteManagementProjectIds === undefined ||
                 suiteManagementProjectIds.includes(projectId)
               }
-              suites={suites.map((suite) => ({ id: suite.id, name: suite.name }))}
+              suites={editableSuites.map((suite) => ({ id: suite.id, name: suite.name }))}
             />
           ) : (
             <Card
@@ -186,7 +189,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               snapshot={directoryProjection.status}
               manifest={directoryManifest}
               canImport={canImport}
-              suites={suites}
+              suites={editableSuites}
               caseManagementProjectIds={caseManagementProjectIds}
               suiteManagementProjectIds={suiteManagementProjectIds}
             />

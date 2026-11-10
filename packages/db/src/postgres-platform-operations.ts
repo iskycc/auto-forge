@@ -18,6 +18,7 @@ import {
   ADAPTER_FAILURE_RESULT_CODES,
   ADAPTER_SUCCESS_RESULT_CODES,
   DomainError,
+  assertCaseSuiteEditable,
   RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
 } from "@autoforge/domain";
 import type { PoolClient } from "pg";
@@ -310,14 +311,17 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return result.rows[0] ? mapSchedule(result.rows[0]) : null;
   }
 
-  async upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number) {
+  async upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number, actorId?: string) {
     await this.ready();
     return withTransaction(this.handle, async (client) => {
-      const suite = await client.query("SELECT id FROM case_suites WHERE id=$1 FOR SHARE", [
-        record.suiteId,
-      ]);
-      if (suite.rowCount !== 1)
-        throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+      const suite = await client.query<{ status: "active" | "archived"; locked_by: string | null }>(
+        "SELECT status, locked_by FROM case_suites WHERE id=$1 FOR UPDATE",
+        [record.suiteId],
+      );
+      assertCaseSuiteEditable(
+        suite.rows[0] && { ...suite.rows[0], lockedBy: suite.rows[0].locked_by },
+        actorId,
+      );
       const currentResult = await client.query<ScheduleRow>(
         "SELECT * FROM case_suite_schedules WHERE suite_id=$1 FOR UPDATE",
         [record.suiteId],
@@ -372,15 +376,28 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     });
   }
 
-  async deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void> {
+  async deleteSchedule(
+    scheduleId: string,
+    expectedRevision: number,
+    actorId?: string,
+  ): Promise<void> {
     await this.ready();
-    const result = await retryPostgresWrite(() =>
-      this.handle.pool.query("DELETE FROM case_suite_schedules WHERE id=$1 AND revision=$2", [
-        scheduleId,
-        expectedRevision,
-      ]),
-    );
-    if (result.rowCount !== 1) versionConflict();
+    await withTransaction(this.handle, async (client) => {
+      const suite = await client.query<{ status: "active" | "archived"; locked_by: string | null }>(
+        "SELECT s.status, s.locked_by FROM case_suites s JOIN case_suite_schedules p ON p.suite_id=s.id WHERE p.id=$1 FOR UPDATE OF s",
+        [scheduleId],
+      );
+      if (!suite.rows[0]) versionConflict();
+      assertCaseSuiteEditable(
+        suite.rows[0] && { ...suite.rows[0], lockedBy: suite.rows[0].locked_by },
+        actorId,
+      );
+      const result = await client.query(
+        "DELETE FROM case_suite_schedules WHERE id=$1 AND revision=$2",
+        [scheduleId, expectedRevision],
+      );
+      if (result.rowCount !== 1) versionConflict();
+    });
   }
 
   async listDueSchedules(now: string, limit: number): Promise<CaseSuiteSchedule[]> {

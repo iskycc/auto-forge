@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
 import type { IdentityAccessRepository } from "../src/ports";
-import { assertAiPermission, resolveAiActor } from "../src/ai-analysis";
+import { AiAnalysisService, assertAiPermission, resolveAiActor } from "../src/ai-analysis";
 import { aiModelConfigurationSchema } from "@autoforge/contracts";
 import type { AiAnalysisRepository, AiGroupWork, AiWork } from "../src/ai-analysis-ports";
 import { AiAnalysisWorker, type AiEvidencePort } from "../src/ai-analysis-worker";
-import type { SecretCipherPort } from "../src/ports";
+import type { SecretCipherPort, RunBatchRepository } from "../src/ports";
 import {
   aiPromptMessages,
   readPreliminaryConclusion,
@@ -481,5 +481,55 @@ describe("AI group reduction admission", () => {
       expect.any(String),
       false,
     );
+  });
+});
+
+describe("automatic final-round intake", () => {
+  it("allows only the configured final round to stream; manual whole-batch analysis still waits", async () => {
+    const batch = {
+      id: "batch",
+      projectId: "project",
+      status: "running",
+      currentRound: 2,
+      retryLimit: 2,
+      policy: { aiAnalysisAfterCompletion: true, aiAnalysisExecutionId: "batch" },
+    };
+    const create = vi.fn(async (job) => job);
+    const repository = {
+      configuration: async () => ({ configuration: { enabled: true } }),
+      create,
+    } as unknown as AiAnalysisRepository;
+    const service = new AiAnalysisService(
+      repository,
+      { getMetadata: async () => batch } as unknown as RunBatchRepository,
+      {} as SecretCipherPort,
+      { now: () => new Date("2026-11-09T00:00:00Z") },
+      { next: () => "job" },
+    );
+    const identity = actor(["analysis.ai.create", "run.read", "case.read", "log.read"]);
+    await expect(service.createAutomatic(identity, "batch")).rejects.toMatchObject({
+      code: "AI_BATCH_ACTIVE",
+    });
+    expect(create).not.toHaveBeenCalled();
+    batch.currentRound = 3;
+    await expect(
+      service.create(identity, { batchId: "batch", requestKey: "manual" }),
+    ).rejects.toMatchObject({ code: "AI_BATCH_ACTIVE" });
+    await expect(service.createAutomatic(identity, "batch")).resolves.toMatchObject({
+      strategy: "stack_groups_v2",
+      requestedBy: "actor",
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ batchId: "batch", attemptId: null }),
+      "automatic",
+      { followFinalResults: true },
+    );
+    batch.policy.aiAnalysisExecutionId = "another-execution";
+    await expect(service.createAutomatic(identity, "batch")).rejects.toMatchObject({
+      code: "AI_BATCH_ACTIVE",
+    });
+    await expect(
+      service.createAutomatic(actor(["analysis.ai.create"]), "batch"),
+    ).rejects.toMatchObject({ code: "AUTH_FORBIDDEN" });
   });
 });

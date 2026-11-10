@@ -114,10 +114,12 @@ export class WebhookNotificationService {
     suiteId: string,
     webhookIds: readonly string[],
     projectIds?: readonly string[],
+    actorId?: string,
   ) {
     return this.repository.replaceSuiteBindings({
       suiteId,
       webhookIds: [...new Set(webhookIds)],
+      ...(actorId ? { actorId } : {}),
       recordedAt: this.clock.now().toISOString(),
       ...(projectIds ? { projectIds } : {}),
     });

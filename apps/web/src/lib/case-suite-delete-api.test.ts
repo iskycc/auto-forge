@@ -67,7 +67,12 @@ describe("task deletion API", () => {
     expect(response.status).toBe(204);
     expect(await response.text()).toBe("");
     expect(projectScope).toHaveBeenCalledWith(identity, "case_suite.manage");
-    expect(deleteSuite).toHaveBeenCalledWith("suite", { expectedRevision: 3 }, ["project"]);
+    expect(deleteSuite).toHaveBeenCalledWith(
+      "suite",
+      { expectedRevision: 3 },
+      ["project"],
+      "manager",
+    );
     expect(recordAuthorizedOperation).toHaveBeenCalledWith(
       identity,
       expect.objectContaining({

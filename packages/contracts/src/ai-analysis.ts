@@ -107,6 +107,7 @@ export type AiAnalysisStatus =
   | "failed"
   | "cancelled";
 export type AiAnalysisJob = {
+  acceptingFinalResults?: boolean;
   strategy?: AiAnalysisStrategy;
   id: string;
   batchId: string;

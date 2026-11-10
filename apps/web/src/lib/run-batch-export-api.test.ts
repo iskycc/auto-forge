@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertExportedWorkbookFeatureOrder } from "../../../../tests/e2e/support/export-workbook-structure";
+import { issuePermanentShareToken } from "./permanent-share-token";
 
 vi.mock("server-only", () => ({}));
 const {
@@ -15,6 +16,7 @@ const {
   ensureShares,
   readConfiguration,
   listClaims,
+  isBatchPublic,
   paths,
 } = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
@@ -23,6 +25,7 @@ const {
   ensureShares: vi.fn(),
   readConfiguration: vi.fn(),
   listClaims: vi.fn(),
+  isBatchPublic: vi.fn(),
   paths: { dataDirectory: "" },
 }));
 vi.mock("./auth", () => ({ authenticateRequest }));
@@ -31,7 +34,8 @@ vi.mock("./services", () => ({
     clock: { now: () => new Date("2026-10-23T10:30:45Z") },
     identityAccess: { projectScope },
     runBatchExport: { prepare: buildExport },
-    publicExecutionAccess: { ensureLinksForAttemptsInBatch: ensureShares },
+    config: { masterKey: "a".repeat(64) },
+    publicExecutionAccess: { ensureLinksForAttemptsInBatch: ensureShares, isBatchPublic },
     configurationStore: { read: readConfiguration, paths },
     failureAnalysis: { listExportClaims: listClaims },
   }),
@@ -73,6 +77,7 @@ beforeEach(async () => {
     new Map([["attempt-failed", "/CaseLog?ExecutionId=attempt-failed"]]),
   );
   listClaims.mockResolvedValue([]);
+  isBatchPublic.mockResolvedValue(true);
   readConfiguration.mockReturnValue({
     web: { timeZone: "Asia/Shanghai", publicBaseUrl: "http://localhost" },
   });
@@ -83,6 +88,66 @@ afterEach(async () => {
 });
 
 describe("validated Excel downloads", () => {
+  it("keeps legacy batch exports and their log links inside the signed batch without creating new grants", async () => {
+    const token = issuePermanentShareToken("a".repeat(64), "run_batch", "batch");
+    const response = await GET(
+      new Request(
+        `http://localhost/api/v1/run-batches/batch/export?access_token=${encodeURIComponent(token)}&scope=round&round=1&outcomes=failed`,
+      ),
+      { params: Promise.resolve({ batchId: "batch" }) },
+    );
+    expect(response.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await response.arrayBuffer());
+    const sheet = workbook.worksheets[0]!;
+    expect(sheet.getCell(2, sheet.columnCount).hyperlink).toContain(
+      `/share/run/${token}/attempt/attempt-failed`,
+    );
+    expect(isBatchPublic).not.toHaveBeenCalled();
+    expect(ensureShares).not.toHaveBeenCalled();
+    const wrong = await GET(
+      new Request(
+        `http://localhost/api/v1/run-batches/other/export?access_token=${encodeURIComponent(token)}&scope=final&outcomes=failed`,
+      ),
+      { params: Promise.resolve({ batchId: "other" }) },
+    );
+    expect(wrong.status).toBe(400);
+  });
+  it("exports a published batch's standard results anonymously without publishing logs or reading private analysis", async () => {
+    authenticateRequest.mockRejectedValue(new DomainError("AUTH_REQUIRED", "请登录。"));
+    const response = await GET(
+      new Request(
+        "http://localhost/api/v1/run-batches/batch/export?public=1&scope=final&outcomes=failed",
+      ),
+      { params: Promise.resolve({ batchId: "batch" }) },
+    );
+    expect(response.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await response.arrayBuffer());
+    expect(
+      workbook.worksheets[0]!.getCell(2, workbook.worksheets[0]!.columnCount).hyperlink,
+    ).toContain("/CaseLog?ExecutionId=attempt-failed");
+    expect(authenticateRequest).not.toHaveBeenCalled();
+    expect(projectScope).not.toHaveBeenCalled();
+    expect(ensureShares).not.toHaveBeenCalled();
+    expect(listClaims).not.toHaveBeenCalled();
+  });
+  it("rejects unpublished IDs and private analysis templates through the anonymous export boundary", async () => {
+    isBatchPublic.mockResolvedValue(false);
+    const request = (query: string) =>
+      GET(
+        new Request(
+          `http://localhost/api/v1/run-batches/batch/export?public=1&scope=final&outcomes=failed${query}`,
+        ),
+        { params: Promise.resolve({ batchId: "batch" }) },
+      );
+    expect((await request("")).status).toBe(400);
+    expect(buildExport).not.toHaveBeenCalled();
+    isBatchPublic.mockResolvedValue(true);
+    expect((await request("&template=failure-analysis")).status).toBe(403);
+    expect(buildExport).not.toHaveBeenCalled();
+    expect(ensureShares).not.toHaveBeenCalled();
+  });
   it.each(["results", "failure-analysis"] as const)(
     "downloads %s DDT cells across pages without shifting result fields or public links",
     async (template) => {

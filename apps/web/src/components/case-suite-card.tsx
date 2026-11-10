@@ -23,6 +23,8 @@ import { Button, Input } from "@/components/ui";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { CaseSuiteRecentExecutions } from "./case-suite-recent-executions";
 import { DeleteCaseSuiteButton } from "./delete-case-suite-button";
+import { CaseSuiteLockButton } from "./case-suite-lock-button";
+import { CaseSuiteArchiveButton } from "./case-suite-archive-button";
 import { OpenRunDialogButton } from "./global-run-dialog";
 
 const statisticNumber = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
@@ -34,6 +36,8 @@ export function CaseSuiteCard({
   canExecute,
   canManage,
   onDeleted,
+  onStatusChanged,
+  onLockChanged,
   exporting,
   exportDisabled,
   onExport,
@@ -47,6 +51,8 @@ export function CaseSuiteCard({
   canExecute: boolean;
   canManage: boolean;
   onDeleted: () => void;
+  onStatusChanged: () => void;
+  onLockChanged: (suite: CaseSuite) => void;
   exporting: boolean;
   exportDisabled: boolean;
   onExport: () => void;
@@ -89,6 +95,11 @@ export function CaseSuiteCard({
               {suite.status === "archived" ? "已归档" : suite.enabled ? "已启用" : "已停用"}
             </Badge>
           </span>
+          {suite.lockedBy ? (
+            <small className="truncate" title={`锁定人：${suite.lockedByName ?? suite.lockedBy}`}>
+              已锁定 · {suite.lockedByName ?? suite.lockedBy}
+            </small>
+          ) : null}
           <small title={suite.description}>{suite.description || "暂无说明"}</small>
           <small>
             v{suite.version} · 更新于{" "}
@@ -171,7 +182,9 @@ export function CaseSuiteCard({
           />
           置顶
         </label>
-        {canExecute ? (
+        {canManage && suite.status === "archived" ? (
+          <CaseSuiteArchiveButton suite={suite} onChanged={onStatusChanged} />
+        ) : canExecute ? (
           <OpenRunDialogButton
             suiteId={suite.id}
             disabled={!suite.enabled || suite.status !== "active"}
@@ -211,16 +224,26 @@ export function CaseSuiteCard({
         <TaskExecutionAccessButton
           suiteId={suite.id}
           baseUrl={undefined}
-          canPublish={canManage && canExecute}
+          canPublish={canManage && canExecute && suite.status === "active"}
         />
         {canManage ? (
-          <DeleteCaseSuiteButton
-            suiteId={suite.id}
-            suiteName={suite.name}
-            revision={suite.revision}
-            presentation="icon"
-            onDeleted={onDeleted}
-          />
+          <div className="ml-auto flex shrink-0 items-center gap-2" aria-label="任务维护操作">
+            <CaseSuiteLockButton suite={suite} onChanged={onLockChanged} />
+            {suite.status === "active" ? (
+              <CaseSuiteArchiveButton
+                suite={suite}
+                presentation="icon"
+                onChanged={onStatusChanged}
+              />
+            ) : null}
+            <DeleteCaseSuiteButton
+              suiteId={suite.id}
+              suiteName={suite.name}
+              revision={suite.revision}
+              presentation="icon"
+              onDeleted={onDeleted}
+            />
+          </div>
         ) : null}
       </footer>
       <div hidden={!expanded} id={historyId}>

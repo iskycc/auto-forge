@@ -443,7 +443,7 @@ async function completeAttempt(
       headers: runnerHeaders(identity),
       data: {
         schemaVersion: 1,
-        completionId: result.completionId,
+        completionId: `${claim.assignment.attemptId}:${result.completionId}`,
         leaseToken: claim.lease.token,
         result: {
           status: result.status,
@@ -1341,9 +1341,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(anonymousResultPage.locator(".public-progress-card")).toHaveCount(0);
   await expect(
     anonymousResultPage.getByRole("button", {
-      name: /终止任务|再次执行|导出结果|查看日志|公开日志|调度日志/,
+      name: /终止任务|再次执行|查看日志|公开日志|调度日志/,
     }),
   ).toHaveCount(0);
+  await expect(
+    anonymousResultPage.getByRole("button", { name: "导出结果", exact: true }),
+  ).toBeEnabled();
   await expect(anonymousResultPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
   for (const viewport of [
     { width: 1024, height: 768 },

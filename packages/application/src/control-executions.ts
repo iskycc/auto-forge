@@ -578,7 +578,7 @@ export class ExecutionControlService {
       now: this.clock.now().toISOString(),
       eventIds: Array.from({ length: 5 }, () => this.ids.next()),
       limit: 5,
-      scope: "terminating_batches",
+      scope: "batch_lifecycle",
     });
   }
 

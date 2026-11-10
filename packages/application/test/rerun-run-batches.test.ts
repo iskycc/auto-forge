@@ -468,6 +468,7 @@ function rerunRepository(
       projectActiveRuns: 0,
       runnerFailureIdsByRun: {},
     })),
+    prepareSchedulingRound: async () => {},
     hasSchedulableRuns: vi.fn().mockResolvedValue(false),
     getSummary: vi.fn(async () => derivedSummary()),
   } as unknown as RunBatchRepository;

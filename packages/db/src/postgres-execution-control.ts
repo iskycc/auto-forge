@@ -1,3 +1,4 @@
+import { advancePostgresSchedulingRound } from "./postgres-round-dispatch";
 import { runPostgresTransaction, retryPostgresWrite } from "./postgres-transaction";
 import type { NodeAttemptLogStore } from "./node-attempt-log-store";
 import { hasBusinessLogWatermarks } from "./archived-attempt-log-store";
@@ -41,11 +42,11 @@ import { createHash } from "node:crypto";
 import type { PoolClient, QueryResult } from "pg";
 
 import type { AsyncAttemptLogStore, AttemptLogStore } from "./attempt-log-store";
-import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
+import { retryQueueTiming } from "./execution-queue-timing";
 import type { SchedulingEventDraft } from "@autoforge/application";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
-import { terminatingBatchSettlementSql } from "./terminating-batch-settlement";
+import { interruptedBatchSettlementSql } from "./interrupted-batch-settlement";
 
 type AssignmentRow = {
   id: string;
@@ -409,17 +410,27 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       );
       // COMMIT 与在途聚合同一往返：聚合在提交后的新快照上评估，可见自身迁移
       // 与所有已提交完成，因此最后提交者必然观察到零在途并完成终态迁移；
-      // 仍见在途的上报直接跳过，全程不持批次行锁。
+      // 无轮次尾部释放需求的普通在途上报直接返回，不持批次行锁。
       const tail = await commitWithInFlightPresence(client, control.batch_id);
       response.hasSchedulableRuns = tail.schedulable;
-      if (tail.running || tail.assigned) {
+      if ((tail.running || tail.assigned) && (tail.schedulable || !tail.held)) {
         response.batchClosed = false;
         return { response, committed: true };
       }
-      // 稀有路径：批次最后一个完成（或轮次收尾）触发终态迁移/轮次推进，
+      // 批次最后一个完成或存在扣留的轮次尾部，触发终态迁移/两轮窗口推进，
       // 在独立小事务中加锁完成；失败时由重复上报路径补做。
       response.batchClosed = isTerminalBatchStatus(
         await settleBatchAfterCompletion(client, control.batch_id, input.acceptedAt, input.eventId),
+      );
+      response.hasSchedulableRuns = Boolean(
+        (
+          await client.query<{ value: boolean }>(
+            `SELECT EXISTS(SELECT 1 FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
+          WHERE r.batch_id=$1 AND r.status='queued' AND r.held_round=0
+          AND b.pause_requested_at IS NULL AND b.cancel_requested_at IS NULL) AS value`,
+            [control.batch_id],
+          )
+        ).rows[0]?.value,
       );
       return { response, committed: true };
     }
@@ -912,8 +923,8 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   ): Promise<RecoveredAttemptExpiration[]> {
     await this.handle.ready;
     return this.transaction(async (client) => {
-      if (input.scope === "terminating_batches") {
-        await settleTerminatingBatches(client, input, 0);
+      if (input.scope === "terminating_batches" || input.scope === "batch_lifecycle") {
+        await settleInterruptedBatches(client, input, 0);
         return [];
       }
       const queued = await client.query<{ id: string; batch_id: string }>(
@@ -1032,7 +1043,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           recoveredAttempts.push(detail);
         }
       }
-      await settleTerminatingBatches(client, input, recovered);
+      await settleInterruptedBatches(client, input, recovered);
       return recoveredAttempts;
     });
   }
@@ -1600,10 +1611,11 @@ async function commitWithInFlightPresence(
      SELECT
        EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'running') AS running,
        EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'assigned') AS assigned,
-       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'queued' AND held_round = 0) AS schedulable`,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'queued' AND held_round = 0) AS schedulable,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'queued' AND held_round > 0) AS held`,
   );
   const presence = (results[1]?.rows as BatchTailSnapshot[] | undefined)?.[0];
-  return presence ?? { running: false, assigned: false, schedulable: false };
+  return presence ?? { running: false, assigned: false, schedulable: false, held: false };
 }
 
 /**
@@ -1636,7 +1648,7 @@ async function settleBatchAfterCompletion(
 
 /**
  * 重复上报的批次终态校正：读取当前批次状态；若批次停留在非终态且已无在途
- * run（对应“完成已提交而终态迁移失败”的罕见窗口），就地补做迁移。
+ * run，或仍有在途但轮次尾部尚未释放时，就地补做迁移。
  * 批次行不存在时返回 null，调用方保留存储回执中的原值。
  */
 async function repairBatchSettlementIfStalled(
@@ -1653,7 +1665,8 @@ async function repairBatchSettlementIfStalled(
   if (!currentStatus) return null;
   if (isTerminalBatchStatus(currentStatus)) return currentStatus;
   const presence = await inFlightPresence(client, batchId);
-  if (presence.running || presence.assigned) return currentStatus;
+  if ((presence.running || presence.assigned) && (presence.schedulable || !presence.held))
+    return currentStatus;
   return updateBatchStatus(client, batchId, updatedAt, eventId, "attempt.completed");
 }
 
@@ -1664,16 +1677,19 @@ type BatchInFlightRow = {
 
 type BatchTailSnapshot = BatchInFlightRow & {
   schedulable: boolean;
+  held: boolean;
 };
 
-async function inFlightPresence(client: PoolClient, batchId: string): Promise<BatchInFlightRow> {
-  const result = await client.query<BatchInFlightRow>(
+async function inFlightPresence(client: PoolClient, batchId: string): Promise<BatchTailSnapshot> {
+  const result = await client.query<BatchTailSnapshot>(
     `SELECT
        EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'running') AS running,
-       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'assigned') AS assigned`,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'assigned') AS assigned,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'queued' AND held_round=0) AS schedulable,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'queued' AND held_round>0) AS held`,
     [batchId],
   );
-  return result.rows[0] ?? { running: false, assigned: false };
+  return result.rows[0] ?? { running: false, assigned: false, schedulable: false, held: false };
 }
 
 /** 连接可能已断开或事务已提交；ROLLBACK 失败不得掩盖原始错误。 */
@@ -2216,19 +2232,27 @@ async function markBatchActiveOnClaim(
   );
 }
 
-async function settleTerminatingBatches(
+async function settleInterruptedBatches(
   client: PoolClient,
   input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
   consumed: number,
 ): Promise<void> {
-  const settlements = await client.query<{ id: string }>(
-    terminatingBatchSettlementSql("postgres"),
+  const settlements = await client.query<{ id: string; termination_requested_at: string | null }>(
+    interruptedBatchSettlementSql("postgres", input.scope),
     [input.now, Math.min(5, Math.max(0, input.limit - consumed))],
   );
   for (const [index, batch] of settlements.rows.entries()) {
     const eventId = input.eventIds[consumed + index];
     if (!eventId) break;
-    await updateBatchStatus(client, batch.id, input.now, eventId, "batch.termination_reconciled");
+    await updateBatchStatus(
+      client,
+      batch.id,
+      input.now,
+      eventId,
+      batch.termination_requested_at
+        ? "batch.termination_reconciled"
+        : "batch.completion_reconciled",
+    );
   }
 }
 
@@ -2262,14 +2286,12 @@ async function updateBatchStatus(
     await terminateWaitingRuns(client, batchId, "任务终止，关闭尚未执行的工作。", updatedAt);
   }
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-  if (!batchState.cancel_requested_at && !batchState.pause_requested_at) {
-    await advanceRoundIfIdle(
-      client,
-      batchId,
-      batchState.retry_mode,
-      batchState.queue_timeout_ms,
-      updatedAt,
-    );
+  if (
+    !batchState.cancel_requested_at &&
+    !batchState.pause_requested_at &&
+    batchState.retry_mode === "round"
+  ) {
+    await advancePostgresSchedulingRound(client, batchId, updatedAt);
   }
   const status = await aggregateStoredBatchStatus(
     client,
@@ -2334,68 +2356,6 @@ async function aggregateStoredBatchStatus(
       status: "failed",
       ...(terminalReasonCode ? { terminalReasonCode } : {}),
     })),
-  ]);
-}
-
-// 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。
-async function advanceRoundIfIdle(
-  client: PoolClient,
-  batchId: string,
-  retryMode: "immediate" | "round",
-  queueTimeoutMs: number,
-  updatedAt: string,
-): Promise<void> {
-  if (retryMode !== "round") return;
-  const inFlight = await client.query<{ value: string }>(
-    "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = $1 AND status IN ('assigned', 'running')",
-    [batchId],
-  );
-  if (Number(inFlight.rows[0]?.value ?? 0) > 0) return;
-  const schedulable = await client.query<{ value: string }>(
-    "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = $1 AND status = 'queued' AND held_round = 0",
-    [batchId],
-  );
-  if (Number(schedulable.rows[0]?.value ?? 0) > 0) return;
-  const nextRound = await client.query<{ value: number | null }>(
-    "SELECT MIN(held_round) AS value FROM execution_runs WHERE batch_id = $1 AND status = 'queued' AND held_round > 0",
-    [batchId],
-  );
-  const nextRoundValue = nextRound.rows[0]?.value;
-  if (nextRoundValue === null || nextRoundValue === undefined) return;
-  const recoveryBarrier = await client.query<{
-    total_steps: string;
-    idle_steps: string;
-    succeeded_steps: string;
-  }>(
-    `SELECT COUNT(*) AS total_steps,
-            COUNT(*) FILTER (WHERE status = 'idle') AS idle_steps,
-            COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded_steps
-     FROM run_batch_round_recoveries
-     WHERE batch_id = $1 AND after_round = $2`,
-    [batchId, nextRoundValue - 1],
-  );
-  const recoverySteps = recoveryBarrier.rows[0];
-  const totalRecoverySteps = Number(recoverySteps?.total_steps ?? 0);
-  if (totalRecoverySteps > 0 && Number(recoverySteps?.idle_steps ?? 0) > 0) {
-    await client.query(
-      `UPDATE run_batch_round_recoveries
-       SET status = 'pending', available_at = $1,
-           activated_at = COALESCE(activated_at, $1), updated_at = $1
-       WHERE batch_id = $2 AND after_round = $3 AND status = 'idle'`,
-      [updatedAt, batchId, nextRoundValue - 1],
-    );
-    return;
-  }
-  if (totalRecoverySteps > Number(recoverySteps?.succeeded_steps ?? 0)) return;
-  await client.query(
-    `UPDATE execution_runs SET held_round = 0, queue_deadline_at = $1, updated_at = $2
-     WHERE batch_id = $3 AND status = 'queued' AND held_round <= $4`,
-    [queueDeadlineAfter(updatedAt, queueTimeoutMs), updatedAt, batchId, nextRoundValue],
-  );
-  await client.query("UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3", [
-    nextRoundValue,
-    updatedAt,
-    batchId,
   ]);
 }
 

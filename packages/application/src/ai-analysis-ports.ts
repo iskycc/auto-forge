@@ -13,7 +13,11 @@ export type AiConfigurationRecord = {
   encryptedKey: string | null;
 };
 export type AiCandidate = { executionRunId: string; attemptId: string; displayName: string };
-export type AiPlanningJob = AiAnalysisJob & { cursor: string | null; leaseToken: string };
+export type AiPlanningJob = AiAnalysisJob & {
+  cursor: string | null;
+  leaseToken: string;
+  intakeOpen?: boolean;
+};
 export type AiEvidencePart = { id: string; objectKey: string; sizeBytes: number };
 export const AI_EVIDENCE_INPUT_POLICY = "stdout_business_tail_v3";
 export type AiEvidence = {
@@ -65,7 +69,11 @@ export type AiGroupMember = {
 export interface AiAnalysisRepository {
   configuration(): Promise<AiConfigurationRecord>;
   saveConfiguration(record: AiConfigurationRecord, expectedRevision: number): Promise<boolean>;
-  create(job: AiAnalysisJob, requestKey: string): Promise<AiAnalysisJob>;
+  create(
+    job: AiAnalysisJob,
+    requestKey: string,
+    options?: { followFinalResults: boolean },
+  ): Promise<AiAnalysisJob>;
   view(input: {
     batchId: string;
     jobId?: string;

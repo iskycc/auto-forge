@@ -85,7 +85,7 @@ try {
               continue;
             }
             try {
-              await service.create(actor, { batchId: candidate.batchId, requestKey: "automatic" });
+              await service.createAutomatic(actor, candidate.batchId);
             } catch (error) {
               if (isDomainError(error) && error.code === "AUTH_FORBIDDEN")
                 await recordSkipped(

@@ -16,7 +16,7 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
     const input = deleteCaseSuiteInputSchema.parse(await readJsonBody(request, 1024));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
-    const suite = await services.caseSuites.delete(suiteId, input, projectIds);
+    const suite = await services.caseSuites.delete(suiteId, input, projectIds, identity.user.id);
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.delete",
       resourceType: "case_suite",

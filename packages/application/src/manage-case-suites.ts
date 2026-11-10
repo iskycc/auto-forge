@@ -17,6 +17,9 @@ import {
   DEFAULT_PROJECT_ID,
   DomainError,
   assertCaseSuiteRevision,
+  assertCaseSuiteLockOwner,
+  assertCaseSuiteEditable,
+  assertCaseSuiteUpdateAllowed,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
   isTerminalRunBatchStatus,
@@ -82,8 +85,13 @@ export class CaseSuiteService {
     });
   }
 
-  list(limit = 200, projectIds?: readonly string[], projectVersionId?: string) {
-    return this.suites.list(limit, projectIds, projectVersionId);
+  list(
+    limit = 200,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+    status?: CaseSuite["status"],
+  ) {
+    return this.suites.list(limit, projectIds, projectVersionId, status ? { status } : undefined);
   }
 
   async listForUser(
@@ -157,11 +165,39 @@ export class CaseSuiteService {
     return suite;
   }
 
-  async delete(suiteId: string, input: DeleteCaseSuiteInput, projectIds?: readonly string[]) {
+  async delete(
+    suiteId: string,
+    input: DeleteCaseSuiteInput,
+    projectIds?: readonly string[],
+    actorId?: string,
+  ) {
     const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteLockOwner(suite, actorId);
     assertCaseSuiteRevision(suite.revision, input.expectedRevision);
-    await this.suites.deleteSuite({ suiteId, expectedRevision: input.expectedRevision });
+    await this.suites.deleteSuite({
+      suiteId,
+      expectedRevision: input.expectedRevision,
+      ...(actorId ? { actorId } : {}),
+    });
     return suite;
+  }
+
+  async setLock(
+    suiteId: string,
+    input: { locked: boolean; expectedRevision: number },
+    actor: { id: string; username: string },
+    projectIds?: readonly string[],
+  ) {
+    const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteLockOwner(suite, actor.id);
+    assertCaseSuiteRevision(suite.revision, input.expectedRevision);
+    return this.suites.setLock({
+      suiteId,
+      ...input,
+      actorId: actor.id,
+      actorName: actor.username,
+      updatedAt: this.clock.now().toISOString(),
+    });
   }
 
   /**
@@ -206,6 +242,7 @@ export class CaseSuiteService {
     projectIds?: readonly string[],
   ) {
     const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteUpdateAllowed(suite, input, actorId);
     assertCaseSuiteRevision(suite.revision, input.expectedRevision);
     const name = input.name?.trim();
     const policyUpdate = input.policy
@@ -599,6 +636,7 @@ export class CaseSuiteService {
     projectIds?: readonly string[],
   ) {
     const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteEditable(suite, actorId);
     const projectVersionId = suite.policy.projectVersionId;
     if (!projectVersionId) {
       throw new DomainError(
@@ -674,7 +712,7 @@ export class CaseSuiteService {
     actorId?: string,
     projectIds?: readonly string[],
   ) {
-    await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
     const uniqueIds = [...new Set(caseDefinitionIds)];
     if (uniqueIds.length === 0) {
       throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请至少选择一个待移除用例。");
@@ -700,6 +738,7 @@ export class CaseSuiteService {
       testStageId,
       requestedIds,
       projectIds,
+      actorId,
     );
     return this.suites.addDdtCases({
       suiteId,
@@ -753,7 +792,7 @@ export class CaseSuiteService {
     actorId?: string,
     projectIds?: readonly string[],
   ) {
-    await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteEditable(await this.getSummary(suiteId, projectIds), actorId);
     const caseIds = [...new Set(requestedIds.map((id) => id.trim()).filter(Boolean))];
     if (caseIds.length === 0) {
       throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请至少选择一个 DDT 用例。");
@@ -772,8 +811,10 @@ export class CaseSuiteService {
     testStageId: string,
     requestedIds: string[],
     projectIds?: readonly string[],
+    actorId?: string,
   ): Promise<{ caseIds: string[] }> {
     const suite = await this.getSummary(suiteId, projectIds);
+    assertCaseSuiteEditable(suite, actorId);
     const projectVersionId = suite.policy.projectVersionId;
     if (!projectVersionId) {
       throw new DomainError(

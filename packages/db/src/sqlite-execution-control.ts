@@ -1,3 +1,4 @@
+import { advanceSqliteSchedulingRound } from "./sqlite-round-dispatch";
 import type {
   AttemptRecoveryReason,
   ClaimedAssignmentRecord,
@@ -42,9 +43,9 @@ import {
   retrySqliteWriteTransaction,
   type SqliteDatabaseHandle,
 } from "./database";
-import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
+import { retryQueueTiming } from "./execution-queue-timing";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
-import { terminatingBatchSettlementSql } from "./terminating-batch-settlement";
+import { interruptedBatchSettlementSql } from "./interrupted-batch-settlement";
 
 type AssignmentRow = {
   id: string;
@@ -855,8 +856,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
   ): Promise<RecoveredAttemptExpiration[]> {
     return retrySqliteWriteTransaction(this.handle, () => {
-      if (input.scope === "terminating_batches") {
-        this.settleTerminatingBatches(input, 0);
+      if (input.scope === "terminating_batches" || input.scope === "batch_lifecycle") {
+        this.settleInterruptedBatches(input, 0);
         return [];
       }
       const queued = this.handle.client
@@ -982,22 +983,32 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           recoveredAttempts.push(detail);
         }
       }
-      this.settleTerminatingBatches(input, recovered);
+      this.settleInterruptedBatches(input, recovered);
       return recoveredAttempts;
     });
   }
 
-  private settleTerminatingBatches(
+  private settleInterruptedBatches(
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
     consumed: number,
   ): void {
     const settlements = this.handle.client
-      .prepare(terminatingBatchSettlementSql("sqlite"))
-      .all(input.now, Math.min(5, Math.max(0, input.limit - consumed))) as Array<{ id: string }>;
+      .prepare(interruptedBatchSettlementSql("sqlite", input.scope))
+      .all(input.now, Math.min(5, Math.max(0, input.limit - consumed))) as Array<{
+      id: string;
+      termination_requested_at: string | null;
+    }>;
     for (const [index, batch] of settlements.entries()) {
       const eventId = input.eventIds[consumed + index];
       if (!eventId) break;
-      this.updateBatchStatus(batch.id, input.now, eventId, "batch.termination_reconciled");
+      this.updateBatchStatus(
+        batch.id,
+        input.now,
+        eventId,
+        batch.termination_requested_at
+          ? "batch.termination_reconciled"
+          : "batch.completion_reconciled",
+      );
     }
   }
 
@@ -1872,8 +1883,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       this.terminateWaitingRuns(batchId, "任务终止，关闭尚未执行的工作。", updatedAt);
     }
     // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-    if (!batch.cancel_requested_at && !batch.pause_requested_at) {
-      this.advanceRoundIfIdle(batchId, batch.retry_mode, batch.queue_timeout_ms, updatedAt);
+    if (!batch.cancel_requested_at && !batch.pause_requested_at && batch.retry_mode === "round") {
+      advanceSqliteSchedulingRound(this.handle, batchId, updatedAt);
     }
     const status = this.aggregateStoredBatchStatus(batchId, batch.cancel_requested_at !== null);
     transitionRunBatch(batch.status, status);
@@ -1934,73 +1945,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         ...(terminalReasonCode ? { terminalReasonCode } : {}),
       })),
     ]);
-  }
-
-  // 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。
-  private advanceRoundIfIdle(
-    batchId: string,
-    retryMode: "immediate" | "round",
-    queueTimeoutMs: number,
-    updatedAt: string,
-  ): void {
-    if (retryMode !== "round") return;
-    const inFlight = this.handle.client
-      .prepare(
-        "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = ? AND status IN ('assigned', 'running')",
-      )
-      .get(batchId) as { value: number };
-    if (inFlight.value > 0) return;
-    const schedulable = this.handle.client
-      .prepare(
-        "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = ? AND status = 'queued' AND held_round = 0",
-      )
-      .get(batchId) as { value: number };
-    if (schedulable.value > 0) return;
-    const nextRound = this.handle.client
-      .prepare(
-        "SELECT MIN(held_round) AS value FROM execution_runs WHERE batch_id = ? AND status = 'queued' AND held_round > 0",
-      )
-      .get(batchId) as { value: number | null };
-    if (nextRound.value === null) return;
-    const recoveryBarrier = this.handle.client
-      .prepare(
-        `SELECT COUNT(*) AS total_steps,
-                SUM(CASE WHEN status = 'idle' THEN 1 ELSE 0 END) AS idle_steps,
-                SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_steps
-         FROM run_batch_round_recoveries
-         WHERE batch_id = ? AND after_round = ?`,
-      )
-      .get(batchId, nextRound.value - 1) as {
-      total_steps: number;
-      idle_steps: number | null;
-      succeeded_steps: number | null;
-    };
-    if (recoveryBarrier.total_steps > 0 && (recoveryBarrier.idle_steps ?? 0) > 0) {
-      this.handle.client
-        .prepare(
-          `UPDATE run_batch_round_recoveries
-           SET status = 'pending', available_at = ?, activated_at = COALESCE(activated_at, ?),
-               updated_at = ?
-           WHERE batch_id = ? AND after_round = ? AND status = 'idle'`,
-        )
-        .run(updatedAt, updatedAt, updatedAt, batchId, nextRound.value - 1);
-      return;
-    }
-    if (
-      recoveryBarrier.total_steps > 0 &&
-      (recoveryBarrier.succeeded_steps ?? 0) < recoveryBarrier.total_steps
-    ) {
-      return;
-    }
-    this.handle.client
-      .prepare(
-        `UPDATE execution_runs SET held_round = 0, queue_deadline_at = ?, updated_at = ?
-         WHERE batch_id = ? AND status = 'queued' AND held_round <= ?`,
-      )
-      .run(queueDeadlineAfter(updatedAt, queueTimeoutMs), updatedAt, batchId, nextRound.value);
-    this.handle.client
-      .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
-      .run(nextRound.value, updatedAt, batchId);
   }
 }
 

@@ -14,6 +14,56 @@ import type {
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("case suite update and copy", () => {
+  it.each(["addCases", "addDdtCases", "removeCases", "removeDdtCases"] as const)(
+    "rejects %s for archived tasks before reading cases or writing members",
+    async (operation) => {
+      const suites = suiteRepositoryFake();
+      suites.getSummary.mockResolvedValue({
+        ...(await suites.getSummary("suite-1")),
+        status: "archived",
+      });
+      const service = new CaseSuiteService(
+        suites,
+        {} as CaseCatalogRepository,
+        projectStructuresFake(),
+        { now: () => new Date(timestamp) },
+        { next: () => "unused" },
+      );
+      const result =
+        operation === "addDdtCases"
+          ? service.addDdtCases("suite-1", "stage-1", ["Case-1"])
+          : service[operation]("suite-1", ["case-1"]);
+      await expect(result).rejects.toMatchObject({ code: "CASE_SUITE_ARCHIVED" });
+      expect(suites[operation]).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires a separate restore before changing archived task configuration", async () => {
+    const suites = suiteRepositoryFake();
+    suites.getSummary.mockResolvedValue({
+      ...(await suites.getSummary("suite-1")),
+      status: "archived",
+    });
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "version-id" },
+    );
+    for (const changes of [
+      { name: "changed" },
+      { enabled: true },
+      { archived: false, name: "changed" },
+    ]) {
+      await expect(
+        service.update("suite-1", { expectedRevision: 2, ...changes }),
+      ).rejects.toMatchObject({ code: "CASE_SUITE_ARCHIVED" });
+    }
+    expect(suites.updateSuite).not.toHaveBeenCalled();
+    await service.update("suite-1", { expectedRevision: 2, archived: false });
+    expect(suites.updateSuite).toHaveBeenCalledWith(expect.objectContaining({ archived: false }));
+  });
   it("deletes only an authorized task at the reviewed revision without loading its members", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(

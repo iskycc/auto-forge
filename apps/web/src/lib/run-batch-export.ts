@@ -7,6 +7,18 @@ import {
 
 export type RunBatchExportScope = "round" | "final" | "all";
 
+export type RunBatchExportAccess = {
+  accessToken?: string | undefined;
+  publicAccess?: boolean | undefined;
+};
+
+export function runBatchExportAccessQuery(query: string, access?: RunBatchExportAccess): string {
+  const parameters = new URLSearchParams(query);
+  if (access?.accessToken) parameters.set("access_token", access.accessToken);
+  else if (access?.publicAccess) parameters.set("public", "1");
+  return parameters.toString();
+}
+
 /** 导出弹窗中的结果筛选项；顺序即契约顺序，展示与 query 组装共用。 */
 export const EXPORT_OUTCOME_OPTIONS: ReadonlyArray<{
   value: ExportOutcomeFilter;

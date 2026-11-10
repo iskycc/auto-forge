@@ -15,6 +15,7 @@ import {
   DEFAULT_EXPORT_OUTCOMES,
   EXPORT_OUTCOME_OPTIONS,
   type RunBatchExportScope,
+  type RunBatchExportAccess,
 } from "@/lib/run-batch-export";
 import { cn } from "@/lib/utils";
 import { downloadFailureLogsExport } from "@/lib/download-run-batch-export";
@@ -26,6 +27,7 @@ export function RunBatchExportDialog({
   roundLabelText,
   defaultScope,
   onClose,
+  access,
 }: {
   batchId: string;
   /** Aggregate views omit the current-round choice. */
@@ -33,7 +35,9 @@ export function RunBatchExportDialog({
   roundLabelText?: string | undefined;
   defaultScope?: RunBatchExportScope;
   onClose: () => void;
+  access?: RunBatchExportAccess;
 }) {
+  const publicExport = !!(access?.accessToken || access?.publicAccess);
   const [scope, setScope] = useState<RunBatchExportScope>(
     defaultScope ?? (round === undefined ? "all" : "round"),
   );
@@ -48,7 +52,7 @@ export function RunBatchExportDialog({
     exportFile,
     excludeInvalidRows,
     dismissReport,
-  } = useRunBatchExport({ batchId, onDownloaded: onClose });
+  } = useRunBatchExport({ batchId, onDownloaded: onClose, ...(access ? { access } : {}) });
   const failureLogs = useRunBatchExport({
     batchId,
     onDownloaded: onClose,
@@ -75,7 +79,11 @@ export function RunBatchExportDialog({
         open
         inactive={report !== null}
         title="导出执行结果"
-        description="选择导出范围，可分别下载 Excel 或失败日志 ZIP。"
+        description={
+          publicExport
+            ? "按所选范围导出已公开的标准执行结果。"
+            : "选择导出范围，可分别下载 Excel 或失败日志 ZIP。"
+        }
         onClose={onClose}
         closeDisabled={exporting}
         footer={
@@ -98,30 +106,32 @@ export function RunBatchExportDialog({
         }
       >
         <div className="grid min-w-0 gap-4">
-          <fieldset className={groupClassName}>
-            <legend>导出内容</legend>
-            <Radio.Group
-              name="export-template"
-              value={template}
-              onChange={(event) => setTemplate(event.target.value as RunBatchExportTemplate)}
-              disabled={exporting}
-              className="w-full grid-cols-2 gap-3"
-              style={{ display: "grid" }}
-            >
-              <ExportChoice
-                value="results"
-                selected={template === "results"}
-                label="标准执行结果"
-                description="按筛选结果导出执行时间、耗时和日志链接"
-              />
-              <ExportChoice
-                value="failure-analysis"
-                selected={template === "failure-analysis"}
-                label="失败用例分析清单"
-                description="仅包含失败或异常结束的用例，附带可填写的分析字段"
-              />
-            </Radio.Group>
-          </fieldset>
+          {!publicExport ? (
+            <fieldset className={groupClassName}>
+              <legend>导出内容</legend>
+              <Radio.Group
+                name="export-template"
+                value={template}
+                onChange={(event) => setTemplate(event.target.value as RunBatchExportTemplate)}
+                disabled={exporting}
+                className="w-full grid-cols-2 gap-3"
+                style={{ display: "grid" }}
+              >
+                <ExportChoice
+                  value="results"
+                  selected={template === "results"}
+                  label="标准执行结果"
+                  description="按筛选结果导出执行时间、耗时和日志链接"
+                />
+                <ExportChoice
+                  value="failure-analysis"
+                  selected={template === "failure-analysis"}
+                  label="失败用例分析清单"
+                  description="仅包含失败或异常结束的用例，附带可填写的分析字段"
+                />
+              </Radio.Group>
+            </fieldset>
+          ) : null}
           <fieldset className={groupClassName}>
             <legend>导出范围</legend>
             <Radio.Group
@@ -176,35 +186,37 @@ export function RunBatchExportDialog({
           ) : (
             <Notice tone="info">分析结果列可选：重跑通过、用例问题已修改、代码问题已提单。</Notice>
           )}
-          <section
-            aria-label="失败日志导出"
-            className="grid min-w-0 gap-3 rounded-lg border border-border bg-muted/40 p-3"
-          >
-            <div>
-              <h3 className="m-0 text-sm font-semibold">失败日志</h3>
-              <p className="m-0 mt-1 text-xs leading-5 text-muted-foreground">
-                独立下载 ZIP，范围沿用上方选择，仅包含失败或异常结束的执行记录。每例一个完整 .log
-                文件，按类路径／CaseID 命名，清理颜色控制字符；不修改 Excel 内容。
-              </p>
-            </div>
-            <div>
-              <Button
-                type="button"
-                disabled={exporting}
-                loading={failureLogs.exporting}
-                aria-label="导出失败日志 ZIP"
-                onClick={() => {
-                  const parameters = new URLSearchParams({ scope });
-                  if (scope === "round" && round !== undefined)
-                    parameters.set("round", String(round));
-                  void failureLogs.exportFile(parameters.toString());
-                }}
-              >
-                <Download size={15} aria-hidden="true" />
-                导出失败日志 ZIP
-              </Button>
-            </div>
-          </section>
+          {!publicExport ? (
+            <section
+              aria-label="失败日志导出"
+              className="grid min-w-0 gap-3 rounded-lg border border-border bg-muted/40 p-3"
+            >
+              <div>
+                <h3 className="m-0 text-sm font-semibold">失败日志</h3>
+                <p className="m-0 mt-1 text-xs leading-5 text-muted-foreground">
+                  独立下载 ZIP，范围沿用上方选择，仅包含失败或异常结束的执行记录。每例一个完整 .log
+                  文件，按类路径／CaseID 命名，清理颜色控制字符；不修改 Excel 内容。
+                </p>
+              </div>
+              <div>
+                <Button
+                  type="button"
+                  disabled={exporting}
+                  loading={failureLogs.exporting}
+                  aria-label="导出失败日志 ZIP"
+                  onClick={() => {
+                    const parameters = new URLSearchParams({ scope });
+                    if (scope === "round" && round !== undefined)
+                      parameters.set("round", String(round));
+                    void failureLogs.exportFile(parameters.toString());
+                  }}
+                >
+                  <Download size={15} aria-hidden="true" />
+                  导出失败日志 ZIP
+                </Button>
+              </div>
+            </section>
+          ) : null}
           {failureLogs.error ? (
             <Notice tone="error" role="alert">
               {failureLogs.error}

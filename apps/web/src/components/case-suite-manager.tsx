@@ -31,6 +31,7 @@ import {
 } from "@/lib/case-suite-adapter-defaults";
 
 export function CaseSuiteManager({
+  currentUserId,
   adapterNameDefaults,
   canManage,
   canReadExecutions,
@@ -43,6 +44,7 @@ export function CaseSuiteManager({
   selectedProjectVersionName,
   status = "active",
 }: {
+  currentUserId: string;
   adapterNameDefaults: AdapterNameDefaults;
   canManage: boolean;
   canReadExecutions: boolean;
@@ -56,8 +58,9 @@ export function CaseSuiteManager({
   status?: "active" | "archived";
 }) {
   const router = useRouter();
+  const [changedSuites, setChangedSuites] = useState<Record<string, CaseSuite>>({});
   const [createdSuites, setCreatedSuites] = useState<CaseSuite[]>([]);
-  const [deletedSuiteIds, setDeletedSuiteIds] = useState<ReadonlySet<string>>(new Set());
+  const [hiddenSuiteIds, setHiddenSuiteIds] = useState<ReadonlySet<string>>(new Set());
   const [pinning, startPinChange] = useTransition();
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinnedSuiteIds, changeOptimisticPin] = useOptimistic(
@@ -75,7 +78,11 @@ export function CaseSuiteManager({
     ...createdSuites.filter((suite) => !initialSuiteIds.has(suite.id)),
     ...initialSuites,
   ]
-    .filter((suite) => !deletedSuiteIds.has(suite.id))
+    .map((suite) => {
+      const changed = changedSuites[suite.id];
+      return changed && changed.revision > suite.revision ? changed : suite;
+    })
+    .filter((suite) => suite.status === status && !hiddenSuiteIds.has(suite.id))
     .sort(
       (left, right) =>
         right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
@@ -121,7 +128,7 @@ export function CaseSuiteManager({
         if (result.hasMore && result.archivedIds.length === 0)
           throw new Error("归档未取得进展，请稍后重试剩余任务。");
         archived += result.archivedIds.length;
-        setDeletedSuiteIds((current) => new Set([...current, ...result.archivedIds]));
+        setHiddenSuiteIds((current) => new Set([...current, ...result.archivedIds]));
         hasMore = result.hasMore;
         setArchiveNotice(
           `已归档 ${archived} 个 Rerun 任务${result.skippedActive ? `，${result.skippedActive} 个有执行中或待执行批次的任务已跳过` : ""}。`,
@@ -579,8 +586,14 @@ export function CaseSuiteManager({
               statistics={statisticsBySuite.get(suite.id)}
               canReadExecutions={canReadExecutions}
               canExecute={canExecute}
-              canManage={canManage}
-              onDeleted={() => setDeletedSuiteIds((current) => new Set([...current, suite.id]))}
+              canManage={canManage && (!suite.lockedBy || suite.lockedBy === currentUserId)}
+              onLockChanged={(changed) =>
+                setChangedSuites((current) => ({ ...current, [changed.id]: changed }))
+              }
+              onDeleted={() => setHiddenSuiteIds((current) => new Set([...current, suite.id]))}
+              onStatusChanged={() =>
+                setHiddenSuiteIds((current) => new Set([...current, suite.id]))
+              }
               exporting={exportingSuiteId === suite.id}
               exportDisabled={exportingSuiteId !== null}
               onExport={() => void exportSuiteCases(suite)}

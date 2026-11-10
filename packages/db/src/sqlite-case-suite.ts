@@ -38,6 +38,10 @@ import type {
 import {
   DEFAULT_PROJECT_ID,
   DomainError,
+  assertCaseSuiteEditable,
+  assertCaseSuiteLockOwner,
+  assertCaseSuiteCanArchive,
+  assertCaseSuiteUpdateAllowed,
   FailureCaseSuiteNameSequence,
   buildCaseSuiteVersionSnapshot,
   defaultCaseSuiteExecutionPolicy,
@@ -60,6 +64,7 @@ import {
   rerunArchiveCandidates,
   busyRerunCount,
   RERUN_ARCHIVE_PAGE_SIZE,
+  activeSuiteBatchQuery,
 } from "./rerun-suite-archive";
 import { auditEventRow } from "./audit-event-row";
 import {
@@ -136,6 +141,9 @@ function toMethod(row: typeof testMethods.$inferSelect): TestMethod {
 function toSuite(row: typeof caseSuites.$inferSelect, caseCount: number): CaseSuite {
   return {
     id: row.id,
+    ...(row.lockedBy ? { lockedBy: row.lockedBy } : {}),
+    ...(row.lockedByName ? { lockedByName: row.lockedByName } : {}),
+    ...(row.lockedAt ? { lockedAt: row.lockedAt } : {}),
     isRerun: row.isRerun,
     projectId: row.projectId,
     name: row.name,
@@ -158,8 +166,11 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
 
   async unlinkDdtScopePage(input: Parameters<CaseSuiteRepository["unlinkDdtScopePage"]>[0]) {
     return retrySqliteWriteTransaction(this.handle, () => {
-      const suite = this.handle.db.get<{ id: string }>(ddtClearSuiteCandidate(input, "sqlite"));
+      const suite = this.handle.db.get<{ id: string; locked_by: string | null }>(
+        ddtClearSuiteCandidate(input, "sqlite"),
+      );
       if (!suite) return 0;
+      assertCaseSuiteLockOwner({ lockedBy: suite.locked_by }, input.actorId);
       const removed = this.handle.db.run(ddtClearSuiteMembers(input, suite.id)).changes;
       if (!removed) return 0;
       this.touchSuite(suite.id, input.actorId, input.updatedAt);
@@ -177,7 +188,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return retrySqliteWriteTransaction(this.handle, () => {
       const version = sql`json_extract(suite.policy_json, '$.projectVersionId')=${input.projectVersionId}`;
       const candidates = this.handle.db.all<{ id: string }>(
-        rerunArchiveCandidates(input.projectId, version, false),
+        rerunArchiveCandidates(input.projectId, version, false, input.actorId),
       );
       const archivedIds = candidates.slice(0, RERUN_ARCHIVE_PAGE_SIZE).map(({ id }) => id);
       if (archivedIds.length) {
@@ -747,6 +758,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
       let added = 0;
       for (const item of input.items) {
         const result = this.handle.db
@@ -788,6 +800,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
       let removed = 0;
       for (const ids of batchesOf(input.caseDefinitionIds, RELATIONAL_WRITE_BATCH_SIZE)) {
         removed += this.handle.db
@@ -832,6 +845,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
       let added = 0;
       for (const item of input.items) {
         added += this.handle.db
@@ -863,6 +877,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteEditable(this.suiteMutationState(input.suiteId), input.actorId);
       let removed = 0;
       for (const ids of batchesOf(input.ddtCaseIds, RELATIONAL_WRITE_BATCH_SIZE)) {
         removed += this.handle.db
@@ -892,6 +907,11 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
 
   async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteUpdateAllowed(this.suiteMutationState(input.suiteId), input, input.actorId);
+      if (input.archived === true)
+        assertCaseSuiteCanArchive(
+          this.handle.db.get<{ id: string }>(activeSuiteBatchQuery(input.suiteId)),
+        );
       const patch: Record<string, unknown> = {
         version: sql`${caseSuites.version} + 1`,
         revision: sql`${caseSuites.revision} + 1`,
@@ -911,6 +931,21 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         )
         .run();
       if (result.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
+      if (input.archived === true)
+        this.handle.db
+          .update(caseSuiteSchedules)
+          .set({
+            enabled: false,
+            updatedAt: input.updatedAt,
+            revision: sql`${caseSuiteSchedules.revision} + 1`,
+          })
+          .where(
+            and(
+              eq(caseSuiteSchedules.suiteId, input.suiteId),
+              eq(caseSuiteSchedules.enabled, true),
+            ),
+          )
+          .run();
       for (const [ruleId, apiKeyCiphertext] of Object.entries(
         input.roundRecoveryCredentialUpserts ?? {},
       )) {
@@ -952,8 +987,34 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return suite;
   }
 
-  async deleteSuite(input: { suiteId: string; expectedRevision: number }): Promise<void> {
+  async setLock(input: Parameters<CaseSuiteRepository["setLock"]>[0]): Promise<CaseSuite> {
     await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteLockOwner(this.suiteMutationState(input.suiteId), input.actorId);
+      const result = this.handle.db
+        .update(caseSuites)
+        .set({
+          lockedBy: input.locked ? input.actorId : null,
+          lockedByName: input.locked ? input.actorName : null,
+          lockedAt: input.locked ? input.updatedAt : null,
+          revision: sql`${caseSuites.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(eq(caseSuites.id, input.suiteId), eq(caseSuites.revision, input.expectedRevision)),
+        )
+        .run();
+      if (result.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
+    });
+    return (await this.getSummary(input.suiteId))!;
+  }
+
+  async deleteSuite(input: {
+    suiteId: string;
+    expectedRevision: number;
+    actorId?: string;
+  }): Promise<void> {
+    await retrySqliteWriteTransaction(this.handle, () => {
+      assertCaseSuiteLockOwner(this.suiteMutationState(input.suiteId), input.actorId);
       const deleted = this.handle.db
         .delete(caseSuites)
         .where(
@@ -1085,6 +1146,14 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         createdAt: input.updatedAt,
       })
       .run();
+  }
+
+  private suiteMutationState(suiteId: string) {
+    return this.handle.db
+      .select({ status: caseSuites.status, lockedBy: caseSuites.lockedBy })
+      .from(caseSuites)
+      .where(eq(caseSuites.id, suiteId))
+      .get();
   }
 
   private touchSuite(suiteId: string, actorId: string | undefined, updatedAt: string): void {

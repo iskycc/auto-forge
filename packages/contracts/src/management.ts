@@ -406,6 +406,13 @@ export const copyCaseSuiteInputSchema = z.object({
   includeCases: z.boolean().optional(),
 });
 
+export const setCaseSuiteLockInputSchema = z
+  .object({
+    locked: z.boolean(),
+    expectedRevision: z.number().int().min(1),
+  })
+  .strict();
+
 export const deleteCaseSuiteInputSchema = z
   .object({ expectedRevision: z.number().int().min(1) })
   .strict();

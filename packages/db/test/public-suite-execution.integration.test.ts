@@ -26,6 +26,28 @@ for (const adapter of ["sqlite", "postgres"] as const)
   describe.skipIf(adapter === "postgres" && !postgresUrl)(
     `${adapter} public task execution`,
     () => {
+      it("serializes public link maintenance with the task lock and leaves existing read grants intact", async () => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.visitor.id, now);
+          await h.query(
+            "UPDATE case_suites SET locked_by=?,locked_by_name=?,locked_at=? WHERE id=?",
+            [h.publisher.id, "锁定人", now, h.suite.id],
+          );
+          await expect(h.links.publish(h.suite.id, h.visitor.id, now)).rejects.toMatchObject({
+            code: "CASE_SUITE_LOCKED",
+          });
+          await expect(h.links.revoke(h.suite.id, h.visitor.id, now)).rejects.toMatchObject({
+            code: "CASE_SUITE_LOCKED",
+          });
+          expect(await h.links.publisher(h.suite.id, h.visitor.id)).toMatchObject({
+            id: h.visitor.id,
+          });
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          await h.links.revoke(h.suite.id, h.publisher.id, now);
+          expect(await h.links.publisher(h.suite.id, h.publisher.id)).toBeNull();
+        });
+      });
+
       it("keeps independent publisher grants, blocks revocation/disabled owners and cascades task deletion", async () => {
         await withHarness(adapter, async (h) => {
           await h.links.publish(h.suite.id, h.publisher.id, now);
@@ -114,7 +136,17 @@ for (const adapter of ["sqlite", "postgres"] as const)
       it("reads every execution environment from the immutable batch snapshot, including older batches", async () => {
         await withHarness(adapter, async (h) => {
           await h.links.publish(h.suite.id, h.publisher.id, now);
+          const locked = await h.suites.setLock({
+            suiteId: h.suite.id,
+            expectedRevision: h.suite.revision,
+            actorId: h.publisher.id,
+            actorName: h.publisher.username,
+            locked: true,
+            updatedAt: now,
+          });
+          const savedTask = await h.suites.getSummary(h.suite.id);
           const record = h.record();
+          record.expectedSuiteRevision = locked.revision;
           const addresses = ["10.0.0.21", "2001:db8::21"];
           record.adapterRuntimeSnapshot!.environmentAddresses = addresses;
           record.policy = {
@@ -134,12 +166,14 @@ for (const adapter of ["sqlite", "postgres"] as const)
           );
           const { publicExecution: _publicExecution, ...ordinary } = h.record();
           void _publicExecution;
+          ordinary.expectedSuiteRevision = locked.revision;
           ordinary.adapterRuntimeSnapshot!.environmentAddresses = ["legacy.internal"];
           const legacy = await h.batches.create(ordinary);
           expect((await h.batches.getMetadata(legacy.id))?.environmentAddresses).toEqual([
             "legacy.internal",
           ]);
           expect((await h.batches.getMetadata(batch.id))?.environmentAddresses).toEqual(addresses);
+          expect(await h.suites.getSummary(h.suite.id)).toEqual(savedTask);
         });
       });
       it("rechecks grants inside creation and detects an existing ordinary execution", async () => {
@@ -163,6 +197,137 @@ for (const adapter of ["sqlite", "postgres"] as const)
           await expect(h.batches.create(h.record())).rejects.toMatchObject({
             code: "PUBLIC_SUITE_LINK_NOT_FOUND",
           });
+        });
+      });
+      it.each([
+        { first: ["10.0.0.1"], second: ["10.0.0.1"], conflict: true },
+        { first: ["10.0.0.1", "10.0.0.2"], second: ["10.0.0.1"], conflict: true },
+        { first: ["10.0.0.1"], second: ["10.0.0.2", "10.0.0.1"], conflict: true },
+        { first: ["10.0.0.1", "10.0.0.2"], second: ["10.0.0.3", "10.0.0.2"], conflict: true },
+        { first: ["2001:db8::1"], second: ["2001:0DB8:0:0:0:0:0:1"], conflict: true },
+        { first: ["10.0.0.1"], second: ["::ffff:10.0.0.1"], conflict: true },
+        { first: ["10.0.0.1"], second: ["10.0.0.10"], conflict: false },
+        {
+          first: ["10.0.0.1", "2001:db8::1"],
+          second: ["10.0.0.2", "2001:db8::2"],
+          conflict: false,
+        },
+      ])(
+        "checks the complete environment sets $first / $second (conflict=$conflict)",
+        async ({ first, second, conflict }) => {
+          await withHarness(adapter, async (h) => {
+            await h.links.publish(h.suite.id, h.publisher.id, now);
+            const firstRecord = h.record();
+            firstRecord.adapterRuntimeSnapshot!.environmentAddresses = first;
+            const firstBatch = await h.batches.create(firstRecord);
+            const nextRecord = h.record();
+            nextRecord.adapterRuntimeSnapshot!.environmentAddresses = second;
+            if (conflict)
+              await expect(h.batches.create(nextRecord)).rejects.toMatchObject({
+                code: "PUBLIC_SUITE_EXECUTION_ACTIVE",
+                message: expect.stringContaining("环境"),
+                details: { batchId: firstBatch.id, conflictingAddresses: expect.any(Array) },
+              });
+            else {
+              const next = await h.batches.create(nextRecord);
+              expect(next.environmentAddresses).toEqual(second);
+              expect((await h.links.executions(h.suite.id)).active).toHaveLength(2);
+            }
+          });
+        },
+      );
+      it.each([true, false])(
+        "serializes simultaneous public starts (overlap=$overlap)",
+        async (overlap) => {
+          await withHarness(adapter, async (h) => {
+            await h.links.publish(h.suite.id, h.publisher.id, now);
+            await h.links.publish(h.suite.id, h.visitor.id, now);
+            const records = [h.record(), h.record()];
+            records[0]!.adapterRuntimeSnapshot!.environmentAddresses = ["10.0.0.1"];
+            records[1]!.adapterRuntimeSnapshot!.environmentAddresses = [
+              overlap ? "10.0.0.1" : "10.0.0.2",
+            ];
+            // Different publisher links share the same task-level environment guard.
+            records[1]!.publicExecution!.publisher = h.visitor;
+            // The repository still serializes public requests from older callers lacking revision.
+            delete records[0]!.expectedSuiteRevision;
+            delete records[1]!.expectedSuiteRevision;
+            const results = await Promise.allSettled(
+              records.map((record) => h.batches.create(record)),
+            );
+            expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
+              overlap ? 1 : 2,
+            );
+            for (const result of results)
+              if (result.status === "rejected")
+                expect(result.reason).toMatchObject({ code: "PUBLIC_SUITE_EXECUTION_ACTIVE" });
+          });
+        },
+      );
+      it("checks every active batch beyond the public display window and preserves idempotent replay", async () => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          let oldestId = "";
+          for (let index = 1; index <= 102; index++) {
+            const { publicExecution: _context, ...ordinary } = h.record();
+            void _context;
+            // Put the hidden conflicting row past the first 100-row validation page.
+            if (index === 1) ordinary.id = `z${ordinary.id}`;
+            ordinary.adapterRuntimeSnapshot!.environmentAddresses = [`10.0.0.${index}`];
+            ordinary.createdAt = new Date(Date.parse(now) + index * 1000).toISOString();
+            const batch = await h.batches.create(ordinary);
+            if (index === 1) oldestId = batch.id;
+          }
+          const record = h.record();
+          record.adapterRuntimeSnapshot!.environmentAddresses = ["10.0.0.1"];
+          await expect(h.batches.create(record)).rejects.toMatchObject({
+            code: "PUBLIC_SUITE_EXECUTION_ACTIVE",
+            details: { batchId: oldestId },
+          });
+          await h.query("UPDATE run_batches SET status='succeeded' WHERE id=?", [oldestId]);
+          const created = await h.batches.create(record);
+          expect(
+            await h.links.replay(h.suite.id, h.publisher.id, record.publicExecution!.requestKey),
+          ).toBe(created.id);
+          await expect(h.batches.create(record)).rejects.toMatchObject({
+            code: "PUBLIC_EXECUTION_REPLAY",
+            details: created.id,
+          });
+        });
+      });
+      it.each([
+        "queued",
+        "dispatching",
+        "scheduled",
+        "running",
+        "paused",
+        "terminating",
+        "succeeded",
+        "failed",
+        "cancelled",
+      ] as const)("keeps environment occupancy until state %s has ended", async (state) => {
+        await withHarness(adapter, async (h) => {
+          await h.links.publish(h.suite.id, h.publisher.id, now);
+          const first = h.record();
+          first.adapterRuntimeSnapshot!.environmentAddresses = ["10.0.0.1"];
+          const batch = await h.batches.create(first);
+          await h.query(
+            "UPDATE run_batches SET status=?,pause_requested_at=?,cancel_requested_at=? WHERE id=?",
+            [
+              state === "paused" || state === "terminating" ? "running" : state,
+              state === "paused" ? now : null,
+              state === "terminating" ? now : null,
+              batch.id,
+            ],
+          );
+          const second = h.record();
+          second.adapterRuntimeSnapshot!.environmentAddresses = ["10.0.0.1"];
+          if (["succeeded", "failed", "cancelled"].includes(state))
+            await expect(h.batches.create(second)).resolves.toMatchObject({ id: second.id });
+          else
+            await expect(h.batches.create(second)).rejects.toMatchObject({
+              code: "PUBLIC_SUITE_EXECUTION_ACTIVE",
+            });
         });
       });
     },
@@ -198,7 +363,7 @@ async function createHarness(adapter: "sqlite" | "postgres") {
         })
       : undefined;
   await postgres?.ready;
-  const query = async (statement: string, parameters: string[] = []) =>
+  const query = async (statement: string, parameters: (string | null)[] = []) =>
     sqlite
       ? sqlite.client.prepare(statement).reader
         ? (sqlite.client.prepare(statement).all(...parameters) as Record<string, unknown>[])
@@ -280,6 +445,7 @@ async function createHarness(adapter: "sqlite" | "postgres") {
     publisher,
     visitor,
     suite,
+    suites,
     links,
     batches,
     executions,

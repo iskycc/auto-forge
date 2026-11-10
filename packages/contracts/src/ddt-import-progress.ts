@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { ddtImportJobStatusSchema, ddtScopeSchema } from "./ddt";
 
+export const ddtImportCaseIdsSchema = z.object({
+  items: z.array(
+    z.object({
+      caseId: z.string().min(1).max(1_000_000),
+      outcome: z.enum(["inserted", "updated", "unchanged", "skipped"]),
+    }),
+  ),
+});
+
 export const DDT_IMPORT_FILES_PAGE_SIZE = 50;
 const count = z.number().int().nonnegative();
 

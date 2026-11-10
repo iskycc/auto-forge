@@ -307,6 +307,7 @@ export const upsertDdtTemplateInputSchema = z.object({
 });
 
 export const confirmDdtImportInputSchema = z.object({
+  overwriteReason: z.string().trim().max(2000).optional(),
   conflictStrategy: z.enum(["overwrite", "skip", "error"]),
 });
 

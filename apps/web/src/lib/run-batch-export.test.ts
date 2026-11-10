@@ -5,9 +5,23 @@ import {
   DEFAULT_EXPORT_OUTCOMES,
   EXPORT_FALLBACK_FILENAME,
   parseExportFilename,
+  runBatchExportAccessQuery,
 } from "./run-batch-export";
 
 describe("buildRunBatchExportQuery", () => {
+  it("retains scope, filters and validation retries while carrying a public grant or legacy signature", () => {
+    const query = "scope=all&outcomes=failed&invalidRows=exclude";
+    expect(runBatchExportAccessQuery(query)).toBe(query);
+    expect(
+      new URLSearchParams(runBatchExportAccessQuery(query, { publicAccess: true })).get("public"),
+    ).toBe("1");
+    const legacy = new URLSearchParams(
+      runBatchExportAccessQuery(query, { accessToken: "legacy+signature", publicAccess: true }),
+    );
+    expect(legacy.get("access_token")).toBe("legacy+signature");
+    expect(legacy.get("public")).toBeNull();
+    expect(legacy.get("invalidRows")).toBe("exclude");
+  });
   it("assembles round scope with the round number and outcomes in contract order", () => {
     const query = buildRunBatchExportQuery("round", 2, ["cancelled", "failed"]);
     const parameters = new URLSearchParams(query);

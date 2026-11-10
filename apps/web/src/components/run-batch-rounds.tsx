@@ -1049,7 +1049,7 @@ function SummaryRoundPanel({
           >
             <RefreshCw size={15} /> 刷新
           </Button>
-          {canReadLogs ? (
+          {canReadLogs || batch.publicAccess || batch.accessToken ? (
             <Button
               className={cn(
                 "button button-secondary compact-button",
@@ -1067,6 +1067,7 @@ function SummaryRoundPanel({
       </div>
       {exportDialogOpen ? (
         <RunBatchExportDialog
+          access={{ accessToken: batch.accessToken, publicAccess: batch.publicAccess }}
           batchId={batch.id}
           defaultScope="final"
           onClose={() => setExportDialogOpen(false)}
@@ -1173,7 +1174,7 @@ function AllRoundsPanel({
           >
             <RefreshCw size={15} /> 刷新
           </Button>
-          {canReadLogs ? (
+          {canReadLogs || batch.publicAccess || batch.accessToken ? (
             <Button
               className={cn(
                 "button button-secondary compact-button",
@@ -1191,6 +1192,7 @@ function AllRoundsPanel({
       </div>
       {exportDialogOpen ? (
         <RunBatchExportDialog
+          access={{ accessToken: batch.accessToken, publicAccess: batch.publicAccess }}
           batchId={batch.id}
           defaultScope="all"
           onClose={() => setExportDialogOpen(false)}
@@ -1323,7 +1325,7 @@ function RoundDetailPanel({
               <ScrollText size={15} /> 总体调度日志
             </Button>
           ) : null}
-          {canReadLogs ? (
+          {canReadLogs || batch.publicAccess || batch.accessToken ? (
             <Button
               className={cn(
                 "button button-secondary compact-button",
@@ -1341,6 +1343,7 @@ function RoundDetailPanel({
       </div>
       {exportDialogOpen ? (
         <RunBatchExportDialog
+          access={{ accessToken: batch.accessToken, publicAccess: batch.publicAccess }}
           batchId={batch.id}
           round={summary.round}
           roundLabelText={label}

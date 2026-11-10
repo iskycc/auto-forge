@@ -36,17 +36,49 @@ const enabled = [
 ].every((key) => !!process.env[key]);
 describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
   it.each([
-    { strategy: "legacy", databaseLogs: false, caseCount: 4, stackSize: 4 },
-    { strategy: "stack_groups_v2", databaseLogs: false, caseCount: 4, stackSize: 2 },
-    { strategy: "stack_groups_v2", databaseLogs: true, caseCount: 4, stackSize: 2 },
-    { strategy: "stack_groups_v2", databaseLogs: true, caseCount: 2, stackSize: 1 },
-    { strategy: "stack_groups_v2", databaseLogs: true, caseCount: 19, stackSize: 10 },
+    { strategy: "legacy", databaseLogs: false, caseCount: 4, stackSize: 4, progressive: false },
+    {
+      strategy: "stack_groups_v2",
+      databaseLogs: false,
+      caseCount: 4,
+      stackSize: 2,
+      progressive: false,
+    },
+    {
+      strategy: "stack_groups_v2",
+      databaseLogs: true,
+      caseCount: 4,
+      stackSize: 2,
+      progressive: false,
+    },
+    {
+      strategy: "stack_groups_v2",
+      databaseLogs: true,
+      caseCount: 2,
+      stackSize: 1,
+      progressive: false,
+    },
+    {
+      strategy: "stack_groups_v2",
+      databaseLogs: true,
+      caseCount: 19,
+      stackSize: 10,
+      progressive: false,
+    },
+    {
+      strategy: "stack_groups_v2",
+      databaseLogs: true,
+      caseCount: 4,
+      stackSize: 2,
+      progressive: true,
+    },
   ] as const)(
-    "uses outbox/NATS and two workers ($strategy, daily logs=$databaseLogs, cases=$caseCount, stack size=$stackSize)",
-    async ({ strategy, databaseLogs, caseCount, stackSize }) => {
+    "uses outbox/NATS and two workers ($strategy, daily logs=$databaseLogs, cases=$caseCount, stack size=$stackSize, progressive=$progressive)",
+    async ({ strategy, databaseLogs, caseCount, stackSize, progressive }) => {
       const suffix = randomUUID().replaceAll("-", "");
       const now = new Date().toISOString();
       const databaseName = `ai_runtime_${suffix}`;
+      const maintenanceDatabase = `ai_maintenance_${suffix}`;
       const url = new URL(process.env.AUTOFORGE_TEST_POSTGRES_URL!);
       const administration = new Pool({ connectionString: url.toString(), max: 1 });
       await administration.query(`CREATE DATABASE "${databaseName}"`);
@@ -196,6 +228,8 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           `INSERT INTO run_batches(id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,total_runs,project_id,created_at,updated_at) VALUES($1,'suite','Full AI test',1,'failed',0,'[]',$4,$2,$3,$3)`,
           [batchId, DEFAULT_PROJECT_ID, now, caseCount],
         );
+        if (progressive)
+          await handle.pool.query("UPDATE run_batches SET status='running' WHERE id=$1", [batchId]);
         for (let index = 0; index < caseCount; index++) {
           const runId = `run-${index}-${suffix}`;
           const attemptId = `attempt-${index}-${suffix}`;
@@ -239,6 +273,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
             revision: 1,
           },
           "full-runtime",
+          progressive ? { followFinalResults: true } : undefined,
         );
         const planning = (await repository.claimPlanning(
           "planner",
@@ -264,6 +299,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           });
         };
         if (databaseLogs) {
+          await administration.query(`CREATE DATABASE "${maintenanceDatabase}"`);
           const connection = new URL(process.env.AUTOFORGE_TEST_POSTGRES_URL!);
           await logRegistry.initializeDaily(
             {
@@ -272,7 +308,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
               port: Number(connection.port || 5432),
               username: decodeURIComponent(connection.username),
               password: decodeURIComponent(connection.password),
-              maintenanceDatabase: "postgres",
+              maintenanceDatabase,
               databasePrefix: logPrefix,
               sslMode: "disable",
             },
@@ -387,6 +423,20 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
               (error) => errors.push(error),
             ),
           );
+        if (progressive) {
+          await expect
+            .poll(async () => (await repository.view({ batchId, jobId: job.id, limit: 50 }))!.job, {
+              timeout: 60000,
+              interval: 500,
+            })
+            .toMatchObject({ total: caseCount, completed: caseCount, acceptingFinalResults: true });
+          expect(
+            (await handle.pool.query("SELECT status FROM run_batches WHERE id=$1", [batchId]))
+              .rows[0]!.status,
+          ).toBe("running");
+          await handle.pool.query("UPDATE run_batches SET status='failed' WHERE id=$1", [batchId]);
+          hosts.forEach((host) => host.wake());
+        }
         await expect
           .poll(
             async () => (await repository.view({ batchId, jobId: job.id, limit: 50 }))!.job.status,
@@ -508,6 +558,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
       } finally {
         await Promise.all(hosts.map((host) => host.close()));
         await logStore.close();
+        await logRegistry.close();
         await queue.close();
         await nats.drain();
         redis.destroy();
@@ -529,6 +580,7 @@ describe.skipIf(!enabled)("Full AI workers with real middleware", () => {
           [logPrefix + "_"],
         );
         for (const row of daily.rows) await administration.query(`DROP DATABASE "${row.datname}"`);
+        await administration.query(`DROP DATABASE IF EXISTS "${maintenanceDatabase}"`);
         await administration.end();
         await rm(directory, { recursive: true, force: true });
       }

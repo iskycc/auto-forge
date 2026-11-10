@@ -218,6 +218,15 @@ export class RoundRecoveryService {
       updatedAt,
     });
     if (completion.outcome === "claim_lost") return;
+    if (completion.outcome === "release_deferred") {
+      await this.appendEvent(
+        claim,
+        "环境恢复已完成，轮次释放仍受执行控制或在途工作约束；条件满足后继续调度。",
+        updatedAt,
+        { state: "release_deferred" },
+      );
+      return;
+    }
     if (completion.outcome === "step_completed") {
       await this.appendEvent(
         claim,
