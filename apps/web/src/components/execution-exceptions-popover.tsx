@@ -25,7 +25,7 @@ export function ExecutionExceptionsPopover({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [result, setResult] = useState<ExecutionExceptionPage | null>(null);
   const [error, setError] = useState("");
-  const [retry, setRetry] = useState(0);
+  const [requestVersion, setRequestVersion] = useState<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -48,14 +48,16 @@ export function ExecutionExceptionsPopover({
   }, [open, result, error]);
 
   useEffect(() => {
-    if (!open || result) return;
+    if (requestVersion === null) return;
     const controller = new AbortController();
+    const timeout = AbortSignal.timeout(15_000);
     async function load() {
       setError("");
+      setResult(null);
       try {
         const response = await fetch(
           `/api/v1/run-batches/${encodeURIComponent(batchId)}/exceptions?scope=terminal&limit=3`,
-          { cache: "no-store", signal: controller.signal },
+          { cache: "no-store", signal: AbortSignal.any([controller.signal, timeout]) },
         );
         if (!response.ok)
           throw new Error(await readApiErrorMessage(response, "读取异常原因失败，请重试。"));
@@ -63,19 +65,30 @@ export function ExecutionExceptionsPopover({
         if (!controller.signal.aborted) setResult(parsed);
       } catch (cause) {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "读取异常原因失败，请重试。");
+          setError(
+            timeout.aborted
+              ? "读取异常原因超时，请重试。"
+              : cause instanceof Error
+                ? cause.message
+                : "读取异常原因失败，请重试。",
+          );
       }
     }
     void load();
+    // Opening is lazy, but once accepted a small bounded read survives popup
+    // visibility changes. Only a new explicit request or unmount cancels it.
     return () => controller.abort();
-  }, [batchId, open, result, retry]);
+  }, [batchId, requestVersion]);
 
   return (
     <>
       <span
         ref={triggerRef}
         className="inline-flex"
-        onFocusCapture={() => setFocused(true)}
+        onFocusCapture={() => {
+          setFocused(true);
+          setRequestVersion((version) => version ?? 0);
+        }}
         onKeyDownCapture={(event) => {
           if (event.key !== "Escape" || !open || dialogOpen) return;
           event.preventDefault();
@@ -90,7 +103,10 @@ export function ExecutionExceptionsPopover({
           trigger="hover"
           placement="rightTop"
           open={open && !dialogOpen}
-          onOpenChange={setHovered}
+          onOpenChange={(next) => {
+            setHovered(next);
+            if (next) setRequestVersion((version) => version ?? 0);
+          }}
           content={
             <div
               ref={contentRef}
@@ -102,7 +118,7 @@ export function ExecutionExceptionsPopover({
                   <Button
                     type="button"
                     size="compact"
-                    onClick={() => setRetry((count) => count + 1)}
+                    onClick={() => setRequestVersion((version) => (version ?? 0) + 1)}
                   >
                     重试
                   </Button>

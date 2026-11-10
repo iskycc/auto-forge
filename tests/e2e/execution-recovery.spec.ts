@@ -190,10 +190,35 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   // size. A table refresh may otherwise move the badge away from the pointer.
   await preview.getByRole("button", { name: "重试", exact: true }).focus();
   await waitForUiTransitions(page);
-  await preview.getByRole("button", { name: "重试", exact: true }).click();
+  let releasePreviewResponse!: () => void;
+  const previewResponseReady = new Promise<void>((resolve) => {
+    releasePreviewResponse = resolve;
+  });
+  await page.route(
+    `**${endpoint}?scope=terminal*`,
+    async (route) => {
+      await previewResponseReady;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  try {
+    await preview.getByRole("button", { name: "重试", exact: true }).click();
+    await expect.poll(() => previewRequests).toBe(2);
+    // Removing retry's focused control and moving outside the popup must not
+    // cancel an accepted request and issue a second request on re-entry.
+    await page.getByRole("tab", { name: "任务执行", exact: true }).focus();
+    await page.mouse.move(0, 0);
+    await expect(preview).not.toBeVisible();
+    await abnormalStatus.hover();
+    await expect(preview).toBeVisible();
+  } finally {
+    releasePreviewResponse();
+  }
   await expect(preview).toContainText("QUEUE_TIMEOUT");
   await expect(preview).toContainText("第 1 轮");
   await expect(preview).toContainText("1 秒时限");
+  expect(previewRequests).toBe(2);
   for (const theme of ["light", "dark"]) {
     if (theme === "dark")
       await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();

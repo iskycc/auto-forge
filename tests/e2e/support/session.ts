@@ -158,7 +158,15 @@ export async function login(page: Page, username: string, password: string): Pro
 }
 
 export async function logout(page: Page): Promise<void> {
+  const acknowledged = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/auth/logout" &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "退出登录" }).click();
+  // URL timing starts after the server has revoked the session and cleared the
+  // cookie. Database pressure must not consume the browser navigation budget.
+  expect((await acknowledged).status()).toBe(204);
   // Accept the standalone entry in older Releases used by upgrade acceptance.
   await expect(page).toHaveURL(
     (url) =>

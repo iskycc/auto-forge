@@ -36,6 +36,7 @@ import {
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
+  logout,
   selectProjectContext,
 } from "./support/session";
 
@@ -87,6 +88,35 @@ function escapeXml(value: string): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
 }
+
+test("logout waits for its acknowledgement before checking the login entry and preserves the source", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await page.goto(
+    new URL("/forbidden", process.env.E2E_SECONDARY_BASE_URL ?? page.url()).toString(),
+  );
+  const returnUrl = page.url();
+  await page.route(
+    "**/api/v1/auth/logout",
+    async (route) => {
+      const response = await route.fetch();
+      // The failing distributed trace acknowledged logout after 4,951 ms, before
+      // redirect hydration. Reproduce a response beyond the old 5-second URL budget.
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      await route.fulfill({ response });
+    },
+    { times: 1 },
+  );
+  await logout(page);
+  expect((await page.request.get("/api/v1/auth/session")).status()).toBe(401);
+  await page.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+  await page.getByLabel("密码", { exact: true }).fill(E2E_ADMIN_PASSWORD);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page).toHaveURL(returnUrl);
+  await expect(page.getByText("没有访问权限", { exact: true })).toBeVisible();
+  expect((await page.request.get("/api/v1/auth/session")).status()).toBe(200);
+});
 
 test("drops a JAR, validates selection and imports only after scan and confirmation", async ({
   page,
@@ -565,8 +595,7 @@ public class MixedVisibleTest {
     "E2E Administrator",
   );
 
-  await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/(?:login(?:\?|$)|\?login=1(?:&|$))/);
+  await logout(page);
   await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
   await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
@@ -2252,8 +2281,7 @@ public class MixedVisibleTest {
   }
 
   const loginReturnUrl = page.url();
-  await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/(?:login(?:\?|$)|\?login=1(?:&|$))/);
+  await logout(page);
   await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
   await expectUiConsistency(page);
 
