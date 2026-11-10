@@ -4063,11 +4063,11 @@ test("task execution shortcuts preselect the clicked task and preserve desktop l
     await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
   };
   await page.goto("/case-suites?status=archived");
+  const archivedCard = page.getByRole("article", { name: "任务 归档任务", exact: true });
   await expect(
-    page
-      .getByRole("article", { name: "任务 归档任务", exact: true })
-      .getByRole("button", { name: "立即执行", exact: true }),
-  ).toBeDisabled();
+    archivedCard.getByRole("button", { name: "恢复任务 归档任务", exact: true }),
+  ).toBeVisible();
+  await expect(archivedCard.getByRole("button", { name: "立即执行", exact: true })).toHaveCount(0);
   for (const theme of ["light", "dark"]) {
     await page
       .context()
@@ -4092,17 +4092,21 @@ test("task execution shortcuts preselect the clicked task and preserve desktop l
         0,
       );
       await expectUiIntegrity(page);
-      const actionRowOffsets = await page.locator(".suite-card-actions").evaluateAll((footers) =>
-        footers.map((footer) => {
-          const positions = Array.from(
-            footer.querySelectorAll("button"),
-            (button) => button.getBoundingClientRect().top,
-          );
-          return Math.max(...positions) - Math.min(...positions);
-        }),
-      );
-      for (const offset of actionRowOffsets)
-        expect(offset, "task actions must stay aligned on one row").toBeLessThanOrEqual(1);
+      const actionGroupOffsets = await page
+        .locator('.suite-card-actions, .suite-card-actions [aria-label="任务维护操作"]')
+        .evaluateAll((groups) =>
+          groups.map((group) => {
+            const positions = Array.from(
+              group.querySelectorAll(":scope > button"),
+              (button) => button.getBoundingClientRect().top,
+            );
+            return Math.max(...positions) - Math.min(...positions);
+          }),
+        );
+      for (const offset of actionGroupOffsets)
+        expect(offset, "each task action group must stay aligned on one row").toBeLessThanOrEqual(
+          1,
+        );
       await captureUi(page, `task-execution-shortcuts-list-${theme}`, viewport.width, false);
       for (const { suite, name } of [
         { suite: first, name: firstName },
@@ -5578,9 +5582,22 @@ test("execution record actions stay on one line after sharing and resizing saved
   const database = new DatabaseSync(resolve(directory, "db", "autoforge.sqlite"));
   try {
     database.exec("PRAGMA busy_timeout=5000");
+    database.exec("BEGIN IMMEDIATE");
+    // A queued batch must contain unfinished work. The lifecycle sweep correctly
+    // settles a batch whose cases are all terminal, even if its header says queued.
+    database
+      .prepare(
+        `UPDATE execution_runs SET status='queued',terminal_outcome=NULL
+         WHERE batch_id IN (SELECT id FROM run_batches WHERE suite_id=?)`,
+      )
+      .run(suites[0]!.id);
     database
       .prepare("UPDATE run_batches SET status='queued',scheduled_for=? WHERE suite_id=?")
       .run(new Date(Date.now() + 86_400_000).toISOString(), suites[0]!.id);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
   } finally {
     database.close();
   }

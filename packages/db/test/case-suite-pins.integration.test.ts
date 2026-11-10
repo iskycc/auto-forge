@@ -72,7 +72,7 @@ async function fixture(dialect: Dialect, migrationsFolder?: string): Promise<Fix
   };
 }
 
-async function seed(f: Fixture, count = 1): Promise<void> {
+async function seedUsers(f: Fixture): Promise<void> {
   for (const userId of ["user-a", "user-b"]) {
     await f.execute(
       `INSERT INTO users (id, username, normalized_username, display_name, source, status, created_at, updated_at)
@@ -80,6 +80,10 @@ async function seed(f: Fixture, count = 1): Promise<void> {
       [userId, userId, userId, userId, timestamp, timestamp],
     );
   }
+}
+
+async function seed(f: Fixture, count = 1): Promise<void> {
+  await seedUsers(f);
   const policy = { ...defaultCaseSuiteExecutionPolicy, projectVersionId: "version" };
   for (let index = 0; index < count; index++) {
     await f.suites.create({
@@ -193,11 +197,14 @@ for (const dialect of ["sqlite", "postgresql"] as const) {
         await writeFile(resolve(directory, name), await readFile(resolve(folder, name)));
       const f = await fixture(dialect, directory);
       try {
-        // Keep the pin migration isolated while current adapters seed task rows.
+        // Seed the historical schema directly: today's repository writes columns
+        // introduced after this migration and must not change its upgrade fixture.
+        await seedUsers(f);
         await f.execute(
-          "ALTER TABLE case_suites ADD COLUMN is_rerun BOOLEAN NOT NULL DEFAULT FALSE",
+          `INSERT INTO case_suites (id, name, version, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+          ["suite-0", "历史任务", timestamp, timestamp],
         );
-        await seed(f);
         const before = await f.rows("SELECT * FROM case_suites");
         const statements = (await readFile(resolve(folder, migration), "utf8"))
           .split(";")

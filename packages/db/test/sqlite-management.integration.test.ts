@@ -2005,6 +2005,15 @@ describe("SQLite management repositories", () => {
         queueTimeoutMs: 1_000,
         environmentVariables: [],
         runnerIds: ["runner-control"],
+        roundRecoveries: [
+          {
+            ruleId: "held-round-recovery",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/restore/",
+            apiKeyCiphertext: "encrypted-recovery",
+            waitMinutes: 3,
+          },
+        ],
         runs: [
           {
             id: "run-held-round-timeout",
@@ -2018,7 +2027,7 @@ describe("SQLite management repositories", () => {
       });
       handle.client
         .prepare(
-          `UPDATE execution_runs SET held_round = 2
+          `UPDATE execution_runs SET held_round = 2, execution_round = 2
            WHERE id = 'run-held-round-timeout'`,
         )
         .run();
@@ -2032,7 +2041,7 @@ describe("SQLite management repositories", () => {
       expect(await batches.get("batch-held-round-timeout")).toMatchObject({
         status: "queued",
         timedOutRuns: 0,
-        runs: [expect.objectContaining({ status: "queued", heldRound: 2 })],
+        runs: [expect.objectContaining({ status: "queued", heldRound: 2, executionRound: 2 })],
       });
 
       await batches.create({

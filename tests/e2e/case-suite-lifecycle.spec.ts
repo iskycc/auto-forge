@@ -288,10 +288,12 @@ test("public task links execute with login only, share live status, record actor
         })
       ).status,
     ).toBe(409);
+    await observer.bringToFront();
     await expect(observer.getByText(/任务正在执行或等待启动/)).toBeVisible({
       timeout: 15000,
     });
     await expect(observer.getByRole("button", { name: "终止执行", exact: true })).toBeDisabled();
+    await visitor.bringToFront();
     const popupPromise = visitor.waitForEvent("popup");
     await visitor.getByRole("link", { name: "新标签页查看执行进展" }).click();
     const popup = await popupPromise;
@@ -341,7 +343,13 @@ test("public task links execute with login only, share live status, record actor
     expect(concurrentCreated.status()).toBe(201);
     const concurrent = (await concurrentCreated.json()) as { batchId: string };
     await expect(visitor.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(2);
-    await expect(observer.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(2);
+    // Public pages suspend polling in hidden tabs. Activate the observer and wait
+    // through its bounded refresh interval before checking cross-user publication.
+    await observer.bringToFront();
+    await expect(observer.getByRole("button", { name: "终止执行", exact: true })).toHaveCount(2, {
+      timeout: 15_000,
+    });
+    await visitor.bringToFront();
     for (const width of [1024, 1536]) {
       await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(visitor);
@@ -458,7 +466,9 @@ test("public task links execute with login only, share live status, record actor
     });
     await visitor.getByRole("button", { name: "暂停任务", exact: true }).click();
     await expect(visitor.getByRole("button", { name: "继续调度", exact: true })).toBeVisible();
+    await observer.bringToFront();
     await expect(observer.getByText("暂停中", { exact: true })).toBeVisible({ timeout: 15000 });
+    await visitor.bringToFront();
     for (const width of [1024, 1536]) {
       await visitor.setViewportSize({ width, height: width === 1024 ? 768 : 960 });
       await expectUiIntegrity(visitor);

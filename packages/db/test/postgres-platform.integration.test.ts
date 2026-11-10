@@ -2126,7 +2126,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     }
   });
 
-  it("holds failed runs until the whole round completes in round retry mode", async () => {
+  it("releases a failed run into the adjacent round while preserving the unfinished round", async () => {
     const handle = createPostgresDatabase({
       connectionString: isolatedConnectionString,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
@@ -2318,7 +2318,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         leaseExpiresAt: "2026-08-09T00:01:47.000Z",
       });
 
-      // 第 1 轮：run A 失败。round 模式下它应被扣留（held_round=2），不进入调度快照。
+      // With no undispatched first-round cases, a failure can fill the adjacent round.
       await executions.completeAttempt({
         runnerId,
         attemptId: attemptIdA,
@@ -2340,15 +2340,37 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         batchId,
         "2026-08-09T00:00:30.000Z",
       );
-      // run B 仍在途，run A 已扣留：快照不应包含任何可调度 run。
-      expect(snapshotMidRound?.queuedRuns).toEqual([]);
+      expect(snapshotMidRound?.queuedRuns).toEqual([
+        expect.objectContaining({ id: runIdA, executionRound: 2 }),
+      ]);
       const runAAfterFirstFailure = await handle.pool.query<{
         status: string;
         held_round: number;
-      }>("SELECT status, held_round FROM execution_runs WHERE id = $1", [runIdA]);
-      expect(runAAfterFirstFailure.rows[0]).toEqual({ status: "queued", held_round: 2 });
+        execution_round: number;
+      }>("SELECT status, held_round, execution_round FROM execution_runs WHERE id = $1", [runIdA]);
+      expect(runAAfterFirstFailure.rows[0]).toEqual({
+        status: "queued",
+        held_round: 0,
+        execution_round: 2,
+      });
+      expect(
+        (
+          await handle.pool.query(
+            "SELECT status, execution_round FROM execution_runs WHERE id = $1",
+            [runIdB],
+          )
+        ).rows,
+      ).toEqual([{ status: "running", execution_round: 1 }]);
+      expect(
+        (
+          await handle.pool.query(
+            "SELECT execution_round FROM run_attempts WHERE execution_run_id IN ($1, $2)",
+            [runIdA, runIdB],
+          )
+        ).rows,
+      ).toEqual([{ execution_round: 1 }, { execution_round: 1 }]);
 
-      // 第 1 轮：run B 失败。整轮结束后两个 run 一起释放进入第 2 轮。
+      // A late first-round failure joins round 2 without rewriting either attempt's round.
       await executions.completeAttempt({
         runnerId,
         attemptId: attemptIdB,

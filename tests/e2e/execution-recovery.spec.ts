@@ -205,9 +205,15 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   try {
     await preview.getByRole("button", { name: "重试", exact: true }).click();
     await expect.poll(() => previewRequests).toBe(2);
+    // Observe React's loading commit before transferring focus. Counting a
+    // network request alone does not mean the old focused retry control is gone.
+    await expect(preview.getByRole("status")).toHaveText("正在读取异常原因…");
+    await expect(preview.getByRole("button", { name: "重试", exact: true })).toHaveCount(0);
     // Removing retry's focused control and moving outside the popup must not
     // cancel an accepted request and issue a second request on re-entry.
-    await page.getByRole("tab", { name: "任务执行", exact: true }).focus();
+    const outsideControl = page.getByRole("button", { name: "重置列宽", exact: true });
+    await outsideControl.focus();
+    await expect(outsideControl).toBeFocused();
     await page.mouse.move(0, 0);
     await expect(preview).not.toBeVisible();
     await abnormalStatus.hover();
@@ -250,7 +256,10 @@ test("execution exceptions reveal unstarted timeouts and distinguish normal test
   await abnormalStatus.press("Tab");
   await abnormalStatus.focus();
   await expect(preview).toContainText("QUEUE_TIMEOUT");
-  await preview.getByRole("button", { name: "查看全部异常原因", exact: true }).click();
+  const completeReasons = preview.getByRole("button", { name: "查看全部异常原因", exact: true });
+  await completeReasons.focus();
+  await expect(completeReasons).toBeFocused();
+  await completeReasons.click();
   await expect(page.getByRole("dialog", { name: "执行异常原因" })).toContainText("QUEUE_TIMEOUT");
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
@@ -651,9 +660,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await expectBatchReason(page, queueTimeoutBatch, "QUEUE_TIMEOUT");
   // Release the artificial capacity lock; the remaining cases need assignments.
   await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 0 });
-  expect(
-    (await complete(page, runner, capacityClaim, "release-project-capacity")).disposition,
-  ).toBe("accepted");
+  expect((await complete(page, runner, capacityClaim, randomUUID())).disposition).toBe("accepted");
   await expectBatchReason(page, capacityBatch, "TESTNG_SUCCEEDED");
 
   const idempotentBatch = await createBatch(page, fixture, runner.runnerId, {});
